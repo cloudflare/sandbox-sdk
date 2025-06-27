@@ -14,6 +14,7 @@ import {
   quickWriteFile,
   quickWriteFileStream,
 } from "../../sandbox/src/client";
+import { isMain } from "./utils";
 
 async function testHttpClient() {
   console.log("🧪 Testing HTTP Client...\n");
@@ -906,7 +907,7 @@ async function testHttpClient() {
 }
 
 // Run tests if this file is executed directly
-if (import.meta.main) {
+if (isMain) {
   // Add a timeout to prevent hanging
   const timeout = setTimeout(() => {
     console.error("❌ Tests timed out after 60 seconds");

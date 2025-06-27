@@ -3,6 +3,7 @@ import {
   quickExecute,
   quickExecuteStream,
 } from "../../sandbox/src/client";
+import { isMain } from "./utils";
 
 async function testHttpClient() {
   console.log("🚀 Testing HTTP Client...\n");
@@ -74,7 +75,7 @@ async function testHttpClient() {
 }
 
 // Run the test if this file is executed directly
-if (import.meta.main) {
+if (isMain) {
   testHttpClient().catch(console.error);
 }
 
