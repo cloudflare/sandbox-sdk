@@ -19,33 +19,33 @@ RUN apk add --no-cache \
 
 # Install global Node.js packages for extended functionality
 RUN npm install -g \
-    typescript \
-    ts-node \
-    nodemon \
-    pm2 \
+    typescript@5.1.6 \
+    ts-node@10.9.1 \
+    nodemon@2.0.22 \
+    pm2@5.3.0 \
     # Testing frameworks
-    jest \
-    mocha \
-    vitest \
+    jest@29.6.1 \
+    mocha@10.2.0 \
+    vitest@0.34.1 \
     # Build tools
-    webpack \
-    vite \
-    rollup \
-    esbuild \
+    webpack@5.88.0 \
+    vite@4.4.9 \
+    rollup@3.29.0 \
+    esbuild@0.19.2 \
     # Linting and formatting
-    eslint \
-    prettier \
+    eslint@8.50.0 \
+    prettier@3.0.3 \
     # Development utilities
-    concurrently \
-    cross-env \
+    concurrently@8.2.0 \
+    cross-env@7.0.3 \
     # Database tools
-    prisma \
+    prisma@5.2.0 \
     # API development
-    express-generator \
+    express-generator@4.17.1 \
     # GraphQL
-    @graphql-codegen/cli \
+    @graphql-codegen/cli@3.2.2 \
     # Documentation
-    typedoc && \
+    typedoc@0.24.9 && \
     # Clean npm cache
     npm cache clean --force
 
