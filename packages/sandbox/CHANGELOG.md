@@ -1,5 +1,11 @@
 # @cloudflare/sandbox
 
+## 0.0.7
+
+### Patch Changes
+
+- [`d1c7c99`](https://github.com/cloudflare/sandbox-sdk/commit/d1c7c99df6555eff71bcd59852e4b8eed2ad8cb6) Thanks [@threepointone](https://github.com/threepointone)! - fix file operations
+
 ## 0.0.6
 
 ### Patch Changes
