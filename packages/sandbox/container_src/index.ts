@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { serve } from "bun";
+
 
 interface ExecuteRequest {
   command: string;
@@ -79,7 +79,7 @@ function cleanupOldSessions() {
 // Run cleanup every 10 minutes
 setInterval(cleanupOldSessions, 10 * 60 * 1000);
 
-const server = serve({
+const server = {
   fetch(req: Request) {
     const url = new URL(req.url);
     const pathname = url.pathname;
@@ -381,7 +381,7 @@ const server = serve({
   },
   hostname: "0.0.0.0",
   port: 3000,
-} as any);
+}
 
 async function handleExecuteRequest(
   req: Request,
@@ -2880,7 +2880,7 @@ function executeMoveFile(
   });
 }
 
-console.log(`🚀 Bun server running on http://0.0.0.0:${server.port}`);
+console.log(`🚀 Server running on http://0.0.0.0:${server.port}`);
 console.log(`📡 HTTP API endpoints available:`);
 console.log(`   POST /api/session/create - Create a new session`);
 console.log(`   GET  /api/session/list - List all sessions`);
@@ -2904,3 +2904,5 @@ console.log(`   POST /api/move - Move a file`);
 console.log(`   POST /api/move/stream - Move a file (streaming)`);
 console.log(`   GET  /api/ping - Health check`);
 console.log(`   GET  /api/commands - List available commands`);
+
+export default server;
