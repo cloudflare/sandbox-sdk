@@ -3,7 +3,7 @@ import {
   quickExecute,
   quickExecuteStream,
 } from "../../sandbox/src/client";
-import { isMain } from "./utils";
+import { isMain } from "./common";
 
 async function testHttpClient() {
   console.log("🚀 Testing HTTP Client...\n");
