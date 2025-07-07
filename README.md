@@ -29,7 +29,7 @@ First, setup your wrangler.json to use the sandbox:
     {
       "class_name": "Sandbox",
       "image": "./Dockerfile",
-      "name": "sandbox"
+      "max_instances": 1
     }
   ],
   "durable_objects": {
