@@ -1,5 +1,11 @@
 # @cloudflare/sandbox
 
+## 0.0.8
+
+### Patch Changes
+
+- [`60af265`](https://github.com/cloudflare/sandbox-sdk/commit/60af265d834e83fd30a921a3e1be232f13fe24da) Thanks [@threepointone](https://github.com/threepointone)! - update dependencies
+
 ## 0.0.7
 
 ### Patch Changes
