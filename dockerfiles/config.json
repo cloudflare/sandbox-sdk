@@ -1,0 +1,60 @@
+{
+  "environments": {
+    "default": {
+      "dockerfile": "../packages/sandbox/Dockerfile",
+      "description": "Minimal Bun runtime environment",
+      "size": "~200MB",
+      "languages": ["javascript", "typescript"],
+      "use_cases": ["Basic JS/TS execution", "Lightweight applications"]
+    },
+    "python-data-science": {
+      "dockerfile": "./python-data-science.dockerfile",
+      "description": "Python environment with data science and ML packages",
+      "size": "~2.5GB",
+      "languages": ["python", "javascript", "typescript"],
+      "packages": [
+        "numpy", "pandas", "matplotlib", "seaborn", "plotly",
+        "scikit-learn", "torch", "transformers", "jupyter"
+      ],
+      "use_cases": [
+        "Data analysis and visualization",
+        "Machine learning model training",
+        "Jupyter notebook execution",
+        "AI/ML prototyping"
+      ]
+    },
+    "node-extended": {
+      "dockerfile": "./node-extended.dockerfile",
+      "description": "Extended Node.js environment with common packages and tools",
+      "size": "~1.2GB",
+      "languages": ["javascript", "typescript", "python"],
+      "packages": [
+        "express", "fastify", "mongoose", "prisma", "webpack",
+        "jest", "cypress", "eslint", "prettier"
+      ],
+      "use_cases": [
+        "Full-stack web development",
+        "API development",
+        "Testing and CI/CD",
+        "Build tool workflows"
+      ]
+    },
+    "multi-lang": {
+      "dockerfile": "./multi-lang.dockerfile",
+      "description": "Multi-language environment supporting Python, Node.js, Go, Java, Rust, Ruby, R",
+      "size": "~4GB",
+      "languages": ["python", "javascript", "typescript", "go", "java", "rust", "ruby", "r"],
+      "use_cases": [
+        "Cross-language development",
+        "Polyglot applications",
+        "Language comparison and testing",
+        "Educational environments"
+      ]
+    }
+  },
+  "selection": {
+    "env_var": "SANDBOX_ENVIRONMENT",
+    "config_file": ".sandbox-config.json",
+    "cli_flag": "--environment"
+  }
+}
