@@ -34,13 +34,14 @@ export default {
     }
 
     // Check for localhost preview pattern: /preview/{port}/{sandbox-id}/*
-    const localPreviewMatch = pathname.match(/^\/preview\/(\d+)\/([a-zA-Z0-9-]+)(\/.*)?$/);
+    const localPreviewMatch = pathname.match(/^\/preview\/(\d+)\/([^\/]+)(\/.*)?$/);
     if (localPreviewMatch) {
       const port = parseInt(localPreviewMatch[1]);
       const sandboxId = localPreviewMatch[2];
       const subPath = localPreviewMatch[3] || "/";
       
-      // Get the sandbox instance
+      // Get the sandbox instance using the sandbox ID from the URL
+      // This could be either a friendly name or a Durable Object ID
       const sandbox = getSandbox(env.Sandbox, sandboxId);
       
       // Forward the request to the container's proxy endpoint
@@ -70,18 +71,81 @@ export default {
 
     if (pathname.startsWith("/test-preview")) {
       // Example of using the preview URL feature
-      const sandbox = getSandbox(env.Sandbox, "my-sandbox");
+      // Use a consistent sandbox ID that we can reference in the preview URL
+      const sandboxId = "test-preview-sandbox";
+      const sandbox = getSandbox(env.Sandbox, sandboxId);
       
-      // Start a simple Python HTTP server
-      await sandbox.exec("python", ["-m", "http.server", "8080"]);
+      // Create a simple Bun HTTP server
+      await sandbox.writeFile("/server.js", `
+        Bun.serve({
+          port: 8080,
+          fetch(req) {
+            const url = new URL(req.url);
+            console.log(\`Server received request: \${req.method} \${url.pathname}\`);
+            
+            if (url.pathname === "/") {
+              return new Response("Hello from Bun server! 🎉", {
+                headers: { "Content-Type": "text/plain" }
+              });
+            }
+            
+            if (url.pathname === "/api/status") {
+              return new Response(JSON.stringify({
+                status: "running",
+                timestamp: new Date().toISOString(),
+                message: "Bun server is working!"
+              }), {
+                headers: { "Content-Type": "application/json" }
+              });
+            }
+            
+            return new Response("Not found", { status: 404 });
+          },
+        });
+        
+        console.log("Bun server running on port 8080");
+      `);
+      
+      // Start the Bun server
+      await sandbox.exec("bun", ["run", "/server.js"]);
+      
+      // Wait a moment for the server to start
+      await new Promise(resolve => setTimeout(resolve, 1000));
       
       // Expose the port
-      const preview = await sandbox.exposePort(8080, { name: "python-server" });
+      const preview = await sandbox.exposePort(8080, { name: "bun-server" });
+      
+      // For localhost, we need to override the URL to use our friendly sandbox ID
+      // since the Durable Object ID will be a hash
+      if (url.hostname.includes("localhost")) {
+        preview.url = `http://localhost:8787/preview/8080/${sandboxId}`;
+      }
       
       return new Response(JSON.stringify({
-        message: "Python server started and exposed",
+        message: "Bun server started and exposed",
         preview,
+        sandboxId: sandboxId,
+        note: "Use the sandboxId in the preview URL for localhost"
       }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    if (pathname.startsWith("/test-check")) {
+      // Debug endpoint to check if Bun server is running
+      const sandboxId = "test-preview-sandbox";
+      const sandbox = getSandbox(env.Sandbox, sandboxId);
+      
+      // Check running processes
+      const ps = await sandbox.exec("ps", ["aux"]);
+      
+      // Check exposed ports
+      const exposedPorts = await sandbox.getExposedPorts();
+      
+      return new Response(JSON.stringify({
+        processes: ps,
+        exposedPorts: exposedPorts,
+      }, null, 2), {
         headers: { "Content-Type": "application/json" },
       });
     }

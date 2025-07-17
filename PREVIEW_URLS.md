@@ -131,17 +131,27 @@ export default {
 
 ## Examples
 
-### Example 1: Expose a Python HTTP Server
+### Example 1: Expose a Bun HTTP Server
 
 ```typescript
-// Start a Python HTTP server
-await sandbox.exec("python", ["-m", "http.server", "8080"]);
+// Create a simple Bun server
+await sandbox.writeFile("/server.js", `
+  Bun.serve({
+    port: 8080,
+    fetch(req) {
+      return new Response("Hello from Bun! 🎉");
+    }
+  });
+`);
+
+// Start the server
+await sandbox.exec("bun", ["run", "/server.js"]);
 
 // Expose the port
 const preview = await sandbox.exposePort(8080, { 
-  name: "docs-server"
+  name: "bun-server"
 });
-console.log(`Documentation available at: ${preview.url}`);
+console.log(`Server available at: ${preview.url}`);
 ```
 
 ### Example 2: Expose a Node.js Express App
@@ -174,19 +184,37 @@ console.log(`API endpoint: ${preview.url}`);
 ### Example 3: Manage Multiple Ports
 
 ```typescript
-// Start multiple services
-await sandbox.exec("python", ["-m", "http.server", "8080"]);
-await sandbox.exec("python", ["-m", "http.server", "8081", "--directory", "/docs"]);
+// Create and start multiple Bun services
+await sandbox.writeFile("/main-server.js", `
+  Bun.serve({
+    port: 8080,
+    fetch(req) {
+      return new Response("Main server");
+    }
+  });
+`);
+
+await sandbox.writeFile("/api-server.js", `
+  Bun.serve({
+    port: 8081,
+    fetch(req) {
+      return Response.json({ api: "v1", status: "ok" });
+    }
+  });
+`);
+
+await sandbox.exec("bun", ["run", "/main-server.js"]);
+await sandbox.exec("bun", ["run", "/api-server.js"]);
 
 // Expose both
 const mainServer = await sandbox.exposePort(8080, { name: "main" });
-const docsServer = await sandbox.exposePort(8081, { name: "docs" });
+const apiServer = await sandbox.exposePort(8081, { name: "api" });
 
 // List all exposed ports
 const ports = await sandbox.getExposedPorts();
 console.log(`Exposed ports: ${ports.length}`);
 
-// Later, unexpose the docs server
+// Later, unexpose the API server
 await sandbox.unexposePort(8081);
 ```
 
