@@ -12,6 +12,10 @@ export default {
     const pathname = url.pathname;
     const hostname = url.hostname;
 
+    // Preview URL Routing:
+    // When you expose a port using sandbox.exposePort(), it returns a URL that routes through your Worker.
+    // This code handles those preview URL requests and forwards them to the container.
+
     // Check if this is a preview URL request
     // Pattern for production/custom domains: {port}-{sandbox-id}.{any-domain}
     const previewMatch = hostname.match(/^(\d+)-([a-zA-Z0-9-]+)\./);
