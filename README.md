@@ -78,4 +78,16 @@ export default {
 - `deleteFile(path: string, options?: { stream?: boolean })`: Delete a file from the sandbox.
 - `renameFile(oldPath: string, newPath: string, options?: { stream?: boolean })`: Rename a file in the sandbox.
 - `moveFile(sourcePath: string, destinationPath: string, options?: { stream?: boolean })`: Move a file from one location to another in the sandbox.
+- `exposePort(port: number, options?: { name?: string })`: Expose a port for external access and get a preview URL. The hostname is automatically detected from the first request.
+- `unexposePort(port: number)`: Remove port exposure.
+- `getExposedPorts()`: List all currently exposed ports with their preview URLs.
 - `ping()`: Ping the sandbox.
+
+### Preview URLs
+
+The Sandbox SDK now supports exposing ports from your containers to make them accessible via public preview URLs. This is useful for:
+- Testing web applications running in the sandbox
+- Exposing APIs or services for external access
+- Debugging services running on specific ports
+
+See [PREVIEW_URLS.md](./PREVIEW_URLS.md) for detailed documentation on this feature.

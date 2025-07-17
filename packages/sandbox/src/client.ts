@@ -1,10 +1,4 @@
-import type { DurableObject } from "cloudflare:workers";
 import type { Sandbox } from "./index";
-
-interface ExecuteRequest {
-  command: string;
-  args?: string[];
-}
 
 export interface ExecuteResponse {
   success: boolean;
@@ -37,13 +31,6 @@ interface CommandsResponse {
   timestamp: string;
 }
 
-interface GitCheckoutRequest {
-  repoUrl: string;
-  branch?: string;
-  targetDir?: string;
-  sessionId?: string;
-}
-
 export interface GitCheckoutResponse {
   success: boolean;
   stdout: string;
@@ -53,12 +40,6 @@ export interface GitCheckoutResponse {
   branch: string;
   targetDir: string;
   timestamp: string;
-}
-
-interface MkdirRequest {
-  path: string;
-  recursive?: boolean;
-  sessionId?: string;
 }
 
 export interface MkdirResponse {
@@ -71,24 +52,11 @@ export interface MkdirResponse {
   timestamp: string;
 }
 
-interface WriteFileRequest {
-  path: string;
-  content: string;
-  encoding?: string;
-  sessionId?: string;
-}
-
 export interface WriteFileResponse {
   success: boolean;
   exitCode: number;
   path: string;
   timestamp: string;
-}
-
-interface ReadFileRequest {
-  path: string;
-  encoding?: string;
-  sessionId?: string;
 }
 
 export interface ReadFileResponse {
@@ -99,22 +67,11 @@ export interface ReadFileResponse {
   timestamp: string;
 }
 
-interface DeleteFileRequest {
-  path: string;
-  sessionId?: string;
-}
-
 export interface DeleteFileResponse {
   success: boolean;
   exitCode: number;
   path: string;
   timestamp: string;
-}
-
-interface RenameFileRequest {
-  oldPath: string;
-  newPath: string;
-  sessionId?: string;
 }
 
 export interface RenameFileResponse {
@@ -125,17 +82,41 @@ export interface RenameFileResponse {
   timestamp: string;
 }
 
-interface MoveFileRequest {
-  sourcePath: string;
-  destinationPath: string;
-  sessionId?: string;
-}
-
 export interface MoveFileResponse {
   success: boolean;
   exitCode: number;
   sourcePath: string;
   destinationPath: string;
+  timestamp: string;
+}
+
+export interface PreviewInfo {
+  url: string;
+  port: number;
+  name?: string;
+}
+
+export interface ExposedPort extends PreviewInfo {
+  exposedAt: string;
+}
+
+export interface ExposePortResponse {
+  success: boolean;
+  port: number;
+  name?: string;
+  exposedAt: string;
+  timestamp: string;
+}
+
+export interface UnexposePortResponse {
+  success: boolean;
+  port: number;
+  timestamp: string;
+}
+
+export interface GetExposedPortsResponse {
+  ports: ExposedPort[];
+  count: number;
   timestamp: string;
 }
 
@@ -1633,6 +1614,104 @@ export class HttpClient {
         "move",
         [sourcePath, destinationPath]
       );
+      throw error;
+    }
+  }
+
+  async exposePort(port: number, name?: string): Promise<ExposePortResponse> {
+    try {
+      const response = await this.doFetch(`/api/expose-port`, {
+        body: JSON.stringify({
+          port,
+          name,
+        }),
+        headers: {
+          "Content-Type": "application/json",
+        },
+        method: "POST",
+      });
+
+      if (!response.ok) {
+        const errorData = (await response.json().catch(() => ({}))) as {
+          error?: string;
+        };
+        console.log(errorData);
+        throw new Error(
+          errorData.error || `HTTP error! status: ${response.status}`
+        );
+      }
+
+      const data: ExposePortResponse = await response.json();
+      console.log(
+        `[HTTP Client] Port exposed: ${port}${name ? ` (${name})` : ""}, Success: ${data.success}`
+      );
+
+      return data;
+    } catch (error) {
+      console.error("[HTTP Client] Error exposing port:", error);
+      throw error;
+    }
+  }
+
+  async unexposePort(port: number): Promise<UnexposePortResponse> {
+    try {
+      const response = await this.doFetch(`/api/unexpose-port`, {
+        body: JSON.stringify({
+          port,
+        }),
+        headers: {
+          "Content-Type": "application/json",
+        },
+        method: "DELETE",
+      });
+
+      if (!response.ok) {
+        const errorData = (await response.json().catch(() => ({}))) as {
+          error?: string;
+        };
+        throw new Error(
+          errorData.error || `HTTP error! status: ${response.status}`
+        );
+      }
+
+      const data: UnexposePortResponse = await response.json();
+      console.log(
+        `[HTTP Client] Port unexposed: ${port}, Success: ${data.success}`
+      );
+
+      return data;
+    } catch (error) {
+      console.error("[HTTP Client] Error unexposing port:", error);
+      throw error;
+    }
+  }
+
+  async getExposedPorts(): Promise<GetExposedPortsResponse> {
+    try {
+      const response = await this.doFetch(`/api/exposed-ports`, {
+        headers: {
+          "Content-Type": "application/json",
+        },
+        method: "GET",
+      });
+
+      if (!response.ok) {
+        const errorData = (await response.json().catch(() => ({}))) as {
+          error?: string;
+        };
+        throw new Error(
+          errorData.error || `HTTP error! status: ${response.status}`
+        );
+      }
+
+      const data: GetExposedPortsResponse = await response.json();
+      console.log(
+        `[HTTP Client] Got ${data.count} exposed ports`
+      );
+
+      return data;
+    } catch (error) {
+      console.error("[HTTP Client] Error getting exposed ports:", error);
       throw error;
     }
   }

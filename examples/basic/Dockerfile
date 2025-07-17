@@ -1,6 +1,7 @@
 # syntax=docker/dockerfile:1
 
-FROM docker.io/ghostwriternr/cloudflare-sandbox:0.0.5
+# FROM docker.io/ghostwriternr/cloudflare-sandbox:0.0.5
+FROM my-sandbox-base:latest
 
 EXPOSE 3000
 

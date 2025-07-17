@@ -35,5 +35,8 @@
       "new_sqlite_classes": ["Sandbox"],
       "tag": "v1"
     }
-  ]
+  ],
+  "dev": {
+		"container_engine": "unix:///Users/naresh/.colima/default/docker.sock"
+	},
 }

@@ -1,5 +1,7 @@
 import { Container, getContainer } from "@cloudflare/containers";
-import { HttpClient } from "./client";
+import { HttpClient, type PreviewInfo, type ExposedPort } from "./client";
+
+export type { PreviewInfo, ExposedPort } from "./client";
 
 export function getSandbox(ns: DurableObjectNamespace<Sandbox>, id: string) {
   return getContainer(ns, id);
@@ -9,6 +11,7 @@ export class Sandbox<Env = unknown> extends Container<Env> {
   defaultPort = 3000; // The default port for the container to listen on
   sleepAfter = "3m"; // Sleep the sandbox if no requests are made in this timeframe
   client: HttpClient;
+  private workerHostname: string | null = null;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -51,6 +54,19 @@ export class Sandbox<Env = unknown> extends Container<Env> {
 
   override onError(error: unknown) {
     console.log("Sandbox error:", error);
+  }
+
+  // Override fetch to capture the hostname
+  override async fetch(request: Request): Promise<Response> {
+    // Capture the hostname from the first request
+    if (!this.workerHostname) {
+      const url = new URL(request.url);
+      this.workerHostname = url.hostname;
+      console.log(`[Sandbox] Captured hostname: ${this.workerHostname}`);
+    }
+    
+    // Call the parent fetch method
+    return super.fetch(request);
   }
 
   async exec(command: string, args: string[], options?: { stream?: boolean }) {
@@ -132,5 +148,61 @@ export class Sandbox<Env = unknown> extends Container<Env> {
       return this.client.readFileStream(path, options.encoding);
     }
     return this.client.readFile(path, options.encoding);
+  }
+
+  async exposePort(port: number, options?: { name?: string }) {
+    const response = await this.client.exposePort(port, options?.name);
+    
+    // Get the current domain from the captured hostname
+    const sandboxId = this.ctx.id.toString();
+    const hostname = this.getHostname();
+    
+    // Construct the preview URL based on the hostname
+    const url = this.constructPreviewUrl(port, sandboxId, hostname);
+    
+    return {
+      url,
+      port,
+      name: options?.name,
+    };
+  }
+
+  async unexposePort(port: number) {
+    await this.client.unexposePort(port);
+  }
+
+  async getExposedPorts() {
+    const response = await this.client.getExposedPorts();
+    
+    // Transform the response to include preview URLs
+    const sandboxId = this.ctx.id.toString();
+    const hostname = this.getHostname();
+    
+    return response.ports.map(port => ({
+      url: this.constructPreviewUrl(port.port, sandboxId, hostname),
+      port: port.port,
+      name: port.name,
+      exposedAt: port.exposedAt,
+    }));
+  }
+
+  private getHostname(): string {
+    // Use the captured hostname or fall back to localhost for development
+    return this.workerHostname || "localhost:8787";
+  }
+
+  private constructPreviewUrl(port: number, sandboxId: string, hostname: string): string {
+    // Handle different hostname patterns
+    if (hostname.includes("localhost")) {
+      // For local development, we need to use a different approach
+      // Since subdomains don't work with localhost, we'll use the base URL
+      // with a note that the user needs to handle routing differently
+      return `http://${hostname}/preview/${port}/${sandboxId}`;
+    }
+    
+    // For all other domains (workers.dev, custom domains, etc.)
+    // Use subdomain-based routing pattern
+    const protocol = hostname.includes("localhost") || hostname.includes(":") ? "http" : "https";
+    return `${protocol}://${port}-${sandboxId}.${hostname}`;
   }
 }
