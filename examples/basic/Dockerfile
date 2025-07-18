@@ -1,7 +1,4 @@
-# syntax=docker/dockerfile:1
-
-# FROM docker.io/ghostwriternr/cloudflare-sandbox:0.0.5
-FROM my-sandbox-base:latest
+FROM docker.io/ghostwriternr/cloudflare-sandbox:0.0.5
 
 EXPOSE 8080
 EXPOSE 3001
