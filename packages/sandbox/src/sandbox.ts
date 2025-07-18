@@ -115,9 +115,9 @@ export class Sandbox<Env = unknown> extends Container<Env> {
 
   async exec(command: string, args: string[], options?: { stream?: boolean; background?: boolean }) {
     if (options?.stream) {
-      return this.client.executeStream(command, args, options?.background);
+      return this.client.executeStream(command, args, undefined, options?.background);
     }
-    return this.client.execute(command, args, options?.background);
+    return this.client.execute(command, args, undefined, options?.background);
   }
 
   async gitCheckout(

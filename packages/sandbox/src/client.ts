@@ -371,8 +371,8 @@ export class HttpClient {
   async execute(
     command: string,
     args: string[] = [],
-    background?: boolean,
-    sessionId?: string
+    sessionId?: string,
+    background: boolean = false,
   ): Promise<ExecuteResponse> {
     try {
       const targetSessionId = sessionId || this.sessionId;
@@ -429,8 +429,8 @@ export class HttpClient {
   async executeStream(
     command: string,
     args: string[] = [],
-    background?: boolean,
-    sessionId?: string
+    sessionId?: string,
+    background: boolean = false
   ): Promise<void> {
     try {
       const targetSessionId = sessionId || this.sessionId;
