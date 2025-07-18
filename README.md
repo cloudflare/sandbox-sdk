@@ -167,13 +167,13 @@ await sandbox.gitCheckout("https://github.com/user/repo", {
 The SDK automatically handles preview URL routing for exposed ports. Just add one line to your worker:
 
 ```typescript
-import { handleSandboxRequest, getSandbox } from "@cloudflare/sandbox";
+import { proxyToSandbox, getSandbox } from "@cloudflare/sandbox";
 
 export default {
   async fetch(request, env) {
-    // This handles all preview URL routing automatically
-    const sandboxResponse = await handleSandboxRequest(request, env);
-    if (sandboxResponse) return sandboxResponse;
+    // Route requests to exposed container ports via their preview URLs
+    const proxyResponse = await proxyToSandbox(request, env);
+    if (proxyResponse) return proxyResponse;
 
     // Your custom routes here
     // ...

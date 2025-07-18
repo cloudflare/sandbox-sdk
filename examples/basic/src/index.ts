@@ -1,4 +1,4 @@
-import { handleSandboxRequest, getSandbox, type Sandbox } from "@cloudflare/sandbox";
+import { proxyToSandbox, getSandbox, type Sandbox } from "@cloudflare/sandbox";
 
 export { Sandbox } from "@cloudflare/sandbox";
 
@@ -8,9 +8,9 @@ type Env = {
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    // Handle all sandbox preview URLs automatically
-    const sandboxResponse = await handleSandboxRequest(request, env);
-    if (sandboxResponse) return sandboxResponse;
+    // Route requests to exposed container ports via their preview URLs
+    const proxyResponse = await proxyToSandbox(request, env);
+    if (proxyResponse) return proxyResponse;
 
     // Custom routes
     const url = new URL(request.url);

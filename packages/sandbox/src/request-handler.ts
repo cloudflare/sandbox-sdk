@@ -10,7 +10,7 @@ export interface RouteInfo {
   path: string;
 }
 
-export async function handleSandboxRequest<E extends SandboxEnv>(
+export async function proxyToSandbox<E extends SandboxEnv>(
   request: Request,
   env: E
 ): Promise<Response | null> {
@@ -19,7 +19,7 @@ export async function handleSandboxRequest<E extends SandboxEnv>(
     const routeInfo = extractSandboxRoute(url);
 
     if (!routeInfo) {
-      return null; // Not a sandbox preview request
+      return null; // Not a request to an exposed container port
     }
 
     const { sandboxId, port, path } = routeInfo;
@@ -51,8 +51,8 @@ export async function handleSandboxRequest<E extends SandboxEnv>(
 
     return sandbox.containerFetch(proxyRequest, port);
   } catch (error) {
-    console.error('[Sandbox] Preview URL routing error:', error);
-    return new Response('Preview URL routing error', { status: 500 });
+    console.error('[Sandbox] Proxy routing error:', error);
+    return new Response('Proxy routing error', { status: 500 });
   }
 }
 

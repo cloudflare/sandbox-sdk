@@ -8,7 +8,7 @@ export type {
 
 // Re-export request handler utilities
 export {
-  handleSandboxRequest, type RouteInfo, type SandboxEnv
+  proxyToSandbox, type RouteInfo, type SandboxEnv
 } from './request-handler';
 
 export { getSandbox, Sandbox } from "./sandbox";
