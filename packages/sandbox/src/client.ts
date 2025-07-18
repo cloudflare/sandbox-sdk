@@ -1,6 +1,12 @@
 import type { Sandbox } from "./index";
 
-export interface ExecuteResponse {
+interface ExecuteRequest {
+  command: string;
+  args?: string[];
+  sessionId?: string;
+}
+
+interface ExecuteResponse {
   success: boolean;
   stdout: string;
   stderr: string;
@@ -31,7 +37,14 @@ interface CommandsResponse {
   timestamp: string;
 }
 
-export interface GitCheckoutResponse {
+interface GitCheckoutRequest {
+  repoUrl: string;
+  branch?: string;
+  targetDir?: string;
+  sessionId?: string;
+}
+
+interface GitCheckoutResponse {
   success: boolean;
   stdout: string;
   stderr: string;
@@ -42,7 +55,13 @@ export interface GitCheckoutResponse {
   timestamp: string;
 }
 
-export interface MkdirResponse {
+interface MkdirRequest {
+  path: string;
+  recursive?: boolean;
+  sessionId?: string;
+}
+
+interface MkdirResponse {
   success: boolean;
   stdout: string;
   stderr: string;
@@ -52,14 +71,27 @@ export interface MkdirResponse {
   timestamp: string;
 }
 
-export interface WriteFileResponse {
+interface WriteFileRequest {
+  path: string;
+  content: string;
+  encoding?: string;
+  sessionId?: string;
+}
+
+interface WriteFileResponse {
   success: boolean;
   exitCode: number;
   path: string;
   timestamp: string;
 }
 
-export interface ReadFileResponse {
+interface ReadFileRequest {
+  path: string;
+  encoding?: string;
+  sessionId?: string;
+}
+
+interface ReadFileResponse {
   success: boolean;
   exitCode: number;
   path: string;
@@ -67,14 +99,25 @@ export interface ReadFileResponse {
   timestamp: string;
 }
 
-export interface DeleteFileResponse {
+interface DeleteFileRequest {
+  path: string;
+  sessionId?: string;
+}
+
+interface DeleteFileResponse {
   success: boolean;
   exitCode: number;
   path: string;
   timestamp: string;
 }
 
-export interface RenameFileResponse {
+interface RenameFileRequest {
+  oldPath: string;
+  newPath: string;
+  sessionId?: string;
+}
+
+interface RenameFileResponse {
   success: boolean;
   exitCode: number;
   oldPath: string;
@@ -82,7 +125,13 @@ export interface RenameFileResponse {
   timestamp: string;
 }
 
-export interface MoveFileResponse {
+interface MoveFileRequest {
+  sourcePath: string;
+  destinationPath: string;
+  sessionId?: string;
+}
+
+interface MoveFileResponse {
   success: boolean;
   exitCode: number;
   sourcePath: string;
@@ -90,17 +139,18 @@ export interface MoveFileResponse {
   timestamp: string;
 }
 
-export interface PreviewInfo {
+interface PreviewInfo {
   url: string;
   port: number;
   name?: string;
 }
 
-export interface ExposedPort extends PreviewInfo {
+interface ExposedPort extends PreviewInfo {
   exposedAt: string;
+  timestamp: string;
 }
 
-export interface ExposePortResponse {
+interface ExposePortResponse {
   success: boolean;
   port: number;
   name?: string;
@@ -108,13 +158,13 @@ export interface ExposePortResponse {
   timestamp: string;
 }
 
-export interface UnexposePortResponse {
+interface UnexposePortResponse {
   success: boolean;
   port: number;
   timestamp: string;
 }
 
-export interface GetExposedPortsResponse {
+interface GetExposedPortsResponse {
   ports: ExposedPort[];
   count: number;
   timestamp: string;
@@ -257,13 +307,13 @@ export class HttpClient {
 
   getOnCommandComplete():
     | ((
-        success: boolean,
-        exitCode: number,
-        stdout: string,
-        stderr: string,
-        command: string,
-        args: string[]
-      ) => void)
+      success: boolean,
+      exitCode: number,
+      stdout: string,
+      stderr: string,
+      command: string,
+      args: string[]
+    ) => void)
     | undefined {
     return this.options.onCommandComplete;
   }
@@ -330,7 +380,7 @@ export class HttpClient {
           args,
           command,
           sessionId: targetSessionId,
-        }),
+        } as ExecuteRequest),
         headers: {
           "Content-Type": "application/json",
         },
@@ -432,8 +482,7 @@ export class HttpClient {
                 switch (event.type) {
                   case "command_start":
                     console.log(
-                      `[HTTP Client] Command started: ${
-                        event.command
+                      `[HTTP Client] Command started: ${event.command
                       } ${event.args?.join(" ")}`
                     );
                     this.options.onCommandStart?.(
@@ -514,7 +563,7 @@ export class HttpClient {
           repoUrl,
           sessionId: targetSessionId,
           targetDir,
-        }),
+        } as GitCheckoutRequest),
         headers: {
           "Content-Type": "application/json",
         },
@@ -605,8 +654,7 @@ export class HttpClient {
                 switch (event.type) {
                   case "command_start":
                     console.log(
-                      `[HTTP Client] Git checkout started: ${
-                        event.command
+                      `[HTTP Client] Git checkout started: ${event.command
                       } ${event.args?.join(" ")}`
                     );
                     this.options.onCommandStart?.(
@@ -685,7 +733,7 @@ export class HttpClient {
           path,
           recursive,
           sessionId: targetSessionId,
-        }),
+        } as MkdirRequest),
         headers: {
           "Content-Type": "application/json",
         },
@@ -726,7 +774,7 @@ export class HttpClient {
           path,
           recursive,
           sessionId: targetSessionId,
-        }),
+        } as MkdirRequest),
         headers: {
           "Content-Type": "application/json",
         },
@@ -772,8 +820,7 @@ export class HttpClient {
                 switch (event.type) {
                   case "command_start":
                     console.log(
-                      `[HTTP Client] Mkdir started: ${
-                        event.command
+                      `[HTTP Client] Mkdir started: ${event.command
                       } ${event.args?.join(" ")}`
                     );
                     this.options.onCommandStart?.(
@@ -852,7 +899,7 @@ export class HttpClient {
           encoding,
           path,
           sessionId: targetSessionId,
-        }),
+        } as WriteFileRequest),
         headers: {
           "Content-Type": "application/json",
         },
@@ -895,7 +942,7 @@ export class HttpClient {
           encoding,
           path,
           sessionId: targetSessionId,
-        }),
+        } as WriteFileRequest),
         headers: {
           "Content-Type": "application/json",
         },
@@ -1018,7 +1065,7 @@ export class HttpClient {
           encoding,
           path,
           sessionId: targetSessionId,
-        }),
+        } as ReadFileRequest),
         headers: {
           "Content-Type": "application/json",
         },
@@ -1059,7 +1106,7 @@ export class HttpClient {
           encoding,
           path,
           sessionId: targetSessionId,
-        }),
+        } as ReadFileRequest),
         headers: {
           "Content-Type": "application/json",
         },
@@ -1114,10 +1161,8 @@ export class HttpClient {
 
                   case "command_complete":
                     console.log(
-                      `[HTTP Client] Read file completed: ${
-                        event.path
-                      }, Success: ${event.success}, Content length: ${
-                        event.content?.length || 0
+                      `[HTTP Client] Read file completed: ${event.path
+                      }, Success: ${event.success}, Content length: ${event.content?.length || 0
                       }`
                     );
                     this.options.onCommandComplete?.(
@@ -1174,7 +1219,7 @@ export class HttpClient {
         body: JSON.stringify({
           path,
           sessionId: targetSessionId,
-        }),
+        } as DeleteFileRequest),
         headers: {
           "Content-Type": "application/json",
         },
@@ -1210,7 +1255,7 @@ export class HttpClient {
         body: JSON.stringify({
           path,
           sessionId: targetSessionId,
-        }),
+        } as DeleteFileRequest),
         headers: {
           "Content-Type": "application/json",
         },
@@ -1320,7 +1365,7 @@ export class HttpClient {
           newPath,
           oldPath,
           sessionId: targetSessionId,
-        }),
+        } as RenameFileRequest),
         headers: {
           "Content-Type": "application/json",
         },
@@ -1361,7 +1406,7 @@ export class HttpClient {
           newPath,
           oldPath,
           sessionId: targetSessionId,
-        }),
+        } as RenameFileRequest),
         headers: {
           "Content-Type": "application/json",
         },
@@ -1474,7 +1519,7 @@ export class HttpClient {
           destinationPath,
           sessionId: targetSessionId,
           sourcePath,
-        }),
+        } as MoveFileRequest),
         headers: {
           "Content-Type": "application/json",
         },
@@ -1515,7 +1560,7 @@ export class HttpClient {
           destinationPath,
           sessionId: targetSessionId,
           sourcePath,
-        }),
+        } as MoveFileRequest),
         headers: {
           "Content-Type": "application/json",
         },

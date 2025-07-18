@@ -1,7 +1,5 @@
 import { Container, getContainer } from "@cloudflare/containers";
-import { HttpClient, type PreviewInfo, type ExposedPort } from "./client";
-
-export type { PreviewInfo, ExposedPort } from "./client";
+import { HttpClient } from "./client";
 
 export function getSandbox(ns: DurableObjectNamespace<Sandbox>, id: string) {
   return getContainer(ns, id);
@@ -16,7 +14,7 @@ export class Sandbox<Env = unknown> extends Container<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.client = new HttpClient({
-      onCommandComplete: (success, exitCode, stdout, stderr, command, args) => {
+      onCommandComplete: (success, exitCode, _stdout, _stderr, command, _args) => {
         console.log(
           `[Container] Command completed: ${command}, Success: ${success}, Exit code: ${exitCode}`
         );
@@ -26,10 +24,10 @@ export class Sandbox<Env = unknown> extends Container<Env> {
           `[Container] Command started: ${command} ${args.join(" ")}`
         );
       },
-      onError: (error, command, args) => {
+      onError: (error, _command, _args) => {
         console.error(`[Container] Command error: ${error}`);
       },
-      onOutput: (stream, data, command) => {
+      onOutput: (stream, data, _command) => {
         console.log(`[Container] [${stream}] ${data}`);
       },
       port: this.defaultPort,
@@ -64,7 +62,7 @@ export class Sandbox<Env = unknown> extends Container<Env> {
       this.workerHostname = url.hostname;
       console.log(`[Sandbox] Captured hostname: ${this.workerHostname}`);
     }
-    
+
     // Call the parent fetch method
     return super.fetch(request);
   }

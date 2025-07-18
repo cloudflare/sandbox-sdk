@@ -22,10 +22,10 @@ export default {
     if (previewMatch) {
       const port = parseInt(previewMatch[1]);
       const sandboxId = previewMatch[2];
-      
+
       // Get the sandbox instance
       const sandbox = getSandbox(env.Sandbox, sandboxId);
-      
+
       // Forward the request to the container's proxy endpoint
       const proxyUrl = `http://localhost:3000/proxy/${port}${pathname}${url.search}`;
       const proxyRequest = new Request(proxyUrl, {
@@ -33,7 +33,7 @@ export default {
         headers: request.headers,
         body: request.body,
       });
-      
+
       return sandbox.containerFetch(proxyRequest);
     }
 
@@ -43,11 +43,11 @@ export default {
       const port = parseInt(localPreviewMatch[1]);
       const sandboxId = localPreviewMatch[2];
       const subPath = localPreviewMatch[3] || "/";
-      
+
       // Get the sandbox instance using the sandbox ID from the URL
       // This could be either a friendly name or a Durable Object ID
       const sandbox = getSandbox(env.Sandbox, sandboxId);
-      
+
       // Forward the request to the container's proxy endpoint
       const proxyUrl = `http://localhost:3000/proxy/${port}${subPath}${url.search}`;
       const proxyRequest = new Request(proxyUrl, {
@@ -55,7 +55,7 @@ export default {
         headers: request.headers,
         body: request.body,
       });
-      
+
       return sandbox.containerFetch(proxyRequest);
     }
 
@@ -78,7 +78,7 @@ export default {
       // Use a consistent sandbox ID that we can reference in the preview URL
       const sandboxId = "test-preview-sandbox";
       const sandbox = getSandbox(env.Sandbox, sandboxId);
-      
+
       // Create a simple Bun HTTP server
       await sandbox.writeFile("/server.js", `
         Bun.serve({
@@ -86,13 +86,13 @@ export default {
           fetch(req) {
             const url = new URL(req.url);
             console.log(\`Server received request: \${req.method} \${url.pathname}\`);
-            
+
             if (url.pathname === "/") {
               return new Response("Hello from Bun server! 🎉", {
                 headers: { "Content-Type": "text/plain" }
               });
             }
-            
+
             if (url.pathname === "/api/status") {
               return new Response(JSON.stringify({
                 status: "running",
@@ -139,13 +139,13 @@ export default {
       // Debug endpoint to check if Bun server is running
       const sandboxId = "test-preview-sandbox";
       const sandbox = getSandbox(env.Sandbox, sandboxId);
-      
+
       // Check running processes
       const ps = await sandbox.exec("ps", ["aux"]);
-      
+
       // Check exposed ports
       const exposedPorts = await sandbox.getExposedPorts();
-      
+
       return new Response(JSON.stringify({
         processes: ps,
         exposedPorts: exposedPorts,

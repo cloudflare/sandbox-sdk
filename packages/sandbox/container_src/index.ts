@@ -3166,7 +3166,7 @@ async function handleProxyRequest(
     }
 
     // Construct the target URL
-    const targetPath = "/" + pathParts.slice(3).join("/");
+    const targetPath = `/${pathParts.slice(3).join("/")}`;
     // Use 127.0.0.1 instead of localhost for more reliable container networking
     const targetUrl = `http://127.0.0.1:${port}${targetPath}${url.search}`;
 
