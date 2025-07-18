@@ -102,7 +102,7 @@ export { Sandbox } from "@cloudflare/sandbox";
 export default {
   async fetch(request: Request, env: Env) {
     const sandbox = getSandbox(env.Sandbox, "my-sandbox");
-    
+
     // Execute a command
     const result = await sandbox.exec("echo", ["Hello from the edge!"]);
     return new Response(result.stdout);
@@ -162,6 +162,53 @@ await sandbox.gitCheckout("https://github.com/user/repo", {
 - `unexposePort(port)` - Remove port exposure
 - `getExposedPorts()` - List all exposed ports with their URLs
 
+## 🌐 Port Forwarding
+
+The SDK automatically handles preview URL routing for exposed ports. Just add one line to your worker:
+
+```typescript
+import { handleSandboxRequest, getSandbox } from "@cloudflare/sandbox";
+
+export default {
+  async fetch(request, env) {
+    // This handles all preview URL routing automatically
+    const sandboxResponse = await handleSandboxRequest(request, env);
+    if (sandboxResponse) return sandboxResponse;
+
+    // Your custom routes here
+    // ...
+  }
+};
+```
+
+When you expose a port, the SDK returns a preview URL that automatically routes to your service:
+
+```typescript
+const preview = await sandbox.exposePort(3000);
+console.log(preview.url); // https://3000-sandbox-id.your-worker.dev
+```
+
+The SDK handles:
+- Production subdomain routing (`3000-sandbox-id.domain.com`)
+- Local development routing (`localhost:8787/preview/3000/sandbox-id`)
+- All localhost variants (127.0.0.1, ::1, etc.)
+- Request forwarding with proper headers
+
+For even simpler usage, use the `createSandboxWorker` helper:
+
+```typescript
+import { createSandboxWorker, getSandbox } from "@cloudflare/sandbox";
+
+export default createSandboxWorker((request, env) => {
+  // Only handle non-sandbox routes
+  if (request.url.includes("/api")) {
+    const sandbox = getSandbox(env.Sandbox, "my-sandbox");
+    return sandbox.containerFetch(request);
+  }
+  return new Response("Not found", { status: 404 });
+});
+```
+
 ### Utility Methods
 
 - `ping()` - Health check for the sandbox
@@ -178,11 +225,11 @@ const sandbox = getSandbox(env.Sandbox, "node-app");
 await sandbox.writeFile("/app.js", `
   const express = require('express');
   const app = express();
-  
+
   app.get('/', (req, res) => {
     res.json({ message: 'Hello from Cloudflare!' });
   });
-  
+
   app.listen(3000);
 `);
 

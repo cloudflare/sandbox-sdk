@@ -6,7 +6,7 @@ interface ExecuteRequest {
   sessionId?: string;
 }
 
-interface ExecuteResponse {
+export interface ExecuteResponse {
   success: boolean;
   stdout: string;
   stderr: string;
@@ -44,7 +44,7 @@ interface GitCheckoutRequest {
   sessionId?: string;
 }
 
-interface GitCheckoutResponse {
+export interface GitCheckoutResponse {
   success: boolean;
   stdout: string;
   stderr: string;
@@ -61,7 +61,7 @@ interface MkdirRequest {
   sessionId?: string;
 }
 
-interface MkdirResponse {
+export interface MkdirResponse {
   success: boolean;
   stdout: string;
   stderr: string;
@@ -78,7 +78,7 @@ interface WriteFileRequest {
   sessionId?: string;
 }
 
-interface WriteFileResponse {
+export interface WriteFileResponse {
   success: boolean;
   exitCode: number;
   path: string;
@@ -91,7 +91,7 @@ interface ReadFileRequest {
   sessionId?: string;
 }
 
-interface ReadFileResponse {
+export interface ReadFileResponse {
   success: boolean;
   exitCode: number;
   path: string;
@@ -104,7 +104,7 @@ interface DeleteFileRequest {
   sessionId?: string;
 }
 
-interface DeleteFileResponse {
+export interface DeleteFileResponse {
   success: boolean;
   exitCode: number;
   path: string;
@@ -117,7 +117,7 @@ interface RenameFileRequest {
   sessionId?: string;
 }
 
-interface RenameFileResponse {
+export interface RenameFileResponse {
   success: boolean;
   exitCode: number;
   oldPath: string;
@@ -131,7 +131,7 @@ interface MoveFileRequest {
   sessionId?: string;
 }
 
-interface MoveFileResponse {
+export interface MoveFileResponse {
   success: boolean;
   exitCode: number;
   sourcePath: string;
