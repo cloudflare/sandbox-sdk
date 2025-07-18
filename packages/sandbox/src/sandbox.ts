@@ -3,13 +3,21 @@ import { HttpClient } from "./client";
 import { isLocalhostPattern } from "./request-handler";
 
 export function getSandbox(ns: DurableObjectNamespace<Sandbox>, id: string) {
-  return getContainer(ns, id);
+  const stub = getContainer(ns, id);
+
+  // Store the name on first access - this is a fire-and-forget operation
+  stub.setSandboxName?.(id).catch(() => {
+    // Ignore errors - this is best effort
+  });
+
+  return stub;
 }
 
 export class Sandbox<Env = unknown> extends Container<Env> {
   sleepAfter = "3m"; // Sleep the sandbox if no requests are made in this timeframe
   client: HttpClient;
   private workerHostname: string | null = null;
+  private sandboxName: string | null = null;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -33,11 +41,25 @@ export class Sandbox<Env = unknown> extends Container<Env> {
       port: 3000, // Control plane port
       stub: this,
     });
+
+    // Load the sandbox name from storage on initialization
+    this.ctx.blockConcurrencyWhile(async () => {
+      this.sandboxName = await this.ctx.storage.get<string>('sandboxName') || null;
+    });
   }
 
   envVars = {
     MESSAGE: "I was passed in via the Sandbox class!",
   };
+
+  // RPC method to set the sandbox name
+  async setSandboxName(name: string): Promise<void> {
+    if (!this.sandboxName) {
+      this.sandboxName = name;
+      await this.ctx.storage.put('sandboxName', name);
+      console.log(`[Sandbox] Stored sandbox name via RPC: ${name}`);
+    }
+  }
 
   override onStart() {
     console.log("Sandbox successfully started");
@@ -57,27 +79,35 @@ export class Sandbox<Env = unknown> extends Container<Env> {
   // Override fetch to capture the hostname and route to appropriate ports
   override async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
-    
+
     // Capture the hostname from the first request
     if (!this.workerHostname) {
       this.workerHostname = url.hostname;
       console.log(`[Sandbox] Captured hostname: ${this.workerHostname}`);
     }
 
+    // Capture and store the sandbox name from the header if present
+    if (!this.sandboxName && request.headers.has('X-Sandbox-Name')) {
+      const name = request.headers.get('X-Sandbox-Name')!;
+      this.sandboxName = name;
+      await this.ctx.storage.put('sandboxName', name);
+      console.log(`[Sandbox] Stored sandbox name: ${this.sandboxName}`);
+    }
+
     // Determine which port to route to
     const port = this.determinePort(url);
-    
+
     // Route to the appropriate port
     return await this.containerFetch(request, port);
   }
-  
+
   private determinePort(url: URL): number {
     // Extract port from proxy requests (e.g., /proxy/8080/*)
     const proxyMatch = url.pathname.match(/^\/proxy\/(\d+)/);
     if (proxyMatch) {
       return parseInt(proxyMatch[1]);
     }
-    
+
     // All other requests go to control plane on port 3000
     // This includes /api/* endpoints and any other control requests
     return 3000;
@@ -167,12 +197,13 @@ export class Sandbox<Env = unknown> extends Container<Env> {
   async exposePort(port: number, options?: { name?: string }) {
     await this.client.exposePort(port, options?.name);
 
-    // Get the current domain from the captured hostname
-    const sandboxId = this.ctx.id.toString();
-    const hostname = this.getHostname();
+    // We need the sandbox name to construct preview URLs
+    if (!this.sandboxName) {
+      throw new Error('Sandbox name not available. Ensure sandbox is accessed through getSandbox()');
+    }
 
-    // Construct the preview URL based on the hostname
-    const url = this.constructPreviewUrl(port, sandboxId, hostname);
+    const hostname = this.getHostname();
+    const url = this.constructPreviewUrl(port, this.sandboxName, hostname);
 
     return {
       url,
@@ -188,12 +219,15 @@ export class Sandbox<Env = unknown> extends Container<Env> {
   async getExposedPorts() {
     const response = await this.client.getExposedPorts();
 
-    // Transform the response to include preview URLs
-    const sandboxId = this.ctx.id.toString();
+    // We need the sandbox name to construct preview URLs
+    if (!this.sandboxName) {
+      throw new Error('Sandbox name not available. Ensure sandbox is accessed through getSandbox()');
+    }
+
     const hostname = this.getHostname();
 
     return response.ports.map(port => ({
-      url: this.constructPreviewUrl(port.port, sandboxId, hostname),
+      url: this.constructPreviewUrl(port.port, this.sandboxName!, hostname),
       port: port.port,
       name: port.name,
       exposedAt: port.exposedAt,

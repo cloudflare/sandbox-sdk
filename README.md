@@ -194,6 +194,27 @@ The SDK handles:
 - All localhost variants (127.0.0.1, ::1, etc.)
 - Request forwarding with proper headers
 
+> **Important for Local Development**: When developing locally with `wrangler dev`, you must explicitly expose ports in your Dockerfile using the `EXPOSE` instruction. This is **only required for local development** - in production, all container ports are automatically accessible.
+
+```dockerfile
+# In your Dockerfile (only needed for local dev)
+FROM oven/bun:latest
+
+# Expose the ports you'll be using
+EXPOSE 3000  # For a web server
+EXPOSE 8080  # For an API server
+EXPOSE 3001  # For any additional services
+
+# Your container setup...
+```
+
+Without the `EXPOSE` instruction in local development, you'll see this error:
+```
+connect(): Connection refused: container port not found. Make sure you exposed the port in your container definition.
+```
+
+For more details, see the [Cloudflare Containers local development guide](https://developers.cloudflare.com/containers/local-dev/#exposing-ports).
+
 For even simpler usage, use the `createSandboxWorker` helper:
 
 ```typescript

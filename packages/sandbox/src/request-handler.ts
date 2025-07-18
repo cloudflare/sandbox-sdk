@@ -27,7 +27,7 @@ export async function handleSandboxRequest<E extends SandboxEnv>(
 
     // Build proxy request with proper headers
     let proxyUrl: string;
-    
+
     // Route based on the target port
     if (port !== 3000) {
       // Route directly to user's service on the specified port
@@ -36,7 +36,7 @@ export async function handleSandboxRequest<E extends SandboxEnv>(
       // Port 3000 is our control plane - route normally
       proxyUrl = `http://localhost:3000${path}${url.search}`;
     }
-    
+
     const proxyRequest = new Request(proxyUrl, {
       method: request.method,
       headers: {
@@ -44,6 +44,7 @@ export async function handleSandboxRequest<E extends SandboxEnv>(
         'X-Original-URL': request.url,
         'X-Forwarded-Host': url.hostname,
         'X-Forwarded-Proto': url.protocol.replace(':', ''),
+        'X-Sandbox-Name': sandboxId, // Pass the friendly name
       },
       body: request.body,
     });
