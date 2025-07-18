@@ -1,5 +1,11 @@
 # @cloudflare/sandbox
 
+## 0.0.9
+
+### Patch Changes
+
+- [#20](https://github.com/cloudflare/sandbox-sdk/pull/20) [`f106fda`](https://github.com/cloudflare/sandbox-sdk/commit/f106fdac98e7ef35677326290d45cbf3af88982c) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - add preview URLs and dynamic port forwarding
+
 ## 0.0.8
 
 ### Patch Changes
