@@ -5,10 +5,8 @@ import { isLocalhostPattern } from "./request-handler";
 export function getSandbox(ns: DurableObjectNamespace<Sandbox>, id: string) {
   const stub = getContainer(ns, id);
 
-  // Store the name on first access - this is a fire-and-forget operation
-  stub.setSandboxName?.(id).catch(() => {
-    // Ignore errors - this is best effort
-  });
+  // Store the name on first access
+  stub.setSandboxName?.(id);
 
   return stub;
 }
@@ -47,10 +45,6 @@ export class Sandbox<Env = unknown> extends Container<Env> {
       this.sandboxName = await this.ctx.storage.get<string>('sandboxName') || null;
     });
   }
-
-  envVars = {
-    MESSAGE: "I was passed in via the Sandbox class!",
-  };
 
   // RPC method to set the sandbox name
   async setSandboxName(name: string): Promise<void> {

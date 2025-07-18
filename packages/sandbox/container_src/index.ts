@@ -125,51 +125,6 @@ const server = serve({
             },
           });
 
-        case "/api/hello":
-          return new Response(
-            JSON.stringify({
-              message: "Hello from API!",
-              timestamp: new Date().toISOString(),
-            }),
-            {
-              headers: {
-                "Content-Type": "application/json",
-                ...corsHeaders,
-              },
-            }
-          );
-
-        case "/api/users":
-          if (req.method === "GET") {
-            return new Response(
-              JSON.stringify([
-                { id: 1, name: "Alice" },
-                { id: 2, name: "Bob" },
-                { id: 3, name: "Charlie" },
-              ]),
-              {
-                headers: {
-                  "Content-Type": "application/json",
-                  ...corsHeaders,
-                },
-              }
-            );
-          } else if (req.method === "POST") {
-            return new Response(
-              JSON.stringify({
-                message: "User created successfully",
-                method: "POST",
-              }),
-              {
-                headers: {
-                  "Content-Type": "application/json",
-                  ...corsHeaders,
-                },
-              }
-            );
-          }
-          break;
-
         case "/api/session/create":
           if (req.method === "POST") {
             const sessionId = generateSessionId();
