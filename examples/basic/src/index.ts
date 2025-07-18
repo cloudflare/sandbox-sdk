@@ -23,8 +23,8 @@ export default {
 
     if (pathname.startsWith("/test-file")) {
       const sandbox = getSandbox(env.Sandbox, "my-sandbox");
-      await sandbox.writeFile("/test-file.txt", "Hello, world!" + Date.now());
-      const file = await sandbox.readFile("/test-file.txt");
+      await sandbox.writeFile("test-file.txt", "Hello, world! " + Date.now());
+      const file = await sandbox.readFile("test-file.txt");
       return new Response(file!.content, { status: 200 });
     }
 
@@ -33,7 +33,7 @@ export default {
       const sandbox = getSandbox(env.Sandbox, sandboxId);
 
       // Create a simple Bun HTTP server
-      await sandbox.writeFile("/server.js", `
+      await sandbox.writeFile("server.js", `
         Bun.serve({
           port: 8080,
           fetch(req) {
@@ -64,7 +64,7 @@ export default {
       `);
 
       // Start the Bun server in the background
-      await sandbox.exec("bun", ["run", "/server.js"], { background: true });
+      await sandbox.exec("bun", ["run", "server.js"], { background: true });
 
       // Expose the port
       const preview = await sandbox.exposePort(8080, { name: "bun-server" });
