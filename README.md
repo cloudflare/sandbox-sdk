@@ -215,21 +215,6 @@ connect(): Connection refused: container port not found. Make sure you exposed t
 
 For more details, see the [Cloudflare Containers local development guide](https://developers.cloudflare.com/containers/local-dev/#exposing-ports).
 
-For even simpler usage, use the `createSandboxWorker` helper:
-
-```typescript
-import { createSandboxWorker, getSandbox } from "@cloudflare/sandbox";
-
-export default createSandboxWorker((request, env) => {
-  // Only handle non-sandbox routes
-  if (request.url.includes("/api")) {
-    const sandbox = getSandbox(env.Sandbox, "my-sandbox");
-    return sandbox.containerFetch(request);
-  }
-  return new Response("Not found", { status: 404 });
-});
-```
-
 ### Utility Methods
 
 - `ping()` - Health check for the sandbox

@@ -93,20 +93,3 @@ export function isLocalhostPattern(hostname: string): boolean {
   );
 }
 
-// Convenience wrapper for simple use cases
-export function createSandboxWorker<E extends SandboxEnv>(
-  routeHandler?: (request: Request, env: E) => Promise<Response> | Response
-) {
-  return {
-    async fetch(request: Request, env: E): Promise<Response> {
-      const sandboxResponse = await handleSandboxRequest(request, env);
-      if (sandboxResponse) return sandboxResponse;
-
-      if (routeHandler) {
-        return routeHandler(request, env);
-      }
-
-      return new Response("Not found", { status: 404 });
-    }
-  };
-}
