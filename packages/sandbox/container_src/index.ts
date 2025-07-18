@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
+import { type ChildProcess, type SpawnOptions, spawn } from "node:child_process";
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { serve } from "bun";
@@ -418,6 +418,8 @@ const server = serve({
   },
   hostname: "0.0.0.0",
   port: 3000,
+  // We don't need this, but typescript complains
+  websocket: { async message() { } },
 });
 
 async function handleExecuteRequest(

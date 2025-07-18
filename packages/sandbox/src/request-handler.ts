@@ -26,7 +26,17 @@ export async function handleSandboxRequest<E extends SandboxEnv>(
     const sandbox = getSandbox(env.Sandbox, sandboxId);
 
     // Build proxy request with proper headers
-    const proxyUrl = `http://localhost:3000/proxy/${port}${path}${url.search}`;
+    let proxyUrl: string;
+    
+    // Route based on the target port
+    if (port !== 3000) {
+      // Route directly to user's service on the specified port
+      proxyUrl = `http://localhost:${port}${path}${url.search}`;
+    } else {
+      // Port 3000 is our control plane - route normally
+      proxyUrl = `http://localhost:3000${path}${url.search}`;
+    }
+    
     const proxyRequest = new Request(proxyUrl, {
       method: request.method,
       headers: {
@@ -38,7 +48,7 @@ export async function handleSandboxRequest<E extends SandboxEnv>(
       body: request.body,
     });
 
-    return sandbox.containerFetch(proxyRequest);
+    return sandbox.containerFetch(proxyRequest, port);
   } catch (error) {
     console.error('[Sandbox] Preview URL routing error:', error);
     return new Response('Preview URL routing error', { status: 500 });
@@ -58,7 +68,7 @@ function extractSandboxRoute(url: URL): RouteInfo | null {
 
   // Development: path pattern /preview/{port}/{sandboxId}/*
   if (isLocalhostPattern(url.hostname)) {
-    const pathMatch = url.pathname.match(/^\/preview\/(\d+)\/([^\/]+)(\/.*)?$/);
+    const pathMatch = url.pathname.match(/^\/preview\/(\d+)\/([^/]+)(\/.*)?$/);
     if (pathMatch) {
       return {
         port: parseInt(pathMatch[1]),

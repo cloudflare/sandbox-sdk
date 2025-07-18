@@ -7,7 +7,6 @@ export function getSandbox(ns: DurableObjectNamespace<Sandbox>, id: string) {
 }
 
 export class Sandbox<Env = unknown> extends Container<Env> {
-  defaultPort = 3000; // The default port for the container to listen on
   sleepAfter = "3m"; // Sleep the sandbox if no requests are made in this timeframe
   client: HttpClient;
   private workerHostname: string | null = null;
@@ -31,7 +30,7 @@ export class Sandbox<Env = unknown> extends Container<Env> {
       onOutput: (stream, data, _command) => {
         console.log(`[Container] [${stream}] ${data}`);
       },
-      port: this.defaultPort,
+      port: 3000, // Control plane port
       stub: this,
     });
   }
@@ -55,17 +54,33 @@ export class Sandbox<Env = unknown> extends Container<Env> {
     console.log("Sandbox error:", error);
   }
 
-  // Override fetch to capture the hostname
+  // Override fetch to capture the hostname and route to appropriate ports
   override async fetch(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+    
     // Capture the hostname from the first request
     if (!this.workerHostname) {
-      const url = new URL(request.url);
       this.workerHostname = url.hostname;
       console.log(`[Sandbox] Captured hostname: ${this.workerHostname}`);
     }
 
-    // Call the parent fetch method
-    return super.fetch(request);
+    // Determine which port to route to
+    const port = this.determinePort(url);
+    
+    // Route to the appropriate port
+    return await this.containerFetch(request, port);
+  }
+  
+  private determinePort(url: URL): number {
+    // Extract port from proxy requests (e.g., /proxy/8080/*)
+    const proxyMatch = url.pathname.match(/^\/proxy\/(\d+)/);
+    if (proxyMatch) {
+      return parseInt(proxyMatch[1]);
+    }
+    
+    // All other requests go to control plane on port 3000
+    // This includes /api/* endpoints and any other control requests
+    return 3000;
   }
 
   async exec(command: string, args: string[], options?: { stream?: boolean; background?: boolean }) {
@@ -150,7 +165,7 @@ export class Sandbox<Env = unknown> extends Container<Env> {
   }
 
   async exposePort(port: number, options?: { name?: string }) {
-    const response = await this.client.exposePort(port, options?.name);
+    await this.client.exposePort(port, options?.name);
 
     // Get the current domain from the captured hostname
     const sandboxId = this.ctx.id.toString();
