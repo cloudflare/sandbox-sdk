@@ -68,11 +68,11 @@ export class Sandbox<Env = unknown> extends Container<Env> {
     return super.fetch(request);
   }
 
-  async exec(command: string, args: string[], options?: { stream?: boolean }) {
+  async exec(command: string, args: string[], options?: { stream?: boolean; background?: boolean }) {
     if (options?.stream) {
-      return this.client.executeStream(command, args);
+      return this.client.executeStream(command, args, options?.background);
     }
-    return this.client.execute(command, args);
+    return this.client.execute(command, args, options?.background);
   }
 
   async gitCheckout(

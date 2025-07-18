@@ -63,11 +63,8 @@ export default {
         console.log("Bun server running on port 8080");
       `);
 
-      // Start the Bun server
-      await sandbox.exec("bun", ["run", "/server.js"]);
-
-      // Wait a moment for the server to start
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      // Start the Bun server in the background
+      await sandbox.exec("bun", ["run", "/server.js"], { background: true });
 
       // Expose the port
       const preview = await sandbox.exposePort(8080, { name: "bun-server" });

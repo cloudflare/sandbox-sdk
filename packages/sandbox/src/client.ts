@@ -4,6 +4,7 @@ interface ExecuteRequest {
   command: string;
   args?: string[];
   sessionId?: string;
+  background?: boolean;
 }
 
 export interface ExecuteResponse {
@@ -370,6 +371,7 @@ export class HttpClient {
   async execute(
     command: string,
     args: string[] = [],
+    background?: boolean,
     sessionId?: string
   ): Promise<ExecuteResponse> {
     try {
@@ -379,6 +381,7 @@ export class HttpClient {
         body: JSON.stringify({
           args,
           command,
+          background,
           sessionId: targetSessionId,
         } as ExecuteRequest),
         headers: {
@@ -426,6 +429,7 @@ export class HttpClient {
   async executeStream(
     command: string,
     args: string[] = [],
+    background?: boolean,
     sessionId?: string
   ): Promise<void> {
     try {
@@ -435,6 +439,7 @@ export class HttpClient {
         body: JSON.stringify({
           args,
           command,
+          background,
           sessionId: targetSessionId,
         }),
         headers: {

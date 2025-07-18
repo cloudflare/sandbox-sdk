@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { serve } from "bun";
@@ -6,6 +6,8 @@ import { serve } from "bun";
 interface ExecuteRequest {
   command: string;
   args?: string[];
+  sessionId?: string;
+  background?: boolean;
 }
 
 interface GitCheckoutRequest {
@@ -62,7 +64,7 @@ interface UnexposePortRequest {
 
 interface SessionData {
   sessionId: string;
-  activeProcess: any | null;
+  activeProcess: ChildProcess | null;
   createdAt: Date;
 }
 
@@ -390,7 +392,7 @@ const server = serve({
           if (pathname.startsWith("/proxy/")) {
             return handleProxyRequest(req, corsHeaders);
           }
-          
+
           console.log(`[Container] Route not found: ${pathname}`);
           return new Response("Not Found", {
             headers: corsHeaders,
@@ -416,15 +418,15 @@ const server = serve({
   },
   hostname: "0.0.0.0",
   port: 3000,
-} as any);
+});
 
 async function handleExecuteRequest(
   req: Request,
   corsHeaders: Record<string, string>
 ): Promise<Response> {
   try {
-    const body = (await req.json()) as ExecuteRequest & { sessionId?: string };
-    const { command, args = [], sessionId } = body;
+    const body = (await req.json()) as ExecuteRequest;
+    const { command, args = [], sessionId, background } = body;
 
     if (!command || typeof command !== "string") {
       return new Response(
@@ -471,7 +473,7 @@ async function handleExecuteRequest(
 
     console.log(`[Server] Executing command: ${command} ${args.join(" ")}`);
 
-    const result = await executeCommand(command, args, sessionId);
+    const result = await executeCommand(command, args, sessionId, background);
 
     return new Response(
       JSON.stringify({
@@ -513,8 +515,8 @@ async function handleStreamingExecuteRequest(
   corsHeaders: Record<string, string>
 ): Promise<Response> {
   try {
-    const body = (await req.json()) as ExecuteRequest & { sessionId?: string };
-    const { command, args = [], sessionId } = body;
+    const body = (await req.json()) as ExecuteRequest;
+    const { command, args = [], sessionId, background } = body;
 
     if (!command || typeof command !== "string") {
       return new Response(
@@ -565,15 +567,23 @@ async function handleStreamingExecuteRequest(
 
     const stream = new ReadableStream({
       start(controller) {
-        const child = spawn(command, args, {
+        const spawnOptions: SpawnOptions = {
           shell: true,
-          stdio: ["pipe", "pipe", "pipe"],
-        });
+          stdio: ["pipe", "pipe", "pipe"] as const,
+          detached: background || false,
+        };
+
+        const child = spawn(command, args, spawnOptions);
 
         // Store the process reference for cleanup if sessionId is provided
         if (sessionId && sessions.has(sessionId)) {
           const session = sessions.get(sessionId)!;
           session.activeProcess = child;
+        }
+
+        // For background processes, unref to prevent blocking
+        if (background) {
+          child.unref();
         }
 
         let stdout = "";
@@ -587,6 +597,7 @@ async function handleStreamingExecuteRequest(
               command,
               timestamp: new Date().toISOString(),
               type: "command_start",
+              background: background || false,
             })}\n\n`
           )
         );
@@ -652,7 +663,11 @@ async function handleStreamingExecuteRequest(
             )
           );
 
-          controller.close();
+          // For non-background processes, close the stream
+          // For background processes with streaming, the stream stays open
+          if (!background) {
+            controller.close();
+          }
         });
 
         child.on("error", (error) => {
@@ -2542,7 +2557,8 @@ async function handleStreamingMoveFileRequest(
 function executeCommand(
   command: string,
   args: string[],
-  sessionId?: string
+  sessionId?: string,
+  background?: boolean
 ): Promise<{
   success: boolean;
   stdout: string;
@@ -2550,10 +2566,13 @@ function executeCommand(
   exitCode: number;
 }> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
+    const spawnOptions: SpawnOptions = {
       shell: true,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
+      stdio: ["pipe", "pipe", "pipe"] as const,
+      detached: background || false,
+    };
+
+    const child = spawn(command, args, spawnOptions);
 
     // Store the process reference for cleanup if sessionId is provided
     if (sessionId && sessions.has(sessionId)) {
@@ -2572,32 +2591,54 @@ function executeCommand(
       stderr += data.toString();
     });
 
-    child.on("close", (code) => {
-      // Clear the active process reference
-      if (sessionId && sessions.has(sessionId)) {
-        const session = sessions.get(sessionId)!;
-        session.activeProcess = null;
-      }
+    if (background) {
+      // For background processes, unref and return quickly
+      child.unref();
 
-      console.log(`[Server] Command completed: ${command}, Exit code: ${code}`);
+      // Collect initial output for 100ms then return
+      setTimeout(() => {
+        resolve({
+          exitCode: 0, // Process is still running
+          stderr,
+          stdout,
+          success: true,
+        });
+      }, 100);
 
-      resolve({
-        exitCode: code || 0,
-        stderr,
-        stdout,
-        success: code === 0,
+      // Still handle errors
+      child.on("error", (error) => {
+        console.error(`[Server] Background process error: ${command}`, error);
+        // Don't reject since we might have already resolved
       });
-    });
+    } else {
+      // Normal synchronous execution
+      child.on("close", (code) => {
+        // Clear the active process reference
+        if (sessionId && sessions.has(sessionId)) {
+          const session = sessions.get(sessionId)!;
+          session.activeProcess = null;
+        }
 
-    child.on("error", (error) => {
-      // Clear the active process reference
-      if (sessionId && sessions.has(sessionId)) {
-        const session = sessions.get(sessionId)!;
-        session.activeProcess = null;
-      }
+        console.log(`[Server] Command completed: ${command}, Exit code: ${code}`);
 
-      reject(error);
-    });
+        resolve({
+          exitCode: code || 0,
+          stderr,
+          stdout,
+          success: code === 0,
+        });
+      });
+
+      child.on("error", (error) => {
+        // Clear the active process reference
+        if (sessionId && sessions.has(sessionId)) {
+          const session = sessions.get(sessionId)!;
+          session.activeProcess = null;
+        }
+
+        reject(error);
+      });
+    }
   });
 }
 
@@ -3116,7 +3157,7 @@ async function handleProxyRequest(
   try {
     const url = new URL(req.url);
     const pathParts = url.pathname.split("/");
-    
+
     // Extract port from path like /proxy/3000/...
     if (pathParts.length < 3) {
       return new Response(
