@@ -400,34 +400,6 @@ async function handleExecuteRequest(
       );
     }
 
-    // Basic safety check - prevent dangerous commands
-    const dangerousCommands = [
-      "rm",
-      "rmdir",
-      "del",
-      "format",
-      "shutdown",
-      "reboot",
-    ];
-    const lowerCommand = command.toLowerCase();
-
-    if (
-      dangerousCommands.some((dangerous) => lowerCommand.includes(dangerous))
-    ) {
-      return new Response(
-        JSON.stringify({
-          error: "Dangerous command not allowed",
-        }),
-        {
-          headers: {
-            "Content-Type": "application/json",
-            ...corsHeaders,
-          },
-          status: 400,
-        }
-      );
-    }
-
     console.log(`[Server] Executing command: ${command} ${args.join(" ")}`);
 
     const result = await executeCommand(command, args, sessionId, background);
@@ -479,34 +451,6 @@ async function handleStreamingExecuteRequest(
       return new Response(
         JSON.stringify({
           error: "Command is required and must be a string",
-        }),
-        {
-          headers: {
-            "Content-Type": "application/json",
-            ...corsHeaders,
-          },
-          status: 400,
-        }
-      );
-    }
-
-    // Basic safety check - prevent dangerous commands
-    const dangerousCommands = [
-      "rm",
-      "rmdir",
-      "del",
-      "format",
-      "shutdown",
-      "reboot",
-    ];
-    const lowerCommand = command.toLowerCase();
-
-    if (
-      dangerousCommands.some((dangerous) => lowerCommand.includes(dangerous))
-    ) {
-      return new Response(
-        JSON.stringify({
-          error: "Dangerous command not allowed",
         }),
         {
           headers: {
