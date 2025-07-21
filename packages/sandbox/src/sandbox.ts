@@ -55,6 +55,12 @@ export class Sandbox<Env = unknown> extends Container<Env> {
     }
   }
 
+  // RPC method to set environment variables
+  async setEnvVars(envVars: Record<string, string>): Promise<void> {
+    this.envVars = { ...this.envVars, ...envVars };
+    console.log(`[Sandbox] Updated environment variables`);
+  }
+
   override onStart() {
     console.log("Sandbox successfully started");
   }
