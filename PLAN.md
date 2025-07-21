@@ -386,51 +386,66 @@ class Sandbox {
 
 ## Implementation Tracking
 
-### Phase 1: Core API Implementation ✅ Ready to Start
-- [ ] **New exec() method** - Enhanced with streaming callbacks, always returns ExecResult
-  - [ ] Update exec() signature with new options (stream, onOutput, signal, timeout)
-  - [ ] Ensure exec() always returns ExecResult regardless of streaming
-  - [ ] Add callback-based streaming support
-  - [ ] Add AbortSignal and timeout support
-- [ ] **startProcess() method** - Background process management
-  - [ ] Implement startProcess() with Process return type
-  - [ ] Add process ID generation and tracking
-  - [ ] Add process status management (starting, running, completed, etc.)
-- [ ] **Process management methods**
-  - [ ] listProcesses() - List active processes
-  - [ ] getProcess(id) - Get process status by ID
-  - [ ] killProcess(id) - Terminate process
-- [ ] **AsyncIterable streaming methods**
-  - [ ] execStream() - Advanced streaming for commands
-  - [ ] streamProcessLogs() - Stream logs from background processes
+### Phase 1: Core API Implementation ✅ COMPLETED
+- [x] **New exec() method** - Enhanced with streaming callbacks, always returns ExecResult
+  - [x] Update exec() signature with new options (stream, onOutput, signal, timeout)
+  - [x] Ensure exec() always returns ExecResult regardless of streaming
+  - [x] Add callback-based streaming support
+  - [x] Add AbortSignal and timeout support
+- [x] **startProcess() method** - Background process management
+  - [x] Implement startProcess() with Process return type
+  - [x] Add process ID generation and tracking
+  - [x] Add process status management (starting, running, completed, etc.)
+- [x] **Process management methods**
+  - [x] listProcesses() - List active processes
+  - [x] getProcess(id) - Get process status by ID
+  - [x] killProcess(id) - Terminate process
+  - [x] killAllProcesses() - Terminate all processes
+  - [x] getProcessLogs(id) - Get accumulated process logs
+- [x] **AsyncIterable streaming methods**
+  - [x] execStream() - Advanced streaming for commands
+  - [x] streamProcessLogs() - Stream logs from background processes
 
-### Phase 2: Container Implementation
-- [ ] **New container endpoints**
-  - [ ] POST /api/process/start - Start background process
-  - [ ] GET /api/process/list - List processes 
-  - [ ] GET /api/process/{id} - Get process status
-  - [ ] DELETE /api/process/{id} - Kill process
-  - [ ] GET /api/process/{id}/logs - Get accumulated logs
-  - [ ] GET /api/process/{id}/stream - Stream process output (SSE)
-- [ ] **Process storage and management**
-  - [ ] In-memory process registry (Map<string, ProcessRecord>)
-  - [ ] Process lifecycle tracking
-  - [ ] Output accumulation and streaming
-  - [ ] Cleanup on process exit
+### Phase 2: Container Implementation ✅ COMPLETED
+- [x] **New container endpoints**
+  - [x] POST /api/process/start - Start background process
+  - [x] GET /api/process/list - List processes 
+  - [x] GET /api/process/{id} - Get process status
+  - [x] DELETE /api/process/{id} - Kill process
+  - [x] DELETE /api/process/all - Kill all processes
+  - [x] GET /api/process/{id}/logs - Get accumulated logs
+  - [x] GET /api/process/{id}/stream - Stream process output (SSE)
+- [x] **Process storage and management**
+  - [x] In-memory process registry (Map<string, ProcessRecord>)
+  - [x] Process lifecycle tracking with real Node.js ChildProcess
+  - [x] Output accumulation and streaming
+  - [x] Cleanup on process exit with automatic listeners
+- [x] **HttpClient integration**
+  - [x] All new process management methods implemented
+  - [x] Type-safe request/response handling
+  - [x] ReadableStream support for log streaming
 
-### Phase 3: Enhanced Features  
-- [ ] **Advanced options and error handling**
-  - [ ] Environment variable support
-  - [ ] Working directory support
-  - [ ] Resource limits and constraints
-  - [ ] Enhanced error reporting
+### Phase 3: Enhanced Features 🔄 IN PROGRESS
+- [x] **Advanced options and error handling**
+  - [x] Environment variable support (env option)
+  - [x] Working directory support (cwd option)  
+  - [x] Text encoding support (encoding option)
+  - [x] Timeout support (timeout option)
+  - [x] Enhanced error reporting (custom error classes)
+  - [ ] Resource limits and constraints (memory/CPU limits)
+  - [ ] Advanced signal handling (beyond basic kill)
+- [ ] **Process cleanup enhancements**
+  - [ ] cleanupCompletedProcesses() endpoint implementation
+  - [ ] Auto-cleanup configuration per process
+  - [ ] Graceful shutdown handling (SIGTERM support)
 - [ ] **Testing and validation**
   - [ ] Unit tests for all new APIs
-  - [ ] Integration tests for process management
+  - [ ] Integration tests for process management  
   - [ ] Performance and memory leak testing
   - [ ] Container restart behavior validation
+  - [ ] Error edge case testing (crashes, timeouts, OOM)
 
-### Phase 4: Documentation and Migration
+### Phase 4: Documentation and Migration ⏸️ PENDING
 - [ ] **Developer documentation**
   - [ ] API reference updates
   - [ ] Migration guide from old API
@@ -444,11 +459,64 @@ class Sandbox {
 ## Next Steps
 
 1. ✅ Review and iterate on this plan until satisfied - **COMPLETED**
-2. ✅ Create detailed API specifications - **COMPLETED in APPROACHES.md**
-3. 🚀 **READY TO START**: Implement Phase 1 (new APIs) without breaking changes
-4. Build comprehensive test suite 
-5. Create migration documentation
-6. Gather feedback from early adopters
+2. ✅ Create detailed API specifications - **COMPLETED in APPROACHES.md** 
+3. ✅ Implement Phase 1 (Core API Implementation) - **COMPLETED**
+4. ✅ Implement Phase 2 (Container Implementation) - **COMPLETED**
+5. 🚀 **CURRENT FOCUS**: Complete Phase 3 (Enhanced Features)
+   - [ ] Add missing container endpoint for cleanup
+   - [ ] Build comprehensive test suite
+   - [ ] Add resource limits and advanced error handling
+6. Create migration documentation and examples
+7. Gather feedback from early adopters
+
+## Current Implementation Status 
+
+### ✅ What's Complete (Phases 1 & 2)
+- **Full API Implementation**: All new methods (exec, startProcess, execStream, etc.) 
+- **Container Endpoints**: Complete HTTP API for process management
+- **Type Safety**: Comprehensive TypeScript definitions
+- **Process Management**: Real ChildProcess integration with lifecycle tracking
+- **Streaming**: Both callback-based and AsyncIterable patterns
+- **Error Handling**: Custom error classes and proper error propagation
+- **Options Support**: Environment variables, working directory, timeout, encoding
+
+### ⚠️ Implementation Gaps Identified
+
+**Critical Gaps (should be addressed soon):**
+1. **No Tests**: Zero test coverage for the new APIs
+2. **Missing Cleanup Endpoint**: `cleanupCompletedProcesses()` not implemented in container
+3. **Signal Support Limited**: Only basic kill, no SIGTERM/SIGINT support
+4. **No Resource Limits**: No memory/CPU constraints on processes
+5. **No Container Restart Handling**: Unclear behavior when container restarts
+
+**Documentation Gaps:**
+6. **No Migration Guide**: Developers don't know how to move from old API
+7. **No Usage Examples**: Missing practical examples and best practices
+8. **No Performance Characteristics**: Unknown memory usage, limits, etc.
+
+**Nice-to-Have Gaps:**
+9. **No Performance Testing**: Untested with many concurrent processes
+10. **No Monitoring**: No metrics or observability for process management
+11. **No Inter-Process Communication**: No helpers for processes to communicate
+
+### 🎯 Recommended Next Actions
+
+**High Priority (Address Soon):**
+1. **Add Basic Testing** - At least integration tests for core functionality
+2. **Implement Cleanup Endpoint** - Add `POST /api/process/cleanup` to container
+3. **Create Usage Examples** - Show developers how to use the new APIs
+4. **Test Edge Cases** - Process crashes, timeouts, memory exhaustion
+
+**Medium Priority (Next Phase):**
+5. **Add Resource Limits** - Memory and CPU constraints per process  
+6. **Enhanced Signal Support** - Proper SIGTERM handling with grace periods
+7. **Migration Documentation** - Guide for moving from old exec() API
+8. **Performance Testing** - Load testing with many processes
+
+**Lower Priority (Future Enhancement):**
+9. **Advanced Monitoring** - Process metrics and health checks
+10. **Container Restart Recovery** - Graceful handling of container restarts
+11. **Inter-Process Helpers** - Communication primitives between processes
 
 ## Implementation Notes
 
@@ -487,3 +555,39 @@ class Sandbox {
 3. **Resource management**: Proper cleanup and lifecycle tracking
 4. **Modern patterns**: AbortSignal, AsyncIterable, Promise-based
 5. **Ephemeral by design**: Process state resets on container restart
+
+## Architecture Summary
+
+### System Architecture (As Implemented)
+
+```
+┌─────────────────┐    HTTP    ┌──────────────────┐    Node.js     ┌─────────────────┐
+│   Sandbox       │ ---------> │  Container       │ ChildProcess   │  User Processes │
+│   Class         │            │  HTTP Server     │ ------------> │  (node, npm,    │
+│  (sandbox.ts)   │            │ (index.ts:3000)  │               │   python, etc.) │
+└─────────────────┘            └──────────────────┘               └─────────────────┘
+         │                              │                                    │
+         │                              │                                    │
+    ┌─────────┐                  ┌─────────────┐                      ┌─────────────┐
+    │HttpClient│                  │Process Store│                      │   Output    │
+    │(client.ts)│                  │  (in-memory)│                      │ Streaming   │
+    └─────────┘                  └─────────────┘                      └─────────────┘
+```
+
+### Data Flow
+1. **Sandbox.startProcess()** → **HttpClient.startProcess()** → **POST /api/process/start**
+2. **Container** spawns real **ChildProcess** and stores in **Map<string, ProcessRecord>**
+3. **Process output** captured and streamed via **Server-Sent Events**
+4. **Process lifecycle** tracked (starting → running → completed/failed/killed)
+5. **Auto-cleanup** on process exit, manual cleanup via **DELETE /api/process/cleanup**
+
+### Key Achievements
+- ✅ **Complete API Redesign** - From confusing single method to clear, purpose-built methods
+- ✅ **Real Process Management** - Actual ChildProcess spawning, not fake timeouts
+- ✅ **Type-Safe Architecture** - Full TypeScript integration across all layers
+- ✅ **Modern Streaming** - Both callback and AsyncIterable patterns supported
+- ✅ **Container Integration** - Real HTTP endpoints with proper lifecycle management
+- ✅ **Error Handling** - Custom error classes and proper error propagation
+- ✅ **Resource Cleanup** - Automatic process cleanup and proper resource management
+
+The implementation successfully transforms the Sandbox SDK from a basic command executor into a full-featured process management platform suitable for complex development workflows.
