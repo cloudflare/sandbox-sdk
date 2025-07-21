@@ -2,22 +2,19 @@ import { Container, getContainer } from "@cloudflare/containers";
 import { HttpClient } from "./client";
 import { isLocalhostPattern } from "./request-handler";
 import type {
+  ExecEvent,
   ExecOptions,
   ExecResult,
-  ProcessOptions,
-  Process,
-  ProcessStatus,
-  ExecEvent,
+  ISandbox,
   LogEvent,
-  StreamOptions,
-  ProcessRecord,
-  ISandbox
+  Process,
+  ProcessOptions,
+  ProcessStatus,
+  StreamOptions
 } from "./types";
 import {
-  SandboxError,
   ProcessNotFoundError,
-  ProcessAlreadyExistsError,
-  ExecutionTimeoutError
+  SandboxError
 } from "./types";
 
 export function getSandbox(ns: DurableObjectNamespace<Sandbox>, id: string) {
@@ -34,7 +31,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   client: HttpClient;
   private workerHostname: string | null = null;
   private sandboxName: string | null = null;
-  private processes: Map<string, ProcessRecord> = new Map();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -140,11 +136,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     // Handle timeout
     let timeoutId: NodeJS.Timeout | undefined;
-    const timeoutPromise = options?.timeout ? new Promise<never>((_, reject) => {
-      timeoutId = setTimeout(() => {
-        reject(new ExecutionTimeoutError(options.timeout!));
-      }, options.timeout);
-    }) : null;
 
     try {
       // Handle cancellation
@@ -319,52 +310,55 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   // Background process management
   async startProcess(command: string, args: string[], options?: ProcessOptions): Promise<Process> {
-    const processId = options?.processId || this.generateProcessId();
-    const startTime = new Date();
-
-    // Check if process ID already exists
-    if (this.processes.has(processId)) {
-      throw new ProcessAlreadyExistsError(processId);
-    }
-
+    // Use the new HttpClient method to start the process
     try {
-      // Create process record in starting state
-      const processRecord: ProcessRecord = {
-        id: processId,
-        command,
-        args,
-        status: 'starting',
-        startTime,
+      const response = await this.client.startProcess(command, args, {
+        processId: options?.processId,
         sessionId: options?.sessionId,
-        stdout: '',
-        stderr: '',
-        outputListeners: new Set(),
-        statusListeners: new Set()
+        timeout: options?.timeout,
+        env: options?.env,
+        cwd: options?.cwd,
+        encoding: options?.encoding,
+        autoCleanup: options?.autoCleanup
+      });
+
+      const process = response.process;
+      const processObj: Process = {
+        id: process.id,
+        pid: process.pid,
+        command: process.command,
+        args: process.args,
+        status: process.status as ProcessStatus,
+        startTime: new Date(process.startTime),
+        endTime: undefined,
+        exitCode: undefined,
+        sessionId: process.sessionId,
+
+        async kill(): Promise<void> {
+          throw new Error('Method will be replaced');
+        },
+        async getStatus(): Promise<ProcessStatus> {
+          throw new Error('Method will be replaced');
+        },
+        async getLogs(): Promise<{ stdout: string; stderr: string }> {
+          throw new Error('Method will be replaced');
+        }
       };
 
-      this.processes.set(processId, processRecord);
+      // Bind context properly
+      processObj.kill = async (signal?: string) => {
+        await this.killProcess(process.id, signal);
+      };
 
-      // Set up output listener if provided
-      if (options?.onOutput) {
-        processRecord.outputListeners.add(options.onOutput);
-      }
+      processObj.getStatus = async () => {
+        const current = await this.getProcess(process.id);
+        return current?.status || 'error';
+      };
 
-      // Start the process using the client with background=true
-      const response = await this.client.execute(
-        command,
-        args,
-        options?.sessionId,
-        true // background=true for background processes
-      );
-
-      // Update process record with initial response
-      processRecord.status = 'running';
-      processRecord.pid = undefined; // We don't get PID from the fake background response
-
-      // Note: The current container implementation returns fake success for background processes
-      // We'll update the status based on actual process monitoring later
-
-      const processObj = this.createProcessObject(processRecord);
+      processObj.getLogs = async () => {
+        const logs = await this.getProcessLogs(process.id);
+        return { stdout: logs.stdout, stderr: logs.stderr };
+      };
 
       // Call onStart callback if provided
       if (options?.onStart) {
@@ -372,10 +366,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       }
 
       return processObj;
-    } catch (error) {
-      // Clean up the process record if starting failed
-      this.processes.delete(processId);
 
+    } catch (error) {
       if (options?.onError && error instanceof Error) {
         options.onError(error);
       }
@@ -385,48 +377,77 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   async listProcesses(): Promise<Process[]> {
-    const processes: Process[] = [];
+    const response = await this.client.listProcesses();
 
-    for (const [id, record] of this.processes) {
-      processes.push(this.createProcessObject(record));
-    }
+    return response.processes.map(processData => ({
+      id: processData.id,
+      pid: processData.pid,
+      command: processData.command,
+      args: processData.args,
+      status: processData.status,
+      startTime: new Date(processData.startTime),
+      endTime: processData.endTime ? new Date(processData.endTime) : undefined,
+      exitCode: processData.exitCode,
+      sessionId: processData.sessionId,
 
-    return processes;
+      kill: async (signal?: string) => {
+        await this.killProcess(processData.id, signal);
+      },
+
+      getStatus: async () => {
+        const current = await this.getProcess(processData.id);
+        return current?.status || 'error';
+      },
+
+      getLogs: async () => {
+        const logs = await this.getProcessLogs(processData.id);
+        return { stdout: logs.stdout, stderr: logs.stderr };
+      }
+    }));
   }
 
   async getProcess(id: string): Promise<Process | null> {
-    const record = this.processes.get(id);
-    if (!record) {
+    const response = await this.client.getProcess(id);
+    if (!response.process) {
       return null;
     }
 
-    return this.createProcessObject(record);
+    const processData = response.process;
+    return {
+      id: processData.id,
+      pid: processData.pid,
+      command: processData.command,
+      args: processData.args,
+      status: processData.status,
+      startTime: new Date(processData.startTime),
+      endTime: processData.endTime ? new Date(processData.endTime) : undefined,
+      exitCode: processData.exitCode,
+      sessionId: processData.sessionId,
+
+      kill: async (signal?: string) => {
+        await this.killProcess(processData.id, signal);
+      },
+
+      getStatus: async () => {
+        const current = await this.getProcess(processData.id);
+        return current?.status || 'error';
+      },
+
+      getLogs: async () => {
+        const logs = await this.getProcessLogs(processData.id);
+        return { stdout: logs.stdout, stderr: logs.stderr };
+      }
+    };
   }
 
   async killProcess(id: string, signal?: string): Promise<void> {
-    const record = this.processes.get(id);
-    if (!record) {
-      throw new ProcessNotFoundError(id);
-    }
-
     try {
-      // In the current implementation, we don't have a direct way to kill background processes
-      // This would need to be implemented in the container side
-      // For now, we'll mark the process as killed locally
-
-      record.status = 'killed';
-      record.endTime = new Date();
-      record.exitCode = -1; // Convention for killed processes
-
-      // Notify status listeners
-      for (const listener of record.statusListeners) {
-        listener('killed');
-      }
-
-      // Clean up if auto-cleanup is enabled (default)
-      // We'll implement this logic later
-
+      // Note: signal parameter is not currently supported by the HttpClient implementation
+      await this.client.killProcess(id);
     } catch (error) {
+      if (error instanceof Error && error.message.includes('Process not found')) {
+        throw new ProcessNotFoundError(id);
+      }
       throw new SandboxError(
         `Failed to kill process ${id}: ${error instanceof Error ? error.message : 'Unknown error'}`,
         'KILL_PROCESS_FAILED'
@@ -435,98 +456,32 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   async killAllProcesses(): Promise<number> {
-    const processIds = Array.from(this.processes.keys());
-    let killedCount = 0;
-
-    for (const id of processIds) {
-      try {
-        await this.killProcess(id);
-        killedCount++;
-      } catch (error) {
-        console.error(`Failed to kill process ${id}:`, error);
-      }
-    }
-
-    return killedCount;
+    const response = await this.client.killAllProcesses();
+    return response.killedCount;
   }
 
   async cleanupCompletedProcesses(): Promise<number> {
-    let cleanedCount = 0;
-
-    for (const [id, record] of this.processes) {
-      if (record.status === 'completed' || record.status === 'failed' || record.status === 'killed') {
-        this.processes.delete(id);
-        cleanedCount++;
-      }
-    }
-
-    return cleanedCount;
+    // For now, this would need to be implemented as a container endpoint
+    // as we no longer maintain local process storage
+    // We'll return 0 as a placeholder until the container endpoint is added
+    return 0;
   }
 
   async getProcessLogs(id: string): Promise<{ stdout: string; stderr: string }> {
-    const record = this.processes.get(id);
-    if (!record) {
-      throw new ProcessNotFoundError(id);
-    }
-
-    return {
-      stdout: record.stdout,
-      stderr: record.stderr
-    };
-  }
-
-  private generateProcessId(): string {
-    return `proc_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
-  }
-
-  private createProcessObject(record: ProcessRecord): Process {
-    const processObj: Process = {
-      id: record.id,
-      pid: record.pid,
-      command: record.command,
-      args: record.args,
-      status: record.status,
-      startTime: record.startTime,
-      endTime: record.endTime,
-      exitCode: record.exitCode,
-      sessionId: record.sessionId,
-
-      async kill(): Promise<void> {
-        // This will be replaced by the bound method below
-        throw new Error('Method will be replaced');
-      },
-
-      async getStatus(): Promise<ProcessStatus> {
-        // This will be replaced by the bound method below
-        throw new Error('Method will be replaced');
-      },
-
-      async getLogs(): Promise<{ stdout: string; stderr: string }> {
-        // This will be replaced by the bound method below
-        throw new Error('Method will be replaced');
-      }
-    };
-
-    // Fix the context binding issue by creating bound methods
-    processObj.kill = async (signal?: string) => {
-      return this.killProcess(record.id, signal);
-    };
-
-    processObj.getStatus = async () => {
-      const currentRecord = this.processes.get(record.id);
-      return currentRecord?.status || 'error';
-    };
-
-    processObj.getLogs = async () => {
-      const currentRecord = this.processes.get(record.id);
+    try {
+      const response = await this.client.getProcessLogs(id);
       return {
-        stdout: currentRecord?.stdout || '',
-        stderr: currentRecord?.stderr || ''
+        stdout: response.stdout,
+        stderr: response.stderr
       };
-    };
-
-    return processObj;
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('Process not found')) {
+        throw new ProcessNotFoundError(id);
+      }
+      throw error;
+    }
   }
+
 
   // AsyncIterable streaming methods
   async *execStream(command: string, args: string[], options?: StreamOptions): AsyncIterable<ExecEvent> {
@@ -701,53 +656,59 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   async *streamProcessLogs(processId: string, options?: { signal?: AbortSignal }): AsyncIterable<LogEvent> {
-    const record = this.processes.get(processId);
-    if (!record) {
-      throw new ProcessNotFoundError(processId);
-    }
-
     // Check for cancellation
     if (options?.signal?.aborted) {
       throw new Error('Operation was aborted');
     }
 
-    // For now, this is a simple implementation that yields existing logs
-    // In a full implementation, this would stream real-time logs from the running process
+    try {
+      // Get the stream from HttpClient
+      const stream = await this.client.streamProcessLogs(processId);
+      const reader = stream.getReader();
 
-    // Yield existing stdout
-    if (record.stdout) {
-      yield {
-        type: 'stdout',
-        timestamp: new Date().toISOString(),
-        data: record.stdout,
-        processId,
-        sessionId: record.sessionId
-      };
+      try {
+        while (true) {
+          if (options?.signal?.aborted) {
+            throw new Error('Operation was aborted');
+          }
+
+          const { done, value } = await reader.read();
+
+          if (done) {
+            break;
+          }
+
+          // Parse the Server-Sent Events format
+          const text = new TextDecoder().decode(value);
+          const lines = text.split('\n');
+
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              try {
+                const data = JSON.parse(line.substring(6));
+                yield {
+                  type: data.type,
+                  timestamp: data.timestamp,
+                  data: data.data,
+                  processId,
+                  sessionId: data.sessionId
+                };
+              } catch (parseError) {
+                // Skip malformed lines
+                console.warn('Failed to parse SSE data:', line, parseError);
+              }
+            }
+          }
+        }
+      } finally {
+        reader.releaseLock();
+      }
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('Process not found')) {
+        throw new ProcessNotFoundError(processId);
+      }
+      throw error;
     }
-
-    // Yield existing stderr
-    if (record.stderr) {
-      yield {
-        type: 'stderr',
-        timestamp: new Date().toISOString(),
-        data: record.stderr,
-        processId,
-        sessionId: record.sessionId
-      };
-    }
-
-    // Yield status
-    yield {
-      type: 'status',
-      timestamp: new Date().toISOString(),
-      data: `Process status: ${record.status}`,
-      processId,
-      sessionId: record.sessionId
-    };
-
-    // In a full implementation, we would set up listeners for real-time log streaming
-    // This would involve integrating with the container's process monitoring
-    // For now, we'll just yield what we have and complete
   }
 
   async gitCheckout(

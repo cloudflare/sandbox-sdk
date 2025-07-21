@@ -3,6 +3,46 @@ import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { serve } from "bun";
 
+// Process management types
+type ProcessStatus =
+  | 'starting'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'killed'
+  | 'error';
+
+interface ProcessRecord {
+  id: string;
+  pid?: number;
+  command: string;
+  args: string[];
+  status: ProcessStatus;
+  startTime: Date;
+  endTime?: Date;
+  exitCode?: number;
+  sessionId?: string;
+  childProcess?: ChildProcess;
+  stdout: string;
+  stderr: string;
+  outputListeners: Set<(stream: 'stdout' | 'stderr', data: string) => void>;
+  statusListeners: Set<(status: ProcessStatus) => void>;
+}
+
+interface StartProcessRequest {
+  command: string;
+  args: string[];
+  options?: {
+    processId?: string;
+    sessionId?: string;
+    timeout?: number;
+    env?: Record<string, string>;
+    cwd?: string;
+    encoding?: string;
+    autoCleanup?: boolean;
+  };
+}
+
 interface ExecuteRequest {
   command: string;
   args?: string[];
@@ -74,9 +114,17 @@ const sessions = new Map<string, SessionData>();
 // In-memory storage for exposed ports
 const exposedPorts = new Map<number, { name?: string; exposedAt: Date }>();
 
+// In-memory process storage - cleared on container restart
+const processes = new Map<string, ProcessRecord>();
+
 // Generate a unique session ID
 function generateSessionId(): string {
   return `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+}
+
+// Generate a unique process ID
+function generateProcessId(): string {
+  return `proc_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
 }
 
 // Clean up old sessions (older than 1 hour)
@@ -342,7 +390,43 @@ const server = serve({
           }
           break;
 
+        case "/api/process/start":
+          if (req.method === "POST") {
+            return handleStartProcessRequest(req, corsHeaders);
+          }
+          break;
+
+        case "/api/process/list":
+          if (req.method === "GET") {
+            return handleListProcessesRequest(req, corsHeaders);
+          }
+          break;
+
+        case "/api/process/kill-all":
+          if (req.method === "DELETE") {
+            return handleKillAllProcessesRequest(req, corsHeaders);
+          }
+          break;
+
         default:
+          // Handle dynamic routes for individual processes
+          if (pathname.startsWith("/api/process/")) {
+            const segments = pathname.split('/');
+            if (segments.length >= 4) {
+              const processId = segments[3];
+              const action = segments[4]; // Optional: logs, stream, etc.
+
+              if (!action && req.method === "GET") {
+                return handleGetProcessRequest(req, corsHeaders, processId);
+              } else if (!action && req.method === "DELETE") {
+                return handleKillProcessRequest(req, corsHeaders, processId);
+              } else if (action === "logs" && req.method === "GET") {
+                return handleGetProcessLogsRequest(req, corsHeaders, processId);
+              } else if (action === "stream" && req.method === "GET") {
+                return handleStreamProcessLogsRequest(req, corsHeaders, processId);
+              }
+            }
+          }
           // Check if this is a proxy request for an exposed port
           if (pathname.startsWith("/proxy/")) {
             return handleProxyRequest(req, corsHeaders);
@@ -3166,6 +3250,631 @@ async function handleProxyRequest(
   }
 }
 
+// Process management handlers
+async function handleStartProcessRequest(
+  req: Request,
+  corsHeaders: Record<string, string>
+): Promise<Response> {
+  try {
+    const body = (await req.json()) as StartProcessRequest;
+    const { command, args = [], options = {} } = body;
+
+    if (!command || typeof command !== "string") {
+      return new Response(
+        JSON.stringify({
+          error: "Command is required and must be a string",
+        }),
+        {
+          headers: {
+            "Content-Type": "application/json",
+            ...corsHeaders,
+          },
+          status: 400,
+        }
+      );
+    }
+
+    const processId = options.processId || generateProcessId();
+    const startTime = new Date();
+
+    // Check if process ID already exists
+    if (processes.has(processId)) {
+      return new Response(
+        JSON.stringify({
+          error: `Process already exists: ${processId}`,
+        }),
+        {
+          headers: {
+            "Content-Type": "application/json",
+            ...corsHeaders,
+          },
+          status: 409,
+        }
+      );
+    }
+
+    console.log(`[Server] Starting background process: ${command} ${args.join(" ")} (ID: ${processId})`);
+
+    // Create process record in starting state
+    const processRecord: ProcessRecord = {
+      id: processId,
+      command,
+      args,
+      status: 'starting',
+      startTime,
+      sessionId: options.sessionId,
+      stdout: '',
+      stderr: '',
+      outputListeners: new Set(),
+      statusListeners: new Set()
+    };
+
+    processes.set(processId, processRecord);
+
+    // Start the actual process
+    try {
+      const spawnOptions: SpawnOptions = {
+        cwd: options.cwd || process.cwd(),
+        env: { ...process.env, ...options.env },
+        detached: false
+      };
+
+      const childProcess = spawn(command, args, spawnOptions);
+      processRecord.childProcess = childProcess;
+      processRecord.pid = childProcess.pid;
+      processRecord.status = 'running';
+
+      // Set up output handling
+      childProcess.stdout?.on('data', (data) => {
+        const output = data.toString(options.encoding || 'utf8');
+        processRecord.stdout += output;
+
+        // Notify listeners
+        for (const listener of processRecord.outputListeners) {
+          listener('stdout', output);
+        }
+      });
+
+      childProcess.stderr?.on('data', (data) => {
+        const output = data.toString(options.encoding || 'utf8');
+        processRecord.stderr += output;
+
+        // Notify listeners
+        for (const listener of processRecord.outputListeners) {
+          listener('stderr', output);
+        }
+      });
+
+      childProcess.on('exit', (code, signal) => {
+        processRecord.endTime = new Date();
+        processRecord.exitCode = code !== null ? code : -1;
+
+        if (signal) {
+          processRecord.status = 'killed';
+        } else if (code === 0) {
+          processRecord.status = 'completed';
+        } else {
+          processRecord.status = 'failed';
+        }
+
+        // Notify status listeners
+        for (const listener of processRecord.statusListeners) {
+          listener(processRecord.status);
+        }
+
+        console.log(`[Server] Process ${processId} exited with code ${code} (signal: ${signal})`);
+      });
+
+      childProcess.on('error', (error) => {
+        processRecord.status = 'error';
+        processRecord.endTime = new Date();
+        console.error(`[Server] Process ${processId} error:`, error);
+
+        // Notify status listeners
+        for (const listener of processRecord.statusListeners) {
+          listener('error');
+        }
+      });
+
+      // Timeout handling
+      if (options.timeout) {
+        setTimeout(() => {
+          if (processRecord.status === 'running') {
+            childProcess.kill('SIGTERM');
+            console.log(`[Server] Process ${processId} timed out after ${options.timeout}ms`);
+          }
+        }, options.timeout);
+      }
+
+      return new Response(
+        JSON.stringify({
+          process: {
+            id: processRecord.id,
+            pid: processRecord.pid,
+            command: processRecord.command,
+            args: processRecord.args,
+            status: processRecord.status,
+            startTime: processRecord.startTime.toISOString(),
+            sessionId: processRecord.sessionId
+          }
+        }),
+        {
+          headers: {
+            "Content-Type": "application/json",
+            ...corsHeaders,
+          },
+        }
+      );
+    } catch (error) {
+      // Clean up on error
+      processes.delete(processId);
+      throw error;
+    }
+  } catch (error) {
+    console.error("[Server] Error in handleStartProcessRequest:", error);
+    return new Response(
+      JSON.stringify({
+        error: "Failed to start process",
+        message: error instanceof Error ? error.message : "Unknown error",
+      }),
+      {
+        headers: {
+          "Content-Type": "application/json",
+          ...corsHeaders,
+        },
+        status: 500,
+      }
+    );
+  }
+}
+
+async function handleListProcessesRequest(
+  req: Request,
+  corsHeaders: Record<string, string>
+): Promise<Response> {
+  try {
+    const processesArray = Array.from(processes.values()).map(record => ({
+      id: record.id,
+      pid: record.pid,
+      command: record.command,
+      args: record.args,
+      status: record.status,
+      startTime: record.startTime.toISOString(),
+      endTime: record.endTime?.toISOString(),
+      exitCode: record.exitCode,
+      sessionId: record.sessionId
+    }));
+
+    return new Response(
+      JSON.stringify({
+        processes: processesArray,
+        count: processesArray.length,
+        timestamp: new Date().toISOString(),
+      }),
+      {
+        headers: {
+          "Content-Type": "application/json",
+          ...corsHeaders,
+        },
+      }
+    );
+  } catch (error) {
+    console.error("[Server] Error in handleListProcessesRequest:", error);
+    return new Response(
+      JSON.stringify({
+        error: "Failed to list processes",
+        message: error instanceof Error ? error.message : "Unknown error",
+      }),
+      {
+        headers: {
+          "Content-Type": "application/json",
+          ...corsHeaders,
+        },
+        status: 500,
+      }
+    );
+  }
+}
+
+async function handleGetProcessRequest(
+  req: Request,
+  corsHeaders: Record<string, string>,
+  processId: string
+): Promise<Response> {
+  try {
+    const record = processes.get(processId);
+
+    if (!record) {
+      return new Response(
+        JSON.stringify({
+          process: null
+        }),
+        {
+          headers: {
+            "Content-Type": "application/json",
+            ...corsHeaders,
+          },
+          status: 404,
+        }
+      );
+    }
+
+    return new Response(
+      JSON.stringify({
+        process: {
+          id: record.id,
+          pid: record.pid,
+          command: record.command,
+          args: record.args,
+          status: record.status,
+          startTime: record.startTime.toISOString(),
+          endTime: record.endTime?.toISOString(),
+          exitCode: record.exitCode,
+          sessionId: record.sessionId
+        }
+      }),
+      {
+        headers: {
+          "Content-Type": "application/json",
+          ...corsHeaders,
+        },
+      }
+    );
+  } catch (error) {
+    console.error("[Server] Error in handleGetProcessRequest:", error);
+    return new Response(
+      JSON.stringify({
+        error: "Failed to get process",
+        message: error instanceof Error ? error.message : "Unknown error",
+      }),
+      {
+        headers: {
+          "Content-Type": "application/json",
+          ...corsHeaders,
+        },
+        status: 500,
+      }
+    );
+  }
+}
+
+async function handleKillProcessRequest(
+  req: Request,
+  corsHeaders: Record<string, string>,
+  processId: string
+): Promise<Response> {
+  try {
+    const record = processes.get(processId);
+
+    if (!record) {
+      return new Response(
+        JSON.stringify({
+          error: `Process not found: ${processId}`,
+        }),
+        {
+          headers: {
+            "Content-Type": "application/json",
+            ...corsHeaders,
+          },
+          status: 404,
+        }
+      );
+    }
+
+    if (record.childProcess && record.status === 'running') {
+      record.childProcess.kill('SIGTERM');
+      console.log(`[Server] Sent SIGTERM to process ${processId}`);
+
+      // Give it a moment to terminate gracefully, then force kill
+      setTimeout(() => {
+        if (record.childProcess && record.status === 'running') {
+          record.childProcess.kill('SIGKILL');
+          console.log(`[Server] Force killed process ${processId}`);
+        }
+      }, 5000);
+    }
+
+    // Mark as killed locally
+    record.status = 'killed';
+    record.endTime = new Date();
+    record.exitCode = -1;
+
+    // Notify status listeners
+    for (const listener of record.statusListeners) {
+      listener('killed');
+    }
+
+    return new Response(
+      JSON.stringify({
+        success: true,
+        message: `Process ${processId} killed`,
+        timestamp: new Date().toISOString(),
+      }),
+      {
+        headers: {
+          "Content-Type": "application/json",
+          ...corsHeaders,
+        },
+      }
+    );
+  } catch (error) {
+    console.error("[Server] Error in handleKillProcessRequest:", error);
+    return new Response(
+      JSON.stringify({
+        error: "Failed to kill process",
+        message: error instanceof Error ? error.message : "Unknown error",
+      }),
+      {
+        headers: {
+          "Content-Type": "application/json",
+          ...corsHeaders,
+        },
+        status: 500,
+      }
+    );
+  }
+}
+
+async function handleKillAllProcessesRequest(
+  req: Request,
+  corsHeaders: Record<string, string>
+): Promise<Response> {
+  try {
+    let killedCount = 0;
+
+    for (const [processId, record] of processes) {
+      if (record.childProcess && record.status === 'running') {
+        try {
+          record.childProcess.kill('SIGTERM');
+          record.status = 'killed';
+          record.endTime = new Date();
+          record.exitCode = -1;
+
+          // Notify status listeners
+          for (const listener of record.statusListeners) {
+            listener('killed');
+          }
+
+          killedCount++;
+          console.log(`[Server] Killed process ${processId}`);
+        } catch (error) {
+          console.error(`[Server] Failed to kill process ${processId}:`, error);
+        }
+      }
+    }
+
+    return new Response(
+      JSON.stringify({
+        success: true,
+        killedCount,
+        message: `Killed ${killedCount} processes`,
+        timestamp: new Date().toISOString(),
+      }),
+      {
+        headers: {
+          "Content-Type": "application/json",
+          ...corsHeaders,
+        },
+      }
+    );
+  } catch (error) {
+    console.error("[Server] Error in handleKillAllProcessesRequest:", error);
+    return new Response(
+      JSON.stringify({
+        error: "Failed to kill all processes",
+        message: error instanceof Error ? error.message : "Unknown error",
+      }),
+      {
+        headers: {
+          "Content-Type": "application/json",
+          ...corsHeaders,
+        },
+        status: 500,
+      }
+    );
+  }
+}
+
+async function handleGetProcessLogsRequest(
+  req: Request,
+  corsHeaders: Record<string, string>,
+  processId: string
+): Promise<Response> {
+  try {
+    const record = processes.get(processId);
+
+    if (!record) {
+      return new Response(
+        JSON.stringify({
+          error: `Process not found: ${processId}`,
+        }),
+        {
+          headers: {
+            "Content-Type": "application/json",
+            ...corsHeaders,
+          },
+          status: 404,
+        }
+      );
+    }
+
+    return new Response(
+      JSON.stringify({
+        stdout: record.stdout,
+        stderr: record.stderr,
+        processId: record.id,
+      }),
+      {
+        headers: {
+          "Content-Type": "application/json",
+          ...corsHeaders,
+        },
+      }
+    );
+  } catch (error) {
+    console.error("[Server] Error in handleGetProcessLogsRequest:", error);
+    return new Response(
+      JSON.stringify({
+        error: "Failed to get process logs",
+        message: error instanceof Error ? error.message : "Unknown error",
+      }),
+      {
+        headers: {
+          "Content-Type": "application/json",
+          ...corsHeaders,
+        },
+        status: 500,
+      }
+    );
+  }
+}
+
+async function handleStreamProcessLogsRequest(
+  req: Request,
+  corsHeaders: Record<string, string>,
+  processId: string
+): Promise<Response> {
+  try {
+    const record = processes.get(processId);
+
+    if (!record) {
+      return new Response(
+        JSON.stringify({
+          error: `Process not found: ${processId}`,
+        }),
+        {
+          headers: {
+            "Content-Type": "application/json",
+            ...corsHeaders,
+          },
+          status: 404,
+        }
+      );
+    }
+
+    // Create a readable stream for Server-Sent Events
+    let isConnected = true;
+
+    const stream = new ReadableStream({
+      start(controller) {
+        // Send existing logs first
+        if (record.stdout) {
+          const event = `data: ${JSON.stringify({
+            type: 'stdout',
+            timestamp: new Date().toISOString(),
+            data: record.stdout,
+            processId,
+            sessionId: record.sessionId
+          })}\\n\\n`;
+          controller.enqueue(new TextEncoder().encode(event));
+        }
+
+        if (record.stderr) {
+          const event = `data: ${JSON.stringify({
+            type: 'stderr',
+            timestamp: new Date().toISOString(),
+            data: record.stderr,
+            processId,
+            sessionId: record.sessionId
+          })}\\n\\n`;
+          controller.enqueue(new TextEncoder().encode(event));
+        }
+
+        // Send status
+        const statusEvent = `data: ${JSON.stringify({
+          type: 'status',
+          timestamp: new Date().toISOString(),
+          data: `Process status: ${record.status}`,
+          processId,
+          sessionId: record.sessionId
+        })}\\n\\n`;
+        controller.enqueue(new TextEncoder().encode(statusEvent));
+
+        // Set up real-time streaming for ongoing output
+        const outputListener = (stream: 'stdout' | 'stderr', data: string) => {
+          if (!isConnected) return;
+
+          const event = `data: ${JSON.stringify({
+            type: stream,
+            timestamp: new Date().toISOString(),
+            data,
+            processId,
+            sessionId: record.sessionId
+          })}\\n\\n`;
+
+          try {
+            controller.enqueue(new TextEncoder().encode(event));
+          } catch (error) {
+            console.log(`[Server] Stream closed for process ${processId}`);
+            isConnected = false;
+          }
+        };
+
+        const statusListener = (status: ProcessStatus) => {
+          if (!isConnected) return;
+
+          const event = `data: ${JSON.stringify({
+            type: 'status',
+            timestamp: new Date().toISOString(),
+            data: `Process status: ${status}`,
+            processId,
+            sessionId: record.sessionId
+          })}\\n\\n`;
+
+          try {
+            controller.enqueue(new TextEncoder().encode(event));
+          } catch (error) {
+            console.log(`[Server] Stream closed for process ${processId}`);
+            isConnected = false;
+          }
+
+          // Close stream when process completes
+          if (['completed', 'failed', 'killed', 'error'].includes(status)) {
+            setTimeout(() => {
+              record.outputListeners.delete(outputListener);
+              record.statusListeners.delete(statusListener);
+              controller.close();
+            }, 1000); // Give a moment for final events
+          }
+        };
+
+        // Add listeners
+        record.outputListeners.add(outputListener);
+        record.statusListeners.add(statusListener);
+      },
+
+      cancel() {
+        isConnected = false;
+        console.log(`[Server] Log stream cancelled for process ${processId}`);
+      }
+    });
+
+    return new Response(stream, {
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        ...corsHeaders,
+      },
+    });
+  } catch (error) {
+    console.error("[Server] Error in handleStreamProcessLogsRequest:", error);
+    return new Response(
+      JSON.stringify({
+        error: "Failed to stream process logs",
+        message: error instanceof Error ? error.message : "Unknown error",
+      }),
+      {
+        headers: {
+          "Content-Type": "application/json",
+          ...corsHeaders,
+        },
+        status: 500,
+      }
+    );
+  }
+}
+
 console.log(`🚀 Bun server running on http://0.0.0.0:${server.port}`);
 console.log(`📡 HTTP API endpoints available:`);
 console.log(`   POST /api/session/create - Create a new session`);
@@ -3191,6 +3900,13 @@ console.log(`   POST /api/move/stream - Move a file (streaming)`);
 console.log(`   POST /api/expose-port - Expose a port for external access`);
 console.log(`   DELETE /api/unexpose-port - Unexpose a port`);
 console.log(`   GET  /api/exposed-ports - List exposed ports`);
+console.log(`   POST /api/process/start - Start a background process`);
+console.log(`   GET  /api/process/list - List all processes`);
+console.log(`   GET  /api/process/{id} - Get process status`);
+console.log(`   DELETE /api/process/{id} - Kill a process`);
+console.log(`   GET  /api/process/{id}/logs - Get process logs`);
+console.log(`   GET  /api/process/{id}/stream - Stream process logs (SSE)`);
+console.log(`   DELETE /api/process/kill-all - Kill all processes`);
 console.log(`   GET  /proxy/{port}/* - Proxy requests to exposed ports`);
 console.log(`   GET  /api/ping - Health check`);
 console.log(`   GET  /api/commands - List available commands`);

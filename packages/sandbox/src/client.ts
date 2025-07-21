@@ -1,4 +1,11 @@
 import type { Sandbox } from "./index";
+import type {
+  GetProcessLogsResponse,
+  GetProcessResponse,
+  ListProcessesResponse,
+  StartProcessRequest,
+  StartProcessResponse
+} from "./types";
 
 interface ExecuteRequest {
   command: string;
@@ -1822,6 +1829,243 @@ export class HttpClient {
 
   clearSession(): void {
     this.sessionId = null;
+  }
+
+  // Process management methods
+  async startProcess(
+    command: string,
+    args: string[] = [],
+    options?: {
+      processId?: string;
+      sessionId?: string;
+      timeout?: number;
+      env?: Record<string, string>;
+      cwd?: string;
+      encoding?: string;
+      autoCleanup?: boolean;
+    }
+  ): Promise<StartProcessResponse> {
+    try {
+      const targetSessionId = options?.sessionId || this.sessionId;
+
+      const response = await this.doFetch("/api/process/start", {
+        body: JSON.stringify({
+          command,
+          args,
+          options: {
+            ...options,
+            sessionId: targetSessionId,
+          },
+        } as StartProcessRequest),
+        headers: {
+          "Content-Type": "application/json",
+        },
+        method: "POST",
+      });
+
+      if (!response.ok) {
+        const errorData = (await response.json().catch(() => ({}))) as {
+          error?: string;
+        };
+        throw new Error(
+          errorData.error || `HTTP error! status: ${response.status}`
+        );
+      }
+
+      const data: StartProcessResponse = await response.json();
+      console.log(
+        `[HTTP Client] Process started: ${command}, ID: ${data.process.id}`
+      );
+
+      return data;
+    } catch (error) {
+      console.error("[HTTP Client] Error starting process:", error);
+      throw error;
+    }
+  }
+
+  async listProcesses(): Promise<ListProcessesResponse> {
+    try {
+      const response = await this.doFetch("/api/process/list", {
+        headers: {
+          "Content-Type": "application/json",
+        },
+        method: "GET",
+      });
+
+      if (!response.ok) {
+        const errorData = (await response.json().catch(() => ({}))) as {
+          error?: string;
+        };
+        throw new Error(
+          errorData.error || `HTTP error! status: ${response.status}`
+        );
+      }
+
+      const data: ListProcessesResponse = await response.json();
+      console.log(
+        `[HTTP Client] Listed ${data.processes.length} processes`
+      );
+
+      return data;
+    } catch (error) {
+      console.error("[HTTP Client] Error listing processes:", error);
+      throw error;
+    }
+  }
+
+  async getProcess(processId: string): Promise<GetProcessResponse> {
+    try {
+      const response = await this.doFetch(`/api/process/${processId}`, {
+        headers: {
+          "Content-Type": "application/json",
+        },
+        method: "GET",
+      });
+
+      if (!response.ok) {
+        const errorData = (await response.json().catch(() => ({}))) as {
+          error?: string;
+        };
+        throw new Error(
+          errorData.error || `HTTP error! status: ${response.status}`
+        );
+      }
+
+      const data: GetProcessResponse = await response.json();
+      console.log(
+        `[HTTP Client] Got process ${processId}: ${data.process?.status || 'not found'}`
+      );
+
+      return data;
+    } catch (error) {
+      console.error("[HTTP Client] Error getting process:", error);
+      throw error;
+    }
+  }
+
+  async killProcess(processId: string): Promise<{ success: boolean; message: string }> {
+    try {
+      const response = await this.doFetch(`/api/process/${processId}`, {
+        headers: {
+          "Content-Type": "application/json",
+        },
+        method: "DELETE",
+      });
+
+      if (!response.ok) {
+        const errorData = (await response.json().catch(() => ({}))) as {
+          error?: string;
+        };
+        throw new Error(
+          errorData.error || `HTTP error! status: ${response.status}`
+        );
+      }
+
+      const data = await response.json() as { success: boolean; message: string };
+      console.log(
+        `[HTTP Client] Killed process ${processId}`
+      );
+
+      return data;
+    } catch (error) {
+      console.error("[HTTP Client] Error killing process:", error);
+      throw error;
+    }
+  }
+
+  async killAllProcesses(): Promise<{ success: boolean; killedCount: number; message: string }> {
+    try {
+      const response = await this.doFetch("/api/process/kill-all", {
+        headers: {
+          "Content-Type": "application/json",
+        },
+        method: "DELETE",
+      });
+
+      if (!response.ok) {
+        const errorData = (await response.json().catch(() => ({}))) as {
+          error?: string;
+        };
+        throw new Error(
+          errorData.error || `HTTP error! status: ${response.status}`
+        );
+      }
+
+      const data = await response.json() as { success: boolean; killedCount: number; message: string };
+      console.log(
+        `[HTTP Client] Killed ${data.killedCount} processes`
+      );
+
+      return data;
+    } catch (error) {
+      console.error("[HTTP Client] Error killing all processes:", error);
+      throw error;
+    }
+  }
+
+  async getProcessLogs(processId: string): Promise<GetProcessLogsResponse> {
+    try {
+      const response = await this.doFetch(`/api/process/${processId}/logs`, {
+        headers: {
+          "Content-Type": "application/json",
+        },
+        method: "GET",
+      });
+
+      if (!response.ok) {
+        const errorData = (await response.json().catch(() => ({}))) as {
+          error?: string;
+        };
+        throw new Error(
+          errorData.error || `HTTP error! status: ${response.status}`
+        );
+      }
+
+      const data: GetProcessLogsResponse = await response.json();
+      console.log(
+        `[HTTP Client] Got logs for process ${processId}`
+      );
+
+      return data;
+    } catch (error) {
+      console.error("[HTTP Client] Error getting process logs:", error);
+      throw error;
+    }
+  }
+
+  async streamProcessLogs(processId: string): Promise<ReadableStream<Uint8Array>> {
+    try {
+      const response = await this.doFetch(`/api/process/${processId}/stream`, {
+        headers: {
+          "Accept": "text/event-stream",
+          "Cache-Control": "no-cache",
+        },
+        method: "GET",
+      });
+
+      if (!response.ok) {
+        const errorData = (await response.json().catch(() => ({}))) as {
+          error?: string;
+        };
+        throw new Error(
+          errorData.error || `HTTP error! status: ${response.status}`
+        );
+      }
+
+      if (!response.body) {
+        throw new Error("No response body for streaming request");
+      }
+
+      console.log(
+        `[HTTP Client] Started streaming logs for process ${processId}`
+      );
+
+      return response.body;
+    } catch (error) {
+      console.error("[HTTP Client] Error streaming process logs:", error);
+      throw error;
+    }
   }
 }
 
