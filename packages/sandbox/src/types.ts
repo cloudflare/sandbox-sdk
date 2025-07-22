@@ -354,8 +354,8 @@ export interface ISandbox {
   killAllProcesses(): Promise<number>;
 
   // Advanced streaming
-  execStream(command: string, options?: StreamOptions): AsyncIterable<ExecEvent>;
-  streamProcessLogs(processId: string, options?: { signal?: AbortSignal }): AsyncIterable<LogEvent>;
+  execStream(command: string, options?: StreamOptions): Promise<ReadableStream<Uint8Array>>;
+  streamProcessLogs(processId: string, options?: { signal?: AbortSignal }): Promise<ReadableStream<Uint8Array>>;
 
   // Utility methods
   cleanupCompletedProcesses(): Promise<number>;

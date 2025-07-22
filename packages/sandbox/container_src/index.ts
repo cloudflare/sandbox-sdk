@@ -3782,7 +3782,7 @@ async function handleStreamProcessLogsRequest(
             data: record.stdout,
             processId,
             sessionId: record.sessionId
-          })}\\n\\n`;
+          })}\n\n`;
           controller.enqueue(new TextEncoder().encode(event));
         }
 
@@ -3793,7 +3793,7 @@ async function handleStreamProcessLogsRequest(
             data: record.stderr,
             processId,
             sessionId: record.sessionId
-          })}\\n\\n`;
+          })}\n\n`;
           controller.enqueue(new TextEncoder().encode(event));
         }
 
@@ -3817,7 +3817,7 @@ async function handleStreamProcessLogsRequest(
             data,
             processId,
             sessionId: record.sessionId
-          })}\\n\\n`;
+          })}\n\n`;
 
           try {
             controller.enqueue(new TextEncoder().encode(event));
@@ -3836,7 +3836,7 @@ async function handleStreamProcessLogsRequest(
             data: `Process status: ${status}`,
             processId,
             sessionId: record.sessionId
-          })}\\n\\n`;
+          })}\n\n`;
 
           try {
             controller.enqueue(new TextEncoder().encode(event));

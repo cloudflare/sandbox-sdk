@@ -476,222 +476,46 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
 
   // AsyncIterable streaming methods
-  async *execStream(command: string, options?: StreamOptions): AsyncIterable<ExecEvent> {
-    const startTime = Date.now();
-    const timestamp = new Date().toISOString();
-
-    // Emit start event
-    yield {
-      type: 'start',
-      timestamp,
-      command
-    };
-
+  async execStream(command: string, options?: StreamOptions): Promise<ReadableStream<Uint8Array>> {
     try {
-      let stdout = '';
-      let stderr = '';
-      let completed = false;
-      let error: Error | undefined;
+      // Use containerFetch to get streaming response from container
+      const response = await this.containerFetch(`/api/execute/stream`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'text/event-stream',
+        },
+        body: JSON.stringify({
+          command,
+          sessionId: options?.sessionId,
+          background: false
+        })
+      });
 
-      // Set up event handling with Promise/AsyncIterable coordination
-      const events: ExecEvent[] = [];
-      let eventResolve: ((value: ExecEvent) => void) | undefined;
-      let pendingEvent: Promise<ExecEvent> | undefined;
-
-      const originalOnOutput = this.client.getOnOutput();
-      const originalOnCommandComplete = this.client.getOnCommandComplete();
-
-      const tempOnOutput = (stream: 'stdout' | 'stderr', data: string, cmd: string) => {
-        if (cmd === command) {
-          if (stream === 'stdout') stdout += data;
-          if (stream === 'stderr') stderr += data;
-
-          const event: ExecEvent = {
-            type: stream,
-            timestamp: new Date().toISOString(),
-            data
-          };
-
-          if (eventResolve) {
-            eventResolve(event);
-            eventResolve = undefined;
-            pendingEvent = undefined;
-          } else {
-            events.push(event);
-          }
-        }
-        originalOnOutput?.(stream, data, cmd);
-      };
-
-      const tempOnCommandComplete = (
-        success: boolean,
-        exitCode: number,
-        finalStdout: string,
-        finalStderr: string,
-        cmd: string
-      ) => {
-        if (cmd === command && !completed) {
-          completed = true;
-
-          const duration = Date.now() - startTime;
-          const result: ExecResult = {
-            success,
-            exitCode,
-            stdout: finalStdout,
-            stderr: finalStderr,
-            command,
-            duration,
-            timestamp,
-            sessionId: options?.sessionId
-          };
-
-          const event: ExecEvent = {
-            type: 'complete',
-            timestamp: new Date().toISOString(),
-            exitCode,
-            result
-          };
-
-          if (eventResolve) {
-            eventResolve(event);
-            eventResolve = undefined;
-            pendingEvent = undefined;
-          } else {
-            events.push(event);
-          }
-
-          // Restore handlers
-          this.client.setOnOutput(originalOnOutput || (() => {}));
-          this.client.setOnCommandComplete(originalOnCommandComplete || (() => {}));
-        }
-        originalOnCommandComplete?.(success, exitCode, finalStdout, finalStderr, cmd);
-      };
-
-      // Set up temporary handlers
-      this.client.setOnOutput(tempOnOutput);
-      this.client.setOnCommandComplete(tempOnCommandComplete);
-
-      // Start the command
-      const streamPromise = this.client.executeStream(command, options?.sessionId, false)
-        .catch(err => {
-          error = err instanceof Error ? err : new Error(String(err));
-          completed = true;
-
-          // Restore handlers
-          this.client.setOnOutput(originalOnOutput || (() => {}));
-          this.client.setOnCommandComplete(originalOnCommandComplete || (() => {}));
-
-          const errorEvent: ExecEvent = {
-            type: 'error',
-            timestamp: new Date().toISOString(),
-            error
-          };
-
-          if (eventResolve) {
-            eventResolve(errorEvent);
-            eventResolve = undefined;
-            pendingEvent = undefined;
-          } else {
-            events.push(errorEvent);
-          }
-        });
-
-      // Yield events as they come
-      while (!completed || events.length > 0) {
-        if (options?.signal?.aborted) {
-          throw new Error('Operation was aborted');
-        }
-
-        if (events.length > 0) {
-          const event = events.shift()!;
-          yield event;
-
-          if (event.type === 'complete' || event.type === 'error') {
-            break;
-          }
-        } else if (!completed) {
-          // Wait for next event
-          pendingEvent = new Promise<ExecEvent>((resolve) => {
-            eventResolve = resolve;
-          });
-
-          const event = await pendingEvent;
-          yield event;
-
-          if (event.type === 'complete' || event.type === 'error') {
-            break;
-          }
-        } else {
-          break;
-        }
+      if (!response.ok) {
+        throw new Error(`Execute stream failed: ${response.status} ${response.statusText}`);
       }
 
-      // Wait for the stream to complete
-      await streamPromise;
-
-      if (error) {
-        throw error;
+      if (!response.body) {
+        throw new Error('No response body for streaming execution');
       }
 
-    } catch (err) {
-      // Emit error event if we haven't already
-      yield {
-        type: 'error',
-        timestamp: new Date().toISOString(),
-        error: err instanceof Error ? err : new Error(String(err))
-      };
-      throw err;
+      return response.body;
+    } catch (error) {
+      throw error instanceof Error ? error : new Error(String(error));
     }
   }
 
-  async *streamProcessLogs(processId: string, options?: { signal?: AbortSignal }): AsyncIterable<LogEvent> {
+  async streamProcessLogs(processId: string, options?: { signal?: AbortSignal }): Promise<ReadableStream<Uint8Array>> {
     // Check for cancellation
     if (options?.signal?.aborted) {
       throw new Error('Operation was aborted');
     }
 
     try {
-      // Get the stream from HttpClient
+      // Return the stream directly from HttpClient - no need to convert to AsyncIterable
       const stream = await this.client.streamProcessLogs(processId);
-      const reader = stream.getReader();
-
-      try {
-        while (true) {
-          if (options?.signal?.aborted) {
-            throw new Error('Operation was aborted');
-          }
-
-          const { done, value } = await reader.read();
-
-          if (done) {
-            break;
-          }
-
-          // Parse the Server-Sent Events format
-          const text = new TextDecoder().decode(value);
-          const lines = text.split('\n');
-
-          for (const line of lines) {
-            if (line.startsWith('data: ')) {
-              try {
-                const data = JSON.parse(line.substring(6));
-                yield {
-                  type: data.type,
-                  timestamp: data.timestamp,
-                  data: data.data,
-                  processId,
-                  sessionId: data.sessionId
-                };
-              } catch (parseError) {
-                // Skip malformed lines
-                console.warn('Failed to parse SSE data:', line, parseError);
-              }
-            }
-          }
-        }
-      } finally {
-        reader.releaseLock();
-      }
+      return stream;
     } catch (error) {
       if (error instanceof Error && error.message.includes('Process not found')) {
         throw new ProcessNotFoundError(processId);

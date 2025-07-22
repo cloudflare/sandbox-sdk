@@ -65,7 +65,7 @@ export default {
     const pathname = url.pathname;
 
     try {
-      const sandbox = getUserSandbox(env, request);
+      const sandbox = getUserSandbox(env, request) as unknown as Sandbox<unknown>;
 
       // Command Execution API
       if (pathname === "/api/execute" && request.method === "POST") {
@@ -106,7 +106,7 @@ export default {
         (async () => {
           try {
             const encoder = new TextEncoder();
-            
+
             // Send start event
             await writer.write(encoder.encode(`data: ${JSON.stringify({
               type: 'start',
@@ -116,12 +116,19 @@ export default {
 
             // Check if execStream method exists, otherwise fallback to regular exec
             if (typeof sandbox.execStream === 'function') {
-              for await (const event of sandbox.execStream(command, { sessionId })) {
-                await writer.write(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
-                
-                if (event.type === 'complete' || event.type === 'error') {
-                  break;
+              const readableStream = await sandbox.execStream(command, { sessionId });
+              const reader = readableStream.getReader();
+
+              try {
+                while (true) {
+                  const { done, value } = await reader.read();
+                  if (done) break;
+
+                  // Forward the raw SSE data directly
+                  await writer.write(value);
                 }
+              } finally {
+                reader.releaseLock();
               }
             } else {
               // Fallback to regular execution if streaming not available
@@ -219,7 +226,7 @@ export default {
       if (pathname.startsWith("/api/process/") && pathname.endsWith("/logs") && request.method === "GET") {
         const pathParts = pathname.split("/");
         const processId = pathParts[pathParts.length - 2];
-        
+
         if (!processId) {
           return errorResponse("Process ID is required");
         }
@@ -235,7 +242,7 @@ export default {
       if (pathname.startsWith("/api/process/") && pathname.endsWith("/stream") && request.method === "GET") {
         const pathParts = pathname.split("/");
         const processId = pathParts[pathParts.length - 2];
-        
+
         if (!processId) {
           return errorResponse("Process ID is required");
         }
@@ -252,55 +259,25 @@ export default {
           }
         }
 
-        // Use proper AsyncIterable streaming from SDK
+        // Use the SDK's streaming and forward directly
         if (typeof sandbox.streamProcessLogs === 'function') {
-          const stream = new ReadableStream({
-            async start(controller) {
-              try {
-                const encoder = new TextEncoder();
-                
-                // Send initial connection event
-                controller.enqueue(encoder.encode(`data: ${JSON.stringify({
-                  type: 'connected',
-                  timestamp: new Date().toISOString(),
-                  processId
-                })}\n\n`));
-                
-                // Use the SDK's AsyncIterable streaming
-                for await (const logEvent of sandbox.streamProcessLogs(processId)) {
-                  controller.enqueue(encoder.encode(`data: ${JSON.stringify(logEvent)}\n\n`));
-                }
-                
-                // Send completion event
-                controller.enqueue(encoder.encode(`data: ${JSON.stringify({
-                  type: 'stream_complete',
-                  timestamp: new Date().toISOString(),
-                  processId
-                })}\n\n`));
-                
-              } catch (error: any) {
-                console.error('Process log streaming error:', error);
-                const errorEvent = {
-                  type: 'error',
-                  timestamp: new Date().toISOString(),
-                  processId,
-                  data: error.message
-                };
-                controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(errorEvent)}\n\n`));
-              } finally {
-                controller.close();
-              }
-            }
-          });
+          try {
+            // Get the ReadableStream directly from the SDK
+            const readableStream = await sandbox.streamProcessLogs(processId);
 
-          return new Response(stream, {
-            headers: {
-              "Content-Type": "text/event-stream",
-              "Cache-Control": "no-cache",
-              "Connection": "keep-alive",
-              ...corsHeaders(),
-            },
-          });
+            // Return stream with proper headers
+            return new Response(readableStream, {
+              headers: {
+                "Content-Type": "text/event-stream",
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                ...corsHeaders(),
+              },
+            });
+          } catch (error: any) {
+            console.error('Process log streaming error:', error);
+            return errorResponse(`Failed to stream process logs: ${error.message}`, 500);
+          }
         } else {
           return errorResponse("Process streaming not implemented in current SDK version", 501);
         }
@@ -370,14 +347,14 @@ export default {
       if (pathname === "/api/session/create" && request.method === "POST") {
         const body = await parseJsonBody(request);
         const sessionId = body.sessionId || `session_${Date.now()}_${Math.random().toString(36).substring(2, 15)}`;
-        
+
         // Sessions are managed automatically by the SDK, just return the ID
         return jsonResponse(sessionId);
       }
 
       if (pathname.startsWith("/api/session/clear/") && request.method === "POST") {
         const sessionId = pathname.split("/").pop();
-        
+
         // In a real implementation, you might want to clean up session state
         // For now, just return success
         return jsonResponse({ message: "Session cleared", sessionId });
@@ -392,7 +369,7 @@ export default {
           apis: [
             "POST /api/execute - Execute commands",
             "POST /api/execute/stream - Execute with streaming",
-            "GET /api/process/list - List processes", 
+            "GET /api/process/list - List processes",
             "POST /api/process/start - Start process",
             "DELETE /api/process/{id} - Kill process",
             "GET /api/process/{id}/logs - Get process logs",

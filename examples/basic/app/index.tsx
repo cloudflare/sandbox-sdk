@@ -142,22 +142,34 @@ class SandboxApiClient {
 
     const reader = response.body!.getReader();
     const decoder = new TextDecoder();
+    let buffer = ''; // Buffer for incomplete lines
 
     try {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
-        const chunk = decoder.decode(value);
-        const lines = chunk.split('\n').filter(line => line.trim());
+        // Add chunk to buffer
+        buffer += decoder.decode(value, { stream: true });
 
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            try {
-              const event = JSON.parse(line.substring(6));
-              yield event;
-            } catch (e) {
-              // Skip invalid JSON
+        // Process complete SSE events
+        while (true) {
+          const eventEnd = buffer.indexOf('\n\n');
+          if (eventEnd === -1) break; // No complete event yet
+
+          const eventData = buffer.substring(0, eventEnd);
+          buffer = buffer.substring(eventEnd + 2);
+
+          // Parse the SSE event
+          const lines = eventData.split('\n');
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              try {
+                const event = JSON.parse(line.substring(6));
+                yield event;
+              } catch (e) {
+                console.warn('Failed to parse SSE event:', line, e);
+              }
             }
           }
         }
@@ -197,22 +209,34 @@ class SandboxApiClient {
 
     const reader = response.body!.getReader();
     const decoder = new TextDecoder();
+    let buffer = ''; // Buffer for incomplete lines
 
     try {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
-        const chunk = decoder.decode(value);
-        const lines = chunk.split('\n').filter(line => line.trim());
+        // Add chunk to buffer
+        buffer += decoder.decode(value, { stream: true });
 
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            try {
-              const event = JSON.parse(line.substring(6));
-              yield event;
-            } catch (e) {
-              // Skip invalid JSON
+        // Process complete SSE events
+        while (true) {
+          const eventEnd = buffer.indexOf('\n\n');
+          if (eventEnd === -1) break; // No complete event yet
+
+          const eventData = buffer.substring(0, eventEnd);
+          buffer = buffer.substring(eventEnd + 2);
+
+          // Parse the SSE event
+          const lines = eventData.split('\n');
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              try {
+                const event = JSON.parse(line.substring(6));
+                yield event;
+              } catch (e) {
+                console.warn('Failed to parse SSE event:', line, e);
+              }
             }
           }
         }
@@ -1116,13 +1140,12 @@ function StreamingTab({
   connectionStatus,
   sessionId
 }: {
-  client: HttpClient | null;
+  client: SandboxApiClient | null;
   connectionStatus: "disconnected" | "connecting" | "connected";
   sessionId: string | null;
 }) {
   const [activeStreams, setActiveStreams] = useState<ActiveStream[]>([]);
   const [commandInput, setCommandInput] = useState("");
-  const [processId, setProcessId] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const [processes, setProcesses] = useState<ProcessInfo[]>([]);
 
@@ -1171,7 +1194,10 @@ function StreamingTab({
 
     try {
       // Use the new execStream AsyncIterable method
-      const streamIterable = client.execStream(command, {
+      const commandParts = command.split(' ');
+      const cmd = commandParts[0];
+      const args = commandParts.slice(1);
+      const streamIterable = client.execStream(cmd, args, {
         sessionId: sessionId || undefined,
         signal: new AbortController().signal
       });
@@ -1247,9 +1273,7 @@ function StreamingTab({
 
     try {
       // Use the new streamProcessLogs AsyncIterable method
-      const logStreamIterable = client.streamProcessLogs(selectedProcessId, {
-        signal: new AbortController().signal
-      });
+      const logStreamIterable = client.streamProcessLogs(selectedProcessId);
 
       for await (const logEvent of logStreamIterable) {
         const streamEvent: LogStreamEvent = {
@@ -1538,7 +1562,7 @@ function StreamingTab({
 
 function SandboxTester() {
   const [activeTab, setActiveTab] = useState<TabType>('commands');
-  const [client, setClient] = useState<HttpClient | null>(null);
+  const [client, setClient] = useState<SandboxApiClient | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<"disconnected" | "connecting" | "connected">("disconnected");
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [commandInput, setCommandInput] = useState("");
@@ -1555,7 +1579,7 @@ function SandboxTester() {
 
   // Initialize HTTP client
   useEffect(() => {
-    const httpClient = new HttpClient({
+    const httpClient = new SandboxApiClient({
       baseUrl: window.location.origin,
       onCommandComplete: (
         success: boolean,
@@ -1603,27 +1627,6 @@ function SandboxTester() {
         });
         setIsExecuting(false);
       },
-      onOutput: (
-        stream: "stdout" | "stderr",
-        data: string,
-        command: string
-      ) => {
-        setResults((prev) => {
-          const updated = [...prev];
-          const lastResult = updated[updated.length - 1];
-          if (lastResult && lastResult.command === command) {
-            if (stream === "stdout") {
-              lastResult.stdout += data;
-            } else {
-              lastResult.stderr += data;
-            }
-          }
-          return updated;
-        });
-      },
-      onStreamEvent: (event) => {
-        console.log("Stream event:", event);
-      },
     });
 
     setClient(httpClient);
@@ -1652,8 +1655,8 @@ function SandboxTester() {
 
     // Cleanup on unmount
     return () => {
-      if (httpClient) {
-        httpClient.clearSession();
+      if (httpClient && sessionId) {
+        httpClient.clearSession(sessionId);
       }
     };
   }, []);
@@ -1683,7 +1686,8 @@ function SandboxTester() {
       console.log("Executing command:", trimmedCommand);
       const result = await client.execute(
         trimmedCommand,
-        sessionId || undefined
+        [],
+        { sessionId: sessionId || undefined }
       );
       console.log("Result:", result);
 
@@ -1740,7 +1744,7 @@ function SandboxTester() {
 
       // Execute the command with streaming
       console.log("Executing streaming command:", trimmedCommand);
-      await client.executeStream(trimmedCommand, sessionId || undefined);
+      await client.executeStream(trimmedCommand, [], { sessionId: sessionId || undefined });
       console.log("Streaming command completed");
 
       setCommandInput("");
