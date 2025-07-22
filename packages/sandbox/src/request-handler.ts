@@ -57,26 +57,15 @@ export async function proxyToSandbox<E extends SandboxEnv>(
 }
 
 function extractSandboxRoute(url: URL): RouteInfo | null {
-  // Production: subdomain pattern {port}-{sandboxId}.{domain}
-  const subdomainMatch = url.hostname.match(/^(\d+)-([a-zA-Z0-9-]+)\./);
+  // Unified subdomain pattern for all environments
+  // Matches: 8080-demo-user-sandbox.localhost or 8080-demo-user-sandbox.workers.dev
+  const subdomainMatch = url.hostname.match(/^(\d+)-([^.]+)\.(.+)$/);
   if (subdomainMatch) {
     return {
       port: parseInt(subdomainMatch[1]),
       sandboxId: subdomainMatch[2],
-      path: url.pathname,
+      path: url.pathname || "/",
     };
-  }
-
-  // Development: path pattern /preview/{port}/{sandboxId}/*
-  if (isLocalhostPattern(url.hostname)) {
-    const pathMatch = url.pathname.match(/^\/preview\/(\d+)\/([^/]+)(\/.*)?$/);
-    if (pathMatch) {
-      return {
-        port: parseInt(pathMatch[1]),
-        sandboxId: pathMatch[2],
-        path: pathMatch[3] || "/",
-      };
-    }
   }
 
   return null;

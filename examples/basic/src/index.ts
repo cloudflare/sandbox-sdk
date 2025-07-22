@@ -17,6 +17,7 @@ export { Sandbox } from "@cloudflare/sandbox";
 
 type Env = {
   Sandbox: DurableObjectNamespace<Sandbox>;
+  ASSETS: Fetcher;
 };
 
 // Helper to get sandbox instance with user-specific ID
@@ -36,7 +37,8 @@ export default {
       return new Response(null, { status: 200, headers: corsHeaders() });
     }
 
-    // Route requests to exposed container ports via their preview URLs
+    // PRIORITY: Route requests to exposed container ports via their preview URLs
+    // This must happen BEFORE any other routing to bypass Wrangler's asset serving
     const proxyResponse = await proxyToSandbox(request, env);
     if (proxyResponse) return proxyResponse;
 
@@ -153,7 +155,8 @@ export default {
         return jsonResponse({ message: "pong", timestamp: new Date().toISOString() });
       }
 
-      return errorResponse("Endpoint not found", 404);
+      // Fallback: serve static assets for all other requests
+      return env.ASSETS.fetch(request);
 
     } catch (error: any) {
       console.error("API Error:", error);

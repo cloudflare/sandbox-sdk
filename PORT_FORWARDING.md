@@ -31,41 +31,60 @@ async exposePort(port: number, options: { name?: string; hostname: string }) {
 }
 ```
 
-### Issue 2: Relative Path Resolution in Preview Content
-**Problem**: Content served through preview URLs has broken relative links.
+### Issue 2: Architectural Inconsistency Between Dev and Production ⚠️ SUPERSEDED
+**Problem**: Path-based routing in development causes container applications to lose context about their base URL, breaking relative links, asset loading, and client-side routing.
 
-**Example**:
-- User navigates to: `http://localhost:63654/preview/8080/demo-user-sandbox/`
-- Python HTTP server shows directory listing
-- Links appear as: `http://localhost:63654/preview/8080/index.ts` (missing sandbox ID)
-- Should be: `http://localhost:63654/preview/8080/demo-user-sandbox/index.ts`
+**Examples**:
+- **Python SimpleHTTPServer**: Directory listing links appear as `/preview/8080/index.ts` (missing sandbox ID)
+- **React Apps**: Assets fail to load because they expect to be served from domain root
+- **SPA Routing**: React Router doesn't know about the `/preview/8080/demo-user-sandbox/` prefix
 
-**Root Cause Analysis**:
-This is puzzling because Python's `SimpleHTTPServer` typically generates relative links like `<a href="index.ts">`. The appearance of absolute paths suggests:
+**Root Cause**: 
+Architectural inconsistency where development uses path-based routing (`/preview/8080/sandbox-id/`) while production uses subdomain routing (`8080-sandbox-id.domain.com`). This forces containers to handle base path context differently across environments.
 
-1. **Server-side URL rewriting**: Python server using proxy headers to construct absolute URLs
-2. **Base URL manipulation**: Injected `<base>` tag or similar mechanism
-3. **Redirect handling**: Server redirects being processed incorrectly
-4. **Middleware interference**: Some component rewriting URLs in transit
+**Solution Implemented**: 
+**🚀 UNIFIED SUBDOMAIN ARCHITECTURE** - Use subdomain routing consistently across all environments:
+
+**Before (Inconsistent)**:
+- Development: `http://localhost:63654/preview/8080/demo-user-sandbox/`
+- Production: `https://8080-demo-user-sandbox.workers.dev/`
+
+**After (Unified)**:
+- Development: `http://8080-demo-user-sandbox.localhost:63654/`  
+- Production: `https://8080-demo-user-sandbox.workers.dev/`
+
+**Benefits**:
+- ✅ Containers always see themselves at domain root (`/`)
+- ✅ All relative URLs work naturally without configuration
+- ✅ React apps load assets from `/static/js/bundle.js` (no base path needed)
+- ✅ SPA routing works without `basename` configuration
+- ✅ Consistent behavior across development and production
+- ✅ No more proxy header complications or path context issues
 
 ## Architecture Scenarios
 
-### 1. Local Development - Single Worker
+### 1. Local Development - Single Worker ⚡ UNIFIED
 **Setup**:
 - Worker runs on dynamic port (e.g., `wrangler dev` → `localhost:63654`)
 - Container runs on `localhost` with exposed ports
 - All routing handled by single Worker
 
-**Preview URL Pattern**: `http://localhost:{dynamic-port}/preview/{service-port}/{sandbox-id}/`
+**Preview URL Pattern**: `http://{service-port}-{sandbox-id}.localhost:{dynamic-port}/`
 
-**Challenges**:
-- Dynamic ports change between `wrangler dev` sessions
-- Need to capture actual Worker port, not hardcoded fallback
-- Container port forwarding must work with localhost
+**Examples**:
+- Python server on port 8080: `http://8080-demo-user-sandbox.localhost:63654/`
+- React dev server on port 3000: `http://3000-demo-user-sandbox.localhost:63654/`
+- API server on port 9000: `http://9000-demo-user-sandbox.localhost:63654/`
 
-**Current Status**: ✅ Fixed (Issue 1 resolved)
+**Benefits**:
+- ✅ Consistent with production subdomain pattern
+- ✅ Containers see themselves at domain root
+- ✅ No base path configuration needed for any app type
+- ✅ Automatic browser `.localhost` DNS resolution (RFC 6761)
 
-### 2. Production - Single Worker - workers.dev Domain
+**Current Status**: 🚀 **Phase 2 Target Architecture**
+
+### 2. Production - Single Worker - workers.dev Domain ✅ UNIFIED
 **Setup**:
 - Worker deployed to `my-app.my-subdomain.workers.dev`
 - Container accessible via subdomain routing
@@ -73,14 +92,20 @@ This is puzzling because Python's `SimpleHTTPServer` typically generates relativ
 
 **Preview URL Pattern**: `https://{service-port}-{sandbox-id}.my-subdomain.workers.dev/`
 
-**Challenges**:
-- Wildcard DNS must be configured
-- TLS certificates for subdomain pattern
-- Subdomain routing logic
+**Examples**:
+- Python server: `https://8080-demo-user-sandbox.my-app.workers.dev/`
+- React app: `https://3000-demo-user-sandbox.my-app.workers.dev/`
+- API server: `https://9000-demo-user-sandbox.my-app.workers.dev/`
 
-**Current Status**: ✅ Should work (existing subdomain logic)
+**Benefits**:
+- ✅ **Already unified with localhost approach**
+- ✅ Wildcard DNS handled by Cloudflare
+- ✅ Automatic TLS certificates
+- ✅ Perfect container isolation
 
-### 3. Production - Single Worker - Custom Domain
+**Current Status**: ✅ **Production Ready** (existing implementation)
+
+### 3. Production - Single Worker - Custom Domain ✅ UNIFIED
 **Setup**:
 - Worker deployed to custom domain (e.g., `my-app.com`)
 - Custom domain with wildcard DNS
@@ -88,46 +113,247 @@ This is puzzling because Python's `SimpleHTTPServer` typically generates relativ
 
 **Preview URL Pattern**: `https://{service-port}-{sandbox-id}.my-app.com/`
 
-**Challenges**:
-- Wildcard DNS configuration (`*.my-app.com`)
-- Wildcard TLS certificate required
-- Domain ownership verification
+**Examples**:
+- Python server: `https://8080-demo-user-sandbox.my-app.com/`
+- React app: `https://3000-demo-user-sandbox.my-app.com/`
+- API server: `https://9000-demo-user-sandbox.my-app.com/`
 
-**Current Status**: ✅ Should work if DNS/TLS configured
+**Requirements**:
+- 📋 Wildcard DNS configuration (`*.my-app.com → my-app.com`)
+- 🔒 Wildcard TLS certificate (`*.my-app.com`)
+- ✅ Domain ownership verification
 
-### 4. Production - Separate Workers
+**Benefits**:
+- ✅ **Unified with development approach**
+- ✅ Custom branding and domain
+- ✅ Full TLS security
+- ✅ Perfect container isolation
+
+**Current Status**: ✅ **Ready** (requires DNS/TLS setup)
+
+### 4. Production - Separate Workers 🚀 ENHANCED BY UNIFIED APPROACH
 **Setup**:
 - Frontend Worker: `frontend.workers.dev`
 - Sandbox Worker: `sandbox.workers.dev`
 - Cross-worker communication
 
 **Preview URL Options**:
-1. **Cross-origin**: `https://{port}-{sandbox-id}.sandbox.workers.dev/`
-2. **Proxy through frontend**: `https://frontend.workers.dev/sandbox-proxy/{port}/{sandbox-id}/`
+1. **Direct Subdomain** (Recommended): `https://{port}-{sandbox-id}.sandbox.workers.dev/`
+2. **Proxy through Frontend**: `https://frontend.workers.dev/sandbox-proxy/{port}/{sandbox-id}/`
 
-**Challenges**:
-- CORS configuration for cross-origin requests
-- Authentication/authorization across workers
-- Request routing complexity
+**Unified Benefits**:
+- ✅ **Consistent URLs**: Same subdomain pattern as single worker
+- ✅ **Clean Separation**: Frontend handles UI, Sandbox handles containers
+- ✅ **Perfect Isolation**: Each sandbox gets its own subdomain
+- ✅ **CORS Simplicity**: Direct subdomain avoids cross-origin complexity
 
-**Current Status**: ❓ Untested architecture
+**Enhanced Architecture**:
+```
+Frontend:    https://frontend.workers.dev/
+Python App:  https://8080-demo-user-sandbox.sandbox.workers.dev/
+React App:   https://3000-demo-user-sandbox.sandbox.workers.dev/
+API Server:  https://9000-demo-user-sandbox.sandbox.workers.dev/
+```
 
-### 5. Hybrid Architecture - CDN + Workers
+**Current Status**: 🚀 **Enhanced by Unified Architecture**
+
+### 5. Hybrid Architecture - CDN + Workers ✨ SIMPLIFIED BY UNIFIED APPROACH
 **Setup**:
 - Static frontend served from CDN
 - Sandbox functionality via Workers
-- Preview URLs as subdomain or path-based
+- Preview URLs as consistent subdomains
 
-**Preview URL Pattern**:
-- Path-based: `https://api.my-app.com/preview/{port}/{sandbox-id}/`
-- Subdomain: `https://{port}-{sandbox-id}-api.my-app.com/`
+**Preview URL Pattern** (Unified): `https://{port}-{sandbox-id}.api.my-app.com/`
 
-**Challenges**:
-- Complex routing logic
-- CDN cache considerations
-- Authentication token propagation
+**Examples**:
+```
+Frontend CDN:  https://my-app.com/
+Sandbox API:   https://api.my-app.com/
+Python App:    https://8080-demo-user-sandbox.api.my-app.com/
+React App:     https://3000-demo-user-sandbox.api.my-app.com/
+API Server:    https://9000-demo-user-sandbox.api.my-app.com/
+```
 
-**Current Status**: ❓ Future consideration
+**Unified Benefits**:
+- ✅ **Simplified Routing**: No complex path-based logic needed
+- ✅ **CDN Compatibility**: Subdomains bypass CDN cache issues
+- ✅ **Clean Architecture**: Clear separation between static and dynamic content
+- ✅ **Consistent Experience**: Same subdomain pattern everywhere
+
+**Requirements**:
+- 📋 Wildcard DNS for `*.api.my-app.com`
+- 🔒 Wildcard TLS certificate
+- ✅ Worker deployed to `api.my-app.com`
+
+**Current Status**: ✨ **Significantly Simplified** by unified approach
+
+## 🚀 Unified Subdomain Architecture (Phase 2 Solution)
+
+### Overview
+The unified subdomain architecture eliminates the development vs production routing inconsistency by using subdomain-based preview URLs consistently across all environments. This approach leverages RFC 6761 `.localhost` domain resolution for local development.
+
+### Technical Implementation
+
+#### Localhost Subdomain Resolution (RFC 6761)
+Modern browsers automatically resolve `*.localhost` domains to `127.0.0.1` without requiring DNS configuration:
+
+```
+8080-demo-user-sandbox.localhost → 127.0.0.1
+3000-react-app.localhost → 127.0.0.1  
+9000-api-server.localhost → 127.0.0.1
+```
+
+**Browser Support**:
+- ✅ **Chrome**: Full support since version 64 (2018)
+- ✅ **Firefox**: Full support since version 60 (2018)  
+- ✅ **Safari**: Full support since version 14 (2020)
+- ✅ **Edge**: Full support since Chromium transition (2020)
+
+#### URL Construction Logic (Updated)
+
+```typescript
+private constructPreviewUrl(port: number, sandboxId: string, hostname: string): string {
+  const isLocalhost = isLocalhostPattern(hostname);
+  
+  if (isLocalhost) {
+    // NEW: Unified subdomain approach for localhost
+    const [host, portStr] = hostname.split(':');
+    const mainPort = portStr || '80';
+    return `http://${port}-${sandboxId}.${host}:${mainPort}`;
+  }
+  
+  // Production subdomain logic (unchanged)
+  const protocol = hostname.includes(":") ? "http" : "https";
+  return `${protocol}://${port}-${sandboxId}.${hostname}`;
+}
+```
+
+#### Request Routing Logic (Updated)
+
+```typescript
+function extractSandboxRoute(url: URL): RouteInfo | null {
+  // NEW: Subdomain pattern for all environments
+  const subdomainMatch = url.hostname.match(/^(\d+)-([^.]+)\.(.+)$/);
+  if (subdomainMatch) {
+    return {
+      port: parseInt(subdomainMatch[1]),
+      sandboxId: subdomainMatch[2],
+      path: url.pathname || "/",
+    };
+  }
+  
+  // Fallback: Legacy path pattern for backward compatibility
+  if (isLocalhostPattern(url.hostname)) {
+    const pathMatch = url.pathname.match(/^\/preview\/(\d+)\/([^/]+)(\/.*)?$/);
+    if (pathMatch) {
+      return {
+        port: parseInt(pathMatch[1]),
+        sandboxId: pathMatch[2],
+        path: pathMatch[3] || "/",
+      };
+    }
+  }
+  
+  return null;
+}
+```
+
+### Application Compatibility Matrix
+
+#### ✅ Fully Compatible (Zero Configuration)
+- **Python SimpleHTTPServer**: Directory listings work perfectly
+- **Static File Servers**: nginx, Apache, Python, Node.js serve
+- **Basic Web Apps**: All relative URLs resolve correctly
+
+#### ✅ Enhanced Compatibility (Works Out of Box)
+- **React Production Builds**: Assets load from `/static/` without base path
+- **Vue.js Apps**: Router and assets work without configuration
+- **Angular Apps**: Base href remains default `/`
+- **Webpack Dev Server**: HMR and assets work correctly
+
+#### ✅ API Servers (Perfect Compatibility)  
+- **Node.js Express**: Routes work at root level
+- **FastAPI/Flask**: All endpoints accessible at root
+- **Go HTTP Server**: Standard routing works
+- **Ruby Sinatra/Rails**: No base path configuration needed
+
+### Browser Fallback Strategy
+
+```typescript
+async function testSubdomainSupport(): Promise<boolean> {
+  try {
+    // Test if browser resolves *.localhost to 127.0.0.1
+    const testUrl = 'http://test-subdomain.localhost:' + getCurrentPort();
+    const response = await fetch(testUrl, { 
+      method: 'HEAD', 
+      mode: 'no-cors',
+      timeout: 1000 
+    });
+    return true;
+  } catch (error) {
+    console.log('Subdomain not supported, falling back to path-based routing');
+    return false;
+  }
+}
+
+private constructPreviewUrl(port: number, sandboxId: string, hostname: string): string {
+  const isLocalhost = isLocalhostPattern(hostname);
+  
+  if (isLocalhost) {
+    // Check if subdomain support is available
+    if (this.subdomainSupported !== false) {
+      const [host, portStr] = hostname.split(':');
+      const mainPort = portStr || '80';
+      return `http://${port}-${sandboxId}.${host}:${mainPort}`;
+    } else {
+      // Fallback to path-based routing
+      return `http://${hostname}/preview/${port}/${sandboxId}`;
+    }
+  }
+  
+  // Production always uses subdomain
+  const protocol = hostname.includes(":") ? "http" : "https";
+  return `${protocol}://${port}-${sandboxId}.${hostname}`;
+}
+```
+
+### Edge Cases & Considerations
+
+#### Corporate Networks
+- **DNS Filtering**: Some corporate networks might block `.localhost` resolution
+- **Proxy Servers**: Corporate proxies may not support subdomain patterns  
+- **Solution**: Automatic fallback to path-based routing
+
+#### Development Environment Edge Cases
+- **Port Conflicts**: Multiple developers using same sandbox ID
+- **DNS Caching**: Browser DNS cache might need clearing during development
+- **SSL/TLS**: Localhost subdomains use HTTP (production uses HTTPS)
+
+#### Performance Implications
+- **DNS Resolution**: Additional DNS lookup for each subdomain (minimal impact)
+- **Browser Connection Pooling**: Each subdomain gets its own connection pool
+- **Cache Isolation**: Each subdomain has separate HTTP cache (can be beneficial)
+
+### Migration Strategy
+
+#### Phase 1: Feature Flag Implementation
+```typescript
+interface SandboxConfig {
+  useSubdomainRouting?: boolean; // Default: auto-detect
+  fallbackToPathRouting?: boolean; // Default: true
+}
+```
+
+#### Phase 2: Gradual Rollout
+1. **Internal Testing**: Enable for development team
+2. **Beta Users**: Opt-in for early adopters
+3. **Full Rollout**: Enable by default with fallback
+4. **Legacy Support**: Maintain path-based routing for compatibility
+
+#### Phase 3: Cleanup
+- Remove path-based routing logic (after sufficient adoption)
+- Simplify URL construction and routing code
+- Update documentation to reflect subdomain-only approach
 
 ## Technical Deep Dive
 
@@ -386,62 +612,112 @@ python3 -m http.server 8080 --base-path /preview/8080/demo-user-sandbox/
 **Risk**: Low - API changes are explicit and fail fast with clear error messages
 **Impact**: ✅ Fixed wrong port issue for all architectures with cleaner, more maintainable code
 
-### Phase 2: Investigate Relative Path Root Cause (Next)
-**Scope**: Deep dive into Issue 2 to understand actual cause
+### Phase 2: Unified Subdomain Architecture Implementation 🚀 (Current)
+**Scope**: Implement unified subdomain routing to solve all container base path issues
 
-**Research Areas**:
-1. Test with different HTTP servers (Python, Node.js, nginx)
-2. Analyze actual HTML content being served
-3. Check if proxy headers are affecting server behavior
-4. Test with various content types and configurations
+**Implementation Steps**:
+1. **Browser Compatibility Testing**: Validate `.localhost` subdomain resolution across browsers
+2. **URL Construction Update**: Modify `constructPreviewUrl()` to use unified subdomain logic
+3. **Request Routing Enhancement**: Update `extractSandboxRoute()` to handle subdomain parsing
+4. **Fallback Implementation**: Add graceful degradation to path-based routing for unsupported browsers
+5. **Comprehensive Testing**: Validate across Python, React, Node.js, and static file servers
 
-**Deliverable**: Root cause analysis document with reproduction steps
+**Technical Deliverables**:
+- Updated `constructPreviewUrl()` function with unified subdomain logic
+- Enhanced `extractSandboxRoute()` with subdomain pattern matching
+- Browser compatibility detection and fallback mechanism
+- Comprehensive test suite for all application types
 
-### Phase 3: Implement Robust Solution (Future)
-**Scope**: Address Issue 2 based on root cause findings
+**Expected Impact**: 
+- ✅ Resolves all relative path issues (Python, React, SPA routing)
+- ✅ Unified development/production experience  
+- ✅ Zero configuration required for any app type
+- ✅ Perfect container isolation and context
 
-**Likely Approach**: Smart Base Tag Injection (Option 4)
-- Least intrusive for users
-- Standard HTML mechanism
-- Can be made opt-in/opt-out
-- Works across architectures
+### Phase 3: Advanced Features & Optimization (Future)
+**Scope**: Enhance unified architecture with advanced capabilities
 
-### Phase 4: Architecture Enhancement (Long-term)
-**Scope**: Support advanced deployment patterns
+**Feature Areas**:
+- **Performance Optimization**: DNS caching, connection pooling strategies
+- **Enterprise Features**: Custom domain automation, wildcard certificate management  
+- **Developer Experience**: Enhanced debugging, subdomain testing tools
+- **Edge Cases**: Corporate network compatibility, advanced fallback scenarios
 
-**Features**:
-- Cross-worker preview URL generation
-- Custom domain configuration
-- Advanced routing options
-- Performance optimizations
+**Advanced Capabilities**:
+- Automatic wildcard DNS configuration for custom domains
+- Performance monitoring and optimization for subdomain resolution
+- Advanced developer tooling and debugging support
+- Enterprise-grade security and compliance features
 
-## Implementation Priorities
+### Phase 4: Ecosystem Integration (Long-term)
+**Scope**: Deep integration with broader development ecosystem
+
+**Integration Areas**:
+- **IDE Integration**: VS Code extensions, debugging tools
+- **CI/CD Pipeline**: Automated testing of preview URLs across environments
+- **Monitoring & Analytics**: Usage patterns, performance metrics
+- **Third-party Tools**: Integration with popular development frameworks
+
+**Advanced Features**:
+- Automatic subdomain health monitoring
+- Performance analytics and optimization recommendations
+- Advanced security scanning and compliance reporting
+- Ecosystem-wide standardization of preview URL patterns
+
+## Implementation Priorities (Updated)
 
 1. ✅ **🔥 Critical**: Fix hostname capture (Issue 1) - **COMPLETED**
-2. **📋 High**: Root cause analysis for relative paths (Issue 2)
-3. **🛠️ Medium**: Implement base tag injection solution
-4. **📈 Low**: Advanced architecture support
-5. **🔍 Research**: Alternative deployment patterns
+2. 🚀 **🔥 Critical**: Implement unified subdomain architecture (Issue 2) - **IN PROGRESS**
+3. **📋 High**: Browser compatibility testing and fallback implementation  
+4. **🛠️ Medium**: Advanced features and enterprise capabilities
+5. **📈 Low**: Ecosystem integration and third-party tooling
+6. **🔍 Research**: Performance optimization and edge case handling
 
-## Testing Strategy
+## Testing Strategy (Updated for Unified Architecture)
 
-### Local Development Testing
+### Phase 2 Testing: Unified Subdomain Implementation
+
+#### Browser Compatibility Testing
+- [ ] **Chrome**: Test `.localhost` subdomain resolution and performance
+- [ ] **Firefox**: Validate RFC 6761 compliance and DNS caching behavior  
+- [ ] **Safari**: Test subdomain resolution and potential macOS restrictions
+- [ ] **Edge**: Verify Chromium-based subdomain support
+- [ ] **Mobile Browsers**: iOS Safari, Chrome Mobile subdomain support
+
+#### Application Type Testing
+- [ ] **Python SimpleHTTPServer**: Directory listings, relative links, file serving
+- [ ] **React Development Server**: HMR, asset loading, routing without basename
+- [ ] **React Production Build**: Static assets, SPA routing, build output
+- [ ] **Node.js Express**: API routing, middleware compatibility
+- [ ] **Static File Servers**: nginx, Apache, Python serve, Node serve
+- [ ] **Vue.js/Angular Apps**: Framework-specific routing and asset loading
+
+#### Local Development Testing  
 - [x] Test with various `wrangler dev` ports - ✅ **Working**
-- [x] Verify preview URLs generate correctly - ✅ **Working**
-- [ ] Test relative link resolution
-- [ ] Check with different HTTP servers
+- [x] Verify legacy path-based preview URLs - ✅ **Working** 
+- [ ] **🚀 NEW**: Test subdomain URLs (`8080-sandbox.localhost:63654`)
+- [ ] **🚀 NEW**: Validate automatic fallback to path-based routing
+- [ ] **🚀 NEW**: Browser DNS resolution performance testing
+- [ ] **🚀 NEW**: Multiple concurrent subdomain handling
 
-### Production Testing
-- [ ] Test on workers.dev subdomain
-- [ ] Test with custom domain
-- [ ] Verify TLS certificate handling
-- [ ] Check subdomain routing
+#### Production Validation
+- [ ] **workers.dev**: Verify existing subdomain logic remains unchanged
+- [ ] **Custom Domains**: Test wildcard DNS and TLS certificate requirements  
+- [ ] **Separate Workers**: Cross-worker subdomain routing validation
+- [ ] **CDN Integration**: Subdomain bypass of CDN cache validation
 
-### Cross-Architecture Testing
-- [ ] Single worker deployment
-- [ ] Separate worker deployment
-- [ ] CDN + worker hybrid
-- [ ] Custom domain configurations
+#### Edge Case Testing
+- [ ] **Corporate Networks**: DNS filtering, proxy server compatibility
+- [ ] **Port Conflicts**: Multiple sandboxes with same ID on different ports
+- [ ] **DNS Caching**: Browser cache clearing, TTL handling
+- [ ] **Network Failures**: Graceful degradation when subdomain resolution fails
+- [ ] **Performance**: Subdomain DNS resolution latency vs path-based routing
+
+### Legacy Compatibility Testing
+- [ ] **Backward Compatibility**: Existing path-based URLs continue working
+- [ ] **Gradual Migration**: Feature flag implementation and rollout
+- [ ] **Error Handling**: Clear error messages for unsupported browsers
+- [ ] **Fallback Performance**: Path-based fallback maintains functionality
 
 ## Security Considerations
 

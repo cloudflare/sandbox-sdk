@@ -630,18 +630,16 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
 
   private constructPreviewUrl(port: number, sandboxId: string, hostname: string): string {
-    // Check if this is a localhost pattern
     const isLocalhost = isLocalhostPattern(hostname);
 
     if (isLocalhost) {
-      // For local development, we need to use a different approach
-      // Since subdomains don't work with localhost, we'll use the base URL
-      // with a note that the user needs to handle routing differently
-      return `http://${hostname}/preview/${port}/${sandboxId}`;
+      // Unified subdomain approach for localhost (RFC 6761)
+      const [host, portStr] = hostname.split(':');
+      const mainPort = portStr || '80';
+      return `http://${port}-${sandboxId}.${host}:${mainPort}`;
     }
 
-    // For all other domains (workers.dev, custom domains, etc.)
-    // Use subdomain-based routing pattern
+    // Production subdomain logic
     const protocol = hostname.includes(":") ? "http" : "https";
     return `${protocol}://${port}-${sandboxId}.${hostname}`;
   }
