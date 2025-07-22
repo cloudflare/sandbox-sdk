@@ -7,7 +7,6 @@ import "./style.css";
 interface CommandResult {
   id: string;
   command: string;
-  args: string[];
   status: "running" | "completed" | "error";
   stdout: string;
   stderr: string;
@@ -21,7 +20,6 @@ interface ProcessInfo {
   id: string;
   pid?: number;
   command: string;
-  args: string[];
   status: 'starting' | 'running' | 'completed' | 'failed' | 'killed' | 'error';
   startTime: string;
   endTime?: string;
@@ -46,7 +44,6 @@ function ProcessManagementTab({
   const [processes, setProcesses] = useState<ProcessInfo[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [processCommand, setProcessCommand] = useState("");
-  const [processArgs, setProcessArgs] = useState("");
   const [processOptions, setProcessOptions] = useState({
     env: "",
     cwd: "",
@@ -87,7 +84,6 @@ function ProcessManagementTab({
 
     try {
       setIsStartingProcess(true);
-      const args = processArgs.trim() ? processArgs.trim().split(/\s+/) : [];
 
       const options: any = {};
       if (processOptions.processId.trim()) options.processId = processOptions.processId.trim();
@@ -105,12 +101,11 @@ function ProcessManagementTab({
         options.env = env;
       }
 
-      const response = await client.startProcess(processCommand.trim(), args, options);
+      const response = await client.startProcess(processCommand.trim(), options);
       console.log("Process started:", response);
 
       // Clear form
       setProcessCommand("");
-      setProcessArgs("");
       setProcessOptions({ env: "", cwd: "", timeout: "", processId: "" });
 
       // Refresh processes list
@@ -232,16 +227,9 @@ function ProcessManagementTab({
           <div className="form-row">
             <input
               type="text"
-              placeholder="Command (e.g., node, python, bun)"
+              placeholder="Command (e.g., node server.js --port 8080)"
               value={processCommand}
               onChange={(e) => setProcessCommand(e.target.value)}
-              className="process-input"
-            />
-            <input
-              type="text"
-              placeholder="Arguments (e.g., server.js --port 8080)"
-              value={processArgs}
-              onChange={(e) => setProcessArgs(e.target.value)}
               className="process-input"
             />
           </div>
@@ -295,8 +283,7 @@ function ProcessManagementTab({
           <div className="template-buttons">
             <button
               onClick={() => {
-                setProcessCommand("bun");
-                setProcessArgs("run server.js");
+                setProcessCommand("bun run server.js");
                 setProcessOptions(prev => ({...prev, processId: "bun-server"}));
               }}
               className="btn btn-template"
@@ -305,8 +292,7 @@ function ProcessManagementTab({
             </button>
             <button
               onClick={() => {
-                setProcessCommand("node");
-                setProcessArgs("-e \"setInterval(() => console.log('Heartbeat:', new Date().toISOString()), 2000)\"");
+                setProcessCommand("node -e \"setInterval(() => console.log('Heartbeat:', new Date().toISOString()), 2000)\"");
                 setProcessOptions(prev => ({...prev, processId: "heartbeat"}));
               }}
               className="btn btn-template"
@@ -315,8 +301,7 @@ function ProcessManagementTab({
             </button>
             <button
               onClick={() => {
-                setProcessCommand("tail");
-                setProcessArgs("-f /var/log/messages");
+                setProcessCommand("tail -f /var/log/messages");
                 setProcessOptions(prev => ({...prev, processId: "log-watcher"}));
               }}
               className="btn btn-template"
@@ -352,7 +337,7 @@ function ProcessManagementTab({
                 </div>
                 <div className="process-id">{process.id}</div>
                 <div className="process-command">
-                  {process.command} {process.args.join(' ')}
+                  {process.command}
                 </div>
                 <div className="process-pid">{process.pid || 'N/A'}</div>
                 <div className="process-started">
@@ -540,7 +525,7 @@ console.log("Bun server running on port 8080");
       await client.writeFile("server.js", serverCode);
 
       // Start the server as a background process
-      await client.startProcess("bun", ["run", "server.js"], {
+      await client.startProcess("bun run server.js", {
         processId: "bun-server",
         sessionId
       });
@@ -608,7 +593,7 @@ server.listen(3001, () => {
       await client.writeFile("node-server.js", serverCode);
 
       // Start the server as a background process
-      await client.startProcess("node", ["node-server.js"], {
+      await client.startProcess("node node-server.js", {
         processId: "node-server",
         sessionId
       });
@@ -681,7 +666,7 @@ with socketserver.TCPServer(("", PORT), MyHandler) as httpd:
       await client.writeFile("python-server.py", serverCode);
 
       // Start the server as a background process
-      await client.startProcess("python3", ["python-server.py"], {
+      await client.startProcess("python3 python-server.py", {
         processId: "python-server",
         sessionId
       });
@@ -860,7 +845,6 @@ interface StreamEvent {
   timestamp: string;
   data?: string;
   command?: string;
-  args?: string[];
   exitCode?: number;
   error?: Error;
 }
@@ -926,9 +910,6 @@ function StreamingTab({
 
     const streamId = `cmd_${Date.now()}`;
     const command = commandInput.trim();
-    const parts = command.split(' ');
-    const cmd = parts[0];
-    const args = parts.slice(1);
 
     setIsStreaming(true);
     setCommandInput("");
@@ -948,7 +929,7 @@ function StreamingTab({
 
     try {
       // Use the new execStream AsyncIterable method
-      const streamIterable = client.execStream(cmd, args, {
+      const streamIterable = client.execStream(command, {
         sessionId: sessionId || undefined,
         signal: new AbortController().signal
       });
@@ -960,7 +941,6 @@ function StreamingTab({
           timestamp: event.timestamp,
           data: event.data,
           command: event.command,
-          args: event.args,
           exitCode: event.exitCode,
           error: event.error
         };
@@ -1341,7 +1321,6 @@ function SandboxTester() {
         stdout: string,
         stderr: string,
         command: string,
-        args: string[]
       ) => {
         setResults((prev) => {
           const updated = [...prev];
@@ -1356,10 +1335,9 @@ function SandboxTester() {
         });
         setIsExecuting(false);
       },
-      onCommandStart: (command: string, args: string[]) => {
-        console.log("Command started:", command, args);
+      onCommandStart: (command: string) => {
+        console.log("Command started:", command);
         const newResult: CommandResult = {
-          args,
           command,
           id: Date.now().toString(),
           status: "running",
@@ -1444,17 +1422,13 @@ function SandboxTester() {
     }
 
     const trimmedCommand = commandInput.trim();
-    const parts = trimmedCommand.split(" ");
-    const command = parts[0];
-    const args = parts.slice(1);
 
     try {
       setIsExecuting(true);
 
       // Create a result entry for the command
       const newResult: CommandResult = {
-        args,
-        command,
+        command: trimmedCommand,
         id: Date.now().toString(),
         status: "running",
         stderr: "",
@@ -1464,10 +1438,9 @@ function SandboxTester() {
       setResults((prev) => [...prev, newResult]);
 
       // Execute the command
-      console.log("Executing command:", command, args);
+      console.log("Executing command:", trimmedCommand);
       const result = await client.execute(
-        command,
-        args,
+        trimmedCommand,
         sessionId || undefined
       );
       console.log("Result:", result);
@@ -1476,7 +1449,7 @@ function SandboxTester() {
       setResults((prev) => {
         const updated = [...prev];
         const lastResult = updated[updated.length - 1];
-        if (lastResult && lastResult.command === command) {
+        if (lastResult && lastResult.command === trimmedCommand) {
           lastResult.status = result.success ? "completed" : "error";
           lastResult.exitCode = result.exitCode;
           lastResult.stdout = result.stdout;
@@ -1491,7 +1464,7 @@ function SandboxTester() {
       setResults((prev) => {
         const updated = [...prev];
         const lastResult = updated[updated.length - 1];
-        if (lastResult && lastResult.command === command) {
+        if (lastResult && lastResult.command === trimmedCommand) {
           lastResult.status = "error";
           lastResult.stderr += `\nError: ${error.message || error}`;
         }
@@ -1508,17 +1481,13 @@ function SandboxTester() {
     }
 
     const trimmedCommand = commandInput.trim();
-    const parts = trimmedCommand.split(" ");
-    const command = parts[0];
-    const args = parts.slice(1);
 
     try {
       setIsExecuting(true);
 
       // Create a result entry for the command
       const newResult: CommandResult = {
-        args,
-        command,
+        command: trimmedCommand,
         id: Date.now().toString(),
         status: "running",
         stderr: "",
@@ -1528,8 +1497,8 @@ function SandboxTester() {
       setResults((prev) => [...prev, newResult]);
 
       // Execute the command with streaming
-      console.log("Executing streaming command:", command, args);
-      await client.executeStream(command, args, sessionId || undefined);
+      console.log("Executing streaming command:", trimmedCommand);
+      await client.executeStream(trimmedCommand, sessionId || undefined);
       console.log("Streaming command completed");
 
       setCommandInput("");
@@ -1538,7 +1507,7 @@ function SandboxTester() {
       setResults((prev) => {
         const updated = [...prev];
         const lastResult = updated[updated.length - 1];
-        if (lastResult && lastResult.command === command) {
+        if (lastResult && lastResult.command === trimmedCommand) {
           lastResult.status = "error";
           lastResult.stderr += `\nError: ${error.message || error}`;
         }
@@ -1684,7 +1653,7 @@ function SandboxTester() {
                   <div className="command-line">
                     ${" "}
                     <span>
-                      {result.command} {result.args.join(" ")}
+                      {result.command}
                     </span>
                   </div>
                   {result.status !== "running" &&

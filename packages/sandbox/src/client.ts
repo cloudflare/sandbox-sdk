@@ -9,7 +9,6 @@ import type {
 
 interface ExecuteRequest {
   command: string;
-  args?: string[];
   sessionId?: string;
   background?: boolean;
 }
@@ -20,7 +19,6 @@ export interface ExecuteResponse {
   stderr: string;
   exitCode: number;
   command: string;
-  args: string[];
   timestamp: string;
 }
 
@@ -186,7 +184,6 @@ interface PingResponse {
 interface StreamEvent {
   type: "command_start" | "output" | "command_complete" | "error";
   command?: string;
-  args?: string[];
   stream?: "stdout" | "stderr";
   data?: string;
   message?: string;
@@ -208,7 +205,7 @@ interface HttpClientOptions {
   stub?: Sandbox;
   baseUrl?: string;
   port?: number;
-  onCommandStart?: (command: string, args: string[]) => void;
+  onCommandStart?: (command: string) => void;
   onOutput?: (
     stream: "stdout" | "stderr",
     data: string,
@@ -219,10 +216,9 @@ interface HttpClientOptions {
     exitCode: number,
     stdout: string,
     stderr: string,
-    command: string,
-    args: string[]
+    command: string
   ) => void;
-  onError?: (error: string, command?: string, args?: string[]) => void;
+  onError?: (error: string, command?: string) => void;
   onStreamEvent?: (event: StreamEvent) => void;
 }
 
@@ -296,7 +292,6 @@ export class HttpClient {
       stdout: string,
       stderr: string,
       command: string,
-      args: string[]
     ) => void
   ): void {
     this.options.onCommandComplete = handler;
@@ -319,8 +314,7 @@ export class HttpClient {
       exitCode: number,
       stdout: string,
       stderr: string,
-      command: string,
-      args: string[]
+      command: string
     ) => void)
     | undefined {
     return this.options.onCommandComplete;
@@ -377,7 +371,6 @@ export class HttpClient {
 
   async execute(
     command: string,
-    args: string[] = [],
     sessionId?: string,
     background: boolean = false,
   ): Promise<ExecuteResponse> {
@@ -386,7 +379,6 @@ export class HttpClient {
 
       const response = await this.doFetch(`/api/execute`, {
         body: JSON.stringify({
-          args,
           command,
           background,
           sessionId: targetSessionId,
@@ -417,8 +409,7 @@ export class HttpClient {
         data.exitCode,
         data.stdout,
         data.stderr,
-        data.command,
-        data.args
+        data.command
       );
 
       return data;
@@ -426,8 +417,7 @@ export class HttpClient {
       console.error("[HTTP Client] Error executing command:", error);
       this.options.onError?.(
         error instanceof Error ? error.message : "Unknown error",
-        command,
-        args
+        command
       );
       throw error;
     }
@@ -435,7 +425,6 @@ export class HttpClient {
 
   async executeStream(
     command: string,
-    args: string[] = [],
     sessionId?: string,
     background: boolean = false
   ): Promise<void> {
@@ -444,7 +433,6 @@ export class HttpClient {
 
       const response = await this.doFetch(`/api/execute/stream`, {
         body: JSON.stringify({
-          args,
           command,
           background,
           sessionId: targetSessionId,
@@ -494,12 +482,10 @@ export class HttpClient {
                 switch (event.type) {
                   case "command_start":
                     console.log(
-                      `[HTTP Client] Command started: ${event.command
-                      } ${event.args?.join(" ")}`
+                      `[HTTP Client] Command started: ${event.command}`
                     );
                     this.options.onCommandStart?.(
-                      event.command!,
-                      event.args || []
+                      event.command!
                     );
                     break;
 
@@ -521,8 +507,7 @@ export class HttpClient {
                       event.exitCode!,
                       event.stdout!,
                       event.stderr!,
-                      event.command!,
-                      event.args || []
+                      event.command!
                     );
                     break;
 
@@ -532,8 +517,7 @@ export class HttpClient {
                     );
                     this.options.onError?.(
                       event.error!,
-                      event.command,
-                      event.args
+                      event.command!
                     );
                     break;
                 }
@@ -553,8 +537,7 @@ export class HttpClient {
       console.error("[HTTP Client] Error in streaming execution:", error);
       this.options.onError?.(
         error instanceof Error ? error.message : "Unknown error",
-        command,
-        args
+        command
       );
       throw error;
     }
@@ -666,12 +649,10 @@ export class HttpClient {
                 switch (event.type) {
                   case "command_start":
                     console.log(
-                      `[HTTP Client] Git checkout started: ${event.command
-                      } ${event.args?.join(" ")}`
+                      `[HTTP Client] Git checkout started: ${event.command}`
                     );
                     this.options.onCommandStart?.(
-                      event.command!,
-                      event.args || []
+                      event.command!
                     );
                     break;
 
@@ -693,8 +674,7 @@ export class HttpClient {
                       event.exitCode!,
                       event.stdout!,
                       event.stderr!,
-                      event.command!,
-                      event.args || []
+                      event.command!
                     );
                     break;
 
@@ -704,8 +684,7 @@ export class HttpClient {
                     );
                     this.options.onError?.(
                       event.error!,
-                      event.command,
-                      event.args
+                      event.command!
                     );
                     break;
                 }
@@ -725,8 +704,7 @@ export class HttpClient {
       console.error("[HTTP Client] Error in streaming git checkout:", error);
       this.options.onError?.(
         error instanceof Error ? error.message : "Unknown error",
-        "git clone",
-        [branch, repoUrl, targetDir || ""]
+        `git clone ${branch} ${repoUrl} ${targetDir || ""}`
       );
       throw error;
     }
@@ -832,12 +810,10 @@ export class HttpClient {
                 switch (event.type) {
                   case "command_start":
                     console.log(
-                      `[HTTP Client] Mkdir started: ${event.command
-                      } ${event.args?.join(" ")}`
+                      `[HTTP Client] Mkdir started: ${event.command}`
                     );
                     this.options.onCommandStart?.(
-                      event.command!,
-                      event.args || []
+                      event.command!
                     );
                     break;
 
@@ -859,8 +835,7 @@ export class HttpClient {
                       event.exitCode!,
                       event.stdout!,
                       event.stderr!,
-                      event.command!,
-                      event.args || []
+                      event.command!
                     );
                     break;
 
@@ -868,8 +843,7 @@ export class HttpClient {
                     console.error(`[HTTP Client] Mkdir error: ${event.error}`);
                     this.options.onError?.(
                       event.error!,
-                      event.command,
-                      event.args
+                      event.command!
                     );
                     break;
                 }
@@ -889,8 +863,7 @@ export class HttpClient {
       console.error("[HTTP Client] Error in streaming mkdir:", error);
       this.options.onError?.(
         error instanceof Error ? error.message : "Unknown error",
-        "mkdir",
-        recursive ? ["-p", path] : [path]
+        `mkdir ${recursive ? "-p" : ""} ${path}`
       );
       throw error;
     }
@@ -1004,11 +977,7 @@ export class HttpClient {
                     console.log(
                       `[HTTP Client] Write file started: ${event.path}`
                     );
-                    this.options.onCommandStart?.("write", [
-                      path,
-                      content,
-                      encoding,
-                    ]);
+                    this.options.onCommandStart?.(`write ${path} ${content} ${encoding}`);
                     break;
 
                   case "output":
@@ -1025,8 +994,7 @@ export class HttpClient {
                       0,
                       "",
                       "",
-                      "write",
-                      [path, content, encoding]
+                      `write ${path} ${content} ${encoding}`
                     );
                     break;
 
@@ -1034,11 +1002,7 @@ export class HttpClient {
                     console.error(
                       `[HTTP Client] Write file error: ${event.error}`
                     );
-                    this.options.onError?.(event.error!, "write", [
-                      path,
-                      content,
-                      encoding,
-                    ]);
+                    this.options.onError?.(event.error!, `write ${path} ${content} ${encoding}`);
                     break;
                 }
               } catch (parseError) {
@@ -1057,8 +1021,7 @@ export class HttpClient {
       console.error("[HTTP Client] Error in streaming write file:", error);
       this.options.onError?.(
         error instanceof Error ? error.message : "Unknown error",
-        "write",
-        [path, content, encoding]
+        `write ${path} ${content} ${encoding}`
       );
       throw error;
     }
@@ -1168,7 +1131,7 @@ export class HttpClient {
                     console.log(
                       `[HTTP Client] Read file started: ${event.path}`
                     );
-                    this.options.onCommandStart?.("read", [path, encoding]);
+                    this.options.onCommandStart?.(`read ${path} ${encoding}`);
                     break;
 
                   case "command_complete":
@@ -1182,8 +1145,7 @@ export class HttpClient {
                       0,
                       event.content || "",
                       "",
-                      "read",
-                      [path, encoding]
+                      `read ${path} ${encoding}`
                     );
                     break;
 
@@ -1191,10 +1153,7 @@ export class HttpClient {
                     console.error(
                       `[HTTP Client] Read file error: ${event.error}`
                     );
-                    this.options.onError?.(event.error!, "read", [
-                      path,
-                      encoding,
-                    ]);
+                    this.options.onError?.(event.error!, `read ${path} ${encoding}`);
                     break;
                 }
               } catch (parseError) {
@@ -1213,8 +1172,7 @@ export class HttpClient {
       console.error("[HTTP Client] Error in streaming read file:", error);
       this.options.onError?.(
         error instanceof Error ? error.message : "Unknown error",
-        "read",
-        [path, encoding]
+        `read ${path} ${encoding}`
       );
       throw error;
     }
@@ -1317,7 +1275,7 @@ export class HttpClient {
                     console.log(
                       `[HTTP Client] Delete file started: ${event.path}`
                     );
-                    this.options.onCommandStart?.("delete", [path]);
+                    this.options.onCommandStart?.(`delete ${path}`);
                     break;
 
                   case "command_complete":
@@ -1329,8 +1287,7 @@ export class HttpClient {
                       0,
                       "",
                       "",
-                      "delete",
-                      [path]
+                      `delete ${path}`
                     );
                     break;
 
@@ -1338,7 +1295,7 @@ export class HttpClient {
                     console.error(
                       `[HTTP Client] Delete file error: ${event.error}`
                     );
-                    this.options.onError?.(event.error!, "delete", [path]);
+                    this.options.onError?.(event.error!, `delete ${path}`);
                     break;
                 }
               } catch (parseError) {
@@ -1357,8 +1314,7 @@ export class HttpClient {
       console.error("[HTTP Client] Error in streaming delete file:", error);
       this.options.onError?.(
         error instanceof Error ? error.message : "Unknown error",
-        "delete",
-        [path]
+        `delete ${path}`
       );
       throw error;
     }
@@ -1468,7 +1424,7 @@ export class HttpClient {
                     console.log(
                       `[HTTP Client] Rename file started: ${event.oldPath} -> ${event.newPath}`
                     );
-                    this.options.onCommandStart?.("rename", [oldPath, newPath]);
+                    this.options.onCommandStart?.(`rename ${oldPath} ${newPath}`);
                     break;
 
                   case "command_complete":
@@ -1480,8 +1436,7 @@ export class HttpClient {
                       0,
                       "",
                       "",
-                      "rename",
-                      [oldPath, newPath]
+                      `rename ${oldPath} ${newPath}`
                     );
                     break;
 
@@ -1489,10 +1444,7 @@ export class HttpClient {
                     console.error(
                       `[HTTP Client] Rename file error: ${event.error}`
                     );
-                    this.options.onError?.(event.error!, "rename", [
-                      oldPath,
-                      newPath,
-                    ]);
+                    this.options.onError?.(event.error!, `rename ${oldPath} ${newPath}`);
                     break;
                 }
               } catch (parseError) {
@@ -1511,8 +1463,7 @@ export class HttpClient {
       console.error("[HTTP Client] Error in streaming rename file:", error);
       this.options.onError?.(
         error instanceof Error ? error.message : "Unknown error",
-        "rename",
-        [oldPath, newPath]
+        `rename ${oldPath} ${newPath}`
       );
       throw error;
     }
@@ -1622,10 +1573,7 @@ export class HttpClient {
                     console.log(
                       `[HTTP Client] Move file started: ${event.sourcePath} -> ${event.destinationPath}`
                     );
-                    this.options.onCommandStart?.("move", [
-                      sourcePath,
-                      destinationPath,
-                    ]);
+                    this.options.onCommandStart?.(`move ${sourcePath} ${destinationPath}`);
                     break;
 
                   case "command_complete":
@@ -1637,8 +1585,7 @@ export class HttpClient {
                       0,
                       "",
                       "",
-                      "move",
-                      [sourcePath, destinationPath]
+                      `move ${sourcePath} ${destinationPath}`
                     );
                     break;
 
@@ -1646,10 +1593,7 @@ export class HttpClient {
                     console.error(
                       `[HTTP Client] Move file error: ${event.error}`
                     );
-                    this.options.onError?.(event.error!, "move", [
-                      sourcePath,
-                      destinationPath,
-                    ]);
+                    this.options.onError?.(event.error!, `move ${sourcePath} ${destinationPath}`);
                     break;
                 }
               } catch (parseError) {
@@ -1668,8 +1612,7 @@ export class HttpClient {
       console.error("[HTTP Client] Error in streaming move file:", error);
       this.options.onError?.(
         error instanceof Error ? error.message : "Unknown error",
-        "move",
-        [sourcePath, destinationPath]
+        `move ${sourcePath} ${destinationPath}`
       );
       throw error;
     }
@@ -1834,7 +1777,6 @@ export class HttpClient {
   // Process management methods
   async startProcess(
     command: string,
-    args: string[] = [],
     options?: {
       processId?: string;
       sessionId?: string;
@@ -1851,7 +1793,6 @@ export class HttpClient {
       const response = await this.doFetch("/api/process/start", {
         body: JSON.stringify({
           command,
-          args,
           options: {
             ...options,
             sessionId: targetSessionId,
@@ -2077,14 +2018,13 @@ export function createClient(options?: HttpClientOptions): HttpClient {
 // Convenience function for quick command execution
 export async function quickExecute(
   command: string,
-  args: string[] = [],
   options?: HttpClientOptions
 ): Promise<ExecuteResponse> {
   const client = createClient(options);
   await client.createSession();
 
   try {
-    return await client.execute(command, args);
+    return await client.execute(command);
   } finally {
     client.clearSession();
   }
@@ -2093,14 +2033,13 @@ export async function quickExecute(
 // Convenience function for quick streaming command execution
 export async function quickExecuteStream(
   command: string,
-  args: string[] = [],
   options?: HttpClientOptions
 ): Promise<void> {
   const client = createClient(options);
   await client.createSession();
 
   try {
-    await client.executeStream(command, args);
+    await client.executeStream(command);
   } finally {
     client.clearSession();
   }

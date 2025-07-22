@@ -10,15 +10,15 @@ async function testHttpClient() {
   // Create a client instance
   const client = new HttpClient({
     baseUrl: "http://localhost:3000",
-    onCommandComplete: (success, exitCode, stdout, stderr, command, args) => {
+    onCommandComplete: (success, exitCode, stdout, stderr, command) => {
       console.log(
         `✅ Command completed: ${command}, Success: ${success}, Exit code: ${exitCode}`
       );
     },
-    onCommandStart: (command, args) => {
-      console.log(`📝 Command started: ${command} ${args.join(" ")}`);
+    onCommandStart: (command) => {
+      console.log(`📝 Command started: ${command}`);
     },
-    onError: (error, command, args) => {
+    onError: (error, command) => {
       console.error(`❌ Command error: ${error}`);
     },
     onOutput: (stream, data, command) => {
@@ -49,7 +49,7 @@ async function testHttpClient() {
 
     // Test regular command execution
     console.log("5. Testing regular command execution...");
-    const result = await client.execute("echo", ["Hello from HTTP client!"]);
+    const result = await client.execute("echo \"Hello from HTTP client!\"");
     console.log(`   Command result: ${result.stdout.trim()}\n`);
 
     // Test another command
@@ -59,7 +59,7 @@ async function testHttpClient() {
 
     // Test streaming command execution
     console.log("7. Testing streaming command execution...");
-    await client.executeStream("ls", ["-la"]);
+    await client.executeStream("ls -la");
     console.log("   Streaming command completed\n");
 
     // Test quick execute utility

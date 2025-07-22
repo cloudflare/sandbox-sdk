@@ -14,16 +14,16 @@ async function basicExample() {
 
   const client = createClient({
     baseUrl: "http://localhost:3000",
-    onCommandComplete: (success, exitCode, stdout, stderr, command, args) => {
+    onCommandComplete: (success, exitCode, stdout, stderr, command) => {
       console.log(
         `Command completed: ${command}, success=${success}, exitCode=${exitCode}`
       );
       if (stderr) console.log(`Stderr: ${stderr}`);
     },
-    onCommandStart: (command, args) => {
-      console.log(`Starting command: ${command} ${args.join(" ")}`);
+    onCommandStart: (command) => {
+      console.log(`Starting command: ${command}`);
     },
-    onError: (error, command, args) => {
+    onError: (error, command) => {
       console.error(`Error in ${command}: ${error}`);
     },
     onOutput: (stream, data, command) => {
@@ -62,16 +62,19 @@ async function streamingExample() {
 
   const client = createClient({
     baseUrl: "http://localhost:3000",
-    onCommandComplete: (success, exitCode, stdout, stderr, command, args) => {
+    onCommandComplete: (success, exitCode, stdout, stderr, command) => {
       console.log(
         `\n✅ Completed: ${command}, success=${success}, exitCode=${exitCode}`
       );
     },
-    onCommandStart: (command, args) => {
-      console.log(`🚀 Starting: ${command} ${args.join(" ")}`);
+    onCommandStart: (command) => {
+      console.log(`🚀 Starting: ${command}`);
     },
     onOutput: (stream, data, command) => {
       process.stdout.write(data);
+    },
+    onError: (error, command) => {
+      console.error(`❌ Error in ${command}: ${error}`);
     },
   });
 
@@ -97,11 +100,11 @@ async function gitExample() {
 
   const client = createClient({
     baseUrl: "http://localhost:3000",
-    onCommandComplete: (success, exitCode, stdout, stderr, command, args) => {
+    onCommandComplete: (success, exitCode, stdout, stderr, command) => {
       console.log(`✅ Git operation completed: ${command}, success=${success}`);
     },
-    onCommandStart: (command, args) => {
-      console.log(`🔧 Starting: ${command} ${args.join(" ")}`);
+    onCommandStart: (command) => {
+      console.log(`🔧 Starting: ${command}`);
     },
     onOutput: (stream, data, command) => {
       console.log(`[${stream}] ${data.trim()}`);
@@ -147,13 +150,13 @@ async function streamingGitExample() {
 
   const client = createClient({
     baseUrl: "http://localhost:3000",
-    onCommandComplete: (success, exitCode, stdout, stderr, command, args) => {
+    onCommandComplete: (success, exitCode, stdout, stderr, command) => {
       console.log(
         `\n🎉 Git operation completed: ${command}, success=${success}`
       );
     },
-    onCommandStart: (command, args) => {
-      console.log(`🌐 Starting git operation: ${command} ${args.join(" ")}`);
+    onCommandStart: (command) => {
+      console.log(`🌐 Starting git operation: ${command}`);
     },
     onOutput: (stream, data, command) => {
       if (stream === "stderr") {
@@ -214,7 +217,7 @@ async function quickExecuteExample() {
 
     // Quick streaming execution
     console.log("Quick streaming execution...");
-    await quickExecuteStream("ls", ["-la", "quick-test"]);
+    await quickExecuteStream("ls -la quick-test");
   } catch (error) {
     console.error("Quick execute failed:", error);
   }
@@ -226,7 +229,7 @@ async function errorHandlingExample() {
 
   const client = createClient({
     baseUrl: "http://localhost:3000",
-    onError: (error, command, args) => {
+    onError: (error, command) => {
       console.error(`❌ Error in ${command}: ${error}`);
     },
   });

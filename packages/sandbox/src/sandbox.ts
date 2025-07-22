@@ -35,17 +35,17 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.client = new HttpClient({
-      onCommandComplete: (success, exitCode, _stdout, _stderr, command, _args) => {
+      onCommandComplete: (success, exitCode, _stdout, _stderr, command) => {
         console.log(
           `[Container] Command completed: ${command}, Success: ${success}, Exit code: ${exitCode}`
         );
       },
-      onCommandStart: (command, args) => {
+      onCommandStart: (command) => {
         console.log(
-          `[Container] Command started: ${command} ${args.join(" ")}`
+          `[Container] Command started: ${command}`
         );
       },
-      onError: (error, _command, _args) => {
+      onError: (error, _command) => {
         console.error(`[Container] Command error: ${error}`);
       },
       onOutput: (stream, data, _command) => {
@@ -130,7 +130,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   // Enhanced exec method - always returns ExecResult with optional streaming
   // This replaces the old exec method to match ISandbox interface
-  async exec(command: string, args: string[], options?: ExecOptions): Promise<ExecResult> {
+  async exec(command: string, options?: ExecOptions): Promise<ExecResult> {
     const startTime = Date.now();
     const timestamp = new Date().toISOString();
 
@@ -147,12 +147,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
       if (options?.stream && options?.onOutput) {
         // Streaming with callbacks - we need to collect the final result
-        result = await this.executeWithStreaming(command, args, options, startTime, timestamp);
+        result = await this.executeWithStreaming(command, options, startTime, timestamp);
       } else {
         // Regular execution
         const response = await this.client.execute(
           command,
-          args,
           options?.sessionId,
           false // Never use background for enhanced exec
         );
@@ -181,7 +180,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   private async executeWithStreaming(
     command: string,
-    args: string[],
     options: ExecOptions,
     startTime: number,
     timestamp: string
@@ -214,8 +212,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         exitCode: number,
         finalStdout: string,
         finalStderr: string,
-        cmd: string,
-        cmdArgs: string[]
+        cmd: string
       ) => {
         if (cmd === command && !completed) {
           completed = true;
@@ -228,7 +225,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
             stdout: finalStdout,
             stderr: finalStderr,
             command,
-            args,
             duration,
             timestamp,
             sessionId: options.sessionId
@@ -242,7 +238,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         }
 
         // Call original handler if it exists
-        originalOnCommandComplete?.(success, exitCode, finalStdout, finalStderr, cmd, cmdArgs);
+        originalOnCommandComplete?.(success, exitCode, finalStdout, finalStderr, cmd);
       };
 
       // Set temporary handlers
@@ -265,7 +261,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       }
 
       // Start streaming execution
-      this.client.executeStream(command, args, options.sessionId, false)
+      this.client.executeStream(command, options.sessionId, false)
         .catch(error => {
           if (!completed) {
             completed = true;
@@ -293,7 +289,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       stdout: response.stdout,
       stderr: response.stderr,
       command: response.command,
-      args: response.args,
       duration,
       timestamp: response.timestamp,
       sessionId
@@ -301,18 +296,18 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   // Legacy exec method for backwards compatibility
-  async execLegacy(command: string, args: string[], options?: { stream?: boolean; background?: boolean }) {
+  async execLegacy(command: string, options?: { stream?: boolean; background?: boolean }) {
     if (options?.stream) {
-      return this.client.executeStream(command, args, undefined, options?.background);
+      return this.client.executeStream(command, undefined, options?.background);
     }
-    return this.client.execute(command, args, undefined, options?.background);
+    return this.client.execute(command, undefined, options?.background);
   }
 
   // Background process management
-  async startProcess(command: string, args: string[], options?: ProcessOptions): Promise<Process> {
+  async startProcess(command: string, options?: ProcessOptions): Promise<Process> {
     // Use the new HttpClient method to start the process
     try {
-      const response = await this.client.startProcess(command, args, {
+      const response = await this.client.startProcess(command, {
         processId: options?.processId,
         sessionId: options?.sessionId,
         timeout: options?.timeout,
@@ -327,7 +322,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         id: process.id,
         pid: process.pid,
         command: process.command,
-        args: process.args,
         status: process.status as ProcessStatus,
         startTime: new Date(process.startTime),
         endTime: undefined,
@@ -383,7 +377,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       id: processData.id,
       pid: processData.pid,
       command: processData.command,
-      args: processData.args,
       status: processData.status,
       startTime: new Date(processData.startTime),
       endTime: processData.endTime ? new Date(processData.endTime) : undefined,
@@ -417,7 +410,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       id: processData.id,
       pid: processData.pid,
       command: processData.command,
-      args: processData.args,
       status: processData.status,
       startTime: new Date(processData.startTime),
       endTime: processData.endTime ? new Date(processData.endTime) : undefined,
@@ -484,7 +476,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
 
   // AsyncIterable streaming methods
-  async *execStream(command: string, args: string[], options?: StreamOptions): AsyncIterable<ExecEvent> {
+  async *execStream(command: string, options?: StreamOptions): AsyncIterable<ExecEvent> {
     const startTime = Date.now();
     const timestamp = new Date().toISOString();
 
@@ -492,8 +484,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     yield {
       type: 'start',
       timestamp,
-      command,
-      args
+      command
     };
 
     try {
@@ -537,8 +528,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         exitCode: number,
         finalStdout: string,
         finalStderr: string,
-        cmd: string,
-        cmdArgs: string[]
+        cmd: string
       ) => {
         if (cmd === command && !completed) {
           completed = true;
@@ -550,7 +540,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
             stdout: finalStdout,
             stderr: finalStderr,
             command,
-            args,
             duration,
             timestamp,
             sessionId: options?.sessionId
@@ -575,7 +564,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           this.client.setOnOutput(originalOnOutput || (() => {}));
           this.client.setOnCommandComplete(originalOnCommandComplete || (() => {}));
         }
-        originalOnCommandComplete?.(success, exitCode, finalStdout, finalStderr, cmd, cmdArgs);
+        originalOnCommandComplete?.(success, exitCode, finalStdout, finalStderr, cmd);
       };
 
       // Set up temporary handlers
@@ -583,7 +572,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       this.client.setOnCommandComplete(tempOnCommandComplete);
 
       // Start the command
-      const streamPromise = this.client.executeStream(command, args, options?.sessionId, false)
+      const streamPromise = this.client.executeStream(command, options?.sessionId, false)
         .catch(err => {
           error = err instanceof Error ? err : new Error(String(err));
           completed = true;

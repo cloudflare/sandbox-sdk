@@ -35,7 +35,7 @@ async function testHttpClient() {
   // Test 2: Command execution
   console.log("Test 2: Command execution");
   try {
-    const result = await quickExecute("echo", ["Hello from HTTP client!"]);
+    const result = await quickExecute("echo \"Hello from HTTP client!\"");
     console.log("✅ Command executed:", result.success);
     console.log("   Output:", result.stdout.trim());
     console.log("   Exit code:", result.exitCode, "\n");
@@ -49,15 +49,15 @@ async function testHttpClient() {
     const client = createClient();
     const sessionId = await client.createSession();
 
-    const commands: [string, string[]][] = [
-      ["pwd", []],
-      ["ls", ["-la"]],
-      ["echo", ["Multiple commands test"]],
+    const commands: string[] = [
+      "pwd",
+      "ls -la",
+      "echo Multiple commands test",
     ];
 
-    for (const [command, args] of commands) {
-      console.log(`Executing: ${command} ${args.join(" ")}`);
-      const result = await client.execute(command, args, sessionId);
+    for (const command of commands) {
+      console.log(`Executing: ${command}`);
+      const result = await client.execute(command, sessionId);
       console.log(`   Success: ${result.success}, Exit: ${result.exitCode}`);
     }
 
@@ -97,7 +97,7 @@ async function testHttpClient() {
     console.log("✅ Sessions listed:", sessions.count, "active sessions");
 
     // Execute command in specific session
-    const result = await client.execute("whoami", [], sessionId1);
+    const result = await client.execute("whoami", sessionId1);
     console.log("✅ Command executed in session 1:", result.stdout.trim());
 
     client.clearSession();
@@ -124,7 +124,7 @@ async function testHttpClient() {
     await client.createSession();
 
     console.log("   Starting streaming command...");
-    await client.executeStream("ls", ["-la"]);
+    await client.executeStream("ls -la");
     console.log("✅ Streaming command completed\n");
 
     client.clearSession();
@@ -136,7 +136,7 @@ async function testHttpClient() {
   console.log("Test 8: Quick streaming execution");
   try {
     console.log("   Starting quick streaming command...");
-    await quickExecuteStream("echo", ["Hello from quick streaming!"]);
+    await quickExecuteStream("echo \"Hello from quick streaming!\"");
     console.log("✅ Quick streaming command completed\n");
   } catch (error) {
     console.error("❌ Test 8 failed:", error);
@@ -152,7 +152,7 @@ async function testHttpClient() {
     console.log("   Exit code:", result.exitCode);
 
     // Verify the file was created by reading it
-    const readResult = await quickExecute("cat", ["test-file.txt"]);
+    const readResult = await quickExecute("cat test-file.txt");
     console.log(
       "✅ File content verified:",
       readResult.stdout.trim() === testContent
@@ -171,7 +171,7 @@ async function testHttpClient() {
     console.log("   Path:", result.path);
 
     // Verify the JSON file
-    const readResult = await quickExecute("cat", ["test-data.json"]);
+    const readResult = await quickExecute("cat test-data.json");
     console.log(
       "✅ JSON content verified:",
       readResult.stdout.trim() === jsonContent
@@ -193,7 +193,7 @@ async function testHttpClient() {
     console.log("   Path:", result.path);
 
     // Verify the nested directory was created
-    const dirResult = await quickExecute("ls", ["-la", "nested/dir"]);
+    const dirResult = await quickExecute("ls -la nested/dir");
     console.log("✅ Nested directory created and file exists");
     console.log(
       "   Directory listing:",
@@ -201,9 +201,7 @@ async function testHttpClient() {
     );
 
     // Verify the file content
-    const readResult = await quickExecute("cat", [
-      "nested/dir/test-nested.txt",
-    ]);
+    const readResult = await quickExecute("cat nested/dir/test-nested.txt");
     console.log(
       "✅ Nested file content verified:",
       readResult.stdout.trim() === nestedContent,
@@ -249,7 +247,7 @@ async function testHttpClient() {
     console.log("✅ Quick streaming file write completed");
 
     // Verify the file
-    const readResult = await quickExecute("cat", ["quick-stream.txt"]);
+    const readResult = await quickExecute("cat quick-stream.txt");
     console.log(
       "✅ Quick streaming file verified:",
       readResult.stdout.trim() === quickContent,
@@ -277,8 +275,7 @@ async function testHttpClient() {
 
     // Verify the file
     const readResult = await client.execute(
-      "cat",
-      ["session-file.txt"],
+      "cat session-file.txt",
       sessionId
     );
     console.log(
@@ -335,7 +332,7 @@ async function testHttpClient() {
 
     // Verify the file was deleted
     try {
-      await quickExecute("cat", ["file-to-delete.txt"]);
+      await quickExecute("cat file-to-delete.txt");
       console.log("❌ File still exists after deletion");
     } catch (error) {
       console.log("✅ File successfully deleted (not found)");
@@ -365,14 +362,14 @@ async function testHttpClient() {
 
     // Verify the old file doesn't exist
     try {
-      await quickExecute("cat", ["file-to-rename.txt"]);
+      await quickExecute("cat file-to-rename.txt");
       console.log("❌ Old file still exists");
     } catch (error) {
       console.log("✅ Old file successfully removed");
     }
 
     // Verify the new file exists with correct content
-    const readResult = await quickExecute("cat", ["renamed-file.txt"]);
+    const readResult = await quickExecute("cat renamed-file.txt");
     console.log(
       "✅ Renamed file content verified:",
       readResult.stdout.trim() === renameContent
@@ -407,16 +404,14 @@ async function testHttpClient() {
 
     // Verify the source file doesn't exist
     try {
-      await quickExecute("cat", ["file-to-move.txt"]);
+      await quickExecute("cat file-to-move.txt");
       console.log("❌ Source file still exists");
     } catch (error) {
       console.log("✅ Source file successfully removed");
     }
 
     // Verify the destination file exists with correct content
-    const readResult = await quickExecute("cat", [
-      "move-destination/moved-file.txt",
-    ]);
+    const readResult = await quickExecute("cat move-destination/moved-file.txt");
     console.log(
       "✅ Moved file content verified:",
       readResult.stdout.trim() === moveContent
@@ -444,7 +439,7 @@ async function testHttpClient() {
 
     // Verify the file was deleted
     try {
-      await client.execute("cat", ["stream-delete-file.txt"]);
+      await client.execute("cat stream-delete-file.txt");
       console.log("❌ File still exists after streaming deletion");
     } catch (error) {
       console.log("✅ File successfully deleted via streaming");
@@ -475,7 +470,7 @@ async function testHttpClient() {
     console.log("✅ Streaming file renaming completed");
 
     // Verify the renamed file exists with correct content
-    const readResult = await client.execute("cat", ["stream-renamed-file.txt"]);
+    const readResult = await client.execute("cat stream-renamed-file.txt");
     console.log(
       "✅ Stream renamed file content verified:",
       readResult.stdout.trim() === streamRenameContent
@@ -499,7 +494,7 @@ async function testHttpClient() {
     console.log("✅ Test file created for streaming moving");
 
     // Create destination directory
-    await client.execute("mkdir", ["-p", "stream-move-dest"]);
+    await client.execute("mkdir -p stream-move-dest");
     console.log("✅ Stream destination directory created");
 
     console.log("   Starting streaming file moving...");
@@ -510,9 +505,7 @@ async function testHttpClient() {
     console.log("✅ Streaming file moving completed");
 
     // Verify the moved file exists with correct content
-    const readResult = await client.execute("cat", [
-      "stream-move-dest/stream-moved-file.txt",
-    ]);
+    const readResult = await client.execute("cat stream-move-dest/stream-moved-file.txt");
     console.log(
       "✅ Stream moved file content verified:",
       readResult.stdout.trim() === streamMoveContent
@@ -549,8 +542,8 @@ async function testHttpClient() {
     console.log("✅ Quick streaming move completed");
 
     // Verify results
-    const renameResult = await quickExecute("cat", ["quick-renamed.txt"]);
-    const moveResult = await quickExecute("cat", ["quick-moved.txt"]);
+    const renameResult = await quickExecute("cat quick-renamed.txt");
+    const moveResult = await quickExecute("cat quick-moved.txt");
     console.log(
       "✅ Quick operations verified:",
       renameResult.stdout.trim() === "Quick rename test" &&
@@ -613,13 +606,11 @@ async function testHttpClient() {
 
     // Verify session operations
     const renameContent = await client.execute(
-      "cat",
-      ["session-renamed.txt"],
+      "cat session-renamed.txt",
       sessionId
     );
     const moveContent = await client.execute(
-      "cat",
-      ["session-moved.txt"],
+      "cat session-moved.txt",
       sessionId
     );
     console.log(

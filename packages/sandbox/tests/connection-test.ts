@@ -11,16 +11,15 @@ async function connectionTest() {
       stdout: string,
       stderr: string,
       command: string,
-      args: string[]
     ) => {
       console.log(
         `✅ Command completed: ${command}, Success: ${success}, Exit code: ${exitCode}`
       );
     },
-    onCommandStart: (command: string, args: string[]) => {
-      console.log("📝 Command started:", command, args);
+    onCommandStart: (command: string) => {
+      console.log("📝 Command started:", command);
     },
-    onError: (error: string, command?: string, args?: string[]) => {
+    onError: (error: string, command?: string) => {
       console.error(`❌ Error: ${error}`);
     },
     onOutput: (stream: "stdout" | "stderr", data: string, command: string) => {

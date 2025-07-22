@@ -80,10 +80,6 @@ export interface ExecResult {
    */
   command: string;
 
-  /**
-   * Arguments passed to command
-   */
-  args: string[];
 
   /**
    * Execution duration in milliseconds
@@ -160,10 +156,6 @@ export interface Process {
    */
   readonly command: string;
 
-  /**
-   * Arguments passed to command
-   */
-  readonly args: string[];
 
   /**
    * Current process status
@@ -213,7 +205,6 @@ export interface ExecEvent {
   timestamp: string;
   data?: string;
   command?: string;
-  args?: string[];
   exitCode?: number;
   result?: ExecResult;
   error?: Error;
@@ -275,7 +266,6 @@ export interface ProcessRecord {
   id: string;
   pid?: number;
   command: string;
-  args: string[];
   status: ProcessStatus;
   startTime: Date;
   endTime?: Date;
@@ -296,7 +286,6 @@ export interface ProcessRecord {
 
 export interface StartProcessRequest {
   command: string;
-  args: string[];
   options?: {
     processId?: string;
     sessionId?: string;
@@ -313,8 +302,7 @@ export interface StartProcessResponse {
     id: string;
     pid?: number;
     command: string;
-    args: string[];
-    status: ProcessStatus;
+      status: ProcessStatus;
     startTime: string;
     sessionId?: string;
   };
@@ -325,8 +313,7 @@ export interface ListProcessesResponse {
     id: string;
     pid?: number;
     command: string;
-    args: string[];
-    status: ProcessStatus;
+      status: ProcessStatus;
     startTime: string;
     endTime?: string;
     exitCode?: number;
@@ -339,8 +326,7 @@ export interface GetProcessResponse {
     id: string;
     pid?: number;
     command: string;
-    args: string[];
-    status: ProcessStatus;
+      status: ProcessStatus;
     startTime: string;
     endTime?: string;
     exitCode?: number;
@@ -358,17 +344,17 @@ export interface GetProcessLogsResponse {
 
 export interface ISandbox {
   // Enhanced execution API
-  exec(command: string, args: string[], options?: ExecOptions): Promise<ExecResult>;
+  exec(command: string, options?: ExecOptions): Promise<ExecResult>;
 
   // Background process management
-  startProcess(command: string, args: string[], options?: ProcessOptions): Promise<Process>;
+  startProcess(command: string, options?: ProcessOptions): Promise<Process>;
   listProcesses(): Promise<Process[]>;
   getProcess(id: string): Promise<Process | null>;
   killProcess(id: string, signal?: string): Promise<void>;
   killAllProcesses(): Promise<number>;
 
   // Advanced streaming
-  execStream(command: string, args: string[], options?: StreamOptions): AsyncIterable<ExecEvent>;
+  execStream(command: string, options?: StreamOptions): AsyncIterable<ExecEvent>;
   streamProcessLogs(processId: string, options?: { signal?: AbortSignal }): AsyncIterable<LogEvent>;
 
   // Utility methods
@@ -390,7 +376,6 @@ export function isProcess(value: any): value is Process {
   return value &&
     typeof value.id === 'string' &&
     typeof value.command === 'string' &&
-    Array.isArray(value.args) &&
     typeof value.status === 'string';
 }
 

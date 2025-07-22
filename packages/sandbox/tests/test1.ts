@@ -2,7 +2,6 @@ import { HttpClient } from "../../sandbox/src/client";
 
 interface ExecuteRequest {
   command: string;
-  args?: string[];
 }
 
 class HttpCommandTester {
@@ -18,7 +17,6 @@ class HttpCommandTester {
         stdout: string,
         stderr: string,
         command: string,
-        args: string[]
       ) => {
         const successIcon = success ? "✅" : "❌";
         console.log(
@@ -28,10 +26,10 @@ class HttpCommandTester {
           console.log(`❌ Final stderr: ${stderr.trim()}`);
         }
       },
-      onCommandStart: (command: string, args: string[]) => {
-        console.log(`🚀 Starting command: ${command} ${args.join(" ")}`);
+      onCommandStart: (command: string) => {
+        console.log(`🚀 Starting command: ${command}`);
       },
-      onError: (error: string, command?: string, args?: string[]) => {
+      onError: (error: string, command?: string) => {
         console.error(`❌ Error: ${error}`);
       },
       onOutput: (
@@ -65,13 +63,12 @@ class HttpCommandTester {
     }
   }
 
-  async executeCommand(command: string, args: string[] = []): Promise<void> {
-    console.log(`\n🔧 Executing: ${command} ${args.join(" ")}`);
+  async executeCommand(command: string): Promise<void> {
+    console.log(`\n🔧 Executing: ${command}`);
 
     try {
       const result = await this.client.execute(
         command,
-        args,
         this.sessionId || undefined
       );
       console.log(`✅ Command executed successfully`);
@@ -81,15 +78,13 @@ class HttpCommandTester {
   }
 
   async executeStreamingCommand(
-    command: string,
-    args: string[] = []
+    command: string
   ): Promise<void> {
-    console.log(`\n🔧 Executing streaming: ${command} ${args.join(" ")}`);
+    console.log(`\n🔧 Executing streaming: ${command}`);
 
     try {
       await this.client.executeStream(
         command,
-        args,
         this.sessionId || undefined
       );
       console.log(`✅ Streaming command completed`);
@@ -137,8 +132,7 @@ class HttpCommandTester {
     console.log("\n⚠️  Testing dangerous command protection...");
     try {
       await this.client.execute(
-        "rm",
-        ["-rf", "/"],
+        "rm -rf /",
         this.sessionId || undefined
       );
     } catch (error) {
@@ -151,7 +145,6 @@ class HttpCommandTester {
     try {
       await this.client.execute(
         "nonexistentcommand12345",
-        [],
         this.sessionId || undefined
       );
     } catch (error) {
@@ -162,7 +155,7 @@ class HttpCommandTester {
   async testLongRunningCommand(): Promise<void> {
     console.log("\n⏱️  Testing long-running command...");
     try {
-      await this.client.execute("sleep", ["3"], this.sessionId || undefined);
+      await this.client.execute("sleep 3", this.sessionId || undefined);
       console.log("✅ Long-running command completed");
     } catch (error) {
       console.error(`❌ Long-running command failed:`, error);
@@ -173,8 +166,7 @@ class HttpCommandTester {
     console.log("\n📡 Testing streaming command...");
     try {
       await this.client.executeStream(
-        "ls",
-        ["-la"],
+        "ls -la",
         this.sessionId || undefined
       );
       console.log("✅ Streaming command completed");
@@ -187,7 +179,7 @@ class HttpCommandTester {
     console.log("\n⚡ Testing quick execute...");
     try {
       const { quickExecute } = await import("../../sandbox/src/client");
-      const result = await quickExecute("echo", ["Hello from quick execute!"]);
+      const result = await quickExecute("echo \"Hello from quick execute!\"");
       console.log(`✅ Quick execute result: ${result.stdout.trim()}`);
     } catch (error) {
       console.error(`❌ Quick execute failed:`, error);
@@ -198,7 +190,7 @@ class HttpCommandTester {
     console.log("\n⚡ Testing quick execute stream...");
     try {
       const { quickExecuteStream } = await import("../../sandbox/src/client");
-      await quickExecuteStream("echo", ["Hello from quick execute stream!"]);
+      await quickExecuteStream("echo \"Hello from quick execute stream!\"");
       console.log("✅ Quick execute stream completed");
     } catch (error) {
       console.error(`❌ Quick execute stream failed:`, error);
@@ -235,16 +227,16 @@ async function runTests(): Promise<void> {
     await tester.ping();
 
     // Test 4: Simple echo command
-    await tester.executeCommand("echo", ["Hello from HTTP!"]);
+    await tester.executeCommand("echo \"Hello from HTTP!\"");
 
     // Test 5: List current directory
-    await tester.executeCommand("ls", ["-la"]);
+    await tester.executeCommand("ls -la");
 
     // Test 6: Get current working directory
     await tester.executeCommand("pwd");
 
     // Test 7: Check system info
-    await tester.executeCommand("uname", ["-a"]);
+    await tester.executeCommand("uname -a");
 
     // Test 8: Test streaming command
     await tester.testStreamingCommand();

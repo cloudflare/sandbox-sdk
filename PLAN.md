@@ -97,13 +97,13 @@ Leverage modern JavaScript patterns with Durable Object metadata storage:
 class Sandbox {
   // Simple execution
   async exec(command: string, args: string[], options?: ExecOptions): Promise<ExecResult>
-  
+
   // Modern streaming execution
   async *execStream(command: string, args: string[], options?: StreamOptions): AsyncIterable<ExecEvent>
-  
+
   // Background processes with ephemeral state
   async startProcess(command: string, args: string[], options?: ProcessOptions): Promise<Process>
-  
+
   // Stream logs from active processes
   async *streamProcessLogs(processId: string): AsyncIterable<LogEvent>
 }
@@ -144,7 +144,7 @@ Key requirement: Stream logs from active background processes within container l
 
 **Options considered**:
 1. `process.streamLogs()` - Method on Process object
-2. `sandbox.streamProcessLogs(id)` - Sandbox-level method  
+2. `sandbox.streamProcessLogs(id)` - Sandbox-level method
 3. `process.logEventSource` - SSE EventSource property
 4. Hybrid approach with multiple access patterns
 
@@ -176,7 +176,7 @@ interface ExecResult {
   timestamp: string;
 }
 
-// Streaming execution  
+// Streaming execution
 interface StreamOptions extends BaseExecOptions {
   onOutput?: (stream: 'stdout' | 'stderr', data: string) => void;
   onComplete?: (result: ExecResult) => void;
@@ -199,7 +199,7 @@ interface Process {
   startTime: Date;
   endTime?: Date;
   exitCode?: number;
-  
+
   // Management methods
   kill(signal?: string): Promise<void>;
   getStatus(): Promise<ProcessStatus>;
@@ -232,7 +232,7 @@ class Sandbox {
   async getProcess(id: string): Promise<Process | null>
   async killProcess(id: string, signal?: string): Promise<void>
   async killAllProcesses(): Promise<void>
-  
+
   // Bulk operations
   async cleanupCompletedProcesses(): Promise<number>
   async getProcessLogs(id: string): Promise<{ stdout: string; stderr: string }>
@@ -317,7 +317,7 @@ const processes = new Map<string, ProcessRecord>();
 
 ### High Priority (Core Functionality)
 1. `exec()` - Basic synchronous execution
-2. `execStream()` - Streaming execution  
+2. `execStream()` - Streaming execution
 3. `startProcess()` - Background process management
 4. Process management endpoints in container
 
@@ -341,7 +341,7 @@ const processes = new Map<string, ProcessRecord>();
 3. **Background log access**: Multiple patterns or single approach?
 4. **Return type consistency**: Should all execution methods return results, even streaming ones?
 
-### Cloudflare Integration Questions  
+### Cloudflare Integration Questions
 5. **Container lifecycle**: Background processes must handle SIGTERM (15min cleanup window)
 6. **Activity timeout**: Background processes should call `renewActivityTimeout()` to prevent container sleep
 7. **Port management**: Integration with existing `exposePort`/`unexposePort` methods?
@@ -362,10 +362,10 @@ Based on our discussion:
 class Sandbox {
   // 90% use case - consistent, simple
   async exec(cmd, args, { stream?, onOutput?, ... }): Promise<ExecResult>
-  
-  // 10% use case - background processes  
+
+  // 10% use case - background processes
   async startProcess(cmd, args, options): Promise<Process>
-  
+
   // Modern streaming for both
   async *execStream(cmd, args): AsyncIterable<ExecEvent>
   async *streamProcessLogs(id: string): AsyncIterable<LogEvent>
@@ -409,7 +409,7 @@ class Sandbox {
 ### Phase 2: Container Implementation ✅ COMPLETED
 - [x] **New container endpoints**
   - [x] POST /api/process/start - Start background process
-  - [x] GET /api/process/list - List processes 
+  - [x] GET /api/process/list - List processes
   - [x] GET /api/process/{id} - Get process status
   - [x] DELETE /api/process/{id} - Kill process
   - [x] DELETE /api/process/all - Kill all processes
@@ -428,7 +428,7 @@ class Sandbox {
 ### Phase 3: Enhanced Features 🔄 IN PROGRESS
 - [x] **Advanced options and error handling**
   - [x] Environment variable support (env option)
-  - [x] Working directory support (cwd option)  
+  - [x] Working directory support (cwd option)
   - [x] Text encoding support (encoding option)
   - [x] Timeout support (timeout option)
   - [x] Enhanced error reporting (custom error classes)
@@ -440,7 +440,7 @@ class Sandbox {
   - [ ] Graceful shutdown handling (SIGTERM support)
 - [ ] **Testing and validation**
   - [ ] Unit tests for all new APIs
-  - [ ] Integration tests for process management  
+  - [ ] Integration tests for process management
   - [ ] Performance and memory leak testing
   - [ ] Container restart behavior validation
   - [ ] Error edge case testing (crashes, timeouts, OOM)
@@ -459,7 +459,7 @@ class Sandbox {
 ## Next Steps
 
 1. ✅ Review and iterate on this plan until satisfied - **COMPLETED**
-2. ✅ Create detailed API specifications - **COMPLETED in APPROACHES.md** 
+2. ✅ Create detailed API specifications - **COMPLETED in APPROACHES.md**
 3. ✅ Implement Phase 1 (Core API Implementation) - **COMPLETED**
 4. ✅ Implement Phase 2 (Container Implementation) - **COMPLETED**
 5. 🚀 **CURRENT FOCUS**: Complete Phase 3 (Enhanced Features)
@@ -469,10 +469,10 @@ class Sandbox {
 6. Create migration documentation and examples
 7. Gather feedback from early adopters
 
-## Current Implementation Status 
+## Current Implementation Status
 
 ### ✅ What's Complete (Phases 1 & 2)
-- **Full API Implementation**: All new methods (exec, startProcess, execStream, etc.) 
+- **Full API Implementation**: All new methods (exec, startProcess, execStream, etc.)
 - **Container Endpoints**: Complete HTTP API for process management
 - **Type Safety**: Comprehensive TypeScript definitions
 - **Process Management**: Real ChildProcess integration with lifecycle tracking
@@ -508,7 +508,7 @@ class Sandbox {
 4. **Test Edge Cases** - Process crashes, timeouts, memory exhaustion
 
 **Medium Priority (Next Phase):**
-5. **Add Resource Limits** - Memory and CPU constraints per process  
+5. **Add Resource Limits** - Memory and CPU constraints per process
 6. **Enhanced Signal Support** - Proper SIGTERM handling with grace periods
 7. **Migration Documentation** - Guide for moving from old exec() API
 8. **Performance Testing** - Load testing with many processes
@@ -537,11 +537,11 @@ class Sandbox {
 
   // Background process management
   async startProcess(command: string, args: string[], options?: ProcessOptions): Promise<Process>
-  
+
   // Modern streaming
   async *execStream(command: string, args: string[]): AsyncIterable<ExecEvent>
   async *streamProcessLogs(processId: string): AsyncIterable<LogEvent>
-  
+
   // Process management
   async listProcesses(): Promise<Process[]>
   async getProcess(id: string): Promise<Process | null>
@@ -591,3 +591,75 @@ class Sandbox {
 - ✅ **Resource Cleanup** - Automatic process cleanup and proper resource management
 
 The implementation successfully transforms the Sandbox SDK from a basic command executor into a full-featured process management platform suitable for complex development workflows.
+
+## Testing Implementation Status (Phase 3 Continued)
+
+### ✅ Completed Testing Infrastructure
+**Comprehensive UI Testing Platform** - Transformed `examples/basic/` into full-featured testing application:
+
+1. **Tabbed Interface Architecture** - Complete React UI with 4 specialized testing tabs:
+   - **Commands Tab**: Enhanced REPL with better output formatting and session management
+   - **Processes Tab**: Background process management with start/stop/list controls and real-time status
+   - **Ports Tab**: Port exposure testing with server templates (Bun, Node.js, Python) and preview URLs
+   - **Streaming Tab**: AsyncIterable testing for both execStream() and streamProcessLogs()
+
+2. **React Components Implemented**:
+   - `SandboxTester` - Main tabbed container component
+   - `ProcessManagementTab` - Full background process testing interface
+   - `PortManagementTab` - Port exposure and server template system
+   - `StreamingTab` - Real-time streaming event testing
+   - `CommandsTab` - Enhanced command execution with session tracking
+
+3. **CSS Styling** - Professional interface with:
+   - Responsive tab navigation system
+   - Process status indicators and action buttons
+   - Port card layouts with template quickstart
+   - Real-time streaming event display
+   - Auto-refresh capabilities and status badges
+
+4. **Backend Integration** - Cleaned up Worker routes:
+   - Removed obsolete `/test-*` endpoints
+   - Streamlined to API proxy and health check only
+   - Full integration with new process management APIs
+
+### 🚧 Pending Work (Current Session Todos)
+
+**High Priority - Missing Implementation:**
+1. **Add missing container endpoint for cleanupCompletedProcesses()** 🔄 IN PROGRESS
+   - Need to implement `POST /api/process/cleanup` endpoint in container server
+   - Add corresponding HttpClient method for cleanup functionality
+
+**Medium Priority - Testing & Examples:**
+2. **Add testing scenarios and real-world examples**
+   - Create comprehensive test cases for process management
+   - Add edge case scenarios (crashes, memory limits, timeouts)
+   - Build practical usage examples (dev servers, build pipelines, monitoring)
+
+3. **Test edge cases (process crashes, timeouts, port conflicts)**
+   - Memory exhaustion behavior testing
+   - Process timeout and cancellation testing
+   - Port collision and cleanup testing
+   - Container restart recovery testing
+
+**Lower Priority - Enhanced Features:**
+4. **Add enhanced signal support (SIGTERM, SIGINT)**
+   - Implement proper signal handling in process management
+   - Add graceful shutdown procedures
+
+5. **Implement resource limits (memory/CPU per process)**
+   - Add process resource monitoring
+   - Implement constraints and limits per process
+
+6. **Create migration guide from old exec() API**
+   - Document transition path from old API
+   - Provide code examples and best practices
+
+### 📋 Current Implementation Status Summary
+- ✅ **Phase 1**: Core API Implementation (100% complete)
+- ✅ **Phase 2**: Container Implementation (100% complete)
+- ✅ **Phase 3A**: Testing UI Implementation (100% complete)
+- 🔄 **Phase 3B**: Container Cleanup Endpoint (in progress)
+- ⏸️ **Phase 3C**: Comprehensive Testing & Edge Cases (pending)
+- ⏸️ **Phase 4**: Documentation and Migration (pending)
+
+The testing platform is now fully functional for demonstrating all implemented APIs. Users can test Commands, Background Processes, Port Exposure, and Streaming functionality through a professional web interface that showcases the complete power of the new Sandbox SDK.

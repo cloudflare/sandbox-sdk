@@ -16,7 +16,6 @@ interface ProcessRecord {
   id: string;
   pid?: number;
   command: string;
-  args: string[];
   status: ProcessStatus;
   startTime: Date;
   endTime?: Date;
@@ -31,7 +30,6 @@ interface ProcessRecord {
 
 interface StartProcessRequest {
   command: string;
-  args: string[];
   options?: {
     processId?: string;
     sessionId?: string;
@@ -45,7 +43,6 @@ interface StartProcessRequest {
 
 interface ExecuteRequest {
   command: string;
-  args?: string[];
   sessionId?: string;
   background?: boolean;
 }
@@ -125,6 +122,39 @@ function generateSessionId(): string {
 // Generate a unique process ID
 function generateProcessId(): string {
   return `proc_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
+}
+
+// Parse a command string into executable and arguments
+function parseCommand(command: string): string[] {
+  const parts: string[] = [];
+  let current = '';
+  let inQuotes = false;
+  let quoteChar = '';
+
+  for (let i = 0; i < command.length; i++) {
+    const char = command[i];
+
+    if (!inQuotes && (char === '"' || char === "'")) {
+      inQuotes = true;
+      quoteChar = char;
+    } else if (inQuotes && char === quoteChar) {
+      inQuotes = false;
+      quoteChar = '';
+    } else if (!inQuotes && char === ' ') {
+      if (current) {
+        parts.push(current);
+        current = '';
+      }
+    } else {
+      current += char;
+    }
+  }
+
+  if (current) {
+    parts.push(current);
+  }
+
+  return parts.length > 0 ? parts : [''];
 }
 
 // Clean up old sessions (older than 1 hour)
@@ -467,7 +497,7 @@ async function handleExecuteRequest(
 ): Promise<Response> {
   try {
     const body = (await req.json()) as ExecuteRequest;
-    const { command, args = [], sessionId, background } = body;
+    const { command, sessionId, background } = body;
 
     if (!command || typeof command !== "string") {
       return new Response(
@@ -484,13 +514,12 @@ async function handleExecuteRequest(
       );
     }
 
-    console.log(`[Server] Executing command: ${command} ${args.join(" ")}`);
+    console.log(`[Server] Executing command: ${command}`);
 
-    const result = await executeCommand(command, args, sessionId, background);
+    const result = await executeCommand(command, sessionId, background);
 
     return new Response(
       JSON.stringify({
-        args,
         command,
         exitCode: result.exitCode,
         stderr: result.stderr,
@@ -529,7 +558,7 @@ async function handleStreamingExecuteRequest(
 ): Promise<Response> {
   try {
     const body = (await req.json()) as ExecuteRequest;
-    const { command, args = [], sessionId, background } = body;
+    const { command, sessionId, background } = body;
 
     if (!command || typeof command !== "string") {
       return new Response(
@@ -547,7 +576,7 @@ async function handleStreamingExecuteRequest(
     }
 
     console.log(
-      `[Server] Executing streaming command: ${command} ${args.join(" ")}`
+      `[Server] Executing streaming command: ${command}`
     );
 
     const stream = new ReadableStream({
@@ -558,7 +587,7 @@ async function handleStreamingExecuteRequest(
           detached: background || false,
         };
 
-        const child = spawn(command, args, spawnOptions);
+        const child = spawn(command, spawnOptions);
 
         // Store the process reference for cleanup if sessionId is provided
         if (sessionId && sessions.has(sessionId)) {
@@ -578,7 +607,6 @@ async function handleStreamingExecuteRequest(
         controller.enqueue(
           new TextEncoder().encode(
             `data: ${JSON.stringify({
-              args,
               command,
               timestamp: new Date().toISOString(),
               type: "command_start",
@@ -636,7 +664,6 @@ async function handleStreamingExecuteRequest(
           controller.enqueue(
             new TextEncoder().encode(
               `data: ${JSON.stringify({
-                args,
                 command,
                 exitCode: code,
                 stderr,
@@ -665,7 +692,6 @@ async function handleStreamingExecuteRequest(
           controller.enqueue(
             new TextEncoder().encode(
               `data: ${JSON.stringify({
-                args,
                 command,
                 error: error.message,
                 type: "error",
@@ -871,8 +897,7 @@ async function handleStreamingGitCheckoutRequest(
         controller.enqueue(
           new TextEncoder().encode(
             `data: ${JSON.stringify({
-              args: [branch, repoUrl, checkoutDir],
-              command: "git clone",
+              command: `git clone ${branch} ${repoUrl} ${checkoutDir}`,
               timestamp: new Date().toISOString(),
               type: "command_start",
             })}\n\n`
@@ -928,8 +953,7 @@ async function handleStreamingGitCheckoutRequest(
           controller.enqueue(
             new TextEncoder().encode(
               `data: ${JSON.stringify({
-                args: [branch, repoUrl, checkoutDir],
-                command: "git clone",
+                command: `git clone ${branch} ${repoUrl} ${checkoutDir}`,
                 exitCode: code,
                 stderr,
                 stdout,
@@ -953,8 +977,7 @@ async function handleStreamingGitCheckoutRequest(
           controller.enqueue(
             new TextEncoder().encode(
               `data: ${JSON.stringify({
-                args: [branch, repoUrl, checkoutDir],
-                command: "git clone",
+                command: `git clone ${branch} ${repoUrl} ${checkoutDir}`,
                 error: error.message,
                 type: "error",
               })}\n\n`
@@ -1150,8 +1173,8 @@ async function handleStreamingMkdirRequest(
 
     const stream = new ReadableStream({
       start(controller) {
-        const args = recursive ? ["-p", path] : [path];
-        const child = spawn("mkdir", args, {
+        const args = `${recursive ? "-p" : ""} ${path}`;
+        const child = spawn(`mkdir ${args}`, {
           shell: true,
           stdio: ["pipe", "pipe", "pipe"],
         });
@@ -1169,8 +1192,7 @@ async function handleStreamingMkdirRequest(
         controller.enqueue(
           new TextEncoder().encode(
             `data: ${JSON.stringify({
-              args,
-              command: "mkdir",
+              command: `mkdir ${args}`,
               timestamp: new Date().toISOString(),
               type: "command_start",
             })}\n\n`
@@ -1224,8 +1246,7 @@ async function handleStreamingMkdirRequest(
           controller.enqueue(
             new TextEncoder().encode(
               `data: ${JSON.stringify({
-                args,
-                command: "mkdir",
+                command: `mkdir ${args}`,
                 exitCode: code,
                 stderr,
                 stdout,
@@ -1249,8 +1270,7 @@ async function handleStreamingMkdirRequest(
           controller.enqueue(
             new TextEncoder().encode(
               `data: ${JSON.stringify({
-                args,
-                command: "mkdir",
+                command: `mkdir ${args}`,
                 error: error.message,
                 type: "error",
               })}\n\n`
@@ -2541,7 +2561,6 @@ async function handleStreamingMoveFileRequest(
 
 function executeCommand(
   command: string,
-  args: string[],
   sessionId?: string,
   background?: boolean
 ): Promise<{
@@ -2557,7 +2576,7 @@ function executeCommand(
       detached: background || false,
     };
 
-    const child = spawn(command, args, spawnOptions);
+    const child = spawn(command, spawnOptions);
 
     // Store the process reference for cleanup if sessionId is provided
     if (sessionId && sessions.has(sessionId)) {
@@ -2720,8 +2739,8 @@ function executeMkdir(
   exitCode: number;
 }> {
   return new Promise((resolve, reject) => {
-    const args = recursive ? ["-p", path] : [path];
-    const mkdirChild = spawn("mkdir", args, {
+    const args = `${recursive ? "-p " : ""} ${path}`;
+    const mkdirChild = spawn(`mkdir ${args}`, {
       shell: true,
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -3257,7 +3276,7 @@ async function handleStartProcessRequest(
 ): Promise<Response> {
   try {
     const body = (await req.json()) as StartProcessRequest;
-    const { command, args = [], options = {} } = body;
+    const { command, options = {} } = body;
 
     if (!command || typeof command !== "string") {
       return new Response(
@@ -3293,13 +3312,12 @@ async function handleStartProcessRequest(
       );
     }
 
-    console.log(`[Server] Starting background process: ${command} ${args.join(" ")} (ID: ${processId})`);
+    console.log(`[Server] Starting background process: ${command} (ID: ${processId})`);
 
     // Create process record in starting state
     const processRecord: ProcessRecord = {
       id: processId,
       command,
-      args,
       status: 'starting',
       startTime,
       sessionId: options.sessionId,
@@ -3319,7 +3337,9 @@ async function handleStartProcessRequest(
         detached: false
       };
 
-      const childProcess = spawn(command, args, spawnOptions);
+      // Parse command into executable and arguments
+      const [commandName, ...args] = parseCommand(command);
+      const childProcess = spawn(commandName, args, spawnOptions);
       processRecord.childProcess = childProcess;
       processRecord.pid = childProcess.pid;
       processRecord.status = 'running';
@@ -3392,7 +3412,6 @@ async function handleStartProcessRequest(
             id: processRecord.id,
             pid: processRecord.pid,
             command: processRecord.command,
-            args: processRecord.args,
             status: processRecord.status,
             startTime: processRecord.startTime.toISOString(),
             sessionId: processRecord.sessionId
@@ -3437,7 +3456,6 @@ async function handleListProcessesRequest(
       id: record.id,
       pid: record.pid,
       command: record.command,
-      args: record.args,
       status: record.status,
       startTime: record.startTime.toISOString(),
       endTime: record.endTime?.toISOString(),
@@ -3505,7 +3523,6 @@ async function handleGetProcessRequest(
           id: record.id,
           pid: record.pid,
           command: record.command,
-          args: record.args,
           status: record.status,
           startTime: record.startTime.toISOString(),
           endTime: record.endTime?.toISOString(),
