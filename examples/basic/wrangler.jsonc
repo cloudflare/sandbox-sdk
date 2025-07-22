@@ -10,10 +10,6 @@
   "assets": {
     "directory": "public"
   },
-  "build": {
-    "command": "bun build app/index.tsx --outdir public/dist",
-    "watch_dir": "app"
-  },
   "containers": [
     {
       "class_name": "Sandbox",

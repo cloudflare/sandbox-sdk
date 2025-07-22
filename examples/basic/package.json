@@ -5,8 +5,8 @@
   "private": true,
   "description": "An example of using the sandbox package",
   "scripts": {
-    "start": "wrangler dev",
-    "deploy": "wrangler deploy"
+    "start": "vite dev",
+    "deploy": "vite build && wrangler deploy"
   },
   "author": "",
   "license": "MIT"

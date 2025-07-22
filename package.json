@@ -5,8 +5,7 @@
   "scripts": {
     "check": "biome check && tsc --noEmit",
     "build": "npm run build -w @cloudflare/sandbox",
-    "test": "echo 'No tests'",
-    "postinstall": "patch-package"
+    "test": "echo 'No tests'"
   },
   "keywords": [],
   "author": "",
@@ -17,22 +16,24 @@
     "examples/*"
   ],
   "devDependencies": {
-    "@biomejs/biome": "^2.0.6",
+    "@biomejs/biome": "^2.1.2",
     "@changesets/changelog-github": "^0.5.1",
     "@changesets/cli": "^2.29.5",
-    "@cloudflare/workers-types": "^4.20250705.0",
-    "@types/bun": "^1.2.18",
-    "@types/node": "^24.0.10",
+    "@cloudflare/vite-plugin": "^1.9.6",
+    "@cloudflare/workers-types": "^4.20250722.0",
+    "@types/bun": "^1.2.19",
+    "@types/node": "^24.0.15",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
+    "@vitejs/plugin-react": "^4.7.0",
     "fast-glob": "^3.3.3",
-    "patch-package": "^8.0.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "tsup": "^8.5.0",
     "tsx": "^4.20.3",
     "typescript": "^5.8.3",
-    "wrangler": "^4.23.0"
+    "vite": "^7.0.5",
+    "wrangler": "^4.25.0"
   },
   "private": true,
   "packageManager": "npm@11.4.2"
