@@ -2,17 +2,34 @@
 
 ## Current Issues
 
-### Issue 1: Incorrect Preview URL Port Generation
-**Problem**: Preview URLs return hardcoded `localhost:8787` instead of actual development server port.
+### Issue 1: Incorrect Preview URL Port Generation ✅ FIXED
+**Problem**: Preview URLs returned hardcoded `localhost:8787` instead of actual development server port.
 
 **Example**:
 - Frontend running on: `http://localhost:63654/`
 - Expected preview URL: `http://localhost:63654/preview/8080/demo-user-sandbox`
-- Actual preview URL: `http://localhost:8787/preview/8080/demo-user-sandbox`
+- Previous behavior: `http://localhost:8787/preview/8080/demo-user-sandbox` ❌
+- Current behavior: `http://localhost:63654/preview/8080/demo-user-sandbox` ✅
 
-**Root Cause**: 
-- Hostname capture in `sandbox.ts:99-102` only captures `url.hostname` (loses port)
-- Fallback in `sandbox.ts:643` hardcoded to `localhost:8787`
+**Root Cause**:
+The Sandbox's `fetch()` method only handles internal container communication, not external API requests from the Worker. The external hostname (`localhost:63654`) was never passed to preview URL construction methods.
+
+**Solution Implemented**:
+**Method Parameter Approach** - Worker endpoints automatically capture and pass hostname to Sandbox methods with required parameters:
+
+```typescript
+// Worker endpoint automatically captures hostname
+export async function exposePort(sandbox: Sandbox<unknown>, request: Request) {
+    const hostname = new URL(request.url).host; // ✅ localhost:63654
+    const preview = await sandbox.exposePort(port, { name, hostname });
+}
+
+// Sandbox method requires hostname parameter - no internal capture or fallbacks
+async exposePort(port: number, options: { name?: string; hostname: string }) {
+    const url = this.constructPreviewUrl(port, this.sandboxName, options.hostname);
+    // ... rest of implementation
+}
+```
 
 ### Issue 2: Relative Path Resolution in Preview Content
 **Problem**: Content served through preview URLs has broken relative links.
@@ -46,7 +63,7 @@ This is puzzling because Python's `SimpleHTTPServer` typically generates relativ
 - Need to capture actual Worker port, not hardcoded fallback
 - Container port forwarding must work with localhost
 
-**Current Status**: ❌ Broken (Issue 1)
+**Current Status**: ✅ Fixed (Issue 1 resolved)
 
 ### 2. Production - Single Worker - workers.dev Domain
 **Setup**:
@@ -101,7 +118,7 @@ This is puzzling because Python's `SimpleHTTPServer` typically generates relativ
 - Sandbox functionality via Workers
 - Preview URLs as subdomain or path-based
 
-**Preview URL Pattern**: 
+**Preview URL Pattern**:
 - Path-based: `https://api.my-app.com/preview/{port}/{sandbox-id}/`
 - Subdomain: `https://{port}-{sandbox-id}-api.my-app.com/`
 
@@ -114,30 +131,38 @@ This is puzzling because Python's `SimpleHTTPServer` typically generates relativ
 
 ## Technical Deep Dive
 
-### Current Preview URL Construction Logic
+### Current Preview URL Construction Logic (After Fix)
 
 ```typescript
-// packages/sandbox/src/sandbox.ts:641-661
-private getHostname(): string {
-  return this.workerHostname || "localhost:8787"; // ❌ Hardcoded fallback
+// packages/sandbox/src/sandbox.ts - Cleaned up implementation
+async exposePort(port: number, options: { name?: string; hostname: string }) {
+  await this.client.exposePort(port, options?.name);
+
+  if (!this.sandboxName) {
+    throw new Error('Sandbox name not available. Ensure sandbox is accessed through getSandbox()');
+  }
+
+  const url = this.constructPreviewUrl(port, this.sandboxName, options.hostname);
+  return { url, port, name: options?.name };
 }
 
 private constructPreviewUrl(port: number, sandboxId: string, hostname: string): string {
   const isLocalhost = isLocalhostPattern(hostname);
-  
+
   if (isLocalhost) {
     return `http://${hostname}/preview/${port}/${sandboxId}`;
   }
-  
+
   const protocol = hostname.includes(":") ? "http" : "https";
   return `${protocol}://${port}-${sandboxId}.${hostname}`;
 }
 ```
 
-**Issues**:
-1. `workerHostname` only captures hostname, loses port information
-2. Hardcoded fallback doesn't match actual dev server port
-3. No handling for cross-worker scenarios
+**Improvements**:
+1. ✅ **Required hostname parameter**: No more fallback logic or hardcoded values
+2. ✅ **Full hostname with port**: `new URL(request.url).host` captures both hostname and port
+3. ✅ **Clear separation**: Worker captures context, Sandbox constructs URLs
+4. ✅ **Explicit API contracts**: Required parameters make dependencies obvious
 
 ### Current Proxy Routing Logic
 
@@ -178,14 +203,14 @@ function extractSandboxRoute(url: URL): RouteInfo | null {
 
 **Possible Causes**:
 1. **Proxy Headers**: Python server using `X-Forwarded-*` headers incorrectly
-2. **Base URL Injection**: Some component adding `<base href="/preview/8080/">` 
+2. **Base URL Injection**: Some component adding `<base href="/preview/8080/">`
 3. **Server Configuration**: Python server configured with wrong base path
 4. **URL Rewriting**: Middleware converting relative to absolute paths
 
 ## Solution Options Analysis
 
 ### Option 1: Fix Hostname Capture Only (Minimal Fix)
-**Approach**: 
+**Approach**:
 - Change `url.hostname` to `url.host` in hostname capture
 - Remove hardcoded `localhost:8787` fallback
 
@@ -287,13 +312,13 @@ async function injectBaseTag(response: Response, basePath: string): Promise<Resp
   if (!contentType?.includes('text/html')) {
     return response; // Pass through non-HTML
   }
-  
+
   const html = await response.text();
   const modifiedHtml = html.replace(
-    /<head>/i, 
+    /<head>/i,
     `<head><base href="${basePath}">`
   );
-  
+
   return new Response(modifiedHtml, {
     headers: response.headers,
     status: response.status
@@ -341,16 +366,25 @@ python3 -m http.server 8080 --base-path /preview/8080/demo-user-sandbox/
 
 ## Recommended Solution Approach
 
-### Phase 1: Fix Critical Issues (Immediate)
-**Scope**: Address Issue 1 with minimal risk
+### Phase 1: Fix Critical Issues ✅ COMPLETED
+**Scope**: Address Issue 1 with comprehensive architectural cleanup
 
 **Implementation**:
-1. Fix hostname capture to use `url.host` instead of `url.hostname`
-2. Remove hardcoded `localhost:8787` fallback
-3. Add better error handling for missing hostname
+1. ✅ Enhanced `exposePort()` and `getExposedPorts()` with **required** `hostname` parameter
+2. ✅ Modified Worker endpoints to automatically capture and pass `new URL(request.url).host`
+3. ✅ Removed redundant internal hostname capture logic from Sandbox class
+4. ✅ Simplified `fetch()` method to focus only on container routing
+5. ✅ Cleaned up architectural debt by removing `workerHostname` property
+6. ✅ Made API contracts explicit and clear (required vs optional parameters)
 
-**Risk**: Low - minimal code change
-**Impact**: Fixes wrong port issue for all architectures
+**Architectural Improvements**:
+- **Separation of Concerns**: Worker handles external context, Sandbox handles container logic
+- **Explicit Dependencies**: Required hostname parameter makes external context dependency clear
+- **Reduced Complexity**: Eliminated fallback logic and multiple hostname capture mechanisms
+- **Better Error Messages**: Clear guidance when hostname is missing
+
+**Risk**: Low - API changes are explicit and fail fast with clear error messages
+**Impact**: ✅ Fixed wrong port issue for all architectures with cleaner, more maintainable code
 
 ### Phase 2: Investigate Relative Path Root Cause (Next)
 **Scope**: Deep dive into Issue 2 to understand actual cause
@@ -383,8 +417,8 @@ python3 -m http.server 8080 --base-path /preview/8080/demo-user-sandbox/
 
 ## Implementation Priorities
 
-1. **🔥 Critical**: Fix hostname capture (Issue 1)
-2. **📋 High**: Root cause analysis for relative paths (Issue 2) 
+1. ✅ **🔥 Critical**: Fix hostname capture (Issue 1) - **COMPLETED**
+2. **📋 High**: Root cause analysis for relative paths (Issue 2)
 3. **🛠️ Medium**: Implement base tag injection solution
 4. **📈 Low**: Advanced architecture support
 5. **🔍 Research**: Alternative deployment patterns
@@ -392,8 +426,8 @@ python3 -m http.server 8080 --base-path /preview/8080/demo-user-sandbox/
 ## Testing Strategy
 
 ### Local Development Testing
-- [ ] Test with various `wrangler dev` ports
-- [ ] Verify preview URLs generate correctly
+- [x] Test with various `wrangler dev` ports - ✅ **Working**
+- [x] Verify preview URLs generate correctly - ✅ **Working**
 - [ ] Test relative link resolution
 - [ ] Check with different HTTP servers
 

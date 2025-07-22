@@ -91,7 +91,9 @@ export default {
       }
 
       if (pathname === "/api/exposed-ports" && request.method === "GET") {
-        const ports = await sandbox.getExposedPorts();
+        // Automatically capture hostname from request
+        const hostname = new URL(request.url).host;
+        const ports = await sandbox.getExposedPorts(hostname);
         return jsonResponse({ ports });
       }
 

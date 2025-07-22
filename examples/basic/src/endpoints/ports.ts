@@ -9,7 +9,13 @@ export async function exposePort(sandbox: Sandbox<unknown>, request: Request) {
         return errorResponse("Port number is required");
     }
 
-    const preview = await sandbox.exposePort(port, name ? { name } : undefined);
+    // Automatically capture hostname from request
+    const hostname = new URL(request.url).host;
+
+    const preview = await sandbox.exposePort(port, {
+        ...(name ? { name } : {}),
+        hostname
+    });
     return jsonResponse(preview);
 }
 

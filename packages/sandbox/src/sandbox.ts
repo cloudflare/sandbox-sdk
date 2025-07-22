@@ -29,7 +29,6 @@ export function getSandbox(ns: DurableObjectNamespace<Sandbox>, id: string) {
 export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   sleepAfter = "3m"; // Sleep the sandbox if no requests are made in this timeframe
   client: HttpClient;
-  private workerHostname: string | null = null;
   private sandboxName: string | null = null;
 
   constructor(ctx: DurableObjectState, env: Env) {
@@ -91,15 +90,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     console.log("Sandbox error:", error);
   }
 
-  // Override fetch to capture the hostname and route to appropriate ports
+  // Override fetch to route internal container requests to appropriate ports
   override async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
-
-    // Capture the hostname from the first request
-    if (!this.workerHostname) {
-      this.workerHostname = url.hostname;
-      console.log(`[Sandbox] Captured hostname: ${this.workerHostname}`);
-    }
 
     // Capture and store the sandbox name from the header if present
     if (!this.sandboxName && request.headers.has('X-Sandbox-Name')) {
@@ -432,7 +425,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     };
   }
 
-  async killProcess(id: string, signal?: string): Promise<void> {
+  async killProcess(id: string, _signal?: string): Promise<void> {
     try {
       // Note: signal parameter is not currently supported by the HttpClient implementation
       await this.client.killProcess(id);
@@ -598,7 +591,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     return this.client.readFile(path, options.encoding);
   }
 
-  async exposePort(port: number, options?: { name?: string }) {
+  async exposePort(port: number, options: { name?: string; hostname: string }) {
     await this.client.exposePort(port, options?.name);
 
     // We need the sandbox name to construct preview URLs
@@ -606,8 +599,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       throw new Error('Sandbox name not available. Ensure sandbox is accessed through getSandbox()');
     }
 
-    const hostname = this.getHostname();
-    const url = this.constructPreviewUrl(port, this.sandboxName, hostname);
+    const url = this.constructPreviewUrl(port, this.sandboxName, options.hostname);
 
     return {
       url,
@@ -620,15 +612,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     await this.client.unexposePort(port);
   }
 
-  async getExposedPorts() {
+  async getExposedPorts(hostname: string) {
     const response = await this.client.getExposedPorts();
 
     // We need the sandbox name to construct preview URLs
     if (!this.sandboxName) {
       throw new Error('Sandbox name not available. Ensure sandbox is accessed through getSandbox()');
     }
-
-    const hostname = this.getHostname();
 
     return response.ports.map(port => ({
       url: this.constructPreviewUrl(port.port, this.sandboxName!, hostname),
@@ -638,10 +628,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }));
   }
 
-  private getHostname(): string {
-    // Use the captured hostname or fall back to localhost for development
-    return this.workerHostname || "localhost:8787";
-  }
 
   private constructPreviewUrl(port: number, sandboxId: string, hostname: string): string {
     // Check if this is a localhost pattern
