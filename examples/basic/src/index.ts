@@ -1,4 +1,17 @@
-import { proxyToSandbox, getSandbox, type Sandbox } from "@cloudflare/sandbox";
+import { getSandbox, proxyToSandbox, type Sandbox } from "@cloudflare/sandbox";
+import {
+  executeCommand,
+  executeCommandStream,
+  exposePort,
+  getProcess,
+  getProcessLogs,
+  killProcesses,
+  listProcesses,
+  startProcess,
+  streamProcessLogs,
+  unexposePort,
+} from "./endpoints";
+import { corsHeaders, errorResponse, jsonResponse, parseJsonBody } from "./http";
 
 export { Sandbox } from "@cloudflare/sandbox";
 
@@ -7,47 +20,13 @@ type Env = {
 };
 
 // Helper to get sandbox instance with user-specific ID
-function getUserSandbox(env: Env, request: Request) {
+function getUserSandbox(env: Env) {
   // For demo purposes, use a fixed sandbox ID. In production, you might extract from:
   // - Authentication headers
   // - URL parameters
   // - Session cookies
   const sandboxId = "demo-user-sandbox";
   return getSandbox(env.Sandbox, sandboxId);
-}
-
-// Helper to parse JSON body safely
-async function parseJsonBody(request: Request): Promise<any> {
-  try {
-    return await request.json();
-  } catch (error) {
-    return {};
-  }
-}
-
-// Helper for CORS headers
-function corsHeaders() {
-  return {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
-  };
-}
-
-// Helper for error responses
-function errorResponse(message: string, status: number = 400) {
-  return new Response(JSON.stringify({ error: message }), {
-    status,
-    headers: { "Content-Type": "application/json", ...corsHeaders() },
-  });
-}
-
-// Helper for success responses
-function jsonResponse(data: any, status: number = 200) {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { "Content-Type": "application/json", ...corsHeaders() },
-  });
 }
 
 export default {
@@ -65,264 +44,50 @@ export default {
     const pathname = url.pathname;
 
     try {
-      const sandbox = getUserSandbox(env, request) as unknown as Sandbox<unknown>;
+      const sandbox = getUserSandbox(env) as unknown as Sandbox<unknown>;
 
       // Command Execution API
       if (pathname === "/api/execute" && request.method === "POST") {
-        const body = await parseJsonBody(request);
-        const { command, sessionId } = body;
-
-        if (!command) {
-          return errorResponse("Command is required");
-        }
-
-        // Use the current SDK API signature: exec(command, options)
-        const result = await sandbox.exec(command, { sessionId });
-
-        return jsonResponse({
-          success: result.exitCode === 0,
-          exitCode: result.exitCode,
-          stdout: result.stdout,
-          stderr: result.stderr,
-          command: result.command,
-          duration: result.duration
-        });
+        return await executeCommand(sandbox, request);
       }
 
       // Streaming Command Execution API
       if (pathname === "/api/execute/stream" && request.method === "POST") {
-        const body = await parseJsonBody(request);
-        const { command, sessionId } = body;
-
-        if (!command) {
-          return errorResponse("Command is required");
-        }
-
-        // Create readable stream for SSE
-        const { readable, writable } = new TransformStream();
-        const writer = writable.getWriter();
-
-        // Start streaming in the background
-        (async () => {
-          try {
-            const encoder = new TextEncoder();
-
-            // Send start event
-            await writer.write(encoder.encode(`data: ${JSON.stringify({
-              type: 'start',
-              timestamp: new Date().toISOString(),
-              command: command
-            })}\n\n`));
-
-            // Check if execStream method exists, otherwise fallback to regular exec
-            if (typeof sandbox.execStream === 'function') {
-              const readableStream = await sandbox.execStream(command, { sessionId });
-              const reader = readableStream.getReader();
-
-              try {
-                while (true) {
-                  const { done, value } = await reader.read();
-                  if (done) break;
-
-                  // Forward the raw SSE data directly
-                  await writer.write(value);
-                }
-              } finally {
-                reader.releaseLock();
-              }
-            } else {
-              // Fallback to regular execution if streaming not available
-              try {
-                const result = await sandbox.exec(command, { sessionId });
-                await writer.write(encoder.encode(`data: ${JSON.stringify({
-                  type: 'complete',
-                  timestamp: new Date().toISOString(),
-                  exitCode: result.exitCode,
-                  result
-                })}\n\n`));
-              } catch (error: any) {
-                await writer.write(encoder.encode(`data: ${JSON.stringify({
-                  type: 'error',
-                  timestamp: new Date().toISOString(),
-                  error: error.message
-                })}\n\n`));
-              }
-            }
-          } catch (error: any) {
-            const errorEvent = {
-              type: 'error',
-              timestamp: new Date().toISOString(),
-              error: error.message
-            };
-            await writer.write(new TextEncoder().encode(`data: ${JSON.stringify(errorEvent)}\n\n`));
-          } finally {
-            await writer.close();
-          }
-        })();
-
-        return new Response(readable, {
-          headers: {
-            "Content-Type": "text/event-stream",
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            ...corsHeaders(),
-          },
-        });
+        return await executeCommandStream(sandbox, request);
       }
 
       // Process Management APIs - Check if methods exist
       if (pathname === "/api/process/list" && request.method === "GET") {
-        if (typeof sandbox.listProcesses === 'function') {
-          const processes = await sandbox.listProcesses();
-          return jsonResponse({ processes });
-        } else {
-          return errorResponse("Process management not implemented in current SDK version", 501);
-        }
+        return await listProcesses(sandbox);
       }
 
       if (pathname === "/api/process/start" && request.method === "POST") {
-        const body = await parseJsonBody(request);
-        const { command, processId, sessionId, timeout, env: envVars, cwd } = body;
-
-        if (!command) {
-          return errorResponse("Command is required");
-        }
-
-        if (typeof sandbox.startProcess === 'function') {
-          const process = await sandbox.startProcess(command, {
-            processId,
-            sessionId,
-            timeout,
-            env: envVars,
-            cwd
-          });
-          return jsonResponse(process);
-        } else {
-          return errorResponse("Process management not implemented in current SDK version", 501);
-        }
+        return await startProcess(sandbox, request);
       }
 
       if (pathname.startsWith("/api/process/") && request.method === "DELETE") {
-        const processId = pathname.split("/").pop();
-        if (processId === "kill-all") {
-          if (typeof sandbox.killAllProcesses === 'function') {
-            const result = await sandbox.killAllProcesses();
-            return jsonResponse({ message: "All processes killed", killedCount: result });
-          } else {
-            return errorResponse("Process management not implemented in current SDK version", 501);
-          }
-        } else if (processId) {
-          if (typeof sandbox.killProcess === 'function') {
-            await sandbox.killProcess(processId);
-            return jsonResponse({ message: "Process killed", processId });
-          } else {
-            return errorResponse("Process management not implemented in current SDK version", 501);
-          }
-        } else {
-          return errorResponse("Process ID is required");
-        }
+        return await killProcesses(sandbox, pathname);
       }
 
       if (pathname.startsWith("/api/process/") && pathname.endsWith("/logs") && request.method === "GET") {
-        const pathParts = pathname.split("/");
-        const processId = pathParts[pathParts.length - 2];
-
-        if (!processId) {
-          return errorResponse("Process ID is required");
-        }
-
-        if (typeof sandbox.getProcessLogs === 'function') {
-          const logs = await sandbox.getProcessLogs(processId);
-          return jsonResponse(logs);
-        } else {
-          return errorResponse("Process management not implemented in current SDK version", 501);
-        }
+        return await getProcessLogs(sandbox, pathname);
       }
 
       if (pathname.startsWith("/api/process/") && pathname.endsWith("/stream") && request.method === "GET") {
-        const pathParts = pathname.split("/");
-        const processId = pathParts[pathParts.length - 2];
-
-        if (!processId) {
-          return errorResponse("Process ID is required");
-        }
-
-        // Check if process exists first
-        if (typeof sandbox.getProcess === 'function') {
-          try {
-            const process = await sandbox.getProcess(processId);
-            if (!process) {
-              return errorResponse("Process not found", 404);
-            }
-          } catch (error: any) {
-            return errorResponse(`Failed to check process: ${error.message}`, 500);
-          }
-        }
-
-        // Use the SDK's streaming and forward directly
-        if (typeof sandbox.streamProcessLogs === 'function') {
-          try {
-            // Get the ReadableStream directly from the SDK
-            const readableStream = await sandbox.streamProcessLogs(processId);
-
-            // Return stream with proper headers
-            return new Response(readableStream, {
-              headers: {
-                "Content-Type": "text/event-stream",
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                ...corsHeaders(),
-              },
-            });
-          } catch (error: any) {
-            console.error('Process log streaming error:', error);
-            return errorResponse(`Failed to stream process logs: ${error.message}`, 500);
-          }
-        } else {
-          return errorResponse("Process streaming not implemented in current SDK version", 501);
-        }
+        return await streamProcessLogs(sandbox, pathname);
       }
 
       if (pathname.startsWith("/api/process/") && request.method === "GET") {
-        const processId = pathname.split("/").pop();
-        if (!processId) {
-          return errorResponse("Process ID is required");
-        }
-
-        if (typeof sandbox.getProcess === 'function') {
-          const process = await sandbox.getProcess(processId);
-          if (!process) {
-            return errorResponse("Process not found", 404);
-          }
-          return jsonResponse(process);
-        } else {
-          return errorResponse("Process management not implemented in current SDK version", 501);
-        }
+        return await getProcess(sandbox, pathname);
       }
 
       // Port Management APIs
       if (pathname === "/api/expose-port" && request.method === "POST") {
-        const body = await parseJsonBody(request);
-        const { port, name } = body;
-
-        if (!port) {
-          return errorResponse("Port number is required");
-        }
-
-        const preview = await sandbox.exposePort(port, name ? { name } : undefined);
-        return jsonResponse(preview);
+        return await exposePort(sandbox, request);
       }
 
       if (pathname === "/api/unexpose-port" && request.method === "POST") {
-        const body = await parseJsonBody(request);
-        const { port } = body;
-
-        if (!port) {
-          return errorResponse("Port number is required");
-        }
-
-        await sandbox.unexposePort(port);
-        return jsonResponse({ message: "Port unexposed", port });
+        return await unexposePort(sandbox, request);
       }
 
       if (pathname === "/api/exposed-ports" && request.method === "GET") {
