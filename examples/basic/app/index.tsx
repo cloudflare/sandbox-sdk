@@ -1,8 +1,250 @@
 import type React from "react";
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { HttpClient } from "../../../packages/sandbox/src/client";
 import "./style.css";
+
+// Simple API client to replace direct HttpClient usage
+class SandboxApiClient {
+  private baseUrl: string;
+  private onCommandComplete?: (success: boolean, exitCode: number, stdout: string, stderr: string, command: string) => void;
+  private onCommandStart?: (command: string) => void;
+  private onError?: (error: string, command?: string) => void;
+
+  constructor(options: {
+    baseUrl?: string;
+    onCommandComplete?: (success: boolean, exitCode: number, stdout: string, stderr: string, command: string) => void;
+    onCommandStart?: (command: string) => void;
+    onError?: (error: string, command?: string) => void;
+  } = {}) {
+    this.baseUrl = options.baseUrl || window.location.origin;
+    this.onCommandComplete = options.onCommandComplete;
+    this.onCommandStart = options.onCommandStart;
+    this.onError = options.onError;
+  }
+
+  private async doFetch(url: string, options: RequestInit): Promise<any> {
+    const response = await fetch(`${this.baseUrl}${url}`, {
+      headers: {
+        'Content-Type': 'application/json',
+        ...options.headers,
+      },
+      ...options,
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  async execute(command: string, args: string[], options: any = {}) {
+    if (this.onCommandStart) {
+      this.onCommandStart(command);
+    }
+
+    try {
+      const result = await this.doFetch('/api/execute', {
+        method: 'POST',
+        body: JSON.stringify({
+          command: `${command} ${args.join(' ')}`,
+          ...options,
+        }),
+      });
+
+      if (this.onCommandComplete) {
+        this.onCommandComplete(result.success, result.exitCode, result.stdout, result.stderr, result.command);
+      }
+
+      return result;
+    } catch (error: any) {
+      if (this.onError) {
+        this.onError(error.message, command);
+      }
+      throw error;
+    }
+  }
+
+  async listProcesses() {
+    return this.doFetch('/api/process/list', {
+      method: 'GET',
+    });
+  }
+
+  async startProcess(command: string, args: string[], options: any = {}) {
+    return this.doFetch('/api/process/start', {
+      method: 'POST',
+      body: JSON.stringify({
+        command,
+        args,
+        ...options,
+      }),
+    });
+  }
+
+  async killProcess(processId: string) {
+    return this.doFetch(`/api/process/${processId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async killAllProcesses() {
+    return this.doFetch('/api/process/kill-all', {
+      method: 'DELETE',
+    });
+  }
+
+  async getProcess(processId: string) {
+    return this.doFetch(`/api/process/${processId}`, {
+      method: 'GET',
+    });
+  }
+
+  async getProcessLogs(processId: string) {
+    return this.doFetch(`/api/process/${processId}/logs`, {
+      method: 'GET',
+    });
+  }
+
+  async exposePort(port: number, options: any = {}) {
+    return this.doFetch('/api/expose-port', {
+      method: 'POST',
+      body: JSON.stringify({
+        port,
+        ...options,
+      }),
+    });
+  }
+
+  async unexposePort(port: number) {
+    return this.doFetch('/api/unexpose-port', {
+      method: 'POST',
+      body: JSON.stringify({ port }),
+    });
+  }
+
+  async getExposedPorts() {
+    return this.doFetch('/api/exposed-ports', {
+      method: 'GET',
+    });
+  }
+
+  async *streamProcessLogs(processId: string): AsyncGenerator<any> {
+    const response = await fetch(`${this.baseUrl}/api/process/${processId}/stream`, {
+      headers: {
+        'Accept': 'text/event-stream',
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    const reader = response.body!.getReader();
+    const decoder = new TextDecoder();
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value);
+        const lines = chunk.split('\n').filter(line => line.trim());
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const event = JSON.parse(line.substring(6));
+              yield event;
+            } catch (e) {
+              // Skip invalid JSON
+            }
+          }
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  }
+
+  async writeFile(path: string, content: string, options: any = {}) {
+    return this.doFetch('/api/write', {
+      method: 'POST',
+      body: JSON.stringify({
+        path,
+        content,
+        ...options,
+      }),
+    });
+  }
+
+  async *execStream(command: string, args: string[], options: any = {}): AsyncGenerator<any> {
+    const response = await fetch(`${this.baseUrl}/api/execute/stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'text/event-stream',
+      },
+      body: JSON.stringify({
+        command: `${command} ${args.join(' ')}`,
+        ...options,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    const reader = response.body!.getReader();
+    const decoder = new TextDecoder();
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value);
+        const lines = chunk.split('\n').filter(line => line.trim());
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const event = JSON.parse(line.substring(6));
+              yield event;
+            } catch (e) {
+              // Skip invalid JSON
+            }
+          }
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  }
+
+  async executeStream(command: string, args: string[], options: any = {}) {
+    return this.execStream(command, args, options);
+  }
+
+  async ping() {
+    return this.doFetch('/api/ping', {
+      method: 'GET',
+    });
+  }
+
+  async createSession(sessionId?: string) {
+    return this.doFetch('/api/session/create', {
+      method: 'POST',
+      body: JSON.stringify({ sessionId }),
+    });
+  }
+
+  async clearSession(sessionId: string) {
+    return this.doFetch(`/api/session/clear/${sessionId}`, {
+      method: 'POST',
+    });
+  }
+}
 
 interface CommandResult {
   id: string;
@@ -37,7 +279,7 @@ function ProcessManagementTab({
   connectionStatus,
   sessionId
 }: {
-  client: HttpClient | null;
+  client: SandboxApiClient | null;
   connectionStatus: "disconnected" | "connecting" | "connected";
   sessionId: string | null;
 }) {
@@ -410,7 +652,7 @@ function PortManagementTab({
   connectionStatus,
   sessionId
 }: {
-  client: HttpClient | null;
+  client: SandboxApiClient | null;
   connectionStatus: "disconnected" | "connecting" | "connected";
   sessionId: string | null;
 }) {
@@ -525,7 +767,7 @@ console.log("Bun server running on port 8080");
       await client.writeFile("server.js", serverCode);
 
       // Start the server as a background process
-      await client.startProcess("bun run server.js", {
+      await client.startProcess("bun", ["run", "server.js"], {
         processId: "bun-server",
         sessionId
       });
@@ -593,7 +835,7 @@ server.listen(3001, () => {
       await client.writeFile("node-server.js", serverCode);
 
       // Start the server as a background process
-      await client.startProcess("node node-server.js", {
+      await client.startProcess("node", ["node-server.js"], {
         processId: "node-server",
         sessionId
       });
@@ -666,7 +908,7 @@ with socketserver.TCPServer(("", PORT), MyHandler) as httpd:
       await client.writeFile("python-server.py", serverCode);
 
       // Start the server as a background process
-      await client.startProcess("python3 python-server.py", {
+      await client.startProcess("python3", ["python-server.py"], {
         processId: "python-server",
         sessionId
       });

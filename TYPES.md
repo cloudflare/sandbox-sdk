@@ -96,11 +96,6 @@ interface ExecResult {
   command: string;
   
   /**
-   * Arguments passed to command
-   */
-  args: string[];
-  
-  /**
    * Execution duration in milliseconds
    */
   duration: number;
@@ -176,11 +171,6 @@ interface Process {
   readonly command: string;
   
   /**
-   * Arguments passed to command
-   */
-  readonly args: string[];
-  
-  /**
    * Current process status
    */
   readonly status: ProcessStatus;
@@ -244,7 +234,6 @@ interface ExecEvent {
   timestamp: string;
   data?: string;
   command?: string;
-  args?: string[];
   exitCode?: number;
   result?: ExecResult;
   error?: Error;
@@ -318,7 +307,6 @@ interface ProcessRecord {
   id: string;
   pid?: number;
   command: string;
-  args: string[];
   status: ProcessStatus;
   startTime: Date;
   endTime?: Date;
@@ -342,7 +330,6 @@ interface ProcessRecord {
 // POST /api/process/start
 interface StartProcessRequest {
   command: string;
-  args: string[];
   options?: {
     processId?: string;
     sessionId?: string;
@@ -359,7 +346,6 @@ interface StartProcessResponse {
     id: string;
     pid?: number;
     command: string;
-    args: string[];
     status: ProcessStatus;
     startTime: string;
     sessionId?: string;
@@ -372,7 +358,6 @@ interface ListProcessesResponse {
     id: string;
     pid?: number;
     command: string;
-    args: string[];
     status: ProcessStatus;
     startTime: string;
     endTime?: string;
@@ -387,7 +372,6 @@ interface GetProcessResponse {
     id: string;
     pid?: number;
     command: string;
-    args: string[];
     status: ProcessStatus;
     startTime: string;
     endTime?: string;
@@ -411,17 +395,17 @@ interface GetProcessLogsResponse {
 ```typescript
 interface ISandbox {
   // Enhanced execution API
-  exec(command: string, args: string[], options?: ExecOptions): Promise<ExecResult>;
+  exec(command: string, options?: ExecOptions): Promise<ExecResult>;
   
   // Background process management
-  startProcess(command: string, args: string[], options?: ProcessOptions): Promise<Process>;
+  startProcess(command: string, options?: ProcessOptions): Promise<Process>;
   listProcesses(): Promise<Process[]>;
   getProcess(id: string): Promise<Process | null>;
   killProcess(id: string, signal?: string): Promise<void>;
   killAllProcesses(): Promise<number>;
   
   // Advanced streaming
-  execStream(command: string, args: string[], options?: StreamOptions): AsyncIterable<ExecEvent>;
+  execStream(command: string, options?: StreamOptions): AsyncIterable<ExecEvent>;
   streamProcessLogs(processId: string, options?: { signal?: AbortSignal }): AsyncIterable<LogEvent>;
   
   // Utility methods
@@ -434,10 +418,10 @@ interface ISandbox {
 
 ```typescript
 // Simple execution
-const result: ExecResult = await sandbox.exec('ls', ['-la']);
+const result: ExecResult = await sandbox.exec('ls -la');
 
 // Streaming execution with callbacks
-const buildResult: ExecResult = await sandbox.exec('npm', ['run', 'build'], {
+const buildResult: ExecResult = await sandbox.exec('npm run build', {
   stream: true,
   onOutput: (stream: 'stdout' | 'stderr', data: string) => {
     console.log(`[${stream}] ${data}`);
@@ -447,7 +431,7 @@ const buildResult: ExecResult = await sandbox.exec('npm', ['run', 'build'], {
 });
 
 // Background process
-const server: Process = await sandbox.startProcess('node', ['server.js'], {
+const server: Process = await sandbox.startProcess('node server.js', {
   processId: 'web-server',
   onExit: (code: number | null) => {
     console.log(`Server exited with code: ${code}`);
@@ -460,7 +444,7 @@ const serverProcess: Process | null = await sandbox.getProcess('web-server');
 await sandbox.killProcess('web-server');
 
 // Advanced streaming
-for await (const event: ExecEvent of sandbox.execStream('npm', ['test'])) {
+for await (const event: ExecEvent of sandbox.execStream('npm test')) {
   switch (event.type) {
     case 'start':
       console.log(`Started: ${event.command}`);
@@ -498,7 +482,6 @@ export function isProcess(value: any): value is Process {
   return value &&
     typeof value.id === 'string' &&
     typeof value.command === 'string' &&
-    Array.isArray(value.args) &&
     typeof value.status === 'string';
 }
 
