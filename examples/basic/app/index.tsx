@@ -1762,6 +1762,34 @@ function SandboxTester() {
       // Execute the command with streaming
       console.log("Executing streaming command:", trimmedCommand);
       await client.executeStream(trimmedCommand, [], { sessionId: sessionId || undefined });
+      const commandParts = trimmedCommand.split(' ');
+      const cmd = commandParts[0];
+      const args = commandParts.slice(1);
+      // Get the async generator
+      const streamGenerator = client.execStream(cmd, args, { sessionId: sessionId || undefined });
+      // Iterate through the stream events
+      for await (const event of streamGenerator) {
+        console.log("Stream event:", event);
+        // Update the result with streaming data
+        setResults((prev) => {
+          const updated = [...prev];
+          const lastResult = updated[updated.length - 1];
+          if (lastResult && lastResult.command === trimmedCommand) {
+            if (event.type === 'stdout') {
+              lastResult.stdout += event.data || '';
+            } else if (event.type === 'stderr') {
+              lastResult.stderr += event.data || '';
+            } else if (event.type === 'complete') {
+              lastResult.status = event.exitCode === 0 ? "completed" : "error";
+              lastResult.exitCode = event.exitCode;
+            } else if (event.type === 'error') {
+              lastResult.status = "error";
+              lastResult.stderr += `\nError: ${event.data || 'Unknown error'}`;
+            }
+          }
+          return updated;
+        });
+      }
       console.log("Streaming command completed");
 
       setCommandInput("");

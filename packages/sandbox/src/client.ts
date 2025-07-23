@@ -323,51 +323,6 @@ export class HttpClient {
     return this.options.onStreamEvent;
   }
 
-  async createSession(): Promise<string> {
-    try {
-      const response = await this.doFetch(`/api/session/create`, {
-        headers: {
-          "Content-Type": "application/json",
-        },
-        method: "POST",
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const data: SessionResponse = await response.json();
-      this.sessionId = data.sessionId;
-      console.log(`[HTTP Client] Created session: ${this.sessionId}`);
-      return this.sessionId;
-    } catch (error) {
-      console.error("[HTTP Client] Error creating session:", error);
-      throw error;
-    }
-  }
-
-  async listSessions(): Promise<SessionListResponse> {
-    try {
-      const response = await this.doFetch(`/api/session/list`, {
-        headers: {
-          "Content-Type": "application/json",
-        },
-        method: "GET",
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const data: SessionListResponse = await response.json();
-      console.log(`[HTTP Client] Listed ${data.count} sessions`);
-      return data;
-    } catch (error) {
-      console.error("[HTTP Client] Error listing sessions:", error);
-      throw error;
-    }
-  }
-
   async execute(
     command: string,
     sessionId?: string
@@ -534,6 +489,49 @@ export class HttpClient {
         error instanceof Error ? error.message : "Unknown error",
         command
       );
+      throw error;
+    }
+  }
+
+  async executeCommandStream(
+    command: string,
+    sessionId?: string
+  ): Promise<ReadableStream<Uint8Array>> {
+    try {
+      const targetSessionId = sessionId || this.sessionId;
+
+      const response = await this.doFetch(`/api/execute/stream`, {
+        body: JSON.stringify({
+          command,
+          sessionId: targetSessionId,
+        }),
+        headers: {
+          "Content-Type": "application/json",
+          "Accept": "text/event-stream",
+        },
+        method: "POST",
+      });
+
+      if (!response.ok) {
+        const errorData = (await response.json().catch(() => ({}))) as {
+          error?: string;
+        };
+        throw new Error(
+          errorData.error || `HTTP error! status: ${response.status}`
+        );
+      }
+
+      if (!response.body) {
+        throw new Error("No response body for streaming request");
+      }
+
+      console.log(
+        `[HTTP Client] Started command stream: ${command}`
+      );
+
+      return response.body;
+    } catch (error) {
+      console.error("[HTTP Client] Error in command stream:", error);
       throw error;
     }
   }
@@ -2002,266 +2000,5 @@ export class HttpClient {
       console.error("[HTTP Client] Error streaming process logs:", error);
       throw error;
     }
-  }
-}
-
-// Example usage and utility functions
-export function createClient(options?: HttpClientOptions): HttpClient {
-  return new HttpClient(options);
-}
-
-// Convenience function for quick command execution
-export async function quickExecute(
-  command: string,
-  options?: HttpClientOptions
-): Promise<ExecuteResponse> {
-  const client = createClient(options);
-  await client.createSession();
-
-  try {
-    return await client.execute(command);
-  } finally {
-    client.clearSession();
-  }
-}
-
-// Convenience function for quick streaming command execution
-export async function quickExecuteStream(
-  command: string,
-  options?: HttpClientOptions
-): Promise<void> {
-  const client = createClient(options);
-  await client.createSession();
-
-  try {
-    await client.executeStream(command);
-  } finally {
-    client.clearSession();
-  }
-}
-
-// Convenience function for quick git checkout
-export async function quickGitCheckout(
-  repoUrl: string,
-  branch: string = "main",
-  targetDir?: string,
-  options?: HttpClientOptions
-): Promise<GitCheckoutResponse> {
-  const client = createClient(options);
-  await client.createSession();
-
-  try {
-    return await client.gitCheckout(repoUrl, branch, targetDir);
-  } finally {
-    client.clearSession();
-  }
-}
-
-// Convenience function for quick directory creation
-export async function quickMkdir(
-  path: string,
-  recursive: boolean = false,
-  options?: HttpClientOptions
-): Promise<MkdirResponse> {
-  const client = createClient(options);
-  await client.createSession();
-
-  try {
-    return await client.mkdir(path, recursive);
-  } finally {
-    client.clearSession();
-  }
-}
-
-// Convenience function for quick streaming git checkout
-export async function quickGitCheckoutStream(
-  repoUrl: string,
-  branch: string = "main",
-  targetDir?: string,
-  options?: HttpClientOptions
-): Promise<void> {
-  const client = createClient(options);
-  await client.createSession();
-
-  try {
-    await client.gitCheckoutStream(repoUrl, branch, targetDir);
-  } finally {
-    client.clearSession();
-  }
-}
-
-// Convenience function for quick streaming directory creation
-export async function quickMkdirStream(
-  path: string,
-  recursive: boolean = false,
-  options?: HttpClientOptions
-): Promise<void> {
-  const client = createClient(options);
-  await client.createSession();
-
-  try {
-    await client.mkdirStream(path, recursive);
-  } finally {
-    client.clearSession();
-  }
-}
-
-// Convenience function for quick file writing
-export async function quickWriteFile(
-  path: string,
-  content: string,
-  encoding: string = "utf-8",
-  options?: HttpClientOptions
-): Promise<WriteFileResponse> {
-  const client = createClient(options);
-  await client.createSession();
-
-  try {
-    return await client.writeFile(path, content, encoding);
-  } finally {
-    client.clearSession();
-  }
-}
-
-// Convenience function for quick streaming file writing
-export async function quickWriteFileStream(
-  path: string,
-  content: string,
-  encoding: string = "utf-8",
-  options?: HttpClientOptions
-): Promise<void> {
-  const client = createClient(options);
-  await client.createSession();
-
-  try {
-    await client.writeFileStream(path, content, encoding);
-  } finally {
-    client.clearSession();
-  }
-}
-
-// Convenience function for quick file reading
-export async function quickReadFile(
-  path: string,
-  encoding: string = "utf-8",
-  options?: HttpClientOptions
-): Promise<ReadFileResponse> {
-  const client = createClient(options);
-  await client.createSession();
-
-  try {
-    return await client.readFile(path, encoding);
-  } finally {
-    client.clearSession();
-  }
-}
-
-// Convenience function for quick streaming file reading
-export async function quickReadFileStream(
-  path: string,
-  encoding: string = "utf-8",
-  options?: HttpClientOptions
-): Promise<void> {
-  const client = createClient(options);
-  await client.createSession();
-
-  try {
-    await client.readFileStream(path, encoding);
-  } finally {
-    client.clearSession();
-  }
-}
-
-// Convenience function for quick file deletion
-export async function quickDeleteFile(
-  path: string,
-  options?: HttpClientOptions
-): Promise<DeleteFileResponse> {
-  const client = createClient(options);
-  await client.createSession();
-
-  try {
-    return await client.deleteFile(path);
-  } finally {
-    client.clearSession();
-  }
-}
-
-// Convenience function for quick streaming file deletion
-export async function quickDeleteFileStream(
-  path: string,
-  options?: HttpClientOptions
-): Promise<void> {
-  const client = createClient(options);
-  await client.createSession();
-
-  try {
-    await client.deleteFileStream(path);
-  } finally {
-    client.clearSession();
-  }
-}
-
-// Convenience function for quick file renaming
-export async function quickRenameFile(
-  oldPath: string,
-  newPath: string,
-  options?: HttpClientOptions
-): Promise<RenameFileResponse> {
-  const client = createClient(options);
-  await client.createSession();
-
-  try {
-    return await client.renameFile(oldPath, newPath);
-  } finally {
-    client.clearSession();
-  }
-}
-
-// Convenience function for quick streaming file renaming
-export async function quickRenameFileStream(
-  oldPath: string,
-  newPath: string,
-  options?: HttpClientOptions
-): Promise<void> {
-  const client = createClient(options);
-  await client.createSession();
-
-  try {
-    await client.renameFileStream(oldPath, newPath);
-  } finally {
-    client.clearSession();
-  }
-}
-
-// Convenience function for quick file moving
-export async function quickMoveFile(
-  sourcePath: string,
-  destinationPath: string,
-  options?: HttpClientOptions
-): Promise<MoveFileResponse> {
-  const client = createClient(options);
-  await client.createSession();
-
-  try {
-    return await client.moveFile(sourcePath, destinationPath);
-  } finally {
-    client.clearSession();
-  }
-}
-
-// Convenience function for quick streaming file moving
-export async function quickMoveFileStream(
-  sourcePath: string,
-  destinationPath: string,
-  options?: HttpClientOptions
-): Promise<void> {
-  const client = createClient(options);
-  await client.createSession();
-
-  try {
-    await client.moveFileStream(sourcePath, destinationPath);
-  } finally {
-    client.clearSession();
   }
 }

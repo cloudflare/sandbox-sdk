@@ -466,29 +466,16 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   // Streaming methods - return ReadableStream for RPC compatibility
   async execStream(command: string, options?: StreamOptions): Promise<ReadableStream<Uint8Array>> {
-    // Use containerFetch to get streaming response from container
-    const response = await this.containerFetch(`/api/execute/stream`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'text/event-stream',
-      },
-      body: JSON.stringify({
-        command,
-        sessionId: options?.sessionId
-      })
-    });
-
-    if (!response.ok) {
-      throw new Error(`Execute stream failed: ${response.status} ${response.statusText}`);
+    // Check for cancellation
+    if (options?.signal?.aborted) {
+      throw new Error('Operation was aborted');
     }
 
-    if (!response.body) {
-      throw new Error('No response body for streaming execution');
-    }
+    // Get the stream from HttpClient (need to add this method)
+    const stream = await this.client.executeCommandStream(command, options?.sessionId);
 
     // Return the ReadableStream directly - can be converted to AsyncIterable by consumers
-    return response.body;
+    return stream;
   }
 
   async streamProcessLogs(processId: string, options?: { signal?: AbortSignal }): Promise<ReadableStream<Uint8Array>> {
@@ -499,7 +486,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     // Get the stream from HttpClient
     const stream = await this.client.streamProcessLogs(processId);
-    
+
     // Return the ReadableStream directly - can be converted to AsyncIterable by consumers
     return stream;
   }
