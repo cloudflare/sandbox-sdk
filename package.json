@@ -19,10 +19,10 @@
     "@biomejs/biome": "^2.1.2",
     "@changesets/changelog-github": "^0.5.1",
     "@changesets/cli": "^2.29.5",
-    "@cloudflare/vite-plugin": "https://pkg.pr.new/@cloudflare/vite-plugin@10002",
-    "@cloudflare/workers-types": "^4.20250722.0",
+    "@cloudflare/vite-plugin": "^1.10.0",
+    "@cloudflare/workers-types": "^4.20250723.0",
     "@types/bun": "^1.2.19",
-    "@types/node": "^24.0.15",
+    "@types/node": "^24.1.0",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.7.0",
@@ -33,7 +33,7 @@
     "tsx": "^4.20.3",
     "typescript": "^5.8.3",
     "vite": "^7.0.5",
-    "wrangler": "https://pkg.pr.new/wrangler@10002"
+    "wrangler": "^4.25.1"
   },
   "private": true,
   "packageManager": "npm@11.4.2"
