@@ -11,7 +11,7 @@ class HttpCommandTester {
 
   constructor(private baseUrl: string) {
     this.client = new HttpClient({
-      baseUrl,
+      baseUrl: this.baseUrl,
       onCommandComplete: (
         success: boolean,
         exitCode: number,
