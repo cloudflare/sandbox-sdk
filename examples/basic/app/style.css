@@ -360,7 +360,7 @@ body {
 
 .process-table-header {
   display: grid;
-  grid-template-columns: 120px 150px 1fr 80px 160px 120px;
+  grid-template-columns: 120px 220px 1fr 80px 160px 120px;
   gap: 1rem;
   padding: 0.75rem;
   background-color: #21262d;
@@ -372,7 +372,7 @@ body {
 
 .process-table-row {
   display: grid;
-  grid-template-columns: 120px 150px 1fr 80px 160px 120px;
+  grid-template-columns: 120px 220px 1fr 80px 160px 120px;
   gap: 1rem;
   padding: 0.75rem;
   background-color: #0d1117;
