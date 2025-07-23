@@ -1636,9 +1636,34 @@ function SandboxTester() {
       try {
         setConnectionStatus("connecting");
 
-        // Test connection with ping
-        await httpClient.ping();
-        console.log("Server is reachable");
+        // Test connection with ping that actually initializes the sandbox
+        let sandboxReady = false;
+        let attempts = 0;
+        const maxAttempts = 10; // Try for up to 10 seconds
+
+        while (!sandboxReady && attempts < maxAttempts) {
+          try {
+            const pingResponse = await httpClient.ping();
+            console.log("Ping response:", pingResponse);
+
+            if (pingResponse.sandboxStatus === "ready") {
+              sandboxReady = true;
+              console.log("Sandbox is ready");
+            } else {
+              console.log("Sandbox still initializing, waiting...");
+              await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
+              attempts++;
+            }
+          } catch (error) {
+            console.log("Ping failed, retrying...", error);
+            await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
+            attempts++;
+          }
+        }
+
+        if (!sandboxReady) {
+          throw new Error("Sandbox failed to initialize within timeout");
+        }
 
         // Create a session
         const session = await httpClient.createSession();
@@ -1809,10 +1834,10 @@ function SandboxTester() {
           className={`connection-status ${connectionStatus}`}
         >
           {connectionStatus === "connected"
-            ? `Connected (${sessionId})`
+            ? `Sandbox Ready (${sessionId})`
             : connectionStatus === "connecting"
-            ? "Connecting..."
-            : "Disconnected"}
+            ? "Initializing Sandbox..."
+            : "Sandbox Disconnected"}
         </div>
       </div>
 

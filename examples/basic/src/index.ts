@@ -150,9 +150,25 @@ export default {
         });
       }
 
-      // Simple ping endpoint (no method call needed)
+      // Ping endpoint that actually initializes the container
       if (pathname === "/api/ping") {
-        return jsonResponse({ message: "pong", timestamp: new Date().toISOString() });
+        try {
+          // Test the actual sandbox connection by calling a simple method
+          // This will initialize the sandbox if it's not already running
+          await sandbox.exec("echo 'Sandbox initialized'");
+          return jsonResponse({
+            message: "pong",
+            timestamp: new Date().toISOString(),
+            sandboxStatus: "ready"
+          });
+        } catch (error: any) {
+          return jsonResponse({
+            message: "pong",
+            timestamp: new Date().toISOString(),
+            sandboxStatus: "initializing",
+            error: error.message
+          }, 202); // 202 Accepted - processing in progress
+        }
       }
 
       // Fallback: serve static assets for all other requests
