@@ -457,75 +457,48 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   async gitCheckout(
     repoUrl: string,
-    options: { branch?: string; targetDir?: string; stream?: boolean }
+    options: { branch?: string; targetDir?: string }
   ) {
-    if (options?.stream) {
-      return this.client.gitCheckoutStream(
-        repoUrl,
-        options.branch,
-        options.targetDir
-      );
-    }
     return this.client.gitCheckout(repoUrl, options.branch, options.targetDir);
   }
 
   async mkdir(
     path: string,
-    options: { recursive?: boolean; stream?: boolean } = {}
+    options: { recursive?: boolean } = {}
   ) {
-    if (options?.stream) {
-      return this.client.mkdirStream(path, options.recursive);
-    }
     return this.client.mkdir(path, options.recursive);
   }
 
   async writeFile(
     path: string,
     content: string,
-    options: { encoding?: string; stream?: boolean } = {}
+    options: { encoding?: string } = {}
   ) {
-    if (options?.stream) {
-      return this.client.writeFileStream(path, content, options.encoding);
-    }
     return this.client.writeFile(path, content, options.encoding);
   }
 
-  async deleteFile(path: string, options: { stream?: boolean } = {}) {
-    if (options?.stream) {
-      return this.client.deleteFileStream(path);
-    }
+  async deleteFile(path: string) {
     return this.client.deleteFile(path);
   }
 
   async renameFile(
     oldPath: string,
-    newPath: string,
-    options: { stream?: boolean } = {}
+    newPath: string
   ) {
-    if (options?.stream) {
-      return this.client.renameFileStream(oldPath, newPath);
-    }
     return this.client.renameFile(oldPath, newPath);
   }
 
   async moveFile(
     sourcePath: string,
-    destinationPath: string,
-    options: { stream?: boolean } = {}
+    destinationPath: string
   ) {
-    if (options?.stream) {
-      return this.client.moveFileStream(sourcePath, destinationPath);
-    }
     return this.client.moveFile(sourcePath, destinationPath);
   }
 
   async readFile(
     path: string,
-    options: { encoding?: string; stream?: boolean } = {}
+    options: { encoding?: string } = {}
   ) {
-    if (options?.stream) {
-      return this.client.readFileStream(path, options.encoding);
-    }
     return this.client.readFile(path, options.encoding);
   }
 

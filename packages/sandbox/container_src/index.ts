@@ -6,15 +6,9 @@ import {
   handleMoveFileRequest,
   handleReadFileRequest,
   handleRenameFileRequest,
-  handleStreamingDeleteFileRequest,
-  handleStreamingMkdirRequest,
-  handleStreamingMoveFileRequest,
-  handleStreamingReadFileRequest,
-  handleStreamingRenameFileRequest,
-  handleStreamingWriteFileRequest,
   handleWriteFileRequest,
 } from "./handler/file";
-import { handleGitCheckoutRequest, handleStreamingGitCheckoutRequest } from "./handler/git";
+import { handleGitCheckoutRequest } from "./handler/git";
 import {
   handleExposePortRequest,
   handleGetExposedPortsRequest,
@@ -213,21 +207,9 @@ const server = serve({
           }
           break;
 
-        case "/api/git/checkout/stream":
-          if (req.method === "POST") {
-            return handleStreamingGitCheckoutRequest(sessions, req, corsHeaders);
-          }
-          break;
-
         case "/api/mkdir":
           if (req.method === "POST") {
             return handleMkdirRequest(sessions, req, corsHeaders);
-          }
-          break;
-
-        case "/api/mkdir/stream":
-          if (req.method === "POST") {
-            return handleStreamingMkdirRequest(sessions, req, corsHeaders);
           }
           break;
 
@@ -237,21 +219,9 @@ const server = serve({
           }
           break;
 
-        case "/api/write/stream":
-          if (req.method === "POST") {
-            return handleStreamingWriteFileRequest(req, corsHeaders);
-          }
-          break;
-
         case "/api/read":
           if (req.method === "POST") {
             return handleReadFileRequest(req, corsHeaders);
-          }
-          break;
-
-        case "/api/read/stream":
-          if (req.method === "POST") {
-            return handleStreamingReadFileRequest(req, corsHeaders);
           }
           break;
 
@@ -261,33 +231,15 @@ const server = serve({
           }
           break;
 
-        case "/api/delete/stream":
-          if (req.method === "POST") {
-            return handleStreamingDeleteFileRequest(req, corsHeaders);
-          }
-          break;
-
         case "/api/rename":
           if (req.method === "POST") {
             return handleRenameFileRequest(req, corsHeaders);
           }
           break;
 
-        case "/api/rename/stream":
-          if (req.method === "POST") {
-            return handleStreamingRenameFileRequest(req, corsHeaders);
-          }
-          break;
-
         case "/api/move":
           if (req.method === "POST") {
             return handleMoveFileRequest(req, corsHeaders);
-          }
-          break;
-
-        case "/api/move/stream":
-          if (req.method === "POST") {
-            return handleStreamingMoveFileRequest(req, corsHeaders);
           }
           break;
 
@@ -387,19 +339,12 @@ console.log(`   GET  /api/session/list - List all sessions`);
 console.log(`   POST /api/execute - Execute a command (non-streaming)`);
 console.log(`   POST /api/execute/stream - Execute a command (streaming)`);
 console.log(`   POST /api/git/checkout - Checkout a git repository`);
-console.log(`   POST /api/git/checkout/stream - Checkout a git repository (streaming)`);
 console.log(`   POST /api/mkdir - Create a directory`);
-console.log(`   POST /api/mkdir/stream - Create a directory (streaming)`);
 console.log(`   POST /api/write - Write a file`);
-console.log(`   POST /api/write/stream - Write a file (streaming)`);
 console.log(`   POST /api/read - Read a file`);
-console.log(`   POST /api/read/stream - Read a file (streaming)`);
 console.log(`   POST /api/delete - Delete a file`);
-console.log(`   POST /api/delete/stream - Delete a file (streaming)`);
 console.log(`   POST /api/rename - Rename a file`);
-console.log(`   POST /api/rename/stream - Rename a file (streaming)`);
 console.log(`   POST /api/move - Move a file`);
-console.log(`   POST /api/move/stream - Move a file (streaming)`);
 console.log(`   POST /api/expose-port - Expose a port for external access`);
 console.log(`   DELETE /api/unexpose-port - Unexpose a port`);
 console.log(`   GET  /api/exposed-ports - List exposed ports`);
