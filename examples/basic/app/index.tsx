@@ -6,16 +6,30 @@ import "./style.css";
 // Simple API client to replace direct HttpClient usage
 class SandboxApiClient {
   private baseUrl: string;
-  private onCommandComplete?: (success: boolean, exitCode: number, stdout: string, stderr: string, command: string) => void;
+  private onCommandComplete?: (
+    success: boolean,
+    exitCode: number,
+    stdout: string,
+    stderr: string,
+    command: string
+  ) => void;
   private onCommandStart?: (command: string) => void;
   private onError?: (error: string, command?: string) => void;
 
-  constructor(options: {
-    baseUrl?: string;
-    onCommandComplete?: (success: boolean, exitCode: number, stdout: string, stderr: string, command: string) => void;
-    onCommandStart?: (command: string) => void;
-    onError?: (error: string, command?: string) => void;
-  } = {}) {
+  constructor(
+    options: {
+      baseUrl?: string;
+      onCommandComplete?: (
+        success: boolean,
+        exitCode: number,
+        stdout: string,
+        stderr: string,
+        command: string
+      ) => void;
+      onCommandStart?: (command: string) => void;
+      onError?: (error: string, command?: string) => void;
+    } = {}
+  ) {
     this.baseUrl = options.baseUrl || window.location.origin;
     this.onCommandComplete = options.onCommandComplete;
     this.onCommandStart = options.onCommandStart;
@@ -25,7 +39,7 @@ class SandboxApiClient {
   private async doFetch(url: string, options: RequestInit): Promise<any> {
     const response = await fetch(`${this.baseUrl}${url}`, {
       headers: {
-        'Content-Type': 'application/json',
+        "Content-Type": "application/json",
         ...options.headers,
       },
       ...options,
@@ -44,16 +58,22 @@ class SandboxApiClient {
     }
 
     try {
-      const result = await this.doFetch('/api/execute', {
-        method: 'POST',
+      const result = await this.doFetch("/api/execute", {
+        method: "POST",
         body: JSON.stringify({
-          command: `${command} ${args.join(' ')}`,
+          command: `${command} ${args.join(" ")}`,
           ...options,
         }),
       });
 
       if (this.onCommandComplete) {
-        this.onCommandComplete(result.success, result.exitCode, result.stdout, result.stderr, result.command);
+        this.onCommandComplete(
+          result.success,
+          result.exitCode,
+          result.stdout,
+          result.stderr,
+          result.command
+        );
       }
 
       return result;
@@ -66,14 +86,14 @@ class SandboxApiClient {
   }
 
   async listProcesses() {
-    return this.doFetch('/api/process/list', {
-      method: 'GET',
+    return this.doFetch("/api/process/list", {
+      method: "GET",
     });
   }
 
   async startProcess(command: string, args: string[], options: any = {}) {
-    return this.doFetch('/api/process/start', {
-      method: 'POST',
+    return this.doFetch("/api/process/start", {
+      method: "POST",
       body: JSON.stringify({
         command,
         args,
@@ -84,31 +104,31 @@ class SandboxApiClient {
 
   async killProcess(processId: string) {
     return this.doFetch(`/api/process/${processId}`, {
-      method: 'DELETE',
+      method: "DELETE",
     });
   }
 
   async killAllProcesses() {
-    return this.doFetch('/api/process/kill-all', {
-      method: 'DELETE',
+    return this.doFetch("/api/process/kill-all", {
+      method: "DELETE",
     });
   }
 
   async getProcess(processId: string) {
     return this.doFetch(`/api/process/${processId}`, {
-      method: 'GET',
+      method: "GET",
     });
   }
 
   async getProcessLogs(processId: string) {
     return this.doFetch(`/api/process/${processId}/logs`, {
-      method: 'GET',
+      method: "GET",
     });
   }
 
   async exposePort(port: number, options: any = {}) {
-    return this.doFetch('/api/expose-port', {
-      method: 'POST',
+    return this.doFetch("/api/expose-port", {
+      method: "POST",
       body: JSON.stringify({
         port,
         ...options,
@@ -117,24 +137,27 @@ class SandboxApiClient {
   }
 
   async unexposePort(port: number) {
-    return this.doFetch('/api/unexpose-port', {
-      method: 'POST',
+    return this.doFetch("/api/unexpose-port", {
+      method: "POST",
       body: JSON.stringify({ port }),
     });
   }
 
   async getExposedPorts() {
-    return this.doFetch('/api/exposed-ports', {
-      method: 'GET',
+    return this.doFetch("/api/exposed-ports", {
+      method: "GET",
     });
   }
 
   async *streamProcessLogs(processId: string): AsyncGenerator<any> {
-    const response = await fetch(`${this.baseUrl}/api/process/${processId}/stream`, {
-      headers: {
-        'Accept': 'text/event-stream',
-      },
-    });
+    const response = await fetch(
+      `${this.baseUrl}/api/process/${processId}/stream`,
+      {
+        headers: {
+          Accept: "text/event-stream",
+        },
+      }
+    );
 
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`);
@@ -142,7 +165,7 @@ class SandboxApiClient {
 
     const reader = response.body!.getReader();
     const decoder = new TextDecoder();
-    let buffer = ''; // Buffer for incomplete lines
+    let buffer = ""; // Buffer for incomplete lines
 
     try {
       while (true) {
@@ -154,21 +177,21 @@ class SandboxApiClient {
 
         // Process complete SSE events
         while (true) {
-          const eventEnd = buffer.indexOf('\n\n');
+          const eventEnd = buffer.indexOf("\n\n");
           if (eventEnd === -1) break; // No complete event yet
 
           const eventData = buffer.substring(0, eventEnd);
           buffer = buffer.substring(eventEnd + 2);
 
           // Parse the SSE event
-          const lines = eventData.split('\n');
+          const lines = eventData.split("\n");
           for (const line of lines) {
-            if (line.startsWith('data: ')) {
+            if (line.startsWith("data: ")) {
               try {
                 const event = JSON.parse(line.substring(6));
                 yield event;
               } catch (e) {
-                console.warn('Failed to parse SSE event:', line, e);
+                console.warn("Failed to parse SSE event:", line, e);
               }
             }
           }
@@ -180,8 +203,8 @@ class SandboxApiClient {
   }
 
   async writeFile(path: string, content: string, options: any = {}) {
-    return this.doFetch('/api/write', {
-      method: 'POST',
+    return this.doFetch("/api/write", {
+      method: "POST",
       body: JSON.stringify({
         path,
         content,
@@ -190,15 +213,95 @@ class SandboxApiClient {
     });
   }
 
-  async *execStream(command: string, args: string[], options: any = {}): AsyncGenerator<any> {
+  async readFile(path: string, options: any = {}) {
+    return this.doFetch("/api/read", {
+      method: "POST",
+      body: JSON.stringify({
+        path,
+        ...options,
+      }),
+    });
+  }
+
+  async deleteFile(path: string) {
+    return this.doFetch("/api/delete", {
+      method: "POST",
+      body: JSON.stringify({ path }),
+    });
+  }
+
+  async renameFile(oldPath: string, newPath: string) {
+    return this.doFetch("/api/rename", {
+      method: "POST",
+      body: JSON.stringify({ oldPath, newPath }),
+    });
+  }
+
+  async moveFile(sourcePath: string, destinationPath: string) {
+    return this.doFetch("/api/move", {
+      method: "POST",
+      body: JSON.stringify({ sourcePath, destinationPath }),
+    });
+  }
+
+  async mkdir(path: string, options: any = {}) {
+    return this.doFetch("/api/mkdir", {
+      method: "POST",
+      body: JSON.stringify({
+        path,
+        ...options,
+      }),
+    });
+  }
+
+  async gitCheckout(repoUrl: string, branch?: string, targetDir?: string) {
+    return this.doFetch("/api/git/checkout", {
+      method: "POST",
+      body: JSON.stringify({ repoUrl, branch, targetDir }),
+    });
+  }
+
+  async setupNextjs(projectName?: string) {
+    return this.doFetch("/api/templates/nextjs", {
+      method: "POST",
+      body: JSON.stringify({ projectName }),
+    });
+  }
+
+  async setupReact(projectName?: string) {
+    return this.doFetch("/api/templates/react", {
+      method: "POST",
+      body: JSON.stringify({ projectName }),
+    });
+  }
+
+  async setupVue(projectName?: string) {
+    return this.doFetch("/api/templates/vue", {
+      method: "POST",
+      body: JSON.stringify({ projectName }),
+    });
+  }
+
+  async setupStatic(projectName?: string) {
+    return this.doFetch("/api/templates/static", {
+      method: "POST",
+      body: JSON.stringify({ projectName }),
+    });
+  }
+
+  async *execStream(
+    command: string,
+    args: string[],
+    options: any = {}
+  ): AsyncGenerator<any> {
     const response = await fetch(`${this.baseUrl}/api/execute/stream`, {
-      method: 'POST',
+      method: "POST",
       headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'text/event-stream',
+        "Content-Type": "application/json",
+        Accept: "text/event-stream",
       },
       body: JSON.stringify({
-        command: `${command} ${args.join(' ')}`,
+        command: `${command} ${args.join(" ")}`,
         ...options,
       }),
     });
@@ -209,7 +312,7 @@ class SandboxApiClient {
 
     const reader = response.body!.getReader();
     const decoder = new TextDecoder();
-    let buffer = ''; // Buffer for incomplete lines
+    let buffer = ""; // Buffer for incomplete lines
 
     try {
       while (true) {
@@ -221,21 +324,21 @@ class SandboxApiClient {
 
         // Process complete SSE events
         while (true) {
-          const eventEnd = buffer.indexOf('\n\n');
+          const eventEnd = buffer.indexOf("\n\n");
           if (eventEnd === -1) break; // No complete event yet
 
           const eventData = buffer.substring(0, eventEnd);
           buffer = buffer.substring(eventEnd + 2);
 
           // Parse the SSE event
-          const lines = eventData.split('\n');
+          const lines = eventData.split("\n");
           for (const line of lines) {
-            if (line.startsWith('data: ')) {
+            if (line.startsWith("data: ")) {
               try {
                 const event = JSON.parse(line.substring(6));
                 yield event;
               } catch (e) {
-                console.warn('Failed to parse SSE event:', line, e);
+                console.warn("Failed to parse SSE event:", line, e);
               }
             }
           }
@@ -251,21 +354,21 @@ class SandboxApiClient {
   }
 
   async ping() {
-    return this.doFetch('/api/ping', {
-      method: 'GET',
+    return this.doFetch("/api/ping", {
+      method: "GET",
     });
   }
 
   async createSession(sessionId?: string) {
-    return this.doFetch('/api/session/create', {
-      method: 'POST',
+    return this.doFetch("/api/session/create", {
+      method: "POST",
       body: JSON.stringify({ sessionId }),
     });
   }
 
   async clearSession(sessionId: string) {
     return this.doFetch(`/api/session/clear/${sessionId}`, {
-      method: 'POST',
+      method: "POST",
     });
   }
 }
@@ -280,13 +383,13 @@ interface CommandResult {
   timestamp: Date;
 }
 
-type TabType = 'commands' | 'processes' | 'ports' | 'streaming';
+type TabType = "commands" | "processes" | "ports" | "streaming" | "files";
 
 interface ProcessInfo {
   id: string;
   pid?: number;
   command: string;
-  status: 'starting' | 'running' | 'completed' | 'failed' | 'killed' | 'error';
+  status: "starting" | "running" | "completed" | "failed" | "killed" | "error";
   startTime: string;
   endTime?: string;
   exitCode?: number;
@@ -301,7 +404,7 @@ interface ProcessLogs {
 function ProcessManagementTab({
   client,
   connectionStatus,
-  sessionId
+  sessionId,
 }: {
   client: SandboxApiClient | null;
   connectionStatus: "disconnected" | "connecting" | "connected";
@@ -314,7 +417,7 @@ function ProcessManagementTab({
     env: "",
     cwd: "",
     timeout: "",
-    processId: ""
+    processId: "",
   });
   const [selectedProcess, setSelectedProcess] = useState<string | null>(null);
   const [processLogs, setProcessLogs] = useState<ProcessLogs | null>(null);
@@ -346,28 +449,34 @@ function ProcessManagementTab({
 
   // Start a background process
   const startProcess = async () => {
-    if (!client || connectionStatus !== "connected" || !processCommand.trim()) return;
+    if (!client || connectionStatus !== "connected" || !processCommand.trim())
+      return;
 
     try {
       setIsStartingProcess(true);
 
       const options: any = {};
-      if (processOptions.processId.trim()) options.processId = processOptions.processId.trim();
+      if (processOptions.processId.trim())
+        options.processId = processOptions.processId.trim();
       if (sessionId) options.sessionId = sessionId;
-      if (processOptions.timeout.trim()) options.timeout = parseInt(processOptions.timeout.trim());
+      if (processOptions.timeout.trim())
+        options.timeout = parseInt(processOptions.timeout.trim());
       if (processOptions.cwd.trim()) options.cwd = processOptions.cwd.trim();
 
       // Parse environment variables
       if (processOptions.env.trim()) {
         const env: Record<string, string> = {};
-        processOptions.env.split(',').forEach(pair => {
-          const [key, value] = pair.split('=');
+        processOptions.env.split(",").forEach((pair) => {
+          const [key, value] = pair.split("=");
           if (key && value) env[key.trim()] = value.trim();
         });
         options.env = env;
       }
 
-      const response = await client.startProcess(processCommand.trim(), options);
+      const response = await client.startProcess(
+        processCommand.trim(),
+        options
+      );
       console.log("Process started:", response);
 
       // Clear form
@@ -428,39 +537,39 @@ function ProcessManagementTab({
     }
   };
 
-  const getStatusColor = (status: ProcessInfo['status']) => {
+  const getStatusColor = (status: ProcessInfo["status"]) => {
     switch (status) {
-      case 'starting':
-        return 'text-yellow-500';
-      case 'running':
-        return 'text-blue-500';
-      case 'completed':
-        return 'text-green-500';
-      case 'failed':
-      case 'error':
-        return 'text-red-500';
-      case 'killed':
-        return 'text-orange-500';
+      case "starting":
+        return "text-yellow-500";
+      case "running":
+        return "text-blue-500";
+      case "completed":
+        return "text-green-500";
+      case "failed":
+      case "error":
+        return "text-red-500";
+      case "killed":
+        return "text-orange-500";
       default:
-        return 'text-gray-500';
+        return "text-gray-500";
     }
   };
 
-  const getStatusIcon = (status: ProcessInfo['status']) => {
+  const getStatusIcon = (status: ProcessInfo["status"]) => {
     switch (status) {
-      case 'starting':
-        return '⏳';
-      case 'running':
-        return '🟢';
-      case 'completed':
-        return '✅';
-      case 'failed':
-      case 'error':
-        return '❌';
-      case 'killed':
-        return '🔶';
+      case "starting":
+        return "⏳";
+      case "running":
+        return "🟢";
+      case "completed":
+        return "✅";
+      case "failed":
+      case "error":
+        return "❌";
+      case "killed":
+        return "🔶";
       default:
-        return '⏳';
+        return "⏳";
     }
   };
 
@@ -505,14 +614,21 @@ function ProcessManagementTab({
               type="text"
               placeholder="Process ID (optional)"
               value={processOptions.processId}
-              onChange={(e) => setProcessOptions(prev => ({...prev, processId: e.target.value}))}
+              onChange={(e) =>
+                setProcessOptions((prev) => ({
+                  ...prev,
+                  processId: e.target.value,
+                }))
+              }
               className="process-input"
             />
             <input
               type="text"
               placeholder="Working Directory (optional)"
               value={processOptions.cwd}
-              onChange={(e) => setProcessOptions(prev => ({...prev, cwd: e.target.value}))}
+              onChange={(e) =>
+                setProcessOptions((prev) => ({ ...prev, cwd: e.target.value }))
+              }
               className="process-input"
             />
           </div>
@@ -522,21 +638,32 @@ function ProcessManagementTab({
               type="text"
               placeholder="Timeout (ms, optional)"
               value={processOptions.timeout}
-              onChange={(e) => setProcessOptions(prev => ({...prev, timeout: e.target.value}))}
+              onChange={(e) =>
+                setProcessOptions((prev) => ({
+                  ...prev,
+                  timeout: e.target.value,
+                }))
+              }
               className="process-input"
             />
             <input
               type="text"
               placeholder="Environment (KEY1=val1,KEY2=val2)"
               value={processOptions.env}
-              onChange={(e) => setProcessOptions(prev => ({...prev, env: e.target.value}))}
+              onChange={(e) =>
+                setProcessOptions((prev) => ({ ...prev, env: e.target.value }))
+              }
               className="process-input"
             />
           </div>
 
           <button
             onClick={startProcess}
-            disabled={!processCommand.trim() || isStartingProcess || connectionStatus !== "connected"}
+            disabled={
+              !processCommand.trim() ||
+              isStartingProcess ||
+              connectionStatus !== "connected"
+            }
             className="btn btn-start-process"
           >
             {isStartingProcess ? "Starting..." : "Start Process"}
@@ -550,7 +677,10 @@ function ProcessManagementTab({
             <button
               onClick={() => {
                 setProcessCommand("bun run server.js");
-                setProcessOptions(prev => ({...prev, processId: "bun-server"}));
+                setProcessOptions((prev) => ({
+                  ...prev,
+                  processId: "bun-server",
+                }));
               }}
               className="btn btn-template"
             >
@@ -558,8 +688,13 @@ function ProcessManagementTab({
             </button>
             <button
               onClick={() => {
-                setProcessCommand("node -e \"setInterval(() => console.log('Heartbeat:', new Date().toISOString()), 2000)\"");
-                setProcessOptions(prev => ({...prev, processId: "heartbeat"}));
+                setProcessCommand(
+                  "node -e \"setInterval(() => console.log('Heartbeat:', new Date().toISOString()), 2000)\""
+                );
+                setProcessOptions((prev) => ({
+                  ...prev,
+                  processId: "heartbeat",
+                }));
               }}
               className="btn btn-template"
             >
@@ -568,7 +703,10 @@ function ProcessManagementTab({
             <button
               onClick={() => {
                 setProcessCommand("tail -f /var/log/messages");
-                setProcessOptions(prev => ({...prev, processId: "log-watcher"}));
+                setProcessOptions((prev) => ({
+                  ...prev,
+                  processId: "log-watcher",
+                }));
               }}
               className="btn btn-template"
             >
@@ -598,14 +736,16 @@ function ProcessManagementTab({
             {processes.map((process) => (
               <div key={process.id} className="process-table-row">
                 <div className="process-status">
-                  <span className="status-icon">{getStatusIcon(process.status)}</span>
-                  <span className={getStatusColor(process.status)}>{process.status}</span>
+                  <span className="status-icon">
+                    {getStatusIcon(process.status)}
+                  </span>
+                  <span className={getStatusColor(process.status)}>
+                    {process.status}
+                  </span>
                 </div>
                 <div className="process-id">{process.id}</div>
-                <div className="process-command">
-                  {process.command}
-                </div>
-                <div className="process-pid">{process.pid || 'N/A'}</div>
+                <div className="process-command">{process.command}</div>
+                <div className="process-pid">{process.pid || "N/A"}</div>
                 <div className="process-started">
                   {new Date(process.startTime).toLocaleString()}
                 </div>
@@ -616,7 +756,7 @@ function ProcessManagementTab({
                   >
                     Logs
                   </button>
-                  {process.status === 'running' && (
+                  {process.status === "running" && (
                     <button
                       onClick={() => killProcess(process.id)}
                       className="btn btn-small btn-kill"
@@ -648,14 +788,18 @@ function ProcessManagementTab({
           {processLogs.stdout && (
             <div className="logs-section">
               <h4>STDOUT:</h4>
-              <pre className="logs-output stdout-logs">{processLogs.stdout}</pre>
+              <pre className="logs-output stdout-logs">
+                {processLogs.stdout}
+              </pre>
             </div>
           )}
 
           {processLogs.stderr && (
             <div className="logs-section">
               <h4>STDERR:</h4>
-              <pre className="logs-output stderr-logs">{processLogs.stderr}</pre>
+              <pre className="logs-output stderr-logs">
+                {processLogs.stderr}
+              </pre>
             </div>
           )}
         </div>
@@ -674,7 +818,7 @@ interface ExposedPort {
 function PortManagementTab({
   client,
   connectionStatus,
-  sessionId
+  sessionId,
 }: {
   client: SandboxApiClient | null;
   connectionStatus: "disconnected" | "connecting" | "connected";
@@ -712,7 +856,8 @@ function PortManagementTab({
 
   // Expose a port
   const exposePort = async () => {
-    if (!client || connectionStatus !== "connected" || !portNumber.trim()) return;
+    if (!client || connectionStatus !== "connected" || !portNumber.trim())
+      return;
 
     try {
       setIsExposing(true);
@@ -793,11 +938,11 @@ console.log("Bun server running on port 8080");
       // Start the server as a background process
       await client.startProcess("bun", ["run", "server.js"], {
         processId: "bun-server",
-        sessionId
+        sessionId,
       });
 
       // Wait a moment for server to start
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      await new Promise((resolve) => setTimeout(resolve, 2000));
 
       // Expose the port
       await client.exposePort(8080, "bun-server");
@@ -861,11 +1006,11 @@ server.listen(3001, () => {
       // Start the server as a background process
       await client.startProcess("node", ["node-server.js"], {
         processId: "node-server",
-        sessionId
+        sessionId,
       });
 
       // Wait a moment for server to start
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      await new Promise((resolve) => setTimeout(resolve, 2000));
 
       // Expose the port
       await client.exposePort(3001, "node-server");
@@ -934,11 +1079,11 @@ with socketserver.TCPServer(("", PORT), MyHandler) as httpd:
       // Start the server as a background process
       await client.startProcess("python3", ["python-server.py"], {
         processId: "python-server",
-        sessionId
+        sessionId,
       });
 
       // Wait a moment for server to start
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      await new Promise((resolve) => setTimeout(resolve, 2000));
 
       // Expose the port
       await client.exposePort(8000, "python-server");
@@ -992,7 +1137,11 @@ with socketserver.TCPServer(("", PORT), MyHandler) as httpd:
 
           <button
             onClick={exposePort}
-            disabled={!portNumber.trim() || isExposing || connectionStatus !== "connected"}
+            disabled={
+              !portNumber.trim() ||
+              isExposing ||
+              connectionStatus !== "connected"
+            }
             className="btn btn-expose-port"
           >
             {isExposing ? "Exposing..." : "Expose Port"}
@@ -1026,7 +1175,8 @@ with socketserver.TCPServer(("", PORT), MyHandler) as httpd:
             </button>
           </div>
           <p className="template-note">
-            These templates will create a server file, start it as a background process, and expose the port automatically.
+            These templates will create a server file, start it as a background
+            process, and expose the port automatically.
           </p>
         </div>
       </div>
@@ -1065,7 +1215,7 @@ with socketserver.TCPServer(("", PORT), MyHandler) as httpd:
 
                 <div className="port-actions">
                   <button
-                    onClick={() => window.open(port.url, '_blank')}
+                    onClick={() => window.open(port.url, "_blank")}
                     className="btn btn-small btn-visit"
                   >
                     Visit
@@ -1088,16 +1238,20 @@ with socketserver.TCPServer(("", PORT), MyHandler) as httpd:
         <h3>💡 Pro Tips</h3>
         <ul>
           <li>
-            <strong>Background Processes:</strong> Use the "Processes" tab to start servers, then expose their ports here
+            <strong>Background Processes:</strong> Use the "Processes" tab to
+            start servers, then expose their ports here
           </li>
           <li>
-            <strong>Server Templates:</strong> Click the template buttons above for instant server setup
+            <strong>Server Templates:</strong> Click the template buttons above
+            for instant server setup
           </li>
           <li>
-            <strong>Preview URLs:</strong> All exposed ports get unique preview URLs that work from anywhere
+            <strong>Preview URLs:</strong> All exposed ports get unique preview
+            URLs that work from anywhere
           </li>
           <li>
-            <strong>Port Management:</strong> Unexpose ports when done to free up resources
+            <strong>Port Management:</strong> Unexpose ports when done to free
+            up resources
           </li>
         </ul>
       </div>
@@ -1107,7 +1261,7 @@ with socketserver.TCPServer(("", PORT), MyHandler) as httpd:
 
 interface StreamEvent {
   id: string;
-  type: 'start' | 'stdout' | 'stderr' | 'complete' | 'error';
+  type: "start" | "stdout" | "stderr" | "complete" | "error";
   timestamp: string;
   data?: string;
   command?: string;
@@ -1117,7 +1271,7 @@ interface StreamEvent {
 
 interface LogStreamEvent {
   id: string;
-  type: 'stdout' | 'stderr' | 'status' | 'error';
+  type: "stdout" | "stderr" | "status" | "error";
   timestamp: string;
   data: string;
   processId: string;
@@ -1126,7 +1280,7 @@ interface LogStreamEvent {
 
 interface ActiveStream {
   id: string;
-  type: 'command' | 'process-logs';
+  type: "command" | "process-logs";
   title: string;
   command?: string;
   processId?: string;
@@ -1135,10 +1289,516 @@ interface ActiveStream {
   startTime: Date;
 }
 
+function FilesTab({
+  client,
+  connectionStatus,
+}: {
+  client: SandboxApiClient | null;
+  connectionStatus: "disconnected" | "connecting" | "connected";
+}) {
+  const [currentPath, setCurrentPath] = useState("/");
+  const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const [fileContent, setFileContent] = useState<string>("");
+  const [isReading, setIsReading] = useState(false);
+  const [results, setResults] = useState<
+    Array<{ type: "success" | "error"; message: string; timestamp: Date }>
+  >([]);
+
+  // File Operations
+  const [newFileName, setNewFileName] = useState("");
+  const [newFileContent, setNewFileContent] = useState("");
+  const [newDirName, setNewDirName] = useState("");
+  const [renameOldPath, setRenameOldPath] = useState("");
+  const [renameNewPath, setRenameNewPath] = useState("");
+  const [moveSourcePath, setMoveSourcePath] = useState("");
+  const [moveDestPath, setMoveDestPath] = useState("");
+  const [deleteFilePath, setDeleteFilePath] = useState("");
+
+  // Git Operations
+  const [gitRepoUrl, setGitRepoUrl] = useState("");
+  const [gitBranch, setGitBranch] = useState("main");
+  const [gitTargetDir, setGitTargetDir] = useState("");
+
+  const addResult = (type: "success" | "error", message: string) => {
+    setResults((prev) => [...prev, { type, message, timestamp: new Date() }]);
+  };
+
+  const handleReadFile = async () => {
+    if (!client || !selectedFile) return;
+    setIsReading(true);
+    try {
+      const result = await client.readFile(selectedFile);
+      setFileContent(result.content || "");
+      addResult("success", `Read file: ${selectedFile}`);
+    } catch (error: any) {
+      addResult("error", `Failed to read ${selectedFile}: ${error.message}`);
+      setFileContent("");
+    } finally {
+      setIsReading(false);
+    }
+  };
+
+  const handleWriteFile = async () => {
+    if (!client || !newFileName.trim()) return;
+    try {
+      await client.writeFile(newFileName, newFileContent);
+      addResult("success", `Created file: ${newFileName}`);
+      setNewFileName("");
+      setNewFileContent("");
+    } catch (error: any) {
+      addResult("error", `Failed to create file: ${error.message}`);
+    }
+  };
+
+  const handleCreateDir = async () => {
+    if (!client || !newDirName.trim()) return;
+    try {
+      await client.mkdir(newDirName, { recursive: true });
+      addResult("success", `Created directory: ${newDirName}`);
+      setNewDirName("");
+    } catch (error: any) {
+      addResult("error", `Failed to create directory: ${error.message}`);
+    }
+  };
+
+  const handleRenameFile = async () => {
+    if (!client || !renameOldPath.trim() || !renameNewPath.trim()) return;
+    try {
+      await client.renameFile(renameOldPath, renameNewPath);
+      addResult("success", `Renamed: ${renameOldPath} → ${renameNewPath}`);
+      setRenameOldPath("");
+      setRenameNewPath("");
+    } catch (error: any) {
+      addResult("error", `Failed to rename: ${error.message}`);
+    }
+  };
+
+  const handleMoveFile = async () => {
+    if (!client || !moveSourcePath.trim() || !moveDestPath.trim()) return;
+    try {
+      await client.moveFile(moveSourcePath, moveDestPath);
+      addResult("success", `Moved: ${moveSourcePath} → ${moveDestPath}`);
+      setMoveSourcePath("");
+      setMoveDestPath("");
+    } catch (error: any) {
+      addResult("error", `Failed to move: ${error.message}`);
+    }
+  };
+
+  const handleDeleteFile = async () => {
+    if (!client || !deleteFilePath.trim()) return;
+    try {
+      await client.deleteFile(deleteFilePath);
+      addResult("success", `Deleted: ${deleteFilePath}`);
+      setDeleteFilePath("");
+    } catch (error: any) {
+      addResult("error", `Failed to delete: ${error.message}`);
+    }
+  };
+
+  const handleGitCheckout = async () => {
+    if (!client || !gitRepoUrl.trim()) return;
+    try {
+      await client.gitCheckout(
+        gitRepoUrl,
+        gitBranch || "main",
+        gitTargetDir || undefined
+      );
+      addResult(
+        "success",
+        `Cloned: ${gitRepoUrl} (${gitBranch}) → ${
+          gitTargetDir || "current directory"
+        }`
+      );
+    } catch (error: any) {
+      addResult("error", `Failed to clone repository: ${error.message}`);
+    }
+  };
+
+  return (
+    <div className="files-tab">
+      <div className="files-section">
+        <h2>📁 File Operations</h2>
+
+        {/* File Reading */}
+        <div className="operation-group">
+          <h3>Read File</h3>
+          <div className="input-group">
+            <input
+              type="text"
+              placeholder="File path (e.g., /app/package.json)"
+              value={selectedFile || ""}
+              onChange={(e) => setSelectedFile(e.target.value)}
+              className="file-input"
+            />
+            <button
+              onClick={handleReadFile}
+              disabled={
+                !selectedFile || isReading || connectionStatus !== "connected"
+              }
+              className="action-button"
+            >
+              {isReading ? "Reading..." : "Read"}
+            </button>
+          </div>
+          {fileContent && (
+            <div className="file-content">
+              <h4>File Content:</h4>
+              <pre className="code-block">{fileContent}</pre>
+            </div>
+          )}
+        </div>
+
+        {/* File Creation */}
+        <div className="operation-group">
+          <h3>Create File</h3>
+          <div className="input-group">
+            <input
+              type="text"
+              placeholder="File path (e.g., /app/hello.txt)"
+              value={newFileName}
+              onChange={(e) => setNewFileName(e.target.value)}
+              className="file-input"
+            />
+          </div>
+          <div className="input-group">
+            <textarea
+              placeholder="File content"
+              value={newFileContent}
+              onChange={(e) => setNewFileContent(e.target.value)}
+              className="file-textarea"
+              rows={4}
+            />
+          </div>
+          <button
+            onClick={handleWriteFile}
+            disabled={!newFileName.trim() || connectionStatus !== "connected"}
+            className="action-button"
+          >
+            Create File
+          </button>
+        </div>
+
+        {/* Directory Creation */}
+        <div className="operation-group">
+          <h3>Create Directory</h3>
+          <div className="input-group">
+            <input
+              type="text"
+              placeholder="Directory path (e.g., /app/src)"
+              value={newDirName}
+              onChange={(e) => setNewDirName(e.target.value)}
+              className="file-input"
+            />
+            <button
+              onClick={handleCreateDir}
+              disabled={!newDirName.trim() || connectionStatus !== "connected"}
+              className="action-button"
+            >
+              Create Directory
+            </button>
+          </div>
+        </div>
+
+        {/* File Rename */}
+        <div className="operation-group">
+          <h3>Rename File</h3>
+          <div className="input-group">
+            <input
+              type="text"
+              placeholder="Old path"
+              value={renameOldPath}
+              onChange={(e) => setRenameOldPath(e.target.value)}
+              className="file-input"
+            />
+            <input
+              type="text"
+              placeholder="New path"
+              value={renameNewPath}
+              onChange={(e) => setRenameNewPath(e.target.value)}
+              className="file-input"
+            />
+            <button
+              onClick={handleRenameFile}
+              disabled={
+                !renameOldPath.trim() ||
+                !renameNewPath.trim() ||
+                connectionStatus !== "connected"
+              }
+              className="action-button"
+            >
+              Rename
+            </button>
+          </div>
+        </div>
+
+        {/* File Move */}
+        <div className="operation-group">
+          <h3>Move File</h3>
+          <div className="input-group">
+            <input
+              type="text"
+              placeholder="Source path"
+              value={moveSourcePath}
+              onChange={(e) => setMoveSourcePath(e.target.value)}
+              className="file-input"
+            />
+            <input
+              type="text"
+              placeholder="Destination path"
+              value={moveDestPath}
+              onChange={(e) => setMoveDestPath(e.target.value)}
+              className="file-input"
+            />
+            <button
+              onClick={handleMoveFile}
+              disabled={
+                !moveSourcePath.trim() ||
+                !moveDestPath.trim() ||
+                connectionStatus !== "connected"
+              }
+              className="action-button"
+            >
+              Move
+            </button>
+          </div>
+        </div>
+
+        {/* File Delete */}
+        <div className="operation-group">
+          <h3>Delete File</h3>
+          <div className="input-group">
+            <input
+              type="text"
+              placeholder="File path to delete"
+              value={deleteFilePath}
+              onChange={(e) => setDeleteFilePath(e.target.value)}
+              className="file-input"
+            />
+            <button
+              onClick={handleDeleteFile}
+              disabled={
+                !deleteFilePath.trim() || connectionStatus !== "connected"
+              }
+              className="action-button delete-button"
+            >
+              Delete
+            </button>
+          </div>
+        </div>
+      </div>
+      {/* Git Operations */}
+      <div className="git-section">
+        <h2>🔀 Git Operations</h2>
+        <div className="operation-group">
+          <h3>Clone Repository</h3>
+          <div className="input-group">
+            <input
+              type="text"
+              placeholder="Repository URL (e.g., https://github.com/user/repo.git)"
+              value={gitRepoUrl}
+              onChange={(e) => setGitRepoUrl(e.target.value)}
+              className="file-input"
+            />
+          </div>
+          <div className="input-group">
+            <input
+              type="text"
+              placeholder="Branch (default: main)"
+              value={gitBranch}
+              onChange={(e) => setGitBranch(e.target.value)}
+              className="file-input"
+            />
+            <input
+              type="text"
+              placeholder="Target directory (optional)"
+              value={gitTargetDir}
+              onChange={(e) => setGitTargetDir(e.target.value)}
+              className="file-input"
+            />
+          </div>
+          <button
+            onClick={handleGitCheckout}
+            disabled={!gitRepoUrl.trim() || connectionStatus !== "connected"}
+            className="action-button"
+          >
+            Clone Repository
+          </button>
+        </div>
+
+        {/* Popular Templates */}
+        <div className="templates-section">
+          <h3>Quick Templates</h3>
+          <div className="template-buttons">
+            <button
+              onClick={() => {
+                setGitRepoUrl("https://github.com/vercel/next.js.git");
+                setGitBranch("canary");
+                setGitTargetDir("nextjs-example");
+              }}
+              className="template-button"
+            >
+              Next.js
+            </button>
+            <button
+              onClick={() => {
+                setGitRepoUrl(
+                  "https://github.com/facebook/create-react-app.git"
+                );
+                setGitBranch("main");
+                setGitTargetDir("react-example");
+              }}
+              className="template-button"
+            >
+              React
+            </button>
+            <button
+              onClick={() => {
+                setGitRepoUrl("https://github.com/vuejs/create-vue.git");
+                setGitBranch("main");
+                setGitTargetDir("vue-example");
+              }}
+              className="template-button"
+            >
+              Vue.js
+            </button>
+          </div>
+        </div>
+      </div>
+      {/* Quick Setup */}
+      <div className="quick-setup-section">
+        <h2>🚀 Quick Project Setup</h2>
+        <p className="section-description">
+          Create and run complete development environments with one click!
+        </p>
+        <div className="quick-setup-buttons">
+          <button
+            onClick={async () => {
+              if (!client || connectionStatus !== "connected") return;
+              try {
+                addResult("success", "Starting Next.js project setup...");
+                const result = await client.setupNextjs();
+                addResult(
+                  "success",
+                  `${result.message} Preview: ${result.previewUrl}`
+                );
+              } catch (error: any) {
+                addResult("error", `Failed to setup Next.js: ${error.message}`);
+              }
+            }}
+            disabled={connectionStatus !== "connected"}
+            className="quick-setup-button nextjs"
+          >
+            <div className="setup-icon">⚡</div>
+            <div className="setup-info">
+              <div className="setup-title">Next.js</div>
+              <div className="setup-description">
+                Full-stack React framework
+              </div>
+            </div>
+          </button>
+          <button
+            onClick={async () => {
+              if (!client || connectionStatus !== "connected") return;
+              try {
+                addResult("success", "Starting React project setup...");
+                const result = await client.setupReact();
+                addResult(
+                  "success",
+                  `${result.message} Preview: ${result.previewUrl}`
+                );
+              } catch (error: any) {
+                addResult("error", `Failed to setup React: ${error.message}`);
+              }
+            }}
+            disabled={connectionStatus !== "connected"}
+            className="quick-setup-button react"
+          >
+            <div className="setup-icon">⚛️</div>
+            <div className="setup-info">
+              <div className="setup-title">React</div>
+              <div className="setup-description">
+                JavaScript library for UIs
+              </div>
+            </div>
+          </button>
+          <button
+            onClick={async () => {
+              if (!client || connectionStatus !== "connected") return;
+              try {
+                addResult("success", "Starting Vue project setup...");
+                const result = await client.setupVue();
+                addResult(
+                  "success",
+                  `${result.message} Preview: ${result.previewUrl}`
+                );
+              } catch (error: any) {
+                addResult("error", `Failed to setup Vue: ${error.message}`);
+              }
+            }}
+            disabled={connectionStatus !== "connected"}
+            className="quick-setup-button vue"
+          >
+            <div className="setup-icon">💚</div>
+            <div className="setup-info">
+              <div className="setup-title">Vue.js</div>
+              <div className="setup-description">Progressive framework</div>
+            </div>
+          </button>
+          <button
+            onClick={async () => {
+              if (!client || connectionStatus !== "connected") return;
+              try {
+                addResult("success", "Starting static site setup...");
+                const result = await client.setupStatic();
+                addResult(
+                  "success",
+                  `${result.message} Preview: ${result.previewUrl}`
+                );
+              } catch (error: any) {
+                addResult(
+                  "error",
+                  `Failed to setup static site: ${error.message}`
+                );
+              }
+            }}
+            disabled={connectionStatus !== "connected"}
+            className="quick-setup-button static"
+          >
+            <div className="setup-icon">📄</div>
+            <div className="setup-info">
+              <div className="setup-title">Static Site</div>
+              <div className="setup-description">Simple HTML website</div>
+            </div>
+          </button>
+        </div>
+      </div>
+
+      {/* Results */}
+      <div className="results-section">
+        <h3>Operation Results</h3>
+        <div className="results-container">
+          {results.map((result, index) => (
+            <div key={index} className={`result-item ${result.type}`}>
+              <span className="timestamp">
+                {result.timestamp.toLocaleTimeString()}
+              </span>
+              <span className={`status ${result.type}`}>
+                {result.type === "success" ? "✓" : "✗"}
+              </span>
+              <span className="message">{result.message}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function StreamingTab({
   client,
   connectionStatus,
-  sessionId
+  sessionId,
 }: {
   client: SandboxApiClient | null;
   connectionStatus: "disconnected" | "connecting" | "connected";
@@ -1171,7 +1831,13 @@ function StreamingTab({
 
   // Start command streaming using execStream (AsyncIterable)
   const startCommandStream = async () => {
-    if (!client || connectionStatus !== "connected" || !commandInput.trim() || isStreaming) return;
+    if (
+      !client ||
+      connectionStatus !== "connected" ||
+      !commandInput.trim() ||
+      isStreaming
+    )
+      return;
 
     const streamId = `cmd_${Date.now()}`;
     const command = commandInput.trim();
@@ -1182,49 +1848,56 @@ function StreamingTab({
     // Add stream to active streams
     const newStream: ActiveStream = {
       id: streamId,
-      type: 'command',
+      type: "command",
       title: `Command: ${command}`,
       command: command,
       isActive: true,
       events: [],
-      startTime: new Date()
+      startTime: new Date(),
     };
 
-    setActiveStreams(prev => [...prev, newStream]);
+    setActiveStreams((prev) => [...prev, newStream]);
 
     try {
       // Use the new execStream AsyncIterable method
-      const commandParts = command.split(' ');
+      const commandParts = command.split(" ");
       const cmd = commandParts[0];
       const args = commandParts.slice(1);
       const streamIterable = client.execStream(cmd, args, {
         sessionId: sessionId || undefined,
-        signal: new AbortController().signal
+        signal: new AbortController().signal,
       });
 
       for await (const event of streamIterable) {
         const streamEvent: StreamEvent = {
           id: `${streamId}_${Date.now()}_${Math.random()}`,
-          type: event.type as 'start' | 'stdout' | 'stderr' | 'complete' | 'error',
+          type: event.type as
+            | "start"
+            | "stdout"
+            | "stderr"
+            | "complete"
+            | "error",
           timestamp: event.timestamp,
           data: event.data,
           command: event.command,
           exitCode: event.exitCode,
-          error: event.error
+          error: event.error,
         };
 
-        setActiveStreams(prev => prev.map(stream =>
-          stream.id === streamId
-            ? {
-                ...stream,
-                events: [...stream.events, streamEvent],
-                isActive: event.type !== 'complete' && event.type !== 'error'
-              }
-            : stream
-        ));
+        setActiveStreams((prev) =>
+          prev.map((stream) =>
+            stream.id === streamId
+              ? {
+                  ...stream,
+                  events: [...stream.events, streamEvent],
+                  isActive: event.type !== "complete" && event.type !== "error",
+                }
+              : stream
+          )
+        );
 
         // Break on completion or error
-        if (event.type === 'complete' || event.type === 'error') {
+        if (event.type === "complete" || event.type === "error") {
           break;
         }
       }
@@ -1233,20 +1906,22 @@ function StreamingTab({
 
       const errorEvent: StreamEvent = {
         id: `${streamId}_error_${Date.now()}`,
-        type: 'error',
+        type: "error",
         timestamp: new Date().toISOString(),
-        error: error instanceof Error ? error : new Error(String(error))
+        error: error instanceof Error ? error : new Error(String(error)),
       };
 
-      setActiveStreams(prev => prev.map(stream =>
-        stream.id === streamId
-          ? {
-              ...stream,
-              events: [...stream.events, errorEvent],
-              isActive: false
-            }
-          : stream
-      ));
+      setActiveStreams((prev) =>
+        prev.map((stream) =>
+          stream.id === streamId
+            ? {
+                ...stream,
+                events: [...stream.events, errorEvent],
+                isActive: false,
+              }
+            : stream
+        )
+      );
     } finally {
       setIsStreaming(false);
     }
@@ -1254,22 +1929,27 @@ function StreamingTab({
 
   // Start process log streaming using streamProcessLogs (AsyncIterable)
   const startProcessLogStream = async (selectedProcessId: string) => {
-    if (!client || connectionStatus !== "connected" || !selectedProcessId.trim()) return;
+    if (
+      !client ||
+      connectionStatus !== "connected" ||
+      !selectedProcessId.trim()
+    )
+      return;
 
     const streamId = `logs_${selectedProcessId}_${Date.now()}`;
 
     // Add stream to active streams
     const newStream: ActiveStream = {
       id: streamId,
-      type: 'process-logs',
+      type: "process-logs",
       title: `Process Logs: ${selectedProcessId}`,
       processId: selectedProcessId,
       isActive: true,
       events: [],
-      startTime: new Date()
+      startTime: new Date(),
     };
 
-    setActiveStreams(prev => [...prev, newStream]);
+    setActiveStreams((prev) => [...prev, newStream]);
 
     try {
       // Use the new streamProcessLogs AsyncIterable method
@@ -1278,54 +1958,60 @@ function StreamingTab({
       for await (const logEvent of logStreamIterable) {
         const streamEvent: LogStreamEvent = {
           id: `${streamId}_${Date.now()}_${Math.random()}`,
-          type: logEvent.type as 'stdout' | 'stderr' | 'status' | 'error',
+          type: logEvent.type as "stdout" | "stderr" | "status" | "error",
           timestamp: logEvent.timestamp,
           data: logEvent.data,
           processId: logEvent.processId,
-          sessionId: logEvent.sessionId
+          sessionId: logEvent.sessionId,
         };
 
-        setActiveStreams(prev => prev.map(stream =>
-          stream.id === streamId
-            ? { ...stream, events: [...stream.events, streamEvent] }
-            : stream
-        ));
+        setActiveStreams((prev) =>
+          prev.map((stream) =>
+            stream.id === streamId
+              ? { ...stream, events: [...stream.events, streamEvent] }
+              : stream
+          )
+        );
       }
     } catch (error) {
       console.error("Log streaming error:", error);
 
       const errorEvent: LogStreamEvent = {
         id: `${streamId}_error_${Date.now()}`,
-        type: 'error',
+        type: "error",
         timestamp: new Date().toISOString(),
-        data: `Error: ${error instanceof Error ? error.message : String(error)}`,
-        processId: selectedProcessId
+        data: `Error: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        processId: selectedProcessId,
       };
 
-      setActiveStreams(prev => prev.map(stream =>
-        stream.id === streamId
-          ? {
-              ...stream,
-              events: [...stream.events, errorEvent],
-              isActive: false
-            }
-          : stream
-      ));
+      setActiveStreams((prev) =>
+        prev.map((stream) =>
+          stream.id === streamId
+            ? {
+                ...stream,
+                events: [...stream.events, errorEvent],
+                isActive: false,
+              }
+            : stream
+        )
+      );
     }
   };
 
   // Stop a stream
   const stopStream = (streamId: string) => {
-    setActiveStreams(prev => prev.map(stream =>
-      stream.id === streamId
-        ? { ...stream, isActive: false }
-        : stream
-    ));
+    setActiveStreams((prev) =>
+      prev.map((stream) =>
+        stream.id === streamId ? { ...stream, isActive: false } : stream
+      )
+    );
   };
 
   // Clear a stream
   const clearStream = (streamId: string) => {
-    setActiveStreams(prev => prev.filter(stream => stream.id !== streamId));
+    setActiveStreams((prev) => prev.filter((stream) => stream.id !== streamId));
   };
 
   // Clear all streams
@@ -1336,20 +2022,20 @@ function StreamingTab({
   // Get event color
   const getEventColor = (type: string) => {
     switch (type) {
-      case 'start':
-        return 'text-blue-500';
-      case 'stdout':
-        return 'text-green-500';
-      case 'stderr':
-        return 'text-red-500';
-      case 'complete':
-        return 'text-green-500';
-      case 'error':
-        return 'text-red-500';
-      case 'status':
-        return 'text-yellow-500';
+      case "start":
+        return "text-blue-500";
+      case "stdout":
+        return "text-green-500";
+      case "stderr":
+        return "text-red-500";
+      case "complete":
+        return "text-green-500";
+      case "error":
+        return "text-red-500";
+      case "status":
+        return "text-yellow-500";
       default:
-        return 'text-gray-500';
+        return "text-gray-500";
     }
   };
 
@@ -1372,7 +2058,8 @@ function StreamingTab({
       <div className="command-streaming">
         <h3>Command Streaming (execStream)</h3>
         <p className="section-description">
-          Test the new <code>execStream()</code> AsyncIterable method for real-time command output.
+          Test the new <code>execStream()</code> AsyncIterable method for
+          real-time command output.
         </p>
 
         <div className="stream-form">
@@ -1384,14 +2071,18 @@ function StreamingTab({
               onChange={(e) => setCommandInput(e.target.value)}
               className="stream-input"
               onKeyPress={(e) => {
-                if (e.key === 'Enter') {
+                if (e.key === "Enter") {
                   startCommandStream();
                 }
               }}
             />
             <button
               onClick={startCommandStream}
-              disabled={!commandInput.trim() || isStreaming || connectionStatus !== "connected"}
+              disabled={
+                !commandInput.trim() ||
+                isStreaming ||
+                connectionStatus !== "connected"
+              }
               className="btn btn-stream-start"
             >
               {isStreaming ? "Starting..." : "Start Stream"}
@@ -1410,7 +2101,9 @@ function StreamingTab({
               📡 Ping Test
             </button>
             <button
-              onClick={() => setCommandInput("find / -name '*.txt' 2>/dev/null | head -20")}
+              onClick={() =>
+                setCommandInput("find / -name '*.txt' 2>/dev/null | head -20")
+              }
               className="btn btn-template"
             >
               🔍 File Search
@@ -1429,28 +2122,35 @@ function StreamingTab({
       <div className="log-streaming">
         <h3>Process Log Streaming (streamProcessLogs)</h3>
         <p className="section-description">
-          Test the new <code>streamProcessLogs()</code> AsyncIterable method for real-time process log monitoring.
+          Test the new <code>streamProcessLogs()</code> AsyncIterable method for
+          real-time process log monitoring.
         </p>
 
         {processes.length === 0 ? (
           <div className="no-processes-message">
-            No background processes running. Start some processes in the "Processes" tab first!
+            No background processes running. Start some processes in the
+            "Processes" tab first!
           </div>
         ) : (
           <div className="process-selector">
             <h4>Select Process to Stream:</h4>
             <div className="process-buttons">
-              {processes.filter(p => p.status === 'running').map(process => (
-                <button
-                  key={process.id}
-                  onClick={() => startProcessLogStream(process.id)}
-                  className="btn btn-template"
-                  disabled={activeStreams.some(s => s.processId === process.id)}
-                >
-                  📋 {process.id} ({process.command})
-                  {activeStreams.some(s => s.processId === process.id) && ' ✅'}
-                </button>
-              ))}
+              {processes
+                .filter((p) => p.status === "running")
+                .map((process) => (
+                  <button
+                    key={process.id}
+                    onClick={() => startProcessLogStream(process.id)}
+                    className="btn btn-template"
+                    disabled={activeStreams.some(
+                      (s) => s.processId === process.id
+                    )}
+                  >
+                    📋 {process.id} ({process.command})
+                    {activeStreams.some((s) => s.processId === process.id) &&
+                      " ✅"}
+                  </button>
+                ))}
             </div>
           </div>
         )}
@@ -1462,11 +2162,12 @@ function StreamingTab({
 
         {activeStreams.length === 0 ? (
           <div className="no-streams">
-            No active streams. Start a command stream or process log stream above!
+            No active streams. Start a command stream or process log stream
+            above!
           </div>
         ) : (
           <div className="streams-grid">
-            {activeStreams.map(stream => (
+            {activeStreams.map((stream) => (
               <div key={stream.id} className="stream-card">
                 <div className="stream-header">
                   <div className="stream-info">
@@ -1509,10 +2210,14 @@ function StreamingTab({
                     <div className="no-events">Waiting for events...</div>
                   ) : (
                     <div className="events-list">
-                      {stream.events.slice(-50).map(event => (
+                      {stream.events.slice(-50).map((event) => (
                         <div key={event.id} className="stream-event">
                           <div className="event-header">
-                            <span className={`event-type ${getEventColor(event.type)}`}>
+                            <span
+                              className={`event-type ${getEventColor(
+                                event.type
+                              )}`}
+                            >
                               {event.type.toUpperCase()}
                             </span>
                             <span className="event-timestamp">
@@ -1540,19 +2245,24 @@ function StreamingTab({
         <h3>🚀 Streaming Features</h3>
         <ul>
           <li>
-            <strong>AsyncIterable Pattern:</strong> Uses modern JavaScript async iterators for clean streaming
+            <strong>AsyncIterable Pattern:</strong> Uses modern JavaScript async
+            iterators for clean streaming
           </li>
           <li>
-            <strong>Multiple Streams:</strong> Monitor multiple commands and process logs simultaneously
+            <strong>Multiple Streams:</strong> Monitor multiple commands and
+            process logs simultaneously
           </li>
           <li>
-            <strong>Real-time Updates:</strong> Events appear immediately as they happen
+            <strong>Real-time Updates:</strong> Events appear immediately as
+            they happen
           </li>
           <li>
-            <strong>Event Filtering:</strong> Different colors and types for stdout, stderr, status, etc.
+            <strong>Event Filtering:</strong> Different colors and types for
+            stdout, stderr, status, etc.
           </li>
           <li>
-            <strong>Stream Management:</strong> Start, stop, and clear individual or all streams
+            <strong>Stream Management:</strong> Start, stop, and clear
+            individual or all streams
           </li>
         </ul>
       </div>
@@ -1561,9 +2271,11 @@ function StreamingTab({
 }
 
 function SandboxTester() {
-  const [activeTab, setActiveTab] = useState<TabType>('commands');
+  const [activeTab, setActiveTab] = useState<TabType>("commands");
   const [client, setClient] = useState<SandboxApiClient | null>(null);
-  const [connectionStatus, setConnectionStatus] = useState<"disconnected" | "connecting" | "connected">("disconnected");
+  const [connectionStatus, setConnectionStatus] = useState<
+    "disconnected" | "connecting" | "connected"
+  >("disconnected");
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [commandInput, setCommandInput] = useState("");
   const [results, setResults] = useState<CommandResult[]>([]);
@@ -1572,7 +2284,7 @@ function SandboxTester() {
 
   // Auto-scroll to bottom when new results are added
   useEffect(() => {
-    if (activeTab === 'commands') {
+    if (activeTab === "commands") {
       resultsEndRef.current?.scrollIntoView({ behavior: "smooth" });
     }
   }, [results, activeTab]);
@@ -1586,7 +2298,7 @@ function SandboxTester() {
         exitCode: number,
         stdout: string,
         stderr: string,
-        command: string,
+        command: string
       ) => {
         setResults((prev) => {
           const updated = [...prev];
@@ -1643,12 +2355,12 @@ function SandboxTester() {
               console.log("Sandbox is ready");
             } else {
               console.log("Sandbox still initializing, waiting...");
-              await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
+              await new Promise((resolve) => setTimeout(resolve, 1000)); // Wait 1 second
               attempts++;
             }
           } catch (error) {
             console.log("Ping failed, retrying...", error);
-            await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
+            await new Promise((resolve) => setTimeout(resolve, 1000)); // Wait 1 second
             attempts++;
           }
         }
@@ -1679,7 +2391,12 @@ function SandboxTester() {
   }, []);
 
   const executeCommand = async () => {
-    if (!client || connectionStatus !== "connected" || !commandInput.trim() || isExecuting) {
+    if (
+      !client ||
+      connectionStatus !== "connected" ||
+      !commandInput.trim() ||
+      isExecuting
+    ) {
       return;
     }
 
@@ -1701,11 +2418,9 @@ function SandboxTester() {
 
       // Execute the command
       console.log("Executing command:", trimmedCommand);
-      const result = await client.execute(
-        trimmedCommand,
-        [],
-        { sessionId: sessionId || undefined }
-      );
+      const result = await client.execute(trimmedCommand, [], {
+        sessionId: sessionId || undefined,
+      });
       console.log("Result:", result);
 
       // Update the result with the response
@@ -1739,7 +2454,12 @@ function SandboxTester() {
   };
 
   const executeStreamingCommand = async () => {
-    if (!client || connectionStatus !== "connected" || !commandInput.trim() || isExecuting) {
+    if (
+      !client ||
+      connectionStatus !== "connected" ||
+      !commandInput.trim() ||
+      isExecuting
+    ) {
       return;
     }
 
@@ -1761,12 +2481,16 @@ function SandboxTester() {
 
       // Execute the command with streaming
       console.log("Executing streaming command:", trimmedCommand);
-      await client.executeStream(trimmedCommand, [], { sessionId: sessionId || undefined });
-      const commandParts = trimmedCommand.split(' ');
+      await client.executeStream(trimmedCommand, [], {
+        sessionId: sessionId || undefined,
+      });
+      const commandParts = trimmedCommand.split(" ");
       const cmd = commandParts[0];
       const args = commandParts.slice(1);
       // Get the async generator
-      const streamGenerator = client.execStream(cmd, args, { sessionId: sessionId || undefined });
+      const streamGenerator = client.execStream(cmd, args, {
+        sessionId: sessionId || undefined,
+      });
       // Iterate through the stream events
       for await (const event of streamGenerator) {
         console.log("Stream event:", event);
@@ -1775,16 +2499,16 @@ function SandboxTester() {
           const updated = [...prev];
           const lastResult = updated[updated.length - 1];
           if (lastResult && lastResult.command === trimmedCommand) {
-            if (event.type === 'stdout') {
-              lastResult.stdout += event.data || '';
-            } else if (event.type === 'stderr') {
-              lastResult.stderr += event.data || '';
-            } else if (event.type === 'complete') {
+            if (event.type === "stdout") {
+              lastResult.stdout += event.data || "";
+            } else if (event.type === "stderr") {
+              lastResult.stderr += event.data || "";
+            } else if (event.type === "complete") {
               lastResult.status = event.exitCode === 0 ? "completed" : "error";
               lastResult.exitCode = event.exitCode;
-            } else if (event.type === 'error') {
+            } else if (event.type === "error") {
               lastResult.status = "error";
-              lastResult.stderr += `\nError: ${event.data || 'Unknown error'}`;
+              lastResult.stderr += `\nError: ${event.data || "Unknown error"}`;
             }
           }
           return updated;
@@ -1850,9 +2574,7 @@ function SandboxTester() {
     <div className="sandbox-tester-container">
       <div className="header">
         <h1>Sandbox SDK Tester</h1>
-        <div
-          className={`connection-status ${connectionStatus}`}
-        >
+        <div className={`connection-status ${connectionStatus}`}>
           {connectionStatus === "connected"
             ? `Sandbox Ready (${sessionId})`
             : connectionStatus === "connecting"
@@ -1863,117 +2585,128 @@ function SandboxTester() {
 
       <div className="tab-navigation">
         <button
-          className={`tab-button ${activeTab === 'commands' ? 'active' : ''}`}
-          onClick={() => setActiveTab('commands')}
+          className={`tab-button ${activeTab === "commands" ? "active" : ""}`}
+          onClick={() => setActiveTab("commands")}
         >
           📟 Commands
         </button>
         <button
-          className={`tab-button ${activeTab === 'processes' ? 'active' : ''}`}
-          onClick={() => setActiveTab('processes')}
+          className={`tab-button ${activeTab === "processes" ? "active" : ""}`}
+          onClick={() => setActiveTab("processes")}
         >
           ⚙️ Processes
         </button>
         <button
-          className={`tab-button ${activeTab === 'ports' ? 'active' : ''}`}
-          onClick={() => setActiveTab('ports')}
+          className={`tab-button ${activeTab === "ports" ? "active" : ""}`}
+          onClick={() => setActiveTab("ports")}
         >
           🌐 Ports
         </button>
         <button
-          className={`tab-button ${activeTab === 'streaming' ? 'active' : ''}`}
-          onClick={() => setActiveTab('streaming')}
+          className={`tab-button ${activeTab === "streaming" ? "active" : ""}`}
+          onClick={() => setActiveTab("streaming")}
         >
           📡 Streaming
+        </button>
+        <button
+          className={`tab-button ${activeTab === "files" ? "active" : ""}`}
+          onClick={() => setActiveTab("files")}
+        >
+          📁 Files
         </button>
       </div>
 
       <div className="tab-content-area">
-        {activeTab === 'commands' && (
+        {activeTab === "commands" && (
           <div className="commands-tab">
             <div className="command-bar">
-        <span className="command-prompt">$</span>
-        <input
-          type="text"
-          className="command-input"
-          value={commandInput}
-          onChange={(e) => setCommandInput(e.target.value)}
-          onKeyPress={handleKeyPress}
-          placeholder="Enter command (e.g., ls -la)"
-          disabled={isExecuting}
-        />
-        <div className="action-buttons">
-          <button
-            type="button"
-            onClick={executeCommand}
-            disabled={!commandInput.trim() || isExecuting}
-            className="btn btn-execute"
-          >
-            {isExecuting ? "Executing..." : "Execute"}
-          </button>
-          <button
-            type="button"
-            onClick={executeStreamingCommand}
-            disabled={connectionStatus !== "connected" || !commandInput.trim() || isExecuting}
-            className="btn btn-stream"
-            title="Execute with real-time streaming output"
-          >
-            {isExecuting ? "Streaming..." : "Stream"}
-          </button>
-          <button type="button" onClick={clearResults} className="btn">
-            Clear
-          </button>
-        </div>
-      </div>
-
-      <div className="results-container" ref={resultsEndRef}>
-        {results.length === 0 ? (
-          <div
-            style={{ color: "#8b949e", padding: "2rem", textAlign: "center" }}
-          >
-            No commands executed yet. Try running a command above.
-          </div>
-        ) : (
-          <div>
-            {results.map((result) => (
-              <div key={result.id} className="command-result">
-                <div className="result-header">
-                  <span className="status-icon">
-                    {getStatusIcon(result.status)}
-                  </span>
-                  <div className="command-line">
-                    ${" "}
-                    <span>
-                      {result.command}
-                    </span>
-                  </div>
-                  {result.status !== "running" &&
-                    result.exitCode !== undefined && (
-                      <span className="exit-code">
-                        (exit: {result.exitCode})
-                      </span>
-                    )}
-                  <span className="timestamp">
-                    {result.timestamp.toLocaleTimeString()}
-                  </span>
-                </div>
-
-                {result.stdout && (
-                  <div className="stdout-output">
-                    <pre>{result.stdout}</pre>
-                  </div>
-                )}
-
-                {result.stderr && (
-                  <div className="stderr-output">
-                    <pre>{result.stderr}</pre>
-                  </div>
-                )}
+              <span className="command-prompt">$</span>
+              <input
+                type="text"
+                className="command-input"
+                value={commandInput}
+                onChange={(e) => setCommandInput(e.target.value)}
+                onKeyPress={handleKeyPress}
+                placeholder="Enter command (e.g., ls -la)"
+                disabled={isExecuting}
+              />
+              <div className="action-buttons">
+                <button
+                  type="button"
+                  onClick={executeCommand}
+                  disabled={!commandInput.trim() || isExecuting}
+                  className="btn btn-execute"
+                >
+                  {isExecuting ? "Executing..." : "Execute"}
+                </button>
+                <button
+                  type="button"
+                  onClick={executeStreamingCommand}
+                  disabled={
+                    connectionStatus !== "connected" ||
+                    !commandInput.trim() ||
+                    isExecuting
+                  }
+                  className="btn btn-stream"
+                  title="Execute with real-time streaming output"
+                >
+                  {isExecuting ? "Streaming..." : "Stream"}
+                </button>
+                <button type="button" onClick={clearResults} className="btn">
+                  Clear
+                </button>
               </div>
-            ))}
-          </div>
-        )}
-      </div>
+            </div>
+
+            <div className="results-container" ref={resultsEndRef}>
+              {results.length === 0 ? (
+                <div
+                  style={{
+                    color: "#8b949e",
+                    padding: "2rem",
+                    textAlign: "center",
+                  }}
+                >
+                  No commands executed yet. Try running a command above.
+                </div>
+              ) : (
+                <div>
+                  {results.map((result) => (
+                    <div key={result.id} className="command-result">
+                      <div className="result-header">
+                        <span className="status-icon">
+                          {getStatusIcon(result.status)}
+                        </span>
+                        <div className="command-line">
+                          $ <span>{result.command}</span>
+                        </div>
+                        {result.status !== "running" &&
+                          result.exitCode !== undefined && (
+                            <span className="exit-code">
+                              (exit: {result.exitCode})
+                            </span>
+                          )}
+                        <span className="timestamp">
+                          {result.timestamp.toLocaleTimeString()}
+                        </span>
+                      </div>
+
+                      {result.stdout && (
+                        <div className="stdout-output">
+                          <pre>{result.stdout}</pre>
+                        </div>
+                      )}
+
+                      {result.stderr && (
+                        <div className="stderr-output">
+                          <pre>{result.stderr}</pre>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
 
             <div className="help-section">
               <h3>Example Commands</h3>
@@ -1982,19 +2715,23 @@ function SandboxTester() {
                   <span className="help-command">ls</span> - List files
                 </div>
                 <div className="help-item">
-                  <span className="help-command">pwd</span> - Print working directory
+                  <span className="help-command">pwd</span> - Print working
+                  directory
                 </div>
                 <div className="help-item">
                   <span className="help-command">echo</span> - Print text
                 </div>
                 <div className="help-item">
-                  <span className="help-command">cat</span> - Display file contents
+                  <span className="help-command">cat</span> - Display file
+                  contents
                 </div>
                 <div className="help-item">
-                  <span className="help-command">whoami</span> - Show current user
+                  <span className="help-command">whoami</span> - Show current
+                  user
                 </div>
                 <div className="help-item">
-                  <span className="help-command">date</span> - Show current date/time
+                  <span className="help-command">date</span> - Show current
+                  date/time
                 </div>
               </div>
               <div className="help-note">
@@ -2006,16 +2743,32 @@ function SandboxTester() {
           </div>
         )}
 
-        {activeTab === 'processes' && (
-          <ProcessManagementTab client={client} connectionStatus={connectionStatus} sessionId={sessionId} />
+        {activeTab === "processes" && (
+          <ProcessManagementTab
+            client={client}
+            connectionStatus={connectionStatus}
+            sessionId={sessionId}
+          />
         )}
 
-        {activeTab === 'ports' && (
-          <PortManagementTab client={client} connectionStatus={connectionStatus} sessionId={sessionId} />
+        {activeTab === "ports" && (
+          <PortManagementTab
+            client={client}
+            connectionStatus={connectionStatus}
+            sessionId={sessionId}
+          />
         )}
 
-        {activeTab === 'streaming' && (
-          <StreamingTab client={client} connectionStatus={connectionStatus} sessionId={sessionId} />
+        {activeTab === "streaming" && (
+          <StreamingTab
+            client={client}
+            connectionStatus={connectionStatus}
+            sessionId={sessionId}
+          />
+        )}
+
+        {activeTab === "files" && (
+          <FilesTab client={client} connectionStatus={connectionStatus} />
         )}
       </div>
     </div>

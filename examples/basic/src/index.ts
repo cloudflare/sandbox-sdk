@@ -10,6 +10,16 @@ import {
   startProcess,
   streamProcessLogs,
   unexposePort,
+  readFile,
+  deleteFile,
+  renameFile,
+  moveFile,
+  createDirectory,
+  gitCheckout,
+  setupNextjs,
+  setupReact,
+  setupVue,
+  setupStatic,
 } from "./endpoints";
 import { corsHeaders, errorResponse, jsonResponse, parseJsonBody } from "./http";
 
@@ -112,6 +122,47 @@ export default {
         return jsonResponse({ message: "File written", path });
       }
 
+      if (pathname === "/api/read" && request.method === "POST") {
+        return await readFile(sandbox, request);
+      }
+
+      if (pathname === "/api/delete" && request.method === "POST") {
+        return await deleteFile(sandbox, request);
+      }
+
+      if (pathname === "/api/rename" && request.method === "POST") {
+        return await renameFile(sandbox, request);
+      }
+
+      if (pathname === "/api/move" && request.method === "POST") {
+        return await moveFile(sandbox, request);
+      }
+
+      if (pathname === "/api/mkdir" && request.method === "POST") {
+        return await createDirectory(sandbox, request);
+      }
+
+      if (pathname === "/api/git/checkout" && request.method === "POST") {
+        return await gitCheckout(sandbox, request);
+      }
+
+      // Template Setup APIs
+      if (pathname === "/api/templates/nextjs" && request.method === "POST") {
+        return await setupNextjs(sandbox, request);
+      }
+
+      if (pathname === "/api/templates/react" && request.method === "POST") {
+        return await setupReact(sandbox, request);
+      }
+
+      if (pathname === "/api/templates/vue" && request.method === "POST") {
+        return await setupVue(sandbox, request);
+      }
+
+      if (pathname === "/api/templates/static" && request.method === "POST") {
+        return await setupStatic(sandbox, request);
+      }
+
       // Session Management APIs
       if (pathname === "/api/session/create" && request.method === "POST") {
         const body = await parseJsonBody(request);
@@ -145,7 +196,17 @@ export default {
             "GET /api/process/{id}/stream - Stream process logs",
             "POST /api/expose-port - Expose port",
             "GET /api/exposed-ports - List exposed ports",
-            "POST /api/write - Write file"
+            "POST /api/write - Write file",
+            "POST /api/read - Read file",
+            "POST /api/delete - Delete file",
+            "POST /api/rename - Rename file",
+            "POST /api/move - Move file",
+            "POST /api/mkdir - Create directory",
+            "POST /api/git/checkout - Git checkout",
+            "POST /api/templates/nextjs - Setup Next.js project",
+            "POST /api/templates/react - Setup React project",
+            "POST /api/templates/vue - Setup Vue project",
+            "POST /api/templates/static - Setup static site"
           ]
         });
       }
