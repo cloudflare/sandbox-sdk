@@ -1603,15 +1603,7 @@ function SandboxTester() {
       },
       onCommandStart: (command: string) => {
         console.log("Command started:", command);
-        const newResult: CommandResult = {
-          command,
-          id: Date.now().toString(),
-          status: "running",
-          stderr: "",
-          stdout: "",
-          timestamp: new Date(),
-        };
-        setResults((prev) => [...prev, newResult]);
+        // Don't create a new result here - executeCommand already does this
         setIsExecuting(true);
       },
       onError: (error: string, command?: string) => {
@@ -1699,7 +1691,7 @@ function SandboxTester() {
       // Create a result entry for the command
       const newResult: CommandResult = {
         command: trimmedCommand,
-        id: Date.now().toString(),
+        id: `${Date.now()}_${Math.random()}`,
         status: "running",
         stderr: "",
         stdout: "",
@@ -1759,7 +1751,7 @@ function SandboxTester() {
       // Create a result entry for the command
       const newResult: CommandResult = {
         command: trimmedCommand,
-        id: Date.now().toString(),
+        id: `${Date.now()}_${Math.random()}`,
         status: "running",
         stderr: "",
         stdout: "",
