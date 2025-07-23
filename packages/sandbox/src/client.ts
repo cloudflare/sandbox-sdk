@@ -10,7 +10,6 @@ import type {
 interface ExecuteRequest {
   command: string;
   sessionId?: string;
-  background?: boolean;
 }
 
 export interface ExecuteResponse {
@@ -371,8 +370,7 @@ export class HttpClient {
 
   async execute(
     command: string,
-    sessionId?: string,
-    background: boolean = false,
+    sessionId?: string
   ): Promise<ExecuteResponse> {
     try {
       const targetSessionId = sessionId || this.sessionId;
@@ -380,7 +378,6 @@ export class HttpClient {
       const response = await this.doFetch(`/api/execute`, {
         body: JSON.stringify({
           command,
-          background,
           sessionId: targetSessionId,
         } as ExecuteRequest),
         headers: {
@@ -425,8 +422,7 @@ export class HttpClient {
 
   async executeStream(
     command: string,
-    sessionId?: string,
-    background: boolean = false
+    sessionId?: string
   ): Promise<void> {
     try {
       const targetSessionId = sessionId || this.sessionId;
@@ -434,7 +430,6 @@ export class HttpClient {
       const response = await this.doFetch(`/api/execute/stream`, {
         body: JSON.stringify({
           command,
-          background,
           sessionId: targetSessionId,
         }),
         headers: {

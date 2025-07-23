@@ -22,9 +22,9 @@ A comprehensive analysis of different API design approaches for the Cloudflare S
 ```typescript
 // 🤔 Current API - confusing boolean combinations
 class Sandbox {
-  async exec(command: string, options?: { 
-    stream?: boolean; 
-    background?: boolean 
+  async exec(command: string, options?: {
+    stream?: boolean;
+    background?: boolean
   }): Promise<ExecuteResponse | void>  // 😱 Return type varies!
 }
 ```
@@ -47,9 +47,9 @@ console.log(`Server started with exit code: ${bgResult.exitCode}`); // 😱 Alwa
 // 💥 Returns fake success after 100ms while process is still starting!
 
 // ❌ Scenario 4: Background + streaming (RESOURCE LEAK!)
-sandbox.exec('tail -f /var/log/app.log', { 
-  stream: true, 
-  background: true 
+sandbox.exec('tail -f /var/log/app.log', {
+  stream: true,
+  background: true
 });
 // 🚨 Connection stays open forever! No way to stop it!
 
@@ -69,7 +69,7 @@ async function deployApp() {
   const build = await exec('npm run build');                    // ExecuteResponse
   const stream = await exec('npm run dev', { stream: true });   // void
   const server = await exec('node server.js', { background: true }); // ExecuteResponse (fake!)
-  
+
   // 😱 TypeScript can't help because return type is Promise<ExecuteResponse | void>
 }
 ```
@@ -101,11 +101,11 @@ class Sandbox {
 
   // Background processes - explicit and powerful
   async startProcess(command: string, options?: ProcessOptions): Promise<Process>
-  
+
   // Modern streaming patterns
   async *execStream(command: string, options?: ExecStreamOptions): AsyncIterable<ExecEvent>
   async *streamProcessLogs(processId: string): AsyncIterable<LogEvent>
-  
+
   // Process management
   async listProcesses(): Promise<Process[]>
   async getProcess(id: string): Promise<Process | null>
@@ -154,7 +154,7 @@ for await (const logEvent of sandbox.streamProcessLogs('log-watcher')) {
   if (logEvent.type === 'stdout') {
     console.log(`[LOG] ${logEvent.data}`);
   }
-  
+
   // Clean exit condition
   if (logEvent.data.includes('SHUTDOWN')) {
     await sandbox.killProcess('log-watcher');
@@ -165,7 +165,7 @@ for await (const logEvent of sandbox.streamProcessLogs('log-watcher')) {
 // ✅ Scenario 5: Advanced streaming for build tools
 async function streamingBuild() {
   console.log('Starting build...');
-  
+
   for await (const event of sandbox.execStream('npm run build')) {
     switch (event.type) {
       case 'start':
@@ -243,7 +243,7 @@ async function developmentWorkflow() {
 
   // Cleanup
   await sandbox.killProcess('dev-server');
-  
+
   return testResult.success;
 }
 
@@ -284,7 +284,7 @@ async function monitorLogs() {
 
   for await (const log of sandbox.streamProcessLogs('log-monitor')) {
     const logData = log.data.toLowerCase();
-    
+
     if (logData.includes('error') || logData.includes('exception')) {
       // Alert system
       await fetch('/api/alerts', {
@@ -292,7 +292,7 @@ async function monitorLogs() {
         body: JSON.stringify({ message: log.data, severity: 'error' })
       });
     }
-    
+
     // Rotate logs or restart monitoring if needed
     if (logData.includes('log rotation')) {
       await sandbox.killProcess('log-monitor');
@@ -322,7 +322,7 @@ class Sandbox {
 ```typescript
 // 🤔 Better than current, but still type confusion
 const syncResult = await sandbox.exec('ls -la'); // ExecResult | Process
-const streamResult = await sandbox.exec('npm run build', { mode: 'stream' }); // ExecResult | Process  
+const streamResult = await sandbox.exec('npm run build', { mode: 'stream' }); // ExecResult | Process
 const bgProcess = await sandbox.exec('node server.js', { mode: 'background' }); // ExecResult | Process
 
 // 😰 TypeScript still can't help distinguish return types
@@ -350,7 +350,7 @@ class Sandbox {
   async exec(command: string): Promise<ExecResult>
   async exec(command: string, options: { stream: true }): Promise<ExecResult & { logStream: ReadableStream }>
   async exec(command: string, options: { background: true }): Promise<Process>
-  
+
   async exec(command: string, options?: any): Promise<any> {
     // Implementation...
   }
@@ -456,10 +456,10 @@ const result1 = await sandbox.exec('ls -la'); // ✅ Works
 const result2 = await sandbox.exec('npm run build', { stream: true }); // 🤔 void? When done?
 
 // Our Proposed - Natural learning
-const result1 = await sandbox.exec('ls -la'); // ✅ Works  
-const result2 = await sandbox.exec('npm run build', { 
+const result1 = await sandbox.exec('ls -la'); // ✅ Works
+const result2 = await sandbox.exec('npm run build', {
   stream: true,
-  onOutput: (stream, data) => console.log(data) 
+  onOutput: (stream, data) => console.log(data)
 }); // ✅ Still get result! + streaming!
 
 // Alternative modes - Also natural
@@ -472,7 +472,7 @@ const result2 = await sandbox.exec('npm run build', { mode: 'stream' }); // 🤔
 ```typescript
 // 🛠️ "I need background processes now"
 
-// Current API - Hidden pitfalls everywhere  
+// Current API - Hidden pitfalls everywhere
 const server = await sandbox.exec('node server.js', { background: true });
 console.log(server.exitCode); // 😱 Always 0! Process might still be starting!
 // 😭 No way to check if process is actually running
@@ -495,10 +495,10 @@ if (server instanceof Process) { // 🤔 Runtime type checking required
 // 🏗️ "I need robust process management with monitoring"
 
 // Current API - Impossible to build reliably
-sandbox.exec('tail -f /var/log/app.log', { 
-  stream: true, 
-  background: true 
-}); 
+sandbox.exec('tail -f /var/log/app.log', {
+  stream: true,
+  background: true
+});
 // 🚨 Memory leak! Connection never closes!
 // 😭 No way to stop, manage, or recover
 
@@ -511,9 +511,9 @@ const controller = new AbortController();
 
 for await (const log of logStream) {
   if (controller.signal.aborted) break;
-  
+
   await processLog(log);
-  
+
   if (shouldRestart()) {
     await sandbox.killProcess(logMonitor.id);
     // Start new monitor...
@@ -525,7 +525,7 @@ for await (const log of logStream) {
 
 ### 🧠 Cognitive Load Analysis
 
-#### **Current API Mental Model** 
+#### **Current API Mental Model**
 ```typescript
 // 😵‍💫 Developer must remember:
 // - `stream: false` → get ExecuteResponse
@@ -554,7 +554,7 @@ for await (const log of logStream) {
 const result = await exec('command', { stream: true });
 // 🤔 What is result? When did command finish? What was exit code?
 
-// 😱 Silent failures  
+// 😱 Silent failures
 const server = await exec('node server.js', { background: true });
 // 🎭 Looks successful but might have crashed immediately
 
@@ -563,7 +563,7 @@ exec('tail -f log', { stream: true, background: true });
 // 💸 Memory leak with no way to stop
 ```
 
-#### **Our Proposed API - Delightful Moments**  
+#### **Our Proposed API - Delightful Moments**
 ```typescript
 // 🎉 Streaming + final result - best of both worlds!
 const buildResult = await sandbox.exec('npm run build', {
@@ -695,7 +695,7 @@ interface ProcessRecord {
   childProcess?: ChildProcess;  // Active process reference
   stdout: string;               // Accumulated output (ephemeral)
   stderr: string;               // Accumulated output (ephemeral)
-  
+
   // Streaming
   outputListeners: Set<(stream: 'stdout' | 'stderr', data: string) => void>;
   statusListeners: Set<(status: ProcessStatus) => void>;
@@ -835,8 +835,8 @@ if (result.success) {
 
 // vs
 
-// 🤮 Current API confusion  
-const result = await sandbox.exec('npm test', { stream: true }); 
+// 🤮 Current API confusion
+const result = await sandbox.exec('npm test', { stream: true });
 // 🤔 What is result? void? When did it finish?
 ```
 

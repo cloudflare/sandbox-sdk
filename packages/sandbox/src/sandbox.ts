@@ -2,17 +2,15 @@ import { Container, getContainer } from "@cloudflare/containers";
 import { HttpClient } from "./client";
 import { isLocalhostPattern } from "./request-handler";
 import {
-  validatePort,
+  logSecurityEvent,
   sanitizeSandboxId,
   SecurityError,
-  logSecurityEvent
+  validatePort
 } from "./security";
 import type {
-  ExecEvent,
   ExecOptions,
   ExecResult,
   ISandbox,
-  LogEvent,
   Process,
   ProcessOptions,
   ProcessStatus,
@@ -151,8 +149,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         // Regular execution
         const response = await this.client.execute(
           command,
-          options?.sessionId,
-          false // Never use background for enhanced exec
+          options?.sessionId
         );
 
         const duration = Date.now() - startTime;
@@ -260,7 +257,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       }
 
       // Start streaming execution
-      this.client.executeStream(command, options.sessionId, false)
+      this.client.executeStream(command, options.sessionId)
         .catch(error => {
           if (!completed) {
             completed = true;
@@ -294,13 +291,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     };
   }
 
-  // Legacy exec method for backwards compatibility
-  async execLegacy(command: string, options?: { stream?: boolean; background?: boolean }) {
-    if (options?.stream) {
-      return this.client.executeStream(command, undefined, options?.background);
-    }
-    return this.client.execute(command, undefined, options?.background);
-  }
 
   // Background process management
   async startProcess(command: string, options?: ProcessOptions): Promise<Process> {
@@ -474,35 +464,31 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
 
-  // AsyncIterable streaming methods
+  // Streaming methods - return ReadableStream for RPC compatibility
   async execStream(command: string, options?: StreamOptions): Promise<ReadableStream<Uint8Array>> {
-    try {
-      // Use containerFetch to get streaming response from container
-      const response = await this.containerFetch(`/api/execute/stream`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'text/event-stream',
-        },
-        body: JSON.stringify({
-          command,
-          sessionId: options?.sessionId,
-          background: false
-        })
-      });
+    // Use containerFetch to get streaming response from container
+    const response = await this.containerFetch(`/api/execute/stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'text/event-stream',
+      },
+      body: JSON.stringify({
+        command,
+        sessionId: options?.sessionId
+      })
+    });
 
-      if (!response.ok) {
-        throw new Error(`Execute stream failed: ${response.status} ${response.statusText}`);
-      }
-
-      if (!response.body) {
-        throw new Error('No response body for streaming execution');
-      }
-
-      return response.body;
-    } catch (error) {
-      throw error instanceof Error ? error : new Error(String(error));
+    if (!response.ok) {
+      throw new Error(`Execute stream failed: ${response.status} ${response.statusText}`);
     }
+
+    if (!response.body) {
+      throw new Error('No response body for streaming execution');
+    }
+
+    // Return the ReadableStream directly - can be converted to AsyncIterable by consumers
+    return response.body;
   }
 
   async streamProcessLogs(processId: string, options?: { signal?: AbortSignal }): Promise<ReadableStream<Uint8Array>> {
@@ -511,16 +497,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       throw new Error('Operation was aborted');
     }
 
-    try {
-      // Return the stream directly from HttpClient - no need to convert to AsyncIterable
-      const stream = await this.client.streamProcessLogs(processId);
-      return stream;
-    } catch (error) {
-      if (error instanceof Error && error.message.includes('Process not found')) {
-        throw new ProcessNotFoundError(processId);
-      }
-      throw error;
-    }
+    // Get the stream from HttpClient
+    const stream = await this.client.streamProcessLogs(processId);
+    
+    // Return the ReadableStream directly - can be converted to AsyncIterable by consumers
+    return stream;
   }
 
   async gitCheckout(

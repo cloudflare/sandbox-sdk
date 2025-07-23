@@ -12,3 +12,9 @@ export {
 } from './request-handler';
 
 export { getSandbox, Sandbox } from "./sandbox";
+
+// Export SSE parser for converting ReadableStream to AsyncIterable
+export { asyncIterableToSSEStream, parseSSEStream, responseToAsyncIterable } from "./sse-parser";
+
+// Export event types for streaming
+export type { ExecEvent, LogEvent } from "./types";

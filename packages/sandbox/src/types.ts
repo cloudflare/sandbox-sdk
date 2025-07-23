@@ -207,15 +207,17 @@ export interface ExecEvent {
   command?: string;
   exitCode?: number;
   result?: ExecResult;
-  error?: Error;
+  error?: string; // Changed to string for serialization
+  sessionId?: string;
 }
 
 export interface LogEvent {
-  type: 'stdout' | 'stderr' | 'status' | 'error';
+  type: 'stdout' | 'stderr' | 'exit' | 'error';
   timestamp: string;
   data: string;
   processId: string;
   sessionId?: string;
+  exitCode?: number; // For 'exit' events
 }
 
 export interface StreamOptions extends BaseExecOptions {
@@ -353,7 +355,7 @@ export interface ISandbox {
   killProcess(id: string, signal?: string): Promise<void>;
   killAllProcesses(): Promise<number>;
 
-  // Advanced streaming
+  // Advanced streaming - returns ReadableStream that can be converted to AsyncIterable
   execStream(command: string, options?: StreamOptions): Promise<ReadableStream<Uint8Array>>;
   streamProcessLogs(processId: string, options?: { signal?: AbortSignal }): Promise<ReadableStream<Uint8Array>>;
 

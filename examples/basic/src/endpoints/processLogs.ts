@@ -1,4 +1,4 @@
-import { Sandbox } from "@cloudflare/sandbox";
+import { Sandbox, parseSSEStream, type LogEvent } from "@cloudflare/sandbox";
 import { corsHeaders, errorResponse, jsonResponse } from "../http";
 
 export async function getProcessLogs(sandbox: Sandbox<unknown>, pathname: string) {
@@ -37,14 +37,40 @@ export async function streamProcessLogs(sandbox: Sandbox<unknown>, pathname: str
         }
     }
 
-    // Use the SDK's streaming and forward directly
+    // Use the SDK's streaming with beautiful AsyncIterable API
     if (typeof sandbox.streamProcessLogs === 'function') {
         try {
-            // Get the ReadableStream directly from the SDK
-            const readableStream = await sandbox.streamProcessLogs(processId);
+            // Create SSE stream from AsyncIterable
+            const encoder = new TextEncoder();
+            const { readable, writable } = new TransformStream();
+            const writer = writable.getWriter();
+
+            // Stream logs in the background
+            (async () => {
+                try {
+                    // Get the ReadableStream from sandbox
+                    const stream = await sandbox.streamProcessLogs(processId);
+                    
+                    // Convert to AsyncIterable using parseSSEStream
+                    for await (const logEvent of parseSSEStream<LogEvent>(stream)) {
+                        // Forward each typed event as SSE
+                        await writer.write(encoder.encode(`data: ${JSON.stringify(logEvent)}\n\n`));
+                    }
+                } catch (error: any) {
+                    // Send error event
+                    await writer.write(encoder.encode(`data: ${JSON.stringify({
+                        type: 'error',
+                        timestamp: new Date().toISOString(),
+                        data: error.message,
+                        processId
+                    })}\n\n`));
+                } finally {
+                    await writer.close();
+                }
+            })();
 
             // Return stream with proper headers
-            return new Response(readableStream, {
+            return new Response(readable, {
                 headers: {
                     "Content-Type": "text/event-stream",
                     "Cache-Control": "no-cache",
