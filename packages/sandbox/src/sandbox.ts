@@ -1,6 +1,12 @@
 import { Container, getContainer } from "@cloudflare/containers";
 import { HttpClient } from "./client";
 import { isLocalhostPattern } from "./request-handler";
+import {
+  validatePort,
+  sanitizeSandboxId,
+  SecurityError,
+  logSecurityEvent
+} from "./security";
 import type {
   ExecEvent,
   ExecOptions,
@@ -609,7 +615,18 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   async unexposePort(port: number) {
+    if (!validatePort(port)) {
+      logSecurityEvent('INVALID_PORT_UNEXPOSE', {
+        port
+      }, 'high');
+      throw new SecurityError(`Invalid port number: ${port}. Must be between 1024-65535 and not reserved.`);
+    }
+
     await this.client.unexposePort(port);
+
+    logSecurityEvent('PORT_UNEXPOSED', {
+      port
+    }, 'low');
   }
 
   async getExposedPorts(hostname: string) {
@@ -630,17 +647,93 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
 
   private constructPreviewUrl(port: number, sandboxId: string, hostname: string): string {
+    if (!validatePort(port)) {
+      logSecurityEvent('INVALID_PORT_REJECTED', {
+        port,
+        sandboxId,
+        hostname
+      }, 'high');
+      throw new SecurityError(`Invalid port number: ${port}. Must be between 1024-65535 and not reserved.`);
+    }
+
+    let sanitizedSandboxId: string;
+    try {
+      sanitizedSandboxId = sanitizeSandboxId(sandboxId);
+    } catch (error) {
+      logSecurityEvent('INVALID_SANDBOX_ID_REJECTED', {
+        sandboxId,
+        port,
+        hostname,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      }, 'high');
+      throw error;
+    }
+
     const isLocalhost = isLocalhostPattern(hostname);
 
     if (isLocalhost) {
       // Unified subdomain approach for localhost (RFC 6761)
       const [host, portStr] = hostname.split(':');
       const mainPort = portStr || '80';
-      return `http://${port}-${sandboxId}.${host}:${mainPort}`;
+
+      // Use URL constructor for safe URL building
+      try {
+        const baseUrl = new URL(`http://${host}:${mainPort}`);
+        // Construct subdomain safely
+        const subdomainHost = `${port}-${sanitizedSandboxId}.${host}`;
+        baseUrl.hostname = subdomainHost;
+
+        const finalUrl = baseUrl.toString();
+
+        logSecurityEvent('PREVIEW_URL_CONSTRUCTED', {
+          port,
+          sandboxId: sanitizedSandboxId,
+          hostname,
+          resultUrl: finalUrl,
+          environment: 'localhost'
+        }, 'low');
+
+        return finalUrl;
+      } catch (error) {
+        logSecurityEvent('URL_CONSTRUCTION_FAILED', {
+          port,
+          sandboxId: sanitizedSandboxId,
+          hostname,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }, 'high');
+        throw new SecurityError(`Failed to construct preview URL: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      }
     }
 
-    // Production subdomain logic
-    const protocol = hostname.includes(":") ? "http" : "https";
-    return `${protocol}://${port}-${sandboxId}.${hostname}`;
+    // Production subdomain logic - enforce HTTPS
+    try {
+      // Always use HTTPS for production (non-localhost)
+      const protocol = "https";
+      const baseUrl = new URL(`${protocol}://${hostname}`);
+
+      // Construct subdomain safely
+      const subdomainHost = `${port}-${sanitizedSandboxId}.${hostname}`;
+      baseUrl.hostname = subdomainHost;
+
+      const finalUrl = baseUrl.toString();
+
+      logSecurityEvent('PREVIEW_URL_CONSTRUCTED', {
+        port,
+        sandboxId: sanitizedSandboxId,
+        hostname,
+        resultUrl: finalUrl,
+        environment: 'production'
+      }, 'low');
+
+      return finalUrl;
+    } catch (error) {
+      logSecurityEvent('URL_CONSTRUCTION_FAILED', {
+        port,
+        sandboxId: sanitizedSandboxId,
+        hostname,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      }, 'high');
+      throw new SecurityError(`Failed to construct preview URL: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
   }
 }
