@@ -19,13 +19,6 @@ export async function executeCommandStream(sandbox: Sandbox<unknown>, request: R
         try {
             const encoder = new TextEncoder();
 
-            // Send start event
-            await writer.write(encoder.encode(`data: ${JSON.stringify({
-                type: 'start',
-                timestamp: new Date().toISOString(),
-                command: command
-            })}\n\n`));
-
             // Get the ReadableStream from sandbox
             const stream = await sandbox.execStream(command, { sessionId });
             

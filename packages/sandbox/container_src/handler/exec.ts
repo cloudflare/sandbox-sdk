@@ -207,9 +207,9 @@ export async function handleStreamingExecuteRequest(
         controller.enqueue(
           new TextEncoder().encode(
             `data: ${JSON.stringify({
-              command,
+              type: "start",
               timestamp: new Date().toISOString(),
-              type: "command_start",
+              command,
               background: background || false,
             })}\n\n`
           )
@@ -223,10 +223,10 @@ export async function handleStreamingExecuteRequest(
           controller.enqueue(
             new TextEncoder().encode(
               `data: ${JSON.stringify({
-                command,
+                type: "stdout",
+                timestamp: new Date().toISOString(),
                 data: output,
-                stream: "stdout",
-                type: "output",
+                command,
               })}\n\n`
             )
           );
@@ -240,10 +240,10 @@ export async function handleStreamingExecuteRequest(
           controller.enqueue(
             new TextEncoder().encode(
               `data: ${JSON.stringify({
-                command,
+                type: "stderr",
+                timestamp: new Date().toISOString(),
                 data: output,
-                stream: "stderr",
-                type: "output",
+                command,
               })}\n\n`
             )
           );
@@ -264,13 +264,18 @@ export async function handleStreamingExecuteRequest(
           controller.enqueue(
             new TextEncoder().encode(
               `data: ${JSON.stringify({
+                type: "complete",
+                timestamp: new Date().toISOString(),
                 command,
                 exitCode: code,
-                stderr,
-                stdout,
-                success: code === 0,
-                timestamp: new Date().toISOString(),
-                type: "command_complete",
+                result: {
+                  success: code === 0,
+                  exitCode: code,
+                  stdout,
+                  stderr,
+                  command,
+                  timestamp: new Date().toISOString(),
+                },
               })}\n\n`
             )
           );
@@ -292,9 +297,10 @@ export async function handleStreamingExecuteRequest(
           controller.enqueue(
             new TextEncoder().encode(
               `data: ${JSON.stringify({
-                command,
-                error: error.message,
                 type: "error",
+                timestamp: new Date().toISOString(),
+                error: error.message,
+                command,
               })}\n\n`
             )
           );

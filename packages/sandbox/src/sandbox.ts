@@ -180,98 +180,62 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     startTime: number,
     timestamp: string
   ): Promise<ExecResult> {
-    return new Promise<ExecResult>((resolve, reject) => {
-      let stdout = '';
-      let stderr = '';
-      let completed = false;
+    let stdout = '';
+    let stderr = '';
 
-      // Set up temporary handlers to capture output and completion
-      const originalOnOutput = this.client.getOnOutput();
-      const originalOnCommandComplete = this.client.getOnCommandComplete();
+    try {
+      const stream = await this.client.executeCommandStream(command, options.sessionId);
+      const { parseSSEStream } = await import('./sse-parser');
 
-      const tempOnOutput = (stream: 'stdout' | 'stderr', data: string, cmd: string) => {
-        if (cmd === command) {
-          if (stream === 'stdout') stdout += data;
-          if (stream === 'stderr') stderr += data;
-
-          // Call user's callback
-          if (options.onOutput) {
-            options.onOutput(stream, data);
-          }
-        }
-        // Call original handler if it exists
-        originalOnOutput?.(stream, data, cmd);
-      };
-
-      const tempOnCommandComplete = (
-        success: boolean,
-        exitCode: number,
-        finalStdout: string,
-        finalStderr: string,
-        cmd: string
-      ) => {
-        if (cmd === command && !completed) {
-          completed = true;
-
-          // Use final output from command completion (more reliable)
-          const duration = Date.now() - startTime;
-          const result: ExecResult = {
-            success,
-            exitCode,
-            stdout: finalStdout,
-            stderr: finalStderr,
-            command,
-            duration,
-            timestamp,
-            sessionId: options.sessionId
-          };
-
-          // Restore original handlers
-          this.client.setOnOutput(originalOnOutput || (() => {}));
-          this.client.setOnCommandComplete(originalOnCommandComplete || (() => {}));
-
-          resolve(result);
+      for await (const event of parseSSEStream<import('./types').ExecEvent>(stream)) {
+        // Check for cancellation
+        if (options.signal?.aborted) {
+          throw new Error('Operation was aborted');
         }
 
-        // Call original handler if it exists
-        originalOnCommandComplete?.(success, exitCode, finalStdout, finalStderr, cmd);
-      };
+        switch (event.type) {
+          case 'stdout':
+          case 'stderr':
+            if (event.data) {
+              // Update accumulated output
+              if (event.type === 'stdout') stdout += event.data;
+              if (event.type === 'stderr') stderr += event.data;
 
-      // Set temporary handlers
-      this.client.setOnOutput(tempOnOutput);
-      this.client.setOnCommandComplete(tempOnCommandComplete);
+              // Call user's callback
+              if (options.onOutput) {
+                options.onOutput(event.type, event.data);
+              }
+            }
+            break;
 
-      // Handle cancellation
-      const abortHandler = () => {
-        if (!completed) {
-          completed = true;
-          // Restore original handlers
-          this.client.setOnOutput(originalOnOutput || (() => {}));
-          this.client.setOnCommandComplete(originalOnCommandComplete || (() => {}));
-          reject(new Error('Operation was aborted'));
+          case 'complete':
+            // Use result from complete event if available
+            const duration = Date.now() - startTime;
+            return event.result || {
+              success: event.exitCode === 0,
+              exitCode: event.exitCode || 0,
+              stdout,
+              stderr,
+              command,
+              duration,
+              timestamp,
+              sessionId: options.sessionId
+            };
+
+          case 'error':
+            throw new Error(event.error || 'Command execution failed');
         }
-      };
-
-      if (options.signal) {
-        options.signal.addEventListener('abort', abortHandler, { once: true });
       }
 
-      // Start streaming execution
-      this.client.executeStream(command, options.sessionId)
-        .catch(error => {
-          if (!completed) {
-            completed = true;
-            // Restore original handlers
-            this.client.setOnOutput(originalOnOutput || (() => {}));
-            this.client.setOnCommandComplete(originalOnCommandComplete || (() => {}));
+      // If we get here without a complete event, something went wrong
+      throw new Error('Stream ended without completion event');
 
-            if (options.signal) {
-              options.signal.removeEventListener('abort', abortHandler);
-            }
-            reject(error);
-          }
-        });
-    });
+    } catch (error) {
+      if (options.signal?.aborted) {
+        throw new Error('Operation was aborted');
+      }
+      throw error;
+    }
   }
 
   private mapExecuteResponseToExecResult(
