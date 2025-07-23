@@ -84,7 +84,7 @@ RUN python3 --version && \
     pnpm --version
 
 # Copy container source files
-COPY --chown=sandbox:sandbox container_src/* ./
+COPY --chown=sandbox:sandbox container_src/ ./
 
 # Expose the application port
 EXPOSE 3000
