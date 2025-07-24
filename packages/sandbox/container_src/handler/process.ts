@@ -550,7 +550,7 @@ export async function handleStreamProcessLogsRequest(
                     data: `Process status: ${record.status}`,
                     processId,
                     sessionId: record.sessionId
-                })}\\n\\n`;
+                })}\n\n`;
                 controller.enqueue(new TextEncoder().encode(statusEvent));
 
                 // Set up real-time streaming for ongoing output
