@@ -3,8 +3,8 @@ import { HttpClient } from "./client";
 import { isLocalhostPattern } from "./request-handler";
 import {
   logSecurityEvent,
-  sanitizeSandboxId,
   SecurityError,
+  sanitizeSandboxId,
   validatePort
 } from "./security";
 import type {
@@ -208,7 +208,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
             }
             break;
 
-          case 'complete':
+          case 'complete': {
             // Use result from complete event if available
             const duration = Date.now() - startTime;
             return event.result || {
@@ -221,6 +221,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
               timestamp,
               sessionId: options.sessionId
             };
+          }
 
           case 'error':
             throw new Error(event.error || 'Command execution failed');

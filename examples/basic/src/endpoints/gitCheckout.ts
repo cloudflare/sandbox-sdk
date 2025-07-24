@@ -11,7 +11,7 @@ export async function gitCheckout(sandbox: Sandbox<unknown>, request: Request) {
     }
 
     const actualBranch = branch || "main";
-    await sandbox.gitCheckout(repoUrl, actualBranch, targetDir);
+    await sandbox.gitCheckout(repoUrl, { branch: actualBranch, targetDir });
     
     return jsonResponse({ 
       success: true,

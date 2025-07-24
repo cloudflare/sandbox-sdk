@@ -1,5 +1,5 @@
-import { spawn, type SpawnOptions } from "node:child_process";
-import { ProcessRecord, ProcessStatus, StartProcessRequest } from "../types";
+import { type SpawnOptions, spawn } from "node:child_process";
+import type { ProcessRecord, ProcessStatus, StartProcessRequest } from "../types";
 
 // Generate a unique process ID
 function generateProcessId(): string {

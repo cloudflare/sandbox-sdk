@@ -1,4 +1,4 @@
-import { spawn, type SpawnOptions } from "node:child_process";
+import { type SpawnOptions, spawn } from "node:child_process";
 import type { ExecuteRequest, SessionData } from "../types";
 
 function executeCommand(
