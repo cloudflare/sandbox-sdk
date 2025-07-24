@@ -25,6 +25,13 @@ import { corsHeaders, errorResponse, jsonResponse, parseJsonBody } from "./http"
 
 export { Sandbox } from "@cloudflare/sandbox";
 
+// Helper function to generate cryptographically secure random strings
+function generateSecureRandomString(length: number = 12): string {
+  const array = new Uint8Array(length);
+  crypto.getRandomValues(array);
+  return Array.from(array, byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
 type Env = {
   Sandbox: DurableObjectNamespace<Sandbox>;
   ASSETS: Fetcher;
@@ -166,7 +173,7 @@ export default {
       // Session Management APIs
       if (pathname === "/api/session/create" && request.method === "POST") {
         const body = await parseJsonBody(request);
-        const sessionId = body.sessionId || `session_${Date.now()}_${Math.random().toString(36).substring(2, 15)}`;
+        const sessionId = body.sessionId || `session_${Date.now()}_${generateSecureRandomString()}`;
 
         // Sessions are managed automatically by the SDK, just return the ID
         return jsonResponse(sessionId);

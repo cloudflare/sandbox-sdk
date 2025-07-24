@@ -1,9 +1,10 @@
 import { type SpawnOptions, spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import type { ProcessRecord, ProcessStatus, StartProcessRequest } from "../types";
 
-// Generate a unique process ID
+// Generate a unique process ID using cryptographically secure randomness
 function generateProcessId(): string {
-  return `proc_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
+  return `proc_${Date.now()}_${randomBytes(6).toString('hex')}`;
 }
 
 

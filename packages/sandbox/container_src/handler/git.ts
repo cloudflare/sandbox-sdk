@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import type { GitCheckoutRequest, SessionData } from "../types";
 
 function executeGitCheckout(
@@ -126,10 +127,10 @@ export async function handleGitCheckoutRequest(
       );
     }
 
-    // Generate target directory if not provided
+    // Generate target directory if not provided using cryptographically secure randomness
     const checkoutDir =
       targetDir ||
-      `repo_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      `repo_${Date.now()}_${randomBytes(6).toString('hex')}`;
 
     console.log(
       `[Server] Checking out repository: ${repoUrl} to ${checkoutDir}`

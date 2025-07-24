@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { serve } from "bun";
 import { handleExecuteRequest, handleStreamingExecuteRequest } from "./handler/exec";
 import {
@@ -35,9 +36,9 @@ const exposedPorts = new Map<number, { name?: string; exposedAt: Date }>();
 // In-memory process storage - cleared on container restart
 const processes = new Map<string, ProcessRecord>();
 
-// Generate a unique session ID
+// Generate a unique session ID using cryptographically secure randomness
 function generateSessionId(): string {
-  return `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  return `session_${Date.now()}_${randomBytes(6).toString('hex')}`;
 }
 
 // Clean up old sessions (older than 1 hour)
