@@ -6,38 +6,6 @@ function generateProcessId(): string {
   return `proc_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
 }
 
-// Parse a command string into executable and arguments
-function parseCommand(command: string): string[] {
-  const parts: string[] = [];
-  let current = '';
-  let inQuotes = false;
-  let quoteChar = '';
-
-  for (let i = 0; i < command.length; i++) {
-    const char = command[i];
-
-    if (!inQuotes && (char === '"' || char === "'")) {
-      inQuotes = true;
-      quoteChar = char;
-    } else if (inQuotes && char === quoteChar) {
-      inQuotes = false;
-      quoteChar = '';
-    } else if (!inQuotes && char === ' ') {
-      if (current) {
-        parts.push(current);
-        current = '';
-      }
-    } else {
-      current += char;
-    }
-  }
-
-  if (current) {
-    parts.push(current);
-  }
-
-  return parts.length > 0 ? parts : [''];
-}
 
 // Process management handlers
 export async function handleStartProcessRequest(
@@ -105,12 +73,13 @@ export async function handleStartProcessRequest(
             const spawnOptions: SpawnOptions = {
                 cwd: options.cwd || process.cwd(),
                 env: { ...process.env, ...options.env },
-                detached: false
+                detached: false,
+                shell: true,
+                stdio: ["pipe", "pipe", "pipe"] as const
             };
 
-            // Parse command into executable and arguments
-            const [commandName, ...args] = parseCommand(command);
-            const childProcess = spawn(commandName, args, spawnOptions);
+            // Use shell execution to preserve quotes and complex command structures
+            const childProcess = spawn(command, spawnOptions);
             processRecord.childProcess = childProcess;
             processRecord.pid = childProcess.pid;
             processRecord.status = 'running';

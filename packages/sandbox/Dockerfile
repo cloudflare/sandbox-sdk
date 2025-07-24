@@ -59,21 +59,8 @@ RUN curl -fsSL https://bun.sh/install | bash \
 # Install global npm packages as root
 RUN npm install -g yarn pnpm
 
-# Create a non-root user for running applications
-RUN useradd -m -s /bin/bash sandbox \
-    && echo "sandbox ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
-
 # Set up working directory
 WORKDIR /app
-
-# Set ownership of the app directory to sandbox user
-RUN chown -R sandbox:sandbox /app
-
-# Set environment variables
-ENV PATH="/home/sandbox/.local/bin:${PATH}"
-
-# Switch to non-root user
-USER sandbox
 
 # Verify installations
 RUN python3 --version && \
@@ -84,7 +71,7 @@ RUN python3 --version && \
     pnpm --version
 
 # Copy container source files
-COPY --chown=sandbox:sandbox container_src/ ./
+COPY container_src/ ./
 
 # Expose the application port
 EXPOSE 3000
