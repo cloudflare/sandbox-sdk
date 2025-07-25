@@ -84,12 +84,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     console.log("Sandbox successfully started");
   }
 
-  override async onStop() {
-    // Only log shutdown when container is actually stopping, not during setup
-    const state = await this.getState();
-    if (state.status === 'stopped' || state.status === 'stopped_with_code') {
-      console.log("Sandbox successfully shut down");
-    }
+  override onStop() {
+    console.log("Sandbox successfully shut down");
     if (this.client) {
       this.client.clearSession();
     }
@@ -116,6 +112,46 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     // Route to the appropriate port
     return await this.containerFetch(request, port);
+  }
+
+  // Override containerFetch to add retry logic for container startup
+  override async containerFetch(
+    requestOrUrl: Request | string | URL,
+    portOrInit?: number | RequestInit,
+    portParam?: number
+  ): Promise<Response> {
+    let lastError: Error | undefined;
+    const maxAttempts = 3;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      try {
+        // Call parent's containerFetch
+        return await super.containerFetch(requestOrUrl, portOrInit, portParam);
+      } catch (error: any) {
+        lastError = error;
+
+        // Check if this is a container startup error
+        const errorMessage = error.message || error.toString();
+        const isStartupError =
+          errorMessage.includes('container port not found') ||
+          errorMessage.includes('the container is not listening') ||
+          errorMessage.includes('Connection refused');
+
+        // Only retry on startup errors, and not on the last attempt
+        if (isStartupError && attempt < maxAttempts - 1) {
+          const backoffMs = 1000 * (attempt + 1); // 1s, 2s, 3s
+          console.log(`[Sandbox] Container startup error on attempt ${attempt + 1}/${maxAttempts}, retrying in ${backoffMs}ms...`);
+          await new Promise(resolve => setTimeout(resolve, backoffMs));
+          continue;
+        }
+
+        // Not a startup error or last attempt - throw immediately
+        throw error;
+      }
+    }
+
+    // If we get here, all attempts failed
+    throw lastError;
   }
 
   private determinePort(url: URL): number {
@@ -538,25 +574,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     logSecurityEvent('PORT_UNEXPOSED', {
       port
     }, 'low');
-  }
-
-  // Health check method that doesn't trigger containerFetch
-  async ping(): Promise<{ status: string; message: string }> {
-    // Get container state
-    const state = await this.getState();
-
-    // Check container status
-    switch (state.status) {
-      case 'healthy':
-        return { status: 'ready', message: 'Sandbox initialized' };
-      case 'running':
-        return { status: 'starting', message: 'Container is starting up' };
-      case 'stopped':
-      case 'stopped_with_code':
-        return { status: 'stopped', message: 'Container is stopped' };
-      default:
-        return { status: 'starting', message: 'Container is initializing' };
-    }
   }
 
   async getExposedPorts(hostname: string) {
