@@ -13,7 +13,7 @@ execSync("npm install", {
   stdio: "inherit",
 });
 
-// Update Dockerfile version references after changeset updates package.json
+// Update Dockerfile and README version references after changeset updates package.json
 try {
   const packageJson = JSON.parse(fs.readFileSync("./packages/sandbox/package.json", "utf-8"));
   const newVersion = packageJson.version;
@@ -23,19 +23,33 @@ try {
 
   // Update the production image version in the comment
   dockerfileContent = dockerfileContent.replace(
-    /# FROM docker\.io\/ghostwriternr\/cloudflare-sandbox:[\d.]+/,
-    `# FROM docker.io/ghostwriternr/cloudflare-sandbox:${newVersion}`
+    /# FROM docker\.io\/cloudflare\/sandbox:[\d.]+/,
+    `# FROM docker.io/cloudflare/sandbox:${newVersion}`
   );
 
   // Update the test image version
   dockerfileContent = dockerfileContent.replace(
-    /FROM ghostwriternr\/cloudflare-sandbox-test:[\d.]+/,
-    `FROM ghostwriternr/cloudflare-sandbox-test:${newVersion}`
+    /FROM cloudflare\/sandbox-test:[\d.]+/,
+    `FROM cloudflare/sandbox-test:${newVersion}`
   );
 
   fs.writeFileSync(dockerfilePath, dockerfileContent);
   console.log(`✅ Updated Dockerfile versions to ${newVersion}`);
+
+  // Update README.md
+  const readmePath = "./README.md";
+  let readmeContent = fs.readFileSync(readmePath, "utf-8");
+
+  // Update the Docker image version in README
+  readmeContent = readmeContent.replace(
+    /FROM docker\.io\/cloudflare\/sandbox:[\d.]+/,
+    `FROM docker.io/cloudflare/sandbox:${newVersion}`
+  );
+
+  fs.writeFileSync(readmePath, readmeContent);
+  console.log(`✅ Updated README.md version to ${newVersion}`);
+
 } catch (error) {
-  console.error("❌ Failed to update Dockerfile versions:", error);
+  console.error("❌ Failed to update file versions:", error);
   // Don't fail the whole release for this
 }

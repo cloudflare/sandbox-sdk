@@ -18,9 +18,9 @@
   ],
   "scripts": {
     "build": "rm -rf dist && tsup src/*.ts --outDir dist --dts --sourcemap --format esm",
-    "docker:local": "docker build . -t ghostwriternr/cloudflare-sandbox-test:$npm_package_version",
-    "docker:publish": "docker buildx build --platform linux/amd64,linux/arm64 -t ghostwriternr/cloudflare-sandbox:$npm_package_version --push .",
-    "docker:publish:beta": "docker buildx build --platform linux/amd64,linux/arm64 -t ghostwriternr/cloudflare-sandbox:$npm_package_version-beta --push ."
+    "docker:local": "docker build . -t cloudflare/sandbox-test:$npm_package_version",
+    "docker:publish": "docker buildx build --platform linux/amd64,linux/arm64 -t cloudflare/sandbox:$npm_package_version --push .",
+    "docker:publish:beta": "docker buildx build --platform linux/amd64,linux/arm64 -t cloudflare/sandbox:$npm_package_version-beta --push ."
   },
   "exports": {
     ".": {
