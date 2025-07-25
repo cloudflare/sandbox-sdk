@@ -223,34 +223,51 @@ export class HttpClient {
 
     console.log(`[HTTP Client] Making ${method} request to ${url}`);
 
-    try {
-      let response: Response;
+    let lastResponse: Response | undefined;
+    const maxAttempts = 3;
 
-      if (this.options.stub) {
-        response = await this.options.stub.containerFetch(
-          url,
-          options,
-          this.options.port
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      try {
+        let response: Response;
+
+        if (this.options.stub) {
+          response = await this.options.stub.containerFetch(
+            url,
+            options,
+            this.options.port
+          );
+        } else {
+          response = await fetch(url, options);
+        }
+
+        // Only retry on 503 (container starting up) and not on last attempt
+        if (response.status === 503 && attempt < maxAttempts - 1) {
+          lastResponse = response;
+          const backoffMs = 1000 * (attempt + 1); // 1s, 2s, 3s
+          console.log(`[HTTP Client] Container starting (503), retrying in ${backoffMs}ms... (attempt ${attempt + 1}/${maxAttempts})`);
+          await new Promise(resolve => setTimeout(resolve, backoffMs));
+          continue;
+        }
+
+        console.log(
+          `[HTTP Client] Response: ${response.status} ${response.statusText}`
         );
-      } else {
-        response = await fetch(url, options);
+
+        if (!response.ok) {
+          console.error(
+            `[HTTP Client] Request failed: ${method} ${url} - ${response.status} ${response.statusText}`
+          );
+        }
+
+        return response;
+      } catch (error) {
+        console.error(`[HTTP Client] Request error: ${method} ${url}`, error);
+        throw error;
       }
-
-      console.log(
-        `[HTTP Client] Response: ${response.status} ${response.statusText}`
-      );
-
-      if (!response.ok) {
-        console.error(
-          `[HTTP Client] Request failed: ${method} ${url} - ${response.status} ${response.statusText}`
-        );
-      }
-
-      return response;
-    } catch (error) {
-      console.error(`[HTTP Client] Request error: ${method} ${url}`, error);
-      throw error;
     }
+
+    // If we get here, all attempts failed with 503
+    return lastResponse!;
   }
 
   async execute(

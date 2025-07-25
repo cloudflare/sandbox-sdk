@@ -114,46 +114,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     return await this.containerFetch(request, port);
   }
 
-  // Override containerFetch to add retry logic for container startup
-  override async containerFetch(
-    requestOrUrl: Request | string | URL,
-    portOrInit?: number | RequestInit,
-    portParam?: number
-  ): Promise<Response> {
-    let lastError: Error | undefined;
-    const maxAttempts = 3;
-
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      try {
-        // Call parent's containerFetch
-        return await super.containerFetch(requestOrUrl, portOrInit, portParam);
-      } catch (error: any) {
-        lastError = error;
-
-        // Check if this is a container startup error
-        const errorMessage = error.message || error.toString();
-        const isStartupError =
-          errorMessage.includes('container port not found') ||
-          errorMessage.includes('the container is not listening') ||
-          errorMessage.includes('Connection refused');
-
-        // Only retry on startup errors, and not on the last attempt
-        if (isStartupError && attempt < maxAttempts - 1) {
-          const backoffMs = 1000 * (attempt + 1); // 1s, 2s, 3s
-          console.log(`[Sandbox] Container startup error on attempt ${attempt + 1}/${maxAttempts}, retrying in ${backoffMs}ms...`);
-          await new Promise(resolve => setTimeout(resolve, backoffMs));
-          continue;
-        }
-
-        // Not a startup error or last attempt - throw immediately
-        throw error;
-      }
-    }
-
-    // If we get here, all attempts failed
-    throw lastError;
-  }
-
   private determinePort(url: URL): number {
     // Extract port from proxy requests (e.g., /proxy/8080/*)
     const proxyMatch = url.pathname.match(/^\/proxy\/(\d+)/);
