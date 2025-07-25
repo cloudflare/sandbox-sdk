@@ -1,5 +1,13 @@
 # @cloudflare/sandbox
 
+## 0.1.1
+
+### Patch Changes
+
+- [`157dde9`](https://github.com/cloudflare/sandbox-sdk/commit/157dde9b1f23e9bb6f3e9c3f0514b639a8813897) Thanks [@threepointone](https://github.com/threepointone)! - update deps
+
+- [`a04f6b6`](https://github.com/cloudflare/sandbox-sdk/commit/a04f6b6c0b2ef9e3ce0851b53769f1c10d8c6de6) Thanks [@threepointone](https://github.com/threepointone)! - trigger a build with updated deps
+
 ## 0.1.0
 
 ### Minor Changes

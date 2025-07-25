@@ -3,7 +3,8 @@
   "version": "0.0.0",
   "description": "an api for computers",
   "scripts": {
-    "check": "biome check && tsc --noEmit",
+    "typecheck": "tsx scripts/typecheck.ts",
+    "check": "biome check && npm run typecheck",
     "build": "npm run build -w @cloudflare/sandbox",
     "test": "echo 'No tests'",
     "toc": "doctoc README.md --github --maxlevel 3 && node scripts/fix-toc-links.js"
@@ -20,8 +21,8 @@
     "@biomejs/biome": "^2.1.2",
     "@changesets/changelog-github": "^0.5.1",
     "@changesets/cli": "^2.29.5",
-    "@cloudflare/vite-plugin": "^1.10.0",
-    "@cloudflare/workers-types": "^4.20250723.0",
+    "@cloudflare/vite-plugin": "^1.10.1",
+    "@cloudflare/workers-types": "^4.20250725.0",
     "@types/bun": "^1.2.19",
     "@types/node": "^24.1.0",
     "@types/react": "^19.1.8",
@@ -34,9 +35,9 @@
     "tsup": "^8.5.0",
     "tsx": "^4.20.3",
     "typescript": "^5.8.3",
-    "vite": "^7.0.5",
-    "wrangler": "^4.25.1"
+    "vite": "^7.0.6",
+    "wrangler": "^4.26.0"
   },
   "private": true,
-  "packageManager": "npm@11.4.2"
+  "packageManager": "npm@11.5.1"
 }
