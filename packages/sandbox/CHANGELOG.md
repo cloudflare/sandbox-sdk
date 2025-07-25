@@ -1,5 +1,11 @@
 # @cloudflare/sandbox
 
+## 0.1.3
+
+### Patch Changes
+
+- [#32](https://github.com/cloudflare/sandbox-sdk/pull/32) [`1a42464`](https://github.com/cloudflare/sandbox-sdk/commit/1a4246479369c5d0160705caf192aa1816540d52) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Bring back package README
+
 ## 0.1.2
 
 ### Patch Changes
