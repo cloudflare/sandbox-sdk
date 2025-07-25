@@ -1,4 +1,5 @@
 # Sandbox base image with development tools, Python, Node.js, and Bun
+FROM oven/bun:latest as bun-source
 FROM ubuntu:22.04
 
 # Prevent interactive prompts during package installation
@@ -50,11 +51,9 @@ RUN apt-get update && apt-get install -y ca-certificates curl gnupg \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Bun using the official installation script
-RUN curl -fsSL https://bun.sh/install | bash \
-    && mv /root/.bun/bin/bun /usr/local/bin/bun \
-    && mv /root/.bun/bin/bunx /usr/local/bin/bunx \
-    && rm -rf /root/.bun
+# Install Bun from official image (avoids architecture compatibility issues)
+COPY --from=bun-source /usr/local/bin/bun /usr/local/bin/bun
+COPY --from=bun-source /usr/local/bin/bunx /usr/local/bin/bunx
 
 # Install global npm packages as root
 RUN npm install -g yarn pnpm
