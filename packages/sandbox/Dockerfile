@@ -1,5 +1,5 @@
 # Sandbox base image with development tools, Python, Node.js, and Bun
-FROM oven/bun:latest as bun-source
+FROM oven/bun:latest AS bun-source
 FROM ubuntu:22.04
 
 # Prevent interactive prompts during package installation

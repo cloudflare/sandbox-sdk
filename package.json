@@ -5,7 +5,7 @@
   "scripts": {
     "typecheck": "tsx scripts/typecheck.ts",
     "check": "biome check && npm run typecheck",
-    "build": "npm run build -w @cloudflare/sandbox",
+    "build": "npm run build -w @cloudflare/sandbox && npm run docker:local -w @cloudflare/sandbox",
     "test": "echo 'No tests'",
     "toc": "doctoc README.md --github --maxlevel 3 && node scripts/fix-toc-links.js"
   },
