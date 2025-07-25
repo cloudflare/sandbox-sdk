@@ -1,4 +1,4 @@
-FROM docker.io/ghostwriternr/cloudflare-sandbox:0.0.9
+FROM docker.io/ghostwriternr/cloudflare-sandbox:0.1.0
 
 EXPOSE 8080
 EXPOSE 3001
