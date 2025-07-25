@@ -56,8 +56,6 @@ RUN curl -fsSL https://bun.sh/install | bash \
     && mv /root/.bun/bin/bunx /usr/local/bin/bunx \
     && rm -rf /root/.bun
 
-# Install global npm packages as root
-RUN npm install -g yarn pnpm
 
 # Set up working directory
 WORKDIR /app
@@ -66,9 +64,8 @@ WORKDIR /app
 RUN python3 --version && \
     node --version && \
     npm --version && \
-    bun --version && \
-    yarn --version && \
-    pnpm --version
+    bun --version
+    
 
 # Copy container source files
 COPY container_src/ ./
