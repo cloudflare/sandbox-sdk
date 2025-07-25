@@ -218,24 +218,25 @@ export default {
         });
       }
 
-      // Ping endpoint that actually initializes the container
+      // Ping endpoint that checks container state without triggering containerFetch
       if (pathname === "/api/ping") {
         try {
-          // Test the actual sandbox connection by calling a simple method
-          // This will initialize the sandbox if it's not already running
-          await sandbox.exec("echo 'Sandbox initialized'");
+          // Use the new ping() method that doesn't trigger containerFetch
+          const pingResult = await sandbox.ping();
+
           return jsonResponse({
             message: "pong",
             timestamp: new Date().toISOString(),
-            sandboxStatus: "ready"
-          });
+            sandboxStatus: pingResult.status,
+            sandboxMessage: pingResult.message
+          }, pingResult.status === 'ready' ? 200 : 202);
         } catch (error: any) {
           return jsonResponse({
             message: "pong",
             timestamp: new Date().toISOString(),
-            sandboxStatus: "initializing",
+            sandboxStatus: "error",
             error: error.message
-          }, 202); // 202 Accepted - processing in progress
+          }, 500);
         }
       }
 

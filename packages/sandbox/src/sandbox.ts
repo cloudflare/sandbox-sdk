@@ -31,6 +31,7 @@ export function getSandbox(ns: DurableObjectNamespace<Sandbox>, id: string) {
 }
 
 export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
+  defaultPort = 3000; // Default port for the container's Bun server
   sleepAfter = "3m"; // Sleep the sandbox if no requests are made in this timeframe
   client: HttpClient;
   private sandboxName: string | null = null;
@@ -83,8 +84,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     console.log("Sandbox successfully started");
   }
 
-  override onStop() {
-    console.log("Sandbox successfully shut down");
+  override async onStop() {
+    // Only log shutdown when container is actually stopping, not during setup
+    const state = await this.getState();
+    if (state.status === 'stopped' || state.status === 'stopped_with_code') {
+      console.log("Sandbox successfully shut down");
+    }
     if (this.client) {
       this.client.clearSession();
     }
@@ -533,6 +538,25 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     logSecurityEvent('PORT_UNEXPOSED', {
       port
     }, 'low');
+  }
+
+  // Health check method that doesn't trigger containerFetch
+  async ping(): Promise<{ status: string; message: string }> {
+    // Get container state
+    const state = await this.getState();
+
+    // Check container status
+    switch (state.status) {
+      case 'healthy':
+        return { status: 'ready', message: 'Sandbox initialized' };
+      case 'running':
+        return { status: 'starting', message: 'Container is starting up' };
+      case 'stopped':
+      case 'stopped_with_code':
+        return { status: 'stopped', message: 'Container is stopped' };
+      default:
+        return { status: 'starting', message: 'Container is initializing' };
+    }
   }
 
   async getExposedPorts(hostname: string) {
