@@ -5,7 +5,7 @@ import {
   logSecurityEvent,
   SecurityError,
   sanitizeSandboxId,
-  validatePort
+  validatePort,
 } from "./security";
 import type {
   ExecOptions,
@@ -14,7 +14,7 @@ import type {
   Process,
   ProcessOptions,
   ProcessStatus,
-  StreamOptions
+  StreamOptions,
 } from "./types";
 import { ProcessNotFoundError, SandboxError } from "./types";
 
@@ -51,7 +51,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         console.log(`[Container] [${stream}] ${data}`);
       },
       port: 3000, // Control plane port
-      stub: this
+      stub: this,
     });
 
     // Load the sandbox name from storage on initialization
@@ -228,7 +228,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
                 command,
                 duration,
                 timestamp,
-                sessionId: options.sessionId
+                sessionId: options.sessionId,
               }
             );
           }
@@ -261,7 +261,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       command: response.command,
       duration,
       timestamp: response.timestamp,
-      sessionId
+      sessionId,
     };
   }
 
@@ -279,7 +279,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         env: options?.env,
         cwd: options?.cwd,
         encoding: options?.encoding,
-        autoCleanup: options?.autoCleanup
+        autoCleanup: options?.autoCleanup,
       });
 
       const process = response.process;
@@ -301,7 +301,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         },
         async getLogs(): Promise<{ stdout: string; stderr: string }> {
           throw new Error("Method will be replaced");
-        }
+        },
       };
 
       // Bind context properly
@@ -359,7 +359,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       getLogs: async () => {
         const logs = await this.getProcessLogs(processData.id);
         return { stdout: logs.stdout, stderr: logs.stderr };
-      }
+      },
     }));
   }
 
@@ -392,7 +392,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       getLogs: async () => {
         const logs = await this.getProcessLogs(processData.id);
         return { stdout: logs.stdout, stderr: logs.stderr };
-      }
+      },
     };
   }
 
@@ -435,7 +435,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       const response = await this.client.getProcessLogs(id);
       return {
         stdout: response.stdout,
-        stderr: response.stderr
+        stderr: response.stderr,
       };
     } catch (error) {
       if (
@@ -538,7 +538,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     return {
       url,
       port,
-      name: options?.name
+      name: options?.name,
     };
   }
 
@@ -547,7 +547,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       logSecurityEvent(
         "INVALID_PORT_UNEXPOSE",
         {
-          port
+          port,
         },
         "high"
       );
@@ -561,7 +561,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     logSecurityEvent(
       "PORT_UNEXPOSED",
       {
-        port
+        port,
       },
       "low"
     );
@@ -581,7 +581,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       url: this.constructPreviewUrl(port.port, this.sandboxName!, hostname),
       port: port.port,
       name: port.name,
-      exposedAt: port.exposedAt
+      exposedAt: port.exposedAt,
     }));
   }
 
@@ -596,7 +596,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         {
           port,
           sandboxId,
-          hostname
+          hostname,
         },
         "high"
       );
@@ -615,7 +615,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           sandboxId,
           port,
           hostname,
-          error: error instanceof Error ? error.message : "Unknown error"
+          error: error instanceof Error ? error.message : "Unknown error",
         },
         "high"
       );
@@ -645,7 +645,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
             sandboxId: sanitizedSandboxId,
             hostname,
             resultUrl: finalUrl,
-            environment: "localhost"
+            environment: "localhost",
           },
           "low"
         );
@@ -658,7 +658,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
             port,
             sandboxId: sanitizedSandboxId,
             hostname,
-            error: error instanceof Error ? error.message : "Unknown error"
+            error: error instanceof Error ? error.message : "Unknown error",
           },
           "high"
         );
@@ -689,7 +689,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           sandboxId: sanitizedSandboxId,
           hostname,
           resultUrl: finalUrl,
-          environment: "production"
+          environment: "production",
         },
         "low"
       );
@@ -702,7 +702,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           port,
           sandboxId: sanitizedSandboxId,
           hostname,
-          error: error instanceof Error ? error.message : "Unknown error"
+          error: error instanceof Error ? error.message : "Unknown error",
         },
         "high"
       );

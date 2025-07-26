@@ -34,7 +34,7 @@ export function validatePort(port: number): boolean {
   // Exclude ports reserved by our system
   const reservedPorts = [
     3000, // Control plane port
-    8787 // Common wrangler dev port
+    8787, // Common wrangler dev port
   ];
 
   if (reservedPorts.includes(port)) {
@@ -73,7 +73,7 @@ export function sanitizeSandboxId(id: string): string {
     "root",
     "system",
     "cloudflare",
-    "workers"
+    "workers",
   ];
 
   const lowerCaseId = id.toLowerCase();
@@ -99,7 +99,7 @@ export function logSecurityEvent(
     timestamp: new Date().toISOString(),
     event,
     severity,
-    ...details
+    ...details,
   };
 
   switch (severity) {

@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import type {
   ProcessRecord,
   ProcessStatus,
-  StartProcessRequest
+  StartProcessRequest,
 } from "../types";
 
 // Generate a unique process ID using cryptographically secure randomness
@@ -24,14 +24,14 @@ export async function handleStartProcessRequest(
     if (!command || typeof command !== "string") {
       return new Response(
         JSON.stringify({
-          error: "Command is required and must be a string"
+          error: "Command is required and must be a string",
         }),
         {
           headers: {
             "Content-Type": "application/json",
-            ...corsHeaders
+            ...corsHeaders,
           },
-          status: 400
+          status: 400,
         }
       );
     }
@@ -43,14 +43,14 @@ export async function handleStartProcessRequest(
     if (processes.has(processId)) {
       return new Response(
         JSON.stringify({
-          error: `Process already exists: ${processId}`
+          error: `Process already exists: ${processId}`,
         }),
         {
           headers: {
             "Content-Type": "application/json",
-            ...corsHeaders
+            ...corsHeaders,
           },
-          status: 409
+          status: 409,
         }
       );
     }
@@ -69,7 +69,7 @@ export async function handleStartProcessRequest(
       stdout: "",
       stderr: "",
       outputListeners: new Set(),
-      statusListeners: new Set()
+      statusListeners: new Set(),
     };
 
     processes.set(processId, processRecord);
@@ -81,7 +81,7 @@ export async function handleStartProcessRequest(
         env: { ...process.env, ...options.env },
         detached: false,
         shell: true,
-        stdio: ["pipe", "pipe", "pipe"] as const
+        stdio: ["pipe", "pipe", "pipe"] as const,
       };
 
       // Use shell execution to preserve quotes and complex command structures
@@ -164,14 +164,14 @@ export async function handleStartProcessRequest(
             command: processRecord.command,
             status: processRecord.status,
             startTime: processRecord.startTime.toISOString(),
-            sessionId: processRecord.sessionId
-          }
+            sessionId: processRecord.sessionId,
+          },
         }),
         {
           headers: {
             "Content-Type": "application/json",
-            ...corsHeaders
-          }
+            ...corsHeaders,
+          },
         }
       );
     } catch (error) {
@@ -184,14 +184,14 @@ export async function handleStartProcessRequest(
     return new Response(
       JSON.stringify({
         error: "Failed to start process",
-        message: error instanceof Error ? error.message : "Unknown error"
+        message: error instanceof Error ? error.message : "Unknown error",
       }),
       {
         headers: {
           "Content-Type": "application/json",
-          ...corsHeaders
+          ...corsHeaders,
         },
-        status: 500
+        status: 500,
       }
     );
   }
@@ -211,20 +211,20 @@ export async function handleListProcessesRequest(
       startTime: record.startTime.toISOString(),
       endTime: record.endTime?.toISOString(),
       exitCode: record.exitCode,
-      sessionId: record.sessionId
+      sessionId: record.sessionId,
     }));
 
     return new Response(
       JSON.stringify({
         processes: processesArray,
         count: processesArray.length,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       }),
       {
         headers: {
           "Content-Type": "application/json",
-          ...corsHeaders
-        }
+          ...corsHeaders,
+        },
       }
     );
   } catch (error) {
@@ -232,14 +232,14 @@ export async function handleListProcessesRequest(
     return new Response(
       JSON.stringify({
         error: "Failed to list processes",
-        message: error instanceof Error ? error.message : "Unknown error"
+        message: error instanceof Error ? error.message : "Unknown error",
       }),
       {
         headers: {
           "Content-Type": "application/json",
-          ...corsHeaders
+          ...corsHeaders,
         },
-        status: 500
+        status: 500,
       }
     );
   }
@@ -257,14 +257,14 @@ export async function handleGetProcessRequest(
     if (!record) {
       return new Response(
         JSON.stringify({
-          process: null
+          process: null,
         }),
         {
           headers: {
             "Content-Type": "application/json",
-            ...corsHeaders
+            ...corsHeaders,
           },
-          status: 404
+          status: 404,
         }
       );
     }
@@ -279,14 +279,14 @@ export async function handleGetProcessRequest(
           startTime: record.startTime.toISOString(),
           endTime: record.endTime?.toISOString(),
           exitCode: record.exitCode,
-          sessionId: record.sessionId
-        }
+          sessionId: record.sessionId,
+        },
       }),
       {
         headers: {
           "Content-Type": "application/json",
-          ...corsHeaders
-        }
+          ...corsHeaders,
+        },
       }
     );
   } catch (error) {
@@ -294,14 +294,14 @@ export async function handleGetProcessRequest(
     return new Response(
       JSON.stringify({
         error: "Failed to get process",
-        message: error instanceof Error ? error.message : "Unknown error"
+        message: error instanceof Error ? error.message : "Unknown error",
       }),
       {
         headers: {
           "Content-Type": "application/json",
-          ...corsHeaders
+          ...corsHeaders,
         },
-        status: 500
+        status: 500,
       }
     );
   }
@@ -319,14 +319,14 @@ export async function handleKillProcessRequest(
     if (!record) {
       return new Response(
         JSON.stringify({
-          error: `Process not found: ${processId}`
+          error: `Process not found: ${processId}`,
         }),
         {
           headers: {
             "Content-Type": "application/json",
-            ...corsHeaders
+            ...corsHeaders,
           },
-          status: 404
+          status: 404,
         }
       );
     }
@@ -358,13 +358,13 @@ export async function handleKillProcessRequest(
       JSON.stringify({
         success: true,
         message: `Process ${processId} killed`,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       }),
       {
         headers: {
           "Content-Type": "application/json",
-          ...corsHeaders
-        }
+          ...corsHeaders,
+        },
       }
     );
   } catch (error) {
@@ -372,14 +372,14 @@ export async function handleKillProcessRequest(
     return new Response(
       JSON.stringify({
         error: "Failed to kill process",
-        message: error instanceof Error ? error.message : "Unknown error"
+        message: error instanceof Error ? error.message : "Unknown error",
       }),
       {
         headers: {
           "Content-Type": "application/json",
-          ...corsHeaders
+          ...corsHeaders,
         },
-        status: 500
+        status: 500,
       }
     );
   }
@@ -419,13 +419,13 @@ export async function handleKillAllProcessesRequest(
         success: true,
         killedCount,
         message: `Killed ${killedCount} processes`,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       }),
       {
         headers: {
           "Content-Type": "application/json",
-          ...corsHeaders
-        }
+          ...corsHeaders,
+        },
       }
     );
   } catch (error) {
@@ -433,14 +433,14 @@ export async function handleKillAllProcessesRequest(
     return new Response(
       JSON.stringify({
         error: "Failed to kill all processes",
-        message: error instanceof Error ? error.message : "Unknown error"
+        message: error instanceof Error ? error.message : "Unknown error",
       }),
       {
         headers: {
           "Content-Type": "application/json",
-          ...corsHeaders
+          ...corsHeaders,
         },
-        status: 500
+        status: 500,
       }
     );
   }
@@ -458,14 +458,14 @@ export async function handleGetProcessLogsRequest(
     if (!record) {
       return new Response(
         JSON.stringify({
-          error: `Process not found: ${processId}`
+          error: `Process not found: ${processId}`,
         }),
         {
           headers: {
             "Content-Type": "application/json",
-            ...corsHeaders
+            ...corsHeaders,
           },
-          status: 404
+          status: 404,
         }
       );
     }
@@ -474,13 +474,13 @@ export async function handleGetProcessLogsRequest(
       JSON.stringify({
         stdout: record.stdout,
         stderr: record.stderr,
-        processId: record.id
+        processId: record.id,
       }),
       {
         headers: {
           "Content-Type": "application/json",
-          ...corsHeaders
-        }
+          ...corsHeaders,
+        },
       }
     );
   } catch (error) {
@@ -488,14 +488,14 @@ export async function handleGetProcessLogsRequest(
     return new Response(
       JSON.stringify({
         error: "Failed to get process logs",
-        message: error instanceof Error ? error.message : "Unknown error"
+        message: error instanceof Error ? error.message : "Unknown error",
       }),
       {
         headers: {
           "Content-Type": "application/json",
-          ...corsHeaders
+          ...corsHeaders,
         },
-        status: 500
+        status: 500,
       }
     );
   }
@@ -513,14 +513,14 @@ export async function handleStreamProcessLogsRequest(
     if (!record) {
       return new Response(
         JSON.stringify({
-          error: `Process not found: ${processId}`
+          error: `Process not found: ${processId}`,
         }),
         {
           headers: {
             "Content-Type": "application/json",
-            ...corsHeaders
+            ...corsHeaders,
           },
-          status: 404
+          status: 404,
         }
       );
     }
@@ -537,7 +537,7 @@ export async function handleStreamProcessLogsRequest(
             timestamp: new Date().toISOString(),
             data: record.stdout,
             processId,
-            sessionId: record.sessionId
+            sessionId: record.sessionId,
           })}\n\n`;
           controller.enqueue(new TextEncoder().encode(event));
         }
@@ -548,7 +548,7 @@ export async function handleStreamProcessLogsRequest(
             timestamp: new Date().toISOString(),
             data: record.stderr,
             processId,
-            sessionId: record.sessionId
+            sessionId: record.sessionId,
           })}\n\n`;
           controller.enqueue(new TextEncoder().encode(event));
         }
@@ -559,7 +559,7 @@ export async function handleStreamProcessLogsRequest(
           timestamp: new Date().toISOString(),
           data: `Process status: ${record.status}`,
           processId,
-          sessionId: record.sessionId
+          sessionId: record.sessionId,
         })}\n\n`;
         controller.enqueue(new TextEncoder().encode(statusEvent));
 
@@ -572,7 +572,7 @@ export async function handleStreamProcessLogsRequest(
             timestamp: new Date().toISOString(),
             data,
             processId,
-            sessionId: record.sessionId
+            sessionId: record.sessionId,
           })}\n\n`;
 
           try {
@@ -591,7 +591,7 @@ export async function handleStreamProcessLogsRequest(
             timestamp: new Date().toISOString(),
             data: `Process status: ${status}`,
             processId,
-            sessionId: record.sessionId
+            sessionId: record.sessionId,
           })}\n\n`;
 
           try {
@@ -619,7 +619,7 @@ export async function handleStreamProcessLogsRequest(
       cancel() {
         isConnected = false;
         console.log(`[Server] Log stream cancelled for process ${processId}`);
-      }
+      },
     });
 
     return new Response(stream, {
@@ -627,22 +627,22 @@ export async function handleStreamProcessLogsRequest(
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
         Connection: "keep-alive",
-        ...corsHeaders
-      }
+        ...corsHeaders,
+      },
     });
   } catch (error) {
     console.error("[Server] Error in handleStreamProcessLogsRequest:", error);
     return new Response(
       JSON.stringify({
         error: "Failed to stream process logs",
-        message: error instanceof Error ? error.message : "Unknown error"
+        message: error instanceof Error ? error.message : "Unknown error",
       }),
       {
         headers: {
           "Content-Type": "application/json",
-          ...corsHeaders
+          ...corsHeaders,
         },
-        status: 500
+        status: 500,
       }
     );
   }

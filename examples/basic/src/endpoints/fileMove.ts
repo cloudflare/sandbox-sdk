@@ -11,12 +11,12 @@ export async function moveFile(sandbox: Sandbox<unknown>, request: Request) {
     }
 
     await sandbox.moveFile(sourcePath, destinationPath);
-    return jsonResponse({ 
+    return jsonResponse({
       success: true,
       message: "File moved",
       sourcePath,
       destinationPath,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     });
   } catch (error: any) {
     console.error("Error moving file:", error);

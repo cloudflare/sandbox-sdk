@@ -396,6 +396,6 @@ export function isProcessStatus(value: string): value is ProcessStatus {
     "completed",
     "failed",
     "killed",
-    "error"
+    "error",
   ].includes(value);
 }

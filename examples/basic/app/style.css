@@ -499,12 +499,24 @@ body {
 }
 
 /* Status color classes */
-.text-yellow-500 { color: #ffc107; }
-.text-blue-500 { color: #58a6ff; }
-.text-green-500 { color: #3fb950; }
-.text-red-500 { color: #f85149; }
-.text-orange-500 { color: #ff8c00; }
-.text-gray-500 { color: #8b949e; }
+.text-yellow-500 {
+  color: #ffc107;
+}
+.text-blue-500 {
+  color: #58a6ff;
+}
+.text-green-500 {
+  color: #3fb950;
+}
+.text-red-500 {
+  color: #f85149;
+}
+.text-orange-500 {
+  color: #ff8c00;
+}
+.text-gray-500 {
+  color: #8b949e;
+}
 
 /* Port Management Tab */
 .port-management-tab {
@@ -784,7 +796,8 @@ body {
 }
 
 /* Command and Log Streaming Sections */
-.command-streaming, .log-streaming {
+.command-streaming,
+.log-streaming {
   background-color: #161b22;
   border: 1px solid #30363d;
   border-radius: 8px;
@@ -792,7 +805,8 @@ body {
   margin-bottom: 2rem;
 }
 
-.command-streaming h3, .log-streaming h3 {
+.command-streaming h3,
+.log-streaming h3 {
   color: #58a6ff;
   font-size: 1.2rem;
   margin-bottom: 0.5rem;
@@ -974,7 +988,8 @@ body {
   font-size: 0.85rem;
 }
 
-.stream-time, .event-count {
+.stream-time,
+.event-count {
   color: #8b949e;
   font-size: 0.8rem;
   font-family: "Fira Code", monospace;
@@ -1946,13 +1961,18 @@ button:focus {
 }
 
 .quick-setup-button:before {
-  content: '';
+  content: "";
   position: absolute;
   top: 0;
   left: -100%;
   width: 100%;
   height: 100%;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.1), transparent);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.1),
+    transparent
+  );
   transition: left 0.5s;
 }
 
@@ -1982,7 +2002,11 @@ button:focus {
 
 .quick-setup-button.react {
   border-color: #61dafb;
-  background: linear-gradient(135deg, rgba(97, 218, 251, 0.1) 0%, rgba(97, 218, 251, 0.05) 100%);
+  background: linear-gradient(
+    135deg,
+    rgba(97, 218, 251, 0.1) 0%,
+    rgba(97, 218, 251, 0.05) 100%
+  );
 }
 
 .quick-setup-button.react:hover:not(:disabled) {
@@ -1992,7 +2016,11 @@ button:focus {
 
 .quick-setup-button.vue {
   border-color: #4fc08d;
-  background: linear-gradient(135deg, rgba(79, 192, 141, 0.1) 0%, rgba(79, 192, 141, 0.05) 100%);
+  background: linear-gradient(
+    135deg,
+    rgba(79, 192, 141, 0.1) 0%,
+    rgba(79, 192, 141, 0.05) 100%
+  );
 }
 
 .quick-setup-button.vue:hover:not(:disabled) {
@@ -2002,7 +2030,11 @@ button:focus {
 
 .quick-setup-button.static {
   border-color: #f39c12;
-  background: linear-gradient(135deg, rgba(243, 156, 18, 0.1) 0%, rgba(243, 156, 18, 0.05) 100%);
+  background: linear-gradient(
+    135deg,
+    rgba(243, 156, 18, 0.1) 0%,
+    rgba(243, 156, 18, 0.05) 100%
+  );
 }
 
 .quick-setup-button.static:hover:not(:disabled) {
@@ -2040,27 +2072,27 @@ button:focus {
   .input-group {
     flex-direction: column;
   }
-  
+
   .file-input {
     min-width: unset;
   }
-  
+
   .template-buttons {
     flex-direction: column;
   }
-  
+
   .template-button {
     width: 100%;
   }
-  
+
   .quick-setup-buttons {
     grid-template-columns: 1fr;
   }
-  
+
   .quick-setup-button {
     padding: 1rem;
   }
-  
+
   .setup-icon {
     font-size: 2rem;
     min-width: 50px;

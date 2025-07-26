@@ -16,7 +16,7 @@ function executeCommand(
     const spawnOptions: SpawnOptions = {
       shell: true,
       stdio: ["pipe", "pipe", "pipe"] as const,
-      detached: background || false
+      detached: background || false,
     };
 
     const child = spawn(command, spawnOptions);
@@ -48,7 +48,7 @@ function executeCommand(
           exitCode: 0, // Process is still running
           stderr,
           stdout,
-          success: true
+          success: true,
         });
       }, 100);
 
@@ -74,7 +74,7 @@ function executeCommand(
           exitCode: code || 0,
           stderr,
           stdout,
-          success: code === 0
+          success: code === 0,
         });
       });
 
@@ -103,14 +103,14 @@ export async function handleExecuteRequest(
     if (!command || typeof command !== "string") {
       return new Response(
         JSON.stringify({
-          error: "Command is required and must be a string"
+          error: "Command is required and must be a string",
         }),
         {
           headers: {
             "Content-Type": "application/json",
-            ...corsHeaders
+            ...corsHeaders,
           },
-          status: 400
+          status: 400,
         }
       );
     }
@@ -131,13 +131,13 @@ export async function handleExecuteRequest(
         stderr: result.stderr,
         stdout: result.stdout,
         success: result.success,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       }),
       {
         headers: {
           "Content-Type": "application/json",
-          ...corsHeaders
-        }
+          ...corsHeaders,
+        },
       }
     );
   } catch (error) {
@@ -145,14 +145,14 @@ export async function handleExecuteRequest(
     return new Response(
       JSON.stringify({
         error: "Failed to execute command",
-        message: error instanceof Error ? error.message : "Unknown error"
+        message: error instanceof Error ? error.message : "Unknown error",
       }),
       {
         headers: {
           "Content-Type": "application/json",
-          ...corsHeaders
+          ...corsHeaders,
         },
-        status: 500
+        status: 500,
       }
     );
   }
@@ -170,14 +170,14 @@ export async function handleStreamingExecuteRequest(
     if (!command || typeof command !== "string") {
       return new Response(
         JSON.stringify({
-          error: "Command is required and must be a string"
+          error: "Command is required and must be a string",
         }),
         {
           headers: {
             "Content-Type": "application/json",
-            ...corsHeaders
+            ...corsHeaders,
           },
-          status: 400
+          status: 400,
         }
       );
     }
@@ -189,7 +189,7 @@ export async function handleStreamingExecuteRequest(
         const spawnOptions: SpawnOptions = {
           shell: true,
           stdio: ["pipe", "pipe", "pipe"] as const,
-          detached: background || false
+          detached: background || false,
         };
 
         const child = spawn(command, spawnOptions);
@@ -215,7 +215,7 @@ export async function handleStreamingExecuteRequest(
               type: "start",
               timestamp: new Date().toISOString(),
               command,
-              background: background || false
+              background: background || false,
             })}\n\n`
           )
         );
@@ -231,7 +231,7 @@ export async function handleStreamingExecuteRequest(
                 type: "stdout",
                 timestamp: new Date().toISOString(),
                 data: output,
-                command
+                command,
               })}\n\n`
             )
           );
@@ -248,7 +248,7 @@ export async function handleStreamingExecuteRequest(
                 type: "stderr",
                 timestamp: new Date().toISOString(),
                 data: output,
-                command
+                command,
               })}\n\n`
             )
           );
@@ -279,8 +279,8 @@ export async function handleStreamingExecuteRequest(
                   stdout,
                   stderr,
                   command,
-                  timestamp: new Date().toISOString()
-                }
+                  timestamp: new Date().toISOString(),
+                },
               })}\n\n`
             )
           );
@@ -305,14 +305,14 @@ export async function handleStreamingExecuteRequest(
                 type: "error",
                 timestamp: new Date().toISOString(),
                 error: error.message,
-                command
+                command,
               })}\n\n`
             )
           );
 
           controller.close();
         });
-      }
+      },
     });
 
     return new Response(stream, {
@@ -320,22 +320,22 @@ export async function handleStreamingExecuteRequest(
         "Cache-Control": "no-cache",
         Connection: "keep-alive",
         "Content-Type": "text/event-stream",
-        ...corsHeaders
-      }
+        ...corsHeaders,
+      },
     });
   } catch (error) {
     console.error("[Server] Error in handleStreamingExecuteRequest:", error);
     return new Response(
       JSON.stringify({
         error: "Failed to execute streaming command",
-        message: error instanceof Error ? error.message : "Unknown error"
+        message: error instanceof Error ? error.message : "Unknown error",
       }),
       {
         headers: {
           "Content-Type": "application/json",
-          ...corsHeaders
+          ...corsHeaders,
         },
-        status: 500
+        status: 500,
       }
     );
   }

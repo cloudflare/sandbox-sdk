@@ -10,15 +10,15 @@
  * still auto-generating the TOC structure with doctoc.
  */
 
-import fs from 'fs';
-import path from 'path';
+import fs from "fs";
+import path from "path";
 
-const readmePath = path.join(process.cwd(), 'README.md');
-let content = fs.readFileSync(readmePath, 'utf8');
+const readmePath = path.join(process.cwd(), "README.md");
+let content = fs.readFileSync(readmePath, "utf8");
 
 // Fix doctoc's emoji handling: (#-word) should become (#word)
 // This matches the explicit IDs we set on HTML headings
-content = content.replace(/\(#-([^)]+)\)/g, '(#$1)');
+content = content.replace(/\(#-([^)]+)\)/g, "(#$1)");
 
 fs.writeFileSync(readmePath, content);
-console.log('TOC links fixed!');
+console.log("TOC links fixed!");

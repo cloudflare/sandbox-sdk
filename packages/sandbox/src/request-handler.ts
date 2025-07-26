@@ -45,9 +45,9 @@ export async function proxyToSandbox<E extends SandboxEnv>(
         "X-Original-URL": request.url,
         "X-Forwarded-Host": url.hostname,
         "X-Forwarded-Proto": url.protocol.replace(":", ""),
-        "X-Sandbox-Name": sandboxId // Pass the friendly name
+        "X-Sandbox-Name": sandboxId, // Pass the friendly name
       },
-      body: request.body
+      body: request.body,
     });
 
     return sandbox.containerFetch(proxyRequest, port);
@@ -70,7 +70,7 @@ function extractSandboxRoute(url: URL): RouteInfo | null {
         "MALFORMED_SUBDOMAIN_ATTEMPT",
         {
           hostname: url.hostname,
-          url: url.toString()
+          url: url.toString(),
         },
         "medium"
       );
@@ -91,7 +91,7 @@ function extractSandboxRoute(url: URL): RouteInfo | null {
         portStr,
         sandboxId,
         hostname: url.hostname,
-        url: url.toString()
+        url: url.toString(),
       },
       "high"
     );
@@ -109,7 +109,7 @@ function extractSandboxRoute(url: URL): RouteInfo | null {
         port,
         hostname: url.hostname,
         url: url.toString(),
-        error: error instanceof Error ? error.message : "Unknown error"
+        error: error instanceof Error ? error.message : "Unknown error",
       },
       "high"
     );
@@ -124,7 +124,7 @@ function extractSandboxRoute(url: URL): RouteInfo | null {
         sandboxId,
         length: sandboxId.length,
         port,
-        hostname: url.hostname
+        hostname: url.hostname,
       },
       "medium"
     );
@@ -138,7 +138,7 @@ function extractSandboxRoute(url: URL): RouteInfo | null {
       sandboxId: sanitizedSandboxId,
       domain,
       path: url.pathname || "/",
-      hostname: url.hostname
+      hostname: url.hostname,
     },
     "low"
   );
@@ -146,7 +146,7 @@ function extractSandboxRoute(url: URL): RouteInfo | null {
   return {
     port,
     sandboxId: sanitizedSandboxId,
-    path: url.pathname || "/"
+    path: url.pathname || "/",
   };
 }
 

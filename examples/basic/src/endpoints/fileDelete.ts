@@ -11,11 +11,11 @@ export async function deleteFile(sandbox: Sandbox<unknown>, request: Request) {
     }
 
     await sandbox.deleteFile(path);
-    return jsonResponse({ 
+    return jsonResponse({
       success: true,
       message: "File deleted",
       path,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     });
   } catch (error: any) {
     console.error("Error deleting file:", error);

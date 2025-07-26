@@ -15,7 +15,9 @@ execSync("npm install", {
 
 // Update Dockerfile and README version references after changeset updates package.json
 try {
-  const packageJson = JSON.parse(fs.readFileSync("./packages/sandbox/package.json", "utf-8"));
+  const packageJson = JSON.parse(
+    fs.readFileSync("./packages/sandbox/package.json", "utf-8")
+  );
   const newVersion = packageJson.version;
 
   const dockerfilePath = "./examples/basic/Dockerfile";
@@ -48,7 +50,6 @@ try {
 
   fs.writeFileSync(readmePath, readmeContent);
   console.log(`✅ Updated README.md version to ${newVersion}`);
-
 } catch (error) {
   console.error("❌ Failed to update file versions:", error);
   // Don't fail the whole release for this

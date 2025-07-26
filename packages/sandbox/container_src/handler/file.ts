@@ -8,7 +8,7 @@ import type {
   ReadFileRequest,
   RenameFileRequest,
   SessionData,
-  WriteFileRequest
+  WriteFileRequest,
 } from "../types";
 
 function executeMkdir(
@@ -26,7 +26,7 @@ function executeMkdir(
     const args = `${recursive ? "-p " : ""} ${path}`;
     const mkdirChild = spawn(`mkdir ${args}`, {
       shell: true,
-      stdio: ["pipe", "pipe", "pipe"]
+      stdio: ["pipe", "pipe", "pipe"],
     });
 
     // Store the process reference for cleanup if sessionId is provided
@@ -59,7 +59,7 @@ function executeMkdir(
           exitCode: code || 0,
           stderr,
           stdout,
-          success: true
+          success: true,
         });
       } else {
         console.error(
@@ -69,7 +69,7 @@ function executeMkdir(
           exitCode: code || 1,
           stderr,
           stdout,
-          success: false
+          success: false,
         });
       }
     });
@@ -99,14 +99,14 @@ export async function handleMkdirRequest(
     if (!path || typeof path !== "string") {
       return new Response(
         JSON.stringify({
-          error: "Path is required and must be a string"
+          error: "Path is required and must be a string",
         }),
         {
           headers: {
             "Content-Type": "application/json",
-            ...corsHeaders
+            ...corsHeaders,
           },
-          status: 400
+          status: 400,
         }
       );
     }
@@ -124,20 +124,20 @@ export async function handleMkdirRequest(
       /^\/proc/, // System directories
       /^\/sys/, // System directories
       /^\/tmp\/\.\./, // Path traversal attempts
-      /\.\./ // Path traversal attempts
+      /\.\./, // Path traversal attempts
     ];
 
     if (dangerousPatterns.some((pattern) => pattern.test(path))) {
       return new Response(
         JSON.stringify({
-          error: "Dangerous path not allowed"
+          error: "Dangerous path not allowed",
         }),
         {
           headers: {
             "Content-Type": "application/json",
-            ...corsHeaders
+            ...corsHeaders,
           },
-          status: 400
+          status: 400,
         }
       );
     }
@@ -156,13 +156,13 @@ export async function handleMkdirRequest(
         stderr: result.stderr,
         stdout: result.stdout,
         success: result.success,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       }),
       {
         headers: {
           "Content-Type": "application/json",
-          ...corsHeaders
-        }
+          ...corsHeaders,
+        },
       }
     );
   } catch (error) {
@@ -170,14 +170,14 @@ export async function handleMkdirRequest(
     return new Response(
       JSON.stringify({
         error: "Failed to create directory",
-        message: error instanceof Error ? error.message : "Unknown error"
+        message: error instanceof Error ? error.message : "Unknown error",
       }),
       {
         headers: {
           "Content-Type": "application/json",
-          ...corsHeaders
+          ...corsHeaders,
         },
-        status: 500
+        status: 500,
       }
     );
   }
@@ -203,13 +203,13 @@ function executeWriteFile(
 
         // Write the file
         await writeFile(path, content, {
-          encoding: encoding as BufferEncoding
+          encoding: encoding as BufferEncoding,
         });
 
         console.log(`[Server] File written successfully: ${path}`);
         resolve({
           exitCode: 0,
-          success: true
+          success: true,
         });
       } catch (error) {
         console.error(`[Server] Error writing file: ${path}`, error);
@@ -230,14 +230,14 @@ export async function handleWriteFileRequest(
     if (!path || typeof path !== "string") {
       return new Response(
         JSON.stringify({
-          error: "Path is required and must be a string"
+          error: "Path is required and must be a string",
         }),
         {
           headers: {
             "Content-Type": "application/json",
-            ...corsHeaders
+            ...corsHeaders,
           },
-          status: 400
+          status: 400,
         }
       );
     }
@@ -255,20 +255,20 @@ export async function handleWriteFileRequest(
       /^\/proc/, // System directories
       /^\/sys/, // System directories
       /^\/tmp\/\.\./, // Path traversal attempts
-      /\.\./ // Path traversal attempts
+      /\.\./, // Path traversal attempts
     ];
 
     if (dangerousPatterns.some((pattern) => pattern.test(path))) {
       return new Response(
         JSON.stringify({
-          error: "Dangerous path not allowed"
+          error: "Dangerous path not allowed",
         }),
         {
           headers: {
             "Content-Type": "application/json",
-            ...corsHeaders
+            ...corsHeaders,
           },
-          status: 400
+          status: 400,
         }
       );
     }
@@ -284,13 +284,13 @@ export async function handleWriteFileRequest(
         exitCode: result.exitCode,
         path,
         success: result.success,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       }),
       {
         headers: {
           "Content-Type": "application/json",
-          ...corsHeaders
-        }
+          ...corsHeaders,
+        },
       }
     );
   } catch (error) {
@@ -298,14 +298,14 @@ export async function handleWriteFileRequest(
     return new Response(
       JSON.stringify({
         error: "Failed to write file",
-        message: error instanceof Error ? error.message : "Unknown error"
+        message: error instanceof Error ? error.message : "Unknown error",
       }),
       {
         headers: {
           "Content-Type": "application/json",
-          ...corsHeaders
+          ...corsHeaders,
         },
-        status: 500
+        status: 500,
       }
     );
   }
@@ -325,14 +325,14 @@ function executeReadFile(
       try {
         // Read the file
         const content = await readFile(path, {
-          encoding: encoding as BufferEncoding
+          encoding: encoding as BufferEncoding,
         });
 
         console.log(`[Server] File read successfully: ${path}`);
         resolve({
           content,
           exitCode: 0,
-          success: true
+          success: true,
         });
       } catch (error) {
         console.error(`[Server] Error reading file: ${path}`, error);
@@ -353,14 +353,14 @@ export async function handleReadFileRequest(
     if (!path || typeof path !== "string") {
       return new Response(
         JSON.stringify({
-          error: "Path is required and must be a string"
+          error: "Path is required and must be a string",
         }),
         {
           headers: {
             "Content-Type": "application/json",
-            ...corsHeaders
+            ...corsHeaders,
           },
-          status: 400
+          status: 400,
         }
       );
     }
@@ -378,20 +378,20 @@ export async function handleReadFileRequest(
       /^\/proc/, // System directories
       /^\/sys/, // System directories
       /^\/tmp\/\.\./, // Path traversal attempts
-      /\.\./ // Path traversal attempts
+      /\.\./, // Path traversal attempts
     ];
 
     if (dangerousPatterns.some((pattern) => pattern.test(path))) {
       return new Response(
         JSON.stringify({
-          error: "Dangerous path not allowed"
+          error: "Dangerous path not allowed",
         }),
         {
           headers: {
             "Content-Type": "application/json",
-            ...corsHeaders
+            ...corsHeaders,
           },
-          status: 400
+          status: 400,
         }
       );
     }
@@ -406,13 +406,13 @@ export async function handleReadFileRequest(
         exitCode: result.exitCode,
         path,
         success: result.success,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       }),
       {
         headers: {
           "Content-Type": "application/json",
-          ...corsHeaders
-        }
+          ...corsHeaders,
+        },
       }
     );
   } catch (error) {
@@ -420,14 +420,14 @@ export async function handleReadFileRequest(
     return new Response(
       JSON.stringify({
         error: "Failed to read file",
-        message: error instanceof Error ? error.message : "Unknown error"
+        message: error instanceof Error ? error.message : "Unknown error",
       }),
       {
         headers: {
           "Content-Type": "application/json",
-          ...corsHeaders
+          ...corsHeaders,
         },
-        status: 500
+        status: 500,
       }
     );
   }
@@ -449,7 +449,7 @@ function executeDeleteFile(
         console.log(`[Server] File deleted successfully: ${path}`);
         resolve({
           exitCode: 0,
-          success: true
+          success: true,
         });
       } catch (error) {
         console.error(`[Server] Error deleting file: ${path}`, error);
@@ -470,14 +470,14 @@ export async function handleDeleteFileRequest(
     if (!path || typeof path !== "string") {
       return new Response(
         JSON.stringify({
-          error: "Path is required and must be a string"
+          error: "Path is required and must be a string",
         }),
         {
           headers: {
             "Content-Type": "application/json",
-            ...corsHeaders
+            ...corsHeaders,
           },
-          status: 400
+          status: 400,
         }
       );
     }
@@ -495,20 +495,20 @@ export async function handleDeleteFileRequest(
       /^\/proc/, // System directories
       /^\/sys/, // System directories
       /^\/tmp\/\.\./, // Path traversal attempts
-      /\.\./ // Path traversal attempts
+      /\.\./, // Path traversal attempts
     ];
 
     if (dangerousPatterns.some((pattern) => pattern.test(path))) {
       return new Response(
         JSON.stringify({
-          error: "Dangerous path not allowed"
+          error: "Dangerous path not allowed",
         }),
         {
           headers: {
             "Content-Type": "application/json",
-            ...corsHeaders
+            ...corsHeaders,
           },
-          status: 400
+          status: 400,
         }
       );
     }
@@ -522,13 +522,13 @@ export async function handleDeleteFileRequest(
         exitCode: result.exitCode,
         path,
         success: result.success,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       }),
       {
         headers: {
           "Content-Type": "application/json",
-          ...corsHeaders
-        }
+          ...corsHeaders,
+        },
       }
     );
   } catch (error) {
@@ -536,14 +536,14 @@ export async function handleDeleteFileRequest(
     return new Response(
       JSON.stringify({
         error: "Failed to delete file",
-        message: error instanceof Error ? error.message : "Unknown error"
+        message: error instanceof Error ? error.message : "Unknown error",
       }),
       {
         headers: {
           "Content-Type": "application/json",
-          ...corsHeaders
+          ...corsHeaders,
         },
-        status: 500
+        status: 500,
       }
     );
   }
@@ -568,7 +568,7 @@ function executeRenameFile(
         );
         resolve({
           exitCode: 0,
-          success: true
+          success: true,
         });
       } catch (error) {
         console.error(
@@ -592,14 +592,14 @@ export async function handleRenameFileRequest(
     if (!oldPath || typeof oldPath !== "string") {
       return new Response(
         JSON.stringify({
-          error: "Old path is required and must be a string"
+          error: "Old path is required and must be a string",
         }),
         {
           headers: {
             "Content-Type": "application/json",
-            ...corsHeaders
+            ...corsHeaders,
           },
-          status: 400
+          status: 400,
         }
       );
     }
@@ -607,14 +607,14 @@ export async function handleRenameFileRequest(
     if (!newPath || typeof newPath !== "string") {
       return new Response(
         JSON.stringify({
-          error: "New path is required and must be a string"
+          error: "New path is required and must be a string",
         }),
         {
           headers: {
             "Content-Type": "application/json",
-            ...corsHeaders
+            ...corsHeaders,
           },
-          status: 400
+          status: 400,
         }
       );
     }
@@ -632,7 +632,7 @@ export async function handleRenameFileRequest(
       /^\/proc/, // System directories
       /^\/sys/, // System directories
       /^\/tmp\/\.\./, // Path traversal attempts
-      /\.\./ // Path traversal attempts
+      /\.\./, // Path traversal attempts
     ];
 
     if (
@@ -642,14 +642,14 @@ export async function handleRenameFileRequest(
     ) {
       return new Response(
         JSON.stringify({
-          error: "Dangerous path not allowed"
+          error: "Dangerous path not allowed",
         }),
         {
           headers: {
             "Content-Type": "application/json",
-            ...corsHeaders
+            ...corsHeaders,
           },
-          status: 400
+          status: 400,
         }
       );
     }
@@ -664,13 +664,13 @@ export async function handleRenameFileRequest(
         newPath,
         oldPath,
         success: result.success,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       }),
       {
         headers: {
           "Content-Type": "application/json",
-          ...corsHeaders
-        }
+          ...corsHeaders,
+        },
       }
     );
   } catch (error) {
@@ -678,14 +678,14 @@ export async function handleRenameFileRequest(
     return new Response(
       JSON.stringify({
         error: "Failed to rename file",
-        message: error instanceof Error ? error.message : "Unknown error"
+        message: error instanceof Error ? error.message : "Unknown error",
       }),
       {
         headers: {
           "Content-Type": "application/json",
-          ...corsHeaders
+          ...corsHeaders,
         },
-        status: 500
+        status: 500,
       }
     );
   }
@@ -710,7 +710,7 @@ function executeMoveFile(
         );
         resolve({
           exitCode: 0,
-          success: true
+          success: true,
         });
       } catch (error) {
         console.error(
@@ -734,14 +734,14 @@ export async function handleMoveFileRequest(
     if (!sourcePath || typeof sourcePath !== "string") {
       return new Response(
         JSON.stringify({
-          error: "Source path is required and must be a string"
+          error: "Source path is required and must be a string",
         }),
         {
           headers: {
             "Content-Type": "application/json",
-            ...corsHeaders
+            ...corsHeaders,
           },
-          status: 400
+          status: 400,
         }
       );
     }
@@ -749,14 +749,14 @@ export async function handleMoveFileRequest(
     if (!destinationPath || typeof destinationPath !== "string") {
       return new Response(
         JSON.stringify({
-          error: "Destination path is required and must be a string"
+          error: "Destination path is required and must be a string",
         }),
         {
           headers: {
             "Content-Type": "application/json",
-            ...corsHeaders
+            ...corsHeaders,
           },
-          status: 400
+          status: 400,
         }
       );
     }
@@ -774,7 +774,7 @@ export async function handleMoveFileRequest(
       /^\/proc/, // System directories
       /^\/sys/, // System directories
       /^\/tmp\/\.\./, // Path traversal attempts
-      /\.\./ // Path traversal attempts
+      /\.\./, // Path traversal attempts
     ];
 
     if (
@@ -784,14 +784,14 @@ export async function handleMoveFileRequest(
     ) {
       return new Response(
         JSON.stringify({
-          error: "Dangerous path not allowed"
+          error: "Dangerous path not allowed",
         }),
         {
           headers: {
             "Content-Type": "application/json",
-            ...corsHeaders
+            ...corsHeaders,
           },
-          status: 400
+          status: 400,
         }
       );
     }
@@ -810,13 +810,13 @@ export async function handleMoveFileRequest(
         exitCode: result.exitCode,
         sourcePath,
         success: result.success,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       }),
       {
         headers: {
           "Content-Type": "application/json",
-          ...corsHeaders
-        }
+          ...corsHeaders,
+        },
       }
     );
   } catch (error) {
@@ -824,14 +824,14 @@ export async function handleMoveFileRequest(
     return new Response(
       JSON.stringify({
         error: "Failed to move file",
-        message: error instanceof Error ? error.message : "Unknown error"
+        message: error instanceof Error ? error.message : "Unknown error",
       }),
       {
         headers: {
           "Content-Type": "application/json",
-          ...corsHeaders
+          ...corsHeaders,
         },
-        status: 500
+        status: 500,
       }
     );
   }

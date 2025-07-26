@@ -143,6 +143,6 @@ export function asyncIterableToSSEStream<T>(
     cancel() {
       // Handle stream cancellation
       console.log("SSE stream cancelled");
-    }
+    },
   });
 }

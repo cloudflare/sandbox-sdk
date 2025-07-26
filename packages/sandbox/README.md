@@ -118,7 +118,7 @@ export default {
     // Execute a command
     const result = await sandbox.exec("echo 'Hello from the edge!'");
     return new Response(result.stdout);
-  }
+  },
 };
 ```
 
@@ -138,7 +138,7 @@ console.log(result.stdout, result.exitCode);
 // With streaming callbacks
 const result = await sandbox.exec("npm run build", {
   stream: true,
-  onOutput: (stream, data) => console.log(`[${stream}] ${data}`)
+  onOutput: (stream, data) => console.log(`[${stream}] ${data}`),
 });
 ```
 
@@ -197,7 +197,7 @@ Clone a git repository.
 ```typescript
 await sandbox.gitCheckout("https://github.com/user/repo", {
   branch: "main",
-  targetDir: "my-project"
+  targetDir: "my-project",
 });
 ```
 
@@ -215,7 +215,7 @@ const sandbox = getSandbox(env.Sandbox, "my-sandbox");
 await sandbox.setEnvVars({
   NODE_ENV: "production",
   API_KEY: "your-api-key",
-  DATABASE_URL: "postgresql://localhost:5432/mydb"
+  DATABASE_URL: "postgresql://localhost:5432/mydb",
 });
 
 // Now you can run commands - environment variables are available
@@ -263,7 +263,7 @@ export default {
 
     // Your custom routes here
     // ...
-  }
+  },
 };
 ```
 
@@ -357,7 +357,7 @@ return new Response(
   JSON.stringify({
     tests: testResult.exitCode === 0 ? "passed" : "failed",
     build: buildResult.exitCode === 0 ? "success" : "failed",
-    output: testResult.stdout
+    output: testResult.stdout,
   })
 );
 ```
@@ -469,7 +469,7 @@ export async function runBuild(env: Env, buildId: string) {
       case "complete":
         await env.BUILDS.put(buildId, {
           status: event.exitCode === 0 ? "success" : "failed",
-          exitCode: event.exitCode
+          exitCode: event.exitCode,
         });
         break;
     }
@@ -488,7 +488,7 @@ for await (const log of parseSSEStream<LogEvent>(logStream)) {
     await env.ALERTS.send({
       severity: "high",
       message: log.data,
-      timestamp: log.timestamp
+      timestamp: log.timestamp,
     });
   }
 }
