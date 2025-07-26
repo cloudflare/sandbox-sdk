@@ -55,8 +55,6 @@ RUN apt-get update && apt-get install -y ca-certificates curl gnupg \
 COPY --from=bun-source /usr/local/bin/bun /usr/local/bin/bun
 COPY --from=bun-source /usr/local/bin/bunx /usr/local/bin/bunx
 
-# Install global npm packages as root
-RUN npm install -g yarn pnpm
 
 # Set up working directory
 WORKDIR /app
@@ -65,9 +63,8 @@ WORKDIR /app
 RUN python3 --version && \
     node --version && \
     npm --version && \
-    bun --version && \
-    yarn --version && \
-    pnpm --version
+    bun --version
+    
 
 # Copy container source files
 COPY container_src/ ./
