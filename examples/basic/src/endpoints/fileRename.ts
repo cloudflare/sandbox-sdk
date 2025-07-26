@@ -11,12 +11,12 @@ export async function renameFile(sandbox: Sandbox<unknown>, request: Request) {
     }
 
     await sandbox.renameFile(oldPath, newPath);
-    return jsonResponse({ 
+    return jsonResponse({
       success: true,
       message: "File renamed",
       oldPath,
       newPath,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     });
   } catch (error: any) {
     console.error("Error renaming file:", error);

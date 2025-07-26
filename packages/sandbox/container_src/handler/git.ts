@@ -129,8 +129,7 @@ export async function handleGitCheckoutRequest(
 
     // Generate target directory if not provided using cryptographically secure randomness
     const checkoutDir =
-      targetDir ||
-      `repo_${Date.now()}_${randomBytes(6).toString('hex')}`;
+      targetDir || `repo_${Date.now()}_${randomBytes(6).toString("hex")}`;
 
     console.log(
       `[Server] Checking out repository: ${repoUrl} to ${checkoutDir}`
@@ -179,4 +178,3 @@ export async function handleGitCheckoutRequest(
     );
   }
 }
-

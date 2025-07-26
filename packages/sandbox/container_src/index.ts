@@ -1,6 +1,9 @@
 import { randomBytes } from "node:crypto";
 import { serve } from "bun";
-import { handleExecuteRequest, handleStreamingExecuteRequest } from "./handler/exec";
+import {
+  handleExecuteRequest,
+  handleStreamingExecuteRequest,
+} from "./handler/exec";
 import {
   handleDeleteFileRequest,
   handleMkdirRequest,
@@ -38,7 +41,7 @@ const processes = new Map<string, ProcessRecord>();
 
 // Generate a unique session ID using cryptographically secure randomness
 function generateSessionId(): string {
-  return `session_${Date.now()}_${randomBytes(6).toString('hex')}`;
+  return `session_${Date.now()}_${randomBytes(6).toString("hex")}`;
 }
 
 // Clean up old sessions (older than 1 hour)
@@ -283,19 +286,39 @@ const server = serve({
         default:
           // Handle dynamic routes for individual processes
           if (pathname.startsWith("/api/process/")) {
-            const segments = pathname.split('/');
+            const segments = pathname.split("/");
             if (segments.length >= 4) {
               const processId = segments[3];
               const action = segments[4]; // Optional: logs, stream, etc.
 
               if (!action && req.method === "GET") {
-                return handleGetProcessRequest(processes, req, corsHeaders, processId);
+                return handleGetProcessRequest(
+                  processes,
+                  req,
+                  corsHeaders,
+                  processId
+                );
               } else if (!action && req.method === "DELETE") {
-                return handleKillProcessRequest(processes, req, corsHeaders, processId);
+                return handleKillProcessRequest(
+                  processes,
+                  req,
+                  corsHeaders,
+                  processId
+                );
               } else if (action === "logs" && req.method === "GET") {
-                return handleGetProcessLogsRequest(processes, req, corsHeaders, processId);
+                return handleGetProcessLogsRequest(
+                  processes,
+                  req,
+                  corsHeaders,
+                  processId
+                );
               } else if (action === "stream" && req.method === "GET") {
-                return handleStreamProcessLogsRequest(processes, req, corsHeaders, processId);
+                return handleStreamProcessLogsRequest(
+                  processes,
+                  req,
+                  corsHeaders,
+                  processId
+                );
               }
             }
           }
@@ -311,7 +334,10 @@ const server = serve({
           });
       }
     } catch (error) {
-      console.error(`[Container] Error handling ${req.method} ${pathname}:`, error);
+      console.error(
+        `[Container] Error handling ${req.method} ${pathname}:`,
+        error
+      );
       return new Response(
         JSON.stringify({
           error: "Internal server error",
@@ -330,7 +356,7 @@ const server = serve({
   hostname: "0.0.0.0",
   port: 3000,
   // We don't need this, but typescript complains
-  websocket: { async message() { } },
+  websocket: { async message() {} },
 });
 
 console.log(`🚀 Bun server running on http://0.0.0.0:${server.port}`);

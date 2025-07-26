@@ -260,7 +260,9 @@ export async function handleProxyRequest(
     const targetUrl = `http://127.0.0.1:${port}${targetPath}${url.search}`;
 
     console.log(`[Server] Proxying request to: ${targetUrl}`);
-    console.log(`[Server] Method: ${req.method}, Port: ${port}, Path: ${targetPath}`);
+    console.log(
+      `[Server] Method: ${req.method}, Port: ${port}, Path: ${targetPath}`
+    );
 
     try {
       // Forward the request to the target port
@@ -284,7 +286,8 @@ export async function handleProxyRequest(
       return new Response(
         JSON.stringify({
           error: `Service on port ${port} is not responding`,
-          message: fetchError instanceof Error ? fetchError.message : "Unknown error",
+          message:
+            fetchError instanceof Error ? fetchError.message : "Unknown error",
         }),
         {
           headers: {

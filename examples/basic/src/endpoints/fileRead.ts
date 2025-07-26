@@ -11,11 +11,11 @@ export async function readFile(sandbox: Sandbox<unknown>, request: Request) {
     }
 
     const result = await sandbox.readFile(path, { encoding });
-    return jsonResponse({ 
+    return jsonResponse({
       success: true,
-      path, 
+      path,
       content: result.content, // Extract the actual content string from the response
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     });
   } catch (error: any) {
     console.error("Error reading file:", error);

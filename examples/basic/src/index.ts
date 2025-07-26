@@ -21,7 +21,12 @@ import {
   setupVue,
   setupStatic,
 } from "./endpoints";
-import { corsHeaders, errorResponse, jsonResponse, parseJsonBody } from "./http";
+import {
+  corsHeaders,
+  errorResponse,
+  jsonResponse,
+  parseJsonBody,
+} from "./http";
 
 export { Sandbox } from "@cloudflare/sandbox";
 
@@ -29,7 +34,9 @@ export { Sandbox } from "@cloudflare/sandbox";
 function generateSecureRandomString(length: number = 12): string {
   const array = new Uint8Array(length);
   crypto.getRandomValues(array);
-  return Array.from(array, byte => byte.toString(16).padStart(2, '0')).join('');
+  return Array.from(array, (byte) => byte.toString(16).padStart(2, "0")).join(
+    ""
+  );
 }
 
 type Env = {
@@ -88,11 +95,19 @@ export default {
         return await killProcesses(sandbox, pathname);
       }
 
-      if (pathname.startsWith("/api/process/") && pathname.endsWith("/logs") && request.method === "GET") {
+      if (
+        pathname.startsWith("/api/process/") &&
+        pathname.endsWith("/logs") &&
+        request.method === "GET"
+      ) {
         return await getProcessLogs(sandbox, pathname);
       }
 
-      if (pathname.startsWith("/api/process/") && pathname.endsWith("/stream") && request.method === "GET") {
+      if (
+        pathname.startsWith("/api/process/") &&
+        pathname.endsWith("/stream") &&
+        request.method === "GET"
+      ) {
         return await streamProcessLogs(sandbox, pathname);
       }
 
@@ -173,13 +188,18 @@ export default {
       // Session Management APIs
       if (pathname === "/api/session/create" && request.method === "POST") {
         const body = await parseJsonBody(request);
-        const sessionId = body.sessionId || `session_${Date.now()}_${generateSecureRandomString()}`;
+        const sessionId =
+          body.sessionId ||
+          `session_${Date.now()}_${generateSecureRandomString()}`;
 
         // Sessions are managed automatically by the SDK, just return the ID
         return jsonResponse(sessionId);
       }
 
-      if (pathname.startsWith("/api/session/clear/") && request.method === "POST") {
+      if (
+        pathname.startsWith("/api/session/clear/") &&
+        request.method === "POST"
+      ) {
         const sessionId = pathname.split("/").pop();
 
         // In a real implementation, you might want to clean up session state
@@ -213,8 +233,8 @@ export default {
             "POST /api/templates/nextjs - Setup Next.js project",
             "POST /api/templates/react - Setup React project",
             "POST /api/templates/vue - Setup Vue project",
-            "POST /api/templates/static - Setup static site"
-          ]
+            "POST /api/templates/static - Setup static site",
+          ],
         });
       }
 
@@ -227,21 +247,23 @@ export default {
           return jsonResponse({
             message: "pong",
             timestamp: new Date().toISOString(),
-            sandboxStatus: "ready"
+            sandboxStatus: "ready",
           });
         } catch (error: any) {
-          return jsonResponse({
-            message: "pong",
-            timestamp: new Date().toISOString(),
-            sandboxStatus: "initializing",
-            error: error.message
-          }, 202); // 202 Accepted - processing in progress
+          return jsonResponse(
+            {
+              message: "pong",
+              timestamp: new Date().toISOString(),
+              sandboxStatus: "initializing",
+              error: error.message,
+            },
+            202
+          ); // 202 Accepted - processing in progress
         }
       }
 
       // Fallback: serve static assets for all other requests
       return env.ASSETS.fetch(request);
-
     } catch (error: any) {
       console.error("API Error:", error);
       return errorResponse(`Internal server error: ${error.message}`, 500);

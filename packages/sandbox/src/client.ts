@@ -4,7 +4,7 @@ import type {
   GetProcessResponse,
   ListProcessesResponse,
   StartProcessRequest,
-  StartProcessResponse
+  StartProcessResponse,
 } from "./types";
 
 interface ExecuteRequest {
@@ -253,10 +253,7 @@ export class HttpClient {
     }
   }
 
-  async execute(
-    command: string,
-    sessionId?: string
-  ): Promise<ExecuteResponse> {
+  async execute(command: string, sessionId?: string): Promise<ExecuteResponse> {
     try {
       const targetSessionId = sessionId || this.sessionId;
 
@@ -305,7 +302,6 @@ export class HttpClient {
     }
   }
 
-
   async executeCommandStream(
     command: string,
     sessionId?: string
@@ -320,7 +316,7 @@ export class HttpClient {
         }),
         headers: {
           "Content-Type": "application/json",
-          "Accept": "text/event-stream",
+          Accept: "text/event-stream",
         },
         method: "POST",
       });
@@ -338,9 +334,7 @@ export class HttpClient {
         throw new Error("No response body for streaming request");
       }
 
-      console.log(
-        `[HTTP Client] Started command stream: ${command}`
-      );
+      console.log(`[HTTP Client] Started command stream: ${command}`);
 
       return response.body;
     } catch (error) {
@@ -392,7 +386,6 @@ export class HttpClient {
     }
   }
 
-
   async mkdir(
     path: string,
     recursive: boolean = false,
@@ -433,7 +426,6 @@ export class HttpClient {
       throw error;
     }
   }
-
 
   async writeFile(
     path: string,
@@ -478,7 +470,6 @@ export class HttpClient {
     }
   }
 
-
   async readFile(
     path: string,
     encoding: string = "utf-8",
@@ -520,7 +511,6 @@ export class HttpClient {
     }
   }
 
-
   async deleteFile(
     path: string,
     sessionId?: string
@@ -559,7 +549,6 @@ export class HttpClient {
       throw error;
     }
   }
-
 
   async renameFile(
     oldPath: string,
@@ -602,7 +591,6 @@ export class HttpClient {
     }
   }
 
-
   async moveFile(
     sourcePath: string,
     destinationPath: string,
@@ -644,7 +632,6 @@ export class HttpClient {
     }
   }
 
-
   async exposePort(port: number, name?: string): Promise<ExposePortResponse> {
     try {
       const response = await this.doFetch(`/api/expose-port`, {
@@ -670,7 +657,9 @@ export class HttpClient {
 
       const data: ExposePortResponse = await response.json();
       console.log(
-        `[HTTP Client] Port exposed: ${port}${name ? ` (${name})` : ""}, Success: ${data.success}`
+        `[HTTP Client] Port exposed: ${port}${
+          name ? ` (${name})` : ""
+        }, Success: ${data.success}`
       );
 
       return data;
@@ -732,9 +721,7 @@ export class HttpClient {
       }
 
       const data: GetExposedPortsResponse = await response.json();
-      console.log(
-        `[HTTP Client] Got ${data.count} exposed ports`
-      );
+      console.log(`[HTTP Client] Got ${data.count} exposed ports`);
 
       return data;
     } catch (error) {
@@ -871,9 +858,7 @@ export class HttpClient {
       }
 
       const data: ListProcessesResponse = await response.json();
-      console.log(
-        `[HTTP Client] Listed ${data.processes.length} processes`
-      );
+      console.log(`[HTTP Client] Listed ${data.processes.length} processes`);
 
       return data;
     } catch (error) {
@@ -902,7 +887,9 @@ export class HttpClient {
 
       const data: GetProcessResponse = await response.json();
       console.log(
-        `[HTTP Client] Got process ${processId}: ${data.process?.status || 'not found'}`
+        `[HTTP Client] Got process ${processId}: ${
+          data.process?.status || "not found"
+        }`
       );
 
       return data;
@@ -912,7 +899,9 @@ export class HttpClient {
     }
   }
 
-  async killProcess(processId: string): Promise<{ success: boolean; message: string }> {
+  async killProcess(
+    processId: string
+  ): Promise<{ success: boolean; message: string }> {
     try {
       const response = await this.doFetch(`/api/process/${processId}`, {
         headers: {
@@ -930,10 +919,11 @@ export class HttpClient {
         );
       }
 
-      const data = await response.json() as { success: boolean; message: string };
-      console.log(
-        `[HTTP Client] Killed process ${processId}`
-      );
+      const data = (await response.json()) as {
+        success: boolean;
+        message: string;
+      };
+      console.log(`[HTTP Client] Killed process ${processId}`);
 
       return data;
     } catch (error) {
@@ -942,7 +932,11 @@ export class HttpClient {
     }
   }
 
-  async killAllProcesses(): Promise<{ success: boolean; killedCount: number; message: string }> {
+  async killAllProcesses(): Promise<{
+    success: boolean;
+    killedCount: number;
+    message: string;
+  }> {
     try {
       const response = await this.doFetch("/api/process/kill-all", {
         headers: {
@@ -960,10 +954,12 @@ export class HttpClient {
         );
       }
 
-      const data = await response.json() as { success: boolean; killedCount: number; message: string };
-      console.log(
-        `[HTTP Client] Killed ${data.killedCount} processes`
-      );
+      const data = (await response.json()) as {
+        success: boolean;
+        killedCount: number;
+        message: string;
+      };
+      console.log(`[HTTP Client] Killed ${data.killedCount} processes`);
 
       return data;
     } catch (error) {
@@ -991,9 +987,7 @@ export class HttpClient {
       }
 
       const data: GetProcessLogsResponse = await response.json();
-      console.log(
-        `[HTTP Client] Got logs for process ${processId}`
-      );
+      console.log(`[HTTP Client] Got logs for process ${processId}`);
 
       return data;
     } catch (error) {
@@ -1002,11 +996,13 @@ export class HttpClient {
     }
   }
 
-  async streamProcessLogs(processId: string): Promise<ReadableStream<Uint8Array>> {
+  async streamProcessLogs(
+    processId: string
+  ): Promise<ReadableStream<Uint8Array>> {
     try {
       const response = await this.doFetch(`/api/process/${processId}/stream`, {
         headers: {
-          "Accept": "text/event-stream",
+          Accept: "text/event-stream",
           "Cache-Control": "no-cache",
         },
         method: "GET",

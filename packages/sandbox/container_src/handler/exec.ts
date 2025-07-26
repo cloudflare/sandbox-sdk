@@ -66,7 +66,9 @@ function executeCommand(
           session.activeProcess = null;
         }
 
-        console.log(`[Server] Command completed: ${command}, Exit code: ${code}`);
+        console.log(
+          `[Server] Command completed: ${command}, Exit code: ${code}`
+        );
 
         resolve({
           exitCode: code || 0,
@@ -115,7 +117,12 @@ export async function handleExecuteRequest(
 
     console.log(`[Server] Executing command: ${command}`);
 
-    const result = await executeCommand(sessions, command, sessionId, background);
+    const result = await executeCommand(
+      sessions,
+      command,
+      sessionId,
+      background
+    );
 
     return new Response(
       JSON.stringify({
@@ -175,9 +182,7 @@ export async function handleStreamingExecuteRequest(
       );
     }
 
-    console.log(
-      `[Server] Executing streaming command: ${command}`
-    );
+    console.log(`[Server] Executing streaming command: ${command}`);
 
     const stream = new ReadableStream({
       start(controller) {

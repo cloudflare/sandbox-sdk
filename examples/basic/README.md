@@ -49,18 +49,21 @@ This example demonstrates the proper 3-layer architecture for Sandbox SDK applic
 ### Layer Responsibilities
 
 **Frontend (`app/index.tsx`)**
+
 - React-based UI with tabbed interface
 - HTTP requests to Worker API endpoints
 - Server-Sent Events for real-time streaming
 - State management for commands, processes, and ports
 
 **Worker (`src/index.ts`)**
+
 - HTTP API gateway with endpoint routing
 - Direct calls to Sandbox SDK methods
 - SSE streaming for real-time updates
 - CORS handling and error responses
 
 **Sandbox Durable Object**
+
 - Implements ISandbox interface methods
 - Process lifecycle management
 - AsyncIterable streaming capabilities
@@ -77,6 +80,7 @@ npm run deploy
 ## Development
 
 ### Project Structure
+
 ```
 examples/basic/
 ├── src/

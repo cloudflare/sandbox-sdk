@@ -12,14 +12,14 @@ export async function gitCheckout(sandbox: Sandbox<unknown>, request: Request) {
 
     const actualBranch = branch || "main";
     await sandbox.gitCheckout(repoUrl, { branch: actualBranch, targetDir });
-    
-    return jsonResponse({ 
+
+    return jsonResponse({
       success: true,
       message: "Repository checked out",
       repoUrl,
       branch: actualBranch,
       targetDir,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     });
   } catch (error: any) {
     console.error("Error checking out repository:", error);

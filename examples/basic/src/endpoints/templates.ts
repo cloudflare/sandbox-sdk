@@ -7,30 +7,32 @@ export async function setupNextjs(sandbox: Sandbox<unknown>, request: Request) {
     const { projectName = "my-nextjs-app" } = body;
 
     // Step 1: Create Next.js app
-    await sandbox.exec(`npx create-next-app@latest ${projectName} --typescript --tailwind --eslint --app --src-dir --import-alias "@/*" --no-turbopack --yes`);
-    
+    await sandbox.exec(
+      `npx create-next-app@latest ${projectName} --typescript --tailwind --eslint --app --src-dir --import-alias "@/*" --no-turbopack --yes`
+    );
+
     // Step 2: Install dependencies (already done by create-next-app)
     // Step 3: Start dev server on port 8080
-    const process = await sandbox.startProcess(`npm run dev -- --port 8080`, { 
-      cwd: projectName 
+    const process = await sandbox.startProcess(`npm run dev -- --port 8080`, {
+      cwd: projectName,
     });
-    
+
     // Step 4: Wait a moment for server to start
-    await new Promise(resolve => setTimeout(resolve, 3000));
-    
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+
     // Step 5: Expose port
     const hostname = new URL(request.url).host;
-    const preview = await sandbox.exposePort(8080, { 
+    const preview = await sandbox.exposePort(8080, {
       name: "Next.js Dev Server",
-      hostname
+      hostname,
     });
-    
-    return jsonResponse({ 
-      success: true, 
+
+    return jsonResponse({
+      success: true,
       projectName,
       processId: process.id,
       previewUrl: preview.url,
-      message: "Next.js project created and running!"
+      message: "Next.js project created and running!",
     });
   } catch (error: any) {
     console.error("Error setting up Next.js:", error);
@@ -44,33 +46,35 @@ export async function setupReact(sandbox: Sandbox<unknown>, request: Request) {
     const { projectName = "my-react-app" } = body;
 
     // Step 1: Create React app
-    await sandbox.exec(`npx create-react-app ${projectName} --template typescript`);
-    
+    await sandbox.exec(
+      `npx create-react-app ${projectName} --template typescript`
+    );
+
     // Step 2: Start dev server on port 8080
-    const process = await sandbox.startProcess(`npm start`, { 
+    const process = await sandbox.startProcess(`npm start`, {
       cwd: projectName,
-      env: { 
+      env: {
         BROWSER: "none", // Prevent browser from opening
-        PORT: "8080" // Set React dev server to use port 8080
-      }
+        PORT: "8080", // Set React dev server to use port 8080
+      },
     });
-    
+
     // Step 3: Wait for server to start
-    await new Promise(resolve => setTimeout(resolve, 5000));
-    
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+
     // Step 4: Expose port
     const hostname = new URL(request.url).host;
-    const preview = await sandbox.exposePort(8080, { 
+    const preview = await sandbox.exposePort(8080, {
       name: "React Dev Server",
-      hostname
+      hostname,
     });
-    
-    return jsonResponse({ 
-      success: true, 
+
+    return jsonResponse({
+      success: true,
       projectName,
       processId: process.id,
       previewUrl: preview.url,
-      message: "React project created and running!"
+      message: "React project created and running!",
     });
   } catch (error: any) {
     console.error("Error setting up React:", error);
@@ -84,32 +88,34 @@ export async function setupVue(sandbox: Sandbox<unknown>, request: Request) {
     const { projectName = "my-vue-app" } = body;
 
     // Step 1: Create Vue app
-    await sandbox.exec(`npm create vue@latest ${projectName} -- --typescript --jsx --router --pinia --vitest --cypress --eslint --prettier --yes`);
-    
+    await sandbox.exec(
+      `npm create vue@latest ${projectName} -- --typescript --jsx --router --pinia --vitest --cypress --eslint --prettier --yes`
+    );
+
     // Step 2: Install dependencies
     await sandbox.exec(`cd ${projectName} && npm install`);
-    
+
     // Step 3: Start dev server on port 8080
-    const process = await sandbox.startProcess(`npm run dev -- --port 8080`, { 
-      cwd: projectName 
+    const process = await sandbox.startProcess(`npm run dev -- --port 8080`, {
+      cwd: projectName,
     });
-    
+
     // Step 4: Wait for server to start
-    await new Promise(resolve => setTimeout(resolve, 3000));
-    
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+
     // Step 5: Expose port
     const hostname = new URL(request.url).host;
-    const preview = await sandbox.exposePort(8080, { 
+    const preview = await sandbox.exposePort(8080, {
       name: "Vue Dev Server",
-      hostname
+      hostname,
     });
-    
-    return jsonResponse({ 
-      success: true, 
+
+    return jsonResponse({
+      success: true,
       projectName,
       processId: process.id,
       previewUrl: preview.url,
-      message: "Vue project created and running!"
+      message: "Vue project created and running!",
     });
   } catch (error: any) {
     console.error("Error setting up Vue:", error);
@@ -124,7 +130,7 @@ export async function setupStatic(sandbox: Sandbox<unknown>, request: Request) {
 
     // Step 1: Create directory and basic HTML
     await sandbox.mkdir(projectName);
-    
+
     // Step 2: Create basic HTML file
     const htmlContent = `<!DOCTYPE html>
 <html lang="en">
@@ -152,30 +158,30 @@ export async function setupStatic(sandbox: Sandbox<unknown>, request: Request) {
     </div>
 </body>
 </html>`;
-    
+
     await sandbox.writeFile(`${projectName}/index.html`, htmlContent);
-    
+
     // Step 3: Start simple HTTP server on port 8080
-    const process = await sandbox.startProcess(`python3 -m http.server 8080`, { 
-      cwd: projectName 
+    const process = await sandbox.startProcess(`python3 -m http.server 8080`, {
+      cwd: projectName,
     });
-    
+
     // Step 4: Wait for server to start
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+
     // Step 5: Expose port
     const hostname = new URL(request.url).host;
-    const preview = await sandbox.exposePort(8080, { 
+    const preview = await sandbox.exposePort(8080, {
       name: "Static Site Server",
-      hostname
+      hostname,
     });
-    
-    return jsonResponse({ 
-      success: true, 
+
+    return jsonResponse({
+      success: true,
       projectName,
       processId: process.id,
       previewUrl: preview.url,
-      message: "Static site created and running!"
+      message: "Static site created and running!",
     });
   } catch (error: any) {
     console.error("Error setting up static site:", error);
