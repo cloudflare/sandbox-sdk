@@ -12,14 +12,14 @@ export async function handleExposePortRequest(
     if (!port || typeof port !== "number") {
       return new Response(
         JSON.stringify({
-          error: "Port is required and must be a number",
+          error: "Port is required and must be a number"
         }),
         {
           headers: {
             "Content-Type": "application/json",
-            ...corsHeaders,
+            ...corsHeaders
           },
-          status: 400,
+          status: 400
         }
       );
     }
@@ -28,14 +28,14 @@ export async function handleExposePortRequest(
     if (port < 1 || port > 65535) {
       return new Response(
         JSON.stringify({
-          error: "Port must be between 1 and 65535",
+          error: "Port must be between 1 and 65535"
         }),
         {
           headers: {
             "Content-Type": "application/json",
-            ...corsHeaders,
+            ...corsHeaders
           },
-          status: 400,
+          status: 400
         }
       );
     }
@@ -51,13 +51,13 @@ export async function handleExposePortRequest(
         name,
         exposedAt: new Date().toISOString(),
         success: true,
-        timestamp: new Date().toISOString(),
+        timestamp: new Date().toISOString()
       }),
       {
         headers: {
           "Content-Type": "application/json",
-          ...corsHeaders,
-        },
+          ...corsHeaders
+        }
       }
     );
   } catch (error) {
@@ -65,14 +65,14 @@ export async function handleExposePortRequest(
     return new Response(
       JSON.stringify({
         error: "Failed to expose port",
-        message: error instanceof Error ? error.message : "Unknown error",
+        message: error instanceof Error ? error.message : "Unknown error"
       }),
       {
         headers: {
           "Content-Type": "application/json",
-          ...corsHeaders,
+          ...corsHeaders
         },
-        status: 500,
+        status: 500
       }
     );
   }
@@ -90,14 +90,14 @@ export async function handleUnexposePortRequest(
     if (!port || typeof port !== "number") {
       return new Response(
         JSON.stringify({
-          error: "Port is required and must be a number",
+          error: "Port is required and must be a number"
         }),
         {
           headers: {
             "Content-Type": "application/json",
-            ...corsHeaders,
+            ...corsHeaders
           },
-          status: 400,
+          status: 400
         }
       );
     }
@@ -106,14 +106,14 @@ export async function handleUnexposePortRequest(
     if (!exposedPorts.has(port)) {
       return new Response(
         JSON.stringify({
-          error: "Port is not exposed",
+          error: "Port is not exposed"
         }),
         {
           headers: {
             "Content-Type": "application/json",
-            ...corsHeaders,
+            ...corsHeaders
           },
-          status: 404,
+          status: 404
         }
       );
     }
@@ -127,13 +127,13 @@ export async function handleUnexposePortRequest(
       JSON.stringify({
         port,
         success: true,
-        timestamp: new Date().toISOString(),
+        timestamp: new Date().toISOString()
       }),
       {
         headers: {
           "Content-Type": "application/json",
-          ...corsHeaders,
-        },
+          ...corsHeaders
+        }
       }
     );
   } catch (error) {
@@ -141,14 +141,14 @@ export async function handleUnexposePortRequest(
     return new Response(
       JSON.stringify({
         error: "Failed to unexpose port",
-        message: error instanceof Error ? error.message : "Unknown error",
+        message: error instanceof Error ? error.message : "Unknown error"
       }),
       {
         headers: {
           "Content-Type": "application/json",
-          ...corsHeaders,
+          ...corsHeaders
         },
-        status: 500,
+        status: 500
       }
     );
   }
@@ -163,20 +163,20 @@ export async function handleGetExposedPortsRequest(
     const ports = Array.from(exposedPorts.entries()).map(([port, info]) => ({
       port,
       name: info.name,
-      exposedAt: info.exposedAt.toISOString(),
+      exposedAt: info.exposedAt.toISOString()
     }));
 
     return new Response(
       JSON.stringify({
         ports,
         count: ports.length,
-        timestamp: new Date().toISOString(),
+        timestamp: new Date().toISOString()
       }),
       {
         headers: {
           "Content-Type": "application/json",
-          ...corsHeaders,
-        },
+          ...corsHeaders
+        }
       }
     );
   } catch (error) {
@@ -184,14 +184,14 @@ export async function handleGetExposedPortsRequest(
     return new Response(
       JSON.stringify({
         error: "Failed to get exposed ports",
-        message: error instanceof Error ? error.message : "Unknown error",
+        message: error instanceof Error ? error.message : "Unknown error"
       }),
       {
         headers: {
           "Content-Type": "application/json",
-          ...corsHeaders,
+          ...corsHeaders
         },
-        status: 500,
+        status: 500
       }
     );
   }
@@ -210,14 +210,14 @@ export async function handleProxyRequest(
     if (pathParts.length < 3) {
       return new Response(
         JSON.stringify({
-          error: "Invalid proxy path",
+          error: "Invalid proxy path"
         }),
         {
           headers: {
             "Content-Type": "application/json",
-            ...corsHeaders,
+            ...corsHeaders
           },
-          status: 400,
+          status: 400
         }
       );
     }
@@ -226,14 +226,14 @@ export async function handleProxyRequest(
     if (!port || Number.isNaN(port)) {
       return new Response(
         JSON.stringify({
-          error: "Invalid port in proxy path",
+          error: "Invalid port in proxy path"
         }),
         {
           headers: {
             "Content-Type": "application/json",
-            ...corsHeaders,
+            ...corsHeaders
           },
-          status: 400,
+          status: 400
         }
       );
     }
@@ -242,14 +242,14 @@ export async function handleProxyRequest(
     if (!exposedPorts.has(port)) {
       return new Response(
         JSON.stringify({
-          error: `Port ${port} is not exposed`,
+          error: `Port ${port} is not exposed`
         }),
         {
           headers: {
             "Content-Type": "application/json",
-            ...corsHeaders,
+            ...corsHeaders
           },
-          status: 404,
+          status: 404
         }
       );
     }
@@ -260,14 +260,16 @@ export async function handleProxyRequest(
     const targetUrl = `http://127.0.0.1:${port}${targetPath}${url.search}`;
 
     console.log(`[Server] Proxying request to: ${targetUrl}`);
-    console.log(`[Server] Method: ${req.method}, Port: ${port}, Path: ${targetPath}`);
+    console.log(
+      `[Server] Method: ${req.method}, Port: ${port}, Path: ${targetPath}`
+    );
 
     try {
       // Forward the request to the target port
       const targetResponse = await fetch(targetUrl, {
         method: req.method,
         headers: req.headers,
-        body: req.body,
+        body: req.body
       });
 
       // Return the response from the target
@@ -276,22 +278,23 @@ export async function handleProxyRequest(
         statusText: targetResponse.statusText,
         headers: {
           ...Object.fromEntries(targetResponse.headers.entries()),
-          ...corsHeaders,
-        },
+          ...corsHeaders
+        }
       });
     } catch (fetchError) {
       console.error(`[Server] Error proxying to port ${port}:`, fetchError);
       return new Response(
         JSON.stringify({
           error: `Service on port ${port} is not responding`,
-          message: fetchError instanceof Error ? fetchError.message : "Unknown error",
+          message:
+            fetchError instanceof Error ? fetchError.message : "Unknown error"
         }),
         {
           headers: {
             "Content-Type": "application/json",
-            ...corsHeaders,
+            ...corsHeaders
           },
-          status: 502,
+          status: 502
         }
       );
     }
@@ -300,14 +303,14 @@ export async function handleProxyRequest(
     return new Response(
       JSON.stringify({
         error: "Failed to proxy request",
-        message: error instanceof Error ? error.message : "Unknown error",
+        message: error instanceof Error ? error.message : "Unknown error"
       }),
       {
         headers: {
           "Content-Type": "application/json",
-          ...corsHeaders,
+          ...corsHeaders
         },
-        status: 500,
+        status: 500
       }
     );
   }

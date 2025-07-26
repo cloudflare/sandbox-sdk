@@ -2,12 +2,12 @@ import type { ChildProcess } from "node:child_process";
 
 // Process management types
 export type ProcessStatus =
-  | 'starting'
-  | 'running'
-  | 'completed'
-  | 'failed'
-  | 'killed'
-  | 'error';
+  | "starting"
+  | "running"
+  | "completed"
+  | "failed"
+  | "killed"
+  | "error";
 
 export interface ProcessRecord {
   id: string;
@@ -21,7 +21,7 @@ export interface ProcessRecord {
   childProcess?: ChildProcess;
   stdout: string;
   stderr: string;
-  outputListeners: Set<(stream: 'stdout' | 'stderr', data: string) => void>;
+  outputListeners: Set<(stream: "stdout" | "stderr", data: string) => void>;
   statusListeners: Set<(status: ProcessStatus) => void>;
 }
 

@@ -1,20 +1,23 @@
 import { randomBytes } from "node:crypto";
 import { serve } from "bun";
-import { handleExecuteRequest, handleStreamingExecuteRequest } from "./handler/exec";
+import {
+  handleExecuteRequest,
+  handleStreamingExecuteRequest
+} from "./handler/exec";
 import {
   handleDeleteFileRequest,
   handleMkdirRequest,
   handleMoveFileRequest,
   handleReadFileRequest,
   handleRenameFileRequest,
-  handleWriteFileRequest,
+  handleWriteFileRequest
 } from "./handler/file";
 import { handleGitCheckoutRequest } from "./handler/git";
 import {
   handleExposePortRequest,
   handleGetExposedPortsRequest,
   handleProxyRequest,
-  handleUnexposePortRequest,
+  handleUnexposePortRequest
 } from "./handler/ports";
 import {
   handleGetProcessLogsRequest,
@@ -23,7 +26,7 @@ import {
   handleKillProcessRequest,
   handleListProcessesRequest,
   handleStartProcessRequest,
-  handleStreamProcessLogsRequest,
+  handleStreamProcessLogsRequest
 } from "./handler/process";
 import type { ProcessRecord, SessionData } from "./types";
 
@@ -38,7 +41,7 @@ const processes = new Map<string, ProcessRecord>();
 
 // Generate a unique session ID using cryptographically secure randomness
 function generateSessionId(): string {
-  return `session_${Date.now()}_${randomBytes(6).toString('hex')}`;
+  return `session_${Date.now()}_${randomBytes(6).toString("hex")}`;
 }
 
 // Clean up old sessions (older than 1 hour)
@@ -66,7 +69,7 @@ const server = serve({
     const corsHeaders = {
       "Access-Control-Allow-Headers": "Content-Type, Authorization",
       "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Origin": "*"
     };
 
     // Handle preflight requests
@@ -83,8 +86,8 @@ const server = serve({
           return new Response("Hello from Bun server! 🚀", {
             headers: {
               "Content-Type": "text/plain; charset=utf-8",
-              ...corsHeaders,
-            },
+              ...corsHeaders
+            }
           });
 
         case "/api/session/create":
@@ -93,7 +96,7 @@ const server = serve({
             const sessionData: SessionData = {
               activeProcess: null,
               createdAt: new Date(),
-              sessionId,
+              sessionId
             };
             sessions.set(sessionId, sessionData);
 
@@ -103,13 +106,13 @@ const server = serve({
               JSON.stringify({
                 message: "Session created successfully",
                 sessionId,
-                timestamp: new Date().toISOString(),
+                timestamp: new Date().toISOString()
               }),
               {
                 headers: {
                   "Content-Type": "application/json",
-                  ...corsHeaders,
-                },
+                  ...corsHeaders
+                }
               }
             );
           }
@@ -121,7 +124,7 @@ const server = serve({
               (session) => ({
                 createdAt: session.createdAt.toISOString(),
                 hasActiveProcess: !!session.activeProcess,
-                sessionId: session.sessionId,
+                sessionId: session.sessionId
               })
             );
 
@@ -129,13 +132,13 @@ const server = serve({
               JSON.stringify({
                 count: sessionList.length,
                 sessions: sessionList,
-                timestamp: new Date().toISOString(),
+                timestamp: new Date().toISOString()
               }),
               {
                 headers: {
                   "Content-Type": "application/json",
-                  ...corsHeaders,
-                },
+                  ...corsHeaders
+                }
               }
             );
           }
@@ -158,13 +161,13 @@ const server = serve({
             return new Response(
               JSON.stringify({
                 message: "pong",
-                timestamp: new Date().toISOString(),
+                timestamp: new Date().toISOString()
               }),
               {
                 headers: {
                   "Content-Type": "application/json",
-                  ...corsHeaders,
-                },
+                  ...corsHeaders
+                }
               }
             );
           }
@@ -188,15 +191,15 @@ const server = serve({
                   "top",
                   "df",
                   "du",
-                  "free",
+                  "free"
                 ],
-                timestamp: new Date().toISOString(),
+                timestamp: new Date().toISOString()
               }),
               {
                 headers: {
                   "Content-Type": "application/json",
-                  ...corsHeaders,
-                },
+                  ...corsHeaders
+                }
               }
             );
           }
@@ -283,19 +286,39 @@ const server = serve({
         default:
           // Handle dynamic routes for individual processes
           if (pathname.startsWith("/api/process/")) {
-            const segments = pathname.split('/');
+            const segments = pathname.split("/");
             if (segments.length >= 4) {
               const processId = segments[3];
               const action = segments[4]; // Optional: logs, stream, etc.
 
               if (!action && req.method === "GET") {
-                return handleGetProcessRequest(processes, req, corsHeaders, processId);
+                return handleGetProcessRequest(
+                  processes,
+                  req,
+                  corsHeaders,
+                  processId
+                );
               } else if (!action && req.method === "DELETE") {
-                return handleKillProcessRequest(processes, req, corsHeaders, processId);
+                return handleKillProcessRequest(
+                  processes,
+                  req,
+                  corsHeaders,
+                  processId
+                );
               } else if (action === "logs" && req.method === "GET") {
-                return handleGetProcessLogsRequest(processes, req, corsHeaders, processId);
+                return handleGetProcessLogsRequest(
+                  processes,
+                  req,
+                  corsHeaders,
+                  processId
+                );
               } else if (action === "stream" && req.method === "GET") {
-                return handleStreamProcessLogsRequest(processes, req, corsHeaders, processId);
+                return handleStreamProcessLogsRequest(
+                  processes,
+                  req,
+                  corsHeaders,
+                  processId
+                );
               }
             }
           }
@@ -307,22 +330,25 @@ const server = serve({
           console.log(`[Container] Route not found: ${pathname}`);
           return new Response("Not Found", {
             headers: corsHeaders,
-            status: 404,
+            status: 404
           });
       }
     } catch (error) {
-      console.error(`[Container] Error handling ${req.method} ${pathname}:`, error);
+      console.error(
+        `[Container] Error handling ${req.method} ${pathname}:`,
+        error
+      );
       return new Response(
         JSON.stringify({
           error: "Internal server error",
-          message: error instanceof Error ? error.message : "Unknown error",
+          message: error instanceof Error ? error.message : "Unknown error"
         }),
         {
           headers: {
             "Content-Type": "application/json",
-            ...corsHeaders,
+            ...corsHeaders
           },
-          status: 500,
+          status: 500
         }
       );
     }
@@ -330,7 +356,7 @@ const server = serve({
   hostname: "0.0.0.0",
   port: 3000,
   // We don't need this, but typescript complains
-  websocket: { async message() { } },
+  websocket: { async message() {} }
 });
 
 console.log(`🚀 Bun server running on http://0.0.0.0:${server.port}`);

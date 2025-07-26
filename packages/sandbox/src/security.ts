@@ -12,7 +12,7 @@
 export class SecurityError extends Error {
   constructor(message: string, public readonly code?: string) {
     super(message);
-    this.name = 'SecurityError';
+    this.name = "SecurityError";
   }
 }
 
@@ -34,7 +34,7 @@ export function validatePort(port: number): boolean {
   // Exclude ports reserved by our system
   const reservedPorts = [
     3000, // Control plane port
-    8787, // Common wrangler dev port
+    8787 // Common wrangler dev port
   ];
 
   if (reservedPorts.includes(port)) {
@@ -52,36 +52,40 @@ export function sanitizeSandboxId(id: string): string {
   // Basic validation: not empty, reasonable length limit (DNS subdomain limit is 63 chars)
   if (!id || id.length > 63) {
     throw new SecurityError(
-      'Sandbox ID must be 1-63 characters long.',
-      'INVALID_SANDBOX_ID_LENGTH'
+      "Sandbox ID must be 1-63 characters long.",
+      "INVALID_SANDBOX_ID_LENGTH"
     );
   }
 
   // DNS compliance: cannot start or end with hyphens (RFC requirement)
-  if (id.startsWith('-') || id.endsWith('-')) {
+  if (id.startsWith("-") || id.endsWith("-")) {
     throw new SecurityError(
-      'Sandbox ID cannot start or end with hyphens (DNS requirement).',
-      'INVALID_SANDBOX_ID_HYPHENS'
+      "Sandbox ID cannot start or end with hyphens (DNS requirement).",
+      "INVALID_SANDBOX_ID_HYPHENS"
     );
   }
 
   // Prevent reserved names that cause technical conflicts
   const reservedNames = [
-    'www', 'api', 'admin', 'root', 'system',
-    'cloudflare', 'workers'
+    "www",
+    "api",
+    "admin",
+    "root",
+    "system",
+    "cloudflare",
+    "workers"
   ];
 
   const lowerCaseId = id.toLowerCase();
   if (reservedNames.includes(lowerCaseId)) {
     throw new SecurityError(
       `Reserved sandbox ID '${id}' is not allowed.`,
-      'RESERVED_SANDBOX_ID'
+      "RESERVED_SANDBOX_ID"
     );
   }
 
   return id;
 }
-
 
 /**
  * Logs security events for monitoring
@@ -89,7 +93,7 @@ export function sanitizeSandboxId(id: string): string {
 export function logSecurityEvent(
   event: string,
   details: Record<string, any>,
-  severity: 'low' | 'medium' | 'high' | 'critical' = 'medium'
+  severity: "low" | "medium" | "high" | "critical" = "medium"
 ): void {
   const logEntry = {
     timestamp: new Date().toISOString(),
@@ -99,15 +103,24 @@ export function logSecurityEvent(
   };
 
   switch (severity) {
-    case 'critical':
-    case 'high':
-      console.error(`[SECURITY:${severity.toUpperCase()}] ${event}:`, JSON.stringify(logEntry));
+    case "critical":
+    case "high":
+      console.error(
+        `[SECURITY:${severity.toUpperCase()}] ${event}:`,
+        JSON.stringify(logEntry)
+      );
       break;
-    case 'medium':
-      console.warn(`[SECURITY:${severity.toUpperCase()}] ${event}:`, JSON.stringify(logEntry));
+    case "medium":
+      console.warn(
+        `[SECURITY:${severity.toUpperCase()}] ${event}:`,
+        JSON.stringify(logEntry)
+      );
       break;
-    case 'low':
-      console.info(`[SECURITY:${severity.toUpperCase()}] ${event}:`, JSON.stringify(logEntry));
+    case "low":
+      console.info(
+        `[SECURITY:${severity.toUpperCase()}] ${event}:`,
+        JSON.stringify(logEntry)
+      );
       break;
   }
 }

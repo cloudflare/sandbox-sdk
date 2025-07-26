@@ -21,7 +21,7 @@ function executeGitCheckout(
       ["clone", "-b", branch, repoUrl, targetDir],
       {
         shell: true,
-        stdio: ["pipe", "pipe", "pipe"],
+        stdio: ["pipe", "pipe", "pipe"]
       }
     );
 
@@ -57,7 +57,7 @@ function executeGitCheckout(
           exitCode: code || 0,
           stderr,
           stdout,
-          success: true,
+          success: true
         });
       } else {
         console.error(
@@ -67,7 +67,7 @@ function executeGitCheckout(
           exitCode: code || 1,
           stderr,
           stdout,
-          success: false,
+          success: false
         });
       }
     });
@@ -97,14 +97,14 @@ export async function handleGitCheckoutRequest(
     if (!repoUrl || typeof repoUrl !== "string") {
       return new Response(
         JSON.stringify({
-          error: "Repository URL is required and must be a string",
+          error: "Repository URL is required and must be a string"
         }),
         {
           headers: {
             "Content-Type": "application/json",
-            ...corsHeaders,
+            ...corsHeaders
           },
-          status: 400,
+          status: 400
         }
       );
     }
@@ -115,22 +115,21 @@ export async function handleGitCheckoutRequest(
     if (!urlPattern.test(repoUrl)) {
       return new Response(
         JSON.stringify({
-          error: "Invalid repository URL format",
+          error: "Invalid repository URL format"
         }),
         {
           headers: {
             "Content-Type": "application/json",
-            ...corsHeaders,
+            ...corsHeaders
           },
-          status: 400,
+          status: 400
         }
       );
     }
 
     // Generate target directory if not provided using cryptographically secure randomness
     const checkoutDir =
-      targetDir ||
-      `repo_${Date.now()}_${randomBytes(6).toString('hex')}`;
+      targetDir || `repo_${Date.now()}_${randomBytes(6).toString("hex")}`;
 
     console.log(
       `[Server] Checking out repository: ${repoUrl} to ${checkoutDir}`
@@ -153,13 +152,13 @@ export async function handleGitCheckoutRequest(
         stdout: result.stdout,
         success: result.success,
         targetDir: checkoutDir,
-        timestamp: new Date().toISOString(),
+        timestamp: new Date().toISOString()
       }),
       {
         headers: {
           "Content-Type": "application/json",
-          ...corsHeaders,
-        },
+          ...corsHeaders
+        }
       }
     );
   } catch (error) {
@@ -167,16 +166,15 @@ export async function handleGitCheckoutRequest(
     return new Response(
       JSON.stringify({
         error: "Failed to checkout repository",
-        message: error instanceof Error ? error.message : "Unknown error",
+        message: error instanceof Error ? error.message : "Unknown error"
       }),
       {
         headers: {
           "Content-Type": "application/json",
-          ...corsHeaders,
+          ...corsHeaders
         },
-        status: 500,
+        status: 500
       }
     );
   }
 }
-

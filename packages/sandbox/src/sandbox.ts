@@ -16,10 +16,7 @@ import type {
   ProcessStatus,
   StreamOptions
 } from "./types";
-import {
-  ProcessNotFoundError,
-  SandboxError
-} from "./types";
+import { ProcessNotFoundError, SandboxError } from "./types";
 
 export function getSandbox(ns: DurableObjectNamespace<Sandbox>, id: string) {
   const stub = getContainer(ns, id);
@@ -45,9 +42,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         );
       },
       onCommandStart: (command) => {
-        console.log(
-          `[Container] Command started: ${command}`
-        );
+        console.log(`[Container] Command started: ${command}`);
       },
       onError: (error, _command) => {
         console.error(`[Container] Command error: ${error}`);
@@ -56,12 +51,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         console.log(`[Container] [${stream}] ${data}`);
       },
       port: 3000, // Control plane port
-      stub: this,
+      stub: this
     });
 
     // Load the sandbox name from storage on initialization
     this.ctx.blockConcurrencyWhile(async () => {
-      this.sandboxName = await this.ctx.storage.get<string>('sandboxName') || null;
+      this.sandboxName =
+        (await this.ctx.storage.get<string>("sandboxName")) || null;
     });
   }
 
@@ -69,7 +65,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   async setSandboxName(name: string): Promise<void> {
     if (!this.sandboxName) {
       this.sandboxName = name;
-      await this.ctx.storage.put('sandboxName', name);
+      await this.ctx.storage.put("sandboxName", name);
       console.log(`[Sandbox] Stored sandbox name via RPC: ${name}`);
     }
   }
@@ -100,10 +96,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     const url = new URL(request.url);
 
     // Capture and store the sandbox name from the header if present
-    if (!this.sandboxName && request.headers.has('X-Sandbox-Name')) {
-      const name = request.headers.get('X-Sandbox-Name')!;
+    if (!this.sandboxName && request.headers.has("X-Sandbox-Name")) {
+      const name = request.headers.get("X-Sandbox-Name")!;
       this.sandboxName = name;
-      await this.ctx.storage.put('sandboxName', name);
+      await this.ctx.storage.put("sandboxName", name);
       console.log(`[Sandbox] Stored sandbox name: ${this.sandboxName}`);
     }
 
@@ -138,23 +134,29 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     try {
       // Handle cancellation
       if (options?.signal?.aborted) {
-        throw new Error('Operation was aborted');
+        throw new Error("Operation was aborted");
       }
 
       let result: ExecResult;
 
       if (options?.stream && options?.onOutput) {
         // Streaming with callbacks - we need to collect the final result
-        result = await this.executeWithStreaming(command, options, startTime, timestamp);
+        result = await this.executeWithStreaming(
+          command,
+          options,
+          startTime,
+          timestamp
+        );
       } else {
         // Regular execution
-        const response = await this.client.execute(
-          command,
-          options?.sessionId
-        );
+        const response = await this.client.execute(command, options?.sessionId);
 
         const duration = Date.now() - startTime;
-        result = this.mapExecuteResponseToExecResult(response, duration, options?.sessionId);
+        result = this.mapExecuteResponseToExecResult(
+          response,
+          duration,
+          options?.sessionId
+        );
       }
 
       // Call completion callback if provided
@@ -181,26 +183,31 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     startTime: number,
     timestamp: string
   ): Promise<ExecResult> {
-    let stdout = '';
-    let stderr = '';
+    let stdout = "";
+    let stderr = "";
 
     try {
-      const stream = await this.client.executeCommandStream(command, options.sessionId);
-      const { parseSSEStream } = await import('./sse-parser');
+      const stream = await this.client.executeCommandStream(
+        command,
+        options.sessionId
+      );
+      const { parseSSEStream } = await import("./sse-parser");
 
-      for await (const event of parseSSEStream<import('./types').ExecEvent>(stream)) {
+      for await (const event of parseSSEStream<import("./types").ExecEvent>(
+        stream
+      )) {
         // Check for cancellation
         if (options.signal?.aborted) {
-          throw new Error('Operation was aborted');
+          throw new Error("Operation was aborted");
         }
 
         switch (event.type) {
-          case 'stdout':
-          case 'stderr':
+          case "stdout":
+          case "stderr":
             if (event.data) {
               // Update accumulated output
-              if (event.type === 'stdout') stdout += event.data;
-              if (event.type === 'stderr') stderr += event.data;
+              if (event.type === "stdout") stdout += event.data;
+              if (event.type === "stderr") stderr += event.data;
 
               // Call user's callback
               if (options.onOutput) {
@@ -209,39 +216,40 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
             }
             break;
 
-          case 'complete': {
+          case "complete": {
             // Use result from complete event if available
             const duration = Date.now() - startTime;
-            return event.result || {
-              success: event.exitCode === 0,
-              exitCode: event.exitCode || 0,
-              stdout,
-              stderr,
-              command,
-              duration,
-              timestamp,
-              sessionId: options.sessionId
-            };
+            return (
+              event.result || {
+                success: event.exitCode === 0,
+                exitCode: event.exitCode || 0,
+                stdout,
+                stderr,
+                command,
+                duration,
+                timestamp,
+                sessionId: options.sessionId
+              }
+            );
           }
 
-          case 'error':
-            throw new Error(event.error || 'Command execution failed');
+          case "error":
+            throw new Error(event.error || "Command execution failed");
         }
       }
 
       // If we get here without a complete event, something went wrong
-      throw new Error('Stream ended without completion event');
-
+      throw new Error("Stream ended without completion event");
     } catch (error) {
       if (options.signal?.aborted) {
-        throw new Error('Operation was aborted');
+        throw new Error("Operation was aborted");
       }
       throw error;
     }
   }
 
   private mapExecuteResponseToExecResult(
-    response: import('./client').ExecuteResponse,
+    response: import("./client").ExecuteResponse,
     duration: number,
     sessionId?: string
   ): ExecResult {
@@ -257,9 +265,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     };
   }
 
-
   // Background process management
-  async startProcess(command: string, options?: ProcessOptions): Promise<Process> {
+  async startProcess(
+    command: string,
+    options?: ProcessOptions
+  ): Promise<Process> {
     // Use the new HttpClient method to start the process
     try {
       const response = await this.client.startProcess(command, {
@@ -284,13 +294,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         sessionId: process.sessionId,
 
         async kill(): Promise<void> {
-          throw new Error('Method will be replaced');
+          throw new Error("Method will be replaced");
         },
         async getStatus(): Promise<ProcessStatus> {
-          throw new Error('Method will be replaced');
+          throw new Error("Method will be replaced");
         },
         async getLogs(): Promise<{ stdout: string; stderr: string }> {
-          throw new Error('Method will be replaced');
+          throw new Error("Method will be replaced");
         }
       };
 
@@ -301,7 +311,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
       processObj.getStatus = async () => {
         const current = await this.getProcess(process.id);
-        return current?.status || 'error';
+        return current?.status || "error";
       };
 
       processObj.getLogs = async () => {
@@ -315,7 +325,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       }
 
       return processObj;
-
     } catch (error) {
       if (options?.onError && error instanceof Error) {
         options.onError(error);
@@ -328,7 +337,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   async listProcesses(): Promise<Process[]> {
     const response = await this.client.listProcesses();
 
-    return response.processes.map(processData => ({
+    return response.processes.map((processData) => ({
       id: processData.id,
       pid: processData.pid,
       command: processData.command,
@@ -344,7 +353,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
       getStatus: async () => {
         const current = await this.getProcess(processData.id);
-        return current?.status || 'error';
+        return current?.status || "error";
       },
 
       getLogs: async () => {
@@ -377,7 +386,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
       getStatus: async () => {
         const current = await this.getProcess(processData.id);
-        return current?.status || 'error';
+        return current?.status || "error";
       },
 
       getLogs: async () => {
@@ -392,12 +401,17 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       // Note: signal parameter is not currently supported by the HttpClient implementation
       await this.client.killProcess(id);
     } catch (error) {
-      if (error instanceof Error && error.message.includes('Process not found')) {
+      if (
+        error instanceof Error &&
+        error.message.includes("Process not found")
+      ) {
         throw new ProcessNotFoundError(id);
       }
       throw new SandboxError(
-        `Failed to kill process ${id}: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        'KILL_PROCESS_FAILED'
+        `Failed to kill process ${id}: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`,
+        "KILL_PROCESS_FAILED"
       );
     }
   }
@@ -414,7 +428,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     return 0;
   }
 
-  async getProcessLogs(id: string): Promise<{ stdout: string; stderr: string }> {
+  async getProcessLogs(
+    id: string
+  ): Promise<{ stdout: string; stderr: string }> {
     try {
       const response = await this.client.getProcessLogs(id);
       return {
@@ -422,32 +438,43 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         stderr: response.stderr
       };
     } catch (error) {
-      if (error instanceof Error && error.message.includes('Process not found')) {
+      if (
+        error instanceof Error &&
+        error.message.includes("Process not found")
+      ) {
         throw new ProcessNotFoundError(id);
       }
       throw error;
     }
   }
 
-
   // Streaming methods - return ReadableStream for RPC compatibility
-  async execStream(command: string, options?: StreamOptions): Promise<ReadableStream<Uint8Array>> {
+  async execStream(
+    command: string,
+    options?: StreamOptions
+  ): Promise<ReadableStream<Uint8Array>> {
     // Check for cancellation
     if (options?.signal?.aborted) {
-      throw new Error('Operation was aborted');
+      throw new Error("Operation was aborted");
     }
 
     // Get the stream from HttpClient (need to add this method)
-    const stream = await this.client.executeCommandStream(command, options?.sessionId);
+    const stream = await this.client.executeCommandStream(
+      command,
+      options?.sessionId
+    );
 
     // Return the ReadableStream directly - can be converted to AsyncIterable by consumers
     return stream;
   }
 
-  async streamProcessLogs(processId: string, options?: { signal?: AbortSignal }): Promise<ReadableStream<Uint8Array>> {
+  async streamProcessLogs(
+    processId: string,
+    options?: { signal?: AbortSignal }
+  ): Promise<ReadableStream<Uint8Array>> {
     // Check for cancellation
     if (options?.signal?.aborted) {
-      throw new Error('Operation was aborted');
+      throw new Error("Operation was aborted");
     }
 
     // Get the stream from HttpClient
@@ -464,10 +491,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     return this.client.gitCheckout(repoUrl, options.branch, options.targetDir);
   }
 
-  async mkdir(
-    path: string,
-    options: { recursive?: boolean } = {}
-  ) {
+  async mkdir(path: string, options: { recursive?: boolean } = {}) {
     return this.client.mkdir(path, options.recursive);
   }
 
@@ -483,24 +507,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     return this.client.deleteFile(path);
   }
 
-  async renameFile(
-    oldPath: string,
-    newPath: string
-  ) {
+  async renameFile(oldPath: string, newPath: string) {
     return this.client.renameFile(oldPath, newPath);
   }
 
-  async moveFile(
-    sourcePath: string,
-    destinationPath: string
-  ) {
+  async moveFile(sourcePath: string, destinationPath: string) {
     return this.client.moveFile(sourcePath, destinationPath);
   }
 
-  async readFile(
-    path: string,
-    options: { encoding?: string } = {}
-  ) {
+  async readFile(path: string, options: { encoding?: string } = {}) {
     return this.client.readFile(path, options.encoding);
   }
 
@@ -509,31 +524,47 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     // We need the sandbox name to construct preview URLs
     if (!this.sandboxName) {
-      throw new Error('Sandbox name not available. Ensure sandbox is accessed through getSandbox()');
+      throw new Error(
+        "Sandbox name not available. Ensure sandbox is accessed through getSandbox()"
+      );
     }
 
-    const url = this.constructPreviewUrl(port, this.sandboxName, options.hostname);
+    const url = this.constructPreviewUrl(
+      port,
+      this.sandboxName,
+      options.hostname
+    );
 
     return {
       url,
       port,
-      name: options?.name,
+      name: options?.name
     };
   }
 
   async unexposePort(port: number) {
     if (!validatePort(port)) {
-      logSecurityEvent('INVALID_PORT_UNEXPOSE', {
-        port
-      }, 'high');
-      throw new SecurityError(`Invalid port number: ${port}. Must be between 1024-65535 and not reserved.`);
+      logSecurityEvent(
+        "INVALID_PORT_UNEXPOSE",
+        {
+          port
+        },
+        "high"
+      );
+      throw new SecurityError(
+        `Invalid port number: ${port}. Must be between 1024-65535 and not reserved.`
+      );
     }
 
     await this.client.unexposePort(port);
 
-    logSecurityEvent('PORT_UNEXPOSED', {
-      port
-    }, 'low');
+    logSecurityEvent(
+      "PORT_UNEXPOSED",
+      {
+        port
+      },
+      "low"
+    );
   }
 
   async getExposedPorts(hostname: string) {
@@ -541,38 +572,53 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     // We need the sandbox name to construct preview URLs
     if (!this.sandboxName) {
-      throw new Error('Sandbox name not available. Ensure sandbox is accessed through getSandbox()');
+      throw new Error(
+        "Sandbox name not available. Ensure sandbox is accessed through getSandbox()"
+      );
     }
 
-    return response.ports.map(port => ({
+    return response.ports.map((port) => ({
       url: this.constructPreviewUrl(port.port, this.sandboxName!, hostname),
       port: port.port,
       name: port.name,
-      exposedAt: port.exposedAt,
+      exposedAt: port.exposedAt
     }));
   }
 
-
-  private constructPreviewUrl(port: number, sandboxId: string, hostname: string): string {
+  private constructPreviewUrl(
+    port: number,
+    sandboxId: string,
+    hostname: string
+  ): string {
     if (!validatePort(port)) {
-      logSecurityEvent('INVALID_PORT_REJECTED', {
-        port,
-        sandboxId,
-        hostname
-      }, 'high');
-      throw new SecurityError(`Invalid port number: ${port}. Must be between 1024-65535 and not reserved.`);
+      logSecurityEvent(
+        "INVALID_PORT_REJECTED",
+        {
+          port,
+          sandboxId,
+          hostname
+        },
+        "high"
+      );
+      throw new SecurityError(
+        `Invalid port number: ${port}. Must be between 1024-65535 and not reserved.`
+      );
     }
 
     let sanitizedSandboxId: string;
     try {
       sanitizedSandboxId = sanitizeSandboxId(sandboxId);
     } catch (error) {
-      logSecurityEvent('INVALID_SANDBOX_ID_REJECTED', {
-        sandboxId,
-        port,
-        hostname,
-        error: error instanceof Error ? error.message : 'Unknown error'
-      }, 'high');
+      logSecurityEvent(
+        "INVALID_SANDBOX_ID_REJECTED",
+        {
+          sandboxId,
+          port,
+          hostname,
+          error: error instanceof Error ? error.message : "Unknown error"
+        },
+        "high"
+      );
       throw error;
     }
 
@@ -580,8 +626,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     if (isLocalhost) {
       // Unified subdomain approach for localhost (RFC 6761)
-      const [host, portStr] = hostname.split(':');
-      const mainPort = portStr || '80';
+      const [host, portStr] = hostname.split(":");
+      const mainPort = portStr || "80";
 
       // Use URL constructor for safe URL building
       try {
@@ -592,23 +638,35 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
         const finalUrl = baseUrl.toString();
 
-        logSecurityEvent('PREVIEW_URL_CONSTRUCTED', {
-          port,
-          sandboxId: sanitizedSandboxId,
-          hostname,
-          resultUrl: finalUrl,
-          environment: 'localhost'
-        }, 'low');
+        logSecurityEvent(
+          "PREVIEW_URL_CONSTRUCTED",
+          {
+            port,
+            sandboxId: sanitizedSandboxId,
+            hostname,
+            resultUrl: finalUrl,
+            environment: "localhost"
+          },
+          "low"
+        );
 
         return finalUrl;
       } catch (error) {
-        logSecurityEvent('URL_CONSTRUCTION_FAILED', {
-          port,
-          sandboxId: sanitizedSandboxId,
-          hostname,
-          error: error instanceof Error ? error.message : 'Unknown error'
-        }, 'high');
-        throw new SecurityError(`Failed to construct preview URL: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        logSecurityEvent(
+          "URL_CONSTRUCTION_FAILED",
+          {
+            port,
+            sandboxId: sanitizedSandboxId,
+            hostname,
+            error: error instanceof Error ? error.message : "Unknown error"
+          },
+          "high"
+        );
+        throw new SecurityError(
+          `Failed to construct preview URL: ${
+            error instanceof Error ? error.message : "Unknown error"
+          }`
+        );
       }
     }
 
@@ -624,23 +682,35 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
       const finalUrl = baseUrl.toString();
 
-      logSecurityEvent('PREVIEW_URL_CONSTRUCTED', {
-        port,
-        sandboxId: sanitizedSandboxId,
-        hostname,
-        resultUrl: finalUrl,
-        environment: 'production'
-      }, 'low');
+      logSecurityEvent(
+        "PREVIEW_URL_CONSTRUCTED",
+        {
+          port,
+          sandboxId: sanitizedSandboxId,
+          hostname,
+          resultUrl: finalUrl,
+          environment: "production"
+        },
+        "low"
+      );
 
       return finalUrl;
     } catch (error) {
-      logSecurityEvent('URL_CONSTRUCTION_FAILED', {
-        port,
-        sandboxId: sanitizedSandboxId,
-        hostname,
-        error: error instanceof Error ? error.message : 'Unknown error'
-      }, 'high');
-      throw new SecurityError(`Failed to construct preview URL: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      logSecurityEvent(
+        "URL_CONSTRUCTION_FAILED",
+        {
+          port,
+          sandboxId: sanitizedSandboxId,
+          hostname,
+          error: error instanceof Error ? error.message : "Unknown error"
+        },
+        "high"
+      );
+      throw new SecurityError(
+        `Failed to construct preview URL: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
     }
   }
 }

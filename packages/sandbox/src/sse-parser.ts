@@ -14,13 +14,13 @@ export async function* parseSSEStream<T>(
 ): AsyncIterable<T> {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
-  let buffer = '';
+  let buffer = "";
 
   try {
     while (true) {
       // Check for cancellation
       if (signal?.aborted) {
-        throw new Error('Operation was aborted');
+        throw new Error("Operation was aborted");
       }
 
       const { done, value } = await reader.read();
@@ -30,28 +30,28 @@ export async function* parseSSEStream<T>(
       buffer += decoder.decode(value, { stream: true });
 
       // Process complete SSE events in buffer
-      const lines = buffer.split('\n');
+      const lines = buffer.split("\n");
 
       // Keep the last incomplete line in buffer
-      buffer = lines.pop() || '';
+      buffer = lines.pop() || "";
 
       for (const line of lines) {
         // Skip empty lines
-        if (line.trim() === '') continue;
+        if (line.trim() === "") continue;
 
         // Process SSE data lines
-        if (line.startsWith('data: ')) {
+        if (line.startsWith("data: ")) {
           const data = line.substring(6);
 
           // Skip [DONE] markers or empty data
-          if (data === '[DONE]' || data.trim() === '') continue;
+          if (data === "[DONE]" || data.trim() === "") continue;
 
           try {
             const event = JSON.parse(data) as T;
             yield event;
           } catch (error) {
             // Log parsing errors but continue processing
-            console.error('Failed to parse SSE event:', data, error);
+            console.error("Failed to parse SSE event:", data, error);
             // Optionally yield an error event
             // yield { type: 'error', data: `Parse error: ${error.message}` } as T;
           }
@@ -62,14 +62,14 @@ export async function* parseSSEStream<T>(
     }
 
     // Process any remaining data in buffer
-    if (buffer.trim() && buffer.startsWith('data: ')) {
+    if (buffer.trim() && buffer.startsWith("data: ")) {
       const data = buffer.substring(6);
-      if (data !== '[DONE]' && data.trim()) {
+      if (data !== "[DONE]" && data.trim()) {
         try {
           const event = JSON.parse(data) as T;
           yield event;
         } catch (error) {
-          console.error('Failed to parse final SSE event:', data, error);
+          console.error("Failed to parse final SSE event:", data, error);
         }
       }
     }
@@ -78,7 +78,6 @@ export async function* parseSSEStream<T>(
     reader.releaseLock();
   }
 }
-
 
 /**
  * Helper to convert a Response with SSE stream directly to AsyncIterable
@@ -90,11 +89,13 @@ export async function* responseToAsyncIterable<T>(
   signal?: AbortSignal
 ): AsyncIterable<T> {
   if (!response.ok) {
-    throw new Error(`Response not ok: ${response.status} ${response.statusText}`);
+    throw new Error(
+      `Response not ok: ${response.status} ${response.statusText}`
+    );
   }
 
   if (!response.body) {
-    throw new Error('No response body');
+    throw new Error("No response body");
   }
 
   yield* parseSSEStream<T>(response.body, signal);
@@ -121,7 +122,7 @@ export function asyncIterableToSSEStream<T>(
       try {
         for await (const event of events) {
           if (options?.signal?.aborted) {
-            controller.error(new Error('Operation was aborted'));
+            controller.error(new Error("Operation was aborted"));
             break;
           }
 
@@ -131,7 +132,7 @@ export function asyncIterableToSSEStream<T>(
         }
 
         // Send completion marker
-        controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+        controller.enqueue(encoder.encode("data: [DONE]\n\n"));
       } catch (error) {
         controller.error(error);
       } finally {
@@ -141,7 +142,7 @@ export function asyncIterableToSSEStream<T>(
 
     cancel() {
       // Handle stream cancellation
-      console.log('SSE stream cancelled');
+      console.log("SSE stream cancelled");
     }
   });
 }

@@ -66,10 +66,10 @@ npm install @cloudflare/sandbox
 ```dockerfile
 FROM docker.io/cloudflare/sandbox:0.1.3
 
-EXPOSE 3000
+# expose any ports you might want to use
+# EXPOSE 8080
+# EXPOSE 5173
 
-# Run the same command as the original image
-CMD ["bun", "index.ts"]
 ```
 
 2. **Configure wrangler.json**:
@@ -118,7 +118,7 @@ export default {
     // Execute a command
     const result = await sandbox.exec("echo 'Hello from the edge!'");
     return new Response(result.stdout);
-  },
+  }
 };
 ```
 
@@ -145,16 +145,16 @@ const result = await sandbox.exec("npm run build", {
 **`execStream(command, options?)`** - Dedicated streaming method returning SSE stream
 
 ```typescript
-import { parseSSEStream, type ExecEvent } from '@cloudflare/sandbox';
+import { parseSSEStream, type ExecEvent } from "@cloudflare/sandbox";
 
 const stream = await sandbox.execStream("npm run test");
 for await (const event of parseSSEStream<ExecEvent>(stream)) {
   switch (event.type) {
-    case 'stdout':
+    case "stdout":
       console.log(`Test output: ${event.data}`);
       break;
-    case 'complete':
-      console.log(`Tests ${event.exitCode === 0 ? 'passed' : 'failed'}`);
+    case "complete":
+      console.log(`Tests ${event.exitCode === 0 ? "passed" : "failed"}`);
       break;
   }
 }
@@ -197,7 +197,7 @@ Clone a git repository.
 ```typescript
 await sandbox.gitCheckout("https://github.com/user/repo", {
   branch: "main",
-  targetDir: "my-project",
+  targetDir: "my-project"
 });
 ```
 
@@ -206,7 +206,7 @@ await sandbox.gitCheckout("https://github.com/user/repo", {
 Set environment variables dynamically in the sandbox.
 
 > **Important**: This method must be called immediately after `getSandbox()` and before any other operations. Once a sandbox instance starts up, environment variables cannot be changed
-for that instance.
+> for that instance.
 
 ```typescript
 const sandbox = getSandbox(env.Sandbox, "my-sandbox");
@@ -263,7 +263,7 @@ export default {
 
     // Your custom routes here
     // ...
-  },
+  }
 };
 ```
 
@@ -284,7 +284,7 @@ The SDK handles:
 
 ```dockerfile
 # In your Dockerfile (only needed for local dev)
-FROM oven/bun:latest
+FROM docker.io/cloudflare/sandbox:0.1.3
 
 # Expose the ports you'll be using
 EXPOSE 3000  # For a web server
@@ -357,7 +357,7 @@ return new Response(
   JSON.stringify({
     tests: testResult.exitCode === 0 ? "passed" : "failed",
     build: buildResult.exitCode === 0 ? "success" : "failed",
-    output: testResult.stdout,
+    output: testResult.stdout
   })
 );
 ```
@@ -422,22 +422,22 @@ The SDK leverages Cloudflare's infrastructure:
 The SDK provides powerful streaming capabilities with typed AsyncIterable support:
 
 ```typescript
-import { parseSSEStream, type ExecEvent } from '@cloudflare/sandbox';
+import { parseSSEStream, type ExecEvent } from "@cloudflare/sandbox";
 
 // Stream command execution
-const stream = await sandbox.execStream('npm run build');
+const stream = await sandbox.execStream("npm run build");
 for await (const event of parseSSEStream<ExecEvent>(stream)) {
   switch (event.type) {
-    case 'start':
+    case "start":
       console.log(`Build started: ${event.command}`);
       break;
-    case 'stdout':
+    case "stdout":
       console.log(`Build: ${event.data}`);
       break;
-    case 'complete':
+    case "complete":
       console.log(`Exit code: ${event.exitCode}`);
       break;
-    case 'error':
+    case "error":
       console.error(`Error: ${event.error}`);
       break;
   }
@@ -455,19 +455,20 @@ The SDK exports utilities for working with Server-Sent Event streams:
 #### Advanced Streaming Examples
 
 **CI/CD Build System:**
+
 ```typescript
 export async function runBuild(env: Env, buildId: string) {
   const sandbox = getSandbox(env.SANDBOX, buildId);
-  const stream = await sandbox.execStream('npm run build');
+  const stream = await sandbox.execStream("npm run build");
 
   for await (const event of parseSSEStream<ExecEvent>(stream)) {
     switch (event.type) {
-      case 'start':
-        await env.BUILDS.put(buildId, { status: 'running' });
+      case "start":
+        await env.BUILDS.put(buildId, { status: "running" });
         break;
-      case 'complete':
+      case "complete":
         await env.BUILDS.put(buildId, {
-          status: event.exitCode === 0 ? 'success' : 'failed',
+          status: event.exitCode === 0 ? "success" : "failed",
           exitCode: event.exitCode
         });
         break;
@@ -477,14 +478,15 @@ export async function runBuild(env: Env, buildId: string) {
 ```
 
 **System Monitoring:**
+
 ```typescript
-const monitor = await sandbox.startProcess('tail -f /var/log/system.log');
+const monitor = await sandbox.startProcess("tail -f /var/log/system.log");
 const logStream = await sandbox.streamProcessLogs(monitor.id);
 
 for await (const log of parseSSEStream<LogEvent>(logStream)) {
-  if (log.type === 'stdout' && log.data.includes('ERROR')) {
+  if (log.type === "stdout" && log.data.includes("ERROR")) {
     await env.ALERTS.send({
-      severity: 'high',
+      severity: "high",
       message: log.data,
       timestamp: log.timestamp
     });

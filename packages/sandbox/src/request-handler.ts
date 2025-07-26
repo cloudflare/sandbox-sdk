@@ -1,9 +1,5 @@
 import { getSandbox, type Sandbox } from "./sandbox";
-import {
-  logSecurityEvent,
-  sanitizeSandboxId,
-  validatePort
-} from "./security";
+import { logSecurityEvent, sanitizeSandboxId, validatePort } from "./security";
 
 export interface SandboxEnv {
   Sandbox: DurableObjectNamespace<Sandbox>;
@@ -46,32 +42,38 @@ export async function proxyToSandbox<E extends SandboxEnv>(
       method: request.method,
       headers: {
         ...Object.fromEntries(request.headers),
-        'X-Original-URL': request.url,
-        'X-Forwarded-Host': url.hostname,
-        'X-Forwarded-Proto': url.protocol.replace(':', ''),
-        'X-Sandbox-Name': sandboxId, // Pass the friendly name
+        "X-Original-URL": request.url,
+        "X-Forwarded-Host": url.hostname,
+        "X-Forwarded-Proto": url.protocol.replace(":", ""),
+        "X-Sandbox-Name": sandboxId // Pass the friendly name
       },
-      body: request.body,
+      body: request.body
     });
 
     return sandbox.containerFetch(proxyRequest, port);
   } catch (error) {
-    console.error('[Sandbox] Proxy routing error:', error);
-    return new Response('Proxy routing error', { status: 500 });
+    console.error("[Sandbox] Proxy routing error:", error);
+    return new Response("Proxy routing error", { status: 500 });
   }
 }
 
 function extractSandboxRoute(url: URL): RouteInfo | null {
   // Parse subdomain pattern: port-sandboxId.domain
-  const subdomainMatch = url.hostname.match(/^(\d{4,5})-([^.-][^.]*[^.-]|[^.-])\.(.+)$/);
+  const subdomainMatch = url.hostname.match(
+    /^(\d{4,5})-([^.-][^.]*[^.-]|[^.-])\.(.+)$/
+  );
 
   if (!subdomainMatch) {
     // Log malformed subdomain attempts
-    if (url.hostname.includes('-') && url.hostname.includes('.')) {
-      logSecurityEvent('MALFORMED_SUBDOMAIN_ATTEMPT', {
-        hostname: url.hostname,
-        url: url.toString()
-      }, 'medium');
+    if (url.hostname.includes("-") && url.hostname.includes(".")) {
+      logSecurityEvent(
+        "MALFORMED_SUBDOMAIN_ATTEMPT",
+        {
+          hostname: url.hostname,
+          url: url.toString()
+        },
+        "medium"
+      );
     }
     return null;
   }
@@ -82,13 +84,17 @@ function extractSandboxRoute(url: URL): RouteInfo | null {
 
   const port = parseInt(portStr, 10);
   if (!validatePort(port)) {
-    logSecurityEvent('INVALID_PORT_IN_SUBDOMAIN', {
-      port,
-      portStr,
-      sandboxId,
-      hostname: url.hostname,
-      url: url.toString()
-    }, 'high');
+    logSecurityEvent(
+      "INVALID_PORT_IN_SUBDOMAIN",
+      {
+        port,
+        portStr,
+        sandboxId,
+        hostname: url.hostname,
+        url: url.toString()
+      },
+      "high"
+    );
     return null;
   }
 
@@ -96,39 +102,51 @@ function extractSandboxRoute(url: URL): RouteInfo | null {
   try {
     sanitizedSandboxId = sanitizeSandboxId(sandboxId);
   } catch (error) {
-    logSecurityEvent('INVALID_SANDBOX_ID_IN_SUBDOMAIN', {
-      sandboxId,
-      port,
-      hostname: url.hostname,
-      url: url.toString(),
-      error: error instanceof Error ? error.message : 'Unknown error'
-    }, 'high');
+    logSecurityEvent(
+      "INVALID_SANDBOX_ID_IN_SUBDOMAIN",
+      {
+        sandboxId,
+        port,
+        hostname: url.hostname,
+        url: url.toString(),
+        error: error instanceof Error ? error.message : "Unknown error"
+      },
+      "high"
+    );
     return null;
   }
 
   // DNS subdomain length limit is 63 characters
   if (sandboxId.length > 63) {
-    logSecurityEvent('SANDBOX_ID_LENGTH_VIOLATION', {
-      sandboxId,
-      length: sandboxId.length,
-      port,
-      hostname: url.hostname
-    }, 'medium');
+    logSecurityEvent(
+      "SANDBOX_ID_LENGTH_VIOLATION",
+      {
+        sandboxId,
+        length: sandboxId.length,
+        port,
+        hostname: url.hostname
+      },
+      "medium"
+    );
     return null;
   }
 
-  logSecurityEvent('SANDBOX_ROUTE_EXTRACTED', {
-    port,
-    sandboxId: sanitizedSandboxId,
-    domain,
-    path: url.pathname || "/",
-    hostname: url.hostname
-  }, 'low');
+  logSecurityEvent(
+    "SANDBOX_ROUTE_EXTRACTED",
+    {
+      port,
+      sandboxId: sanitizedSandboxId,
+      domain,
+      path: url.pathname || "/",
+      hostname: url.hostname
+    },
+    "low"
+  );
 
   return {
     port,
     sandboxId: sanitizedSandboxId,
-    path: url.pathname || "/",
+    path: url.pathname || "/"
   };
 }
 
