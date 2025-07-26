@@ -12,6 +12,3 @@ FROM cloudflare/sandbox-test:0.1.3
 # expose any ports you might want to use (necessary for local dev)
 # EXPOSE 8080
 # EXPOSE 3001
-
-# # Run the same command as the original image
-# CMD ["bun", "index.ts"]
