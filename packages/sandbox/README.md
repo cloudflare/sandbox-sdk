@@ -205,8 +205,7 @@ await sandbox.gitCheckout("https://github.com/user/repo", {
 
 Set environment variables dynamically in the sandbox.
 
-> **Important**: This method must be called immediately after `getSandbox()` and before any other operations. Once a sandbox instance starts up, environment variables cannot be changed
-> for that instance.
+> **Important**: This method must be called immediately after `getSandbox()` and before any other operations. Once a sandbox instance starts up, environment variables cannot be changed for that instance.
 
 ```typescript
 const sandbox = getSandbox(env.Sandbox, "my-sandbox");
