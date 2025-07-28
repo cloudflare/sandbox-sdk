@@ -12,12 +12,19 @@ export abstract class BaseHttpClient {
   protected baseUrl: string;
   protected options: HttpClientOptions;
   protected sessionId: string | null = null;
+  private isTestEnvironment: boolean;
 
   constructor(options: HttpClientOptions = {}) {
     this.options = {
       ...options,
     };
     this.baseUrl = this.options.baseUrl!;
+    
+    // Detect test environment to reduce logging noise
+    this.isTestEnvironment = 
+      process.env.NODE_ENV === 'test' || 
+      process.env.VITEST === 'true' ||
+      typeof globalThis.expect !== 'undefined'; // Vitest globals check
   }
 
   /**
@@ -32,7 +39,10 @@ export abstract class BaseHttpClient {
       : `${this.baseUrl}${path}`;
     const method = options?.method || "GET";
 
-    console.log(`[HTTP Client] Making ${method} request to ${url}`);
+    // Only log HTTP details in non-test environments
+    if (!this.isTestEnvironment) {
+      console.log(`[HTTP Client] Making ${method} request to ${url}`);
+    }
 
     try {
       let response: Response;
@@ -47,11 +57,13 @@ export abstract class BaseHttpClient {
         response = await fetch(url, options);
       }
 
-      console.log(
-        `[HTTP Client] Response: ${response.status} ${response.statusText}`
-      );
+      if (!this.isTestEnvironment) {
+        console.log(
+          `[HTTP Client] Response: ${response.status} ${response.statusText}`
+        );
+      }
 
-      if (!response.ok) {
+      if (!response.ok && !this.isTestEnvironment) {
         console.error(
           `[HTTP Client] Request failed: ${method} ${url} - ${response.status} ${response.statusText}`
         );
@@ -59,7 +71,9 @@ export abstract class BaseHttpClient {
 
       return response;
     } catch (error) {
-      console.error(`[HTTP Client] Request error: ${method} ${url}`, error);
+      if (!this.isTestEnvironment) {
+        console.error(`[HTTP Client] Request error: ${method} ${url}`, error);
+      }
       throw error;
     }
   }
@@ -202,16 +216,20 @@ export abstract class BaseHttpClient {
    * Utility method to log successful operations
    */
   protected logSuccess(operation: string, details?: string): void {
-    const message = details
-      ? `[HTTP Client] ${operation}: ${details}`
-      : `[HTTP Client] ${operation} completed successfully`;
-    console.log(message);
+    if (!this.isTestEnvironment) {
+      const message = details
+        ? `[HTTP Client] ${operation}: ${details}`
+        : `[HTTP Client] ${operation} completed successfully`;
+      console.log(message);
+    }
   }
 
   /**
    * Utility method to log errors
    */
   protected logError(operation: string, error: unknown): void {
-    console.error(`[HTTP Client] Error in ${operation}:`, error);
+    if (!this.isTestEnvironment) {
+      console.error(`[HTTP Client] Error in ${operation}:`, error);
+    }
   }
 }

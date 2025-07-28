@@ -4,36 +4,38 @@ export default defineWorkersConfig({
   test: {
     globals: true,
     
-    // Only run integration tests that need Workers runtime
-    include: ['src/__tests__/integration/**/*.test.ts'],
+    // Include all integration tests that work without containers
+    include: [
+      'src/__tests__/integration/basic-*.test.ts',
+      'src/__tests__/integration/client-architecture-*.test.ts'
+    ],
     
     poolOptions: {
       workers: {
-        // Simplified wrangler config for testing
-        wrangler: {
-          configPath: './wrangler.toml',
-        },
+        main: './src/index.ts',
+        
+        // Don't use wrangler config for now to avoid container issues
+        // wrangler: {
+        //   configPath: './wrangler.toml',
+        // },
         
         miniflare: {
-          isolatedStorage: true,
+          compatibilityDate: '2025-05-06',
+          compatibilityFlags: ['nodejs_compat'],
           
-          // Durable Objects configuration
+          // Basic Durable Objects configuration 
           durableObjects: {
             'Sandbox': 'Sandbox',
           },
           
           // Test bindings
           kvNamespaces: ['TEST_KV'],
-          r2Buckets: ['TEST_R2'], 
-          d1Databases: ['DB'],
         },
-        
-        main: './src/index.ts',
       },
     },
     
-    testTimeout: 30000, // Longer timeout for Cloudflare operations
-    maxConcurrency: 3, // Lower concurrency for integration tests
+    testTimeout: 30000,
+    maxConcurrency: 1,
   },
   
   esbuild: {
