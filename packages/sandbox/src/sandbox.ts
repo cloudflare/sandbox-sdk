@@ -539,6 +539,16 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
 
+  async isPortExposed(port: number): Promise<boolean> {
+    try {
+      const response = await this.client.ports.getExposedPorts();
+      return response.ports.some(exposedPort => exposedPort.port === port);
+    } catch (error) {
+      console.error(`[Sandbox] Error checking if port ${port} is exposed:`, error);
+      return false;
+    }
+  }
+
   private constructPreviewUrl(port: number, sandboxId: string, hostname: string): string {
     if (!validatePort(port)) {
       logSecurityEvent('INVALID_PORT_REJECTED', {

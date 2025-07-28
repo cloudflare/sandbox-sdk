@@ -30,6 +30,36 @@ export async function proxyToSandbox<E extends SandboxEnv>(
     const { sandboxId, port, path } = routeInfo;
     const sandbox = getSandbox(env.Sandbox, sandboxId);
 
+    // Critical security check: Ensure port is exposed before routing
+    // Skip check for control plane port 3000
+    if (port !== 3000) {
+      const isExposed = await sandbox.isPortExposed(port);
+      if (!isExposed) {
+        logSecurityEvent('UNAUTHORIZED_PORT_ACCESS_BLOCKED', {
+          port,
+          sandboxId,
+          path,
+          hostname: url.hostname,
+          url: request.url,
+          method: request.method,
+          userAgent: request.headers.get('User-Agent') || 'unknown'
+        }, 'high');
+        
+        return new Response(
+          JSON.stringify({ 
+            error: `Port ${port} is not exposed or accessible`,
+            code: 'PORT_NOT_EXPOSED'
+          }), 
+          { 
+            status: 404,
+            headers: {
+              'Content-Type': 'application/json'
+            }
+          }
+        );
+      }
+    }
+
     // Build proxy request with proper headers
     let proxyUrl: string;
 
