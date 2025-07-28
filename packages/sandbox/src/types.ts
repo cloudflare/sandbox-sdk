@@ -1,5 +1,8 @@
-// Core Types
+/**
+ * Core SDK Types - Public API interfaces for Cloudflare Sandbox SDK consumers
+ */
 
+// Base execution options shared across command types
 export interface BaseExecOptions {
   /**
    * Session ID for grouping related commands
@@ -27,6 +30,7 @@ export interface BaseExecOptions {
   encoding?: string;
 }
 
+// Command execution types
 export interface ExecOptions extends BaseExecOptions {
   /**
    * Enable real-time output streaming via callbacks
@@ -80,7 +84,6 @@ export interface ExecResult {
    */
   command: string;
 
-
   /**
    * Execution duration in milliseconds
    */
@@ -97,8 +100,7 @@ export interface ExecResult {
   sessionId?: string;
 }
 
-// Background Process Types
-
+// Background process types
 export interface ProcessOptions extends BaseExecOptions {
   /**
    * Custom process ID for later reference
@@ -156,7 +158,6 @@ export interface Process {
    */
   readonly command: string;
 
-
   /**
    * Current process status
    */
@@ -198,8 +199,7 @@ export interface Process {
   getLogs(): Promise<{ stdout: string; stderr: string }>;
 }
 
-// Streaming Types
-
+// Streaming event types
 export interface ExecEvent {
   type: 'start' | 'stdout' | 'stderr' | 'complete' | 'error';
   timestamp: string;
@@ -207,7 +207,7 @@ export interface ExecEvent {
   command?: string;
   exitCode?: number;
   result?: ExecResult;
-  error?: string; // Changed to string for serialization
+  error?: string;
   sessionId?: string;
 }
 
@@ -217,7 +217,7 @@ export interface LogEvent {
   data: string;
   processId: string;
   sessionId?: string;
-  exitCode?: number; // For 'exit' events
+  exitCode?: number;
 }
 
 export interface StreamOptions extends BaseExecOptions {
@@ -232,120 +232,10 @@ export interface StreamOptions extends BaseExecOptions {
   signal?: AbortSignal;
 }
 
-// Error Types
 
-export class SandboxError extends Error {
-  constructor(message: string, public code?: string) {
-    super(message);
-    this.name = 'SandboxError';
-  }
-}
-
-export class ProcessNotFoundError extends SandboxError {
-  constructor(processId: string) {
-    super(`Process not found: ${processId}`, 'PROCESS_NOT_FOUND');
-    this.name = 'ProcessNotFoundError';
-  }
-}
-
-export class ProcessAlreadyExistsError extends SandboxError {
-  constructor(processId: string) {
-    super(`Process already exists: ${processId}`, 'PROCESS_EXISTS');
-    this.name = 'ProcessAlreadyExistsError';
-  }
-}
-
-export class ExecutionTimeoutError extends SandboxError {
-  constructor(timeout: number) {
-    super(`Execution timed out after ${timeout}ms`, 'EXECUTION_TIMEOUT');
-    this.name = 'ExecutionTimeoutError';
-  }
-}
-
-// Internal Container Types
-
-export interface ProcessRecord {
-  id: string;
-  pid?: number;
-  command: string;
-  status: ProcessStatus;
-  startTime: Date;
-  endTime?: Date;
-  exitCode?: number;
-  sessionId?: string;
-
-  // Internal fields
-  childProcess?: any;  // Node.js ChildProcess
-  stdout: string;      // Accumulated output (ephemeral)
-  stderr: string;      // Accumulated output (ephemeral)
-
-  // Streaming
-  outputListeners: Set<(stream: 'stdout' | 'stderr', data: string) => void>;
-  statusListeners: Set<(status: ProcessStatus) => void>;
-}
-
-// Container Request/Response Types
-
-export interface StartProcessRequest {
-  command: string;
-  options?: {
-    processId?: string;
-    sessionId?: string;
-    timeout?: number;
-    env?: Record<string, string>;
-    cwd?: string;
-    encoding?: string;
-    autoCleanup?: boolean;
-  };
-}
-
-export interface StartProcessResponse {
-  process: {
-    id: string;
-    pid?: number;
-    command: string;
-      status: ProcessStatus;
-    startTime: string;
-    sessionId?: string;
-  };
-}
-
-export interface ListProcessesResponse {
-  processes: Array<{
-    id: string;
-    pid?: number;
-    command: string;
-      status: ProcessStatus;
-    startTime: string;
-    endTime?: string;
-    exitCode?: number;
-    sessionId?: string;
-  }>;
-}
-
-export interface GetProcessResponse {
-  process: {
-    id: string;
-    pid?: number;
-    command: string;
-      status: ProcessStatus;
-    startTime: string;
-    endTime?: string;
-    exitCode?: number;
-    sessionId?: string;
-  } | null;
-}
-
-export interface GetProcessLogsResponse {
-  stdout: string;
-  stderr: string;
-  processId: string;
-}
-
-// Main Sandbox Interface
-
+// Main Sandbox interface
 export interface ISandbox {
-  // Enhanced execution API
+  // Command execution
   exec(command: string, options?: ExecOptions): Promise<ExecResult>;
 
   // Background process management
@@ -355,17 +245,16 @@ export interface ISandbox {
   killProcess(id: string, signal?: string): Promise<void>;
   killAllProcesses(): Promise<number>;
 
-  // Advanced streaming - returns ReadableStream that can be converted to AsyncIterable
+  // Streaming operations
   execStream(command: string, options?: StreamOptions): Promise<ReadableStream<Uint8Array>>;
   streamProcessLogs(processId: string, options?: { signal?: AbortSignal }): Promise<ReadableStream<Uint8Array>>;
 
   // Utility methods
   cleanupCompletedProcesses(): Promise<number>;
-  getProcessLogs(id: string): Promise<{ stdout: string; stderr: string }>;
+  getProcessLogs(id: string): Promise<{ stdout: string; stderr: string; processId: string }>;
 }
 
-// Type Guards
-
+// Type guards for runtime validation
 export function isExecResult(value: any): value is ExecResult {
   return value &&
     typeof value.success === 'boolean' &&

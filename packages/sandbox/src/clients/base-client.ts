@@ -1,0 +1,215 @@
+import type {
+  ErrorResponse,
+  HttpClientOptions,
+  ResponseHandler
+} from './types';
+
+/**
+ * Abstract base class providing common HTTP functionality for all domain clients
+ */
+export abstract class BaseHttpClient {
+  protected baseUrl: string;
+  protected options: HttpClientOptions;
+  protected sessionId: string | null = null;
+
+  constructor(options: HttpClientOptions = {}) {
+    this.options = {
+      ...options,
+    };
+    this.baseUrl = this.options.baseUrl!;
+  }
+
+  /**
+   * Core HTTP request method with error handling and logging
+   */
+  protected async doFetch(
+    path: string,
+    options?: RequestInit
+  ): Promise<Response> {
+    const url = this.options.stub
+      ? `http://localhost:${this.options.port}${path}`
+      : `${this.baseUrl}${path}`;
+    const method = options?.method || "GET";
+
+    console.log(`[HTTP Client] Making ${method} request to ${url}`);
+
+    try {
+      let response: Response;
+
+      if (this.options.stub) {
+        response = await this.options.stub.containerFetch(
+          url,
+          options || {},
+          this.options.port
+        );
+      } else {
+        response = await fetch(url, options);
+      }
+
+      console.log(
+        `[HTTP Client] Response: ${response.status} ${response.statusText}`
+      );
+
+      if (!response.ok) {
+        console.error(
+          `[HTTP Client] Request failed: ${method} ${url} - ${response.status} ${response.statusText}`
+        );
+      }
+
+      return response;
+    } catch (error) {
+      console.error(`[HTTP Client] Request error: ${method} ${url}`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Make a POST request with JSON body
+   */
+  protected async postJson<T>(
+    endpoint: string,
+    data: Record<string, any>,
+    responseHandler?: ResponseHandler<T>
+  ): Promise<T> {
+    const response = await this.doFetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(data),
+    });
+
+    return this.handleResponse(response, responseHandler);
+  }
+
+  /**
+   * Make a GET request
+   */
+  protected async get<T>(
+    endpoint: string,
+    responseHandler?: ResponseHandler<T>
+  ): Promise<T> {
+    const response = await this.doFetch(endpoint, {
+      method: 'GET',
+    });
+
+    return this.handleResponse(response, responseHandler);
+  }
+
+  /**
+   * Make a DELETE request
+   */
+  protected async delete<T>(
+    endpoint: string,
+    responseHandler?: ResponseHandler<T>
+  ): Promise<T> {
+    const response = await this.doFetch(endpoint, {
+      method: 'DELETE',
+    });
+
+    return this.handleResponse(response, responseHandler);
+  }
+
+
+  /**
+   * Handle HTTP response with error checking and parsing
+   */
+  protected async handleResponse<T>(
+    response: Response,
+    customHandler?: ResponseHandler<T>
+  ): Promise<T> {
+    if (!response.ok) {
+      await this.handleErrorResponse(response);
+    }
+
+    if (customHandler) {
+      return customHandler(response);
+    }
+
+    return response.json();
+  }
+
+  /**
+   * Handle error responses with consistent error throwing
+   */
+  protected async handleErrorResponse(response: Response): Promise<never> {
+    let errorData: ErrorResponse;
+    
+    try {
+      errorData = await response.json();
+    } catch {
+      errorData = { 
+        error: `HTTP error! status: ${response.status}`,
+        details: response.statusText 
+      };
+    }
+
+    const error = new Error(errorData.error || `HTTP error! status: ${response.status}`);
+    
+    // Call error callback if provided
+    this.options.onError?.(errorData.error, undefined);
+    
+    throw error;
+  }
+
+  /**
+   * Include session ID in request data if available
+   */
+  protected withSession(data: Record<string, any>, sessionId?: string): Record<string, any> {
+    const targetSessionId = sessionId || this.sessionId;
+    
+    if (targetSessionId) {
+      return { ...data, sessionId: targetSessionId };
+    }
+    
+    return data;
+  }
+
+  /**
+   * Set the session ID for subsequent requests
+   */
+  public setSessionId(sessionId: string | null): void {
+    this.sessionId = sessionId;
+  }
+
+  /**
+   * Get the current session ID
+   */
+  public getSessionId(): string | null {
+    return this.sessionId;
+  }
+
+  /**
+   * Create a streaming response handler for Server-Sent Events
+   */
+  protected async handleStreamResponse(
+    response: Response
+  ): Promise<ReadableStream<Uint8Array>> {
+    if (!response.ok) {
+      await this.handleErrorResponse(response);
+    }
+
+    if (!response.body) {
+      throw new Error('No response body for streaming');
+    }
+
+    return response.body;
+  }
+
+  /**
+   * Utility method to log successful operations
+   */
+  protected logSuccess(operation: string, details?: string): void {
+    const message = details 
+      ? `[HTTP Client] ${operation}: ${details}`
+      : `[HTTP Client] ${operation} completed successfully`;
+    console.log(message);
+  }
+
+  /**
+   * Utility method to log errors
+   */
+  protected logError(operation: string, error: unknown): void {
+    console.error(`[HTTP Client] Error in ${operation}:`, error);
+  }
+}

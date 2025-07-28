@@ -250,12 +250,6 @@ const server = serve({
           }
           break;
 
-        case "/api/unexpose-port":
-          if (req.method === "DELETE") {
-            return handleUnexposePortRequest(exposedPorts, req, corsHeaders);
-          }
-          break;
-
         case "/api/exposed-ports":
           if (req.method === "GET") {
             return handleGetExposedPortsRequest(exposedPorts, req, corsHeaders);
@@ -296,6 +290,19 @@ const server = serve({
                 return handleGetProcessLogsRequest(processes, req, corsHeaders, processId);
               } else if (action === "stream" && req.method === "GET") {
                 return handleStreamProcessLogsRequest(processes, req, corsHeaders, processId);
+              }
+            }
+          }
+          
+          // Handle dynamic routes for individual exposed ports
+          if (pathname.startsWith("/api/exposed-ports/")) {
+            const segments = pathname.split('/');
+            if (segments.length >= 4) {
+              const portStr = segments[3];
+              const port = parseInt(portStr, 10);
+              
+              if (!isNaN(port) && req.method === "DELETE") {
+                return handleUnexposePortRequest(exposedPorts, req, corsHeaders, port);
               }
             }
           }
@@ -347,7 +354,7 @@ console.log(`   POST /api/delete - Delete a file`);
 console.log(`   POST /api/rename - Rename a file`);
 console.log(`   POST /api/move - Move a file`);
 console.log(`   POST /api/expose-port - Expose a port for external access`);
-console.log(`   DELETE /api/unexpose-port - Unexpose a port`);
+console.log(`   DELETE /api/exposed-ports/{port} - Unexpose a specific port`);
 console.log(`   GET  /api/exposed-ports - List exposed ports`);
 console.log(`   POST /api/process/start - Start a background process`);
 console.log(`   GET  /api/process/list - List all processes`);

@@ -81,16 +81,14 @@ export async function handleExposePortRequest(
 export async function handleUnexposePortRequest(
   exposedPorts: Map<number, { name?: string; exposedAt: Date }>,
   req: Request,
-  corsHeaders: Record<string, string>
+  corsHeaders: Record<string, string>,
+  port: number
 ): Promise<Response> {
   try {
-    const body = (await req.json()) as UnexposePortRequest;
-    const { port } = body;
-
-    if (!port || typeof port !== "number") {
+    if (!port || typeof port !== "number" || port <= 0) {
       return new Response(
         JSON.stringify({
-          error: "Port is required and must be a number",
+          error: "Port is required and must be a valid positive number",
         }),
         {
           headers: {
