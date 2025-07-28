@@ -203,7 +203,7 @@ export class ProcessClient extends BaseHttpClient {
    */
   async streamProcessLogs(processId: string): Promise<ReadableStream<Uint8Array>> {
     try {
-      const response = await this.doFetch(`/api/process/${processId}/logs/stream`, {
+      const response = await this.doFetch(`/api/process/${processId}/stream`, {
         method: 'GET',
       });
 
