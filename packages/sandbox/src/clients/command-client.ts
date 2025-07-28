@@ -1,7 +1,5 @@
 import { BaseHttpClient } from './base-client';
-import { parseSSEStream } from '../sse-parser';
 import type { HttpClientOptions, SessionRequest } from './types';
-import type { ExecEvent } from '../types';
 
 /**
  * Request interface for command execution
@@ -40,7 +38,7 @@ export class CommandClient extends BaseHttpClient {
   ): Promise<ExecuteResponse> {
     try {
       const data = this.withSession({ command }, sessionId);
-      
+
       const response = await this.postJson<ExecuteResponse>(
         '/api/execute',
         data
@@ -63,13 +61,13 @@ export class CommandClient extends BaseHttpClient {
       return response;
     } catch (error) {
       this.logError('execute', error);
-      
+
       // Call error callback if provided
       this.options.onError?.(
         error instanceof Error ? error.message : String(error),
         command
       );
-      
+
       throw error;
     }
   }
@@ -83,7 +81,7 @@ export class CommandClient extends BaseHttpClient {
   ): Promise<ReadableStream<Uint8Array>> {
     try {
       const data = this.withSession({ command }, sessionId);
-      
+
       const response = await this.doFetch('/api/execute/stream', {
         method: 'POST',
         headers: {
@@ -93,19 +91,19 @@ export class CommandClient extends BaseHttpClient {
       });
 
       const stream = await this.handleStreamResponse(response);
-      
+
       this.logSuccess('Command stream started', command);
 
       return stream;
     } catch (error) {
       this.logError('executeStream', error);
-      
+
       // Call error callback if provided
       this.options.onError?.(
         error instanceof Error ? error.message : String(error),
         command
       );
-      
+
       throw error;
     }
   }

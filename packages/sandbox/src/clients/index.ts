@@ -11,6 +11,7 @@ export { UtilityClient } from './utility-client';
 
 // Types and interfaces
 export type {
+  ContainerStub,
   HttpClientOptions,
   BaseApiResponse,
   ErrorResponse,

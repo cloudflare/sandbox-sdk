@@ -2,7 +2,7 @@
 export { getSandbox, Sandbox } from "./sandbox";
 
 // Export the new client architecture
-export { 
+export {
   SandboxClient,
   CommandClient,
   FileClient,
@@ -16,9 +16,20 @@ export {
 
 // Export all client types from new architecture
 export type {
+  // Base client types
   HttpClientOptions as SandboxClientOptions,
+  ContainerStub,
+  BaseApiResponse,
+  ErrorResponse,
+  RequestConfig,
+  ResponseHandler,
+  SessionRequest,
+
+  // Command client types
   ExecuteRequest,
   ExecuteResponse as CommandExecuteResponse,
+
+  // File client types
   MkdirRequest,
   MkdirResponse,
   WriteFileRequest,
@@ -27,15 +38,30 @@ export type {
   ReadFileResponse,
   FileOperationRequest,
   FileOperationResponse,
+
+  // Process client types
+  StartProcessRequest,
+  StartProcessResponse,
+  ListProcessesResponse,
+  GetProcessResponse,
+  GetProcessLogsResponse,
+  KillProcessResponse,
+  KillAllProcessesResponse,
   ProcessInfo,
+
+  // Port client types
   ExposePortRequest,
   ExposePortResponse,
   UnexposePortRequest,
   UnexposePortResponse,
   ExposedPortInfo,
   GetExposedPortsResponse,
+
+  // Git client types
   GitCheckoutRequest,
   GitCheckoutResponse,
+
+  // Utility client types
   PingResponse,
   CommandsResponse
 } from "./clients";
