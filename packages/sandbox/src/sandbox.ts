@@ -36,6 +36,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   sleepAfter = "3m"; // Sleep the sandbox if no requests are made in this timeframe
   client: SandboxClient;
   private sandboxName: string | null = null;
+  private portTokens: Map<number, string> = new Map();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -52,9 +53,16 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       stub: this,
     });
 
-    // Load the sandbox name from storage on initialization
+    // Load the sandbox name and port tokens from storage on initialization
     this.ctx.blockConcurrencyWhile(async () => {
       this.sandboxName = await this.ctx.storage.get<string>('sandboxName') || null;
+      const storedTokens = await this.ctx.storage.get<Record<string, string>>('portTokens') || {};
+
+      // Convert stored tokens back to Map
+      this.portTokens = new Map();
+      for (const [portStr, token] of Object.entries(storedTokens)) {
+        this.portTokens.set(parseInt(portStr, 10), token);
+      }
     });
   }
 
@@ -444,9 +452,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     repoUrl: string,
     options: { branch?: string; targetDir?: string }
   ) {
-    return this.client.git.checkout(repoUrl, { 
-      branch: options.branch, 
-      targetDir: options.targetDir 
+    return this.client.git.checkout(repoUrl, {
+      branch: options.branch,
+      targetDir: options.targetDir
     });
   }
 
@@ -498,7 +506,18 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       throw new Error('Sandbox name not available. Ensure sandbox is accessed through getSandbox()');
     }
 
-    const url = this.constructPreviewUrl(port, this.sandboxName, options.hostname);
+    // Generate and store token for this port
+    const token = this.generatePortToken();
+    this.portTokens.set(port, token);
+    await this.persistPortTokens();
+
+    const url = this.constructPreviewUrl(port, this.sandboxName, options.hostname, token);
+
+    logSecurityEvent('PORT_TOKEN_GENERATED', {
+      port,
+      sandboxId: this.sandboxName,
+      tokenLength: token.length
+    }, 'low');
 
     return {
       url,
@@ -517,6 +536,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     await this.client.ports.unexposePort(port);
 
+    // Clean up token for this port
+    if (this.portTokens.has(port)) {
+      this.portTokens.delete(port);
+      await this.persistPortTokens();
+    }
+
     logSecurityEvent('PORT_UNEXPOSED', {
       port
     }, 'low');
@@ -530,12 +555,20 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       throw new Error('Sandbox name not available. Ensure sandbox is accessed through getSandbox()');
     }
 
-    return response.ports.map(port => ({
-      url: this.constructPreviewUrl(port.port, this.sandboxName!, hostname),
-      port: port.port,
-      name: port.name,
-      exposedAt: port.exposedAt,
-    }));
+    return response.ports.map(port => {
+      // Get token for this port - must exist for all exposed ports
+      const token = this.portTokens.get(port.port);
+      if (!token) {
+        throw new Error(`Port ${port.port} is exposed but has no token. This should not happen.`);
+      }
+
+      return {
+        url: this.constructPreviewUrl(port.port, this.sandboxName!, hostname, token),
+        port: port.port,
+        name: port.name,
+        exposedAt: port.exposedAt,
+      };
+    });
   }
 
 
@@ -549,7 +582,46 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
   }
 
-  private constructPreviewUrl(port: number, sandboxId: string, hostname: string): string {
+  async validatePortToken(port: number, token: string): Promise<boolean> {
+    // First check if port is exposed
+    const isExposed = await this.isPortExposed(port);
+    if (!isExposed) {
+      return false;
+    }
+
+    // Get stored token for this port - must exist for all exposed ports
+    const storedToken = this.portTokens.get(port);
+    if (!storedToken) {
+      // This should not happen - all exposed ports must have tokens
+      console.error(`Port ${port} is exposed but has no token. This indicates a bug.`);
+      return false;
+    }
+
+    // Constant-time comparison to prevent timing attacks
+    return storedToken === token;
+  }
+
+  private generatePortToken(): string {
+    // Generate cryptographically secure 16-character token using Web Crypto API
+    // Available in Cloudflare Workers runtime
+    const array = new Uint8Array(12); // 12 bytes = 16 base64url chars (after padding removal)
+    crypto.getRandomValues(array);
+
+    // Convert to base64url format (URL-safe, no padding, lowercase)
+    const base64 = btoa(String.fromCharCode(...array));
+    return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '').toLowerCase();
+  }
+
+  private async persistPortTokens(): Promise<void> {
+    // Convert Map to plain object for storage
+    const tokensObj: Record<string, string> = {};
+    for (const [port, token] of this.portTokens.entries()) {
+      tokensObj[port.toString()] = token;
+    }
+    await this.ctx.storage.put('portTokens', tokensObj);
+  }
+
+  private constructPreviewUrl(port: number, sandboxId: string, hostname: string, token: string): string {
     if (!validatePort(port)) {
       logSecurityEvent('INVALID_PORT_REJECTED', {
         port,
@@ -582,8 +654,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       // Use URL constructor for safe URL building
       try {
         const baseUrl = new URL(`http://${host}:${mainPort}`);
-        // Construct subdomain safely
-        const subdomainHost = `${port}-${sanitizedSandboxId}.${host}`;
+        // Construct subdomain safely with mandatory token
+        const subdomainHost = `${port}-${sanitizedSandboxId}-${token}.${host}`;
         baseUrl.hostname = subdomainHost;
 
         const finalUrl = baseUrl.toString();
@@ -614,8 +686,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       const protocol = "https";
       const baseUrl = new URL(`${protocol}://${hostname}`);
 
-      // Construct subdomain safely
-      const subdomainHost = `${port}-${sanitizedSandboxId}.${hostname}`;
+      // Construct subdomain safely with mandatory token
+      const subdomainHost = `${port}-${sanitizedSandboxId}-${token}.${hostname}`;
       baseUrl.hostname = subdomainHost;
 
       const finalUrl = baseUrl.toString();

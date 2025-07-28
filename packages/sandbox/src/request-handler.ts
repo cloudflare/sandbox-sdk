@@ -13,6 +13,7 @@ export interface RouteInfo {
   port: number;
   sandboxId: string;
   path: string;
+  token: string;
 }
 
 export async function proxyToSandbox<E extends SandboxEnv>(
@@ -27,15 +28,16 @@ export async function proxyToSandbox<E extends SandboxEnv>(
       return null; // Not a request to an exposed container port
     }
 
-    const { sandboxId, port, path } = routeInfo;
+    const { sandboxId, port, path, token } = routeInfo;
     const sandbox = getSandbox(env.Sandbox, sandboxId);
 
-    // Critical security check: Ensure port is exposed before routing
+    // Critical security check: Validate token (mandatory for all user ports)
     // Skip check for control plane port 3000
     if (port !== 3000) {
-      const isExposed = await sandbox.isPortExposed(port);
-      if (!isExposed) {
-        logSecurityEvent('UNAUTHORIZED_PORT_ACCESS_BLOCKED', {
+      // Validate the token matches the port
+      const isValidToken = await sandbox.validatePortToken(port, token);
+      if (!isValidToken) {
+        logSecurityEvent('INVALID_TOKEN_ACCESS_BLOCKED', {
           port,
           sandboxId,
           path,
@@ -44,13 +46,13 @@ export async function proxyToSandbox<E extends SandboxEnv>(
           method: request.method,
           userAgent: request.headers.get('User-Agent') || 'unknown'
         }, 'high');
-        
+
         return new Response(
-          JSON.stringify({ 
-            error: `Port ${port} is not exposed or accessible`,
-            code: 'PORT_NOT_EXPOSED'
-          }), 
-          { 
+          JSON.stringify({
+            error: `Access denied: Invalid token or port not exposed`,
+            code: 'INVALID_TOKEN'
+          }),
+          {
             status: 404,
             headers: {
               'Content-Type': 'application/json'
@@ -92,8 +94,8 @@ export async function proxyToSandbox<E extends SandboxEnv>(
 }
 
 function extractSandboxRoute(url: URL): RouteInfo | null {
-  // Parse subdomain pattern: port-sandboxId.domain
-  const subdomainMatch = url.hostname.match(/^(\d{4,5})-([^.-][^.]*[^.-]|[^.-])\.(.+)$/);
+  // Parse subdomain pattern: port-sandboxId-token.domain (tokens mandatory)
+  const subdomainMatch = url.hostname.match(/^(\d{4,5})-([^.-][^.]*[^.-]|[^.-])-([a-zA-Z0-9_-]{12,20})\.(.+)$/);
 
   if (!subdomainMatch) {
     // Log malformed subdomain attempts
@@ -108,7 +110,8 @@ function extractSandboxRoute(url: URL): RouteInfo | null {
 
   const portStr = subdomainMatch[1];
   const sandboxId = subdomainMatch[2];
-  const domain = subdomainMatch[3];
+  const token = subdomainMatch[3]; // Mandatory token
+  const domain = subdomainMatch[4];
 
   const port = parseInt(portStr, 10);
   if (!validatePort(port)) {
@@ -152,13 +155,15 @@ function extractSandboxRoute(url: URL): RouteInfo | null {
     sandboxId: sanitizedSandboxId,
     domain,
     path: url.pathname || "/",
-    hostname: url.hostname
+    hostname: url.hostname,
+    hasToken: !!token
   }, 'low');
 
   return {
     port,
     sandboxId: sanitizedSandboxId,
     path: url.pathname || "/",
+    token,
   };
 }
 
