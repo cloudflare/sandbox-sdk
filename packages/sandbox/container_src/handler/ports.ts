@@ -1,3 +1,4 @@
+import { mapPortError, createErrorResponse, SandboxOperation } from "../utils/error-mapping";
 import type { ExposePortRequest, UnexposePortRequest } from "../types";
 
 export async function handleExposePortRequest(
@@ -10,34 +11,38 @@ export async function handleExposePortRequest(
     const { port, name } = body;
 
     if (!port || typeof port !== "number") {
-      return new Response(
-        JSON.stringify({
-          error: "Port is required and must be a number",
-        }),
-        {
-          headers: {
-            "Content-Type": "application/json",
-            ...corsHeaders,
-          },
-          status: 400,
-        }
-      );
+      const errorData = {
+        error: "Port is required and must be a number",
+        code: 'INVALID_PORT_NUMBER',
+        operation: SandboxOperation.PORT_EXPOSE,
+        httpStatus: 400,
+        details: 'Port parameter is missing or not a valid number'
+      };
+      return createErrorResponse(errorData, corsHeaders);
     }
 
     // Validate port range
     if (port < 1 || port > 65535) {
-      return new Response(
-        JSON.stringify({
-          error: "Port must be between 1 and 65535",
-        }),
-        {
-          headers: {
-            "Content-Type": "application/json",
-            ...corsHeaders,
-          },
-          status: 400,
-        }
-      );
+      const errorData = {
+        error: `Invalid port number: ${port}`,
+        code: 'INVALID_PORT_NUMBER',
+        operation: SandboxOperation.PORT_EXPOSE,
+        httpStatus: 400,
+        details: `Port must be between 1 and 65535, got ${port}`
+      };
+      return createErrorResponse(errorData, corsHeaders);
+    }
+
+    // Check if port is already exposed
+    if (exposedPorts.has(port)) {
+      const errorData = {
+        error: `Port already exposed: ${port}`,
+        code: 'PORT_ALREADY_EXPOSED',
+        operation: SandboxOperation.PORT_EXPOSE,
+        httpStatus: 409,
+        details: `Port ${port} is already exposed and cannot be exposed again`
+      };
+      return createErrorResponse(errorData, corsHeaders);
     }
 
     // Store the exposed port
@@ -62,19 +67,8 @@ export async function handleExposePortRequest(
     );
   } catch (error) {
     console.error("[Server] Error in handleExposePortRequest:", error);
-    return new Response(
-      JSON.stringify({
-        error: "Failed to expose port",
-        message: error instanceof Error ? error.message : "Unknown error",
-      }),
-      {
-        headers: {
-          "Content-Type": "application/json",
-          ...corsHeaders,
-        },
-        status: 500,
-      }
-    );
+    const errorData = mapPortError(error, SandboxOperation.PORT_EXPOSE);
+    return createErrorResponse(errorData, corsHeaders);
   }
 }
 
@@ -86,34 +80,26 @@ export async function handleUnexposePortRequest(
 ): Promise<Response> {
   try {
     if (!port || typeof port !== "number" || port <= 0) {
-      return new Response(
-        JSON.stringify({
-          error: "Port is required and must be a valid positive number",
-        }),
-        {
-          headers: {
-            "Content-Type": "application/json",
-            ...corsHeaders,
-          },
-          status: 400,
-        }
-      );
+      const errorData = {
+        error: "Port is required and must be a valid positive number",
+        code: 'INVALID_PORT_NUMBER',
+        operation: SandboxOperation.PORT_UNEXPOSE,
+        httpStatus: 400,
+        details: `Invalid port parameter: ${port}`
+      };
+      return createErrorResponse(errorData, corsHeaders);
     }
 
     // Check if port is exposed
     if (!exposedPorts.has(port)) {
-      return new Response(
-        JSON.stringify({
-          error: "Port is not exposed",
-        }),
-        {
-          headers: {
-            "Content-Type": "application/json",
-            ...corsHeaders,
-          },
-          status: 404,
-        }
-      );
+      const errorData = {
+        error: `Port not exposed: ${port}`,
+        code: 'PORT_NOT_EXPOSED',
+        operation: SandboxOperation.PORT_UNEXPOSE,
+        httpStatus: 404,
+        details: `Port ${port} is not currently exposed and cannot be unexposed`
+      };
+      return createErrorResponse(errorData, corsHeaders);
     }
 
     // Remove the exposed port
@@ -136,19 +122,8 @@ export async function handleUnexposePortRequest(
     );
   } catch (error) {
     console.error("[Server] Error in handleUnexposePortRequest:", error);
-    return new Response(
-      JSON.stringify({
-        error: "Failed to unexpose port",
-        message: error instanceof Error ? error.message : "Unknown error",
-      }),
-      {
-        headers: {
-          "Content-Type": "application/json",
-          ...corsHeaders,
-        },
-        status: 500,
-      }
-    );
+    const errorData = mapPortError(error, SandboxOperation.PORT_UNEXPOSE, port);
+    return createErrorResponse(errorData, corsHeaders);
   }
 }
 
@@ -179,19 +154,8 @@ export async function handleGetExposedPortsRequest(
     );
   } catch (error) {
     console.error("[Server] Error in handleGetExposedPortsRequest:", error);
-    return new Response(
-      JSON.stringify({
-        error: "Failed to get exposed ports",
-        message: error instanceof Error ? error.message : "Unknown error",
-      }),
-      {
-        headers: {
-          "Content-Type": "application/json",
-          ...corsHeaders,
-        },
-        status: 500,
-      }
-    );
+    const errorData = mapPortError(error, SandboxOperation.PORT_LIST);
+    return createErrorResponse(errorData, corsHeaders);
   }
 }
 
@@ -206,50 +170,38 @@ export async function handleProxyRequest(
 
     // Extract port from path like /proxy/3000/...
     if (pathParts.length < 3) {
-      return new Response(
-        JSON.stringify({
-          error: "Invalid proxy path",
-        }),
-        {
-          headers: {
-            "Content-Type": "application/json",
-            ...corsHeaders,
-          },
-          status: 400,
-        }
-      );
+      const errorData = {
+        error: "Invalid proxy path",
+        code: 'INVALID_PROXY_PATH',
+        operation: SandboxOperation.PORT_PROXY,
+        httpStatus: 400,
+        details: `Proxy path must include port: /proxy/{port}/path, got ${url.pathname}`
+      };
+      return createErrorResponse(errorData, corsHeaders);
     }
 
     const port = parseInt(pathParts[2]);
     if (!port || Number.isNaN(port)) {
-      return new Response(
-        JSON.stringify({
-          error: "Invalid port in proxy path",
-        }),
-        {
-          headers: {
-            "Content-Type": "application/json",
-            ...corsHeaders,
-          },
-          status: 400,
-        }
-      );
+      const errorData = {
+        error: `Invalid port in proxy path: ${pathParts[2]}`,
+        code: 'INVALID_PORT_NUMBER',
+        operation: SandboxOperation.PORT_PROXY,
+        httpStatus: 400,
+        details: `Port must be a valid number, got "${pathParts[2]}"`
+      };
+      return createErrorResponse(errorData, corsHeaders);
     }
 
     // Check if port is exposed
     if (!exposedPorts.has(port)) {
-      return new Response(
-        JSON.stringify({
-          error: `Port ${port} is not exposed`,
-        }),
-        {
-          headers: {
-            "Content-Type": "application/json",
-            ...corsHeaders,
-          },
-          status: 404,
-        }
-      );
+      const errorData = {
+        error: `Port not exposed: ${port}`,
+        code: 'PORT_NOT_EXPOSED',
+        operation: SandboxOperation.PORT_PROXY,
+        httpStatus: 404,
+        details: `Cannot proxy to port ${port} because it is not currently exposed`
+      };
+      return createErrorResponse(errorData, corsHeaders);
     }
 
     // Construct the target URL
@@ -279,34 +231,18 @@ export async function handleProxyRequest(
       });
     } catch (fetchError) {
       console.error(`[Server] Error proxying to port ${port}:`, fetchError);
-      return new Response(
-        JSON.stringify({
-          error: `Service on port ${port} is not responding`,
-          message: fetchError instanceof Error ? fetchError.message : "Unknown error",
-        }),
-        {
-          headers: {
-            "Content-Type": "application/json",
-            ...corsHeaders,
-          },
-          status: 502,
-        }
-      );
+      const errorData = {
+        error: `Service on port ${port} is not responding`,
+        code: 'SERVICE_NOT_RESPONDING',
+        operation: SandboxOperation.PORT_PROXY,
+        httpStatus: 502,
+        details: `Failed to connect to service on port ${port}: ${fetchError instanceof Error ? fetchError.message : 'Unknown error'}`
+      };
+      return createErrorResponse(errorData, corsHeaders);
     }
   } catch (error) {
     console.error("[Server] Error in handleProxyRequest:", error);
-    return new Response(
-      JSON.stringify({
-        error: "Failed to proxy request",
-        message: error instanceof Error ? error.message : "Unknown error",
-      }),
-      {
-        headers: {
-          "Content-Type": "application/json",
-          ...corsHeaders,
-        },
-        status: 500,
-      }
-    );
+    const errorData = mapPortError(error, SandboxOperation.PORT_PROXY);
+    return createErrorResponse(errorData, corsHeaders);
   }
 }

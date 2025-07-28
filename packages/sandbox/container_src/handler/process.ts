@@ -1,5 +1,6 @@
 import { type SpawnOptions, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
+import { mapProcessError, createErrorResponse, SandboxOperation } from "../utils/error-mapping";
 import type { ProcessRecord, ProcessStatus, StartProcessRequest } from "../types";
 
 // Generate a unique process ID using cryptographically secure randomness
@@ -172,19 +173,8 @@ export async function handleStartProcessRequest(
         }
     } catch (error) {
         console.error("[Server] Error in handleStartProcessRequest:", error);
-        return new Response(
-            JSON.stringify({
-                error: "Failed to start process",
-                message: error instanceof Error ? error.message : "Unknown error",
-            }),
-            {
-                headers: {
-                    "Content-Type": "application/json",
-                    ...corsHeaders,
-                },
-                status: 500,
-            }
-        );
+        const errorData = mapProcessError(error, SandboxOperation.PROCESS_START);
+        return createErrorResponse(errorData, corsHeaders);
     }
 }
 
@@ -308,18 +298,14 @@ export async function handleKillProcessRequest(
         const record = processes.get(processId);
 
         if (!record) {
-            return new Response(
-                JSON.stringify({
-                    error: `Process not found: ${processId}`,
-                }),
-                {
-                    headers: {
-                        "Content-Type": "application/json",
-                        ...corsHeaders,
-                    },
-                    status: 404,
-                }
-            );
+            const errorData = {
+                error: `Process not found: ${processId}`,
+                code: 'PROCESS_NOT_FOUND',
+                operation: SandboxOperation.PROCESS_KILL,
+                httpStatus: 404,
+                details: `Process with ID "${processId}" does not exist`
+            };
+            return createErrorResponse(errorData, corsHeaders);
         }
 
         if (record.childProcess && record.status === 'running') {

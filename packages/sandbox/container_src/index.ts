@@ -293,15 +293,15 @@ const server = serve({
               }
             }
           }
-          
+
           // Handle dynamic routes for individual exposed ports
           if (pathname.startsWith("/api/exposed-ports/")) {
             const segments = pathname.split('/');
             if (segments.length >= 4) {
               const portStr = segments[3];
               const port = parseInt(portStr, 10);
-              
-              if (!isNaN(port) && req.method === "DELETE") {
+
+              if (!Number.isNaN(port) && req.method === "DELETE") {
                 return handleUnexposePortRequest(exposedPorts, req, corsHeaders, port);
               }
             }

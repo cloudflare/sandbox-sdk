@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import { mapFileSystemError, createErrorResponse, SandboxOperation } from "../utils/error-mapping";
 import type {
     DeleteFileRequest,
     MkdirRequest,
@@ -167,19 +168,13 @@ export async function handleMkdirRequest(
         );
     } catch (error) {
         console.error("[Server] Error in handleMkdirRequest:", error);
-        return new Response(
-            JSON.stringify({
-                error: "Failed to create directory",
-                message: error instanceof Error ? error.message : "Unknown error",
-            }),
-            {
-                headers: {
-                    "Content-Type": "application/json",
-                    ...corsHeaders,
-                },
-                status: 500,
-            }
-        );
+        let path = "unknown";
+        try {
+            const body = await req.clone().json() as MkdirRequest;
+            path = body?.path || "unknown";
+        } catch {}
+        const errorData = mapFileSystemError(error, SandboxOperation.DIRECTORY_CREATE, path);
+        return createErrorResponse(errorData, corsHeaders);
     }
 }
 
@@ -296,19 +291,13 @@ export async function handleWriteFileRequest(
         );
     } catch (error) {
         console.error("[Server] Error in handleWriteFileRequest:", error);
-        return new Response(
-            JSON.stringify({
-                error: "Failed to write file",
-                message: error instanceof Error ? error.message : "Unknown error",
-            }),
-            {
-                headers: {
-                    "Content-Type": "application/json",
-                    ...corsHeaders,
-                },
-                status: 500,
-            }
-        );
+        let path = "unknown";
+        try {
+            const body = await req.clone().json() as WriteFileRequest;
+            path = body?.path || "unknown";
+        } catch {}
+        const errorData = mapFileSystemError(error, SandboxOperation.FILE_WRITE, path);
+        return createErrorResponse(errorData, corsHeaders);
     }
 }
 
@@ -419,19 +408,13 @@ export async function handleReadFileRequest(
         );
     } catch (error) {
         console.error("[Server] Error in handleReadFileRequest:", error);
-        return new Response(
-            JSON.stringify({
-                error: "Failed to read file",
-                message: error instanceof Error ? error.message : "Unknown error",
-            }),
-            {
-                headers: {
-                    "Content-Type": "application/json",
-                    ...corsHeaders,
-                },
-                status: 500,
-            }
-        );
+        let path = "unknown";
+        try {
+            const body = await req.clone().json() as ReadFileRequest;
+            path = body?.path || "unknown";
+        } catch {}
+        const errorData = mapFileSystemError(error, SandboxOperation.FILE_READ, path);
+        return createErrorResponse(errorData, corsHeaders);
     }
 }
 
@@ -536,19 +519,13 @@ export async function handleDeleteFileRequest(
         );
     } catch (error) {
         console.error("[Server] Error in handleDeleteFileRequest:", error);
-        return new Response(
-            JSON.stringify({
-                error: "Failed to delete file",
-                message: error instanceof Error ? error.message : "Unknown error",
-            }),
-            {
-                headers: {
-                    "Content-Type": "application/json",
-                    ...corsHeaders,
-                },
-                status: 500,
-            }
-        );
+        let path = "unknown";
+        try {
+            const body = await req.clone().json() as DeleteFileRequest;
+            path = body?.path || "unknown";
+        } catch {}
+        const errorData = mapFileSystemError(error, SandboxOperation.FILE_DELETE, path);
+        return createErrorResponse(errorData, corsHeaders);
     }
 }
 
@@ -679,19 +656,13 @@ export async function handleRenameFileRequest(
         );
     } catch (error) {
         console.error("[Server] Error in handleRenameFileRequest:", error);
-        return new Response(
-            JSON.stringify({
-                error: "Failed to rename file",
-                message: error instanceof Error ? error.message : "Unknown error",
-            }),
-            {
-                headers: {
-                    "Content-Type": "application/json",
-                    ...corsHeaders,
-                },
-                status: 500,
-            }
-        );
+        let path = "unknown";
+        try {
+            const body = await req.clone().json() as RenameFileRequest;
+            path = body?.oldPath || "unknown";
+        } catch {}
+        const errorData = mapFileSystemError(error, SandboxOperation.FILE_RENAME, path);
+        return createErrorResponse(errorData, corsHeaders);
     }
 }
 
@@ -826,19 +797,13 @@ export async function handleMoveFileRequest(
         );
     } catch (error) {
         console.error("[Server] Error in handleMoveFileRequest:", error);
-        return new Response(
-            JSON.stringify({
-                error: "Failed to move file",
-                message: error instanceof Error ? error.message : "Unknown error",
-            }),
-            {
-                headers: {
-                    "Content-Type": "application/json",
-                    ...corsHeaders,
-                },
-                status: 500,
-            }
-        );
+        let path = "unknown";
+        try {
+            const body = await req.clone().json() as MoveFileRequest;
+            path = body?.sourcePath || "unknown";
+        } catch {}
+        const errorData = mapFileSystemError(error, SandboxOperation.FILE_MOVE, path);
+        return createErrorResponse(errorData, corsHeaders);
     }
 }
 

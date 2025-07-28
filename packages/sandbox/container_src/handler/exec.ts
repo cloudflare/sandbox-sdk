@@ -1,5 +1,6 @@
 import { type SpawnOptions, spawn } from "node:child_process";
 import type { ExecuteRequest, SessionData } from "../types";
+import { createErrorResponse, mapCommandError, SandboxOperation } from "../utils/error-mapping";
 
 function executeCommand(
   sessions: Map<string, SessionData>,
@@ -135,19 +136,13 @@ export async function handleExecuteRequest(
     );
   } catch (error) {
     console.error("[Server] Error in handleExecuteRequest:", error);
-    return new Response(
-      JSON.stringify({
-        error: "Failed to execute command",
-        message: error instanceof Error ? error.message : "Unknown error",
-      }),
-      {
-        headers: {
-          "Content-Type": "application/json",
-          ...corsHeaders,
-        },
-        status: 500,
-      }
-    );
+    let command = "unknown";
+    try {
+      const body = await req.clone().json() as ExecuteRequest;
+      command = body?.command || "unknown";
+    } catch {}
+    const errorData = mapCommandError(error, SandboxOperation.COMMAND_EXECUTE, command);
+    return createErrorResponse(errorData, corsHeaders);
   }
 }
 
@@ -320,18 +315,12 @@ export async function handleStreamingExecuteRequest(
     });
   } catch (error) {
     console.error("[Server] Error in handleStreamingExecuteRequest:", error);
-    return new Response(
-      JSON.stringify({
-        error: "Failed to execute streaming command",
-        message: error instanceof Error ? error.message : "Unknown error",
-      }),
-      {
-        headers: {
-          "Content-Type": "application/json",
-          ...corsHeaders,
-        },
-        status: 500,
-      }
-    );
+    let command = "unknown";
+    try {
+      const body = await req.clone().json() as ExecuteRequest;
+      command = body?.command || "unknown";
+    } catch {}
+    const errorData = mapCommandError(error, SandboxOperation.COMMAND_STREAM, command);
+    return createErrorResponse(errorData, corsHeaders);
   }
 }

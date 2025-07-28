@@ -3,6 +3,7 @@ import type {
   HttpClientOptions,
   ResponseHandler
 } from './types';
+import { mapContainerError } from '../utils/error-mapping';
 
 /**
  * Abstract base class providing common HTTP functionality for all domain clients
@@ -133,22 +134,23 @@ export abstract class BaseHttpClient {
    * Handle error responses with consistent error throwing
    */
   protected async handleErrorResponse(response: Response): Promise<never> {
-    let errorData: ErrorResponse;
-    
+    let errorData: ErrorResponse & { code?: string; operation?: import('../errors').SandboxOperationType; path?: string };
+
     try {
       errorData = await response.json();
     } catch {
-      errorData = { 
+      errorData = {
         error: `HTTP error! status: ${response.status}`,
-        details: response.statusText 
+        details: response.statusText
       };
     }
 
-    const error = new Error(errorData.error || `HTTP error! status: ${response.status}`);
-    
+    // Map to specific error types if possible
+    const error = mapContainerError(errorData);
+
     // Call error callback if provided
     this.options.onError?.(errorData.error, undefined);
-    
+
     throw error;
   }
 
@@ -157,11 +159,11 @@ export abstract class BaseHttpClient {
    */
   protected withSession(data: Record<string, any>, sessionId?: string): Record<string, any> {
     const targetSessionId = sessionId || this.sessionId;
-    
+
     if (targetSessionId) {
       return { ...data, sessionId: targetSessionId };
     }
-    
+
     return data;
   }
 
@@ -200,7 +202,7 @@ export abstract class BaseHttpClient {
    * Utility method to log successful operations
    */
   protected logSuccess(operation: string, details?: string): void {
-    const message = details 
+    const message = details
       ? `[HTTP Client] ${operation}: ${details}`
       : `[HTTP Client] ${operation} completed successfully`;
     console.log(message);

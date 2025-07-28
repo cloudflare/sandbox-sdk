@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
+import { mapGitError, createErrorResponse, SandboxOperation } from "../utils/error-mapping";
 import type { GitCheckoutRequest, SessionData } from "../types";
 
 function executeGitCheckout(
@@ -95,36 +96,28 @@ export async function handleGitCheckoutRequest(
     const { repoUrl, branch = "main", targetDir, sessionId } = body;
 
     if (!repoUrl || typeof repoUrl !== "string") {
-      return new Response(
-        JSON.stringify({
-          error: "Repository URL is required and must be a string",
-        }),
-        {
-          headers: {
-            "Content-Type": "application/json",
-            ...corsHeaders,
-          },
-          status: 400,
-        }
-      );
+      const errorData = {
+        error: "Repository URL is required and must be a string",
+        code: 'INVALID_GIT_URL',
+        operation: SandboxOperation.GIT_CHECKOUT,
+        httpStatus: 400,
+        details: 'Repository URL parameter is missing or not a valid string'
+      };
+      return createErrorResponse(errorData, corsHeaders);
     }
 
     // Validate repository URL format
     const urlPattern =
       /^(https?:\/\/|git@|ssh:\/\/).*\.git$|^https?:\/\/.*\/.*$/;
     if (!urlPattern.test(repoUrl)) {
-      return new Response(
-        JSON.stringify({
-          error: "Invalid repository URL format",
-        }),
-        {
-          headers: {
-            "Content-Type": "application/json",
-            ...corsHeaders,
-          },
-          status: 400,
-        }
-      );
+      const errorData = {
+        error: `Invalid repository URL format: ${repoUrl}`,
+        code: 'INVALID_GIT_URL',
+        operation: SandboxOperation.GIT_CHECKOUT,
+        httpStatus: 400,
+        details: `Repository URL "${repoUrl}" does not match expected format`
+      };
+      return createErrorResponse(errorData, corsHeaders);
     }
 
     // Generate target directory if not provided using cryptographically secure randomness
@@ -143,6 +136,13 @@ export async function handleGitCheckoutRequest(
       checkoutDir,
       sessionId
     );
+
+    // Check if git operation failed
+    if (!result.success) {
+      const gitError = { message: result.stderr, stderr: result.stderr };
+      const errorData = mapGitError(gitError, SandboxOperation.GIT_CHECKOUT, repoUrl, branch);
+      return createErrorResponse(errorData, corsHeaders);
+    }
 
     return new Response(
       JSON.stringify({
@@ -164,19 +164,15 @@ export async function handleGitCheckoutRequest(
     );
   } catch (error) {
     console.error("[Server] Error in handleGitCheckoutRequest:", error);
-    return new Response(
-      JSON.stringify({
-        error: "Failed to checkout repository",
-        message: error instanceof Error ? error.message : "Unknown error",
-      }),
-      {
-        headers: {
-          "Content-Type": "application/json",
-          ...corsHeaders,
-        },
-        status: 500,
-      }
-    );
+    let repoUrl = 'unknown';
+    let branch = 'unknown';
+    try {
+      const body = await req.clone().json() as GitCheckoutRequest;
+      repoUrl = body?.repoUrl || 'unknown';
+      branch = body?.branch || 'unknown';
+    } catch {}
+    const errorData = mapGitError(error, SandboxOperation.GIT_CHECKOUT, repoUrl, branch);
+    return createErrorResponse(errorData, corsHeaders);
   }
 }
 
