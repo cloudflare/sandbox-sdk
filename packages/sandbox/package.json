@@ -20,7 +20,17 @@
     "build": "rm -rf dist && tsup src/*.ts --outDir dist --dts --sourcemap --format esm",
     "docker:local": "docker build . -t cloudflare/sandbox-test:$npm_package_version",
     "docker:publish": "docker buildx build --platform linux/amd64,linux/arm64 -t cloudflare/sandbox:$npm_package_version --push .",
-    "docker:publish:beta": "docker buildx build --platform linux/amd64,linux/arm64 -t cloudflare/sandbox:$npm_package_version-beta --push ."
+    "docker:publish:beta": "docker buildx build --platform linux/amd64,linux/arm64 -t cloudflare/sandbox:$npm_package_version-beta --push .",
+    "test": "npm run test:unit && npm run test:integration",
+    "test:watch": "vitest --config vitest.unit.config.ts",
+    "test:ui": "vitest --ui --config vitest.unit.config.ts",
+    "test:coverage": "vitest run --coverage --config vitest.unit.config.ts",
+    "test:unit": "vitest run --config vitest.unit.config.ts",
+    "test:unit:watch": "vitest --config vitest.unit.config.ts",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "test:integration:watch": "vitest --config vitest.integration.config.ts",
+    "test:container": "vitest run src/__tests__/container",
+    "test:e2e": "vitest run src/__tests__/e2e"
   },
   "exports": {
     ".": {
