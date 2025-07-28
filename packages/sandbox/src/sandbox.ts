@@ -150,7 +150,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         // Regular execution
         const response = await this.client.execute(
           command,
-          options?.sessionId
+          {
+            sessionId: options?.sessionId,
+            cwd: options?.cwd,
+            env: options?.env,
+          }
         );
 
         const duration = Date.now() - startTime;

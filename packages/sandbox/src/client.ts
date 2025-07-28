@@ -1,16 +1,13 @@
+import type { ExecuteRequest } from "../container_src/types";
 import type { Sandbox } from "./index";
 import type {
+  BaseExecOptions,
   GetProcessLogsResponse,
   GetProcessResponse,
   ListProcessesResponse,
   StartProcessRequest,
   StartProcessResponse
 } from "./types";
-
-interface ExecuteRequest {
-  command: string;
-  sessionId?: string;
-}
 
 export interface ExecuteResponse {
   success: boolean;
@@ -255,16 +252,19 @@ export class HttpClient {
 
   async execute(
     command: string,
-    sessionId?: string
+    options: Pick<BaseExecOptions, 'sessionId' | 'cwd' | 'env'>
   ): Promise<ExecuteResponse> {
     try {
-      const targetSessionId = sessionId || this.sessionId;
+      const targetSessionId = options.sessionId || this.sessionId;
+      const executeRequest = {
+        command,
+        sessionId: targetSessionId,
+        cwd: options.cwd,
+        env: options.env,
+      } satisfies ExecuteRequest;
 
       const response = await this.doFetch(`/api/execute`, {
-        body: JSON.stringify({
-          command,
-          sessionId: targetSessionId,
-        } as ExecuteRequest),
+        body: JSON.stringify(executeRequest),
         headers: {
           "Content-Type": "application/json",
         },

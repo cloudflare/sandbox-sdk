@@ -38,10 +38,15 @@ export interface StartProcessRequest {
   };
 }
 
-export interface ExecuteRequest {
-  command: string;
-  sessionId?: string;
+export interface ExecuteOptions {
+  sessionId?: string | null;
   background?: boolean;
+  cwd?: string | URL;
+  env?: Record<string, string>;
+}
+
+export interface ExecuteRequest extends ExecuteOptions {
+  command: string;
 }
 
 export interface GitCheckoutRequest {

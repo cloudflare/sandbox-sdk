@@ -1,11 +1,10 @@
 import { type SpawnOptions, spawn } from "node:child_process";
-import type { ExecuteRequest, SessionData } from "../types";
+import type { ExecuteOptions, ExecuteRequest, SessionData } from "../types";
 
 function executeCommand(
   sessions: Map<string, SessionData>,
   command: string,
-  sessionId?: string,
-  background?: boolean
+  options: ExecuteOptions,
 ): Promise<{
   success: boolean;
   stdout: string;
@@ -16,14 +15,16 @@ function executeCommand(
     const spawnOptions: SpawnOptions = {
       shell: true,
       stdio: ["pipe", "pipe", "pipe"] as const,
-      detached: background || false,
+      detached: options.background || false,
+      cwd: options.cwd,
+      env: options.env ? { ...process.env, ...options.env } : process.env
     };
 
     const child = spawn(command, spawnOptions);
 
     // Store the process reference for cleanup if sessionId is provided
-    if (sessionId && sessions.has(sessionId)) {
-      const session = sessions.get(sessionId)!;
+    if (options.sessionId && sessions.has(options.sessionId)) {
+      const session = sessions.get(options.sessionId)!;
       session.activeProcess = child;
     }
 
@@ -38,7 +39,7 @@ function executeCommand(
       stderr += data.toString();
     });
 
-    if (background) {
+    if (options.background) {
       // For background processes, unref and return quickly
       child.unref();
 
@@ -61,8 +62,8 @@ function executeCommand(
       // Normal synchronous execution
       child.on("close", (code) => {
         // Clear the active process reference
-        if (sessionId && sessions.has(sessionId)) {
-          const session = sessions.get(sessionId)!;
+        if (options.sessionId && sessions.has(options.sessionId)) {
+          const session = sessions.get(options.sessionId)!;
           session.activeProcess = null;
         }
 
@@ -78,8 +79,8 @@ function executeCommand(
 
       child.on("error", (error) => {
         // Clear the active process reference
-        if (sessionId && sessions.has(sessionId)) {
-          const session = sessions.get(sessionId)!;
+        if (options.sessionId && sessions.has(options.sessionId)) {
+          const session = sessions.get(options.sessionId)!;
           session.activeProcess = null;
         }
 
@@ -96,7 +97,7 @@ export async function handleExecuteRequest(
 ): Promise<Response> {
   try {
     const body = (await req.json()) as ExecuteRequest;
-    const { command, sessionId, background } = body;
+    const { command, sessionId, background, cwd, env } = body;
 
     if (!command || typeof command !== "string") {
       return new Response(
@@ -115,7 +116,7 @@ export async function handleExecuteRequest(
 
     console.log(`[Server] Executing command: ${command}`);
 
-    const result = await executeCommand(sessions, command, sessionId, background);
+    const result = await executeCommand(sessions, command, { sessionId, background, cwd, env });
 
     return new Response(
       JSON.stringify({
