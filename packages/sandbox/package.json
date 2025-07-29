@@ -23,7 +23,8 @@
     "docker:local": "docker build . -t cloudflare/sandbox-test:$npm_package_version",
     "docker:publish": "docker buildx build --platform linux/amd64,linux/arm64 -t cloudflare/sandbox:$npm_package_version --push .",
     "docker:publish:beta": "docker buildx build --platform linux/amd64,linux/arm64 -t cloudflare/sandbox:$npm_package_version-beta --push .",
-    "test": "npm run test:unit && npm run test:integration",
+    "test": "npm run test:unit && npm run test:integration && npm run test:container",
+    "test:all": "npm run test:unit && npm run test:integration && npm run test:container && npm run test:e2e",
     "test:watch": "vitest --config vitest.unit.config.ts",
     "test:ui": "vitest --ui --config vitest.unit.config.ts",
     "test:coverage": "vitest run --coverage --config vitest.unit.config.ts",
@@ -33,7 +34,8 @@
     "test:integration:watch": "vitest --config vitest.integration.config.ts",
     "test:container": "vitest run --config vitest.container.config.ts",
     "test:container:watch": "vitest --config vitest.container.config.ts",
-    "test:e2e": "vitest run src/__tests__/e2e"
+    "test:e2e": "vitest run --config vitest.e2e.config.ts",
+    "test:e2e:watch": "vitest --config vitest.e2e.config.ts"
   },
   "exports": {
     ".": {

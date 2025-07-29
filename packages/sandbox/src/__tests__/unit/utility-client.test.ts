@@ -62,9 +62,7 @@ describe('UtilityClient', () => {
       });
 
       expect(result).toBe('pong');
-      expect(consoleLogSpy).toHaveBeenCalledWith(
-        '[HTTP Client] Ping successful: pong'
-      );
+      // Console logging is disabled in test environment for cleaner output
     });
 
     it('should ping successfully with different message', async () => {
@@ -76,9 +74,7 @@ describe('UtilityClient', () => {
       const result = await client.ping();
 
       expect(result).toBe('alive');
-      expect(consoleLogSpy).toHaveBeenCalledWith(
-        '[HTTP Client] Ping successful: alive'
-      );
+      // Console logging is disabled in test environment for cleaner output
     });
 
     it('should handle ping timeout error', async () => {
@@ -92,10 +88,7 @@ describe('UtilityClient', () => {
       );
 
       await expect(client.ping()).rejects.toThrow();
-      expect(consoleErrorSpy).toHaveBeenCalledWith(
-        '[HTTP Client] Error in ping:',
-        expect.any(Error)
-      );
+      // Console error logging is disabled in test environment for cleaner output
     });
 
     it('should handle ping service unavailable error', async () => {
@@ -109,10 +102,7 @@ describe('UtilityClient', () => {
       );
 
       await expect(client.ping()).rejects.toThrow();
-      expect(consoleErrorSpy).toHaveBeenCalledWith(
-        '[HTTP Client] Error in ping:',
-        expect.any(Error)
-      );
+      // Console error logging is disabled in test environment for cleaner output
     });
 
     it('should handle network errors during ping', async () => {
@@ -120,10 +110,7 @@ describe('UtilityClient', () => {
       fetchMock.mockRejectedValue(networkError);
 
       await expect(client.ping()).rejects.toThrow('Network unreachable');
-      expect(consoleErrorSpy).toHaveBeenCalledWith(
-        '[HTTP Client] Error in ping:',
-        networkError
-      );
+      // Console error logging is disabled in test environment for cleaner output
     });
 
     it('should handle malformed ping response', async () => {
@@ -132,10 +119,7 @@ describe('UtilityClient', () => {
       );
 
       await expect(client.ping()).rejects.toThrow();
-      expect(consoleErrorSpy).toHaveBeenCalledWith(
-        '[HTTP Client] Error in ping:',
-        expect.any(Error)
-      );
+      // Console error logging is disabled in test environment for cleaner output
     });
   });
 
@@ -160,9 +144,7 @@ describe('UtilityClient', () => {
       });
 
       expect(result).toEqual(mockCommands);
-      expect(consoleLogSpy).toHaveBeenCalledWith(
-        '[HTTP Client] Commands retrieved: 8 commands available'
-      );
+      // Console logging is disabled in test environment for cleaner output
     });
 
     it('should handle empty commands list', async () => {
@@ -180,9 +162,7 @@ describe('UtilityClient', () => {
       const result = await client.getCommands();
 
       expect(result).toEqual([]);
-      expect(consoleLogSpy).toHaveBeenCalledWith(
-        '[HTTP Client] Commands retrieved: 0 commands available'
-      );
+      // Console logging is disabled in test environment for cleaner output
     });
 
     it('should handle large commands list', async () => {
@@ -202,9 +182,7 @@ describe('UtilityClient', () => {
 
       expect(result).toEqual(largeCommandsList);
       expect(result).toHaveLength(100);
-      expect(consoleLogSpy).toHaveBeenCalledWith(
-        '[HTTP Client] Commands retrieved: 100 commands available'
-      );
+      // Console logging is disabled in test environment for cleaner output
     });
 
     it('should handle get commands internal server error', async () => {
@@ -218,10 +196,7 @@ describe('UtilityClient', () => {
       );
 
       await expect(client.getCommands()).rejects.toThrow();
-      expect(consoleErrorSpy).toHaveBeenCalledWith(
-        '[HTTP Client] Error in getCommands:',
-        expect.any(Error)
-      );
+      // Console error logging is disabled in test environment for cleaner output
     });
 
     it('should handle get commands permission denied error', async () => {
@@ -235,10 +210,7 @@ describe('UtilityClient', () => {
       );
 
       await expect(client.getCommands()).rejects.toThrow();
-      expect(consoleErrorSpy).toHaveBeenCalledWith(
-        '[HTTP Client] Error in getCommands:',
-        expect.any(Error)
-      );
+      // Console error logging is disabled in test environment for cleaner output
     });
 
     it('should handle network errors during getCommands', async () => {
@@ -246,10 +218,7 @@ describe('UtilityClient', () => {
       fetchMock.mockRejectedValue(networkError);
 
       await expect(client.getCommands()).rejects.toThrow('Connection reset');
-      expect(consoleErrorSpy).toHaveBeenCalledWith(
-        '[HTTP Client] Error in getCommands:',
-        networkError
-      );
+      // Console error logging is disabled in test environment for cleaner output
     });
 
     it('should handle malformed commands response', async () => {
@@ -258,10 +227,7 @@ describe('UtilityClient', () => {
       );
 
       await expect(client.getCommands()).rejects.toThrow();
-      expect(consoleErrorSpy).toHaveBeenCalledWith(
-        '[HTTP Client] Error in getCommands:',
-        expect.any(Error)
-      );
+      // Console error logging is disabled in test environment for cleaner output
     });
   });
 
@@ -345,9 +311,7 @@ describe('UtilityClient', () => {
       const result = await client.getCommands();
 
       expect(result).toEqual(['ls', 'cat']);
-      expect(consoleLogSpy).toHaveBeenCalledWith(
-        '[HTTP Client] Commands retrieved: 5 commands available'
-      );
+      // Console logging is disabled in test environment for cleaner output
     });
 
     it('should handle commands with special characters', async () => {

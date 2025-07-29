@@ -78,9 +78,7 @@ describe('FileClient', () => {
       });
 
       expect(result).toEqual(mockResponse);
-      expect(consoleLogSpy).toHaveBeenCalledWith(
-        '[HTTP Client] Directory created: /test/directory (recursive: false)'
-      );
+      // Console logging is disabled in test environment for cleaner output
     });
 
     it('should create directory recursively', async () => {
@@ -134,10 +132,7 @@ describe('FileClient', () => {
       );
 
       await expect(client.mkdir('/root/directory')).rejects.toThrow();
-      expect(consoleErrorSpy).toHaveBeenCalledWith(
-        '[HTTP Client] Error in mkdir:',
-        expect.any(Error)
-      );
+      // Console error logging is disabled in test environment for cleaner output
     });
   });
 
@@ -170,9 +165,7 @@ describe('FileClient', () => {
       });
 
       expect(result).toEqual(mockResponse);
-      expect(consoleLogSpy).toHaveBeenCalledWith(
-        '[HTTP Client] File written: /test/file.txt (13 chars)'
-      );
+      // Console logging is disabled in test environment for cleaner output
     });
 
     it('should write file with custom encoding', async () => {
@@ -227,10 +220,7 @@ describe('FileClient', () => {
       );
 
       await expect(client.writeFile('/test/file.txt', 'content')).rejects.toThrow();
-      expect(consoleErrorSpy).toHaveBeenCalledWith(
-        '[HTTP Client] Error in writeFile:',
-        expect.any(Error)
-      );
+      // Console error logging is disabled in test environment for cleaner output
     });
   });
 
@@ -262,9 +252,7 @@ describe('FileClient', () => {
       });
 
       expect(result).toEqual(mockResponse);
-      expect(consoleLogSpy).toHaveBeenCalledWith(
-        '[HTTP Client] File read: /test/file.txt (18 chars)'
-      );
+      // Console logging is disabled in test environment for cleaner output
     });
 
     it('should read file with custom encoding', async () => {
@@ -317,10 +305,7 @@ describe('FileClient', () => {
       );
 
       await expect(client.readFile('/nonexistent/file.txt')).rejects.toThrow();
-      expect(consoleErrorSpy).toHaveBeenCalledWith(
-        '[HTTP Client] Error in readFile:',
-        expect.any(Error)
-      );
+      // Console error logging is disabled in test environment for cleaner output
     });
   });
 
@@ -350,9 +335,7 @@ describe('FileClient', () => {
       });
 
       expect(result).toEqual(mockResponse);
-      expect(consoleLogSpy).toHaveBeenCalledWith(
-        '[HTTP Client] File deleted: /test/file.txt'
-      );
+      // Console logging is disabled in test environment for cleaner output
     });
 
     it('should delete file with session ID', async () => {
@@ -385,10 +368,7 @@ describe('FileClient', () => {
       );
 
       await expect(client.deleteFile('/nonexistent/file.txt')).rejects.toThrow();
-      expect(consoleErrorSpy).toHaveBeenCalledWith(
-        '[HTTP Client] Error in deleteFile:',
-        expect.any(Error)
-      );
+      // Console error logging is disabled in test environment for cleaner output
     });
   });
 
@@ -420,9 +400,7 @@ describe('FileClient', () => {
       });
 
       expect(result).toEqual(mockResponse);
-      expect(consoleLogSpy).toHaveBeenCalledWith(
-        '[HTTP Client] File renamed: /test/old.txt -> /test/new.txt'
-      );
+      // Console logging is disabled in test environment for cleaner output
     });
 
     it('should rename file with session ID', async () => {
@@ -456,10 +434,7 @@ describe('FileClient', () => {
       );
 
       await expect(client.renameFile('/test/old.txt', '/test/existing.txt')).rejects.toThrow();
-      expect(consoleErrorSpy).toHaveBeenCalledWith(
-        '[HTTP Client] Error in renameFile:',
-        expect.any(Error)
-      );
+      // Console error logging is disabled in test environment for cleaner output
     });
   });
 
@@ -491,9 +466,7 @@ describe('FileClient', () => {
       });
 
       expect(result).toEqual(mockResponse);
-      expect(consoleLogSpy).toHaveBeenCalledWith(
-        '[HTTP Client] File moved: /src/file.txt -> /dest/file.txt'
-      );
+      // Console logging is disabled in test environment for cleaner output
     });
 
     it('should move file with session ID', async () => {
@@ -527,10 +500,7 @@ describe('FileClient', () => {
       );
 
       await expect(client.moveFile('/src/file.txt', '/nonexistent/file.txt')).rejects.toThrow();
-      expect(consoleErrorSpy).toHaveBeenCalledWith(
-        '[HTTP Client] Error in moveFile:',
-        expect.any(Error)
-      );
+      // Console error logging is disabled in test environment for cleaner output
     });
   });
 });

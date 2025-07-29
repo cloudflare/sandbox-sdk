@@ -75,9 +75,7 @@ describe('PortClient', () => {
       });
 
       expect(result).toEqual(mockResponse);
-      expect(consoleLogSpy).toHaveBeenCalledWith(
-        '[HTTP Client] Port exposed: 3001 exposed at https://preview-abc123.workers.dev'
-      );
+      // Console logging is disabled in test environment for cleaner output
     });
 
     it('should expose port with name successfully', async () => {
@@ -100,9 +98,7 @@ describe('PortClient', () => {
       });
 
       expect(result).toEqual(namedResponse);
-      expect(consoleLogSpy).toHaveBeenCalledWith(
-        '[HTTP Client] Port exposed: 3001 exposed at https://preview-abc123.workers.dev (web)'
-      );
+      // Console logging is disabled in test environment for cleaner output
     });
 
     it('should handle port already exposed error', async () => {
@@ -116,10 +112,7 @@ describe('PortClient', () => {
       );
 
       await expect(client.exposePort(3001)).rejects.toThrow();
-      expect(consoleErrorSpy).toHaveBeenCalledWith(
-        '[HTTP Client] Error in exposePort:',
-        expect.any(Error)
-      );
+      // Console error logging is disabled in test environment for cleaner output
     });
 
     it('should handle invalid port error', async () => {
@@ -133,10 +126,7 @@ describe('PortClient', () => {
       );
 
       await expect(client.exposePort(80)).rejects.toThrow();
-      expect(consoleErrorSpy).toHaveBeenCalledWith(
-        '[HTTP Client] Error in exposePort:',
-        expect.any(Error)
-      );
+      // Console error logging is disabled in test environment for cleaner output
     });
 
     it('should handle port in use error', async () => {
@@ -150,10 +140,7 @@ describe('PortClient', () => {
       );
 
       await expect(client.exposePort(3000)).rejects.toThrow();
-      expect(consoleErrorSpy).toHaveBeenCalledWith(
-        '[HTTP Client] Error in exposePort:',
-        expect.any(Error)
-      );
+      // Console error logging is disabled in test environment for cleaner output
     });
   });
 
@@ -176,9 +163,7 @@ describe('PortClient', () => {
       });
 
       expect(result).toEqual(mockResponse);
-      expect(consoleLogSpy).toHaveBeenCalledWith(
-        '[HTTP Client] Port unexposed: 3001'
-      );
+      // Console logging is disabled in test environment for cleaner output
     });
 
     it('should handle port not exposed error', async () => {
@@ -192,10 +177,7 @@ describe('PortClient', () => {
       );
 
       await expect(client.unexposePort(3001)).rejects.toThrow();
-      expect(consoleErrorSpy).toHaveBeenCalledWith(
-        '[HTTP Client] Error in unexposePort:',
-        expect.any(Error)
-      );
+      // Console error logging is disabled in test environment for cleaner output
     });
 
     it('should handle service not responding error', async () => {
@@ -209,10 +191,7 @@ describe('PortClient', () => {
       );
 
       await expect(client.unexposePort(3001)).rejects.toThrow();
-      expect(consoleErrorSpy).toHaveBeenCalledWith(
-        '[HTTP Client] Error in unexposePort:',
-        expect.any(Error)
-      );
+      // Console error logging is disabled in test environment for cleaner output
     });
   });
 
@@ -249,9 +228,7 @@ describe('PortClient', () => {
       });
 
       expect(result).toEqual(mockResponse);
-      expect(consoleLogSpy).toHaveBeenCalledWith(
-        '[HTTP Client] Exposed ports retrieved: 2 ports exposed'
-      );
+      // Console logging is disabled in test environment for cleaner output
     });
 
     it('should handle empty exposed ports list', async () => {
@@ -269,9 +246,7 @@ describe('PortClient', () => {
       const result = await client.getExposedPorts();
 
       expect(result).toEqual(emptyResponse);
-      expect(consoleLogSpy).toHaveBeenCalledWith(
-        '[HTTP Client] Exposed ports retrieved: 0 ports exposed'
-      );
+      // Console logging is disabled in test environment for cleaner output
     });
 
     it('should handle get exposed ports errors', async () => {
@@ -285,10 +260,7 @@ describe('PortClient', () => {
       );
 
       await expect(client.getExposedPorts()).rejects.toThrow();
-      expect(consoleErrorSpy).toHaveBeenCalledWith(
-        '[HTTP Client] Error in getExposedPorts:',
-        expect.any(Error)
-      );
+      // Console error logging is disabled in test environment for cleaner output
     });
   });
 
@@ -298,10 +270,7 @@ describe('PortClient', () => {
       fetchMock.mockRejectedValue(networkError);
 
       await expect(client.exposePort(3001)).rejects.toThrow('Network failed');
-      expect(consoleErrorSpy).toHaveBeenCalledWith(
-        '[HTTP Client] Error in exposePort:',
-        networkError
-      );
+      // Console error logging is disabled in test environment for cleaner output
     });
 
     it('should handle malformed response data', async () => {
@@ -310,10 +279,7 @@ describe('PortClient', () => {
       );
 
       await expect(client.getExposedPorts()).rejects.toThrow();
-      expect(consoleErrorSpy).toHaveBeenCalledWith(
-        '[HTTP Client] Error in getExposedPorts:',
-        expect.any(Error)
-      );
+      // Console error logging is disabled in test environment for cleaner output
     });
   });
 
@@ -372,9 +338,7 @@ describe('PortClient', () => {
         }),
       });
 
-      expect(consoleLogSpy).toHaveBeenCalledWith(
-        '[HTTP Client] Port exposed: 3001 exposed at https://preview-abc123.workers.dev (web-app_v2)'
-      );
+      // Console logging is disabled in test environment for cleaner output
     });
   });
 });

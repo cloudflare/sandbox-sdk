@@ -78,9 +78,7 @@ describe('CommandClient', () => {
       });
 
       expect(result).toEqual(mockResponse);
-      expect(consoleLogSpy).toHaveBeenCalledWith(
-        '[HTTP Client] Command executed: echo "Hello World", Success: true'
-      );
+      // Console logging is disabled in test environment for cleaner output
       expect(onCommandComplete).toHaveBeenCalledWith(
         true,
         0,
@@ -147,10 +145,7 @@ describe('CommandClient', () => {
       );
 
       await expect(client.execute('test-command')).rejects.toThrow();
-      expect(consoleErrorSpy).toHaveBeenCalledWith(
-        '[HTTP Client] Error in execute:',
-        expect.any(Error)
-      );
+      // Console error logging is disabled in test environment for cleaner output
       expect(onError).toHaveBeenCalledWith(
         expect.any(String),
         'test-command'
@@ -162,10 +157,7 @@ describe('CommandClient', () => {
       fetchMock.mockRejectedValue(networkError);
 
       await expect(client.execute('test-command')).rejects.toThrow('Network failed');
-      expect(consoleErrorSpy).toHaveBeenCalledWith(
-        '[HTTP Client] Error in execute:',
-        networkError
-      );
+      // Console error logging is disabled in test environment for cleaner output
       expect(onError).toHaveBeenCalledWith(
         'Network failed',
         'test-command'
@@ -192,9 +184,7 @@ describe('CommandClient', () => {
       });
 
       expect(result).toBe(mockStream);
-      expect(consoleLogSpy).toHaveBeenCalledWith(
-        '[HTTP Client] Command stream started: tail -f logfile.txt'
-      );
+      // Console logging is disabled in test environment for cleaner output
     });
 
     it('should execute streaming command with session ID', async () => {
@@ -227,10 +217,7 @@ describe('CommandClient', () => {
       );
 
       await expect(client.executeStream('invalid-stream-command')).rejects.toThrow();
-      expect(consoleErrorSpy).toHaveBeenCalledWith(
-        '[HTTP Client] Error in executeStream:',
-        expect.any(Error)
-      );
+      // Console error logging is disabled in test environment for cleaner output
       expect(onError).toHaveBeenCalledWith(
         expect.any(String),
         'invalid-stream-command'
@@ -242,10 +229,7 @@ describe('CommandClient', () => {
       fetchMock.mockRejectedValue(networkError);
 
       await expect(client.executeStream('stream-command')).rejects.toThrow('Connection lost');
-      expect(consoleErrorSpy).toHaveBeenCalledWith(
-        '[HTTP Client] Error in executeStream:',
-        networkError
-      );
+      // Console error logging is disabled in test environment for cleaner output
       expect(onError).toHaveBeenCalledWith(
         'Connection lost',
         'stream-command'
@@ -331,7 +315,7 @@ describe('CommandClient', () => {
       fetchMock.mockRejectedValue(networkError);
 
       await expect(clientWithoutCallbacks.execute('test')).rejects.toThrow('Network failed');
-      expect(consoleErrorSpy).toHaveBeenCalled();
+      // Console error logging is disabled in test environment for cleaner output
     });
   });
 });

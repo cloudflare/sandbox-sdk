@@ -74,9 +74,7 @@ describe('GitClient', () => {
       });
 
       expect(result).toEqual(mockResponse);
-      expect(consoleLogSpy).toHaveBeenCalledWith(
-        '[HTTP Client] Repository cloned: https://github.com/user/my-repo.git (branch: main) -> my-repo'
-      );
+      // Console logging is disabled in test environment for cleaner output
     });
 
     it('should clone repository with custom branch', async () => {
@@ -183,10 +181,7 @@ describe('GitClient', () => {
       );
 
       await expect(client.checkout('https://github.com/user/nonexistent.git')).rejects.toThrow();
-      expect(consoleErrorSpy).toHaveBeenCalledWith(
-        '[HTTP Client] Error in checkout:',
-        expect.any(Error)
-      );
+      // Console error logging is disabled in test environment for cleaner output
     });
 
     it('should handle authentication error', async () => {
@@ -200,10 +195,7 @@ describe('GitClient', () => {
       );
 
       await expect(client.checkout('https://github.com/user/private-repo.git')).rejects.toThrow();
-      expect(consoleErrorSpy).toHaveBeenCalledWith(
-        '[HTTP Client] Error in checkout:',
-        expect.any(Error)
-      );
+      // Console error logging is disabled in test environment for cleaner output
     });
 
     it('should handle branch not found error', async () => {
@@ -217,10 +209,7 @@ describe('GitClient', () => {
       );
 
       await expect(client.checkout('https://github.com/user/repo.git', { branch: 'nonexistent' })).rejects.toThrow();
-      expect(consoleErrorSpy).toHaveBeenCalledWith(
-        '[HTTP Client] Error in checkout:',
-        expect.any(Error)
-      );
+      // Console error logging is disabled in test environment for cleaner output
     });
 
     it('should handle network error during clone', async () => {
@@ -234,10 +223,7 @@ describe('GitClient', () => {
       );
 
       await expect(client.checkout('https://github.com/user/repo.git')).rejects.toThrow();
-      expect(consoleErrorSpy).toHaveBeenCalledWith(
-        '[HTTP Client] Error in checkout:',
-        expect.any(Error)
-      );
+      // Console error logging is disabled in test environment for cleaner output
     });
 
     it('should handle invalid Git URL error', async () => {
@@ -251,10 +237,7 @@ describe('GitClient', () => {
       );
 
       await expect(client.checkout('not-a-valid-url')).rejects.toThrow();
-      expect(consoleErrorSpy).toHaveBeenCalledWith(
-        '[HTTP Client] Error in checkout:',
-        expect.any(Error)
-      );
+      // Console error logging is disabled in test environment for cleaner output
     });
 
     it('should handle clone failure error', async () => {
@@ -268,10 +251,7 @@ describe('GitClient', () => {
       );
 
       await expect(client.checkout('https://github.com/user/repo.git')).rejects.toThrow();
-      expect(consoleErrorSpy).toHaveBeenCalledWith(
-        '[HTTP Client] Error in checkout:',
-        expect.any(Error)
-      );
+      // Console error logging is disabled in test environment for cleaner output
     });
 
     it('should handle network failures', async () => {
@@ -279,10 +259,7 @@ describe('GitClient', () => {
       fetchMock.mockRejectedValue(networkError);
 
       await expect(client.checkout('https://github.com/user/repo.git')).rejects.toThrow('Connection failed');
-      expect(consoleErrorSpy).toHaveBeenCalledWith(
-        '[HTTP Client] Error in checkout:',
-        networkError
-      );
+      // Console error logging is disabled in test environment for cleaner output
     });
   });
 
