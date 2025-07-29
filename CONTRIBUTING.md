@@ -21,8 +21,8 @@ npm run test:unit
 
 ### Prerequisites
 - Node.js 18+ with npm
-- Docker Desktop (for container testing)
 - Git
+- No Docker needed (all tests are mocked)
 - Familiarity with TypeScript and Vitest
 
 ### Understanding the Codebase

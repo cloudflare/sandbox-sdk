@@ -46,9 +46,9 @@ Tests client-container communication:
 - Workers runtime compatibility
 
 ### 3. Container Tests
-**Environment**: Cloudflare Workers with real containers  
+**Environment**: Node.js (mocked container services)
 **Location**: `src/__tests__/container/`  
-**Requirements**: Docker running  
+**Requirements**: None (no Docker needed)
 **Purpose**: Test service layer with proper mocking
 
 Tests individual services in isolation:
@@ -260,9 +260,9 @@ describe('GitService', () => {
 ## Troubleshooting
 
 ### Container Tests
-1. **Docker not running**: Start Docker Desktop
-2. **Port conflicts**: Stop services using port 3000
-3. **Build failures**: Run `npm run docker:local` manually
+1. **ReadableStream locked**: Use fresh streams per mock call
+2. **Global mock interference**: Use proper beforeEach/afterEach cleanup
+3. **Service dependency issues**: Use dynamic imports for services
 
 ### Service Tests  
 1. **ReadableStream locked**: Use fresh streams per mock call
@@ -271,7 +271,7 @@ describe('GitService', () => {
 
 ### Performance Notes
 - **Unit tests**: ~2-5 seconds (development workflow)
-- **Container tests**: ~30-60 seconds (full service validation)
+- **Container tests**: ~5-10 seconds (mocked service validation)
 - **E2E tests**: ~45-90 seconds (complete workflows)
 
 Run unit tests during development, full suite before commits.

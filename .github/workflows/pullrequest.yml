@@ -4,7 +4,7 @@ on: pull_request
 
 jobs:
   check:
-    timeout-minutes: 5
+    timeout-minutes: 15
     strategy:
       matrix:
         os: [
@@ -23,8 +23,26 @@ jobs:
           node-version: 20
           cache: "npm"
 
-      - run: npm install
-      - run: npm run build
-      - run: npm run check
-      - run: npm run test:unit
-        working-directory: packages/sandbox
+      - name: Install dependencies
+        run: npm install
+        
+      - name: Run type checking
+        run: npm run typecheck
+        
+      - name: Run linting
+        run: npm run check
+        
+      - name: Build packages
+        run: npm run build
+        
+      - name: Run unit tests
+        run: npm run test:unit
+        
+      - name: Run integration tests  
+        run: npm run test:integration
+        
+      - name: Run container tests
+        run: npm run test:container
+        
+      - name: Run E2E tests
+        run: npm run test:e2e

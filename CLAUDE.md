@@ -22,8 +22,7 @@ npm test                    # Full test suite
 npm run typecheck          # TypeScript validation
 npm run check             # Biome linting
 
-# Container cleanup (after container tests)
-npm run cleanup:containers # Clean up Docker containers
+# No Docker needed - all tests are mocked
 ```
 
 ### Package-Specific Commands
@@ -117,9 +116,9 @@ interface ServiceResult<T> {
    - Durable Object integration testing
 
 3. **Container Tests** (`src/__tests__/container/`)
-   - Service layer testing with ServiceResult validation
-   - Handler testing with proper mocking
-   - **Current focus**: 103 service tests all passing
+   - Service layer testing with ServiceResult validation (Node.js with mocks)
+   - Handler testing with proper mocking (no Docker needed)
+   - **Current focus**: 103 service tests (mocked services)
 
 4. **E2E Tests** (`src/__tests__/e2e/`)
    - Complete workflow validation
@@ -275,10 +274,11 @@ This ensures you're always working with current APIs and patterns rather than ou
 
 ## Debugging Common Issues
 
-### Container Test Issues
+### Container Test Issues (Mocked Services)
 - **ReadableStream locked errors**: Create fresh streams per mock call
 - **Global mock interference**: Use proper beforeEach/afterEach cleanup
 - **Service dependency issues**: Use dynamic imports for services
+- **No Docker needed**: Container tests are pure Node.js mocks
 
 ### Client Test Issues  
 - **HTTP mocking**: Use vi.fn() for fetch mocking, not ServiceResult patterns
