@@ -3,20 +3,20 @@ import path from 'path';
 
 export default defineConfig({
   test: {
-    name: 'container-tests',
-    include: ['src/__tests__/container/**/*.test.ts'],
-    testTimeout: 10000,
+    name: 'contract-tests',
+    include: ['src/__tests__/contracts/**/*.test.ts'],
+    testTimeout: 15000, // Longer timeout for real container interactions
     hookTimeout: 10000,
     teardownTimeout: 10000,
     isolate: true,
-    pool: 'forks', // Use forks for container tests
+    pool: 'forks',
     poolOptions: {
       forks: {
-        singleFork: true, // Single fork for better resource management
+        singleFork: true,
       },
     },
     environment: 'node',
-    setupFiles: ['src/__tests__/container/setup.ts'],
+    setupFiles: ['src/__tests__/contracts/setup.ts'],
   },
   resolve: {
     alias: {

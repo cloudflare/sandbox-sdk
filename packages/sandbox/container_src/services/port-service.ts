@@ -245,8 +245,8 @@ export class PortService {
       const pathSegments = url.pathname.split('/');
       
       // Remove the /proxy/{port} part to get the actual path
-      const targetPath = pathSegments.slice(3).join('/') || '/';
-      const targetUrl = `http://localhost:${port}${targetPath}${url.search}`;
+      const targetPath = pathSegments.slice(3).join('/');
+      const targetUrl = `http://localhost:${port}/${targetPath}${url.search}`;
 
       this.logger.info('Proxying request', { 
         port, 
