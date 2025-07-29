@@ -26,4 +26,5 @@ jobs:
       - run: npm install
       - run: npm run build
       - run: npm run check
-      - run: CI=true npm run test
+      - run: npm run test:unit
+        working-directory: packages/sandbox

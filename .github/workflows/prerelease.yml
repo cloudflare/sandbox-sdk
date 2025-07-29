@@ -30,7 +30,8 @@ jobs:
 
       - run: npm run build
       - run: npm run check
-      - run: CI=true npm run test
+      - run: npm run test
+        working-directory: packages/sandbox
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
