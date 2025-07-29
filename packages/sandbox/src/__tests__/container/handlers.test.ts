@@ -25,8 +25,7 @@ describe('Container HTTP Handlers', () => {
   // Ensure proper cleanup after each test
   afterEach(async () => {
     // Clean up any test-specific resources
-    // Note: Container cleanup is handled by the cleanup script due to framework limitations
-    // Run `npm run cleanup:containers` after tests to remove orphaned Docker containers
+    // The container will be reused but state should be isolated
   });
 
   describe('Basic Endpoints', () => {
@@ -53,14 +52,13 @@ describe('Container HTTP Handlers', () => {
         await waitForContainerReady(instance);
         
         const port = instance.ctx.container.getTcpPort(3000);
-        const res = await port.fetch('http://container/api/ping');
-        const data = await res.json();
-        return { status: res.status, data };
+        return await port.fetch('http://container/api/ping');
       });
 
       expect(response.status).toBe(200);
-      expect(response.data.message).toBe('pong');
-      expect(response.data.timestamp).toBeDefined();
+      const data = await response.json();
+      expect(data.message).toBe('pong');
+      expect(data.timestamp).toBeDefined();
     });
 
     it('should list available commands', async () => {
@@ -68,16 +66,15 @@ describe('Container HTTP Handlers', () => {
         await waitForContainerReady(instance);
         
         const port = instance.ctx.container.getTcpPort(3000);
-        const res = await port.fetch('http://container/api/commands');
-        const data = await res.json();
-        return { status: res.status, data };
+        return await port.fetch('http://container/api/commands');
       });
 
       expect(response.status).toBe(200);
-      expect(response.data.availableCommands).toBeInstanceOf(Array);
-      expect(response.data.availableCommands).toContain('ls');
-      expect(response.data.availableCommands).toContain('echo');
-      expect(response.data.timestamp).toBeDefined();
+      const data = await response.json();
+      expect(data.availableCommands).toBeInstanceOf(Array);
+      expect(data.availableCommands).toContain('ls');
+      expect(data.availableCommands).toContain('echo');
+      expect(data.timestamp).toBeDefined();
     });
 
     it('should handle CORS preflight requests', async () => {
@@ -85,24 +82,15 @@ describe('Container HTTP Handlers', () => {
         await waitForContainerReady(instance);
         
         const port = instance.ctx.container.getTcpPort(3000);
-        const res = await port.fetch('http://container/api/ping', {
+        return await port.fetch('http://container/api/ping', {
           method: 'OPTIONS'
         });
-        // Consume response body to avoid resource leaks
-        await res.text();
-        return { 
-          status: res.status, 
-          headers: {
-            origin: res.headers.get('Access-Control-Allow-Origin'),
-            methods: res.headers.get('Access-Control-Allow-Methods')
-          }
-        };
       });
 
       expect(response.status).toBe(200);
-      expect(response.headers.origin).toBe('*');
-      expect(response.headers.methods).toContain('GET');
-      expect(response.headers.methods).toContain('POST');
+      expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
+      expect(response.headers.get('Access-Control-Allow-Methods')).toContain('GET');
+      expect(response.headers.get('Access-Control-Allow-Methods')).toContain('POST');
     });
   });
 
@@ -112,19 +100,18 @@ describe('Container HTTP Handlers', () => {
         await waitForContainerReady(instance);
         
         const port = instance.ctx.container.getTcpPort(3000);
-        const res = await port.fetch('http://container/api/session/create', {
+        return await port.fetch('http://container/api/session/create', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' }
         });
-        const data = await res.json();
-        return { status: res.status, data };
       });
 
       expect(response.status).toBe(200);
-      expect(response.data.sessionId).toBeDefined();
-      expect(response.data.sessionId).toMatch(/^session_\d+_[a-f0-9]+$/);
-      expect(response.data.message).toBe('Session created successfully');
-      expect(response.data.timestamp).toBeDefined();
+      const data = await response.json();
+      expect(data.sessionId).toBeDefined();
+      expect(data.sessionId).toMatch(/^session_\d+_[a-f0-9]+$/);
+      expect(data.message).toBe('Session created successfully');
+      expect(data.timestamp).toBeDefined();
     });
 
     it('should list sessions', async () => {
@@ -161,24 +148,23 @@ describe('Container HTTP Handlers', () => {
         await waitForContainerReady(instance);
         
         const port = instance.ctx.container.getTcpPort(3000);
-        const res = await port.fetch('http://container/api/execute', {
+        return await port.fetch('http://container/api/execute', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             command: 'echo "Hello Container"'
           })
         });
-        const data = await res.json();
-        return { status: res.status, data };
       });
 
       expect(response.status).toBe(200);
-      expect(response.data.success).toBe(true);
-      expect(response.data.exitCode).toBe(0);
-      expect(response.data.stdout.trim()).toBe('Hello Container');
-      expect(response.data.stderr).toBe('');
-      expect(response.data.command).toBe('echo "Hello Container"');
-      expect(response.data.timestamp).toBeDefined();
+      const data = await response.json();
+      expect(data.success).toBe(true);
+      expect(data.exitCode).toBe(0);
+      expect(data.stdout.trim()).toBe('Hello Container');
+      expect(data.stderr).toBe('');
+      expect(data.command).toBe('echo "Hello Container"');
+      expect(data.timestamp).toBeDefined();
     });
 
     it('should handle command failures', async () => {
@@ -186,21 +172,20 @@ describe('Container HTTP Handlers', () => {
         await waitForContainerReady(instance);
         
         const port = instance.ctx.container.getTcpPort(3000);
-        const res = await port.fetch('http://container/api/execute', {
+        return await port.fetch('http://container/api/execute', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             command: 'false' // Command that always fails
           })
         });
-        const data = await res.json();
-        return { status: res.status, data };
       });
 
       expect(response.status).toBe(200);
-      expect(response.data.success).toBe(false);
-      expect(response.data.exitCode).toBe(1);
-      expect(response.data.command).toBe('false');
+      const data = await response.json();
+      expect(data.success).toBe(false);
+      expect(data.exitCode).toBe(1);
+      expect(data.command).toBe('false');
     });
 
     it('should support streaming command execution', async () => {
@@ -208,27 +193,22 @@ describe('Container HTTP Handlers', () => {
         await waitForContainerReady(instance);
         
         const port = instance.ctx.container.getTcpPort(3000);
-        const res = await port.fetch('http://container/api/execute/stream', {
+        return await port.fetch('http://container/api/execute/stream', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             command: 'echo "streaming test"'
           })
         });
-        const body = await res.text();
-        return { 
-          status: res.status, 
-          contentType: res.headers.get('Content-Type'),
-          body 
-        };
       });
 
       expect(response.status).toBe(200);
-      expect(response.contentType).toBe('text/event-stream');
+      expect(response.headers.get('Content-Type')).toBe('text/event-stream');
       
       // Verify streaming response format
-      expect(response.body).toContain('data:');
-      expect(response.body).toContain('streaming test');
+      const body = await response.text();
+      expect(body).toContain('data:');
+      expect(body).toContain('streaming test');
     });
   });
 
@@ -278,20 +258,19 @@ describe('Container HTTP Handlers', () => {
         await waitForContainerReady(instance);
         
         const port = instance.ctx.container.getTcpPort(3000);
-        const res = await port.fetch('http://container/api/read', {
+        return await port.fetch('http://container/api/read', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             path: '/tmp/nonexistent.txt'
           })
         });
-        const data = await res.json();
-        return { status: res.status, data };
       });
 
       expect(response.status).toBe(404);
-      expect(response.data.error).toContain('File not found');
-      expect(response.data.code).toBe('FILE_NOT_FOUND');
+      const data = await response.json();
+      expect(data.error).toContain('File not found');
+      expect(data.code).toBe('FILE_NOT_FOUND');
     });
 
     it('should create directories', async () => {
@@ -299,19 +278,18 @@ describe('Container HTTP Handlers', () => {
         await waitForContainerReady(instance);
         
         const port = instance.ctx.container.getTcpPort(3000);
-        const res = await port.fetch('http://container/api/mkdir', {
+        return await port.fetch('http://container/api/mkdir', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             path: '/tmp/test-dir'
           })
         });
-        const data = await res.json();
-        return { status: res.status, data };
       });
 
       expect(response.status).toBe(200);
-      expect(response.data.success).toBe(true);
+      const data = await response.json();
+      expect(data.success).toBe(true);
     });
 
     it('should delete files', async () => {
@@ -352,10 +330,7 @@ describe('Container HTTP Handlers', () => {
         await waitForContainerReady(instance);
         
         const port = instance.ctx.container.getTcpPort(3000);
-        const res = await port.fetch('http://container/api/unknown-endpoint');
-        // Consume response body to avoid resource leaks
-        await res.text();
-        return { status: res.status };
+        return await port.fetch('http://container/api/unknown-endpoint');
       });
 
       expect(response.status).toBe(404);
@@ -366,17 +341,16 @@ describe('Container HTTP Handlers', () => {
         await waitForContainerReady(instance);
         
         const port = instance.ctx.container.getTcpPort(3000);
-        const res = await port.fetch('http://container/api/execute', {
+        return await port.fetch('http://container/api/execute', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: 'invalid json'
         });
-        const data = await res.json();
-        return { status: res.status, data };
       });
 
       expect(response.status).toBe(500);
-      expect(response.data.error).toBe('Internal server error');
+      const data = await response.json();
+      expect(data.error).toBe('Internal server error');
     });
   });
 });

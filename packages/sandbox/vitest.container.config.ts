@@ -39,7 +39,7 @@ export default defineWorkersConfig({
     // Container tests need more time and resources
     testTimeout: 60000,
     maxConcurrency: 1,
-    isolatedStorage: false, // Disable isolated storage for container tests due to persistent issues
+    isolatedStorage: true,
   },
   
   esbuild: {

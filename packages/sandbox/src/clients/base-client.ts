@@ -24,7 +24,7 @@ export abstract class BaseHttpClient {
     this.isTestEnvironment = 
       process.env.NODE_ENV === 'test' || 
       process.env.VITEST === 'true' ||
-      typeof (globalThis as any).expect !== 'undefined'; // Vitest globals check
+      typeof globalThis.expect !== 'undefined'; // Vitest globals check
   }
 
   /**

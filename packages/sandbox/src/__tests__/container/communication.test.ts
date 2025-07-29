@@ -23,8 +23,6 @@ describe('Container-Client Communication Flow', () => {
 
   afterEach(async () => {
     // Clean up any test-specific resources
-    // Note: Container cleanup is handled by the cleanup script due to framework limitations
-    // Run `npm run cleanup:containers` after tests to remove orphaned Docker containers
   });
 
   /**
