@@ -1,0 +1,208 @@
+// Route Setup
+import type { Router } from '../core/router';
+import type { DIContainer } from '../core/container';
+
+export function setupRoutes(router: Router, container: DIContainer): void {
+  // Session routes
+  router.register({
+    method: 'POST',
+    path: '/api/session/create',
+    handler: async (req, ctx) => container.get('sessionHandler').handle(req, ctx),
+    middleware: [container.get('loggingMiddleware')],
+  });
+
+  router.register({
+    method: 'GET',
+    path: '/api/session/list',
+    handler: async (req, ctx) => container.get('sessionHandler').handle(req, ctx),
+    middleware: [container.get('loggingMiddleware')],
+  });
+
+  // Execute routes
+  router.register({
+    method: 'POST',
+    path: '/api/execute',
+    handler: async (req, ctx) => container.get('executeHandler').handle(req, ctx),
+    middleware: [container.get('validationMiddleware'), container.get('loggingMiddleware')],
+  });
+
+  router.register({
+    method: 'POST',
+    path: '/api/execute/stream',
+    handler: async (req, ctx) => container.get('executeHandler').handle(req, ctx),
+    middleware: [container.get('validationMiddleware'), container.get('loggingMiddleware')],
+  });
+
+  // File operation routes
+  router.register({
+    method: 'POST',
+    path: '/api/read',
+    handler: async (req, ctx) => container.get('fileHandler').handle(req, ctx),
+    middleware: [container.get('validationMiddleware'), container.get('loggingMiddleware')],
+  });
+
+  router.register({
+    method: 'POST',
+    path: '/api/write',
+    handler: async (req, ctx) => container.get('fileHandler').handle(req, ctx),
+    middleware: [container.get('validationMiddleware'), container.get('loggingMiddleware')],
+  });
+
+  router.register({
+    method: 'POST',
+    path: '/api/delete',
+    handler: async (req, ctx) => container.get('fileHandler').handle(req, ctx),
+    middleware: [container.get('validationMiddleware'), container.get('loggingMiddleware')],
+  });
+
+  router.register({
+    method: 'POST',
+    path: '/api/rename',
+    handler: async (req, ctx) => container.get('fileHandler').handle(req, ctx),
+    middleware: [container.get('validationMiddleware'), container.get('loggingMiddleware')],
+  });
+
+  router.register({
+    method: 'POST',
+    path: '/api/move',
+    handler: async (req, ctx) => container.get('fileHandler').handle(req, ctx),
+    middleware: [container.get('validationMiddleware'), container.get('loggingMiddleware')],
+  });
+
+  router.register({
+    method: 'POST',
+    path: '/api/mkdir',
+    handler: async (req, ctx) => container.get('fileHandler').handle(req, ctx),
+    middleware: [container.get('validationMiddleware'), container.get('loggingMiddleware')],
+  });
+
+  // Port management routes
+  router.register({
+    method: 'POST',
+    path: '/api/expose-port',
+    handler: async (req, ctx) => container.get('portHandler').handle(req, ctx),
+    middleware: [container.get('validationMiddleware'), container.get('loggingMiddleware')],
+  });
+
+  router.register({
+    method: 'GET',
+    path: '/api/exposed-ports',
+    handler: async (req, ctx) => container.get('portHandler').handle(req, ctx),
+    middleware: [container.get('loggingMiddleware')],
+  });
+
+  router.register({
+    method: 'DELETE',
+    path: '/api/exposed-ports/{port}',
+    handler: async (req, ctx) => container.get('portHandler').handle(req, ctx),
+    middleware: [container.get('loggingMiddleware')],
+  });
+
+  // Process management routes
+  router.register({
+    method: 'POST',
+    path: '/api/process/start',
+    handler: async (req, ctx) => container.get('processHandler').handle(req, ctx),
+    middleware: [container.get('validationMiddleware'), container.get('loggingMiddleware')],
+  });
+
+  router.register({
+    method: 'GET',
+    path: '/api/process/list',
+    handler: async (req, ctx) => container.get('processHandler').handle(req, ctx),
+    middleware: [container.get('loggingMiddleware')],
+  });
+
+  router.register({
+    method: 'DELETE',
+    path: '/api/process/kill-all',
+    handler: async (req, ctx) => container.get('processHandler').handle(req, ctx),
+    middleware: [container.get('loggingMiddleware')],
+  });
+
+  router.register({
+    method: 'GET',
+    path: '/api/process/{id}',
+    handler: async (req, ctx) => container.get('processHandler').handle(req, ctx),
+    middleware: [container.get('loggingMiddleware')],
+  });
+
+  router.register({
+    method: 'DELETE',
+    path: '/api/process/{id}',
+    handler: async (req, ctx) => container.get('processHandler').handle(req, ctx),
+    middleware: [container.get('loggingMiddleware')],
+  });
+
+  router.register({
+    method: 'GET',
+    path: '/api/process/{id}/logs',
+    handler: async (req, ctx) => container.get('processHandler').handle(req, ctx),
+    middleware: [container.get('loggingMiddleware')],
+  });
+
+  router.register({
+    method: 'GET',
+    path: '/api/process/{id}/stream',
+    handler: async (req, ctx) => container.get('processHandler').handle(req, ctx),
+    middleware: [container.get('loggingMiddleware')],
+  });
+
+  // Git operations
+  router.register({
+    method: 'POST',
+    path: '/api/git/checkout',
+    handler: async (req, ctx) => container.get('gitHandler').handle(req, ctx),
+    middleware: [container.get('validationMiddleware'), container.get('loggingMiddleware')],
+  });
+
+  // Proxy routes (catch-all for /proxy/*)
+  router.register({
+    method: 'GET',
+    path: '/proxy/{port}',
+    handler: async (req, ctx) => container.get('portHandler').handle(req, ctx),
+    middleware: [container.get('loggingMiddleware')],
+  });
+
+  router.register({
+    method: 'POST',
+    path: '/proxy/{port}',
+    handler: async (req, ctx) => container.get('portHandler').handle(req, ctx),
+    middleware: [container.get('loggingMiddleware')],
+  });
+
+  router.register({
+    method: 'PUT',
+    path: '/proxy/{port}',
+    handler: async (req, ctx) => container.get('portHandler').handle(req, ctx),
+    middleware: [container.get('loggingMiddleware')],
+  });
+
+  router.register({
+    method: 'DELETE',
+    path: '/proxy/{port}',
+    handler: async (req, ctx) => container.get('portHandler').handle(req, ctx),
+    middleware: [container.get('loggingMiddleware')],
+  });
+
+  // Miscellaneous routes
+  router.register({
+    method: 'GET',
+    path: '/',
+    handler: async (req, ctx) => container.get('miscHandler').handle(req, ctx),
+  });
+
+  router.register({
+    method: 'GET',
+    path: '/api/ping',
+    handler: async (req, ctx) => container.get('miscHandler').handle(req, ctx),
+    middleware: [container.get('loggingMiddleware')],
+  });
+
+  router.register({
+    method: 'GET',
+    path: '/api/commands',
+    handler: async (req, ctx) => container.get('miscHandler').handle(req, ctx),
+    middleware: [container.get('loggingMiddleware')],
+  });
+}
