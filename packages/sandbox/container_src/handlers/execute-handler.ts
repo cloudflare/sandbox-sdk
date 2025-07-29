@@ -74,7 +74,7 @@ export class ExecuteHandler extends BaseHandler<Request, Response> {
           errorCode: processResult.error!.code,
           errorMessage: processResult.error!.message,
         });
-        return this.createErrorResponse(processResult.error!, 500, context);
+        return this.createErrorResponse(processResult.error!, 400, context);
       }
     }
 
@@ -118,7 +118,7 @@ export class ExecuteHandler extends BaseHandler<Request, Response> {
         errorCode: result.error!.code,
         errorMessage: result.error!.message,
       });
-      return this.createErrorResponse(result.error!, 500, context);
+      return this.createErrorResponse(result.error!, 400, context);
     }
   }
 
@@ -145,7 +145,7 @@ export class ExecuteHandler extends BaseHandler<Request, Response> {
         errorCode: processResult.error!.code,
         errorMessage: processResult.error!.message,
       });
-      return this.createErrorResponse(processResult.error!, 500, context);
+      return this.createErrorResponse(processResult.error!, 400, context);
     }
 
     const process = processResult.data!;

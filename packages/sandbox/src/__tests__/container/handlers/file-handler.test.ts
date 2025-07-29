@@ -168,7 +168,7 @@ describe('FileHandler', () => {
       expect(response.status).toBe(500);
       const responseData = await response.json();
       expect(responseData.success).toBe(false);
-      expect(responseData.error.code).toBe('FILE_NOT_FOUND');
+      expect(responseData.code).toBe('FILE_NOT_FOUND');
 
       expect(mockLogger.error).toHaveBeenCalledWith(
         'File read failed',
@@ -252,7 +252,7 @@ describe('FileHandler', () => {
 
       expect(response.status).toBe(500);
       const responseData = await response.json();
-      expect(responseData.error.code).toBe('PERMISSION_DENIED');
+      expect(responseData.code).toBe('PERMISSION_DENIED');
     });
   });
 
@@ -314,7 +314,7 @@ describe('FileHandler', () => {
 
       expect(response.status).toBe(500);
       const responseData = await response.json();
-      expect(responseData.error.code).toBe('FILE_NOT_FOUND');
+      expect(responseData.code).toBe('FILE_NOT_FOUND');
     });
   });
 
@@ -382,7 +382,7 @@ describe('FileHandler', () => {
 
       expect(response.status).toBe(500);
       const responseData = await response.json();
-      expect(responseData.error.code).toBe('SOURCE_NOT_FOUND');
+      expect(responseData.code).toBe('SOURCE_NOT_FOUND');
 
       expect(mockLogger.error).toHaveBeenCalledWith(
         'File rename failed',
@@ -461,7 +461,7 @@ describe('FileHandler', () => {
 
       expect(response.status).toBe(500);
       const responseData = await response.json();
-      expect(responseData.error.code).toBe('DESTINATION_PERMISSION_DENIED');
+      expect(responseData.code).toBe('DESTINATION_PERMISSION_DENIED');
     });
   });
 
@@ -561,7 +561,7 @@ describe('FileHandler', () => {
 
       expect(response.status).toBe(500);
       const responseData = await response.json();
-      expect(responseData.error.code).toBe('MKDIR_PERMISSION_DENIED');
+      expect(responseData.code).toBe('MKDIR_PERMISSION_DENIED');
 
       expect(mockLogger.error).toHaveBeenCalledWith(
         'Directory creation failed',

@@ -189,8 +189,8 @@ describe('GitHandler', () => {
       expect(response.status).toBe(400);
       const responseData = await response.json();
       expect(responseData.success).toBe(false);
-      expect(responseData.error.code).toBe('INVALID_GIT_URL');
-      expect(responseData.error.message).toContain('Invalid URL scheme');
+      expect(responseData.code).toBe('INVALID_GIT_URL');
+      expect(responseData.error).toContain('Invalid URL scheme');
 
       expect(mockLogger.error).toHaveBeenCalledWith(
         'Git repository clone failed',
@@ -230,8 +230,8 @@ describe('GitHandler', () => {
 
       expect(response.status).toBe(400);
       const responseData = await response.json();
-      expect(responseData.error.code).toBe('INVALID_TARGET_PATH');
-      expect(responseData.error.message).toContain('Path outside sandbox');
+      expect(responseData.code).toBe('INVALID_TARGET_PATH');
+      expect(responseData.error).toContain('Path outside sandbox');
     });
 
     it('should handle git clone command failures', async () => {
@@ -264,10 +264,10 @@ describe('GitHandler', () => {
 
       expect(response.status).toBe(400);
       const responseData = await response.json();
-      expect(responseData.error.code).toBe('GIT_CLONE_FAILED');
-      expect(responseData.error.details.exitCode).toBe(128);
-      expect(responseData.error.details.stderr).toContain('repository');
-      expect(responseData.error.details.stderr).toContain('not found');
+      expect(responseData.code).toBe('GIT_CLONE_FAILED');
+      expect(responseData.details.exitCode).toBe(128);
+      expect(responseData.details.stderr).toContain('repository');
+      expect(responseData.details.stderr).toContain('not found');
 
       expect(mockLogger.error).toHaveBeenCalledWith(
         'Git repository clone failed',
@@ -310,8 +310,8 @@ describe('GitHandler', () => {
 
       expect(response.status).toBe(400);
       const responseData = await response.json();
-      expect(responseData.error.code).toBe('GIT_CLONE_FAILED');
-      expect(responseData.error.details.stderr).toContain('nonexistent-branch not found');
+      expect(responseData.code).toBe('GIT_CLONE_FAILED');
+      expect(responseData.details.stderr).toContain('nonexistent-branch not found');
     });
 
     it('should handle service exceptions', async () => {
@@ -339,8 +339,8 @@ describe('GitHandler', () => {
 
       expect(response.status).toBe(400);
       const responseData = await response.json();
-      expect(responseData.error.code).toBe('GIT_CLONE_ERROR');
-      expect(responseData.error.details.originalError).toBe('Command not found');
+      expect(responseData.code).toBe('GIT_CLONE_ERROR');
+      expect(responseData.details.originalError).toBe('Command not found');
     });
   });
 

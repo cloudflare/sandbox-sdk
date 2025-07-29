@@ -118,8 +118,8 @@ describe('SessionHandler', () => {
       expect(response.status).toBe(500);
       const responseData = await response.json();
       expect(responseData.success).toBe(false);
-      expect(responseData.error.code).toBe('SESSION_CREATE_ERROR');
-      expect(responseData.error.message).toBe('Failed to create session');
+      expect(responseData.code).toBe('SESSION_CREATE_ERROR');
+      expect(responseData.error).toBe('Failed to create session');
 
       expect(mockLogger.error).toHaveBeenCalledWith(
         'Session creation failed',
@@ -328,7 +328,7 @@ describe('SessionHandler', () => {
       expect(response.status).toBe(500);
       const responseData = await response.json();
       expect(responseData.success).toBe(false);
-      expect(responseData.error.code).toBe('SESSION_LIST_ERROR');
+      expect(responseData.code).toBe('SESSION_LIST_ERROR');
 
       expect(mockLogger.error).toHaveBeenCalledWith(
         'Session listing failed',

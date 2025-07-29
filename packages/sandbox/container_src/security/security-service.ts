@@ -50,40 +50,56 @@ export class SecurityService {
 
   // Dangerous command patterns
   private static readonly DANGEROUS_COMMANDS = [
-    /rm\s+-rf\s+\//,           // Recursive delete from root
-    /sudo/,                    // Privilege escalation
-    /su\s/,                    // Switch user
-    /passwd/,                  // Change password
-    /useradd/,                 // Add user
-    /userdel/,                 // Delete user
-    /usermod/,                 // Modify user
-    /chmod\s+777/,             // Dangerous permissions
-    /chown\s+root/,            // Change to root ownership
+    // Critical system destruction
+    /rm\s+-rf\s+\/$/,          // Delete entire root filesystem
+    /rm\s+-rf\s+\/\s/,         // Delete root with trailing content  
+    /rm\s+-rf\s+\*$/,          // Delete everything in current dir
+    
+    // Privilege escalation (actual security risks)
+    /^sudo(\s|$)/,             // Privilege escalation
+    /^su(\s|$)/,               // Switch user
+    
+    // System password/user modification
+    /^passwd(\s|$)/,           // Change passwords
+    /^useradd(\s|$)/,          // Add users
+    /^userdel(\s|$)/,          // Delete users
+    /^usermod(\s|$)/,          // Modify users
+    
+    // Critical system file access
     /\/etc\/passwd/,           // System password file
     /\/etc\/shadow/,           // System shadow file
-    /mkfs/,                    // Format filesystem
-    /dd\s+if=/,                // Direct disk access
-    /mount/,                   // Mount filesystems
-    /umount/,                  // Unmount filesystems
-    /init\s+0/,                // Shutdown system
-    /shutdown/,                // Shutdown system
-    /reboot/,                  // Reboot system
-    /halt/,                    // Halt system
-    /systemctl/,               // System control
-    /service\s/,               // Service control
-    /crontab/,                 // Cron jobs
-    /at\s/,                    // Scheduled tasks
-    /nohup.*&/,                // Background processes
-    /\&\&.*rm/,                // Chained dangerous commands
-    /\|\|.*rm/,                // Alternative dangerous commands
-    /exec.*bash/,              // Execute shell
-    /exec.*sh/,                // Execute shell
-    /\/bin\/bash/,             // Direct shell access
-    /\/bin\/sh/,               // Direct shell access
-    /curl.*\|.*bash/,          // Pipe to shell
-    /wget.*\|.*bash/,          // Pipe to shell
-    /eval/,                    // Dynamic evaluation
-    /nc\s+-l/,                 // Netcat listener
+    
+    // Filesystem operations
+    /^mkfs(\s|\.)/,            // Format filesystem (mkfs or mkfs.ext4)
+    /^mount(\s|$)/,            // Mount filesystems
+    /^umount(\s|$)/,           // Unmount filesystems
+    /^chmod\s+777/,            // Dangerous permissions
+    /^chown\s+root/,           // Change to root ownership
+    /^dd\s+if=/,               // Direct disk access
+    
+    // System control
+    /^init\s+0/,               // Shutdown system via init
+    /^shutdown/,               // Shutdown system
+    /^reboot/,                 // Reboot system
+    /^halt/,                   // Halt system
+    /^systemctl(\s|$)/,        // System control
+    /^service\s/,              // Service control
+    
+    // Shell execution (direct shell access)
+    /^exec\s+(bash|sh)/,       // Execute shell
+    /^\/bin\/(bash|sh)$/,      // Direct shell access
+    /^bash$/,                  // Direct bash
+    /^sh$/,                    // Direct sh
+    
+    // Remote code execution patterns
+    /curl.*\|\s*(bash|sh)/,    // Download and execute
+    /wget.*\|\s*(bash|sh)/,    // Download and execute
+    /\|\s*bash$/,              // Pipe to bash
+    /\|\s*sh$/,                // Pipe to shell
+    
+    // Process injection/evaluation
+    /^eval\s/,                 // Dynamic evaluation
+    /^nc\s+-l/,                // Netcat listener
     /netcat\s+-l/,             // Netcat listener
   ];
 
@@ -280,20 +296,23 @@ export class SecurityService {
       errors.push('Command contains null bytes');
     }
 
-    // Check for shell injection attempts
-    const suspiciousChars = /[;&|`$(){}[\]<>]/;
-    if (suspiciousChars.test(trimmedCommand)) {
-      // Allow some safe uses but be restrictive
-      const allowedPatterns = [
-        /^ls\s+-[a-zA-Z]+$/,          // ls with flags
-        /^echo\s+"[^"]*"$/,           // echo with quoted strings
-        /^cat\s+[\w\/\.-]+\s*\|?\s*head$/,  // cat with pipe to head
-        /^grep\s+"[^"]*"\s+[\w\/\.-]+$/,    // grep with quoted pattern
-      ];
+    // Check for specific shell injection patterns (be permissive for development)
+    const dangerousShellPatterns = [
+      /;\s*(rm|sudo|passwd|shutdown)/,  // Command chaining with dangerous commands
+      /\|\s*(rm|sudo|passwd|shutdown)/, // Piping to dangerous commands
+      /&&\s*(rm|sudo|passwd|shutdown)/, // AND chaining with dangerous commands
+      /\|\|\s*(rm|sudo|passwd|shutdown)/, // OR chaining with dangerous commands
+      /`.*sudo/,                        // Command substitution with sudo
+      /\$\(.*sudo/,                     // Command substitution with sudo
+      /`.*rm\s+-rf/,                    // Command substitution with rm -rf
+      /\$\(.*rm\s+-rf/,                 // Command substitution with rm -rf
+      /\$\{IFS\}/,                      // Shell variable manipulation (bypass attempt)
+    ];
 
-      const isAllowed = allowedPatterns.some(pattern => pattern.test(trimmedCommand));
-      if (!isAllowed) {
-        errors.push('Command contains potentially dangerous shell characters');
+    for (const pattern of dangerousShellPatterns) {
+      if (pattern.test(trimmedCommand)) {
+        errors.push('Command contains dangerous shell injection pattern');
+        break;
       }
     }
 

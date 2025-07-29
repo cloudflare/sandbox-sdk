@@ -158,7 +158,7 @@ describe('MiscHandler', () => {
 
       const response1 = await miscHandler.handle(request1, mockContext);
       // Small delay to ensure different timestamps
-      await new Promise(resolve => setTimeout(resolve, 1));
+      await new Promise(resolve => setTimeout(resolve, 5));
       const response2 = await miscHandler.handle(request2, mockContext);
 
       const responseData1 = await response1.json();
@@ -215,7 +215,7 @@ describe('MiscHandler', () => {
       }
 
       // Verify exact count matches implementation
-      expect(responseData.availableCommands).toHaveLength(18);
+      expect(responseData.availableCommands).toHaveLength(19);
     });
 
     it('should return consistent command list across requests', async () => {

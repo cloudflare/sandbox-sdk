@@ -169,7 +169,7 @@ describe('PortHandler', () => {
       expect(response.status).toBe(400);
       const responseData = await response.json();
       expect(responseData.success).toBe(false);
-      expect(responseData.error.code).toBe('INVALID_PORT');
+      expect(responseData.code).toBe('INVALID_PORT');
 
       expect(mockLogger.error).toHaveBeenCalledWith(
         'Port expose failed',
@@ -204,7 +204,7 @@ describe('PortHandler', () => {
 
       expect(response.status).toBe(400);
       const responseData = await response.json();
-      expect(responseData.error.code).toBe('PORT_ALREADY_EXPOSED');
+      expect(responseData.code).toBe('PORT_ALREADY_EXPOSED');
     });
   });
 
@@ -254,7 +254,7 @@ describe('PortHandler', () => {
 
       expect(response.status).toBe(404);
       const responseData = await response.json();
-      expect(responseData.error.code).toBe('PORT_NOT_EXPOSED');
+      expect(responseData.code).toBe('PORT_NOT_EXPOSED');
 
       expect(mockLogger.error).toHaveBeenCalledWith(
         'Port unexpose failed',
@@ -376,7 +376,7 @@ describe('PortHandler', () => {
 
       expect(response.status).toBe(500);
       const responseData = await response.json();
-      expect(responseData.error.code).toBe('PORT_LIST_ERROR');
+      expect(responseData.code).toBe('PORT_LIST_ERROR');
 
       expect(mockLogger.error).toHaveBeenCalledWith(
         'Port listing failed',
@@ -484,7 +484,7 @@ describe('PortHandler', () => {
 
       expect(response.status).toBe(400);
       const responseData = await response.json();
-      expect(responseData.error).toBe('Invalid proxy URL format');
+      expect(responseData.error).toBe('Invalid port number in proxy URL');
 
       // Should not call proxy service
       expect(mockPortService.proxyRequest).not.toHaveBeenCalled();

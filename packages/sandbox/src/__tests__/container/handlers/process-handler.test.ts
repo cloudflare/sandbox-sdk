@@ -136,7 +136,7 @@ describe('ProcessHandler', () => {
       expect(response.status).toBe(500);
       const responseData = await response.json();
       expect(responseData.success).toBe(false);
-      expect(responseData.error.code).toBe('COMMAND_NOT_FOUND');
+      expect(responseData.code).toBe('COMMAND_NOT_FOUND');
 
       expect(mockLogger.error).toHaveBeenCalledWith(
         'Process start failed',
@@ -238,7 +238,7 @@ describe('ProcessHandler', () => {
       expect(response.status).toBe(500);
       const responseData = await response.json();
       expect(responseData.success).toBe(false);
-      expect(responseData.error.code).toBe('DB_ERROR');
+      expect(responseData.code).toBe('DB_ERROR');
     });
   });
 
@@ -296,7 +296,7 @@ describe('ProcessHandler', () => {
       expect(response.status).toBe(404);
       const responseData = await response.json();
       expect(responseData.success).toBe(false);
-      expect(responseData.error.code).toBe('PROCESS_NOT_FOUND');
+      expect(responseData.code).toBe('PROCESS_NOT_FOUND');
     });
   });
 
@@ -345,7 +345,7 @@ describe('ProcessHandler', () => {
 
       expect(response.status).toBe(404);
       const responseData = await response.json();
-      expect(responseData.error.code).toBe('PROCESS_ALREADY_TERMINATED');
+      expect(responseData.code).toBe('PROCESS_ALREADY_TERMINATED');
     });
   });
 
@@ -394,7 +394,7 @@ describe('ProcessHandler', () => {
 
       expect(response.status).toBe(500);
       const responseData = await response.json();
-      expect(responseData.error.code).toBe('KILL_ALL_ERROR');
+      expect(responseData.code).toBe('KILL_ALL_ERROR');
     });
   });
 
@@ -449,7 +449,7 @@ describe('ProcessHandler', () => {
 
       expect(response.status).toBe(404);
       const responseData = await response.json();
-      expect(responseData.error.code).toBe('PROCESS_NOT_FOUND');
+      expect(responseData.code).toBe('PROCESS_NOT_FOUND');
     });
   });
 
@@ -518,7 +518,7 @@ describe('ProcessHandler', () => {
 
       expect(response.status).toBe(404);
       const responseData = await response.json();
-      expect(responseData.error.code).toBe('STREAM_ERROR');
+      expect(responseData.code).toBe('STREAM_ERROR');
     });
 
     it('should handle process not found during stream setup', async () => {
@@ -541,7 +541,7 @@ describe('ProcessHandler', () => {
 
       expect(response.status).toBe(404);
       const responseData = await response.json();
-      expect(responseData.error.code).toBe('PROCESS_NOT_FOUND');
+      expect(responseData.code).toBe('PROCESS_NOT_FOUND');
 
       expect(mockLogger.error).toHaveBeenCalledWith(
         'Process stream setup failed - process not found',
@@ -556,6 +556,15 @@ describe('ProcessHandler', () => {
 
   describe('route handling', () => {
     it('should return 404 for invalid endpoints', async () => {
+      // Mock getProcess to return process not found for invalid process ID
+      (mockProcessService.getProcess as any).mockResolvedValue({
+        success: false,
+        error: {
+          message: 'Process not found',
+          code: 'PROCESS_NOT_FOUND'
+        }
+      });
+
       const request = new Request('http://localhost:3000/api/process/invalid-endpoint', {
         method: 'GET'
       });
@@ -564,10 +573,19 @@ describe('ProcessHandler', () => {
 
       expect(response.status).toBe(404);
       const responseData = await response.json();
-      expect(responseData.error).toBe('Invalid process endpoint');
+      expect(responseData.error).toBe('Process not found');
     });
 
     it('should handle malformed process ID paths', async () => {
+      // Mock getProcess to return process not found for empty process ID
+      (mockProcessService.getProcess as any).mockResolvedValue({
+        success: false,
+        error: {
+          message: 'Process not found',
+          code: 'PROCESS_NOT_FOUND'
+        }
+      });
+
       const request = new Request('http://localhost:3000/api/process/', {
         method: 'GET'
       });
@@ -576,7 +594,7 @@ describe('ProcessHandler', () => {
 
       expect(response.status).toBe(404);
       const responseData = await response.json();
-      expect(responseData.error).toBe('Invalid process endpoint');
+      expect(responseData.error).toBe('Process not found');
     });
 
     it('should handle unsupported HTTP methods for process endpoints', async () => {

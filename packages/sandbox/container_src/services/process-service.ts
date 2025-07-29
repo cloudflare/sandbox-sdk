@@ -223,18 +223,8 @@ export class ProcessService {
         success: result.success 
       });
 
-      // If the command failed (non-zero exit code), return error ServiceResult
-      if (exitCode !== 0) {
-        return {
-          success: false,
-          error: {
-            message: 'Failed to execute command',
-            code: 'COMMAND_EXEC_ERROR',
-            details: { command, exitCode, stderr, originalError: `Command exited with code ${exitCode}` },
-          },
-        };
-      }
-
+      // Service operation was successful regardless of command exit code
+      // Command failure is indicated in CommandResult.success, not ServiceResult.success
       return {
         success: true,
         data: result,

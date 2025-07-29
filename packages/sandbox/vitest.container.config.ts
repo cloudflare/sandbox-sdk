@@ -4,7 +4,7 @@ import path from 'path';
 export default defineConfig({
   test: {
     name: 'container-tests',
-    include: ['src/__tests__/container/**/*.test.ts'],
+    include: ['src/__tests__/container/**/*.test.ts', 'src/__tests__/container-integration/**/*.test.ts'],
     testTimeout: 10000,
     hookTimeout: 10000,
     teardownTimeout: 10000,
@@ -12,7 +12,7 @@ export default defineConfig({
     pool: 'forks', // Use forks for container tests
     poolOptions: {
       forks: {
-        singleFork: true, // Single fork for better resource management
+        singleFork: false, // Use separate forks for better test isolation
       },
     },
     environment: 'node',

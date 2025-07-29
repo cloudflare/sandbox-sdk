@@ -105,14 +105,18 @@ describe('ProcessService', () => {
       }
     });
 
-    it('should return ServiceResult with success false for invalid command', async () => {
+    it('should return ServiceResult with success true but command failure for invalid command', async () => {
       const result = await processService.executeCommand('nonexistent-command', {});
 
-      expect(result.success).toBe(false);
-      if (!result.success) {
-        expect(result.error).toBeDefined();
-        expect(result.error.code).toBe('COMMAND_EXEC_ERROR');
-        expect(result.error.message).toContain('Failed to execute command');
+      // Service operation succeeded (command was executed)
+      expect(result.success).toBe(true);
+      expect(result.data).toBeDefined();
+      
+      if (result.success) {
+        // But the command itself failed
+        expect(result.data.success).toBe(false);
+        expect(result.data.exitCode).toBe(127); // Command not found
+        expect(result.data.stderr).toContain('command not found');
       }
     });
 
