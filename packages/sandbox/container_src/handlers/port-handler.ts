@@ -63,8 +63,6 @@ export class PortHandler extends BaseHandler<Request, Response> {
           port: portInfo.port,
           name: portInfo.name,
           exposedAt: portInfo.exposedAt.toISOString(),
-          status: portInfo.status,
-          message: 'Port exposed successfully',
           timestamp: new Date().toISOString(),
         }),
         {
@@ -137,7 +135,6 @@ export class PortHandler extends BaseHandler<Request, Response> {
         port: portInfo.port,
         name: portInfo.name,
         exposedAt: portInfo.exposedAt.toISOString(),
-        status: portInfo.status,
       }));
 
       return new Response(

@@ -111,6 +111,12 @@ export abstract class BaseHandler<TRequest, TResponse> implements Handler<TReque
 
   protected getValidatedData<T>(context: RequestContext): T {
     const validatedContext = context as ValidatedRequestContext<T>;
+    console.log(`[BaseHandler] Checking for validated data:`, {
+      hasValidatedData: !!validatedContext.validatedData,
+      contextKeys: Object.keys(context),
+      requestId: context.requestId
+    });
+    
     if (!validatedContext.validatedData) {
       throw new Error('No validated data found in context. Ensure validation middleware ran first.');
     }

@@ -67,6 +67,7 @@ export class FileHandler extends BaseHandler<Request, Response> {
           success: true,
           content: result.data!,
           path: body.path,
+          exitCode: 0,
           encoding: body.encoding || 'utf-8',
           timestamp: new Date().toISOString(),
         }),
@@ -113,9 +114,8 @@ export class FileHandler extends BaseHandler<Request, Response> {
       return new Response(
         JSON.stringify({
           success: true,
-          message: 'File written successfully',
+          exitCode: 0,
           path: body.path,
-          bytesWritten: body.content.length,
           timestamp: new Date().toISOString(),
         }),
         {
@@ -156,7 +156,7 @@ export class FileHandler extends BaseHandler<Request, Response> {
       return new Response(
         JSON.stringify({
           success: true,
-          message: 'File deleted successfully',
+          exitCode: 0,
           path: body.path,
           timestamp: new Date().toISOString(),
         }),
@@ -200,8 +200,8 @@ export class FileHandler extends BaseHandler<Request, Response> {
       return new Response(
         JSON.stringify({
           success: true,
-          message: 'File renamed successfully',
-          oldPath: body.oldPath,
+          exitCode: 0,
+          path: body.oldPath,
           newPath: body.newPath,
           timestamp: new Date().toISOString(),
         }),
@@ -246,9 +246,9 @@ export class FileHandler extends BaseHandler<Request, Response> {
       return new Response(
         JSON.stringify({
           success: true,
-          message: 'File moved successfully',
-          sourcePath: body.sourcePath,
-          destinationPath: body.destinationPath,
+          exitCode: 0,
+          path: body.sourcePath,
+          newPath: body.destinationPath,
           timestamp: new Date().toISOString(),
         }),
         {
@@ -294,9 +294,11 @@ export class FileHandler extends BaseHandler<Request, Response> {
       return new Response(
         JSON.stringify({
           success: true,
-          message: 'Directory created successfully',
+          stdout: '',
+          stderr: '',
+          exitCode: 0,
           path: body.path,
-          recursive: body.recursive,
+          recursive: body.recursive || false,
           timestamp: new Date().toISOString(),
         }),
         {

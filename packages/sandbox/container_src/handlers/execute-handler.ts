@@ -99,6 +99,7 @@ export class ExecuteHandler extends BaseHandler<Request, Response> {
           exitCode: commandResult.exitCode,
           stdout: commandResult.stdout,
           stderr: commandResult.stderr,
+          command: body.command,
           timestamp: new Date().toISOString(),
         }),
         {
@@ -160,8 +161,7 @@ export class ExecuteHandler extends BaseHandler<Request, Response> {
       start(controller) {
         // Send initial process info
         const initialData = `data: ${JSON.stringify({
-          type: 'process_started',
-          processId: process.id,
+          type: 'start',
           command: process.command,
           timestamp: new Date().toISOString(),
         })}\n\n`;
@@ -170,8 +170,7 @@ export class ExecuteHandler extends BaseHandler<Request, Response> {
         // Set up output listeners
         const outputListener = (stream: 'stdout' | 'stderr', data: string) => {
           const eventData = `data: ${JSON.stringify({
-            type: 'output',
-            stream,
+            type: stream, // 'stdout' or 'stderr' directly
             data,
             timestamp: new Date().toISOString(),
           })}\n\n`;
@@ -179,18 +178,10 @@ export class ExecuteHandler extends BaseHandler<Request, Response> {
         };
 
         const statusListener = (status: string) => {
-          const eventData = `data: ${JSON.stringify({
-            type: 'status_change',
-            status,
-            timestamp: new Date().toISOString(),
-          })}\n\n`;
-          controller.enqueue(new TextEncoder().encode(eventData));
-
           // Close stream when process completes
           if (['completed', 'failed', 'killed', 'error'].includes(status)) {
             const finalData = `data: ${JSON.stringify({
-              type: 'process_ended',
-              status,
+              type: 'complete',
               exitCode: process.exitCode,
               timestamp: new Date().toISOString(),
             })}\n\n`;

@@ -52,10 +52,12 @@ export class GitHandler extends BaseHandler<Request, Response> {
       return new Response(
         JSON.stringify({
           success: true,
-          message: 'Repository cloned successfully',
+          stdout: '',
+          stderr: '',
+          exitCode: 0,
           repoUrl: body.repoUrl,
           branch: gitResult.branch,
-          targetDirectory: gitResult.path,
+          targetDir: gitResult.path,
           timestamp: new Date().toISOString(),
         }),
         {

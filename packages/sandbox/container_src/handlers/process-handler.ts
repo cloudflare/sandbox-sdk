@@ -67,12 +67,14 @@ export class ProcessHandler extends BaseHandler<Request, Response> {
       return new Response(
         JSON.stringify({
           success: true,
-          processId: process.id,
-          pid: process.pid,
-          command: process.command,
-          status: process.status,
-          startTime: process.startTime.toISOString(),
-          sessionId: process.sessionId,
+          process: {
+            id: process.id,
+            pid: process.pid,
+            command: process.command,
+            status: process.status,
+            startTime: process.startTime.toISOString(),
+            sessionId: process.sessionId,
+          },
           message: 'Process started successfully',
           timestamp: new Date().toISOString(),
         }),
@@ -212,7 +214,6 @@ export class ProcessHandler extends BaseHandler<Request, Response> {
         JSON.stringify({
           success: true,
           message: 'Process killed successfully',
-          processId,
           timestamp: new Date().toISOString(),
         }),
         {
@@ -249,7 +250,7 @@ export class ProcessHandler extends BaseHandler<Request, Response> {
         JSON.stringify({
           success: true,
           message: 'All processes killed successfully',
-          count: result.data!,
+          killedCount: result.data!,
           timestamp: new Date().toISOString(),
         }),
         {
@@ -285,11 +286,8 @@ export class ProcessHandler extends BaseHandler<Request, Response> {
         JSON.stringify({
           success: true,
           processId,
-          logs: {
-            stdout: process.stdout,
-            stderr: process.stderr,
-          },
-          status: process.status,
+          stdout: process.stdout,
+          stderr: process.stderr,
           timestamp: new Date().toISOString(),
         }),
         {
@@ -349,9 +347,9 @@ export class ProcessHandler extends BaseHandler<Request, Response> {
           // Send existing logs
           if (process.stdout) {
             const stdoutData = `data: ${JSON.stringify({
-              type: 'output',
-              stream: 'stdout',
+              type: 'stdout',
               data: process.stdout,
+              processId: process.id,
               timestamp: new Date().toISOString(),
             })}\n\n`;
             controller.enqueue(new TextEncoder().encode(stdoutData));
@@ -359,9 +357,9 @@ export class ProcessHandler extends BaseHandler<Request, Response> {
 
           if (process.stderr) {
             const stderrData = `data: ${JSON.stringify({
-              type: 'output',
-              stream: 'stderr',
+              type: 'stderr',
               data: process.stderr,
+              processId: process.id,
               timestamp: new Date().toISOString(),
             })}\n\n`;
             controller.enqueue(new TextEncoder().encode(stderrData));
@@ -370,28 +368,22 @@ export class ProcessHandler extends BaseHandler<Request, Response> {
           // Set up listeners for new output
           const outputListener = (stream: 'stdout' | 'stderr', data: string) => {
             const eventData = `data: ${JSON.stringify({
-              type: 'output',
-              stream,
+              type: stream, // 'stdout' or 'stderr' directly
               data,
+              processId: process.id,
               timestamp: new Date().toISOString(),
             })}\n\n`;
             controller.enqueue(new TextEncoder().encode(eventData));
           };
 
           const statusListener = (status: string) => {
-            const eventData = `data: ${JSON.stringify({
-              type: 'status_change',
-              status,
-              timestamp: new Date().toISOString(),
-            })}\n\n`;
-            controller.enqueue(new TextEncoder().encode(eventData));
-
             // Close stream when process completes
             if (['completed', 'failed', 'killed', 'error'].includes(status)) {
               const finalData = `data: ${JSON.stringify({
-                type: 'process_ended',
-                status,
+                type: 'exit',
+                processId: process.id,
                 exitCode: process.exitCode,
+                data: `Process ${status} with exit code ${process.exitCode}`,
                 timestamp: new Date().toISOString(),
               })}\n\n`;
               controller.enqueue(new TextEncoder().encode(finalData));

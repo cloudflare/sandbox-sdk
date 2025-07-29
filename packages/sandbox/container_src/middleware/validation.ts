@@ -13,8 +13,11 @@ export class ValidationMiddleware implements Middleware {
     const url = new URL(request.url);
     const pathname = url.pathname;
 
+    console.log(`[ValidationMiddleware] Processing ${request.method} ${pathname}`);
+
     // Skip validation for certain endpoints
     if (this.shouldSkipValidation(pathname)) {
+      console.log(`[ValidationMiddleware] Skipping validation for ${pathname}`);
       return await next();
     }
 
@@ -28,6 +31,11 @@ export class ValidationMiddleware implements Middleware {
           
           // Validate based on endpoint
           const validationResult = this.validateByEndpoint(pathname, body);
+          console.log(`[ValidationMiddleware] Validation result for ${pathname}:`, {
+            isValid: validationResult.isValid,
+            hasData: !!validationResult.data,
+            errorCount: validationResult.errors?.length || 0
+          });
           
           if (!validationResult.isValid) {
             return new Response(
@@ -54,11 +62,12 @@ export class ValidationMiddleware implements Middleware {
             body: JSON.stringify(validationResult.data),
           });
 
-          // Store original request in context for handlers
-          const validatedContext = context as ValidatedRequestContext;
+          // Store validated data in context for handlers
+          const validatedContext = context as ValidatedRequestContext<unknown>;
           validatedContext.originalRequest = request;
           validatedContext.validatedData = validationResult.data;
-
+          
+          console.log(`[ValidationMiddleware] Storing validated data in context for ${pathname}`);
           return await next();
         }
       } catch (error) {
@@ -83,19 +92,30 @@ export class ValidationMiddleware implements Middleware {
   }
 
   private shouldSkipValidation(pathname: string): boolean {
-    const skipPatterns = [
+    const exactPatterns = [
       '/',
       '/api/ping',
       '/api/commands',
       '/api/session/list',
       '/api/exposed-ports',
       '/api/process/list',
+    ];
+    
+    const prefixPatterns = [
       '/proxy/',
     ];
 
-    return skipPatterns.some(pattern => 
-      pathname === pattern || pathname.startsWith(pattern)
-    );
+    const exactMatch = exactPatterns.includes(pathname);
+    const prefixMatch = prefixPatterns.some(pattern => pathname.startsWith(pattern));
+    const shouldSkip = exactMatch || prefixMatch;
+    
+    console.log(`[ValidationMiddleware] shouldSkipValidation for ${pathname}:`, {
+      shouldSkip,
+      exactMatch,
+      prefixMatch
+    });
+    
+    return shouldSkip;
   }
 
   private validateByEndpoint(pathname: string, body: unknown): ValidationResult<unknown> {
