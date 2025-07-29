@@ -31,7 +31,8 @@
     "test:unit:watch": "vitest --config vitest.unit.config.ts",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:integration:watch": "vitest --config vitest.integration.config.ts",
-    "test:container": "vitest run src/__tests__/container",
+    "test:container": "vitest run --config vitest.container.config.ts",
+    "test:container:watch": "vitest --config vitest.container.config.ts",
     "test:e2e": "vitest run src/__tests__/e2e"
   },
   "exports": {

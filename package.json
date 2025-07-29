@@ -22,7 +22,7 @@
     "@changesets/changelog-github": "^0.5.1",
     "@changesets/cli": "^2.29.5",
     "@cloudflare/vite-plugin": "^1.10.1",
-    "@cloudflare/vitest-pool-workers": "^0.8.57",
+    "@cloudflare/vitest-pool-workers": "https://pkg.pr.new/@cloudflare/vitest-pool-workers@10107",
     "@cloudflare/workers-types": "^4.20250725.0",
     "@types/bun": "^1.2.19",
     "@types/node": "^24.1.0",
