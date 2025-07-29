@@ -1,5 +1,5 @@
 // Validation Middleware
-import type { Middleware, RequestContext, NextFunction } from '../core/types';
+import type { Middleware, RequestContext, NextFunction, ValidatedRequestContext, ValidationResult } from '../core/types';
 import type { RequestValidator } from '../validation/request-validator';
 
 export class ValidationMiddleware implements Middleware {
@@ -55,8 +55,9 @@ export class ValidationMiddleware implements Middleware {
           });
 
           // Store original request in context for handlers
-          (context as any).originalRequest = request;
-          (context as any).validatedData = validationResult.data;
+          const validatedContext = context as ValidatedRequestContext;
+          validatedContext.originalRequest = request;
+          validatedContext.validatedData = validationResult.data;
 
           return await next();
         }
@@ -97,7 +98,7 @@ export class ValidationMiddleware implements Middleware {
     );
   }
 
-  private validateByEndpoint(pathname: string, body: unknown): any {
+  private validateByEndpoint(pathname: string, body: unknown): ValidationResult<unknown> {
     switch (pathname) {
       case '/api/execute':
       case '/api/execute/stream':

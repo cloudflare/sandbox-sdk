@@ -98,7 +98,7 @@ export class SecurityService {
 
   constructor(private logger: Logger) {}
 
-  validatePath(path: string): ValidationResult {
+  validatePath(path: string): ValidationResult<string> {
     const errors: string[] = [];
 
     // Basic validation
@@ -204,7 +204,7 @@ export class SecurityService {
     return result;
   }
 
-  validatePort(port: number): ValidationResult {
+  validatePort(port: number): ValidationResult<number> {
     const errors: string[] = [];
 
     // Basic validation
@@ -245,7 +245,7 @@ export class SecurityService {
     };
   }
 
-  validateCommand(command: string): ValidationResult {
+  validateCommand(command: string): ValidationResult<string> {
     const errors: string[] = [];
 
     // Basic validation
@@ -318,7 +318,7 @@ export class SecurityService {
     };
   }
 
-  validateGitUrl(url: string): ValidationResult {
+  validateGitUrl(url: string): ValidationResult<string> {
     const errors: string[] = [];
 
     // Basic validation
@@ -430,4 +430,5 @@ export class SecurityService {
       ...details,
     });
   }
+
 }

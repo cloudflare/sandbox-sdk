@@ -26,11 +26,19 @@ export class Router {
     this.globalMiddleware.push(middleware);
   }
 
+  private validateHttpMethod(method: string): HttpMethod {
+    const validMethods: HttpMethod[] = ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'];
+    if (validMethods.includes(method as HttpMethod)) {
+      return method as HttpMethod;
+    }
+    throw new Error(`Unsupported HTTP method: ${method}`);
+  }
+
   /**
    * Route an incoming request to the appropriate handler
    */
   async route(request: Request): Promise<Response> {
-    const method = request.method as HttpMethod;
+    const method = this.validateHttpMethod(request.method);
     const pathname = new URL(request.url).pathname;
     
     console.log(`[Router] Routing ${method} ${pathname}`);

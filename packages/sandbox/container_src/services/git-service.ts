@@ -1,5 +1,5 @@
 // Git Operations Service
-import type { GitResult, CloneOptions, Logger, ServiceResult } from '../core/types';
+import type { CloneOptions, Logger, ServiceResult } from '../core/types';
 
 export interface SecurityService {
   validateGitUrl(url: string): { isValid: boolean; errors: string[] };
@@ -13,7 +13,7 @@ export class GitService {
     private logger: Logger
   ) {}
 
-  async cloneRepository(repoUrl: string, options: CloneOptions = {}): Promise<ServiceResult<GitResult>> {
+  async cloneRepository(repoUrl: string, options: CloneOptions = {}): Promise<ServiceResult<{ path: string; branch: string }>> {
     try {
       // Validate repository URL
       const urlValidation = this.security.validateGitUrl(repoUrl);
@@ -96,21 +96,20 @@ export class GitService {
         };
       }
 
-      const result: GitResult = {
-        success: true,
-        message: 'Repository cloned successfully',
-        targetDirectory,
-      };
-
+      const branchUsed = options.branch || 'main'; // Default to main if no branch specified
+      
       this.logger.info('Repository cloned successfully', { 
         repoUrl, 
         targetDirectory,
-        branch: options.branch 
+        branch: branchUsed 
       });
 
       return {
         success: true,
-        data: result,
+        data: {
+          path: targetDirectory,
+          branch: branchUsed
+        },
       };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -127,7 +126,7 @@ export class GitService {
     }
   }
 
-  async checkoutBranch(repoPath: string, branch: string): Promise<ServiceResult<GitResult>> {
+  async checkoutBranch(repoPath: string, branch: string): Promise<ServiceResult<void>> {
     try {
       // Validate repository path
       const pathValidation = this.security.validatePath(repoPath);
@@ -194,17 +193,10 @@ export class GitService {
         };
       }
 
-      const result: GitResult = {
-        success: true,
-        message: `Successfully checked out branch: ${branch}`,
-        targetDirectory: repoPath,
-      };
-
       this.logger.info('Branch checked out successfully', { repoPath, branch });
 
       return {
         success: true,
-        data: result,
       };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';

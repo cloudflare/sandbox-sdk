@@ -74,7 +74,7 @@ export class InMemoryProcessStore implements ProcessStore {
 
   async cleanup(olderThan: Date): Promise<number> {
     let cleaned = 0;
-    for (const [id, process] of this.processes.entries()) {
+    for (const [id, process] of Array.from(this.processes.entries())) {
       if (process.startTime < olderThan && 
           ['completed', 'failed', 'killed', 'error'].includes(process.status)) {
         await this.delete(id);
@@ -87,7 +87,7 @@ export class InMemoryProcessStore implements ProcessStore {
   // Helper methods for testing
   clear(): void {
     // Kill all running processes first
-    for (const process of this.processes.values()) {
+    for (const process of Array.from(this.processes.values())) {
       if (process.subprocess) {
         try {
           process.subprocess.kill();
@@ -417,11 +417,12 @@ export class ProcessService {
     }
   }
 
-  private handleProcessStreams(record: ProcessRecord, subprocess: any): void {
+  private handleProcessStreams(record: ProcessRecord, subprocess: { stdout?: ReadableStream; stderr?: ReadableStream }): void {
     // Use Bun's native stream handling for better performance
     const decoder = new TextDecoder();
     
     // Handle stdout
+    if (!subprocess.stdout) return;
     const stdoutReader = subprocess.stdout.getReader();
     const readStdout = async () => {
       try {
@@ -439,6 +440,7 @@ export class ProcessService {
     };
 
     // Handle stderr
+    if (!subprocess.stderr) return;
     const stderrReader = subprocess.stderr.getReader();
     const readStderr = async () => {
       try {
@@ -460,7 +462,7 @@ export class ProcessService {
     readStderr();
   }
 
-  private handleProcessExit(record: ProcessRecord, subprocess: any): void {
+  private handleProcessExit(record: ProcessRecord, subprocess: { exited: Promise<number> }): void {
     subprocess.exited.then((exitCode: number) => {
       const endTime = new Date();
       const status: ProcessStatus = exitCode === 0 ? 'completed' : 'failed';

@@ -3,100 +3,119 @@ import type {
   Logger,
 } from './types';
 
-// Import service interfaces (we'll create these later)
+// Import service interfaces
+import type { 
+  ServiceResult, 
+  SessionData, 
+  ProcessRecord, 
+  PortInfo,
+  GitCheckoutRequest,
+  ValidationResult,
+  RequestContext,
+  NextFunction,
+  ExecuteRequest,
+  FileRequest,
+  StartProcessRequest,
+  ExposePortRequest,
+  CommandResult
+} from './types';
+
 export interface SessionService {
-  createSession(): Promise<any>;
-  getSession(id: string): Promise<any>;
-  updateSession(id: string, data: any): Promise<void>;
-  deleteSession(id: string): Promise<void>;
+  createSession(): Promise<ServiceResult<SessionData>>;
+  getSession(id: string): Promise<ServiceResult<SessionData>>;
+  updateSession(id: string, data: Partial<SessionData>): Promise<ServiceResult<void>>;
+  deleteSession(id: string): Promise<ServiceResult<void>>;
+  destroy(): void;
 }
 
 export interface ProcessService {
-  startProcess(command: string, options: any): Promise<any>;
-  executeCommand(command: string, options: any): Promise<any>;
-  getProcess(id: string): Promise<any>;
-  killProcess(id: string): Promise<void>;
-  listProcesses(): Promise<any[]>;
+  startProcess(command: string, options: Record<string, unknown>): Promise<ServiceResult<ProcessRecord>>;
+  executeCommand(command: string, options: Record<string, unknown>): Promise<ServiceResult<CommandResult>>;
+  getProcess(id: string): Promise<ServiceResult<ProcessRecord>>;
+  killProcess(id: string): Promise<ServiceResult<void>>;
+  listProcesses(): Promise<ServiceResult<ProcessRecord[]>>;
+  destroy(): Promise<void>;
 }
 
 export interface FileService {
-  read(path: string, options?: any): Promise<string>;
-  write(path: string, content: string, options?: any): Promise<void>;
-  delete(path: string): Promise<void>;
-  rename(oldPath: string, newPath: string): Promise<void>;
-  move(sourcePath: string, destinationPath: string): Promise<void>;
-  mkdir(path: string, options?: any): Promise<void>;
-  exists(path: string): Promise<boolean>;
+  read(path: string, options?: { encoding?: string }): Promise<ServiceResult<string>>;
+  write(path: string, content: string, options?: { encoding?: string }): Promise<ServiceResult<void>>;
+  delete(path: string): Promise<ServiceResult<void>>;
+  rename(oldPath: string, newPath: string): Promise<ServiceResult<void>>;
+  move(sourcePath: string, destinationPath: string): Promise<ServiceResult<void>>;
+  mkdir(path: string, options?: { recursive?: boolean }): Promise<ServiceResult<void>>;
+  exists(path: string): Promise<ServiceResult<boolean>>;
 }
 
 export interface PortService {
-  exposePort(port: number, name?: string): Promise<any>;
-  unexposePort(port: number): Promise<void>;
-  getExposedPorts(): Promise<any[]>;
+  exposePort(port: number, name?: string): Promise<ServiceResult<PortInfo>>;
+  unexposePort(port: number): Promise<ServiceResult<void>>;
+  getExposedPorts(): Promise<ServiceResult<PortInfo[]>>;
   proxyRequest(port: number, request: Request): Promise<Response>;
+  destroy(): void;
 }
 
 export interface GitService {
-  cloneRepository(repoUrl: string, options: any): Promise<any>;
-  checkoutBranch(repoPath: string, branch: string): Promise<any>;
+  cloneRepository(repoUrl: string, options: { branch?: string; targetDir?: string }): Promise<ServiceResult<{ path: string; branch: string }>>;
+  checkoutBranch(repoPath: string, branch: string): Promise<ServiceResult<void>>;
 }
 
 export interface SecurityService {
-  validatePath(path: string): any;
+  validatePath(path: string): ValidationResult<string>;
   sanitizePath(path: string): string;
-  validatePort(port: number): any;
-  validateCommand(command: string): any;
-  validateGitUrl(url: string): any;
+  validatePort(port: number): ValidationResult<number>;
+  validateCommand(command: string): ValidationResult<string>;
+  validateGitUrl(url: string): ValidationResult<string>;
 }
 
 export interface RequestValidator {
-  validateExecuteRequest(request: unknown): any;
-  validateFileRequest(request: unknown): any;
-  validateProcessRequest(request: unknown): any;
-  validatePortRequest(request: unknown): any;
-  validateGitRequest(request: unknown): any;
+  validateExecuteRequest(request: unknown): ValidationResult<ExecuteRequest>;
+  validateFileRequest(request: unknown, operation?: string): ValidationResult<FileRequest>;
+  validateProcessRequest(request: unknown): ValidationResult<StartProcessRequest>;
+  validatePortRequest(request: unknown): ValidationResult<ExposePortRequest>;
+  validateGitRequest(request: unknown): ValidationResult<GitCheckoutRequest>;
 }
 
 // Handler interfaces
 export interface ExecuteHandler {
-  handle(request: any, context: any): Promise<any>;
+  handle(request: Request, context: RequestContext): Promise<Response>;
 }
 
 export interface FileHandler {
-  handle(request: any, context: any): Promise<any>;
+  handle(request: Request, context: RequestContext): Promise<Response>;
 }
 
 export interface ProcessHandler {
-  handle(request: any, context: any): Promise<any>;
+  handle(request: Request, context: RequestContext): Promise<Response>;
 }
 
 export interface PortHandler {
-  handle(request: any, context: any): Promise<any>;
+  handle(request: Request, context: RequestContext): Promise<Response>;
 }
 
 export interface GitHandler {
-  handle(request: any, context: any): Promise<any>;
+  handle(request: Request, context: RequestContext): Promise<Response>;
 }
 
 export interface MiscHandler {
-  handle(request: any, context: any): Promise<any>;
+  handle(request: Request, context: RequestContext): Promise<Response>;
 }
 
 export interface SessionHandler {
-  handle(request: any, context: any): Promise<any>;
+  handle(request: Request, context: RequestContext): Promise<Response>;
 }
 
-// Middleware interfaces
+// Middleware interfaces  
 export interface CorsMiddleware {
-  handle(request: Request, context: any, next: any): Promise<Response>;
+  handle(request: Request, context: RequestContext, next: NextFunction): Promise<Response>;
 }
 
 export interface ValidationMiddleware {
-  handle(request: Request, context: any, next: any): Promise<Response>;
+  handle(request: Request, context: RequestContext, next: NextFunction): Promise<Response>;
 }
 
 export interface LoggingMiddleware {
-  handle(request: Request, context: any, next: any): Promise<Response>;
+  handle(request: Request, context: RequestContext, next: NextFunction): Promise<Response>;
 }
 
 export interface Dependencies {
@@ -127,7 +146,7 @@ export interface Dependencies {
   loggingMiddleware: LoggingMiddleware;
 }
 
-export class DIContainer {
+export class Container {
   private dependencies: Partial<Dependencies> = {};
   private initialized = false;
 
@@ -136,11 +155,17 @@ export class DIContainer {
   }
 
   get<T extends keyof Dependencies>(key: T): Dependencies[T] {
+    if (!this.initialized) {
+      throw new Error('Container not initialized. Call initialize() first.');
+    }
+    
     const dependency = this.dependencies[key];
     if (!dependency) {
       throw new Error(`Dependency '${key}' not found. Make sure to initialize the container.`);
     }
-    return dependency;
+    
+    // Safe cast because we know the container is initialized and dependency exists
+    return dependency as Dependencies[T];
   }
 
   set<T extends keyof Dependencies>(key: T, implementation: Dependencies[T]): void {
@@ -155,6 +180,7 @@ export class DIContainer {
     // Import all necessary classes
     const { ConsoleLogger } = await import('./logger');
     const { SecurityService } = await import('../security/security-service');
+    const { SecurityServiceAdapter } = await import('../security/security-adapter');
     const { RequestValidator } = await import('../validation/request-validator');
     
     // Services
@@ -181,6 +207,7 @@ export class DIContainer {
     // Initialize infrastructure
     const logger = new ConsoleLogger();
     const security = new SecurityService(logger);
+    const securityAdapter = new SecurityServiceAdapter(security);
     const validator = new RequestValidator(security);
     
     // Initialize stores
@@ -191,9 +218,9 @@ export class DIContainer {
     // Initialize services
     const sessionService = new SessionService(sessionStore, logger);
     const processService = new ProcessService(processStore, logger);
-    const fileService = new FileService(security, logger);
-    const portService = new PortService(portStore, security, logger);
-    const gitService = new GitService(security, logger);
+    const fileService = new FileService(securityAdapter, logger);
+    const portService = new PortService(portStore, securityAdapter, logger);
+    const gitService = new GitService(securityAdapter, logger);
     
     // Initialize handlers
     const sessionHandler = new SessionHandler(sessionService, logger);

@@ -50,11 +50,45 @@ export interface ContainerErrorResponse {
 }
 
 /**
+ * Type guard to check if an error has a code property
+ */
+function hasErrorCode(error: unknown): error is { code: string } {
+  return typeof error === 'object' && error !== null && 'code' in error;
+}
+
+/**
+ * Type guard to check if an error has a message property
+ */
+function hasErrorMessage(error: unknown): error is { message: string } {
+  return typeof error === 'object' && error !== null && 'message' in error;
+}
+
+/**
+ * Safely extract error code from unknown error
+ */
+function getErrorCode(error: unknown): string | undefined {
+  return hasErrorCode(error) ? error.code : undefined;
+}
+
+/**
+ * Safely extract error message from unknown error
+ */
+function getErrorMessage(error: unknown): string {
+  if (hasErrorMessage(error)) {
+    return error.message;
+  }
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return 'Unknown error';
+}
+
+/**
  * Map filesystem errors to structured error responses
  */
-export function mapFileSystemError(error: any, operation: SandboxOperationType, path: string): ContainerErrorResponse {
-  const errorCode = error.code;
-  const errorMessage = error.message || 'Unknown error';
+export function mapFileSystemError(error: unknown, operation: SandboxOperationType, path: string): ContainerErrorResponse {
+  const errorCode = getErrorCode(error);
+  const errorMessage = getErrorMessage(error);
 
   switch (errorCode) {
     case 'ENOENT':
@@ -183,10 +217,11 @@ export function mapFileSystemError(error: any, operation: SandboxOperationType, 
 /**
  * Map command execution errors to structured error responses
  */
-export function mapCommandError(error: any, operation: SandboxOperationType, command: string): ContainerErrorResponse {
-  const errorMessage = error.message || 'Unknown error';
+export function mapCommandError(error: unknown, operation: SandboxOperationType, command: string): ContainerErrorResponse {
+  const errorMessage = getErrorMessage(error);
+  const errorCode = getErrorCode(error);
 
-  if (error.code === 'ENOENT') {
+  if (errorCode === 'ENOENT') {
     return {
       error: `Command not found: ${command}`,
       code: 'COMMAND_NOT_FOUND',
@@ -196,7 +231,7 @@ export function mapCommandError(error: any, operation: SandboxOperationType, com
     };
   }
 
-  if (error.code === 'EACCES') {
+  if (errorCode === 'EACCES') {
     return {
       error: `Permission denied for command: ${command}`,
       code: 'COMMAND_PERMISSION_DENIED',
@@ -218,10 +253,11 @@ export function mapCommandError(error: any, operation: SandboxOperationType, com
 /**
  * Map process management errors to structured error responses
  */
-export function mapProcessError(error: any, operation: SandboxOperationType, processId?: string): ContainerErrorResponse {
-  const errorMessage = error.message || 'Unknown error';
+export function mapProcessError(error: unknown, operation: SandboxOperationType, processId?: string): ContainerErrorResponse {
+  const errorMessage = getErrorMessage(error);
+  const errorCode = getErrorCode(error);
 
-  if (error.code === 'ESRCH') {
+  if (errorCode === 'ESRCH') {
     return {
       error: processId ? `Process not found: ${processId}` : 'Process not found',
       code: 'PROCESS_NOT_FOUND',
@@ -231,7 +267,7 @@ export function mapProcessError(error: any, operation: SandboxOperationType, pro
     };
   }
 
-  if (error.code === 'EPERM') {
+  if (errorCode === 'EPERM') {
     return {
       error: processId ? `Permission denied for process: ${processId}` : 'Permission denied for process operation',
       code: 'PROCESS_PERMISSION_DENIED',
@@ -253,12 +289,13 @@ export function mapProcessError(error: any, operation: SandboxOperationType, pro
 /**
  * Map port management errors to structured error responses
  */
-export function mapPortError(error: any, operation: SandboxOperationType, port?: number): ContainerErrorResponse {
-  const errorMessage = error.message || 'Unknown error';
+export function mapPortError(error: unknown, operation: SandboxOperationType, port?: number): ContainerErrorResponse {
+  const errorMessage = getErrorMessage(error);
+  const errorCode = getErrorCode(error);
   const portStr = port ? port.toString() : 'unknown';
 
   // Handle network/connectivity errors
-  if (error.code === 'ECONNREFUSED') {
+  if (errorCode === 'ECONNREFUSED') {
     return {
       error: `Service on port ${portStr} is not responding`,
       code: 'SERVICE_NOT_RESPONDING',
@@ -268,7 +305,7 @@ export function mapPortError(error: any, operation: SandboxOperationType, port?:
     };
   }
 
-  if (error.code === 'EADDRINUSE') {
+  if (errorCode === 'EADDRINUSE') {
     return {
       error: `Port ${portStr} is already in use`,
       code: 'PORT_IN_USE',
@@ -288,11 +325,25 @@ export function mapPortError(error: any, operation: SandboxOperationType, port?:
 }
 
 /**
+ * Type guard to check if an error has stderr property
+ */
+function hasStderr(error: unknown): error is { stderr: string } {
+  return typeof error === 'object' && error !== null && 'stderr' in error && typeof (error as { stderr: unknown }).stderr === 'string';
+}
+
+/**
+ * Safely extract stderr from unknown error
+ */
+function getStderr(error: unknown): string {
+  return hasStderr(error) ? error.stderr : '';
+}
+
+/**
  * Map git operation errors to structured error responses
  */
-export function mapGitError(error: any, operation: SandboxOperationType, repoUrl?: string, branch?: string): ContainerErrorResponse {
-  const errorMessage = error.message || 'Unknown error';
-  const stderr = error.stderr || '';
+export function mapGitError(error: unknown, operation: SandboxOperationType, repoUrl?: string, branch?: string): ContainerErrorResponse {
+  const errorMessage = getErrorMessage(error);
+  const stderr = getStderr(error);
 
   // Check for authentication failures
   if (stderr.includes('Authentication failed') || stderr.includes('Permission denied') || stderr.includes('403')) {

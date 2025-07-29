@@ -11,19 +11,15 @@ export class MiscHandler extends BaseHandler<Request, Response> {
     const url = new URL(request.url);
     const pathname = url.pathname;
 
-    try {
-      switch (pathname) {
-        case '/':
-          return await this.handleRoot(request, context);
-        case '/api/ping':
-          return await this.handlePing(request, context);
-        case '/api/commands':
-          return await this.handleCommands(request, context);
-        default:
-          return this.createErrorResponse('Invalid endpoint', 404, context);
-      }
-    } catch (error) {
-      return this.createErrorResponse(error instanceof Error ? error : 'Unknown error', 500, context);
+    switch (pathname) {
+      case '/':
+        return await this.handleRoot(request, context);
+      case '/api/ping':
+        return await this.handlePing(request, context);
+      case '/api/commands':
+        return await this.handleCommands(request, context);
+      default:
+        return this.createErrorResponse('Invalid endpoint', 404, context);
     }
   }
 

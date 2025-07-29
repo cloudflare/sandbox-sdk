@@ -38,7 +38,7 @@ export class InMemoryPortStore implements PortStore {
 
   async cleanup(olderThan: Date): Promise<number> {
     let cleaned = 0;
-    for (const [port, info] of this.exposedPorts.entries()) {
+    for (const [port, info] of Array.from(this.exposedPorts.entries())) {
       if (info.exposedAt < olderThan && info.status === 'inactive') {
         this.exposedPorts.delete(port);
         cleaned++;

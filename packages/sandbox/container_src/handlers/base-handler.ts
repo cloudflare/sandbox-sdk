@@ -1,5 +1,5 @@
 // Base Handler Implementation
-import type { Handler, RequestContext, Logger, ServiceResult, ServiceError } from '../core/types';
+import type { Handler, RequestContext, Logger, ServiceResult, ServiceError, ValidatedRequestContext } from '../core/types';
 
 export abstract class BaseHandler<TRequest, TResponse> implements Handler<TRequest, TResponse> {
   constructor(
@@ -108,13 +108,13 @@ export abstract class BaseHandler<TRequest, TResponse> implements Handler<TReque
     return statusCodeMap[errorCode] || 500;
   }
 
-  protected async parseRequestBody<T>(request: Request): Promise<T> {
-    try {
-      const body = await request.json();
-      return body as T;
-    } catch (error) {
-      throw new Error('Invalid JSON in request body');
+
+  protected getValidatedData<T>(context: RequestContext): T {
+    const validatedContext = context as ValidatedRequestContext<T>;
+    if (!validatedContext.validatedData) {
+      throw new Error('No validated data found in context. Ensure validation middleware ran first.');
     }
+    return validatedContext.validatedData;
   }
 
   protected extractPathParam(pathname: string, position: number): string {

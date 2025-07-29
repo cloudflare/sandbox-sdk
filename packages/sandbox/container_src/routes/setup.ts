@@ -1,8 +1,8 @@
 // Route Setup
 import type { Router } from '../core/router';
-import type { DIContainer } from '../core/container';
+import type { Container } from '../core/container';
 
-export function setupRoutes(router: Router, container: DIContainer): void {
+export function setupRoutes(router: Router, container: Container): void {
   // Session routes
   router.register({
     method: 'POST',

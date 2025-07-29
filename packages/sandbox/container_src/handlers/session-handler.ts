@@ -15,17 +15,13 @@ export class SessionHandler extends BaseHandler<Request, Response> {
     const url = new URL(request.url);
     const pathname = url.pathname;
 
-    try {
-      switch (pathname) {
-        case '/api/session/create':
-          return await this.handleCreate(request, context);
-        case '/api/session/list':
-          return await this.handleList(request, context);
-        default:
-          return this.createErrorResponse('Invalid session endpoint', 404, context);
-      }
-    } catch (error) {
-      return this.createErrorResponse(error instanceof Error ? error : 'Unknown error', 500, context);
+    switch (pathname) {
+      case '/api/session/create':
+        return await this.handleCreate(request, context);
+      case '/api/session/list':
+        return await this.handleList(request, context);
+      default:
+        return this.createErrorResponse('Invalid session endpoint', 404, context);
     }
   }
 
@@ -55,6 +51,11 @@ export class SessionHandler extends BaseHandler<Request, Response> {
         }
       );
     } else {
+      this.logger.error('Session creation failed', undefined, {
+        requestId: context.requestId,
+        errorCode: result.error!.code,
+        errorMessage: result.error!.message,
+      });
       return this.createErrorResponse(result.error!, 500, context);
     }
   }
@@ -86,6 +87,11 @@ export class SessionHandler extends BaseHandler<Request, Response> {
         }
       );
     } else {
+      this.logger.error('Session listing failed', undefined, {
+        requestId: context.requestId,
+        errorCode: result.error!.code,
+        errorMessage: result.error!.message,
+      });
       return this.createErrorResponse(result.error!, 500, context);
     }
   }

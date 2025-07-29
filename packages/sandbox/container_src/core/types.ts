@@ -13,6 +13,12 @@ export interface RequestContext {
   timestamp: Date;
 }
 
+// Extended context with validation data
+export interface ValidatedRequestContext<T = unknown> extends RequestContext {
+  originalRequest?: Request;
+  validatedData?: T;
+}
+
 export interface ValidationResult<T = unknown> {
   isValid: boolean;
   data?: T;
@@ -101,17 +107,15 @@ export interface ProcessRecord {
   outputListeners: Set<(stream: 'stdout' | 'stderr', data: string) => void>;
   statusListeners: Set<(status: ProcessStatus) => void>;
   // For Bun subprocess
-  subprocess?: any;
+  subprocess?: { 
+    kill: (signal?: number) => void; 
+    stdout?: ReadableStream; 
+    stderr?: ReadableStream; 
+    exited: Promise<number> 
+  };
 }
 
-export interface ProcessOptions {
-  sessionId?: string;
-  timeout?: number;
-  env?: Record<string, string>;
-  cwd?: string;
-  encoding?: string;
-  autoCleanup?: boolean;
-}
+export type { ProcessOptions } from '../validation/schemas';
 
 export interface CommandResult {
   success: boolean;
@@ -165,12 +169,8 @@ export interface CloneOptions {
   sessionId?: string;
 }
 
-// Request/Response types (from existing types.ts)
-export interface ExecuteRequest {
-  command: string;
-  sessionId?: string;
-  background?: boolean;
-}
+// Import request types from Zod schemas - single source of truth!
+export type { ExecuteRequest } from '../validation/schemas';
 
 export interface ExecuteResponse {
   success: boolean;
@@ -180,23 +180,14 @@ export interface ExecuteResponse {
   processId?: string;
 }
 
-export interface ReadFileRequest {
-  path: string;
-  encoding?: string;
-  sessionId?: string;
-}
+export type { ReadFileRequest } from '../validation/schemas';
 
 export interface ReadFileResponse {
   content: string;
   path: string;
 }
 
-export interface WriteFileRequest {
-  path: string;
-  content: string;
-  encoding?: string;
-  sessionId?: string;
-}
+export type { WriteFileRequest } from '../validation/schemas';
 
 export interface WriteFileResponse {
   success: boolean;
@@ -204,47 +195,24 @@ export interface WriteFileResponse {
   bytesWritten: number;
 }
 
-export interface DeleteFileRequest {
-  path: string;
-  sessionId?: string;
-}
+export type { DeleteFileRequest } from '../validation/schemas';
 
 export interface DeleteFileResponse {
   success: boolean;
   path: string;
 }
 
-export interface RenameFileRequest {
-  oldPath: string;
-  newPath: string;
-  sessionId?: string;
-}
+export type { RenameFileRequest } from '../validation/schemas';
 
-export interface MoveFileRequest {
-  sourcePath: string;
-  destinationPath: string;
-  sessionId?: string;
-}
+export type { MoveFileRequest } from '../validation/schemas';
 
-export interface GitCheckoutRequest {
-  repoUrl: string;
-  branch?: string;
-  targetDir?: string;
-  sessionId?: string;
-}
+export type { GitCheckoutRequest } from '../validation/schemas';
 
-export interface MkdirRequest {
-  path: string;
-  recursive?: boolean;
-  sessionId?: string;
-}
+export type { MkdirRequest } from '../validation/schemas';
 
-export interface ExposePortRequest {
-  port: number;
-  name?: string;
-}
+export type { ExposePortRequest } from '../validation/schemas';
 
-export interface StartProcessRequest {
-  command: string;
-  options?: ProcessOptions;
-}
+export type { StartProcessRequest } from '../validation/schemas';
+
+// Import union types from Zod schemas
+export type { FileRequest, FileOperation } from '../validation/schemas';

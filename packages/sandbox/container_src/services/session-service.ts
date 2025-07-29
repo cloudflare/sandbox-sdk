@@ -43,7 +43,7 @@ export class InMemorySessionStore implements SessionStore {
 
   async cleanup(olderThan: Date): Promise<number> {
     let cleaned = 0;
-    for (const [id, session] of this.sessions.entries()) {
+    for (const [id, session] of Array.from(this.sessions.entries())) {
       if (session.createdAt < olderThan && !session.activeProcess) {
         this.sessions.delete(id);
         cleaned++;
