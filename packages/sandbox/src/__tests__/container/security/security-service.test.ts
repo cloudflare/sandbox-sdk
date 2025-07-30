@@ -162,7 +162,7 @@ describe('SecurityService', () => {
       });
 
       it('should reject excessively long paths', async () => {
-        const longPath = '/tmp/' + 'a'.repeat(5000);
+        const longPath = `/tmp/${'a'.repeat(5000)}`;
         const result = securityService.validatePath(longPath);
         expect(result.isValid).toBe(false);
         expect(result.errors.some(e => e.message.includes('too long'))).toBe(true);
@@ -451,7 +451,7 @@ describe('SecurityService', () => {
       });
 
       it('should reject excessively long commands', async () => {
-        const longCommand = 'echo ' + 'a'.repeat(10000);
+        const longCommand = `echo ${'a'.repeat(10000)}`;
         const result = securityService.validateCommand(longCommand);
         expect(result.isValid).toBe(false);
         expect(result.errors.some(e => e.message.includes('too long'))).toBe(true);
@@ -617,7 +617,7 @@ describe('SecurityService', () => {
       });
 
       it('should reject excessively long URLs', async () => {
-        const longUrl = 'https://github.com/user/' + 'a'.repeat(3000) + '.git';
+        const longUrl = `https://github.com/user/${'a'.repeat(3000)}.git`;
         const result = securityService.validateGitUrl(longUrl);
         expect(result.isValid).toBe(false);
         expect(result.errors.some(e => e.message.includes('too long'))).toBe(true);
@@ -747,7 +747,7 @@ describe('SecurityService', () => {
         { input: '\0', method: 'validatePath' },
         { input: 'A'.repeat(10000), method: 'validateCommand' },
         { input: -999999, method: 'validatePort' },
-        { input: '${IFS}rm${IFS}-rf${IFS}/', method: 'validateCommand' }
+        { input: '$' + '{IFS}rm$' + '{IFS}-rf$' + '{IFS}/', method: 'validateCommand' }
       ];
 
       for (const testCase of edgeCases) {

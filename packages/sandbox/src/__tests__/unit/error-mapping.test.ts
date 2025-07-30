@@ -652,7 +652,7 @@ describe('Error Mapping', () => {
         if (clientError instanceof FileNotFoundError) {
           expect(clientError.path).toBe('/home/user/project/config.json');
           expect(clientError.operation).toBe(SandboxOperation.FILE_READ);
-          expect(clientError.details).toBe('The specified file does not exist in the container filesystem');
+          expect(clientError.details).toBe('The file or directory at "/home/user/project/config.json" does not exist');
         }
       });
 

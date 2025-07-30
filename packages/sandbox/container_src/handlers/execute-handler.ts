@@ -2,13 +2,11 @@
 
 import type { ExecuteRequest, Logger, RequestContext } from '../core/types';
 import type { ProcessService } from '../services/process-service';
-import type { SessionService } from '../services/session-service';
 import { BaseHandler } from './base-handler';
 
 export class ExecuteHandler extends BaseHandler<Request, Response> {
   constructor(
     private processService: ProcessService,
-    private sessionService: SessionService,
     logger: Logger
   ) {
     super(logger);

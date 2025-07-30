@@ -696,7 +696,7 @@ describe('HTTP API Contract Validation', () => {
             // All success responses must have ISO 8601 timestamp
             expect(data.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
             expect(new Date(data.timestamp)).toBeInstanceOf(Date);
-            expect(isNaN(new Date(data.timestamp).getTime())).toBe(false);
+            expect(Number.isNaN(new Date(data.timestamp).getTime())).toBe(false);
             
             // All success responses must have success: true
             expect(data.success).toBe(true);
@@ -809,7 +809,7 @@ describe('HTTP API Contract Validation', () => {
             // All error responses must have ISO 8601 timestamp
             expect(data.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
             expect(new Date(data.timestamp)).toBeInstanceOf(Date);
-            expect(isNaN(new Date(data.timestamp).getTime())).toBe(false);
+            expect(Number.isNaN(new Date(data.timestamp).getTime())).toBe(false);
           }
 
           // Validate error message contains relevant context

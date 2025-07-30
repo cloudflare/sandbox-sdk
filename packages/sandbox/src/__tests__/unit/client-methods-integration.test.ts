@@ -418,7 +418,8 @@ describe('Client Method Signatures Integration', () => {
           success: true,
           port: 3000,
           protocol: 'http',
-          url: 'http://localhost:3000'
+          url: 'http://localhost:3000',
+          exposedAt: '2023-01-01T00:00:00.000Z'
         }), {
           status: 200,
           headers: { 'Content-Type': 'application/json' }

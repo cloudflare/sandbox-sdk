@@ -172,7 +172,7 @@ function extractRepositoryFromMessage(message: string, details?: string): string
  */
 function extractBranchFromMessage(message: string, details?: string): string {
   // Try details first
-  if (details && details.includes('Branch')) {
+  if (details?.includes('Branch')) {
     const match = details.match(/Branch "([^"]+)"/);
     if (match) return match[1];
   }

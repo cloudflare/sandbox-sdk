@@ -354,14 +354,4 @@ export class GitService {
       return `/tmp/git-clone-${timestamp}-${randomSuffix}`;
     }
   }
-
-  private extractRepoName(repoUrl: string): string {
-    try {
-      const url = new URL(repoUrl);
-      const pathParts = url.pathname.split('/');
-      return pathParts[pathParts.length - 1].replace(/\.git$/, '');
-    } catch (error) {
-      return 'unknown-repo';
-    }
-  }
 }

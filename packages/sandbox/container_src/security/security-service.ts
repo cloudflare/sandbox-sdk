@@ -218,7 +218,7 @@ export class SecurityService {
       resolved.push(part);
     }
 
-    const result = '/' + resolved.join('/');
+    const result = `/${resolved.join('/')}`;
     
     if (result !== path) {
       this.logger.info('Path sanitized', { original: path, sanitized: result });
@@ -463,7 +463,7 @@ export class SecurityService {
     
     // Always start with /
     if (!normalized.startsWith('/')) {
-      normalized = '/' + normalized;
+      normalized = `/${normalized}`;
     }
 
     return normalized;

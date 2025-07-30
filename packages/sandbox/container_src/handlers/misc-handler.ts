@@ -4,9 +4,6 @@ import type { Logger, RequestContext } from '../core/types';
 import { BaseHandler } from './base-handler';
 
 export class MiscHandler extends BaseHandler<Request, Response> {
-  constructor(logger: Logger) {
-    super(logger);
-  }
 
   async handle(request: Request, context: RequestContext): Promise<Response> {
     const url = new URL(request.url);

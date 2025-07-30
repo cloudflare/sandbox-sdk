@@ -25,7 +25,7 @@ export class ValidationMiddleware implements Middleware {
     if (request.method === 'POST' || request.method === 'PUT') {
       try {
         const contentType = request.headers.get('content-type');
-        if (contentType && contentType.includes('application/json')) {
+        if (contentType?.includes('application/json')) {
           // Parse request body for validation
           const body = await request.json();
           

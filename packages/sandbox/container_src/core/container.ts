@@ -147,10 +147,6 @@ export class Container {
   private dependencies: Partial<Dependencies> = {};
   private initialized = false;
 
-  constructor() {
-    // Dependencies will be initialized later when we create the services
-  }
-
   get<T extends keyof Dependencies>(key: T): Dependencies[T] {
     if (!this.initialized) {
       throw new Error('Container not initialized. Call initialize() first.');
@@ -221,7 +217,7 @@ export class Container {
     
     // Initialize handlers
     const sessionHandler = new SessionHandler(sessionService, logger);
-    const executeHandler = new ExecuteHandler(processService, sessionService, logger);
+    const executeHandler = new ExecuteHandler(processService, logger);
     const fileHandler = new FileHandler(fileService, logger);
     const processHandler = new ProcessHandler(processService, logger);
     const portHandler = new PortHandler(portService, logger);

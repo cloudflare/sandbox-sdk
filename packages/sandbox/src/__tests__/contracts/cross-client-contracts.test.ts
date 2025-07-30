@@ -624,7 +624,7 @@ describe('Cross-Client Contract Validation', () => {
             // Verify timestamp is in ISO 8601 format
             expect(result.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
             expect(new Date(result.timestamp)).toBeInstanceOf(Date);
-            expect(isNaN(new Date(result.timestamp).getTime())).toBe(false);
+            expect(Number.isNaN(new Date(result.timestamp).getTime())).toBe(false);
           }
         }
       });

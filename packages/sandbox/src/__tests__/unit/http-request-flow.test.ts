@@ -179,7 +179,7 @@ describe('HTTP Request Flow', () => {
       
       // Verify no Authorization header is present by default
       const headers = lastCall[1]?.headers as Record<string, string> || {};
-      expect(headers['Authorization']).toBeUndefined();
+      expect(headers.Authorization).toBeUndefined();
     });
 
     it('should handle unauthorized responses correctly', async () => {

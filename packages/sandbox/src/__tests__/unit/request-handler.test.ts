@@ -509,8 +509,8 @@ describe('Request Handler', () => {
 
   describe('proxyToSandbox - Complex scenarios', () => {
     it('should handle very long URLs correctly', async () => {
-      const longPath = '/api/' + 'segment/'.repeat(50) + 'endpoint';
-      const longQuery = '?' + 'param=value&'.repeat(20).slice(0, -1);
+      const longPath = `/api/${'segment/'.repeat(50)}endpoint`;
+      const longQuery = `?${'param=value&'.repeat(20).slice(0, -1)}`;
       const request = new Request(`https://3001-sandbox-abc123def456.example.com${longPath}${longQuery}`);
       
       mockSandbox.validatePortToken.mockResolvedValue(true);

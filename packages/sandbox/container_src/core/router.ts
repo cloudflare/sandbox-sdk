@@ -150,7 +150,7 @@ export class Router {
   private extractSessionId(request: Request): string | undefined {
     // Try to get from Authorization header
     const authHeader = request.headers.get('Authorization');
-    if (authHeader && authHeader.startsWith('Bearer ')) {
+    if (authHeader?.startsWith('Bearer ')) {
       return authHeader.substring(7);
     }
 

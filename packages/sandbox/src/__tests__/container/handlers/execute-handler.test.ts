@@ -65,7 +65,6 @@ describe('ExecuteHandler', () => {
     const { ExecuteHandler: ExecuteHandlerClass } = await import('@container/handlers/execute-handler');
     executeHandler = new ExecuteHandlerClass(
       mockProcessService, 
-      mockSessionService,
       mockLogger
     );
   });
