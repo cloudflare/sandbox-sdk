@@ -55,12 +55,11 @@ Client SDK → Durable Object → Container Runtime
 
 ## 🧪 SDK Testing Strategy
 
-**103 service tests + integration/e2e tests** across 4 tiers for validating SDK changes:
+**Comprehensive testing** across 3 tiers for validating SDK changes:
 
 1. **Unit Tests**: Fast isolated component testing for SDK changes
-2. **Integration Tests**: Client-container communication validation in SDK
-3. **Container Tests**: Service layer testing with proper mocking for SDK
-4. **E2E Tests**: Complete workflow validation for SDK functionality
+2. **Container Tests**: Service layer testing with proper mocking for SDK
+3. **Contract Tests**: HTTP API and streaming format validation
 
 ## 📋 Key SDK Implementation Concepts
 

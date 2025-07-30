@@ -53,12 +53,12 @@ Tests API consistency and client behavior:
 **Requirements**: None (no Docker needed)
 **Purpose**: Test service layer business logic with intelligent mocking
 
-Tests individual services in isolation with 103 service tests:
-- **GitService** (21 tests): Repository operations, security validation
-- **PortService** (27 tests): Port management, HTTP proxying  
-- **ProcessService** (8 tests): Command execution, background processes
-- **FileService** (28 tests): File operations, path validation
-- **SessionService** (19 tests): Session management, context isolation
+Tests individual services in isolation:
+- **GitService**: Repository operations, security validation
+- **PortService**: Port management, HTTP proxying  
+- **ProcessService**: Command execution, background processes
+- **FileService**: File operations, path validation
+- **SessionService**: Session management, context isolation
 
 ## Service Testing Patterns
 
