@@ -157,7 +157,16 @@ describe('SandboxClient', () => {
       client.setSessionId(sessionId);
       
       // Mock all HTTP responses
-      fetchMock.mockResolvedValue(new Response(JSON.stringify({ success: true })));
+      fetchMock.mockImplementation(() => 
+        Promise.resolve(new Response(JSON.stringify({ 
+          success: true, 
+          content: 'test content',
+          stdout: 'test output',
+          processes: [],
+          ports: [],
+          message: 'pong'
+        })))
+      );
       
       // Simulate concurrent operations across different domain clients
       const operations = [
@@ -231,7 +240,8 @@ describe('SandboxClient', () => {
         expect.fail('Should have thrown an error');
       } catch (error) {
         expect(onError).toHaveBeenCalledWith(
-          expect.stringContaining('Command failed')
+          expect.stringContaining('Command failed'),
+          'failing-command'
         );
       }
     });

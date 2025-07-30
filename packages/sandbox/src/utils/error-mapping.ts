@@ -87,6 +87,7 @@ export function mapContainerError(errorResponse: ErrorResponse & { code?: string
       return new PortNotExposedError(extractPortFromMessage(message), operation || SandboxOperation.PORT_UNEXPOSE);
 
     case 'INVALID_PORT_NUMBER':
+    case 'INVALID_PORT':
       return new InvalidPortError(extractPortFromMessage(message), details || 'Invalid port', operation || SandboxOperation.PORT_EXPOSE);
 
     case 'SERVICE_NOT_RESPONDING':
@@ -162,9 +163,15 @@ function extractRepositoryFromMessage(message: string, details?: string): string
     return details;
   }
 
-  // Try to extract from message
-  const match = message.match(/(?:repository|Repository|URL).*?:?\s*([^\s]+)/);
-  return match?.[1] || 'unknown';
+  // Try to extract from message - look for URL patterns
+  const urlMatch = message.match(/https?:\/\/[^\s]+|git@[^\s]+/);
+  if (urlMatch) {
+    return urlMatch[0];
+  }
+  
+  // Fallback: try to extract after colon
+  const colonMatch = message.match(/:\s*([^\s]+(?:\.git)?)/);
+  return colonMatch?.[1] || 'unknown';
 }
 
 /**

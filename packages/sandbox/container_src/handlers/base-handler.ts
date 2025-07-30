@@ -1,14 +1,28 @@
 // Base Handler Implementation
-import type { Handler, Logger, RequestContext, ServiceError, ServiceResult, ValidatedRequestContext } from '../core/types';
+import type {
+  Handler,
+  Logger,
+  RequestContext,
+  ServiceError,
+  ServiceResult,
+  ValidatedRequestContext,
+} from "../core/types";
 
-export abstract class BaseHandler<TRequest, TResponse> implements Handler<TRequest, TResponse> {
-  constructor(
-    protected logger: Logger
-  ) {}
+export abstract class BaseHandler<TRequest, TResponse>
+  implements Handler<TRequest, TResponse>
+{
+  constructor(protected logger: Logger) {}
 
-  abstract handle(request: TRequest, context: RequestContext): Promise<TResponse>;
+  abstract handle(
+    request: TRequest,
+    context: RequestContext
+  ): Promise<TResponse>;
 
-  protected createSuccessResponse<T>(data: T, context: RequestContext, statusCode: number = 200): Response {
+  protected createSuccessResponse<T>(
+    data: T,
+    context: RequestContext,
+    statusCode: number = 200
+  ): Response {
     return new Response(
       JSON.stringify({
         success: true,
@@ -18,7 +32,7 @@ export abstract class BaseHandler<TRequest, TResponse> implements Handler<TReque
       {
         status: statusCode,
         headers: {
-          'Content-Type': 'application/json',
+          "Content-Type": "application/json",
           ...context.corsHeaders,
         },
       }
@@ -26,32 +40,36 @@ export abstract class BaseHandler<TRequest, TResponse> implements Handler<TReque
   }
 
   protected createErrorResponse(
-    error: ServiceError | Error | string, 
+    error: ServiceError | Error | string,
     statusCode: number = 500,
     context: RequestContext
   ): Response {
     let errorObj: ServiceError;
 
-    if (typeof error === 'string') {
+    if (typeof error === "string") {
       errorObj = {
         message: error,
-        code: 'UNKNOWN_ERROR',
+        code: "UNKNOWN_ERROR",
       };
     } else if (error instanceof Error) {
       errorObj = {
         message: error.message,
-        code: 'INTERNAL_ERROR',
+        code: "INTERNAL_ERROR",
         details: { stack: error.stack },
       };
     } else {
       errorObj = error;
     }
 
-    this.logger.error('Handler error', error instanceof Error ? error : undefined, {
-      requestId: context.requestId,
-      errorCode: errorObj.code,
-      statusCode,
-    });
+    this.logger.error(
+      "Handler error",
+      error instanceof Error ? error : undefined,
+      {
+        requestId: context.requestId,
+        errorCode: errorObj.code,
+        statusCode,
+      }
+    );
 
     return new Response(
       JSON.stringify({
@@ -64,7 +82,7 @@ export abstract class BaseHandler<TRequest, TResponse> implements Handler<TReque
       {
         status: statusCode,
         headers: {
-          'Content-Type': 'application/json',
+          "Content-Type": "application/json",
           ...context.corsHeaders,
         },
       }
@@ -77,7 +95,7 @@ export abstract class BaseHandler<TRequest, TResponse> implements Handler<TReque
     successStatus: number = 200
   ): Response {
     if (result.success) {
-      const data = 'data' in result ? result.data : undefined;
+      const data = "data" in result ? result.data : undefined;
       return this.createSuccessResponse(data, context, successStatus);
     } else {
       const statusCode = this.getStatusCodeForError(result.error.code);
@@ -87,46 +105,41 @@ export abstract class BaseHandler<TRequest, TResponse> implements Handler<TReque
 
   private getStatusCodeForError(errorCode: string): number {
     const statusCodeMap: Record<string, number> = {
-      'NOT_FOUND': 404,
-      'PROCESS_NOT_FOUND': 404,
-      'SESSION_NOT_FOUND': 404,
-      'PORT_NOT_FOUND': 404,
-      'FILE_NOT_FOUND': 404,
-      'INVALID_REQUEST': 400,
-      'VALIDATION_ERROR': 400,
-      'INVALID_PATH': 400,
-      'INVALID_PORT': 400,
-      'INVALID_COMMAND': 400,
-      'SECURITY_VIOLATION': 403,
-      'PATH_SECURITY_VIOLATION': 403,
-      'COMMAND_SECURITY_VIOLATION': 403,
-      'PORT_ALREADY_EXPOSED': 409,
-      'SESSION_EXPIRED': 401,
-      'UNAUTHORIZED': 401,
-      'TIMEOUT': 408,
+      NOT_FOUND: 404,
+      PROCESS_NOT_FOUND: 404,
+      SESSION_NOT_FOUND: 404,
+      PORT_NOT_FOUND: 404,
+      FILE_NOT_FOUND: 404,
+      INVALID_REQUEST: 400,
+      VALIDATION_ERROR: 400,
+      INVALID_PATH: 400,
+      INVALID_PORT: 400,
+      INVALID_COMMAND: 400,
+      SECURITY_VIOLATION: 403,
+      PATH_SECURITY_VIOLATION: 403,
+      COMMAND_SECURITY_VIOLATION: 403,
+      PORT_ALREADY_EXPOSED: 409,
+      SESSION_EXPIRED: 401,
+      UNAUTHORIZED: 401,
+      TIMEOUT: 408,
     };
 
     return statusCodeMap[errorCode] || 500;
   }
 
-
   protected getValidatedData<T>(context: RequestContext): T {
     const validatedContext = context as ValidatedRequestContext<T>;
-    console.log(`[BaseHandler] Checking for validated data:`, {
-      hasValidatedData: !!validatedContext.validatedData,
-      contextKeys: Object.keys(context),
-      requestId: context.requestId
-    });
-    
     if (!validatedContext.validatedData) {
-      throw new Error('No validated data found in context. Ensure validation middleware ran first.');
+      throw new Error(
+        "No validated data found in context. Ensure validation middleware ran first."
+      );
     }
     return validatedContext.validatedData;
   }
 
   protected extractPathParam(pathname: string, position: number): string {
-    const segments = pathname.split('/');
-    return segments[position] || '';
+    const segments = pathname.split("/");
+    return segments[position] || "";
   }
 
   protected extractQueryParam(request: Request, param: string): string | null {

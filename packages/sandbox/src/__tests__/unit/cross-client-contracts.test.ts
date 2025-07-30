@@ -368,7 +368,7 @@ describe('Cross-Client Contract Validation', () => {
           {
             clientType: 'PortClient',
             mockResponse: {
-              error: 'Invalid port range',
+              error: 'Invalid port: 99999',
               code: 'INVALID_PORT',
               port: 99999,
               validRange: '1024-65535'
