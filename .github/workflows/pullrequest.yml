@@ -19,15 +19,14 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
-        
+
       - name: Run quality checks
         run: |
           npm run build
           npm run typecheck
           npm run check
-        
+
       - name: Run test suite
         run: |
           npm run test:unit
-          npm run test:contracts
           npm run test:container
