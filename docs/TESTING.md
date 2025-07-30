@@ -10,9 +10,8 @@ npm test
 
 # Run specific SDK test suites
 npm run test:unit        # SDK unit tests (Node.js environment)
-npm run test:integration # SDK client-container integration (Workers runtime) 
-npm run test:container   # SDK container service tests (requires Docker)
-npm run test:e2e         # SDK end-to-end workflows
+npm run test:container   # SDK container service tests (Node.js with mocks)
+npm run test:contracts   # SDK contract validation tests
 
 # SDK development testing
 npm run test:coverage    # Generate SDK test coverage report
@@ -21,7 +20,9 @@ npm run test:watch       # Watch mode for SDK development
 
 ## SDK Test Architecture
 
-**103 service tests + integration/e2e tests across 4 tiers for validating SDK changes:**
+**Comprehensive mocked testing across 3 tiers for validating SDK changes:**
+
+> **Note**: We use mocked testing because `vitest` + `@cloudflare/vitest-pool-workers` are not yet ready to work with containers and have significant compatibility issues. We cannot currently test in the actual Workers + Containers environment that production uses. The Containers team is working on resolving this, but we've implemented thorough contract validation and service logic testing to ensure comprehensive coverage in the meantime.
 
 ### 1. Unit Tests
 **Environment**: Node.js  
@@ -31,42 +32,33 @@ npm run test:watch       # Watch mode for SDK development
 Tests individual SDK components without external dependencies:
 - HTTP clients and session management
 - Security validation and input sanitization  
-- SSE parsing and request routing utilities
-- Error classes and type guards
+- Error mapping from container responses to client exceptions
+- Cross-client behavior consistency
+- Request/response serialization
 
-### 2. Integration Tests  
-**Environment**: Cloudflare Workers runtime  
-**Location**: `src/__tests__/integration/`  
-**Purpose**: Validate Durable Object integration
+### 2. Contract Tests  
+**Environment**: Node.js
+**Location**: `src/__tests__/contracts/`  
+**Purpose**: Validate HTTP API contracts and cross-cutting concerns
 
-Tests client-container communication:
-- Sandbox class integration with HttpClient
-- Error propagation from container to client
-- Session management across operations
-- Workers runtime compatibility
+Tests API consistency and client behavior:
+- HTTP API contract validation with type-safe validation
+- Cross-cutting concerns (timestamps, error formats, session handling)
+- Client uniformity across all SDK clients
+- Response structure validation using discriminated unions
 
 ### 3. Container Tests
 **Environment**: Node.js (mocked container services)
 **Location**: `src/__tests__/container/`  
 **Requirements**: None (no Docker needed)
-**Purpose**: Test service layer with proper mocking
+**Purpose**: Test service layer business logic with intelligent mocking
 
-Tests individual services in isolation:
+Tests individual services in isolation with 103 service tests:
 - **GitService** (21 tests): Repository operations, security validation
 - **PortService** (27 tests): Port management, HTTP proxying  
 - **ProcessService** (8 tests): Command execution, background processes
 - **FileService** (28 tests): File operations, path validation
 - **SessionService** (19 tests): Session management, context isolation
-
-### 4. End-to-End Tests
-**Environment**: Full sandbox workflows  
-**Location**: `src/__tests__/e2e/`  
-**Purpose**: Complete development scenarios
-
-Tests real-world usage patterns:
-- Application deployment and port exposure
-- Git workflows with dependency installation
-- Streaming operations and error recovery
 
 ## Service Testing Patterns
 
@@ -182,27 +174,8 @@ afterEach(() => {
 ## Container Test Setup
 
 ### Requirements
-- Docker installed and running
-- `@cloudflare/vitest-pool-workers` for Workers runtime
-
-### Configuration
-Container tests use Vitest with Workers pool:
-
-```typescript
-// vitest.container.config.ts
-export default defineWorkersConfig({
-  test: {
-    pool: 'workers',
-    poolOptions: {
-      workers: {
-        wrangler: {
-          configPath: './wrangler.jsonc'
-        }
-      }
-    }
-  }
-});
-```
+- Node.js (no Docker needed)
+- Vitest for test execution
 
 ### Service Test Environment
 Each service test file follows this pattern:
@@ -234,7 +207,7 @@ describe('GitService', () => {
 ## Framework & Tools
 
 - **Primary Framework**: Vitest 3.2.4 (modern TypeScript testing)
-- **Cloudflare Integration**: `@cloudflare/vitest-pool-workers` (Workers runtime)
+- **Environment**: Node.js (due to vitest + Workers + Containers compatibility issues)
 - **Coverage**: `@vitest/coverage-v8` (comprehensive reporting)
 - **Mocking**: Vitest built-in mocking with `vi.fn()`
 
@@ -242,13 +215,11 @@ describe('GitService', () => {
 
 | Command | Purpose | Environment |
 |---------|---------|-------------|
-| `npm test` | Run all test suites | Mixed |
+| `npm test` | Run all test suites | Node.js |
 | `npm run test:unit` | Fast unit tests only | Node.js |
-| `npm run test:integration` | Client-container integration | Workers |
-| `npm run test:container` | Service layer tests | Workers + Docker |
-| `npm run test:e2e` | End-to-end workflows | Full stack |
-| `npm run test:coverage` | Generate coverage report | All |
-| `npm run cleanup:containers` | Clean up Docker containers | System |
+| `npm run test:contracts` | Contract validation tests | Node.js |
+| `npm run test:container` | Service layer tests (mocked) | Node.js |
+| `npm run test:coverage` | Generate coverage report | Node.js |
 
 ## Coverage Requirements
 
@@ -271,7 +242,7 @@ describe('GitService', () => {
 
 ### Performance Notes
 - **Unit tests**: ~2-5 seconds (development workflow)
+- **Contract tests**: ~2-5 seconds (API validation)
 - **Container tests**: ~5-10 seconds (mocked service validation)
-- **E2E tests**: ~45-90 seconds (complete workflows)
 
 Run unit tests during development, full suite before commits.

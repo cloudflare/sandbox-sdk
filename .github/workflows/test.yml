@@ -38,14 +38,11 @@ jobs:
       - name: Run unit tests
         run: npm run test:unit
         
-      - name: Run integration tests
-        run: npm run test:integration
+      - name: Run contract tests
+        run: npm run test:contracts
         
       - name: Run container tests
         run: npm run test:container
-        
-      - name: Run E2E tests
-        run: npm run test:e2e
         
       - name: Generate coverage report
         run: npm run test:coverage

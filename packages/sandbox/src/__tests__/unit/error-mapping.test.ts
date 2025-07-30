@@ -630,4 +630,318 @@ describe('Error Mapping', () => {
       });
     });
   });
+
+  describe('End-to-End Error Mapping', () => {
+    describe('Realistic Container Error Responses', () => {
+      it('should map container FILE_NOT_FOUND to FileNotFoundError with full context', () => {
+        const containerResponse = {
+          error: 'File not found: /home/user/project/config.json',
+          code: 'FILE_NOT_FOUND',
+          path: '/home/user/project/config.json',
+          operation: SandboxOperation.FILE_READ,
+          details: 'The specified file does not exist in the container filesystem',
+          timestamp: '2024-07-30T12:00:00.000Z',
+          requestId: 'req_123456789'
+        };
+        
+        const clientError = mapContainerError(containerResponse);
+        
+        expect(clientError).toBeInstanceOf(FileNotFoundError);
+        expect(clientError.message).toContain('config.json');
+        
+        if (clientError instanceof FileNotFoundError) {
+          expect(clientError.path).toBe('/home/user/project/config.json');
+          expect(clientError.operation).toBe(SandboxOperation.FILE_READ);
+          expect(clientError.details).toBe('The specified file does not exist in the container filesystem');
+        }
+      });
+
+      it('should map container COMMAND_NOT_FOUND to CommandNotFoundError with execution context', () => {
+        const containerResponse = {
+          error: 'Command not found: custom-build-tool',
+          code: 'COMMAND_NOT_FOUND',
+          command: 'custom-build-tool --version',
+          details: 'Command "custom-build-tool" is not available in the container PATH',
+          path: '/usr/local/bin:/usr/bin:/bin',
+          timestamp: '2024-07-30T12:00:00.000Z',
+          requestId: 'req_987654321'
+        };
+        
+        const clientError = mapContainerError(containerResponse);
+        
+        expect(clientError).toBeInstanceOf(CommandNotFoundError);
+        expect(clientError.message).toContain('custom-build-tool');
+        
+        if (clientError instanceof CommandNotFoundError) {
+          expect(clientError.command).toBe('custom-build-tool --version');
+          expect(clientError.details).toContain('PATH');
+        }
+      });
+
+      it('should map container PROCESS_NOT_FOUND to ProcessNotFoundError with process details', () => {
+        const containerResponse = {
+          error: 'Process not found: proc_abc123def456',
+          code: 'PROCESS_NOT_FOUND',
+          processId: 'proc_abc123def456',
+          details: 'Process may have exited or was never started',
+          lastKnownStatus: 'running',
+          sessionId: 'session_xyz789',
+          timestamp: '2024-07-30T12:00:00.000Z',
+          requestId: 'req_proc_lookup'
+        };
+        
+        const clientError = mapContainerError(containerResponse);
+        
+        expect(clientError).toBeInstanceOf(ProcessNotFoundError);
+        expect(clientError.message).toContain('proc_abc123def456');
+        
+        if (clientError instanceof ProcessNotFoundError) {
+          expect(clientError.processId).toBe('proc_abc123def456');
+          expect(clientError.details).toContain('exited');
+        }
+      });
+
+      it('should map container PORT_ALREADY_EXPOSED to PortAlreadyExposedError with port info', () => {
+        const containerResponse = {
+          error: 'Port already exposed: 8080',
+          code: 'PORT_ALREADY_EXPOSED',
+          port: 8080,
+          currentExposure: {
+            exposedAt: 'https://8080-sandbox-abc123.example.com',
+            name: 'web-server',
+            sessionId: 'session_existing'
+          },
+          details: 'Port 8080 is already exposed by session session_existing',
+          timestamp: '2024-07-30T12:00:00.000Z',
+          requestId: 'req_port_expose'
+        };
+        
+        const clientError = mapContainerError(containerResponse);
+        
+        expect(clientError).toBeInstanceOf(PortAlreadyExposedError);
+        expect(clientError.message).toContain('8080');
+        
+        if (clientError instanceof PortAlreadyExposedError) {
+          expect(clientError.port).toBe(8080);
+          expect(clientError.details).toContain('session_existing');
+        }
+      });
+
+      it('should map container INVALID_PORT to InvalidPortError with validation details', () => {
+        const containerResponse = {
+          error: 'Invalid port number: 99999',
+          code: 'INVALID_PORT',
+          port: 99999,
+          validRange: { min: 1024, max: 65535 },
+          reservedPorts: [22, 25, 53, 80, 443, 3000],
+          details: 'Port must be between 1024-65535 and not reserved',
+          timestamp: '2024-07-30T12:00:00.000Z',
+          requestId: 'req_port_validate'
+        };
+        
+        const clientError = mapContainerError(containerResponse);
+        
+        expect(clientError).toBeInstanceOf(InvalidPortError);
+        expect(clientError.message).toContain('99999');
+        
+        if (clientError instanceof InvalidPortError) {
+          expect(clientError.port).toBe(99999);
+          expect(clientError.details).toContain('1024-65535');
+        }
+      });
+
+      it('should map container GIT_REPOSITORY_NOT_FOUND to GitRepositoryNotFoundError', () => {
+        const containerResponse = {
+          error: 'Git repository not found: https://github.com/user/nonexistent-repo.git',
+          code: 'GIT_REPOSITORY_NOT_FOUND',
+          repoUrl: 'https://github.com/user/nonexistent-repo.git',
+          branch: 'main',
+          targetDir: '/tmp/workspace/project',
+          httpStatus: 404,
+          details: 'Repository does not exist or is not accessible',
+          timestamp: '2024-07-30T12:00:00.000Z',
+          requestId: 'req_git_clone'
+        };
+        
+        const clientError = mapContainerError(containerResponse);
+        
+        expect(clientError).toBeInstanceOf(GitRepositoryNotFoundError);
+        expect(clientError.message).toContain('nonexistent-repo');
+        
+        if (clientError instanceof GitRepositoryNotFoundError) {
+          expect(clientError.repository).toBe('https://github.com/user/nonexistent-repo.git');
+          expect(clientError.details).toContain('not accessible');
+        }
+      });
+
+      it('should map container GIT_AUTH_FAILED to GitAuthenticationError with auth context', () => {
+        const containerResponse = {
+          error: 'Git authentication failed: https://github.com/private-org/secret-repo.git',
+          code: 'GIT_AUTH_FAILED',
+          repoUrl: 'https://github.com/private-org/secret-repo.git',
+          authMethod: 'https',
+          httpStatus: 401,
+          details: 'Authentication required for private repository access',
+          suggestion: 'Provide valid credentials or use SSH key authentication',
+          timestamp: '2024-07-30T12:00:00.000Z',
+          requestId: 'req_git_auth'
+        };
+        
+        const clientError = mapContainerError(containerResponse);
+        
+        expect(clientError).toBeInstanceOf(GitAuthenticationError);
+        expect(clientError.message).toContain('authentication');
+        
+        if (clientError instanceof GitAuthenticationError) {
+          expect(clientError.repository).toBe('https://github.com/private-org/secret-repo.git');
+          expect(clientError.details).toContain('credentials');
+        }
+      });
+    });
+
+    describe('Error Context Preservation', () => {
+      it('should preserve all error context fields in mapped errors', () => {
+        const richContainerResponse = {
+          error: 'Permission denied: /etc/sensitive-config.txt',
+          code: 'PERMISSION_DENIED',
+          path: '/etc/sensitive-config.txt',
+          operation: SandboxOperation.FILE_WRITE,
+          details: 'Write access denied by security policy',
+          securityLevel: 'HIGH',
+          requestedPermissions: ['read', 'write'],
+          availablePermissions: ['read'],
+          timestamp: '2024-07-30T12:00:00.000Z',
+          requestId: 'req_security_check',
+          sessionId: 'session_secure_123',
+          userId: 'user_developer_001'
+        };
+        
+        const clientError = mapContainerError(richContainerResponse);
+        
+        expect(clientError).toBeInstanceOf(PermissionDeniedError);
+        
+        if (clientError instanceof PermissionDeniedError) {
+          expect(clientError.path).toBe('/etc/sensitive-config.txt');
+          expect(clientError.operation).toBe(SandboxOperation.FILE_WRITE);
+          expect(clientError.details).toContain('security policy');
+          
+          // Verify error preserves rich context for debugging
+          expect(clientError.message).toContain('sensitive-config.txt');
+          expect(clientError.message).toContain('Permission denied');
+        }
+      });
+
+      it('should handle errors with minimal context gracefully', () => {
+        const minimalContainerResponse = {
+          error: 'Operation failed',
+          code: 'INTERNAL_ERROR'
+        };
+        
+        const clientError = mapContainerError(minimalContainerResponse);
+        
+        expect(clientError).toBeInstanceOf(SandboxError);
+        expect(clientError.message).toBe('Operation failed');
+      });
+
+      it('should handle errors with extra unknown fields gracefully', () => {
+        const extendedContainerResponse = {
+          error: 'File not found: /app/data.json',
+          code: 'FILE_NOT_FOUND',
+          path: '/app/data.json',
+          operation: SandboxOperation.FILE_READ,
+          // Extra fields that might be added in future container versions
+          containerVersion: '2.1.0',
+          experimentalFeatures: ['advanced-caching'],
+          metrics: {
+            diskUsage: '45%',
+            memoryUsage: '23%'
+          },
+          unknown_field: 'should_be_ignored'
+        };
+        
+        const clientError = mapContainerError(extendedContainerResponse);
+        
+        expect(clientError).toBeInstanceOf(FileNotFoundError);
+        expect(clientError.message).toContain('data.json');
+        
+        if (clientError instanceof FileNotFoundError) {
+          expect(clientError.path).toBe('/app/data.json');
+          expect(clientError.operation).toBe(SandboxOperation.FILE_READ);
+        }
+      });
+    });
+
+    describe('Error Chaining and Causality', () => {
+      it('should handle chained errors from container operations', () => {
+        const chainedContainerResponse = {
+          error: 'Command execution failed: npm install',
+          code: 'COMMAND_EXECUTION_FAILED',
+          command: 'npm install --production',
+          exitCode: 1,
+          stdout: 'npm WARN deprecated package@1.0.0',
+          stderr: 'npm ERR! Error: EACCES: permission denied, mkdir \'/usr/local/lib/node_modules\'',
+          rootCause: {
+            error: 'Permission denied: /usr/local/lib/node_modules',
+            code: 'PERMISSION_DENIED',
+            path: '/usr/local/lib/node_modules',
+            operation: SandboxOperation.DIRECTORY_CREATE
+          },
+          details: 'npm install failed due to permission issues with global module directory',
+          timestamp: '2024-07-30T12:00:00.000Z',
+          requestId: 'req_npm_install'
+        };
+        
+        const clientError = mapContainerError(chainedContainerResponse);
+        
+        expect(clientError).toBeInstanceOf(CommandError);
+        expect(clientError.message).toContain('npm install');
+        
+        if (clientError instanceof CommandError) {
+          expect(clientError.command).toBe('npm install --production');
+          expect(clientError.exitCode).toBe(1);
+          expect(clientError.details).toContain('permission issues');
+        }
+      });
+    });
+
+    describe('Error Mapping Performance', () => {
+      it('should handle error mapping efficiently for large error objects', () => {
+        const largeContainerResponse = {
+          error: 'Process execution timeout: long-running-script.sh',
+          code: 'PROCESS_TIMEOUT',
+          processId: 'proc_long_running_123',
+          command: 'bash long-running-script.sh',
+          timeout: 300000, // 5 minutes
+          actualDuration: 350000, // 5.83 minutes
+          details: 'Process exceeded maximum execution time limit',
+          // Large diagnostic data
+          processTree: Array.from({ length: 100 }, (_, i) => ({
+            pid: 1000 + i,
+            ppid: i === 0 ? null : 1000 + Math.floor(i / 2),
+            name: `subprocess-${i}`,
+            status: i % 3 === 0 ? 'running' : 'completed'
+          })),
+          memoryUsage: Array.from({ length: 60 }, (_, i) => ({
+            timestamp: Date.now() - (60 - i) * 1000,
+            usage: Math.random() * 1024 * 1024 * 1024 // Random GB usage
+          })),
+          logOutput: 'A'.repeat(10000), // 10KB of log data
+          timestamp: '2024-07-30T12:00:00.000Z',
+          requestId: 'req_long_process'
+        };
+        
+        const start = performance.now();
+        const clientError = mapContainerError(largeContainerResponse);
+        const duration = performance.now() - start;
+        
+        expect(clientError).toBeInstanceOf(ProcessError);
+        expect(duration).toBeLessThan(10); // Should complete in under 10ms
+        
+        if (clientError instanceof ProcessError) {
+          expect(clientError.processId).toBe('proc_long_running_123');
+          expect(clientError.details).toContain('timeout');
+        }
+      });
+    });
+  });
 });

@@ -1,5 +1,5 @@
 import { BaseHttpClient } from './base-client';
-import type { HttpClientOptions, SessionRequest } from './types';
+import type { HttpClientOptions, SessionRequest, BaseApiResponse } from './types';
 
 /**
  * Request interface for command execution
@@ -11,13 +11,11 @@ export interface ExecuteRequest extends SessionRequest {
 /**
  * Response interface for command execution
  */
-export interface ExecuteResponse {
-  success: boolean;
+export interface ExecuteResponse extends BaseApiResponse {
   stdout: string;
   stderr: string;
   exitCode: number;
   command: string;
-  timestamp: string;
 }
 
 

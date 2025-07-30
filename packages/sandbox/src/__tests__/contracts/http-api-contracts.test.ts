@@ -30,6 +30,34 @@ type ApiResponse = ApiErrorResponse;
 // Union types for contract testing that include both success and error cases
 type ContractCreateSessionResponse = CreateSessionResponse | ApiErrorResponse;
 type ContractStartProcessResponse = StartProcessResponse | ApiErrorResponse;
+
+// Common HTTP API contract patterns that ALL endpoints should follow
+interface CommonHttpResponseContract {
+  timestamp: string;
+}
+
+interface CommonSuccessResponseContract extends CommonHttpResponseContract {
+  success: true;
+}
+
+interface CommonErrorResponseContract extends CommonHttpResponseContract {
+  success: false;
+  error: string;
+}
+
+// Type guards for common contract patterns
+function isSuccessResponse(data: unknown): data is CommonSuccessResponseContract {
+  return typeof data === 'object' && data !== null && 
+         'success' in data && (data as Record<string, unknown>).success === true &&
+         'timestamp' in data && typeof (data as Record<string, unknown>).timestamp === 'string';
+}
+
+function isErrorResponse(data: unknown): data is CommonErrorResponseContract {
+  return typeof data === 'object' && data !== null &&
+         'success' in data && (data as Record<string, unknown>).success === false &&
+         'error' in data && typeof (data as Record<string, unknown>).error === 'string' &&
+         'timestamp' in data && typeof (data as Record<string, unknown>).timestamp === 'string';
+}
 type ContractListProcessesResponse = ListProcessesResponse | ApiErrorResponse;
 type ContractListExposedPortsResponse = ListExposedPortsResponse | ApiErrorResponse;
 
@@ -616,6 +644,433 @@ describe('HTTP API Contract Validation', () => {
         expect(response.headers.get('Access-Control-Allow-Methods')).toContain('POST');
         expect(response.headers.get('Access-Control-Allow-Headers')).toContain('Content-Type');
       }
+    });
+  });
+
+  describe('Comprehensive Response Format Validation', () => {
+    describe('Success Response Format Consistency', () => {
+      it('should return consistent success response format across all endpoints', async () => {
+        const successEndpoints = [
+          {
+            name: 'Execute API',
+            url: `${HTTP_API_CONTRACT_BASE_URL}/api/execute`,
+            method: 'POST' as const,
+            body: { command: 'echo "success test"', sessionId: testSessionId }
+          },
+          {
+            name: 'File Write API',
+            url: `${HTTP_API_CONTRACT_BASE_URL}/api/files/write`, 
+            method: 'POST' as const,
+            body: { path: '/tmp/success-test.txt', content: 'test', sessionId: testSessionId }
+          },
+          {
+            name: 'Ping API',
+            url: `${HTTP_API_CONTRACT_BASE_URL}/api/ping`,
+            method: 'GET' as const,
+            body: null
+          },
+          {
+            name: 'Commands API',
+            url: `${HTTP_API_CONTRACT_BASE_URL}/api/commands`,
+            method: 'GET' as const,
+            body: null
+          }
+        ];
+
+        for (const endpoint of successEndpoints) {
+          const response = await fetch(endpoint.url, {
+            method: endpoint.method,
+            headers: { 'Content-Type': 'application/json' },
+            body: endpoint.body ? JSON.stringify(endpoint.body) : undefined
+          });
+
+          expect(response.status).toBe(200);
+          expect(response.headers.get('content-type')).toContain('application/json');
+
+          const data = await response.json();
+
+          // Validate common success response contract
+          expect(isSuccessResponse(data)).toBe(true);
+          
+          if (isSuccessResponse(data)) {
+            // All success responses must have ISO 8601 timestamp
+            expect(data.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+            expect(new Date(data.timestamp)).toBeInstanceOf(Date);
+            expect(isNaN(new Date(data.timestamp).getTime())).toBe(false);
+            
+            // All success responses must have success: true
+            expect(data.success).toBe(true);
+          }
+        }
+      });
+
+      it('should maintain consistent common field types across all success responses', async () => {
+        const endpoints = [
+          {
+            url: `${HTTP_API_CONTRACT_BASE_URL}/api/execute`,
+            method: 'POST' as const,
+            body: { command: 'echo "type test"', sessionId: testSessionId }
+          },
+          {
+            url: `${HTTP_API_CONTRACT_BASE_URL}/api/ping`,
+            method: 'GET' as const,
+            body: null
+          },
+          {
+            url: `${HTTP_API_CONTRACT_BASE_URL}/api/commands`,
+            method: 'GET' as const,
+            body: null
+          }
+        ];
+
+        for (const endpoint of endpoints) {
+          const response = await fetch(endpoint.url, {
+            method: endpoint.method,
+            headers: { 'Content-Type': 'application/json' },
+            body: endpoint.body ? JSON.stringify(endpoint.body) : undefined
+          });
+
+          expect(response.status).toBe(200);
+          const data = await response.json();
+
+          // Validate common field types that ALL success responses should have
+          expect(isSuccessResponse(data)).toBe(true);
+          
+          if (isSuccessResponse(data)) {
+            // All success responses must have timestamp as string
+            expect(typeof data.timestamp).toBe('string');
+            // All success responses must have success as boolean
+            expect(typeof data.success).toBe('boolean');
+            expect(data.success).toBe(true);
+          }
+        }
+      });
+    });
+
+    describe('Error Response Format Consistency', () => {
+      it('should return consistent error response format across all endpoints', async () => {
+        const errorEndpoints = [
+          {
+            name: 'Execute API - Validation Error',
+            url: `${HTTP_API_CONTRACT_BASE_URL}/api/execute`,
+            method: 'POST' as const,
+            body: { /* missing command */ sessionId: testSessionId },
+            expectedStatus: 400,
+            expectedErrorType: 'validation'
+          },
+          {
+            name: 'File API - Security Error',
+            url: `${HTTP_API_CONTRACT_BASE_URL}/api/files/read`,
+            method: 'POST' as const,
+            body: { path: '/etc/passwd', sessionId: testSessionId },
+            expectedStatus: 400,
+            expectedErrorType: 'security'
+          },
+          {
+            name: 'Port API - Validation Error',
+            url: `${HTTP_API_CONTRACT_BASE_URL}/api/ports/expose`,
+            method: 'POST' as const,
+            body: { port: 'invalid', sessionId: testSessionId },
+            expectedStatus: 400,
+            expectedErrorType: 'validation'
+          },
+          {
+            name: 'Git API - Security Error',
+            url: `${HTTP_API_CONTRACT_BASE_URL}/api/git/checkout`,
+            method: 'POST' as const,
+            body: { repoUrl: 'invalid-url', sessionId: testSessionId },
+            expectedStatus: 400,
+            expectedErrorType: 'validation'
+          }
+        ];
+
+        for (const endpoint of errorEndpoints) {
+          const response = await fetch(endpoint.url, {
+            method: endpoint.method,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(endpoint.body)
+          });
+
+          expect(response.status).toBe(endpoint.expectedStatus);
+          expect(response.headers.get('content-type')).toContain('application/json');
+
+          const data = await response.json();
+          
+          // Validate common error response contract
+          expect(isErrorResponse(data)).toBe(true);
+          
+          if (isErrorResponse(data)) {
+            // All error responses must have success: false
+            expect(data.success).toBe(false);
+            
+            // All error responses must have non-empty error message
+            expect(data.error.length).toBeGreaterThan(0);
+            
+            // All error responses must have ISO 8601 timestamp
+            expect(data.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+            expect(new Date(data.timestamp)).toBeInstanceOf(Date);
+            expect(isNaN(new Date(data.timestamp).getTime())).toBe(false);
+          }
+
+          // Validate error message contains relevant context
+          if (isErrorResponse(data)) {
+            if (endpoint.expectedErrorType === 'validation') {
+              expect(data.error.toLowerCase()).toMatch(/validation|invalid|missing|required/);
+            } else if (endpoint.expectedErrorType === 'security') {
+              expect(data.error.toLowerCase()).toMatch(/security|validation|path|blocked/);
+            }
+          }
+        }
+      });
+
+      it('should include error codes and details in structured error responses', async () => {
+        const structuredErrorTests = [
+          {
+            url: `${HTTP_API_CONTRACT_BASE_URL}/api/files/read`,
+            method: 'POST' as const,
+            body: { path: '/nonexistent/file.txt', sessionId: testSessionId },
+            expectedStatus: 404,
+            expectedErrorCode: 'FILE_NOT_FOUND'
+          },
+          {
+            url: `${HTTP_API_CONTRACT_BASE_URL}/api/execute`,
+            method: 'POST' as const,
+            body: { command: 'nonexistent-command-xyz', sessionId: testSessionId },
+            expectedStatus: 200, // Command errors return 200 with error in response
+            expectedInResponse: true
+          }
+        ];
+
+        for (const test of structuredErrorTests) {
+          const response = await fetch(test.url, {
+            method: test.method,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(test.body)
+          });
+
+          expect(response.status).toBe(test.expectedStatus);
+          const data = await response.json();
+
+          if (test.expectedInResponse) {
+            // Command execution errors: HTTP 200 but operation failed
+            // Should still follow common timestamp contract
+            expect(data).toHaveProperty('timestamp');
+            if (typeof data === 'object' && data !== null && 'timestamp' in data) {
+              expect(typeof (data as Record<string, unknown>).timestamp).toBe('string');
+              expect((data as Record<string, unknown>).timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+            }
+            
+            // These responses may have success: false to indicate operation failure
+            if (typeof data === 'object' && data !== null && 'success' in data) {
+              expect((data as Record<string, unknown>).success).toBe(false);
+            }
+          } else {
+            // HTTP-level errors should follow error response contract
+            expect(isErrorResponse(data)).toBe(true);
+            
+            if (isErrorResponse(data)) {
+              expect(data.success).toBe(false);
+              expect(data.error.length).toBeGreaterThan(0);
+              expect(data.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+            }
+          }
+        }
+      });
+    });
+
+    describe('Streaming Response Format Consistency', () => {
+      it('should handle streaming response format correctly', async () => {
+        const response = await fetch(`${HTTP_API_CONTRACT_BASE_URL}/api/execute/stream`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            command: 'echo "stream test"',
+            sessionId: testSessionId
+          })
+        });
+
+        expect(response.status).toBe(200);
+        expect(response.headers.get('content-type')).toContain('text/plain');
+        expect(response.headers.get('transfer-encoding')).toBe('chunked');
+
+        // Validate streaming response can be read
+        const reader = response.body?.getReader();
+        expect(reader).toBeDefined();
+
+        if (reader) {
+          const { value, done } = await reader.read();
+          expect(done).toBe(false);
+          expect(value).toBeInstanceOf(Uint8Array);
+
+          // Clean up
+          reader.releaseLock();
+        }
+      });
+
+      it('should maintain consistent headers for streaming endpoints', async () => {
+        const streamingEndpoints = [
+          {
+            url: `${HTTP_API_CONTRACT_BASE_URL}/api/execute/stream`,
+            method: 'POST' as const,
+            body: { command: 'echo "header test"', sessionId: testSessionId }
+          }
+        ];
+
+        for (const endpoint of streamingEndpoints) {
+          const response = await fetch(endpoint.url, {
+            method: endpoint.method,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(endpoint.body)
+          });
+
+          // Streaming responses should have consistent headers
+          expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
+          expect(response.headers.get('transfer-encoding')).toBe('chunked');
+          expect(response.headers.get('content-type')).toContain('text/plain');
+        }
+      });
+    });
+
+    describe('Response Size and Performance Validation', () => {
+      it('should handle large response payloads consistently', async () => {
+        // Test with command that produces large output
+        const response = await fetch(`${HTTP_API_CONTRACT_BASE_URL}/api/execute`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            command: 'for i in {1..100}; do echo "Line $i of large output test"; done',
+            sessionId: testSessionId
+          })
+        });
+
+        expect(response.status).toBe(200);
+        const data = await response.json();
+        
+        // Validate cross-cutting HTTP API contract
+        expect(isSuccessResponse(data)).toBe(true);
+        
+        if (isSuccessResponse(data)) {
+          expect(data.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+        }
+        
+        // Validate endpoint-specific response structure for large payloads
+        expect(data).toHaveProperty('stdout');
+        if (typeof data === 'object' && data !== null && 'stdout' in data && typeof data.stdout === 'string') {
+          expect(data.stdout.length).toBeGreaterThan(1000); // Should be substantial output
+          expect(data.stdout).toContain('Line 1');
+          expect(data.stdout).toContain('Line 100');
+        }
+      });
+
+      it('should maintain response format under concurrent load', async () => {
+        const concurrentRequests = Array.from({ length: 5 }, (_, i) => 
+          fetch(`${HTTP_API_CONTRACT_BASE_URL}/api/execute`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              command: `echo "concurrent test ${i}"`,
+              sessionId: testSessionId
+            })
+          })
+        );
+
+        const responses = await Promise.all(concurrentRequests);
+        
+        for (let i = 0; i < responses.length; i++) {
+          const response = responses[i];
+          expect(response.status).toBe(200);
+          expect(response.headers.get('content-type')).toContain('application/json');
+          
+          const data = await response.json();
+          
+          // Validate cross-cutting HTTP API contract
+          expect(isSuccessResponse(data)).toBe(true);
+          
+          if (isSuccessResponse(data)) {
+            expect(data.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+          }
+          
+          // Validate endpoint-specific response structure
+          expect(data).toHaveProperty('stdout');
+          if (typeof data === 'object' && data !== null && 'stdout' in data && typeof (data as Record<string, unknown>).stdout === 'string') {
+            expect((data as Record<string, unknown>).stdout).toContain(`concurrent test ${i}`);
+          }
+        }
+      });
+    });
+
+    describe('Content Encoding and Character Set Validation', () => {
+      it('should handle UTF-8 content correctly in all responses', async () => {
+        const unicodeTests = [
+          {
+            name: 'Command with Unicode Output',
+            url: `${HTTP_API_CONTRACT_BASE_URL}/api/execute`,
+            method: 'POST' as const,
+            body: { command: 'echo "Hello 世界 🌍 émojis and spëcial chars"', sessionId: testSessionId },
+            expectedInOutput: '世界 🌍 émojis and spëcial chars'
+          },
+          {
+            name: 'File with Unicode Content',
+            url: `${HTTP_API_CONTRACT_BASE_URL}/api/files/write`,
+            method: 'POST' as const,
+            body: { 
+              path: '/tmp/unicode-test.txt', 
+              content: 'Unicode content: 中文 🚀 café naïve résumé', 
+              sessionId: testSessionId 
+            },
+            followUp: {
+              url: `${HTTP_API_CONTRACT_BASE_URL}/api/files/read`,
+              body: { path: '/tmp/unicode-test.txt', sessionId: testSessionId },
+              expectedInContent: 'Unicode content: 中文 🚀 café naïve résumé'
+            }
+          }
+        ];
+
+        for (const test of unicodeTests) {
+          const response = await fetch(test.url, {
+            method: test.method,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(test.body)
+          });
+
+          expect(response.status).toBe(200);
+          expect(response.headers.get('content-type')).toContain('application/json');
+          expect(response.headers.get('content-type')).toContain('charset=utf-8');
+          
+          const data = await response.json();
+          
+          // Validate cross-cutting HTTP API contract for UTF-8 content
+          expect(isSuccessResponse(data)).toBe(true);
+          
+          if (isSuccessResponse(data)) {
+            expect(data.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+          }
+          
+          // Validate UTF-8 content in endpoint-specific response  
+          if (test.expectedInOutput && typeof data === 'object' && data !== null && 'stdout' in data && typeof (data as Record<string, unknown>).stdout === 'string') {
+            expect((data as Record<string, unknown>).stdout).toContain(test.expectedInOutput);
+          }
+
+          // Test follow-up request for file operations
+          if (test.followUp) {
+            const followUpResponse = await fetch(test.followUp.url, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(test.followUp.body)
+            });
+
+            expect(followUpResponse.status).toBe(200);
+            const followUpData = await followUpResponse.json();
+            
+            // Validate cross-cutting contract for follow-up response
+            expect(isSuccessResponse(followUpData)).toBe(true);
+            
+            if (test.followUp.expectedInContent && typeof followUpData === 'object' && followUpData !== null && 'content' in followUpData && typeof (followUpData as Record<string, unknown>).content === 'string') {
+              expect((followUpData as Record<string, unknown>).content).toContain(test.followUp.expectedInContent);
+            }
+          }
+        }
+      });
     });
   });
 

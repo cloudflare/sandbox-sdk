@@ -55,7 +55,7 @@ export class SandboxError extends Error {
 }
 
 export class ProcessNotFoundError extends SandboxError {
-  constructor(processId: string) {
+  constructor(public processId: string) {
     super(`Process not found: ${processId}`, 'PROCESS_NOT_FOUND', SandboxOperation.PROCESS_GET);
     this.name = 'ProcessNotFoundError';
   }
@@ -123,7 +123,8 @@ export class CommandError extends SandboxError {
     public command: string,
     code: string,
     details?: string,
-    httpStatus?: number
+    httpStatus?: number,
+    public exitCode?: number
   ) {
     super(message, code, SandboxOperation.COMMAND_EXECUTE, details, httpStatus);
     this.name = 'CommandError';

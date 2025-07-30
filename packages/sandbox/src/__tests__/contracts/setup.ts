@@ -5,6 +5,7 @@
  * instances for validating SDK interface compliance.
  */
 
+// globals are enabled in vitest.contracts.config.ts, so no imports needed
 
 // Test container instance for contract validation
 let testContainerProcess: any = null;

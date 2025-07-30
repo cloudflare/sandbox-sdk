@@ -46,6 +46,56 @@ interface InternalErrorResponse extends ApiErrorResponse {
   };
 }
 
+// Client Error Types - These map to specific SDK error classes
+interface FileNotFoundErrorResponse extends ApiErrorResponse {
+  code: 'FILE_NOT_FOUND';
+  path: string;
+  operation: string;
+  details?: string;
+}
+
+interface CommandNotFoundErrorResponse extends ApiErrorResponse {
+  code: 'COMMAND_NOT_FOUND';
+  command: string;
+  details?: string;
+}
+
+interface ProcessNotFoundErrorResponse extends ApiErrorResponse {
+  code: 'PROCESS_NOT_FOUND';
+  processId: string;
+  details?: string;
+}
+
+interface PortAlreadyExposedErrorResponse extends ApiErrorResponse {
+  code: 'PORT_ALREADY_EXPOSED';
+  port: number;
+  details?: string;
+}
+
+interface PortNotExposedErrorResponse extends ApiErrorResponse {
+  code: 'PORT_NOT_EXPOSED';
+  port: number;
+  details?: string;
+}
+
+interface InvalidPortErrorResponse extends ApiErrorResponse {
+  code: 'INVALID_PORT';
+  port: number;
+  details?: string;
+}
+
+interface GitRepositoryNotFoundErrorResponse extends ApiErrorResponse {
+  code: 'GIT_REPOSITORY_NOT_FOUND';
+  repoUrl: string;
+  details?: string;
+}
+
+interface GitAuthenticationErrorResponse extends ApiErrorResponse {
+  code: 'GIT_AUTHENTICATION_ERROR';
+  repoUrl: string;
+  details?: string;
+}
+
 describe('Error Response Contract Validation', () => {
   describe('Validation Error Contracts', () => {
     it('should return ValidationErrorResponse for missing required fields', async () => {
@@ -466,6 +516,282 @@ describe('Error Response Contract Validation', () => {
 
       expect(response.status).toBe(400);
       expect(response.headers.get('Content-Type')).toContain('application/json');
+    });
+  });
+
+  describe('Client Error Type Contracts', () => {
+    it('should return FileNotFoundError format for missing files', async () => {
+      const response = await fetch(`${ERROR_CONTRACT_BASE_URL}/api/read`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          path: '/tmp/nonexistent-file-12345.txt',
+          sessionId: 'test-session'
+        })
+      });
+
+      expect(response.status).toBe(404);
+      
+      const data: FileNotFoundErrorResponse = await response.json();
+      
+      // Validate FileNotFoundErrorResponse contract
+      expect(data.success).toBe(false);
+      expect(data.code).toBe('FILE_NOT_FOUND');
+      expect(data).toHaveProperty('error');
+      expect(data).toHaveProperty('path');
+      expect(data).toHaveProperty('operation');
+      expect(data.path).toBe('/tmp/nonexistent-file-12345.txt');
+      expect(data.operation).toBe('FILE_READ');
+      expect(data.error).toContain('file');
+      expect(data.error).toContain('not found');
+    });
+
+    it('should return CommandNotFoundError format for invalid commands', async () => {
+      const response = await fetch(`${ERROR_CONTRACT_BASE_URL}/api/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          command: 'definitely-not-a-real-command-12345',
+          sessionId: 'test-session'
+        })
+      });
+
+      expect(response.status).toBe(404);
+      
+      const data: CommandNotFoundErrorResponse = await response.json();
+      
+      // Validate CommandNotFoundErrorResponse contract
+      expect(data.success).toBe(false);
+      expect(data.code).toBe('COMMAND_NOT_FOUND');
+      expect(data).toHaveProperty('error');
+      expect(data).toHaveProperty('command');
+      expect(data.command).toBe('definitely-not-a-real-command-12345');
+      expect(data.error).toContain('command');
+      expect(data.error).toContain('not found');
+    });
+
+    it('should return ProcessNotFoundError format for invalid process IDs', async () => {
+      const response = await fetch(`${ERROR_CONTRACT_BASE_URL}/api/process/nonexistent-process-12345`, {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' }
+      });
+
+      expect(response.status).toBe(404);
+      
+      const data: ProcessNotFoundErrorResponse = await response.json();
+      
+      // Validate ProcessNotFoundErrorResponse contract
+      expect(data.success).toBe(false);
+      expect(data.code).toBe('PROCESS_NOT_FOUND');
+      expect(data).toHaveProperty('error');
+      expect(data).toHaveProperty('processId');
+      expect(data.processId).toBe('nonexistent-process-12345');
+      expect(data.error).toContain('process');
+      expect(data.error).toContain('not found');
+    });
+
+    it('should return PortAlreadyExposedError format for duplicate port exposures', async () => {
+      // First, expose a port
+      const exposeResponse = await fetch(`${ERROR_CONTRACT_BASE_URL}/api/expose-port`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          port: 8888,
+          sessionId: 'test-session'
+        })
+      });
+
+      if (exposeResponse.ok) {
+        // Try to expose the same port again
+        const duplicateResponse = await fetch(`${ERROR_CONTRACT_BASE_URL}/api/expose-port`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            port: 8888,
+            sessionId: 'test-session'
+          })
+        });
+
+        expect(duplicateResponse.status).toBe(409);
+        
+        const data: PortAlreadyExposedErrorResponse = await duplicateResponse.json();
+        
+        // Validate PortAlreadyExposedErrorResponse contract
+        expect(data.success).toBe(false);
+        expect(data.code).toBe('PORT_ALREADY_EXPOSED');
+        expect(data).toHaveProperty('error');
+        expect(data).toHaveProperty('port');
+        expect(data.port).toBe(8888);
+        expect(data.error).toContain('port');
+        expect(data.error).toContain('already exposed');
+
+        // Clean up
+        await fetch(`${ERROR_CONTRACT_BASE_URL}/api/exposed-ports/8888`, {
+          method: 'DELETE'
+        });
+      }
+    });
+
+    it('should return PortNotExposedError format for unexposing non-exposed ports', async () => {
+      const response = await fetch(`${ERROR_CONTRACT_BASE_URL}/api/exposed-ports/9999`, {
+        method: 'DELETE'
+      });
+
+      expect(response.status).toBe(404);
+      
+      const data: PortNotExposedErrorResponse = await response.json();
+      
+      // Validate PortNotExposedErrorResponse contract
+      expect(data.success).toBe(false);
+      expect(data.code).toBe('PORT_NOT_EXPOSED');
+      expect(data).toHaveProperty('error');
+      expect(data).toHaveProperty('port');
+      expect(data.port).toBe(9999);
+      expect(data.error).toContain('port');
+      expect(data.error).toContain('not exposed');
+    });
+
+    it('should return InvalidPortError format for invalid port numbers', async () => {
+      const invalidPorts = [-1, 0, 99999, 65536, 'invalid'];
+      
+      for (const port of invalidPorts) {
+        const response = await fetch(`${ERROR_CONTRACT_BASE_URL}/api/expose-port`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            port: port,
+            sessionId: 'test-session'
+          })
+        });
+
+        expect(response.status).toBe(400);
+        
+        const data: InvalidPortErrorResponse = await response.json();
+        
+        // Validate InvalidPortErrorResponse contract
+        expect(data.success).toBe(false);
+        expect(data.code).toBe('INVALID_PORT');
+        expect(data).toHaveProperty('error');
+        expect(data).toHaveProperty('port');
+        expect(data.port).toBe(typeof port === 'number' ? port : NaN);
+        expect(data.error).toContain('port');
+        expect(data.error).toContain('invalid');
+      }
+    });
+
+    it('should return GitRepositoryNotFoundError format for invalid repositories', async () => {
+      const response = await fetch(`${ERROR_CONTRACT_BASE_URL}/api/git/checkout`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          repoUrl: 'https://github.com/definitely/does-not-exist-repo-12345.git',
+          targetDir: '/tmp/fake-repo',
+          sessionId: 'test-session'
+        })
+      });
+
+      expect(response.status).toBe(404);
+      
+      const data: GitRepositoryNotFoundErrorResponse = await response.json();
+      
+      // Validate GitRepositoryNotFoundErrorResponse contract
+      expect(data.success).toBe(false);
+      expect(data.code).toBe('GIT_REPOSITORY_NOT_FOUND');
+      expect(data).toHaveProperty('error');
+      expect(data).toHaveProperty('repoUrl');
+      expect(data.repoUrl).toBe('https://github.com/definitely/does-not-exist-repo-12345.git');
+      expect(data.error).toContain('repository');
+      expect(data.error).toContain('not found');
+    });
+
+    it('should return GitAuthenticationError format for private repositories', async () => {
+      const response = await fetch(`${ERROR_CONTRACT_BASE_URL}/api/git/checkout`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          repoUrl: 'https://github.com/private/some-private-repo.git',
+          targetDir: '/tmp/private-test',
+          sessionId: 'test-session'
+        })
+      });
+
+      // This could be 401 (authentication required) or 403 (forbidden)
+      expect([401, 403]).toContain(response.status);
+      
+      const data: GitAuthenticationErrorResponse = await response.json();
+      
+      // Validate GitAuthenticationErrorResponse contract
+      expect(data.success).toBe(false);
+      expect(data.code).toBe('GIT_AUTHENTICATION_ERROR');
+      expect(data).toHaveProperty('error');
+      expect(data).toHaveProperty('repoUrl');
+      expect(data.repoUrl).toBe('https://github.com/private/some-private-repo.git');
+      expect(data.error).toContain('authentication');
+    });
+
+    it('should maintain consistent error structure across all client error types', async () => {
+      const clientErrorTests = [
+        {
+          name: 'FileNotFoundError',
+          request: {
+            url: '/api/read',
+            method: 'POST',
+            body: JSON.stringify({
+              path: '/tmp/missing-file.txt',
+              sessionId: 'test-session'
+            })
+          },
+          expectedCode: 'FILE_NOT_FOUND',
+          expectedStatus: 404
+        },
+        {
+          name: 'CommandNotFoundError',
+          request: {
+            url: '/api/execute',
+            method: 'POST',
+            body: JSON.stringify({
+              command: 'missing-command-xyz',
+              sessionId: 'test-session'
+            })
+          },
+          expectedCode: 'COMMAND_NOT_FOUND',
+          expectedStatus: 404
+        },
+        {
+          name: 'ProcessNotFoundError',
+          request: {
+            url: '/api/process/missing-process-123',
+            method: 'GET',
+            body: undefined
+          },
+          expectedCode: 'PROCESS_NOT_FOUND',
+          expectedStatus: 404
+        }
+      ];
+
+      for (const test of clientErrorTests) {
+        const response = await fetch(`${ERROR_CONTRACT_BASE_URL}${test.request.url}`, {
+          method: test.request.method,
+          headers: test.request.body ? { 'Content-Type': 'application/json' } : {},
+          body: test.request.body
+        });
+
+        expect(response.status).toBe(test.expectedStatus);
+        
+        const data: ApiErrorResponse = await response.json();
+        
+        // All client error types should have consistent base structure
+        expect(data.success).toBe(false);
+        expect(data.code).toBe(test.expectedCode);
+        expect(data).toHaveProperty('error');
+        expect(typeof data.error).toBe('string');
+        expect(data.error.length).toBeGreaterThan(0);
+        
+        // Should include timestamp for tracking
+        if (data.timestamp) {
+          expect(typeof data.timestamp).toBe('string');
+        }
+      }
     });
   });
 

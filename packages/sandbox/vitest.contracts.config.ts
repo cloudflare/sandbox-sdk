@@ -4,6 +4,7 @@ import path from 'path';
 export default defineConfig({
   test: {
     name: 'contract-tests',
+    globals: true,
     include: ['src/__tests__/contracts/**/*.test.ts'],
     testTimeout: 15000, // Longer timeout for real container interactions
     hookTimeout: 10000,
