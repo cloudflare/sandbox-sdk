@@ -5,48 +5,73 @@ permissions:
 on:
   push:
     branches: [main, develop]
-  pull_request:
-    branches: [main]
 
 jobs:
-  test:
+  quality-checks:
     runs-on: ubuntu-latest
-    
-    strategy:
-      matrix:
-        node-version: [20]
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        
-      - name: Setup Node.js ${{ matrix.node-version }}
+
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ matrix.node-version }}
-          cache: 'npm'
-          
+          node-version: 20
+          cache: "npm"
+
       - name: Install dependencies
         run: npm ci
-        
+
       - name: Run type checking
         run: npm run typecheck
-        
+
       - name: Run linting
         run: npm run check
-        
-      - name: Run unit tests
-        run: npm run test:unit
-        
-      - name: Run contract tests
-        run: npm run test:contracts
-        
-      - name: Run container tests
-        run: npm run test:container
-        
+
+  test:
+    runs-on: ubuntu-latest
+    needs: quality-checks
+    strategy:
+      matrix:
+        test-suite: [unit, contracts, container]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run ${{ matrix.test-suite }} tests
+        run: npm run test:${{ matrix.test-suite }}
+
+  coverage:
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
       - name: Generate coverage report
         run: npm run test:coverage
-        
+
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v3
         with:
@@ -55,25 +80,33 @@ jobs:
 
   build:
     runs-on: ubuntu-latest
-    needs: test
-    
+    needs: coverage
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
-          
+          node-version: "20"
+          cache: "npm"
+
       - name: Install dependencies
         run: npm ci
-        
+
       - name: Build sandbox package
         run: npm run build
         working-directory: packages/sandbox
-        
+
+      - name: Cache build artifacts
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            packages/sandbox/dist
+            packages/sandbox/node_modules
+          key: build-${{ github.sha }}-${{ hashFiles('**/package-lock.json') }}
+
       - name: Build Docker image
         run: npm run docker:local
         working-directory: packages/sandbox
@@ -81,24 +114,29 @@ jobs:
   example-test:
     runs-on: ubuntu-latest
     needs: build
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
-          
-      - name: Install dependencies
+          node-version: "20"
+          cache: "npm"
+
+      - name: Restore build artifacts
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            packages/sandbox/dist
+            packages/sandbox/node_modules
+          key: build-${{ github.sha }}-${{ hashFiles('**/package-lock.json') }}
+          fail-on-cache-miss: true
+
+      - name: Install root dependencies
         run: npm ci
-        
-      - name: Build sandbox package
-        run: npm run build
-        working-directory: packages/sandbox
-        
+
       - name: Test example application
         run: |
           npm ci

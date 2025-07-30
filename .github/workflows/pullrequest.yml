@@ -5,16 +5,8 @@ permissions:
 on: pull_request
 
 jobs:
-  check:
-    timeout-minutes: 15
-    strategy:
-      matrix:
-        os: [
-            ubuntu-24.04,
-            # windows-latest,
-            # macos-latest,
-          ]
-    runs-on: ${{ matrix.os }}
+  pr-validation:
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
@@ -26,22 +18,16 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
         
-      - name: Run type checking
-        run: npm run typecheck
+      - name: Run quality checks
+        run: |
+          npm run typecheck
+          npm run check
+          npm run build
         
-      - name: Run linting
-        run: npm run check
-        
-      - name: Build packages
-        run: npm run build
-        
-      - name: Run unit tests
-        run: npm run test:unit
-        
-      - name: Run contract tests
-        run: npm run test:contracts
-        
-      - name: Run container tests
-        run: npm run test:container
+      - name: Run test suite
+        run: |
+          npm run test:unit
+          npm run test:contracts
+          npm run test:container
