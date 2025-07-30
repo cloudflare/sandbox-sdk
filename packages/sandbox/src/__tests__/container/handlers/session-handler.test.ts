@@ -5,9 +5,9 @@
  * Demonstrates testing handlers with session management functionality.
  */
 
+import type { CreateSessionResponse, HandlerErrorResponse, ListSessionsResponse, Logger, RequestContext, SessionData, ValidatedRequestContext } from '@container/core/types';
 import type { SessionHandler } from '@container/handlers/session-handler';
 import type { SessionService } from '@container/services/session-service';
-import type { Logger, RequestContext, ValidatedRequestContext, SessionData, HandlerErrorResponse, CreateSessionResponse, ListSessionsResponse } from '@container/core/types';
 
 // Mock the dependencies - use partial mock to avoid private property issues
 const mockSessionService = {

@@ -1,5 +1,9 @@
 import { Container, getContainer } from "@cloudflare/containers";
 import { SandboxClient } from "./clients";
+import {
+  ProcessNotFoundError,
+  SandboxError
+} from "./errors";
 import { isLocalhostPattern } from "./request-handler";
 import {
   logSecurityEvent,
@@ -8,19 +12,15 @@ import {
   validatePort
 } from "./security";
 import type {
+  ExecEvent,
   ExecOptions,
   ExecResult,
-  ExecEvent,
   ISandbox,
   Process,
   ProcessOptions,
   ProcessStatus,
   StreamOptions
 } from "./types";
-import {
-  ProcessNotFoundError,
-  SandboxError
-} from "./errors";
 
 export function getSandbox(ns: DurableObjectNamespace<Sandbox>, id: string) {
   const stub = getContainer(ns, id);

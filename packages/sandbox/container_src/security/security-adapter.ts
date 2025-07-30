@@ -1,5 +1,5 @@
 // Security Service Adapter - provides simple interfaces for services
-import { SecurityService } from './security-service';
+import type { SecurityService } from './security-service';
 
 export class SecurityServiceAdapter {
   constructor(private securityService: SecurityService) {}

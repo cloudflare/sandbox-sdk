@@ -1,4 +1,4 @@
-import { parseSSEStream, responseToAsyncIterable, asyncIterableToSSEStream } from '../../sse-parser';
+import { asyncIterableToSSEStream, parseSSEStream, responseToAsyncIterable } from '../../sse-parser';
 
 describe('SSE Parser', () => {
   let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
@@ -350,7 +350,7 @@ describe('SSE Parser', () => {
 
     it('should handle AbortSignal cancellation', async () => {
       const controller = new AbortController();
-      let consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
       async function* mockEvents() {
         yield { type: 'start' };
@@ -384,7 +384,7 @@ describe('SSE Parser', () => {
     });
 
     it('should handle stream cancellation', async () => {
-      let consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
       async function* mockEvents() {
         yield { type: 'start' };

@@ -6,13 +6,13 @@
  * They prevent breaking changes to the interaction patterns between clients.
  */
 
-// Using expect.fail() instead of importing fail from vitest
-import { SandboxClient } from '../../clients/sandbox-client';
 import { CommandClient } from '../../clients/command-client';
 import { FileClient } from '../../clients/file-client';
-import { ProcessClient } from '../../clients/process-client';
-import { PortClient } from '../../clients/port-client';
 import { GitClient } from '../../clients/git-client';
+import { PortClient } from '../../clients/port-client';
+import { ProcessClient } from '../../clients/process-client';
+// Using expect.fail() instead of importing fail from vitest
+import { SandboxClient } from '../../clients/sandbox-client';
 import { UtilityClient } from '../../clients/utility-client';
 
 describe('Cross-Client Contract Validation', () => {
@@ -546,10 +546,10 @@ describe('Cross-Client Contract Validation', () => {
           }
 
           // Verify field types match expectations
-          if (result.hasOwnProperty('success')) {
+          if (Object.hasOwn(result, 'success')) {
             expect(typeof result.success).toBe('boolean');
           }
-          if (result.hasOwnProperty('timestamp')) {
+          if (Object.hasOwn(result, 'timestamp')) {
             expect(typeof result.timestamp).toBe('string');
           }
         }
@@ -620,7 +620,7 @@ describe('Cross-Client Contract Validation', () => {
 
           const result = await test.operation();
 
-          if (result.hasOwnProperty('timestamp')) {
+          if (Object.hasOwn(result, 'timestamp')) {
             // Verify timestamp is in ISO 8601 format
             expect(result.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
             expect(new Date(result.timestamp)).toBeInstanceOf(Date);
@@ -675,7 +675,7 @@ describe('Cross-Client Contract Validation', () => {
         const lastCall = fetchMock.mock.calls[fetchMock.mock.calls.length - 1];
         const url = lastCall[0] as string;
         // Should use default baseUrl (implementation specific)
-        expect(url).toMatch(/^https?:\/\/[^\/]+\/api\//);
+        expect(url).toMatch(/^https?:\/\/[^/]+\/api\//);
       });
     });
 

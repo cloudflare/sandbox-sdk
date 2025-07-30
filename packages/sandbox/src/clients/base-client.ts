@@ -1,9 +1,9 @@
+import { mapContainerError } from '../utils/error-mapping';
 import type {
   ErrorResponse,
   HttpClientOptions,
   ResponseHandler
 } from './types';
-import { mapContainerError } from '../utils/error-mapping';
 
 /**
  * Abstract base class providing common HTTP functionality for all domain clients

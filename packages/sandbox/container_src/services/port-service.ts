@@ -1,5 +1,5 @@
 // Port Management Service
-import type { PortInfo, Logger, ServiceResult } from '../core/types';
+import type { Logger, PortInfo, ServiceResult } from '../core/types';
 
 export interface SecurityService {
   validatePort(port: number): { isValid: boolean; errors: string[] };

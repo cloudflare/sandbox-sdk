@@ -1,7 +1,8 @@
 // Port Handler
-import { BaseHandler } from './base-handler';
-import type { RequestContext, Logger, ExposePortRequest } from '../core/types';
+
+import type { ExposePortRequest, Logger, RequestContext } from '../core/types';
 import type { PortService } from '../services/port-service';
+import { BaseHandler } from './base-handler';
 
 export class PortHandler extends BaseHandler<Request, Response> {
   constructor(

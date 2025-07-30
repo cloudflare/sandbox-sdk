@@ -5,9 +5,9 @@
  * Demonstrates testing handlers with multiple endpoints and streaming functionality.
  */
 
+import type { GetProcessResponse, HandlerErrorResponse, KillAllProcessesResponse, KillProcessResponse, ListProcessesResponse, Logger, ProcessInfo, ProcessLogsResponse, RequestContext, StartProcessResponse, ValidatedRequestContext } from '@container/core/types';
 import type { ProcessHandler } from '@container/handlers/process-handler';
 import type { ProcessService } from '@container/services/process-service';
-import type { Logger, RequestContext, ValidatedRequestContext, ProcessInfo, HandlerErrorResponse, StartProcessResponse, ListProcessesResponse, GetProcessResponse, KillProcessResponse, KillAllProcessesResponse, ProcessLogsResponse } from '@container/core/types';
 
 // Mock the dependencies - use partial mock to avoid private property issues
 const mockProcessService = {

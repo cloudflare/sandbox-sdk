@@ -1,23 +1,20 @@
 // Dependency Injection Container
-import type { 
-  Logger,
-} from './types';
-
 // Import service interfaces
 import type { 
+  CommandResult, 
+  ExecuteRequest,
+  ExposePortRequest,
+  FileRequest,
+  GitCheckoutRequest,
+  Logger,
+  NextFunction,
+  PortInfo,
+  ProcessRecord, 
+  RequestContext,
   ServiceResult, 
   SessionData, 
-  ProcessRecord, 
-  PortInfo,
-  GitCheckoutRequest,
-  ValidationResult,
-  RequestContext,
-  NextFunction,
-  ExecuteRequest,
-  FileRequest,
   StartProcessRequest,
-  ExposePortRequest,
-  CommandResult
+  ValidationResult
 } from './types';
 
 export interface SessionService {

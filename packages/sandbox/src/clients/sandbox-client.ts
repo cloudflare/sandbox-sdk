@@ -1,10 +1,10 @@
 import { CommandClient } from './command-client';
 import { FileClient } from './file-client';
-import { ProcessClient } from './process-client';
-import { PortClient } from './port-client';
 import { GitClient } from './git-client';
-import { UtilityClient } from './utility-client';
+import { PortClient } from './port-client';
+import { ProcessClient } from './process-client';
 import type { HttpClientOptions } from './types';
+import { UtilityClient } from './utility-client';
 
 /**
  * Main sandbox client that composes all domain-specific clients

@@ -1,11 +1,11 @@
 // Bun-optimized File System Service
 import type { 
   FileStats, 
-  ReadOptions, 
-  WriteOptions, 
-  MkdirOptions, 
   Logger, 
-  ServiceResult 
+  MkdirOptions, 
+  ReadOptions, 
+  ServiceResult, 
+  WriteOptions 
 } from '../core/types';
 
 export interface SecurityService {

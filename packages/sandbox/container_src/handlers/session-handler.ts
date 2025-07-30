@@ -1,7 +1,8 @@
 // Session Handler
-import { BaseHandler } from './base-handler';
-import type { RequestContext, Logger } from '../core/types';
+
+import type { Logger, RequestContext } from '../core/types';
 import type { SessionService } from '../services/session-service';
+import { BaseHandler } from './base-handler';
 
 export class SessionHandler extends BaseHandler<Request, Response> {
   constructor(

@@ -1,6 +1,7 @@
 // Miscellaneous Handler for ping, commands, etc.
+
+import type { Logger, RequestContext } from '../core/types';
 import { BaseHandler } from './base-handler';
-import type { RequestContext, Logger } from '../core/types';
 
 export class MiscHandler extends BaseHandler<Request, Response> {
   constructor(logger: Logger) {

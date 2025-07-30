@@ -6,9 +6,9 @@
  * contract breaks we experienced during refactoring.
  */
 
-import type { ExecEvent, LogEvent } from '../../types';
-import { parseSSEStream } from '../../sse-parser';
 import type { StartProcessResponse } from '@container/core/types';
+import { parseSSEStream } from '../../sse-parser';
+import type { ExecEvent, LogEvent } from '../../types';
 
 // Mock container endpoint for testing
 const CONTAINER_BASE_URL = 'http://localhost:3000'; // This would be a test container

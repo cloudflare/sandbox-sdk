@@ -1,5 +1,5 @@
 // Logging Middleware
-import type { Middleware, RequestContext, NextFunction, Logger } from '../core/types';
+import type { Logger, Middleware, NextFunction, RequestContext } from '../core/types';
 
 export class LoggingMiddleware implements Middleware {
   constructor(private logger: Logger) {}

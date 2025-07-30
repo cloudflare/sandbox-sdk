@@ -5,9 +5,9 @@
  * Demonstrates testing handlers with port management and proxying functionality.
  */
 
+import type { ExposePortResponse, HandlerErrorResponse, ListExposedPortsResponse, Logger, PortInfo, ProxiedErrorResponse, ProxiedSuccessResponse, RequestContext, UnexposePortResponse, ValidatedRequestContext } from '@container/core/types';
 import type { PortHandler } from '@container/handlers/port-handler';
 import type { PortService } from '@container/services/port-service';
-import type { Logger, RequestContext, ValidatedRequestContext, PortInfo, HandlerErrorResponse, ExposePortResponse, UnexposePortResponse, ListExposedPortsResponse, ProxiedSuccessResponse, ProxiedErrorResponse } from '@container/core/types';
 
 // Mock the dependencies - use partial mock to avoid private property issues
 const mockPortService = {

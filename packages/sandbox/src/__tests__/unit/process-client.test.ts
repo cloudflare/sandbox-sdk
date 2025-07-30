@@ -1,15 +1,16 @@
 // Vitest globals are available due to globals: true in config
-import { ProcessClient } from '../../clients/process-client';
+
 import type { 
-  StartProcessResponse, 
-  ListProcessesResponse, 
-  GetProcessResponse,
-  KillProcessResponse,
-  KillAllProcessesResponse,
   GetProcessLogsResponse,
+  GetProcessResponse,
+  HttpClientOptions, 
+  KillAllProcessesResponse,
+  KillProcessResponse,
+  ListProcessesResponse, 
   ProcessInfo,
-  HttpClientOptions 
+  StartProcessResponse 
 } from '../../clients';
+import { ProcessClient } from '../../clients/process-client';
 
 describe('ProcessClient', () => {
   let client: ProcessClient;

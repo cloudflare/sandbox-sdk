@@ -1,16 +1,17 @@
 // File Handler
-import { BaseHandler } from './base-handler';
+
 import type { 
-  RequestContext, 
-  Logger, 
-  ReadFileRequest,
-  WriteFileRequest,
   DeleteFileRequest,
-  RenameFileRequest,
+  Logger, 
+  MkdirRequest, 
   MoveFileRequest,
-  MkdirRequest
+  ReadFileRequest,
+  RenameFileRequest,
+  RequestContext, 
+  WriteFileRequest
 } from '../core/types';
 import type { FileService } from '../services/file-service';
+import { BaseHandler } from './base-handler';
 
 export class FileHandler extends BaseHandler<Request, Response> {
   constructor(

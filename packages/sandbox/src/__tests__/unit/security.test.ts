@@ -1,8 +1,8 @@
 import { 
+  logSecurityEvent, 
   SecurityError,
-  validatePort, 
   sanitizeSandboxId,
-  logSecurityEvent 
+  validatePort 
 } from '../../security';
 
 describe('Security Module', () => {

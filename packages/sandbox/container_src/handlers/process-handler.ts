@@ -1,7 +1,8 @@
 // Process Handler
-import { BaseHandler } from './base-handler';
-import type { RequestContext, Logger, StartProcessRequest, ProcessStatus } from '../core/types';
+
+import type { Logger, ProcessStatus, RequestContext, StartProcessRequest } from '../core/types';
 import type { ProcessService } from '../services/process-service';
+import { BaseHandler } from './base-handler';
 
 export class ProcessHandler extends BaseHandler<Request, Response> {
   constructor(

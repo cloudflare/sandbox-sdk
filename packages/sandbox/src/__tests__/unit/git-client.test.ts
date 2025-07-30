@@ -1,5 +1,5 @@
-import { GitClient } from '../../clients/git-client';
 import type { GitCheckoutResponse, HttpClientOptions } from '../../clients';
+import { GitClient } from '../../clients/git-client';
 
 describe('GitClient', () => {
   let client: GitClient;

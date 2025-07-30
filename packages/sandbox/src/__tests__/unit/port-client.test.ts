@@ -1,11 +1,11 @@
-import { PortClient } from '../../clients/port-client';
 import type { 
-  ExposePortResponse, 
-  UnexposePortResponse, 
-  GetExposedPortsResponse,
   ExposedPortInfo,
-  HttpClientOptions 
+  ExposePortResponse, 
+  GetExposedPortsResponse,
+  HttpClientOptions, 
+  UnexposePortResponse 
 } from '../../clients';
+import { PortClient } from '../../clients/port-client';
 
 describe('PortClient', () => {
   let client: PortClient;

@@ -5,8 +5,8 @@
  * Demonstrates testing services with git operations and security integration.
  */
 
-import type { GitService, SecurityService } from '@container/services/git-service';
 import type { Logger } from '@container/core/types';
+import type { GitService, SecurityService } from '@container/services/git-service';
 
 // Mock the dependencies
 const mockSecurityService: SecurityService = {

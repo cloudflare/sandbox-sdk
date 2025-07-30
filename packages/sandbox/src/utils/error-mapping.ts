@@ -2,34 +2,34 @@
  * Client-side error mapping utilities
  */
 
+import type { ErrorResponse } from '../clients/types';
 import {
-  SandboxError,
-  FileSystemError,
-  FileNotFoundError,
-  PermissionDeniedError,
-  FileExistsError,
   CommandError,
   CommandNotFoundError,
-  ProcessError,
-  ProcessNotFoundError,
-  PortError,
-  PortAlreadyExposedError,
-  PortNotExposedError,
-  InvalidPortError,
-  ServiceNotRespondingError,
-  PortInUseError,
-  GitError,
-  GitRepositoryNotFoundError,
+  FileExistsError,
+  FileNotFoundError,
+  FileSystemError,
   GitAuthenticationError,
   GitBranchNotFoundError,
-  GitNetworkError,
-  GitCloneError,
   GitCheckoutError,
+  GitCloneError,
+  GitError,
+  GitNetworkError,
+  GitRepositoryNotFoundError,
   InvalidGitUrlError,
+  InvalidPortError,
+  PermissionDeniedError,
+  PortAlreadyExposedError,
+  PortError,
+  PortInUseError,
+  PortNotExposedError,
+  ProcessError,
+  ProcessNotFoundError,
+  SandboxError,
   SandboxOperation,
-  type SandboxOperationType
+  type SandboxOperationType, 
+  ServiceNotRespondingError
 } from '../errors';
-import type { ErrorResponse } from '../clients/types';
 
 /**
  * Map container error responses to specific error classes

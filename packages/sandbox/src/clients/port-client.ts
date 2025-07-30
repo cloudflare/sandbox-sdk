@@ -1,5 +1,5 @@
 import { BaseHttpClient } from './base-client';
-import type { HttpClientOptions, BaseApiResponse } from './types';
+import type { BaseApiResponse, HttpClientOptions } from './types';
 
 /**
  * Request interface for exposing ports

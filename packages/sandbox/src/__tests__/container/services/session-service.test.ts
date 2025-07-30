@@ -5,8 +5,8 @@
  * Demonstrates testing services with store abstraction and ServiceResult pattern.
  */
 
+import type { Logger, SessionData } from '@container/core/types';
 import type { SessionService, SessionStore } from '@container/services/session-service';
-import type { SessionData, Logger } from '@container/core/types';
 
 // Mock the store dependency
 const mockSessionStore: SessionStore = {

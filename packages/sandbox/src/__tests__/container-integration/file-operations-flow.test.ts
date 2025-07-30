@@ -7,10 +7,10 @@
  * These tests use the full Router + Middleware + Handler pipeline to test real integration
  */
 
-import { Router } from '@container/core/router';
 import { Container } from '@container/core/container';
+import { Router } from '@container/core/router';
 import { setupRoutes } from '@container/routes/setup';
-import type { ReadFileResponse, WriteFileResponse, MkdirResponse } from '../../clients/file-client';
+import type { MkdirResponse, ReadFileResponse, WriteFileResponse } from '../../clients/file-client';
 
 // Mock Bun globals for file operations
 const mockBunFile = vi.fn();

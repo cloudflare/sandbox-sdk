@@ -1,40 +1,40 @@
+import type { ErrorResponse } from '../../clients';
 import {
-  mapContainerError,
-  isFileNotFoundError,
-  isPermissionError,
-  isFileSystemError,
-  isCommandError,
-  isProcessError,
-  isPortError,
-  isGitError,
-} from '../../utils/error-mapping';
-import {
-  SandboxError,
-  FileNotFoundError,
-  PermissionDeniedError,
-  FileExistsError,
-  FileSystemError,
-  CommandNotFoundError,
   CommandError,
-  ProcessNotFoundError,
-  ProcessError,
-  PortAlreadyExposedError,
-  PortNotExposedError,
-  InvalidPortError,
-  ServiceNotRespondingError,
-  PortInUseError,
-  PortError,
-  GitRepositoryNotFoundError,
+  CommandNotFoundError,
+  FileExistsError,
+  FileNotFoundError,
+  FileSystemError,
   GitAuthenticationError,
   GitBranchNotFoundError,
-  GitNetworkError,
-  GitCloneError,
   GitCheckoutError,
-  InvalidGitUrlError,
+  GitCloneError,
   GitError,
-  SandboxOperation
+  GitNetworkError,
+  GitRepositoryNotFoundError,
+  InvalidGitUrlError,
+  InvalidPortError,
+  PermissionDeniedError,
+  PortAlreadyExposedError,
+  PortError,
+  PortInUseError,
+  PortNotExposedError,
+  ProcessError,
+  ProcessNotFoundError,
+  SandboxError,
+  SandboxOperation, 
+  ServiceNotRespondingError
 } from '../../errors';
-import type { ErrorResponse } from '../../clients';
+import {
+  isCommandError,
+  isFileNotFoundError,
+  isFileSystemError,
+  isGitError,
+  isPermissionError,
+  isPortError,
+  isProcessError,
+  mapContainerError,
+} from '../../utils/error-mapping';
 
 describe('Error Mapping', () => {
   describe('mapContainerError', () => {

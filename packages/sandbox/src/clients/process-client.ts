@@ -1,7 +1,7 @@
-import { BaseHttpClient } from './base-client';
 import { parseSSEStream } from '../sse-parser';
-import type { HttpClientOptions, BaseApiResponse, SessionRequest } from './types';
 import type { LogEvent } from '../types';
+import { BaseHttpClient } from './base-client';
+import type { BaseApiResponse, HttpClientOptions, SessionRequest } from './types';
 
 /**
  * Request interface for starting processes

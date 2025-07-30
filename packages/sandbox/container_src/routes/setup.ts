@@ -1,6 +1,7 @@
 // Route Setup
-import type { Router } from '../core/router';
+
 import type { Container } from '../core/container';
+import type { Router } from '../core/router';
 
 export function setupRoutes(router: Router, container: Container): void {
   // Session routes

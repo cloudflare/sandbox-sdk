@@ -5,8 +5,8 @@
  * Demonstrates testing services with port management and proxying functionality.
  */
 
-import type { PortService, PortStore, SecurityService } from '@container/services/port-service';
 import type { Logger, PortInfo, PortNotFoundResponse, ProxyErrorResponse } from '@container/core/types';
+import type { PortService, PortStore, SecurityService } from '@container/services/port-service';
 
 // Mock the dependencies
 const mockPortStore: PortStore = {

@@ -5,8 +5,8 @@
  * Demonstrates comprehensive security validation testing across all attack vectors.
  */
 
-import type { SecurityService } from '@container/security/security-service';
 import type { Logger } from '@container/core/types';
+import type { SecurityService } from '@container/security/security-service';
 
 // Mock the dependencies
 const mockLogger: Logger = {

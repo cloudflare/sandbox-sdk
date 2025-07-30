@@ -1,5 +1,5 @@
+import type { CommandsResponse, HttpClientOptions, PingResponse } from '../../clients';
 import { UtilityClient } from '../../clients/utility-client';
-import type { PingResponse, CommandsResponse, HttpClientOptions } from '../../clients';
 
 describe('UtilityClient', () => {
   let client: UtilityClient;

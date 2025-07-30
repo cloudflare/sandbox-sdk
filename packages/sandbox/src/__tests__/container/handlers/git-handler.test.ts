@@ -5,9 +5,9 @@
  * Demonstrates testing handlers with git operations and repository management.
  */
 
+import type { GitCheckoutResponse, HandlerErrorResponse, Logger, RequestContext, ValidatedRequestContext } from '@container/core/types';
 import type { GitHandler } from '@container/handlers/git-handler';
 import type { GitService } from '@container/services/git-service';
-import type { Logger, RequestContext, ValidatedRequestContext, GitCheckoutResponse, HandlerErrorResponse } from '@container/core/types';
 
 // Mock the dependencies - use partial mock to avoid private property issues
 const mockGitService = {

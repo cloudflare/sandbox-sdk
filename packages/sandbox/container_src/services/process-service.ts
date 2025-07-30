@@ -1,10 +1,10 @@
 // Bun-optimized Process Management Service
 import type { 
-  ProcessRecord, 
-  ProcessOptions, 
-  ProcessStatus, 
   CommandResult, 
   Logger, 
+  ProcessOptions, 
+  ProcessRecord, 
+  ProcessStatus, 
   ServiceResult 
 } from '../core/types';
 

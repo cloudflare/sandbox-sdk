@@ -1,5 +1,5 @@
-import { CommandClient } from '../../clients/command-client';
 import type { ExecuteResponse, HttpClientOptions } from '../../clients';
+import { CommandClient } from '../../clients/command-client';
 
 describe('CommandClient', () => {
   let client: CommandClient;

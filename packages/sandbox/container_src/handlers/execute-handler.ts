@@ -1,8 +1,9 @@
 // Execute Handler
-import { BaseHandler } from './base-handler';
-import type { RequestContext, Logger, ExecuteRequest } from '../core/types';
+
+import type { ExecuteRequest, Logger, RequestContext } from '../core/types';
 import type { ProcessService } from '../services/process-service';
 import type { SessionService } from '../services/session-service';
+import { BaseHandler } from './base-handler';
 
 export class ExecuteHandler extends BaseHandler<Request, Response> {
   constructor(

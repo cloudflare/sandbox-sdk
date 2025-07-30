@@ -1,6 +1,6 @@
 // Session Management Service with store abstraction
 import { randomBytes } from "node:crypto";
-import type { SessionData, Logger, ServiceResult, ServiceError } from '../core/types';
+import type { Logger, ServiceError, ServiceResult, SessionData } from '../core/types';
 
 export interface SessionStore {
   create(session: SessionData): Promise<void>;

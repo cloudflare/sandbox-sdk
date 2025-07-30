@@ -1,6 +1,6 @@
+import type { ErrorResponse, HttpClientOptions } from '../../clients';
 import { BaseHttpClient } from '../../clients/base-client';
-import { SandboxError, FileNotFoundError } from '../../errors';
-import type { HttpClientOptions, ErrorResponse } from '../../clients';
+import { FileNotFoundError, SandboxError } from '../../errors';
 
 // Concrete implementation for testing the abstract base class
 class TestHttpClient extends BaseHttpClient {

@@ -12,10 +12,10 @@ vi.mock('../../security', () => ({
 
 // Now import after mocking
 import { 
-  proxyToSandbox, 
   isLocalhostPattern,
-  type SandboxEnv,
-  type RouteInfo 
+  proxyToSandbox, 
+  type RouteInfo, 
+  type SandboxEnv
 } from '../../request-handler';
 import { getSandbox } from '../../sandbox';
 import { logSecurityEvent, sanitizeSandboxId, validatePort } from '../../security';

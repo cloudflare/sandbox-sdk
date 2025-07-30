@@ -7,12 +7,12 @@
  * These tests use the full Router + Middleware + Handler pipeline to test real integration
  */
 
-import { Router } from '@container/core/router';
 import { Container } from '@container/core/container';
+import { Router } from '@container/core/router';
 import { setupRoutes } from '@container/routes/setup';
-import type { GitCheckoutResponse } from '../../clients/git-client';
 import type { ExecuteResponse } from '../../clients/command-client';
 import type { ReadFileResponse } from '../../clients/file-client';
+import type { GitCheckoutResponse } from '../../clients/git-client';
 import type { ApiErrorResponse } from '../../clients/types';
 
 // Mock Bun globals for Git and file operations

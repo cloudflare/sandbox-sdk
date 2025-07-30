@@ -5,9 +5,8 @@
  * This demonstrates how to test individual services with proper mocking.
  */
 
-import type { ProcessService } from '@container/services/process-service';
-import type { ProcessStore } from '@container/services/process-service';
 import type { Logger } from '@container/core/types';
+import type { ProcessService, ProcessStore } from '@container/services/process-service';
 
 // Mock the dependencies
 const mockProcessStore: ProcessStore = {

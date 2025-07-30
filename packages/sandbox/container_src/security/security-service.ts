@@ -1,5 +1,5 @@
 // Centralized Security Service
-import type { ValidationResult, Logger } from '../core/types';
+import type { Logger, ValidationResult } from '../core/types';
 
 export class SecurityService {
   // Dangerous path patterns that should be blocked
@@ -105,11 +105,11 @@ export class SecurityService {
 
   // Valid Git URL patterns
   private static readonly VALID_GIT_PATTERNS = [
-    /^https:\/\/github\.com\/[\w\.-]+\/[\w\.-]+(?:\.git)?$/,
-    /^https:\/\/gitlab\.com\/[\w\.-]+\/[\w\.-]+(?:\.git)?$/,
-    /^https:\/\/bitbucket\.org\/[\w\.-]+\/[\w\.-]+(?:\.git)?$/,
-    /^git@github\.com:[\w\.-]+\/[\w\.-]+\.git$/,
-    /^git@gitlab\.com:[\w\.-]+\/[\w\.-]+\.git$/,
+    /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+(?:\.git)?$/,
+    /^https:\/\/gitlab\.com\/[\w.-]+\/[\w.-]+(?:\.git)?$/,
+    /^https:\/\/bitbucket\.org\/[\w.-]+\/[\w.-]+(?:\.git)?$/,
+    /^git@github\.com:[\w.-]+\/[\w.-]+\.git$/,
+    /^git@gitlab\.com:[\w.-]+\/[\w.-]+\.git$/,
   ];
 
   constructor(private logger: Logger) {}

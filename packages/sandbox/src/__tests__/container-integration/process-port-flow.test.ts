@@ -7,11 +7,11 @@
  * These tests use the full Router + Middleware + Handler pipeline to test real integration
  */
 
-import { Router } from '@container/core/router';
 import { Container } from '@container/core/container';
+import { Router } from '@container/core/router';
 import { setupRoutes } from '@container/routes/setup';
-import type { StartProcessResponse, ListProcessesResponse, KillAllProcessesResponse } from '../../clients/process-client';
 import type { ExposePortResponse, GetExposedPortsResponse } from '../../clients/port-client';
+import type { KillAllProcessesResponse, ListProcessesResponse, StartProcessResponse } from '../../clients/process-client';
 import type { ApiErrorResponse } from '../../clients/types';
 
 // Mock Bun globals for process and port operations

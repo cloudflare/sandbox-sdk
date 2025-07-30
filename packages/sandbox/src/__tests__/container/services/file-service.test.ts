@@ -5,8 +5,8 @@
  * Demonstrates testing services with security integration and Bun APIs.
  */
 
+import type { FileStats, Logger } from '@container/core/types';
 import type { FileService, SecurityService } from '@container/services/file-service';
-import type { Logger, FileStats } from '@container/core/types';
 
 // Mock the dependencies
 const mockSecurityService: SecurityService = {

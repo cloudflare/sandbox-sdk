@@ -5,6 +5,7 @@
   "scripts": {
     "typecheck": "tsx scripts/typecheck.ts",
     "check": "biome check && npm run typecheck",
+    "fix": "biome check --fix && npm run typecheck",
     "build": "npm run build -w @cloudflare/sandbox && npm run docker:local -w @cloudflare/sandbox",
     "test": "npm run test -w @cloudflare/sandbox",
     "test:unit": "npm run test:unit -w @cloudflare/sandbox",

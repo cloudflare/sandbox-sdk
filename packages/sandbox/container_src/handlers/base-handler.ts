@@ -1,5 +1,5 @@
 // Base Handler Implementation
-import type { Handler, RequestContext, Logger, ServiceResult, ServiceError, ValidatedRequestContext } from '../core/types';
+import type { Handler, Logger, RequestContext, ServiceError, ServiceResult, ValidatedRequestContext } from '../core/types';
 
 export abstract class BaseHandler<TRequest, TResponse> implements Handler<TRequest, TResponse> {
   constructor(

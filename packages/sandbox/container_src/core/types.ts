@@ -399,9 +399,5 @@ export interface MkdirResponse {
   timestamp: string;
 }
 
-export type { ExposePortRequest } from '../validation/schemas';
-
-export type { StartProcessRequest } from '../validation/schemas';
-
 // Import union types from Zod schemas
-export type { FileRequest, FileOperation } from '../validation/schemas';
+export type { ExposePortRequest, FileOperation, FileRequest, StartProcessRequest } from '../validation/schemas';

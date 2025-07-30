@@ -5,9 +5,9 @@
  * Demonstrates testing Zod schema validation with SecurityService integration.
  */
 
-import type { RequestValidator } from '@container/validation/request-validator';
-import type { SecurityService } from '@container/security/security-service';
 import type { ValidationResult } from '@container/core/types';
+import type { SecurityService } from '@container/security/security-service';
+import type { RequestValidator } from '@container/validation/request-validator';
 import type { MkdirRequest, ReadFileRequest } from '@container/validation/schemas';
 
 // Mock the SecurityService - use partial mock to avoid private property issues

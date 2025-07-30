@@ -5,12 +5,10 @@
  * This demonstrates how to test handlers with mocked service dependencies.
  */
 
+import type { ExecuteRequest, ExecuteResponse, Logger, RequestContext, ServiceResult, ValidatedRequestContext } from '@container/core/types';
 import type { ExecuteHandler } from '@container/handlers/execute-handler';
 import type { ProcessService } from '@container/services/process-service';
 import type { SessionService } from '@container/services/session-service';
-import type { Logger } from '@container/core/types';
-import type { RequestContext, ServiceResult, ValidatedRequestContext } from '@container/core/types';
-import type { ExecuteRequest, ExecuteResponse } from '@container/core/types';
 import type { ContainerErrorResponse } from '@container/utils/error-mapping';
 
 // Mock the service dependencies

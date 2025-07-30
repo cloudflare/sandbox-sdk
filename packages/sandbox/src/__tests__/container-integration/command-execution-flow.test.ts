@@ -7,8 +7,8 @@
  * These tests use the full Router + Middleware + Handler pipeline to test real integration
  */
 
-import { Router } from '@container/core/router';
 import { Container } from '@container/core/container';
+import { Router } from '@container/core/router';
 import { setupRoutes } from '@container/routes/setup';
 import type { ExecuteResponse } from '../../clients/command-client';
 import type { ApiErrorResponse, ValidationErrorResponse } from '../../clients/types';

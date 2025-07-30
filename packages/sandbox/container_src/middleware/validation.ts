@@ -1,5 +1,5 @@
 // Validation Middleware
-import type { Middleware, RequestContext, NextFunction, ValidatedRequestContext, ValidationResult } from '../core/types';
+import type { Middleware, NextFunction, RequestContext, ValidatedRequestContext, ValidationResult } from '../core/types';
 import type { RequestValidator } from '../validation/request-validator';
 
 export class ValidationMiddleware implements Middleware {

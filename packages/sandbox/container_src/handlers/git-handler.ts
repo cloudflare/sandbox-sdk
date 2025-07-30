@@ -1,7 +1,8 @@
 // Git Handler
-import { BaseHandler } from './base-handler';
-import type { RequestContext, Logger, GitCheckoutRequest } from '../core/types';
+
+import type { GitCheckoutRequest, Logger, RequestContext } from '../core/types';
 import type { GitService } from '../services/git-service';
+import { BaseHandler } from './base-handler';
 
 export class GitHandler extends BaseHandler<Request, Response> {
   constructor(

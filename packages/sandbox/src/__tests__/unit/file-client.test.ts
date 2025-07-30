@@ -1,11 +1,11 @@
-import { FileClient } from '../../clients/file-client';
 import type { 
-  MkdirResponse, 
-  WriteFileResponse, 
-  ReadFileResponse, 
   FileOperationResponse,
-  HttpClientOptions 
+  HttpClientOptions, 
+  MkdirResponse, 
+  ReadFileResponse, 
+  WriteFileResponse 
 } from '../../clients';
+import { FileClient } from '../../clients/file-client';
 
 describe('FileClient', () => {
   let client: FileClient;

@@ -1,5 +1,5 @@
 import { BaseHttpClient } from './base-client';
-import type { HttpClientOptions, BaseApiResponse, SessionRequest } from './types';
+import type { BaseApiResponse, HttpClientOptions, SessionRequest } from './types';
 
 /**
  * Request interface for Git checkout operations

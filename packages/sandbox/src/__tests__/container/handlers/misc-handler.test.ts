@@ -5,8 +5,8 @@
  * Demonstrates testing handlers with utility endpoints and different response types.
  */
 
+import type { CommandsResponse, HandlerErrorResponse, Logger, PingResponse, RequestContext, ValidatedRequestContext } from '@container/core/types';
 import type { MiscHandler } from '@container/handlers/misc-handler';
-import type { Logger, RequestContext, ValidatedRequestContext, PingResponse, CommandsResponse, HandlerErrorResponse } from '@container/core/types';
 
 // Mock the dependencies
 const mockLogger: Logger = {

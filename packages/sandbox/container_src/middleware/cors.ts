@@ -1,5 +1,5 @@
 // CORS Middleware
-import type { Middleware, RequestContext, NextFunction } from '../core/types';
+import type { Middleware, NextFunction, RequestContext } from '../core/types';
 
 export class CorsMiddleware implements Middleware {
   async handle(

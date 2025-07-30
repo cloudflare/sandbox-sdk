@@ -1,10 +1,11 @@
 // Using expect.expect.fail() instead of importing fail from vitest
-import { SandboxClient } from '../../clients/sandbox-client';
+
 import { CommandClient } from '../../clients/command-client';
 import { FileClient } from '../../clients/file-client';
-import { ProcessClient } from '../../clients/process-client';
-import { PortClient } from '../../clients/port-client';
 import { GitClient } from '../../clients/git-client';
+import { PortClient } from '../../clients/port-client';
+import { ProcessClient } from '../../clients/process-client';
+import { SandboxClient } from '../../clients/sandbox-client';
 import { UtilityClient } from '../../clients/utility-client';
 
 describe('Client Method Signatures Integration', () => {
