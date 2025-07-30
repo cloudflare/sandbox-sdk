@@ -22,9 +22,9 @@ jobs:
         
       - name: Run quality checks
         run: |
+          npm run build
           npm run typecheck
           npm run check
-          npm run build
         
       - name: Run test suite
         run: |
