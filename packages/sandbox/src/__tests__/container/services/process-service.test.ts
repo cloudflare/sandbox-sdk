@@ -5,10 +5,9 @@
  * This demonstrates how to test individual services with proper mocking.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { ProcessService } from '@container/services/process-service';
-import type { ProcessStore } from '@container/core/types';
-import type { Logger } from '@container/core/logger';
+import type { ProcessStore } from '@container/services/process-service';
+import type { Logger } from '@container/core/types';
 
 // Mock the dependencies
 const mockProcessStore: ProcessStore = {
@@ -17,6 +16,7 @@ const mockProcessStore: ProcessStore = {
   update: vi.fn(),
   delete: vi.fn(),
   list: vi.fn(),
+  cleanup: vi.fn(),
 };
 
 const mockLogger: Logger = {
@@ -97,8 +97,8 @@ describe('ProcessService', () => {
       });
 
       expect(result.success).toBe(true);
-      expect(result.data).toBeDefined();
       if (result.success) {
+        expect(result.data).toBeDefined();
         expect(result.data.exitCode).toBe(0);
         expect(result.data.stdout).toContain('test output');
         expect(result.data.stderr).toBe('');
@@ -110,9 +110,9 @@ describe('ProcessService', () => {
 
       // Service operation succeeded (command was executed)
       expect(result.success).toBe(true);
-      expect(result.data).toBeDefined();
       
       if (result.success) {
+        expect(result.data).toBeDefined();
         // But the command itself failed
         expect(result.data.success).toBe(false);
         expect(result.data.exitCode).toBe(127); // Command not found
@@ -133,7 +133,6 @@ describe('ProcessService', () => {
   describe('startProcess', () => {
     it('should create background process and store it', async () => {
       const result = await processService.startProcess('sleep 10', {
-        background: true,
         cwd: '/tmp'
       });
 

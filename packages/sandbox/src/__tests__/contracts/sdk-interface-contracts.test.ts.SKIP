@@ -6,23 +6,29 @@
  * depend on and prevent breaking changes to public methods and types.
  */
 
-import { describe, it, expect, beforeAll, vi } from 'vitest';
-import { SandboxClient } from '../../client';
+import { SandboxClient } from '../../clients/sandbox-client';
 import type { 
   ExecOptions, 
-  ExecResult,
-  FileReadOptions,
-  FileWriteOptions,
-  FileResult,
-  ProcessStartOptions,
-  ProcessResult,
-  PortExposeOptions,
-  PortResult,
-  GitCheckoutOptions,
-  GitResult,
-  SessionOptions,
-  SessionResult
+  ExecResult
 } from '../../types';
+import type {
+  ReadFileRequest,
+  ReadFileResponse,
+  WriteFileRequest,  
+  WriteFileResponse
+} from '../../clients/file-client';
+import type {
+  StartProcessRequest,
+  StartProcessResponse
+} from '../../clients/process-client';
+import type {
+  ExposePortRequest,
+  ExposePortResponse
+} from '../../clients/port-client';
+import type {
+  GitCheckoutRequest,
+  GitCheckoutResponse
+} from '../../clients/git-client';
 
 // Mock fetch for testing
 global.fetch = vi.fn();
@@ -32,33 +38,34 @@ describe('SDK Interface Contract Validation', () => {
   const MOCK_BASE_URL = 'https://sandbox.example.com';
 
   beforeAll(() => {
-    client = new SandboxClient(MOCK_BASE_URL);
+    client = new SandboxClient({ baseUrl: MOCK_BASE_URL });
   });
 
   describe('SandboxClient Constructor Contract', () => {
-    it('should accept baseUrl as string parameter', () => {
-      const testClient = new SandboxClient('https://test.example.com');
+    it('should accept baseUrl in options object', () => {
+      const testClient = new SandboxClient({ baseUrl: 'https://test.example.com' });
       expect(testClient).toBeInstanceOf(SandboxClient);
     });
 
-    it('should accept baseUrl with options object', () => {
-      const testClient = new SandboxClient('https://test.example.com', {
-        timeout: 30000,
-        headers: { 'Authorization': 'Bearer token' }
+    it('should accept full options object', () => {
+      const testClient = new SandboxClient({ 
+        baseUrl: 'https://test.example.com',
+        port: 3000
       });
       expect(testClient).toBeInstanceOf(SandboxClient);
     });
 
-    it('should throw for invalid baseUrl', () => {
-      expect(() => new SandboxClient('')).toThrow();
-      expect(() => new SandboxClient('invalid-url')).toThrow();
+    it('should work with default options', () => {
+      const testClient = new SandboxClient();
+      expect(testClient).toBeInstanceOf(SandboxClient);
     });
   });
 
   describe('Command Execution Interface Contract', () => {
-    it('should have execute method with correct signature', () => {
-      expect(typeof client.execute).toBe('function');
-      expect(client.execute.length).toBe(2); // command, options
+    it('should have commands client with execute method', () => {
+      expect(client.commands).toBeDefined();
+      expect(typeof client.commands.execute).toBe('function');
+      expect(client.commands.execute.length).toBe(2); // command, sessionId
     });
 
     it('should accept execute parameters matching ExecOptions contract', async () => {
@@ -74,20 +81,11 @@ describe('SDK Interface Contract Validation', () => {
       (global.fetch as any).mockResolvedValue(mockResponse);
 
       // Test with minimal parameters
-      const result1 = await client.execute('ls -la');
+      const result1 = await client.commands.execute('ls -la');
       expect(result1).toBeDefined();
 
-      // Test with full ExecOptions interface
-      const options: ExecOptions = {
-        sessionId: 'test-session',
-        cwd: '/tmp',
-        env: { NODE_ENV: 'test' },
-        background: false,
-        streaming: false,
-        timeout: 30000
-      };
-
-      const result2 = await client.execute('echo "test"', options);
+      // Test with sessionId parameter
+      const result2 = await client.commands.execute('echo "test"', 'test-session');
       expect(result2).toBeDefined();
 
       // Verify fetch was called with correct parameters

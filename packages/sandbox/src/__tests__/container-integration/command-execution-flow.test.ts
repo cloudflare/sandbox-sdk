@@ -7,10 +7,11 @@
  * These tests use the full Router + Middleware + Handler pipeline to test real integration
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Router } from '@container/core/router';
 import { Container } from '@container/core/container';
 import { setupRoutes } from '@container/routes/setup';
+import type { ExecuteResponse } from '../../clients/command-client';
+import type { ApiErrorResponse, ValidationErrorResponse } from '../../clients/types';
 
 // Mock Bun globals for command execution
 const mockBunSpawn = vi.fn();
@@ -78,7 +79,7 @@ describe('Command Execution Integration Flow', () => {
       expect(response.status).toBe(200);
       expect(response.headers.get('Content-Type')).toBe('application/json');
 
-      const responseData = await response.json();
+      const responseData = await response.json() as ExecuteResponse;
       expect(responseData.success).toBe(true);
       expect(responseData.stdout).toContain('Command output line 1');
       expect(responseData.stdout).toContain('Command output line 2');
@@ -109,7 +110,7 @@ describe('Command Execution Integration Flow', () => {
       
       // Security validation should reject this command
       expect(createResponse.status).toBe(400);
-      const responseData = await createResponse.json();
+      const responseData = await createResponse.json() as ValidationErrorResponse;
       expect(responseData.error).toBe('Validation Error');
       expect(responseData.message).toBe('Request validation failed');
 
@@ -131,7 +132,7 @@ describe('Command Execution Integration Flow', () => {
 
       // Security validation should reject this dangerous command
       expect(response.status).toBe(400);
-      const responseData = await response.json();
+      const responseData = await response.json() as ValidationErrorResponse;
       expect(responseData.error).toBe('Validation Error');
       expect(responseData.message).toBe('Request validation failed');
 
@@ -152,7 +153,7 @@ describe('Command Execution Integration Flow', () => {
       const response = await router.route(sessionCreateRequest);
 
       expect(response.status).toBe(200);
-      const responseData = await response.json();
+      const responseData = await response.json() as ExecuteResponse;
       expect(responseData.success).toBe(true);
       expect(responseData.exitCode).toBe(0);
 
@@ -218,7 +219,7 @@ describe('Command Execution Integration Flow', () => {
       const response = await router.route(failingRequest);
 
       expect(response.status).toBe(200); // Still 200 but with error info
-      const responseData = await response.json();
+      const responseData = await response.json() as ExecuteResponse;
       expect(responseData.success).toBe(false);
       expect(responseData.exitCode).toBe(1);
       expect(responseData.stderr).toContain('Command not found');
@@ -283,7 +284,7 @@ describe('Command Execution Integration Flow', () => {
       const response = await router.route(invalidJsonRequest);
 
       expect(response.status).toBe(400);
-      const responseData = await response.json();
+      const responseData = await response.json() as ValidationErrorResponse;
       expect(responseData.error).toBe('Invalid JSON');
       expect(responseData.message).toBe('Request body must be valid JSON');
     });
@@ -302,7 +303,7 @@ describe('Command Execution Integration Flow', () => {
 
       // Security validation should reject commands with shell operators
       expect(response.status).toBe(400);
-      const responseData = await response.json();
+      const responseData = await response.json() as ValidationErrorResponse;
       expect(responseData.error).toBe('Validation Error');
       expect(responseData.message).toBe('Request validation failed');
 
@@ -329,7 +330,7 @@ describe('Command Execution Integration Flow', () => {
 
       // Spawn failure would be caught and return error response
       expect(response.status).toBe(400);
-      const responseData = await response.json();
+      const responseData = await response.json() as ApiErrorResponse;
       expect(responseData.success).toBe(false);
       expect(responseData.error).toContain('Failed to execute command');
     });
@@ -348,7 +349,7 @@ describe('Command Execution Integration Flow', () => {
       });
 
       const response = await router.route(request);
-      const responseData = await response.json();
+      const responseData = await response.json() as ExecuteResponse;
 
       // Response should follow handler response pattern structure
       expect(responseData).toHaveProperty('success');
@@ -360,8 +361,7 @@ describe('Command Execution Integration Flow', () => {
       expect(responseData.stdout).toBeDefined();
       expect(responseData.exitCode).toBe(0);
 
-      // Should not have error field on success
-      expect(responseData.error).toBeUndefined();
+      // Should not have error field on success (ExecuteResponse doesn't include error field)
     });
   });
 });

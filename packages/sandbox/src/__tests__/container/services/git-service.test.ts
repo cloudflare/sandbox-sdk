@@ -5,7 +5,6 @@
  * Demonstrates testing services with git operations and security integration.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { GitService, SecurityService } from '@container/services/git-service';
 import type { Logger } from '@container/core/types';
 
@@ -27,11 +26,11 @@ const mockLogger: Logger = {
 const mockBunSpawn = vi.fn();
 
 // Mock Response for stream reading with dynamic text extraction
-global.Response = vi.fn().mockImplementation((stream) => {
+global.Response = vi.fn().mockImplementation((stream: BodyInit | null | undefined) => {
   return {
     text: vi.fn().mockImplementation(async () => {
-      if (stream && stream.getReader) {
-        const reader = stream.getReader();
+      if (stream && typeof stream === 'object' && 'getReader' in stream) {
+        const reader = (stream as ReadableStream).getReader();
         const chunks = [];
         let done = false;
         

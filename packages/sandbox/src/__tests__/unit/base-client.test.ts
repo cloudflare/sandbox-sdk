@@ -1,7 +1,6 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { BaseHttpClient } from '../../clients/base-client';
 import { SandboxError, FileNotFoundError } from '../../errors';
-import type { HttpClientOptions, ErrorResponse } from '../../clients/types';
+import type { HttpClientOptions, ErrorResponse } from '../../clients';
 
 // Concrete implementation for testing the abstract base class
 class TestHttpClient extends BaseHttpClient {

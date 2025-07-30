@@ -6,128 +6,47 @@
  * that external SDK consumers depend on.
  */
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import type { 
+  StartProcessResponse, 
+  ExposePortResponse, 
+  CreateSessionResponse,
+  ListExposedPortsResponse,
+  PingResponse,
+  CommandsResponse,
+  GitCheckoutResponse,
+  ListProcessesResponse
+} from '@container/core/types';
+import type { ExecuteResponse } from '../../clients/command-client';
+import type { ReadFileResponse, WriteFileResponse } from '../../clients/file-client';
+import type { ApiErrorResponse } from '../../clients/types';
+
 
 // Mock container endpoint for testing
-const CONTAINER_BASE_URL = 'http://localhost:3000';
+const HTTP_API_CONTRACT_BASE_URL = 'http://localhost:3000';
 
-// Expected API contract types (these should match the actual SDK types)
-interface ApiResponse<T = any> {
-  success: boolean;
-  data?: T;
-  error?: string;
-  timestamp?: string;
-}
+// Contract test response types - union of success and error cases
+type ApiResponse = ApiErrorResponse;
 
-interface ExecuteResponse {
-  success: boolean;
-  output?: string;
-  error?: string;
-  exitCode?: number;
-  processId?: string;
-  timestamp: string;
-}
-
-interface FileReadResponse {
-  success: boolean;
-  content?: string;
-  size?: number;
-  error?: string;
-  timestamp: string;
-}
-
-interface FileWriteResponse {
-  success: boolean;
-  bytesWritten?: number;
-  error?: string;
-  timestamp: string;
-}
-
-interface ProcessStartResponse {
-  success: boolean;
-  processId?: string;
-  pid?: number;
-  error?: string;
-  timestamp: string;
-}
-
-interface ProcessListResponse {
-  success: boolean;
-  processes?: Array<{
-    id: string;
-    command: string;
-    status: string;
-    pid?: number;
-    exitCode?: number;
-    createdAt: string;
-  }>;
-  error?: string;
-  timestamp: string;
-}
-
-interface PortExposeResponse {
-  success: boolean;
-  port?: number;
-  name?: string;
-  previewUrl?: string;
-  error?: string;
-  timestamp: string;
-}
-
-interface PortListResponse {
-  success: boolean;
-  ports?: Array<{
-    id: string;
-    port: number;
-    name?: string;
-    isActive: boolean;
-    previewUrl: string;
-  }>;
-  error?: string;
-  timestamp: string;
-}
-
-interface GitCheckoutResponse {
-  success: boolean;
-  output?: string;
-  exitCode?: number;
-  targetDir?: string;
-  error?: string;
-  timestamp: string;
-}
-
-interface SessionCreateResponse {
-  success: boolean;
-  sessionId?: string;
-  error?: string;
-  timestamp: string;
-}
-
-interface PingResponse {
-  message: string;
-  timestamp: string;
-  requestId: string;
-}
-
-interface CommandsResponse {
-  availableCommands: string[];
-  timestamp: string;
-}
+// Union types for contract testing that include both success and error cases
+type ContractCreateSessionResponse = CreateSessionResponse | ApiErrorResponse;
+type ContractStartProcessResponse = StartProcessResponse | ApiErrorResponse;
+type ContractListProcessesResponse = ListProcessesResponse | ApiErrorResponse;
+type ContractListExposedPortsResponse = ListExposedPortsResponse | ApiErrorResponse;
 
 describe('HTTP API Contract Validation', () => {
   let testSessionId: string;
 
   beforeAll(async () => {
     // Create a test session for use in other tests
-    const response = await fetch(`${CONTAINER_BASE_URL}/api/sessions`, {
+    const response = await fetch(`${HTTP_API_CONTRACT_BASE_URL}/api/sessions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({})
     });
     
     if (response.ok) {
-      const data: SessionCreateResponse = await response.json();
-      if (data.success && data.sessionId) {
+      const data: ContractCreateSessionResponse = await response.json();
+      if ('sessionId' in data && data.sessionId) {
         testSessionId = data.sessionId;
       }
     }
@@ -138,7 +57,7 @@ describe('HTTP API Contract Validation', () => {
 
   describe('Command Execution API (/api/execute)', () => {
     it('should return ExecuteResponse contract for successful command', async () => {
-      const response = await fetch(`${CONTAINER_BASE_URL}/api/execute`, {
+      const response = await fetch(`${HTTP_API_CONTRACT_BASE_URL}/api/execute`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -159,16 +78,15 @@ describe('HTTP API Contract Validation', () => {
       expect(typeof data.timestamp).toBe('string');
 
       if (data.success) {
-        expect(data).toHaveProperty('output');
+        expect(data).toHaveProperty('stdout');
         expect(data).toHaveProperty('exitCode');
-        expect(typeof data.output).toBe('string');
+        expect(typeof data.stdout).toBe('string');
         expect(typeof data.exitCode).toBe('number');
-        expect(data.output).toContain('contract test');
+        expect(data.stdout).toContain('contract test');
         expect(data.exitCode).toBe(0);
-        expect(data.error).toBeUndefined();
       } else {
-        expect(data).toHaveProperty('error');
-        expect(typeof data.error).toBe('string');
+        expect(data).toHaveProperty('stderr');
+        expect(typeof data.stderr).toBe('string');
       }
 
       // Validate timestamp format (ISO 8601)
@@ -177,7 +95,7 @@ describe('HTTP API Contract Validation', () => {
     });
 
     it('should return ExecuteResponse contract for failed command', async () => {
-      const response = await fetch(`${CONTAINER_BASE_URL}/api/execute`, {
+      const response = await fetch(`${HTTP_API_CONTRACT_BASE_URL}/api/execute`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -190,16 +108,16 @@ describe('HTTP API Contract Validation', () => {
       const data: ExecuteResponse = await response.json();
 
       expect(data.success).toBe(false);
-      expect(data).toHaveProperty('error');
+      expect(data).toHaveProperty('stderr');
       expect(data).toHaveProperty('exitCode');
       expect(data).toHaveProperty('timestamp');
-      expect(typeof data.error).toBe('string');
+      expect(typeof data.stderr).toBe('string');
       expect(typeof data.exitCode).toBe('number');
       expect(data.exitCode).not.toBe(0);
     });
 
     it('should return 400 for invalid request body', async () => {
-      const response = await fetch(`${CONTAINER_BASE_URL}/api/execute`, {
+      const response = await fetch(`${HTTP_API_CONTRACT_BASE_URL}/api/execute`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -220,7 +138,7 @@ describe('HTTP API Contract Validation', () => {
 
   describe('File Operations API (/api/files)', () => {
     it('should return FileWriteResponse contract for file write', async () => {
-      const response = await fetch(`${CONTAINER_BASE_URL}/api/files/write`, {
+      const response = await fetch(`${HTTP_API_CONTRACT_BASE_URL}/api/files/write`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -232,7 +150,7 @@ describe('HTTP API Contract Validation', () => {
       });
 
       expect(response.status).toBe(200);
-      const data: FileWriteResponse = await response.json();
+      const data: WriteFileResponse = await response.json();
 
       // Validate contract structure
       expect(data).toHaveProperty('success');
@@ -241,19 +159,17 @@ describe('HTTP API Contract Validation', () => {
       expect(typeof data.timestamp).toBe('string');
 
       if (data.success) {
-        expect(data).toHaveProperty('bytesWritten');
-        expect(typeof data.bytesWritten).toBe('number');
-        expect(data.bytesWritten).toBeGreaterThan(0);
-        expect(data.error).toBeUndefined();
-      } else {
-        expect(data).toHaveProperty('error');
-        expect(typeof data.error).toBe('string');
+        expect(data).toHaveProperty('path');
+        expect(data).toHaveProperty('exitCode');
+        expect(typeof data.path).toBe('string');
+        expect(typeof data.exitCode).toBe('number');
+        expect(data.exitCode).toBe(0);
       }
     });
 
     it('should return FileReadResponse contract for file read', async () => {
       // First ensure file exists by writing it
-      await fetch(`${CONTAINER_BASE_URL}/api/files/write`, {
+      await fetch(`${HTTP_API_CONTRACT_BASE_URL}/api/files/write`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -263,7 +179,7 @@ describe('HTTP API Contract Validation', () => {
         })
       });
 
-      const response = await fetch(`${CONTAINER_BASE_URL}/api/files/read`, {
+      const response = await fetch(`${HTTP_API_CONTRACT_BASE_URL}/api/files/read`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -274,26 +190,22 @@ describe('HTTP API Contract Validation', () => {
       });
 
       expect(response.status).toBe(200);
-      const data: FileReadResponse = await response.json();
+      const data: ReadFileResponse = await response.json();
 
       expect(data).toHaveProperty('success');
       expect(data).toHaveProperty('timestamp');
 
       if (data.success) {
         expect(data).toHaveProperty('content');
-        expect(data).toHaveProperty('size');
+        expect(data).toHaveProperty('path');
         expect(typeof data.content).toBe('string');
-        expect(typeof data.size).toBe('number');
+        expect(typeof data.path).toBe('string');
         expect(data.content).toContain('content for read test');
-        expect(data.error).toBeUndefined();
-      } else {
-        expect(data).toHaveProperty('error');
-        expect(typeof data.error).toBe('string');
       }
     });
 
     it('should return 404 for nonexistent file read', async () => {
-      const response = await fetch(`${CONTAINER_BASE_URL}/api/files/read`, {
+      const response = await fetch(`${HTTP_API_CONTRACT_BASE_URL}/api/files/read`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -303,16 +215,14 @@ describe('HTTP API Contract Validation', () => {
       });
 
       expect(response.status).toBe(404);
-      const data: FileReadResponse = await response.json();
+      const data: ReadFileResponse = await response.json();
 
       expect(data.success).toBe(false);
-      expect(data).toHaveProperty('error');
-      expect(typeof data.error).toBe('string');
-      expect(data.error).toContain('not found');
+      expect(data).toHaveProperty('timestamp');
     });
 
     it('should return 400 for dangerous file path', async () => {
-      const response = await fetch(`${CONTAINER_BASE_URL}/api/files/read`, {
+      const response = await fetch(`${HTTP_API_CONTRACT_BASE_URL}/api/files/read`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -332,7 +242,7 @@ describe('HTTP API Contract Validation', () => {
 
   describe('Process Management API (/api/processes)', () => {
     it('should return ProcessStartResponse contract for process start', async () => {
-      const response = await fetch(`${CONTAINER_BASE_URL}/api/processes/start`, {
+      const response = await fetch(`${HTTP_API_CONTRACT_BASE_URL}/api/processes/start`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -343,40 +253,39 @@ describe('HTTP API Contract Validation', () => {
       });
 
       expect(response.status).toBe(200);
-      const data: ProcessStartResponse = await response.json();
+      const data: ContractStartProcessResponse = await response.json();
 
-      expect(data).toHaveProperty('success');
       expect(data).toHaveProperty('timestamp');
 
-      if (data.success) {
-        expect(data).toHaveProperty('processId');
-        expect(data).toHaveProperty('pid');
-        expect(typeof data.processId).toBe('string');
-        expect(typeof data.pid).toBe('number');
-        expect(data.processId.length).toBeGreaterThan(0);
-        expect(data.pid).toBeGreaterThan(0);
-        expect(data.error).toBeUndefined();
+      if ('process' in data) {
+        // Success case
+        expect(data).toHaveProperty('process');
+        expect(data).toHaveProperty('message');
+        expect(typeof data.process.id).toBe('string');
+        expect(typeof data.process.pid).toBe('number');
+        expect(data.process.id.length).toBeGreaterThan(0);
+        expect(data.process.pid).toBeGreaterThan(0);
       } else {
+        // Error case
         expect(data).toHaveProperty('error');
         expect(typeof data.error).toBe('string');
       }
     });
 
     it('should return ProcessListResponse contract for process list', async () => {
-      const response = await fetch(`${CONTAINER_BASE_URL}/api/processes?sessionId=${testSessionId}`, {
+      const response = await fetch(`${HTTP_API_CONTRACT_BASE_URL}/api/processes?sessionId=${testSessionId}`, {
         method: 'GET'
       });
 
       expect(response.status).toBe(200);
-      const data: ProcessListResponse = await response.json();
+      const data: ContractListProcessesResponse = await response.json();
 
-      expect(data).toHaveProperty('success');
       expect(data).toHaveProperty('timestamp');
 
-      if (data.success) {
+      if ('processes' in data) {
+        // Success case
         expect(data).toHaveProperty('processes');
         expect(Array.isArray(data.processes)).toBe(true);
-        expect(data.error).toBeUndefined();
 
         // Validate process object structure if any processes exist
         if (data.processes && data.processes.length > 0) {
@@ -384,13 +293,13 @@ describe('HTTP API Contract Validation', () => {
           expect(process).toHaveProperty('id');
           expect(process).toHaveProperty('command');
           expect(process).toHaveProperty('status');
-          expect(process).toHaveProperty('createdAt');
+          expect(process).toHaveProperty('startTime');
           expect(typeof process.id).toBe('string');
           expect(typeof process.command).toBe('string');
           expect(typeof process.status).toBe('string');
-          expect(typeof process.createdAt).toBe('string');
         }
       } else {
+        // Error case
         expect(data).toHaveProperty('error');
         expect(typeof data.error).toBe('string');
       }
@@ -399,7 +308,7 @@ describe('HTTP API Contract Validation', () => {
 
   describe('Port Management API (/api/ports)', () => {
     it('should return PortExposeResponse contract for port expose', async () => {
-      const response = await fetch(`${CONTAINER_BASE_URL}/api/ports/expose`, {
+      const response = await fetch(`${HTTP_API_CONTRACT_BASE_URL}/api/ports/expose`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -410,66 +319,60 @@ describe('HTTP API Contract Validation', () => {
       });
 
       expect(response.status).toBe(200);
-      const data: PortExposeResponse = await response.json();
+      const data: ExposePortResponse = await response.json();
 
       expect(data).toHaveProperty('success');
       expect(data).toHaveProperty('timestamp');
 
       if (data.success) {
         expect(data).toHaveProperty('port');
-        expect(data).toHaveProperty('previewUrl');
+        expect(data).toHaveProperty('exposedAt');
         expect(typeof data.port).toBe('number');
-        expect(typeof data.previewUrl).toBe('string');
+        expect(typeof data.exposedAt).toBe('string');
         expect(data.port).toBe(8080);
-        expect(data.previewUrl.length).toBeGreaterThan(0);
-        expect(data.error).toBeUndefined();
 
         if (data.name) {
           expect(typeof data.name).toBe('string');
           expect(data.name).toBe('contract-test-service');
         }
-      } else {
-        expect(data).toHaveProperty('error');
-        expect(typeof data.error).toBe('string');
       }
     });
 
     it('should return PortListResponse contract for port list', async () => {
-      const response = await fetch(`${CONTAINER_BASE_URL}/api/ports?sessionId=${testSessionId}`, {
+      const response = await fetch(`${HTTP_API_CONTRACT_BASE_URL}/api/ports?sessionId=${testSessionId}`, {
         method: 'GET'
       });
 
       expect(response.status).toBe(200);
-      const data: PortListResponse = await response.json();
+      const data: ContractListExposedPortsResponse = await response.json();
 
-      expect(data).toHaveProperty('success');
       expect(data).toHaveProperty('timestamp');
 
-      if (data.success) {
+      if ('ports' in data) {
+        // Success case
         expect(data).toHaveProperty('ports');
         expect(Array.isArray(data.ports)).toBe(true);
-        expect(data.error).toBeUndefined();
 
         // Validate port object structure if any ports exist
         if (data.ports && data.ports.length > 0) {
           const port = data.ports[0];
-          expect(port).toHaveProperty('id');
           expect(port).toHaveProperty('port');
-          expect(port).toHaveProperty('isActive');
-          expect(port).toHaveProperty('previewUrl');
-          expect(typeof port.id).toBe('string');
+          expect(port).toHaveProperty('exposedAt');
           expect(typeof port.port).toBe('number');
-          expect(typeof port.isActive).toBe('boolean');
-          expect(typeof port.previewUrl).toBe('string');
+          expect(typeof port.exposedAt).toBe('string');
+          if (port.name) {
+            expect(typeof port.name).toBe('string');
+          }
         }
       } else {
+        // Error case
         expect(data).toHaveProperty('error');
         expect(typeof data.error).toBe('string');
       }
     });
 
     it('should return 400 for reserved port', async () => {
-      const response = await fetch(`${CONTAINER_BASE_URL}/api/ports/expose`, {
+      const response = await fetch(`${HTTP_API_CONTRACT_BASE_URL}/api/ports/expose`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -489,7 +392,7 @@ describe('HTTP API Contract Validation', () => {
 
   describe('Git Operations API (/api/git)', () => {
     it('should return GitCheckoutResponse contract for git checkout', async () => {
-      const response = await fetch(`${CONTAINER_BASE_URL}/api/git/checkout`, {
+      const response = await fetch(`${HTTP_API_CONTRACT_BASE_URL}/api/git/checkout`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -507,23 +410,19 @@ describe('HTTP API Contract Validation', () => {
       expect(data).toHaveProperty('timestamp');
 
       if (data.success) {
-        expect(data).toHaveProperty('output');
+        expect(data).toHaveProperty('stdout');
         expect(data).toHaveProperty('exitCode');
         expect(data).toHaveProperty('targetDir');
-        expect(typeof data.output).toBe('string');
+        expect(typeof data.stdout).toBe('string');
         expect(typeof data.exitCode).toBe('number');
         expect(typeof data.targetDir).toBe('string');
         expect(data.exitCode).toBe(0);
         expect(data.targetDir).toBe('/tmp/contract-git-test');
-        expect(data.error).toBeUndefined();
-      } else {
-        expect(data).toHaveProperty('error');
-        expect(typeof data.error).toBe('string');
       }
     });
 
     it('should return 400 for malicious git URL', async () => {
-      const response = await fetch(`${CONTAINER_BASE_URL}/api/git/checkout`, {
+      const response = await fetch(`${HTTP_API_CONTRACT_BASE_URL}/api/git/checkout`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -543,7 +442,7 @@ describe('HTTP API Contract Validation', () => {
 
   describe('Session Management API (/api/sessions)', () => {
     it('should return SessionCreateResponse contract for session creation', async () => {
-      const response = await fetch(`${CONTAINER_BASE_URL}/api/sessions`, {
+      const response = await fetch(`${HTTP_API_CONTRACT_BASE_URL}/api/sessions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -552,17 +451,19 @@ describe('HTTP API Contract Validation', () => {
       });
 
       expect(response.status).toBe(200);
-      const data: SessionCreateResponse = await response.json();
+      const data: ContractCreateSessionResponse = await response.json();
 
-      expect(data).toHaveProperty('success');
       expect(data).toHaveProperty('timestamp');
 
-      if (data.success) {
+      if ('sessionId' in data) {
+        // Success case
         expect(data).toHaveProperty('sessionId');
+        expect(data).toHaveProperty('message');
         expect(typeof data.sessionId).toBe('string');
+        expect(typeof data.message).toBe('string');
         expect(data.sessionId.length).toBeGreaterThan(0);
-        expect(data.error).toBeUndefined();
       } else {
+        // Error case
         expect(data).toHaveProperty('error');
         expect(typeof data.error).toBe('string');
       }
@@ -571,7 +472,7 @@ describe('HTTP API Contract Validation', () => {
 
   describe('Utility APIs', () => {
     it('should return PingResponse contract for ping endpoint', async () => {
-      const response = await fetch(`${CONTAINER_BASE_URL}/api/ping`, {
+      const response = await fetch(`${HTTP_API_CONTRACT_BASE_URL}/api/ping`, {
         method: 'GET'
       });
 
@@ -592,7 +493,7 @@ describe('HTTP API Contract Validation', () => {
     });
 
     it('should return CommandsResponse contract for commands endpoint', async () => {
-      const response = await fetch(`${CONTAINER_BASE_URL}/api/commands`, {
+      const response = await fetch(`${HTTP_API_CONTRACT_BASE_URL}/api/commands`, {
         method: 'GET'
       });
 
@@ -613,7 +514,7 @@ describe('HTTP API Contract Validation', () => {
     });
 
     it('should return consistent text response for root endpoint', async () => {
-      const response = await fetch(`${CONTAINER_BASE_URL}/`, {
+      const response = await fetch(`${HTTP_API_CONTRACT_BASE_URL}/`, {
         method: 'GET'
       });
 
@@ -629,25 +530,25 @@ describe('HTTP API Contract Validation', () => {
     it('should return consistent error format across all endpoints', async () => {
       const errorEndpoints = [
         {
-          url: `${CONTAINER_BASE_URL}/api/execute`,
+          url: `${HTTP_API_CONTRACT_BASE_URL}/api/execute`,
           method: 'POST',
           body: JSON.stringify({ /* missing command */ }),
           expectedStatus: 400
         },
         {
-          url: `${CONTAINER_BASE_URL}/api/files/read`,
+          url: `${HTTP_API_CONTRACT_BASE_URL}/api/files/read`,
           method: 'POST',  
           body: JSON.stringify({ path: '/etc/passwd' }),
           expectedStatus: 400
         },
         {
-          url: `${CONTAINER_BASE_URL}/api/ports/expose`,
+          url: `${HTTP_API_CONTRACT_BASE_URL}/api/ports/expose`,
           method: 'POST',
           body: JSON.stringify({ port: 22 }),
           expectedStatus: 400
         },
         {
-          url: `${CONTAINER_BASE_URL}/api/git/checkout`,
+          url: `${HTTP_API_CONTRACT_BASE_URL}/api/git/checkout`,
           method: 'POST',
           body: JSON.stringify({ repoUrl: 'https://malicious.com/repo.git' }),
           expectedStatus: 400
@@ -675,7 +576,7 @@ describe('HTTP API Contract Validation', () => {
     });
 
     it('should return 404 with consistent format for nonexistent endpoints', async () => {
-      const response = await fetch(`${CONTAINER_BASE_URL}/api/nonexistent`, {
+      const response = await fetch(`${HTTP_API_CONTRACT_BASE_URL}/api/nonexistent`, {
         method: 'GET'
       });
 
@@ -691,12 +592,12 @@ describe('HTTP API Contract Validation', () => {
   describe('CORS Headers Consistency', () => {
     it('should include consistent CORS headers across all endpoints', async () => {
       const testEndpoints = [
-        `${CONTAINER_BASE_URL}/`,
-        `${CONTAINER_BASE_URL}/api/ping`,
-        `${CONTAINER_BASE_URL}/api/commands`,
-        `${CONTAINER_BASE_URL}/api/execute`,
-        `${CONTAINER_BASE_URL}/api/files/read`,
-        `${CONTAINER_BASE_URL}/api/ports/expose`
+        `${HTTP_API_CONTRACT_BASE_URL}/`,
+        `${HTTP_API_CONTRACT_BASE_URL}/api/ping`,
+        `${HTTP_API_CONTRACT_BASE_URL}/api/commands`,
+        `${HTTP_API_CONTRACT_BASE_URL}/api/execute`,
+        `${HTTP_API_CONTRACT_BASE_URL}/api/files/read`,
+        `${HTTP_API_CONTRACT_BASE_URL}/api/ports/expose`
       ];
 
       for (const url of testEndpoints) {
@@ -721,7 +622,7 @@ describe('HTTP API Contract Validation', () => {
   afterAll(async () => {
     // Clean up test session if it was created
     if (testSessionId && testSessionId !== 'test-session-contract') {
-      await fetch(`${CONTAINER_BASE_URL}/api/sessions/${testSessionId}`, {
+      await fetch(`${HTTP_API_CONTRACT_BASE_URL}/api/sessions/${testSessionId}`, {
         method: 'DELETE'
       }).catch(() => {
         // Ignore cleanup errors

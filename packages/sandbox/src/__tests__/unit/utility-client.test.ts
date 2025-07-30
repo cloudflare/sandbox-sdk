@@ -1,6 +1,5 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { UtilityClient } from '../../clients/utility-client';
-import type { PingResponse, CommandsResponse, HttpClientOptions } from '../../clients/types';
+import type { PingResponse, CommandsResponse, HttpClientOptions } from '../../clients';
 
 describe('UtilityClient', () => {
   let client: UtilityClient;

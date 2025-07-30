@@ -5,7 +5,6 @@
  * Demonstrates comprehensive security validation testing across all attack vectors.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { SecurityService } from '@container/security/security-service';
 import type { Logger } from '@container/core/types';
 

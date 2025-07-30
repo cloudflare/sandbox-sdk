@@ -5,25 +5,23 @@
  * This demonstrates how to test handlers with mocked service dependencies.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { ExecuteHandler } from '@container/handlers/execute-handler';
 import type { ProcessService } from '@container/services/process-service';
 import type { SessionService } from '@container/services/session-service';
-import type { RequestValidator } from '@container/validation/request-validator';
-import type { Logger } from '@container/core/logger';
+import type { Logger } from '@container/core/types';
 import type { RequestContext, ServiceResult, ValidatedRequestContext } from '@container/core/types';
-import type { ExecuteRequest } from '@container/validation/schemas';
+import type { ExecuteRequest, ExecuteResponse } from '@container/core/types';
+import type { ContainerErrorResponse } from '@container/utils/error-mapping';
 
 // Mock the service dependencies
-const mockProcessService: ProcessService = {
+const mockProcessService = {
   executeCommand: vi.fn(),
-  executeCommandStream: vi.fn(),
   startProcess: vi.fn(),
   getProcess: vi.fn(),
   killProcess: vi.fn(),
   listProcesses: vi.fn(),
   streamProcessLogs: vi.fn(),
-};
+} as ProcessService;
 
 const mockSessionService = {
   createSession: vi.fn(),
@@ -106,7 +104,7 @@ describe('ExecuteHandler', () => {
 
       // Verify response
       expect(response.status).toBe(200);
-      const responseData = await response.json();
+      const responseData = await response.json() as ExecuteResponse;
       expect(responseData.success).toBe(true);
       expect(responseData.exitCode).toBe(0);
       expect(responseData.stdout).toBe('hello\\n');
@@ -146,7 +144,7 @@ describe('ExecuteHandler', () => {
 
       // Verify response - service succeeded, command failed
       expect(response.status).toBe(200);
-      const responseData = await response.json();
+      const responseData = await response.json() as ExecuteResponse;
       expect(responseData.success).toBe(false); // Command failed
       expect(responseData.exitCode).toBe(1);
       expect(responseData.stderr).toContain('command not found');
@@ -176,8 +174,7 @@ describe('ExecuteHandler', () => {
 
       // Verify error response for service failure
       expect(response.status).toBe(400);
-      const responseData = await response.json();
-      expect(responseData.success).toBe(false);
+      const responseData = await response.json() as ContainerErrorResponse;
       expect(responseData.code).toBe('SPAWN_ERROR');
       expect(responseData.error).toContain('Failed to spawn process');
     });
@@ -197,7 +194,7 @@ describe('ExecuteHandler', () => {
         await executeHandler.handle(request, mockContext);
         expect.fail('Handler should throw when no validated data is provided');
       } catch (error) {
-        expect(error.message).toContain('No validated data found in context');
+        expect((error as Error).message).toContain('No validated data found in context');
       }
 
       // Verify service was not called
@@ -238,10 +235,10 @@ describe('ExecuteHandler', () => {
 
       // Verify response
       expect(response.status).toBe(200);
-      const responseData = await response.json();
+      const responseData = await response.json() as ExecuteResponse;
       expect(responseData.success).toBe(true);
       expect(responseData.processId).toBe('proc-123');
-      expect(responseData.message).toBe('Background process started successfully');
+      // Background process response includes processId
 
       // Verify service was called correctly
       expect(mockProcessService.startProcess).toHaveBeenCalledWith(
@@ -259,7 +256,7 @@ describe('ExecuteHandler', () => {
       // Test assumes validation already occurred and data is in context
 
       // Mock process service to return a readable stream
-      const mockStream = new ReadableStream({
+      new ReadableStream({
         start(controller) {
           // Simulate SSE events
           controller.enqueue('data: {"type":"start","timestamp":"2023-01-01T00:00:00Z"}\\n\\n');

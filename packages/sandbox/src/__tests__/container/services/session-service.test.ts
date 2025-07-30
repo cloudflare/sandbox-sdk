@@ -5,7 +5,6 @@
  * Demonstrates testing services with store abstraction and ServiceResult pattern.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { SessionService, SessionStore } from '@container/services/session-service';
 import type { SessionData, Logger } from '@container/core/types';
 

@@ -7,10 +7,12 @@
  * These tests use the full Router + Middleware + Handler pipeline to test real integration
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Router } from '@container/core/router';
 import { Container } from '@container/core/container';
 import { setupRoutes } from '@container/routes/setup';
+import type { StartProcessResponse, ListProcessesResponse, KillAllProcessesResponse } from '../../clients/process-client';
+import type { ExposePortResponse, GetExposedPortsResponse } from '../../clients/port-client';
+import type { ApiErrorResponse } from '../../clients/types';
 
 // Mock Bun globals for process and port operations
 const mockBunSpawn = vi.fn();
@@ -99,7 +101,7 @@ describe('Process and Port Management Integration Flow', () => {
       const startResponse = await router.route(startProcessRequest);
 
       expect(startResponse.status).toBe(200);
-      const startResponseData = await startResponse.json();
+      const startResponseData = await startResponse.json() as StartProcessResponse;
       expect(startResponseData.success).toBe(true);
       // Process start should succeed - exact response structure may vary
       expect(startResponseData).toHaveProperty('success', true);
@@ -121,7 +123,7 @@ describe('Process and Port Management Integration Flow', () => {
       const listResponse = await router.route(listProcessRequest);
 
       expect(listResponse.status).toBe(200);
-      const listResponseData = await listResponse.json();
+      const listResponseData = await listResponse.json() as ListProcessesResponse;
       expect(listResponseData.success).toBe(true);
       expect(Array.isArray(listResponseData.processes)).toBe(true);
     });
@@ -136,7 +138,7 @@ describe('Process and Port Management Integration Flow', () => {
       const killResponse = await router.route(killAllRequest);
 
       expect(killResponse.status).toBe(200);
-      const killResponseData = await killResponse.json();
+      const killResponseData = await killResponse.json() as KillAllProcessesResponse;
       expect(killResponseData.success).toBe(true);
     });
   });
@@ -156,7 +158,7 @@ describe('Process and Port Management Integration Flow', () => {
       const exposeResponse = await router.route(exposePortRequest);
 
       expect(exposeResponse.status).toBe(200);
-      const exposeResponseData = await exposeResponse.json();
+      const exposeResponseData = await exposeResponse.json() as ExposePortResponse;
       expect(exposeResponseData.success).toBe(true);
       expect(exposeResponseData.port).toBe(4000);
     });
@@ -175,7 +177,7 @@ describe('Process and Port Management Integration Flow', () => {
 
       // Should be rejected by security validation
       expect([400, 403]).toContain(response.status);
-      const responseData = await response.json();
+      const responseData = await response.json() as ApiErrorResponse;
       expect(responseData.success).toBeFalsy();
     });
 
@@ -189,7 +191,7 @@ describe('Process and Port Management Integration Flow', () => {
       const listResponse = await router.route(listPortsRequest);
 
       expect(listResponse.status).toBe(200);
-      const listResponseData = await listResponse.json();
+      const listResponseData = await listResponse.json() as GetExposedPortsResponse;
       expect(listResponseData.success).toBe(true);
       expect(Array.isArray(listResponseData.ports)).toBe(true);
     });
@@ -231,7 +233,7 @@ describe('Process and Port Management Integration Flow', () => {
       const exposeResponse = await router.route(exposeRequest);
       expect(exposeResponse.status).toBe(200);
 
-      const exposeData = await exposeResponse.json();
+      const exposeData = await exposeResponse.json() as ExposePortResponse;
       expect(exposeData.success).toBe(true);
     });
 
@@ -247,7 +249,7 @@ describe('Process and Port Management Integration Flow', () => {
       expect(killResponse.status).toBe(200);
 
       // Cleanup should succeed
-      const killData = await killResponse.json();
+      const killData = await killResponse.json() as KillAllProcessesResponse;
       expect(killData.success).toBe(true);
     });
   });
@@ -305,7 +307,7 @@ describe('Process and Port Management Integration Flow', () => {
       
       // Should handle spawn failure gracefully
       expect([400, 500]).toContain(response.status);
-      const responseData = await response.json();
+      const responseData = await response.json() as ApiErrorResponse;
       expect(responseData.success).toBe(false);
     });
   });

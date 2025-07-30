@@ -1,4 +1,3 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { FileClient } from '../../clients/file-client';
 import type { 
   MkdirResponse, 
@@ -6,7 +5,7 @@ import type {
   ReadFileResponse, 
   FileOperationResponse,
   HttpClientOptions 
-} from '../../clients/types';
+} from '../../clients';
 
 describe('FileClient', () => {
   let client: FileClient;

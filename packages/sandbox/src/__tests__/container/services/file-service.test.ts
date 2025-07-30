@@ -5,7 +5,6 @@
  * Demonstrates testing services with security integration and Bun APIs.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { FileService, SecurityService } from '@container/services/file-service';
 import type { Logger, FileStats } from '@container/core/types';
 
@@ -39,7 +38,7 @@ global.Bun = {
 } as any;
 
 // Mock Response for stream reading
-global.Response = vi.fn().mockImplementation((stream) => ({
+global.Response = vi.fn().mockImplementation((stream: BodyInit | null | undefined) => ({
   text: vi.fn().mockResolvedValue('regular file:1024:1672531200:1672531200'),
 })) as any;
 

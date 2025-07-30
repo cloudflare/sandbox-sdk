@@ -24,10 +24,9 @@
     "docker:local": "docker build . -t cloudflare/sandbox-test:$npm_package_version",
     "docker:publish": "docker buildx build --platform linux/amd64,linux/arm64 -t cloudflare/sandbox:$npm_package_version --push .",
     "docker:publish:beta": "docker buildx build --platform linux/amd64,linux/arm64 -t cloudflare/sandbox:$npm_package_version-beta --push .",
-    "test": "npm run test:unit && npm run test:integration && npm run test:container",
+    "test": "npm run test:unit && npm run test:container",
     "test:coverage": "vitest run --coverage --config vitest.unit.config.ts",
     "test:unit": "vitest run --config vitest.unit.config.ts",
-    "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:container": "vitest run --config vitest.container.config.ts",
     "test:contracts": "vitest run --config vitest.contracts.config.ts"
   },

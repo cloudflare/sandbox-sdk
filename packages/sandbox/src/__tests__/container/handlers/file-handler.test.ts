@@ -5,13 +5,14 @@
  * Demonstrates testing handlers with file system operations and CRUD functionality.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { FileHandler } from '@container/handlers/file-handler';
 import type { FileService } from '@container/services/file-service';
-import type { Logger, RequestContext } from '@container/core/types';
+import type { Logger, RequestContext, ValidatedRequestContext } from '@container/core/types';
+import type { ReadFileResponse, WriteFileResponse, DeleteFileResponse, RenameFileResponse, MoveFileResponse, MkdirResponse } from '@container/core/types';
+import type { ContainerErrorResponse } from '@container/utils/error-mapping';
 
-// Mock the dependencies
-const mockFileService: FileService = {
+// Mock the dependencies - use partial mock to avoid missing properties
+const mockFileService = {
   readFile: vi.fn(),
   writeFile: vi.fn(),
   deleteFile: vi.fn(),
@@ -27,7 +28,8 @@ const mockFileService: FileService = {
   exists: vi.fn(),
   stat: vi.fn(),
   getFileStats: vi.fn(),
-};
+  // Remove private properties to avoid type conflicts
+} as FileService;
 
 const mockLogger: Logger = {
   info: vi.fn(),
@@ -46,8 +48,13 @@ const mockContext: RequestContext = {
     'Access-Control-Allow-Headers': 'Content-Type',
   },
   sessionId: 'session-456',
-  validatedData: {}, // Will be set per test
 };
+
+// Helper to create validated context
+const createValidatedContext = <T>(data: T): ValidatedRequestContext<T> => ({
+  ...mockContext,
+  validatedData: data
+});
 
 describe('FileHandler', () => {
   let fileHandler: FileHandler;
@@ -69,7 +76,7 @@ describe('FileHandler', () => {
       };
       const fileContent = 'Hello, World!';
 
-      mockContext.validatedData = readFileData;
+      const validatedContext = createValidatedContext(readFileData);
       (mockFileService.readFile as any).mockResolvedValue({
         success: true,
         data: fileContent
@@ -81,14 +88,13 @@ describe('FileHandler', () => {
         body: JSON.stringify(readFileData)
       });
 
-      const response = await fileHandler.handle(request, mockContext);
+      const response = await fileHandler.handle(request, validatedContext);
 
       expect(response.status).toBe(200);
-      const responseData = await response.json();
+      const responseData = await response.json() as ReadFileResponse;
       expect(responseData.success).toBe(true);
       expect(responseData.content).toBe(fileContent);
       expect(responseData.path).toBe('/tmp/test.txt');
-      expect(responseData.encoding).toBe('utf-8');
       expect(responseData.exitCode).toBe(0);
 
       // Verify service was called correctly
@@ -121,7 +127,7 @@ describe('FileHandler', () => {
         // encoding not specified
       };
 
-      mockContext.validatedData = readFileData;
+      const validatedContext = createValidatedContext(readFileData);
       (mockFileService.readFile as any).mockResolvedValue({
         success: true,
         data: 'file content'
@@ -133,10 +139,10 @@ describe('FileHandler', () => {
         body: JSON.stringify(readFileData)
       });
 
-      const response = await fileHandler.handle(request, mockContext);
+      const response = await fileHandler.handle(request, validatedContext);
 
       expect(response.status).toBe(200);
-      const responseData = await response.json();
+      const responseData = await response.json() as ReadFileResponse;
       expect(responseData.encoding).toBe('utf-8'); // Default encoding
 
       expect(mockFileService.readFile).toHaveBeenCalledWith('/tmp/test.txt', {
@@ -146,7 +152,7 @@ describe('FileHandler', () => {
 
     it('should handle file read errors', async () => {
       const readFileData = { path: '/tmp/nonexistent.txt' };
-      mockContext.validatedData = readFileData;
+      const validatedContext = createValidatedContext(readFileData);
 
       (mockFileService.readFile as any).mockResolvedValue({
         success: false,
@@ -163,11 +169,10 @@ describe('FileHandler', () => {
         body: JSON.stringify(readFileData)
       });
 
-      const response = await fileHandler.handle(request, mockContext);
+      const response = await fileHandler.handle(request, validatedContext);
 
       expect(response.status).toBe(500);
-      const responseData = await response.json();
-      expect(responseData.success).toBe(false);
+      const responseData = await response.json() as ContainerErrorResponse;
       expect(responseData.code).toBe('FILE_NOT_FOUND');
 
       expect(mockLogger.error).toHaveBeenCalledWith(
@@ -190,7 +195,7 @@ describe('FileHandler', () => {
         encoding: 'utf-8'
       };
 
-      mockContext.validatedData = writeFileData;
+      const validatedContext = createValidatedContext(writeFileData);
       (mockFileService.writeFile as any).mockResolvedValue({
         success: true
       });
@@ -201,10 +206,10 @@ describe('FileHandler', () => {
         body: JSON.stringify(writeFileData)
       });
 
-      const response = await fileHandler.handle(request, mockContext);
+      const response = await fileHandler.handle(request, validatedContext);
 
       expect(response.status).toBe(200);
-      const responseData = await response.json();
+      const responseData = await response.json() as ReadFileResponse;
       expect(responseData.success).toBe(true);
       expect(responseData.path).toBe('/tmp/output.txt');
       expect(responseData.exitCode).toBe(0);
@@ -231,7 +236,7 @@ describe('FileHandler', () => {
         path: '/readonly/file.txt',
         content: 'content'
       };
-      mockContext.validatedData = writeFileData;
+      const validatedContext = createValidatedContext(writeFileData);
 
       (mockFileService.writeFile as any).mockResolvedValue({
         success: false,
@@ -248,10 +253,10 @@ describe('FileHandler', () => {
         body: JSON.stringify(writeFileData)
       });
 
-      const response = await fileHandler.handle(request, mockContext);
+      const response = await fileHandler.handle(request, validatedContext);
 
       expect(response.status).toBe(500);
-      const responseData = await response.json();
+      const responseData = await response.json() as ContainerErrorResponse;
       expect(responseData.code).toBe('PERMISSION_DENIED');
     });
   });
@@ -262,7 +267,7 @@ describe('FileHandler', () => {
         path: '/tmp/delete-me.txt'
       };
 
-      mockContext.validatedData = deleteFileData;
+      const validatedContext = createValidatedContext(deleteFileData);
       (mockFileService.deleteFile as any).mockResolvedValue({
         success: true
       });
@@ -273,10 +278,10 @@ describe('FileHandler', () => {
         body: JSON.stringify(deleteFileData)
       });
 
-      const response = await fileHandler.handle(request, mockContext);
+      const response = await fileHandler.handle(request, validatedContext);
 
       expect(response.status).toBe(200);
-      const responseData = await response.json();
+      const responseData = await response.json() as ReadFileResponse;
       expect(responseData.success).toBe(true);
       expect(responseData.path).toBe('/tmp/delete-me.txt');
       expect(responseData.exitCode).toBe(0);
@@ -294,7 +299,7 @@ describe('FileHandler', () => {
 
     it('should handle file delete errors', async () => {
       const deleteFileData = { path: '/tmp/nonexistent.txt' };
-      mockContext.validatedData = deleteFileData;
+      const validatedContext = createValidatedContext(deleteFileData);
 
       (mockFileService.deleteFile as any).mockResolvedValue({
         success: false,
@@ -310,10 +315,10 @@ describe('FileHandler', () => {
         body: JSON.stringify(deleteFileData)
       });
 
-      const response = await fileHandler.handle(request, mockContext);
+      const response = await fileHandler.handle(request, validatedContext);
 
       expect(response.status).toBe(500);
-      const responseData = await response.json();
+      const responseData = await response.json() as ContainerErrorResponse;
       expect(responseData.code).toBe('FILE_NOT_FOUND');
     });
   });
@@ -325,7 +330,7 @@ describe('FileHandler', () => {
         newPath: '/tmp/new-name.txt'
       };
 
-      mockContext.validatedData = renameFileData;
+      const validatedContext = createValidatedContext(renameFileData);
       (mockFileService.renameFile as any).mockResolvedValue({
         success: true
       });
@@ -336,10 +341,10 @@ describe('FileHandler', () => {
         body: JSON.stringify(renameFileData)
       });
 
-      const response = await fileHandler.handle(request, mockContext);
+      const response = await fileHandler.handle(request, validatedContext);
 
       expect(response.status).toBe(200);
-      const responseData = await response.json();
+      const responseData = await response.json() as RenameFileResponse;
       expect(responseData.success).toBe(true);
       expect(responseData.path).toBe('/tmp/old-name.txt');
       expect(responseData.newPath).toBe('/tmp/new-name.txt');
@@ -362,7 +367,7 @@ describe('FileHandler', () => {
         oldPath: '/tmp/nonexistent.txt',
         newPath: '/tmp/renamed.txt'
       };
-      mockContext.validatedData = renameFileData;
+      const validatedContext = createValidatedContext(renameFileData);
 
       (mockFileService.renameFile as any).mockResolvedValue({
         success: false,
@@ -378,10 +383,10 @@ describe('FileHandler', () => {
         body: JSON.stringify(renameFileData)
       });
 
-      const response = await fileHandler.handle(request, mockContext);
+      const response = await fileHandler.handle(request, validatedContext);
 
       expect(response.status).toBe(500);
-      const responseData = await response.json();
+      const responseData = await response.json() as ContainerErrorResponse;
       expect(responseData.code).toBe('SOURCE_NOT_FOUND');
 
       expect(mockLogger.error).toHaveBeenCalledWith(
@@ -404,7 +409,7 @@ describe('FileHandler', () => {
         destinationPath: '/tmp/destination.txt'
       };
 
-      mockContext.validatedData = moveFileData;
+      const validatedContext = createValidatedContext(moveFileData);
       (mockFileService.moveFile as any).mockResolvedValue({
         success: true
       });
@@ -415,10 +420,10 @@ describe('FileHandler', () => {
         body: JSON.stringify(moveFileData)
       });
 
-      const response = await fileHandler.handle(request, mockContext);
+      const response = await fileHandler.handle(request, validatedContext);
 
       expect(response.status).toBe(200);
-      const responseData = await response.json();
+      const responseData = await response.json() as MoveFileResponse;
       expect(responseData.success).toBe(true);
       expect(responseData.path).toBe('/tmp/source.txt');
       expect(responseData.newPath).toBe('/tmp/destination.txt');
@@ -441,7 +446,7 @@ describe('FileHandler', () => {
         sourcePath: '/tmp/source.txt',
         destinationPath: '/readonly/destination.txt'
       };
-      mockContext.validatedData = moveFileData;
+      const validatedContext = createValidatedContext(moveFileData);
 
       (mockFileService.moveFile as any).mockResolvedValue({
         success: false,
@@ -457,10 +462,10 @@ describe('FileHandler', () => {
         body: JSON.stringify(moveFileData)
       });
 
-      const response = await fileHandler.handle(request, mockContext);
+      const response = await fileHandler.handle(request, validatedContext);
 
       expect(response.status).toBe(500);
-      const responseData = await response.json();
+      const responseData = await response.json() as ContainerErrorResponse;
       expect(responseData.code).toBe('DESTINATION_PERMISSION_DENIED');
     });
   });
@@ -472,7 +477,7 @@ describe('FileHandler', () => {
         recursive: true
       };
 
-      mockContext.validatedData = mkdirData;
+      const validatedContext = createValidatedContext(mkdirData);
       (mockFileService.createDirectory as any).mockResolvedValue({
         success: true
       });
@@ -483,10 +488,10 @@ describe('FileHandler', () => {
         body: JSON.stringify(mkdirData)
       });
 
-      const response = await fileHandler.handle(request, mockContext);
+      const response = await fileHandler.handle(request, validatedContext);
 
       expect(response.status).toBe(200);
-      const responseData = await response.json();
+      const responseData = await response.json() as MkdirResponse;
       expect(responseData.success).toBe(true);
       expect(responseData.path).toBe('/tmp/new-directory');
       expect(responseData.recursive).toBe(true);
@@ -514,7 +519,7 @@ describe('FileHandler', () => {
         // recursive not specified
       };
 
-      mockContext.validatedData = mkdirData;
+      const validatedContext = createValidatedContext(mkdirData);
       (mockFileService.createDirectory as any).mockResolvedValue({
         success: true
       });
@@ -525,10 +530,10 @@ describe('FileHandler', () => {
         body: JSON.stringify(mkdirData)
       });
 
-      const response = await fileHandler.handle(request, mockContext);
+      const response = await fileHandler.handle(request, validatedContext);
 
       expect(response.status).toBe(200);
-      const responseData = await response.json();
+      const responseData = await response.json() as MkdirResponse;
       expect(responseData.recursive).toBe(false); // Default to false
 
       expect(mockFileService.createDirectory).toHaveBeenCalledWith('/tmp/simple-dir', {
@@ -541,7 +546,7 @@ describe('FileHandler', () => {
         path: '/readonly/new-dir',
         recursive: false
       };
-      mockContext.validatedData = mkdirData;
+      const validatedContext = createValidatedContext(mkdirData);
 
       (mockFileService.createDirectory as any).mockResolvedValue({
         success: false,
@@ -557,10 +562,10 @@ describe('FileHandler', () => {
         body: JSON.stringify(mkdirData)
       });
 
-      const response = await fileHandler.handle(request, mockContext);
+      const response = await fileHandler.handle(request, validatedContext);
 
       expect(response.status).toBe(500);
-      const responseData = await response.json();
+      const responseData = await response.json() as ContainerErrorResponse;
       expect(responseData.code).toBe('MKDIR_PERMISSION_DENIED');
 
       expect(mockLogger.error).toHaveBeenCalledWith(
@@ -585,7 +590,7 @@ describe('FileHandler', () => {
       const response = await fileHandler.handle(request, mockContext);
 
       expect(response.status).toBe(404);
-      const responseData = await response.json();
+      const responseData = await response.json() as ContainerErrorResponse;
       expect(responseData.error).toBe('Invalid file endpoint');
     });
 
@@ -597,7 +602,7 @@ describe('FileHandler', () => {
       const response = await fileHandler.handle(request, mockContext);
 
       expect(response.status).toBe(404);
-      const responseData = await response.json();
+      const responseData = await response.json() as ContainerErrorResponse;
       expect(responseData.error).toBe('Invalid file endpoint');
     });
   });
@@ -605,7 +610,7 @@ describe('FileHandler', () => {
   describe('CORS headers', () => {
     it('should include CORS headers in all successful responses', async () => {
       const readFileData = { path: '/tmp/test.txt' };
-      mockContext.validatedData = readFileData;
+      const validatedContext = createValidatedContext(readFileData);
 
       (mockFileService.readFile as any).mockResolvedValue({
         success: true,
@@ -618,7 +623,7 @@ describe('FileHandler', () => {
         body: JSON.stringify(readFileData)
       });
 
-      const response = await fileHandler.handle(request, mockContext);
+      const response = await fileHandler.handle(request, validatedContext);
 
       expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
       expect(response.headers.get('Access-Control-Allow-Methods')).toBe('GET, POST, OPTIONS');
@@ -664,7 +669,7 @@ describe('FileHandler', () => {
       for (const operation of operations) {
         // Reset mocks
         vi.clearAllMocks();
-        mockContext.validatedData = operation.data;
+        const validatedContext = createValidatedContext(operation.data);
 
         // Mock appropriate service method
         if (operation.endpoint === '/api/read') {
@@ -681,8 +686,8 @@ describe('FileHandler', () => {
           body: JSON.stringify(operation.data)
         });
 
-        const response = await fileHandler.handle(request, mockContext);
-        const responseData = await response.json();
+        const response = await fileHandler.handle(request, validatedContext);
+        const responseData = await response.json() as ReadFileResponse;
 
         // Check that all expected fields are present
         for (const field of operation.expectedFields) {

@@ -5,13 +5,13 @@
  * Demonstrates testing Zod schema validation with SecurityService integration.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { RequestValidator } from '@container/validation/request-validator';
 import type { SecurityService } from '@container/security/security-service';
 import type { ValidationResult } from '@container/core/types';
+import type { MkdirRequest, ReadFileRequest } from '@container/validation/schemas';
 
-// Mock the SecurityService
-const mockSecurityService: SecurityService = {
+// Mock the SecurityService - use partial mock to avoid private property issues
+const mockSecurityService = {
   validatePath: vi.fn(),
   validateCommand: vi.fn(),
   validatePort: vi.fn(),
@@ -21,7 +21,7 @@ const mockSecurityService: SecurityService = {
   generateSecureSessionId: vi.fn(),
   hashSensitiveData: vi.fn(),
   logSecurityEvent: vi.fn(),
-};
+} as SecurityService;
 
 describe('RequestValidator', () => {
   let requestValidator: RequestValidator;
@@ -347,7 +347,7 @@ describe('RequestValidator', () => {
         const result = requestValidator.validateFileRequest(validRequest, 'mkdir');
 
         expect(result.isValid).toBe(true);
-        expect(result.data?.recursive).toBeUndefined();
+        expect((result.data as MkdirRequest)?.recursive).toBeUndefined();
       });
     });
 
@@ -707,7 +707,7 @@ describe('RequestValidator', () => {
       const fileResult = requestValidator.validateFileRequest(fileRequest, 'read');
       if (fileResult.isValid) {
         // fileResult.data should be typed correctly based on operation
-        expect(typeof fileResult.data.path).toBe('string');
+        expect(typeof (fileResult.data as ReadFileRequest).path).toBe('string');
       }
 
       const portRequest = { port: 8080 };

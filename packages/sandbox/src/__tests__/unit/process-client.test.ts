@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+// Vitest globals are available due to globals: true in config
 import { ProcessClient } from '../../clients/process-client';
 import type { 
   StartProcessResponse, 
@@ -9,7 +9,7 @@ import type {
   GetProcessLogsResponse,
   ProcessInfo,
   HttpClientOptions 
-} from '../../clients/types';
+} from '../../clients';
 
 describe('ProcessClient', () => {
   let client: ProcessClient;

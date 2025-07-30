@@ -1,6 +1,5 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { GitClient } from '../../clients/git-client';
-import type { GitCheckoutResponse, HttpClientOptions } from '../../clients/types';
+import type { GitCheckoutResponse, HttpClientOptions } from '../../clients';
 
 describe('GitClient', () => {
   let client: GitClient;

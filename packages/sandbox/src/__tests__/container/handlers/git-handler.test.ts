@@ -5,18 +5,17 @@
  * Demonstrates testing handlers with git operations and repository management.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { GitHandler } from '@container/handlers/git-handler';
 import type { GitService } from '@container/services/git-service';
-import type { Logger, RequestContext } from '@container/core/types';
+import type { Logger, RequestContext, ValidatedRequestContext, GitCheckoutResponse, HandlerErrorResponse } from '@container/core/types';
 
-// Mock the dependencies
-const mockGitService: GitService = {
+// Mock the dependencies - use partial mock to avoid private property issues
+const mockGitService = {
   cloneRepository: vi.fn(),
   checkoutBranch: vi.fn(),
   getCurrentBranch: vi.fn(),
   listBranches: vi.fn(),
-};
+} as GitService;
 
 const mockLogger: Logger = {
   info: vi.fn(),
@@ -35,8 +34,13 @@ const mockContext: RequestContext = {
     'Access-Control-Allow-Headers': 'Content-Type',
   },
   sessionId: 'session-456',
-  validatedData: {}, // Will be set per test
 };
+
+// Helper to create validated context
+const createValidatedContext = <T>(data: T): ValidatedRequestContext<T> => ({
+  ...mockContext,
+  validatedData: data
+});
 
 describe('GitHandler', () => {
   let gitHandler: GitHandler;
@@ -64,7 +68,7 @@ describe('GitHandler', () => {
         branch: 'develop'
       };
 
-      mockContext.validatedData = gitCheckoutData;
+      const validatedContext = createValidatedContext(gitCheckoutData);
       (mockGitService.cloneRepository as any).mockResolvedValue({
         success: true,
         data: mockGitResult
@@ -76,10 +80,10 @@ describe('GitHandler', () => {
         body: JSON.stringify(gitCheckoutData)
       });
 
-      const response = await gitHandler.handle(request, mockContext);
+      const response = await gitHandler.handle(request, validatedContext);
 
       expect(response.status).toBe(200);
-      const responseData = await response.json();
+      const responseData = await response.json() as GitCheckoutResponse;
       expect(responseData.success).toBe(true);
       expect(responseData.repoUrl).toBe('https://github.com/user/awesome-repo.git');
       expect(responseData.branch).toBe('develop');
@@ -130,7 +134,7 @@ describe('GitHandler', () => {
         branch: 'main'
       };
 
-      mockContext.validatedData = gitCheckoutData;
+      const validatedContext = createValidatedContext(gitCheckoutData);
       (mockGitService.cloneRepository as any).mockResolvedValue({
         success: true,
         data: mockGitResult
@@ -142,10 +146,10 @@ describe('GitHandler', () => {
         body: JSON.stringify(gitCheckoutData)
       });
 
-      const response = await gitHandler.handle(request, mockContext);
+      const response = await gitHandler.handle(request, validatedContext);
 
       expect(response.status).toBe(200);
-      const responseData = await response.json();
+      const responseData = await response.json() as GitCheckoutResponse;
       expect(responseData.success).toBe(true);
       expect(responseData.repoUrl).toBe('https://github.com/user/simple-repo.git');
       expect(responseData.branch).toBe('main'); // Service returned branch
@@ -168,7 +172,7 @@ describe('GitHandler', () => {
         branch: 'main'
       };
 
-      mockContext.validatedData = gitCheckoutData;
+      const validatedContext = createValidatedContext(gitCheckoutData);
       (mockGitService.cloneRepository as any).mockResolvedValue({
         success: false,
         error: {
@@ -184,11 +188,10 @@ describe('GitHandler', () => {
         body: JSON.stringify(gitCheckoutData)
       });
 
-      const response = await gitHandler.handle(request, mockContext);
+      const response = await gitHandler.handle(request, validatedContext);
 
       expect(response.status).toBe(400);
-      const responseData = await response.json();
-      expect(responseData.success).toBe(false);
+      const responseData = await response.json() as HandlerErrorResponse;
       expect(responseData.code).toBe('INVALID_GIT_URL');
       expect(responseData.error).toContain('Invalid URL scheme');
 
@@ -210,7 +213,7 @@ describe('GitHandler', () => {
         targetDir: '/malicious/../path'
       };
 
-      mockContext.validatedData = gitCheckoutData;
+      const validatedContext = createValidatedContext(gitCheckoutData);
       (mockGitService.cloneRepository as any).mockResolvedValue({
         success: false,
         error: {
@@ -226,10 +229,10 @@ describe('GitHandler', () => {
         body: JSON.stringify(gitCheckoutData)
       });
 
-      const response = await gitHandler.handle(request, mockContext);
+      const response = await gitHandler.handle(request, validatedContext);
 
       expect(response.status).toBe(400);
-      const responseData = await response.json();
+      const responseData = await response.json() as HandlerErrorResponse;
       expect(responseData.code).toBe('INVALID_TARGET_PATH');
       expect(responseData.error).toContain('Path outside sandbox');
     });
@@ -240,7 +243,7 @@ describe('GitHandler', () => {
         branch: 'main'
       };
 
-      mockContext.validatedData = gitCheckoutData;
+      const validatedContext = createValidatedContext(gitCheckoutData);
       (mockGitService.cloneRepository as any).mockResolvedValue({
         success: false,
         error: {
@@ -260,10 +263,10 @@ describe('GitHandler', () => {
         body: JSON.stringify(gitCheckoutData)
       });
 
-      const response = await gitHandler.handle(request, mockContext);
+      const response = await gitHandler.handle(request, validatedContext);
 
       expect(response.status).toBe(400);
-      const responseData = await response.json();
+      const responseData = await response.json() as HandlerErrorResponse;
       expect(responseData.code).toBe('GIT_CLONE_FAILED');
       expect(responseData.details.exitCode).toBe(128);
       expect(responseData.details.stderr).toContain('repository');
@@ -286,7 +289,7 @@ describe('GitHandler', () => {
         branch: 'nonexistent-branch'
       };
 
-      mockContext.validatedData = gitCheckoutData;
+      const validatedContext = createValidatedContext(gitCheckoutData);
       (mockGitService.cloneRepository as any).mockResolvedValue({
         success: false,
         error: {
@@ -306,10 +309,10 @@ describe('GitHandler', () => {
         body: JSON.stringify(gitCheckoutData)
       });
 
-      const response = await gitHandler.handle(request, mockContext);
+      const response = await gitHandler.handle(request, validatedContext);
 
       expect(response.status).toBe(400);
-      const responseData = await response.json();
+      const responseData = await response.json() as HandlerErrorResponse;
       expect(responseData.code).toBe('GIT_CLONE_FAILED');
       expect(responseData.details.stderr).toContain('nonexistent-branch not found');
     });
@@ -319,7 +322,7 @@ describe('GitHandler', () => {
         repoUrl: 'https://github.com/user/repo.git'
       };
 
-      mockContext.validatedData = gitCheckoutData;
+      const validatedContext = createValidatedContext(gitCheckoutData);
       (mockGitService.cloneRepository as any).mockResolvedValue({
         success: false,
         error: {
@@ -335,10 +338,10 @@ describe('GitHandler', () => {
         body: JSON.stringify(gitCheckoutData)
       });
 
-      const response = await gitHandler.handle(request, mockContext);
+      const response = await gitHandler.handle(request, validatedContext);
 
       expect(response.status).toBe(400);
-      const responseData = await response.json();
+      const responseData = await response.json() as HandlerErrorResponse;
       expect(responseData.code).toBe('GIT_CLONE_ERROR');
       expect(responseData.details.originalError).toBe('Command not found');
     });
@@ -353,7 +356,7 @@ describe('GitHandler', () => {
       const response = await gitHandler.handle(request, mockContext);
 
       expect(response.status).toBe(404);
-      const responseData = await response.json();
+      const responseData = await response.json() as HandlerErrorResponse;
       expect(responseData.error).toBe('Invalid git endpoint');
 
       // Should not call any service methods
@@ -368,7 +371,7 @@ describe('GitHandler', () => {
       const response = await gitHandler.handle(request, mockContext);
 
       expect(response.status).toBe(404);
-      const responseData = await response.json();
+      const responseData = await response.json() as HandlerErrorResponse;
       expect(responseData.error).toBe('Invalid git endpoint');
     });
 
@@ -380,7 +383,7 @@ describe('GitHandler', () => {
       const response = await gitHandler.handle(request, mockContext);
 
       expect(response.status).toBe(404);
-      const responseData = await response.json();
+      const responseData = await response.json() as HandlerErrorResponse;
       expect(responseData.error).toBe('Invalid git endpoint');
     });
   });
@@ -391,7 +394,7 @@ describe('GitHandler', () => {
         repoUrl: 'https://github.com/user/repo.git'
       };
 
-      mockContext.validatedData = gitCheckoutData;
+      const validatedContext = createValidatedContext(gitCheckoutData);
       (mockGitService.cloneRepository as any).mockResolvedValue({
         success: true,
         data: { path: '/tmp/repo', branch: 'main' }
@@ -403,7 +406,7 @@ describe('GitHandler', () => {
         body: JSON.stringify(gitCheckoutData)
       });
 
-      const response = await gitHandler.handle(request, mockContext);
+      const response = await gitHandler.handle(request, validatedContext);
 
       expect(response.status).toBe(200);
       expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
@@ -431,7 +434,7 @@ describe('GitHandler', () => {
         targetDir: '/tmp/feature-work'
       };
 
-      mockContext.validatedData = gitCheckoutData;
+      const validatedContext = createValidatedContext(gitCheckoutData);
       (mockGitService.cloneRepository as any).mockResolvedValue({
         success: true,
         data: { path: '/tmp/feature-work', branch: 'feature-branch' }
@@ -443,10 +446,10 @@ describe('GitHandler', () => {
         body: JSON.stringify(gitCheckoutData)
       });
 
-      const response = await gitHandler.handle(request, mockContext);
+      const response = await gitHandler.handle(request, validatedContext);
 
       expect(response.status).toBe(200);
-      const responseData = await response.json();
+      const responseData = await response.json() as GitCheckoutResponse;
 
       // Verify all expected fields are present
       const expectedFields = ['success', 'stdout', 'stderr', 'exitCode', 'repoUrl', 'branch', 'targetDir', 'timestamp'];
@@ -465,7 +468,7 @@ describe('GitHandler', () => {
 
     it('should have proper Content-Type header', async () => {
       const gitCheckoutData = { repoUrl: 'https://github.com/user/repo.git' };
-      mockContext.validatedData = gitCheckoutData;
+      const validatedContext = createValidatedContext(gitCheckoutData);
 
       (mockGitService.cloneRepository as any).mockResolvedValue({
         success: true,
@@ -478,7 +481,7 @@ describe('GitHandler', () => {
         body: JSON.stringify(gitCheckoutData)
       });
 
-      const response = await gitHandler.handle(request, mockContext);
+      const response = await gitHandler.handle(request, validatedContext);
 
       expect(response.headers.get('Content-Type')).toBe('application/json');
     });
@@ -493,7 +496,7 @@ describe('GitHandler', () => {
         sessionId: 'session-789'
       };
 
-      mockContext.validatedData = gitCheckoutData;
+      const validatedContext = createValidatedContext(gitCheckoutData);
       (mockGitService.cloneRepository as any).mockResolvedValue({
         success: true,
         data: { path: '/tmp/test-workspace', branch: 'develop' }
@@ -505,7 +508,7 @@ describe('GitHandler', () => {
         body: JSON.stringify(gitCheckoutData)
       });
 
-      await gitHandler.handle(request, mockContext);
+      await gitHandler.handle(request, validatedContext);
 
       // Verify comprehensive logging
       expect(mockLogger.info).toHaveBeenCalledWith(
@@ -534,7 +537,7 @@ describe('GitHandler', () => {
         branch: 'restricted'
       };
 
-      mockContext.validatedData = gitCheckoutData;
+      const validatedContext = createValidatedContext(gitCheckoutData);
       (mockGitService.cloneRepository as any).mockResolvedValue({
         success: false,
         error: {
@@ -550,7 +553,7 @@ describe('GitHandler', () => {
         body: JSON.stringify(gitCheckoutData)
       });
 
-      await gitHandler.handle(request, mockContext);
+      await gitHandler.handle(request, validatedContext);
 
       expect(mockLogger.error).toHaveBeenCalledWith(
         'Git repository clone failed',

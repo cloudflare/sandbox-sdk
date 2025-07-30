@@ -6,9 +6,9 @@
  * contract breaks we experienced during refactoring.
  */
 
-import { describe, it, expect } from 'vitest';
-import type { ExecEvent, LogEvent } from '~/types';
-import { parseSSEStream } from '~/sse-parser';
+import type { ExecEvent, LogEvent } from '../../types';
+import { parseSSEStream } from '../../sse-parser';
+import type { StartProcessResponse } from '@container/core/types';
 
 // Mock container endpoint for testing
 const CONTAINER_BASE_URL = 'http://localhost:3000'; // This would be a test container
@@ -119,9 +119,9 @@ describe('Container Streaming Format Contracts', () => {
         })
       });
 
-      const startResult = await startResponse.json();
+      const startResult = await startResponse.json() as StartProcessResponse;
       expect(startResult.success).toBe(true);
-      const processId = startResult.data.process.id;
+      const processId = startResult.process.id;
 
       // Stream process logs
       const response = await fetch(`${CONTAINER_BASE_URL}/api/process/${processId}/logs/stream`);
@@ -164,8 +164,8 @@ describe('Container Streaming Format Contracts', () => {
         body: JSON.stringify({ command: 'echo "log format check"', background: true })
       });
 
-      const startResult = await startResponse.json();
-      const processId = startResult.data.process.id;
+      const startResult = await startResponse.json() as StartProcessResponse;
+      const processId = startResult.process.id;
 
       const response = await fetch(`${CONTAINER_BASE_URL}/api/process/${processId}/logs/stream`);
 
@@ -210,8 +210,8 @@ describe('Container Streaming Format Contracts', () => {
         body: JSON.stringify({ command: 'echo "type test"', background: true })
       });
 
-      const startResult = await startResponse.json();
-      const processId = startResult.data.process.id;
+      const startResult = await startResponse.json() as StartProcessResponse;
+      const processId = startResult.process.id;
 
       const response = await fetch(`${CONTAINER_BASE_URL}/api/process/${processId}/logs/stream`);
 

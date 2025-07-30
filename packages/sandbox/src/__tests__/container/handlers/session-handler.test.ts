@@ -5,13 +5,12 @@
  * Demonstrates testing handlers with session management functionality.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { SessionHandler } from '@container/handlers/session-handler';
 import type { SessionService } from '@container/services/session-service';
-import type { Logger, RequestContext, SessionData } from '@container/core/types';
+import type { Logger, RequestContext, ValidatedRequestContext, SessionData, HandlerErrorResponse, CreateSessionResponse, ListSessionsResponse } from '@container/core/types';
 
-// Mock the dependencies
-const mockSessionService: SessionService = {
+// Mock the dependencies - use partial mock to avoid private property issues
+const mockSessionService = {
   createSession: vi.fn(),
   getSession: vi.fn(),
   updateSession: vi.fn(),
@@ -19,7 +18,7 @@ const mockSessionService: SessionService = {
   listSessions: vi.fn(),
   cleanupExpiredSessions: vi.fn(),
   destroy: vi.fn(),
-};
+} as SessionService;
 
 const mockLogger: Logger = {
   info: vi.fn(),
@@ -38,8 +37,13 @@ const mockContext: RequestContext = {
     'Access-Control-Allow-Headers': 'Content-Type',
   },
   sessionId: 'session-456',
-  validatedData: {}, // Will be set per test
 };
+
+// Helper to create validated context
+const createValidatedContext = <T>(data: T): ValidatedRequestContext<T> => ({
+  ...mockContext,
+  validatedData: data
+});
 
 describe('SessionHandler', () => {
   let sessionHandler: SessionHandler;
@@ -76,7 +80,7 @@ describe('SessionHandler', () => {
       const response = await sessionHandler.handle(request, mockContext);
 
       expect(response.status).toBe(200);
-      const responseData = await response.json();
+      const responseData = await response.json() as CreateSessionResponse;
       expect(responseData.message).toBe('Session created successfully');
       expect(responseData.sessionId).toBe('session_1672531200_abc123');
       expect(responseData.timestamp).toBeDefined();
@@ -116,7 +120,7 @@ describe('SessionHandler', () => {
       const response = await sessionHandler.handle(request, mockContext);
 
       expect(response.status).toBe(500);
-      const responseData = await response.json();
+      const responseData = await response.json() as HandlerErrorResponse;
       expect(responseData.success).toBe(false);
       expect(responseData.code).toBe('SESSION_CREATE_ERROR');
       expect(responseData.error).toBe('Failed to create session');
@@ -163,8 +167,8 @@ describe('SessionHandler', () => {
       const response1 = await sessionHandler.handle(request1, mockContext);
       const response2 = await sessionHandler.handle(request2, mockContext);
 
-      const responseData1 = await response1.json();
-      const responseData2 = await response2.json();
+      const responseData1 = await response1.json() as CreateSessionResponse;
+      const responseData2 = await response2.json() as CreateSessionResponse;
 
       expect(responseData1.sessionId).not.toBe(responseData2.sessionId);
       expect(responseData1.sessionId).toBe('session_1672531200_abc123');
@@ -212,7 +216,7 @@ describe('SessionHandler', () => {
       const response = await sessionHandler.handle(request, mockContext);
 
       expect(response.status).toBe(200);
-      const responseData = await response.json();
+      const responseData = await response.json() as ListSessionsResponse;
       expect(responseData.count).toBe(3);
       expect(responseData.sessions).toHaveLength(3);
 
@@ -258,7 +262,7 @@ describe('SessionHandler', () => {
       const response = await sessionHandler.handle(request, mockContext);
 
       expect(response.status).toBe(200);
-      const responseData = await response.json();
+      const responseData = await response.json() as ListSessionsResponse;
       expect(responseData.count).toBe(0);
       expect(responseData.sessions).toHaveLength(0);
       expect(responseData.sessions).toEqual([]);
@@ -301,7 +305,7 @@ describe('SessionHandler', () => {
 
       const response = await sessionHandler.handle(request, mockContext);
 
-      const responseData = await response.json();
+      const responseData = await response.json() as ListSessionsResponse;
 
       // Test truthiness evaluation for hasActiveProcess
       expect(responseData.sessions[0].hasActiveProcess).toBe(true);  // 'proc-123' is truthy
@@ -326,7 +330,7 @@ describe('SessionHandler', () => {
       const response = await sessionHandler.handle(request, mockContext);
 
       expect(response.status).toBe(500);
-      const responseData = await response.json();
+      const responseData = await response.json() as HandlerErrorResponse;
       expect(responseData.success).toBe(false);
       expect(responseData.code).toBe('SESSION_LIST_ERROR');
 
@@ -346,7 +350,7 @@ describe('SessionHandler', () => {
         {
           id: 'session-1',
           sessionId: 'session-1',
-          activeProcess: undefined,
+          activeProcess: null,
           createdAt: new Date('2023-01-01T00:00:00Z'),
           expiresAt: new Date('2023-01-01T01:00:00Z'),
         }
@@ -363,7 +367,7 @@ describe('SessionHandler', () => {
 
       const response = await sessionHandler.handle(request, mockContext);
 
-      const responseData = await response.json();
+      const responseData = await response.json() as ListSessionsResponse;
       expect(responseData.sessions[0].hasActiveProcess).toBe(false); // undefined is falsy
     });
   });
@@ -377,7 +381,7 @@ describe('SessionHandler', () => {
       const response = await sessionHandler.handle(request, mockContext);
 
       expect(response.status).toBe(404);
-      const responseData = await response.json();
+      const responseData = await response.json() as HandlerErrorResponse;
       expect(responseData.error).toBe('Invalid session endpoint');
 
       // Should not call any service methods
@@ -393,7 +397,7 @@ describe('SessionHandler', () => {
       const response = await sessionHandler.handle(request, mockContext);
 
       expect(response.status).toBe(404);
-      const responseData = await response.json();
+      const responseData = await response.json() as HandlerErrorResponse;
       expect(responseData.error).toBe('Invalid session endpoint');
     });
 
@@ -405,7 +409,7 @@ describe('SessionHandler', () => {
       const response = await sessionHandler.handle(request, mockContext);
 
       expect(response.status).toBe(404);
-      const responseData = await response.json();
+      const responseData = await response.json() as HandlerErrorResponse;
       expect(responseData.error).toBe('Invalid session endpoint');
     });
   });
@@ -521,7 +525,7 @@ describe('SessionHandler', () => {
       });
 
       const response = await sessionHandler.handle(request, mockContext);
-      const responseData = await response.json();
+      const responseData = await response.json() as ListSessionsResponse;
 
       // Verify timestamp is valid ISO string
       expect(responseData.timestamp).toBeDefined();
@@ -550,7 +554,7 @@ describe('SessionHandler', () => {
       });
 
       const response = await sessionHandler.handle(request, mockContext);
-      const responseData = await response.json();
+      const responseData = await response.json() as ListSessionsResponse;
 
       expect(responseData.sessions[0].createdAt).toBe('2023-01-01T12:30:45.123Z');
       expect(responseData.sessions[0].createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
@@ -581,7 +585,7 @@ describe('SessionHandler', () => {
       });
 
       const response = await sessionHandler.handle(request, mockContext);
-      const responseData = await response.json();
+      const responseData = await response.json() as ListSessionsResponse;
 
       const sessionResponse = responseData.sessions[0];
 
@@ -591,10 +595,10 @@ describe('SessionHandler', () => {
       expect(sessionResponse.hasActiveProcess).toBe(true);
 
       // Should not include internal fields
-      expect(sessionResponse.id).toBeUndefined();
-      expect(sessionResponse.expiresAt).toBeUndefined();
-      expect(sessionResponse.activeProcess).toBeUndefined();
-      expect(sessionResponse.extraField).toBeUndefined();
+      expect((sessionResponse as any).id).toBeUndefined();
+      expect((sessionResponse as any).expiresAt).toBeUndefined();
+      expect((sessionResponse as any).activeProcess).toBeUndefined();
+      expect((sessionResponse as any).extraField).toBeUndefined();
 
       // Should only have expected fields
       const expectedFields = ['sessionId', 'createdAt', 'hasActiveProcess'];

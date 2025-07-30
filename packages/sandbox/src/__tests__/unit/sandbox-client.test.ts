@@ -1,4 +1,3 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { SandboxClient } from '../../clients/sandbox-client';
 import { CommandClient } from '../../clients/command-client';
 import { FileClient } from '../../clients/file-client';

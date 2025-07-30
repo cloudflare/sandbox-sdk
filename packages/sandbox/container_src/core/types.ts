@@ -19,9 +19,13 @@ export interface ValidatedRequestContext<T = unknown> extends RequestContext {
   validatedData?: T;
 }
 
-export interface ValidationResult<T = unknown> {
-  isValid: boolean;
-  data?: T;
+export type ValidationResult<T = unknown> = {
+  isValid: true;
+  data: T;
+  errors: ValidationError[];
+} | {
+  isValid: false;
+  data?: undefined;
   errors: ValidationError[];
 }
 
@@ -31,16 +35,154 @@ export interface ValidationError {
   code: string;
 }
 
-export interface ServiceResult<T> {
-  success: boolean;
-  data?: T;
-  error?: ServiceError;
-}
+export type ServiceResult<T> = T extends void 
+  ? {
+      success: true;
+    } | {
+      success: false;
+      error: ServiceError;
+    }
+  : {
+      success: true;
+      data: T;
+    } | {
+      success: false;
+      error: ServiceError;
+    }
 
 export interface ServiceError {
   message: string;
   code: string;
   details?: Record<string, unknown>;
+}
+
+// Handler error response structure - matches BaseHandler.createErrorResponse()
+export interface HandlerErrorResponse {
+  success: false;
+  error: string;
+  code: string;
+  details?: any;
+  timestamp: string;
+}
+
+// Misc handler response interfaces
+export interface PingResponse {
+  message: string;
+  timestamp: string;
+  requestId: string;
+}
+
+export interface CommandsResponse {
+  availableCommands: string[];
+  timestamp: string;
+}
+
+// Port handler response interfaces
+export interface ExposePortResponse {
+  success: true;
+  port: number;
+  name?: string;
+  exposedAt: string;
+  timestamp: string;
+}
+
+export interface UnexposePortResponse {
+  success: true;
+  message: string;
+  port: number;
+  timestamp: string;
+}
+
+export interface ListExposedPortsResponse {
+  success: true;
+  count: number;
+  ports: Array<{
+    port: number;
+    name?: string;
+    exposedAt: string;
+  }>;
+  timestamp: string;
+}
+
+// Proxied service response interfaces - for responses from external services via proxy
+export interface ProxiedSuccessResponse {
+  success: boolean;
+  [key: string]: unknown;
+}
+
+export interface ProxiedErrorResponse {
+  error: string;
+  [key: string]: unknown;
+}
+
+// Process handler response interfaces
+export interface StartProcessResponse {
+  success: true;
+  process: ProcessInfo;
+  message: string;
+  timestamp: string;
+}
+
+export interface ListProcessesResponse {
+  success: true;
+  count: number;
+  processes: ProcessInfo[];
+  timestamp: string;
+}
+
+export interface GetProcessResponse {
+  success: true;
+  process: ProcessInfo;
+  timestamp: string;
+}
+
+export interface KillProcessResponse {
+  success: true;
+  message: string;
+  timestamp: string;
+}
+
+export interface KillAllProcessesResponse {
+  success: true;
+  message: string;
+  killedCount: number;
+  timestamp: string;
+}
+
+export interface ProcessLogsResponse {
+  success: true;
+  processId: string;
+  stdout: string;
+  stderr: string;
+  timestamp: string;
+}
+
+// Session handler response interfaces
+export interface CreateSessionResponse {
+  message: string;
+  sessionId: string;
+  timestamp: string;
+}
+
+export interface ListSessionsResponse {
+  count: number;
+  sessions: Array<{
+    sessionId: string;
+    createdAt: string;
+    hasActiveProcess: boolean;
+  }>;
+  timestamp: string;
+}
+
+// Port service specific error response interfaces
+export interface PortNotFoundResponse {
+  error: string;
+  port: number;
+}
+
+export interface ProxyErrorResponse {
+  error: string;
+  message: string;
 }
 
 export interface Middleware {
@@ -115,6 +257,9 @@ export interface ProcessRecord {
   };
 }
 
+// Export ProcessRecord as ProcessInfo for consistency with test usage
+export type ProcessInfo = ProcessRecord;
+
 export type { ProcessOptions } from '../validation/schemas';
 
 export interface CommandResult {
@@ -183,32 +328,76 @@ export interface ExecuteResponse {
 export type { ReadFileRequest } from '../validation/schemas';
 
 export interface ReadFileResponse {
+  success: boolean;
   content: string;
   path: string;
+  exitCode: number;
+  encoding: string;
+  timestamp: string;
 }
 
 export type { WriteFileRequest } from '../validation/schemas';
 
 export interface WriteFileResponse {
   success: boolean;
+  exitCode: number;
   path: string;
-  bytesWritten: number;
+  timestamp: string;
 }
 
 export type { DeleteFileRequest } from '../validation/schemas';
 
 export interface DeleteFileResponse {
   success: boolean;
+  exitCode: number;
   path: string;
+  timestamp: string;
 }
 
 export type { RenameFileRequest } from '../validation/schemas';
 
+export interface RenameFileResponse {
+  success: boolean;
+  exitCode: number;
+  path: string;
+  newPath: string;
+  timestamp: string;
+}
+
 export type { MoveFileRequest } from '../validation/schemas';
+
+export interface MoveFileResponse {
+  success: boolean;
+  exitCode: number;  
+  path: string;
+  newPath: string;
+  timestamp: string;
+}
 
 export type { GitCheckoutRequest } from '../validation/schemas';
 
+export interface GitCheckoutResponse {
+  success: boolean;
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+  repoUrl: string;
+  branch: string;
+  targetDir: string;
+  timestamp: string;
+}
+
 export type { MkdirRequest } from '../validation/schemas';
+
+export interface MkdirResponse {
+  success: boolean;
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+  path: string;
+  recursive: boolean;
+  timestamp: string;
+}
 
 export type { ExposePortRequest } from '../validation/schemas';
 

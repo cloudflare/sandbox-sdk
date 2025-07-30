@@ -1,4 +1,3 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { PortClient } from '../../clients/port-client';
 import type { 
   ExposePortResponse, 
@@ -6,7 +5,7 @@ import type {
   GetExposedPortsResponse,
   ExposedPortInfo,
   HttpClientOptions 
-} from '../../clients/types';
+} from '../../clients';
 
 describe('PortClient', () => {
   let client: PortClient;

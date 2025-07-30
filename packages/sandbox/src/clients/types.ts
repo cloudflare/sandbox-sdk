@@ -31,7 +31,28 @@ export interface BaseApiResponse {
 }
 
 /**
- * Standard error response structure
+ * Standard error response structure - matches BaseHandler.createErrorResponse()
+ */
+export interface ApiErrorResponse {
+  success: false;
+  error: string;
+  code: string;
+  details?: any;
+  timestamp: string;
+}
+
+/**
+ * Validation error response structure - matches ValidationMiddleware
+ */
+export interface ValidationErrorResponse {
+  error: string;
+  message: string;
+  details?: any[];
+  timestamp: string;
+}
+
+/**
+ * Legacy error response interface - deprecated, use ApiErrorResponse
  */
 export interface ErrorResponse {
   error: string;

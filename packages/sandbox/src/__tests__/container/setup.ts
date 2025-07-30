@@ -5,7 +5,8 @@
  * for testing the refactored container services and handlers.
  */
 
-import { beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
+// Use global vitest APIs (enabled via vitest.config.ts globals: true)
+// beforeAll, afterAll, beforeEach, afterEach, vi are available globally
 
 // Store original global state to restore after tests
 let originalBun: any;

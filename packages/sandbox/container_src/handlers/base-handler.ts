@@ -77,10 +77,11 @@ export abstract class BaseHandler<TRequest, TResponse> implements Handler<TReque
     successStatus: number = 200
   ): Response {
     if (result.success) {
-      return this.createSuccessResponse(result.data, context, successStatus);
+      const data = 'data' in result ? result.data : undefined;
+      return this.createSuccessResponse(data, context, successStatus);
     } else {
-      const statusCode = this.getStatusCodeForError(result.error!.code);
-      return this.createErrorResponse(result.error!, statusCode, context);
+      const statusCode = this.getStatusCodeForError(result.error.code);
+      return this.createErrorResponse(result.error, statusCode, context);
     }
   }
 

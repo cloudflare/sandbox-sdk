@@ -1,4 +1,3 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { parseSSEStream, responseToAsyncIterable, asyncIterableToSSEStream } from '../../sse-parser';
 
 describe('SSE Parser', () => {
@@ -378,7 +377,7 @@ describe('SSE Parser', () => {
         // Continue reading to trigger abort handling
         await reader.read();
       } catch (error) {
-        expect(error.message).toBe('Operation was aborted');
+        expect((error as Error).message).toBe('Operation was aborted');
       }
 
       consoleLogSpy.mockRestore();

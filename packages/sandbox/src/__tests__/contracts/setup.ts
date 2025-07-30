@@ -5,7 +5,6 @@
  * instances for validating SDK interface compliance.
  */
 
-import { beforeAll, afterAll } from 'vitest';
 
 // Test container instance for contract validation
 let testContainerProcess: any = null;

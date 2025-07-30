@@ -5,20 +5,13 @@
  * consistent formats and provide predictable error information for SDK consumers.
  */
 
-import { describe, it, expect } from 'vitest';
+import type { ApiErrorResponse } from '../../clients/types';
+
 
 // Mock container endpoint for testing
-const CONTAINER_BASE_URL = 'http://localhost:3000';
+const ERROR_CONTRACT_BASE_URL = 'http://localhost:3000';
 
-// Expected error response contracts
-interface ApiErrorResponse {
-  success: false;
-  error: string;
-  timestamp?: string;
-  code?: string;
-  details?: Record<string, any>;
-}
-
+// Contract-specific error response types for testing expected API behavior
 interface ValidationErrorResponse extends ApiErrorResponse {
   code: 'VALIDATION_ERROR';
   details: {
@@ -96,7 +89,7 @@ describe('Error Response Contract Validation', () => {
       ];
 
       for (const testCase of testCases) {
-        const response = await fetch(`${CONTAINER_BASE_URL}${testCase.endpoint}`, {
+        const response = await fetch(`${ERROR_CONTRACT_BASE_URL}${testCase.endpoint}`, {
           method: testCase.method,
           headers: { 'Content-Type': 'application/json' },
           body: testCase.body
@@ -148,7 +141,7 @@ describe('Error Response Contract Validation', () => {
       ];
 
       for (const testCase of testCases) {
-        const response = await fetch(`${CONTAINER_BASE_URL}${testCase.endpoint}`, {
+        const response = await fetch(`${ERROR_CONTRACT_BASE_URL}${testCase.endpoint}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: testCase.body
@@ -179,7 +172,7 @@ describe('Error Response Contract Validation', () => {
       ];
 
       for (const path of dangerousPaths) {
-        const response = await fetch(`${CONTAINER_BASE_URL}/api/files/read`, {
+        const response = await fetch(`${ERROR_CONTRACT_BASE_URL}/api/files/read`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ path, sessionId: 'test-session' })
@@ -214,7 +207,7 @@ describe('Error Response Contract Validation', () => {
       ];
 
       for (const command of dangerousCommands) {
-        const response = await fetch(`${CONTAINER_BASE_URL}/api/execute`, {
+        const response = await fetch(`${ERROR_CONTRACT_BASE_URL}/api/execute`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ command, sessionId: 'test-session' })
@@ -236,7 +229,7 @@ describe('Error Response Contract Validation', () => {
       const reservedPorts = [22, 25, 53, 80, 443, 3000, 3306, 5432];
 
       for (const port of reservedPorts) {
-        const response = await fetch(`${CONTAINER_BASE_URL}/api/ports/expose`, {
+        const response = await fetch(`${ERROR_CONTRACT_BASE_URL}/api/ports/expose`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ port, sessionId: 'test-session' })
@@ -264,7 +257,7 @@ describe('Error Response Contract Validation', () => {
       ];
 
       for (const repoUrl of maliciousUrls) {
-        const response = await fetch(`${CONTAINER_BASE_URL}/api/git/checkout`, {
+        const response = await fetch(`${ERROR_CONTRACT_BASE_URL}/api/git/checkout`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ repoUrl, sessionId: 'test-session' })
@@ -285,7 +278,7 @@ describe('Error Response Contract Validation', () => {
 
   describe('Not Found Error Contracts', () => {
     it('should return NotFoundErrorResponse for nonexistent files', async () => {
-      const response = await fetch(`${CONTAINER_BASE_URL}/api/files/read`, {
+      const response = await fetch(`${ERROR_CONTRACT_BASE_URL}/api/files/read`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -310,7 +303,7 @@ describe('Error Response Contract Validation', () => {
     });
 
     it('should return NotFoundErrorResponse for nonexistent processes', async () => {
-      const response = await fetch(`${CONTAINER_BASE_URL}/api/processes/nonexistent-process-123/stop`, {
+      const response = await fetch(`${ERROR_CONTRACT_BASE_URL}/api/processes/nonexistent-process-123/stop`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sessionId: 'test-session' })
@@ -327,7 +320,7 @@ describe('Error Response Contract Validation', () => {
     });
 
     it('should return NotFoundErrorResponse for nonexistent sessions', async () => {
-      const response = await fetch(`${CONTAINER_BASE_URL}/api/sessions/nonexistent-session-123`, {
+      const response = await fetch(`${ERROR_CONTRACT_BASE_URL}/api/sessions/nonexistent-session-123`, {
         method: 'DELETE'
       });
 
@@ -342,7 +335,7 @@ describe('Error Response Contract Validation', () => {
     });
 
     it('should return NotFoundErrorResponse for invalid endpoints', async () => {
-      const response = await fetch(`${CONTAINER_BASE_URL}/api/nonexistent-endpoint`, {
+      const response = await fetch(`${ERROR_CONTRACT_BASE_URL}/api/nonexistent-endpoint`, {
         method: 'GET'
       });
 
@@ -362,7 +355,7 @@ describe('Error Response Contract Validation', () => {
       // This test simulates server-side failures that might occur
       // In a real scenario, this would be tested by inducing specific failure conditions
       
-      const response = await fetch(`${CONTAINER_BASE_URL}/api/execute`, {
+      const response = await fetch(`${ERROR_CONTRACT_BASE_URL}/api/execute`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -392,7 +385,7 @@ describe('Error Response Contract Validation', () => {
     });
 
     it('should return InternalErrorResponse for database connection failures', async () => {
-      const response = await fetch(`${CONTAINER_BASE_URL}/api/sessions`, {
+      const response = await fetch(`${ERROR_CONTRACT_BASE_URL}/api/sessions`, {
         method: 'GET',
         headers: { 
           'X-Simulate-Error': 'database' // Simulate database failure
@@ -419,7 +412,7 @@ describe('Error Response Contract Validation', () => {
       ];
 
       for (const endpoint of errorEndpoints) {
-        const response = await fetch(`${CONTAINER_BASE_URL}${endpoint.url}`, {
+        const response = await fetch(`${ERROR_CONTRACT_BASE_URL}${endpoint.url}`, {
           method: endpoint.method,
           headers: endpoint.body ? { 'Content-Type': 'application/json' } : {},
           body: endpoint.body
@@ -450,7 +443,7 @@ describe('Error Response Contract Validation', () => {
     });
 
     it('should include proper CORS headers in error responses', async () => {
-      const response = await fetch(`${CONTAINER_BASE_URL}/api/execute`, {
+      const response = await fetch(`${ERROR_CONTRACT_BASE_URL}/api/execute`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({}) // Invalid request
@@ -465,7 +458,7 @@ describe('Error Response Contract Validation', () => {
     });
 
     it('should return proper Content-Type for error responses', async () => {
-      const response = await fetch(`${CONTAINER_BASE_URL}/api/files/read`, {
+      const response = await fetch(`${ERROR_CONTRACT_BASE_URL}/api/files/read`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path: '/etc/passwd' })
@@ -497,7 +490,7 @@ describe('Error Response Contract Validation', () => {
       ];
 
       for (const testCase of testCases) {
-        const response = await fetch(`${CONTAINER_BASE_URL}${testCase.endpoint}`, {
+        const response = await fetch(`${ERROR_CONTRACT_BASE_URL}${testCase.endpoint}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: testCase.body
@@ -518,7 +511,7 @@ describe('Error Response Contract Validation', () => {
     });
 
     it('should not expose internal implementation details in error messages', async () => {
-      const response = await fetch(`${CONTAINER_BASE_URL}/api/execute`, {
+      const response = await fetch(`${ERROR_CONTRACT_BASE_URL}/api/execute`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ command: 'invalid-command-that-might-expose-internals' })

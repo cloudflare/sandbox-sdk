@@ -168,11 +168,18 @@ export class SecurityService {
       });
     }
 
-    return { 
-      isValid, 
-      errors: validationErrors,
-      data: isValid ? normalizedPath : undefined 
-    };
+    if (isValid) {
+      return {
+        isValid: true,
+        errors: validationErrors,
+        data: normalizedPath
+      };
+    } else {
+      return {
+        isValid: false,
+        errors: validationErrors
+      };
+    }
   }
 
   sanitizePath(path: string): string {
@@ -254,11 +261,18 @@ export class SecurityService {
       this.logger.warn('Port validation failed', { port, errors });
     }
 
-    return { 
-      isValid, 
-      errors: validationErrors,
-      data: isValid ? port : undefined 
-    };
+    if (isValid) {
+      return {
+        isValid: true,
+        errors: validationErrors,
+        data: port
+      };
+    } else {
+      return {
+        isValid: false,
+        errors: validationErrors
+      };
+    }
   }
 
   validateCommand(command: string): ValidationResult<string> {
@@ -330,11 +344,18 @@ export class SecurityService {
       });
     }
 
-    return { 
-      isValid, 
-      errors: validationErrors,
-      data: isValid ? trimmedCommand : undefined 
-    };
+    if (isValid) {
+      return {
+        isValid: true,
+        errors: validationErrors,
+        data: trimmedCommand
+      };
+    } else {
+      return {
+        isValid: false,
+        errors: validationErrors
+      };
+    }
   }
 
   validateGitUrl(url: string): ValidationResult<string> {
@@ -389,11 +410,18 @@ export class SecurityService {
       });
     }
 
-    return { 
-      isValid, 
-      errors: validationErrors,
-      data: isValid ? trimmedUrl : undefined 
-    };
+    if (isValid) {
+      return {
+        isValid: true,
+        errors: validationErrors,
+        data: trimmedUrl
+      };
+    } else {
+      return {
+        isValid: false,
+        errors: validationErrors
+      };
+    }
   }
 
   // Additional helper methods

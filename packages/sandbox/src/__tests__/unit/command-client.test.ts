@@ -1,6 +1,5 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { CommandClient } from '../../clients/command-client';
-import type { ExecuteResponse, HttpClientOptions } from '../../clients/types';
+import type { ExecuteResponse, HttpClientOptions } from '../../clients';
 
 describe('CommandClient', () => {
   let client: CommandClient;

@@ -1,4 +1,3 @@
-import { describe, it, expect } from 'vitest';
 import {
   mapContainerError,
   isFileNotFoundError,
@@ -35,7 +34,7 @@ import {
   GitError,
   SandboxOperation
 } from '../../errors';
-import type { ErrorResponse } from '../../clients/types';
+import type { ErrorResponse } from '../../clients';
 
 describe('Error Mapping', () => {
   describe('mapContainerError', () => {

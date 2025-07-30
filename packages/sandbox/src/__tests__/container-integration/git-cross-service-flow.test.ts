@@ -7,10 +7,13 @@
  * These tests use the full Router + Middleware + Handler pipeline to test real integration
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Router } from '@container/core/router';
 import { Container } from '@container/core/container';
 import { setupRoutes } from '@container/routes/setup';
+import type { GitCheckoutResponse } from '../../clients/git-client';
+import type { ExecuteResponse } from '../../clients/command-client';
+import type { ReadFileResponse } from '../../clients/file-client';
+import type { ApiErrorResponse } from '../../clients/types';
 
 // Mock Bun globals for Git and file operations
 const mockBunSpawn = vi.fn();
@@ -112,7 +115,7 @@ describe('Git Operations and Cross-Service Integration Flow', () => {
       const gitResponse = await router.route(gitRequest);
 
       expect(gitResponse.status).toBe(200);
-      const gitResponseData = await gitResponse.json();
+      const gitResponseData = await gitResponse.json() as GitCheckoutResponse;
       expect(gitResponseData.success).toBe(true);
 
       // Verify Git clone was called through Bun API (arguments + options)
@@ -141,7 +144,7 @@ describe('Git Operations and Cross-Service Integration Flow', () => {
 
       // Security validation should reject this or Git should fail
       expect([400, 500]).toContain(response.status);
-      const responseData = await response.json();
+      const responseData = await response.json() as ApiErrorResponse;
       expect(responseData.success).toBeFalsy(); // May be false or undefined depending on validation layer
     });
 
@@ -161,7 +164,7 @@ describe('Git Operations and Cross-Service Integration Flow', () => {
 
       // Security validation should reject this path
       expect(response.status).toBe(400);
-      const responseData = await response.json();
+      const responseData = await response.json() as ApiErrorResponse;
       expect(responseData.error).toBe('Validation Error');
     });
   });
@@ -197,7 +200,7 @@ describe('Git Operations and Cross-Service Integration Flow', () => {
       const commandResponse = await router.route(commandRequest);
       expect(commandResponse.status).toBe(200);
       
-      const commandData = await commandResponse.json();
+      const commandData = await commandResponse.json() as ExecuteResponse;
       expect(commandData.success).toBe(true);
     });
 
@@ -226,7 +229,7 @@ describe('Git Operations and Cross-Service Integration Flow', () => {
       const readResponse = await router.route(readRequest);
       expect(readResponse.status).toBe(500); // File service should return error
       
-      const responseData = await readResponse.json();
+      const responseData = await readResponse.json() as ApiErrorResponse;
       expect(responseData.success).toBe(false);
     });
 
@@ -247,7 +250,7 @@ describe('Git Operations and Cross-Service Integration Flow', () => {
       const envResponse = await router.route(envCommandRequest);
       expect(envResponse.status).toBe(200);
       
-      const envData = await envResponse.json();
+      const envData = await envResponse.json() as ExecuteResponse;
       expect(envData.success).toBe(true);
     });
   });
@@ -291,7 +294,7 @@ describe('Git Operations and Cross-Service Integration Flow', () => {
       const response = await router.route(commandRequest);
       expect(response.status).toBe(400); // Should handle spawn failure gracefully
       
-      const responseData = await response.json();
+      const responseData = await response.json() as ApiErrorResponse;
       expect(responseData.success).toBe(false);
     });
   });

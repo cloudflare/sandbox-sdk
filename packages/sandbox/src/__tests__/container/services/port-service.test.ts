@@ -5,9 +5,8 @@
  * Demonstrates testing services with port management and proxying functionality.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { PortService, PortStore, SecurityService } from '@container/services/port-service';
-import type { Logger, PortInfo } from '@container/core/types';
+import type { Logger, PortInfo, PortNotFoundResponse, ProxyErrorResponse } from '@container/core/types';
 
 // Mock the dependencies
 const mockPortStore: PortStore = {
@@ -384,7 +383,7 @@ describe('PortService', () => {
       const response = await portService.proxyRequest(8080, testRequest);
 
       expect(response.status).toBe(404);
-      const responseData = await response.json();
+      const responseData = await response.json() as PortNotFoundResponse;
       expect(responseData.error).toBe('Port not found');
       expect(responseData.port).toBe(8080);
 
@@ -408,7 +407,7 @@ describe('PortService', () => {
       const response = await portService.proxyRequest(8080, testRequest);
 
       expect(response.status).toBe(502);
-      const responseData = await response.json();
+      const responseData = await response.json() as ProxyErrorResponse;
       expect(responseData.error).toBe('Proxy error');
       expect(responseData.message).toContain('Connection refused');
 

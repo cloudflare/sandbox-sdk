@@ -5,13 +5,12 @@
  * Demonstrates testing handlers with multiple endpoints and streaming functionality.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { ProcessHandler } from '@container/handlers/process-handler';
 import type { ProcessService } from '@container/services/process-service';
-import type { Logger, RequestContext, ProcessInfo } from '@container/core/types';
+import type { Logger, RequestContext, ValidatedRequestContext, ProcessInfo, HandlerErrorResponse, StartProcessResponse, ListProcessesResponse, GetProcessResponse, KillProcessResponse, KillAllProcessesResponse, ProcessLogsResponse } from '@container/core/types';
 
-// Mock the dependencies
-const mockProcessService: ProcessService = {
+// Mock the dependencies - use partial mock to avoid private property issues
+const mockProcessService = {
   startProcess: vi.fn(),
   getProcess: vi.fn(),
   killProcess: vi.fn(),
@@ -19,7 +18,7 @@ const mockProcessService: ProcessService = {
   listProcesses: vi.fn(),
   streamProcessLogs: vi.fn(),
   executeCommand: vi.fn(),
-};
+} as ProcessService;
 
 const mockLogger: Logger = {
   info: vi.fn(),
@@ -38,8 +37,13 @@ const mockContext: RequestContext = {
     'Access-Control-Allow-Headers': 'Content-Type',
   },
   sessionId: 'session-456',
-  validatedData: {}, // Will be set per test
 };
+
+// Helper to create validated context
+const createValidatedContext = <T>(data: T): ValidatedRequestContext<T> => ({
+  ...mockContext,
+  validatedData: data
+});
 
 describe('ProcessHandler', () => {
   let processHandler: ProcessHandler;
@@ -67,12 +71,13 @@ describe('ProcessHandler', () => {
         status: 'running',
         startTime: new Date('2023-01-01T00:00:00Z'),
         sessionId: 'session-456',
+        stdout: '',
+        stderr: '',
         outputListeners: new Set(),
         statusListeners: new Set(),
       };
 
-      // Set up mocks
-      mockContext.validatedData = startProcessData;
+      const validatedContext = createValidatedContext(startProcessData);
       (mockProcessService.startProcess as any).mockResolvedValue({
         success: true,
         data: mockProcessInfo
@@ -84,10 +89,10 @@ describe('ProcessHandler', () => {
         body: JSON.stringify(startProcessData)
       });
 
-      const response = await processHandler.handle(request, mockContext);
+      const response = await processHandler.handle(request, validatedContext);
 
       expect(response.status).toBe(200);
-      const responseData = await response.json();
+      const responseData = await response.json() as StartProcessResponse;
       expect(responseData.success).toBe(true);
       expect(responseData.process.id).toBe('proc-123');
       expect(responseData.process.pid).toBe(12345);
@@ -114,7 +119,7 @@ describe('ProcessHandler', () => {
 
     it('should handle process start failures', async () => {
       const startProcessData = { command: 'invalid-command' };
-      mockContext.validatedData = startProcessData;
+      const validatedContext = createValidatedContext(startProcessData);
 
       (mockProcessService.startProcess as any).mockResolvedValue({
         success: false,
@@ -131,10 +136,10 @@ describe('ProcessHandler', () => {
         body: JSON.stringify(startProcessData)
       });
 
-      const response = await processHandler.handle(request, mockContext);
+      const response = await processHandler.handle(request, validatedContext);
 
       expect(response.status).toBe(500);
-      const responseData = await response.json();
+      const responseData = await response.json() as HandlerErrorResponse;
       expect(responseData.success).toBe(false);
       expect(responseData.code).toBe('COMMAND_NOT_FOUND');
 
@@ -160,6 +165,8 @@ describe('ProcessHandler', () => {
           status: 'running',
           startTime: new Date('2023-01-01T00:00:00Z'),
           sessionId: 'session-456',
+          stdout: '',
+          stderr: '',
           outputListeners: new Set(),
           statusListeners: new Set(),
         },
@@ -172,6 +179,8 @@ describe('ProcessHandler', () => {
           endTime: new Date('2023-01-01T00:01:30Z'),
           exitCode: 0,
           sessionId: 'session-456',
+          stdout: '',
+          stderr: '',
           outputListeners: new Set(),
           statusListeners: new Set(),
         }
@@ -189,7 +198,7 @@ describe('ProcessHandler', () => {
       const response = await processHandler.handle(request, mockContext);
 
       expect(response.status).toBe(200);
-      const responseData = await response.json();
+      const responseData = await response.json() as ListProcessesResponse;
       expect(responseData.success).toBe(true);
       expect(responseData.count).toBe(2);
       expect(responseData.processes).toHaveLength(2);
@@ -236,7 +245,7 @@ describe('ProcessHandler', () => {
       const response = await processHandler.handle(request, mockContext);
 
       expect(response.status).toBe(500);
-      const responseData = await response.json();
+      const responseData = await response.json() as HandlerErrorResponse;
       expect(responseData.success).toBe(false);
       expect(responseData.code).toBe('DB_ERROR');
     });
@@ -269,7 +278,7 @@ describe('ProcessHandler', () => {
       const response = await processHandler.handle(request, mockContext);
 
       expect(response.status).toBe(200);
-      const responseData = await response.json();
+      const responseData = await response.json() as GetProcessResponse;
       expect(responseData.success).toBe(true);
       expect(responseData.process.id).toBe('proc-123');
       expect(responseData.process.stdout).toBe('Process output');
@@ -294,7 +303,7 @@ describe('ProcessHandler', () => {
       const response = await processHandler.handle(request, mockContext);
 
       expect(response.status).toBe(404);
-      const responseData = await response.json();
+      const responseData = await response.json() as HandlerErrorResponse;
       expect(responseData.success).toBe(false);
       expect(responseData.code).toBe('PROCESS_NOT_FOUND');
     });
@@ -313,7 +322,7 @@ describe('ProcessHandler', () => {
       const response = await processHandler.handle(request, mockContext);
 
       expect(response.status).toBe(200);
-      const responseData = await response.json();
+      const responseData = await response.json() as KillProcessResponse;
       expect(responseData.success).toBe(true);
       expect(responseData.message).toBe('Process killed successfully');
 
@@ -344,7 +353,7 @@ describe('ProcessHandler', () => {
       const response = await processHandler.handle(request, mockContext);
 
       expect(response.status).toBe(404);
-      const responseData = await response.json();
+      const responseData = await response.json() as HandlerErrorResponse;
       expect(responseData.code).toBe('PROCESS_ALREADY_TERMINATED');
     });
   });
@@ -363,7 +372,7 @@ describe('ProcessHandler', () => {
       const response = await processHandler.handle(request, mockContext);
 
       expect(response.status).toBe(200);
-      const responseData = await response.json();
+      const responseData = await response.json() as KillAllProcessesResponse;
       expect(responseData.success).toBe(true);
       expect(responseData.message).toBe('All processes killed successfully');
       expect(responseData.killedCount).toBe(3);
@@ -393,7 +402,7 @@ describe('ProcessHandler', () => {
       const response = await processHandler.handle(request, mockContext);
 
       expect(response.status).toBe(500);
-      const responseData = await response.json();
+      const responseData = await response.json() as HandlerErrorResponse;
       expect(responseData.code).toBe('KILL_ALL_ERROR');
     });
   });
@@ -425,7 +434,7 @@ describe('ProcessHandler', () => {
       const response = await processHandler.handle(request, mockContext);
 
       expect(response.status).toBe(200);
-      const responseData = await response.json();
+      const responseData = await response.json() as ProcessLogsResponse;
       expect(responseData.success).toBe(true);
       expect(responseData.processId).toBe('proc-123');
       expect(responseData.stdout).toBe('test output');
@@ -448,7 +457,7 @@ describe('ProcessHandler', () => {
       const response = await processHandler.handle(request, mockContext);
 
       expect(response.status).toBe(404);
-      const responseData = await response.json();
+      const responseData = await response.json() as HandlerErrorResponse;
       expect(responseData.code).toBe('PROCESS_NOT_FOUND');
     });
   });
@@ -517,7 +526,7 @@ describe('ProcessHandler', () => {
       const response = await processHandler.handle(request, mockContext);
 
       expect(response.status).toBe(404);
-      const responseData = await response.json();
+      const responseData = await response.json() as HandlerErrorResponse;
       expect(responseData.code).toBe('STREAM_ERROR');
     });
 
@@ -540,7 +549,7 @@ describe('ProcessHandler', () => {
       const response = await processHandler.handle(request, mockContext);
 
       expect(response.status).toBe(404);
-      const responseData = await response.json();
+      const responseData = await response.json() as HandlerErrorResponse;
       expect(responseData.code).toBe('PROCESS_NOT_FOUND');
 
       expect(mockLogger.error).toHaveBeenCalledWith(
@@ -572,7 +581,7 @@ describe('ProcessHandler', () => {
       const response = await processHandler.handle(request, mockContext);
 
       expect(response.status).toBe(404);
-      const responseData = await response.json();
+      const responseData = await response.json() as HandlerErrorResponse;
       expect(responseData.error).toBe('Process not found');
     });
 
@@ -593,7 +602,7 @@ describe('ProcessHandler', () => {
       const response = await processHandler.handle(request, mockContext);
 
       expect(response.status).toBe(404);
-      const responseData = await response.json();
+      const responseData = await response.json() as HandlerErrorResponse;
       expect(responseData.error).toBe('Process not found');
     });
 
@@ -605,7 +614,7 @@ describe('ProcessHandler', () => {
       const response = await processHandler.handle(request, mockContext);
 
       expect(response.status).toBe(404);
-      const responseData = await response.json();
+      const responseData = await response.json() as HandlerErrorResponse;
       expect(responseData.error).toBe('Invalid process endpoint');
     });
 
@@ -617,7 +626,7 @@ describe('ProcessHandler', () => {
       const response = await processHandler.handle(request, mockContext);
 
       expect(response.status).toBe(404);
-      const responseData = await response.json();
+      const responseData = await response.json() as HandlerErrorResponse;
       expect(responseData.error).toBe('Invalid process endpoint');
     });
   });
