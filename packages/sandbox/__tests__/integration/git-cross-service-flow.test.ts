@@ -10,10 +10,8 @@
 import { Container } from '@container/core/container';
 import { Router } from '@container/core/router';
 import { setupRoutes } from '@container/routes/setup';
-import type { ExecuteResponse } from '../../clients/command-client';
-import type { ReadFileResponse } from '../../clients/file-client';
-import type { GitCheckoutResponse } from '../../clients/git-client';
-import type { ApiErrorResponse } from '../../clients/types';
+import type { ExecuteResponse, GitCheckoutResponse } from 'src/clients';
+import type { ApiErrorResponse } from 'src/clients/types';
 
 // Mock Bun globals for Git and file operations
 const mockBunSpawn = vi.fn();

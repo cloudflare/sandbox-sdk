@@ -104,19 +104,19 @@ interface ServiceResult<T> {
 
 ## Testing Architecture - Current
 
-### 3-Tier Testing Strategy (103 service tests + integration/e2e)
+### 3-Tier Testing Strategy
 
 1. **Unit Tests** (`src/__tests__/unit/`)
    - Client SDK testing with mocked HTTP
    - Security validation and utilities
    - Fast feedback during development
 
-2. **Container Tests** (`src/__tests__/container/`)
+2. **Container Tests** (`container_src/__tests__/`)
    - Service layer testing with ServiceResult validation (Node.js with mocks)
    - Handler testing with proper mocking (no Docker needed)
-   - **Current focus**: 103 service tests (mocked services)
+   - Service layer business logic with comprehensive mocking
 
-3. **Container Integration Tests** (`src/__tests__/container-integration/`)
+3. **Integration Tests** (`__tests__/integration/`)
    - End-to-end workflow validation across multiple services
    - Complete request flows: validation → middleware → handler → response
    - Cross-service integration testing (Git + File + Process workflows)

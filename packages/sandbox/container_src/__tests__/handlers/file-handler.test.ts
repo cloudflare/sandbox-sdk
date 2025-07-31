@@ -5,7 +5,7 @@
  * Demonstrates testing handlers with file system operations and CRUD functionality.
  */
 
-import type { DeleteFileResponse, Logger, MkdirResponse, MoveFileResponse, ReadFileResponse, RenameFileResponse, RequestContext, ValidatedRequestContext, WriteFileResponse } from '@container/core/types';
+import type { Logger, MkdirResponse, MoveFileResponse, ReadFileResponse, RenameFileResponse, RequestContext, ValidatedRequestContext, WriteFileResponse } from '@container/core/types';
 import type { FileHandler } from '@container/handlers/file-handler';
 import type { FileService } from '@container/services/file-service';
 import type { ContainerErrorResponse } from '@container/utils/error-mapping';

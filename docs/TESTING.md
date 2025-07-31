@@ -37,18 +37,19 @@ Tests individual SDK components without external dependencies:
 
 ### 2. Container Tests
 **Environment**: Node.js (mocked container services)
-**Location**: `src/__tests__/container/`  
+**Location**: `container_src/__tests__/`  
 **Requirements**: None (no Docker needed)
 **Purpose**: Test service layer business logic with intelligent mocking
 
 Tests individual services in isolation:
-- **Services**: GitService, PortService, ProcessService, FileService, SessionService
-- **Handlers**: HTTP endpoint implementations with mocked dependencies
-- **Security**: SecurityService validation and request validation
+- **Services** (`services/`): GitService, PortService, ProcessService, FileService, SessionService
+- **Handlers** (`handlers/`): HTTP endpoint implementations with mocked dependencies
+- **Security** (`security/`): SecurityService validation
+- **Validation** (`validation/`): Request validation and schema validation
 
-### 3. Container Integration Tests
+### 3. Integration Tests
 **Environment**: Node.js (mocked container services)
-**Location**: `src/__tests__/container-integration/`  
+**Location**: `__tests__/integration/`  
 **Requirements**: None (no Docker needed)
 **Purpose**: Test complete workflows across multiple services
 

@@ -10,7 +10,7 @@
 import { Container } from '@container/core/container';
 import { Router } from '@container/core/router';
 import { setupRoutes } from '@container/routes/setup';
-import type { MkdirResponse, ReadFileResponse, WriteFileResponse } from '../../clients/file-client';
+import { ReadFileResponse } from 'src/clients/file-client';
 
 // Mock Bun globals for file operations
 const mockBunFile = vi.fn();

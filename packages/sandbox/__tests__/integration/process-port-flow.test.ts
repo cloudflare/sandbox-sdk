@@ -10,9 +10,8 @@
 import { Container } from '@container/core/container';
 import { Router } from '@container/core/router';
 import { setupRoutes } from '@container/routes/setup';
-import type { ExposePortResponse, GetExposedPortsResponse } from '../../clients/port-client';
-import type { KillAllProcessesResponse, ListProcessesResponse, StartProcessResponse } from '../../clients/process-client';
-import type { ApiErrorResponse } from '../../clients/types';
+import type { ExposePortResponse, GetExposedPortsResponse, KillAllProcessesResponse, ListProcessesResponse, StartProcessResponse } from 'src/clients';
+import type { ApiErrorResponse } from 'src/clients/types';
 
 // Mock Bun globals for process and port operations
 const mockBunSpawn = vi.fn();
@@ -38,11 +37,11 @@ describe('Process and Port Management Integration Flow', () => {
     // Setup Bun.spawn mock for process operations
     mockBunSpawn.mockImplementation((args: string[]) => {
       const command = args.join(' ');
-      
+
       // Simulate long-running background processes
       if (command.includes('sleep') || command.includes('server') || command.includes('node')) {
         return {
-          exited: new Promise(() => {}), // Never resolves for background processes
+          exited: new Promise(() => { }), // Never resolves for background processes
           exitCode: undefined,
           stdout: new ReadableStream({
             start(controller) {
@@ -57,7 +56,7 @@ describe('Process and Port Management Integration Flow', () => {
           kill: vi.fn().mockReturnValue(true),
         };
       }
-      
+
       // Simulate quick commands
       return {
         exited: Promise.resolve(),
@@ -239,7 +238,7 @@ describe('Process and Port Management Integration Flow', () => {
 
     it('should handle process termination and port cleanup', async () => {
       // Test cleanup workflow when processes are terminated
-      
+
       // Kill all processes
       const killAllRequest = new Request('http://localhost:3000/api/process/kill-all', {
         method: 'DELETE'
@@ -257,7 +256,7 @@ describe('Process and Port Management Integration Flow', () => {
   describe('error boundary and resource management', () => {
     it('should handle port conflicts gracefully', async () => {
       // This tests how the system handles resource conflicts
-      
+
       // Try to expose the same port twice
       const firstExpose = new Request('http://localhost:3000/api/expose-port', {
         method: 'POST',
@@ -281,7 +280,7 @@ describe('Process and Port Management Integration Flow', () => {
       });
 
       const secondResponse = await router.route(secondExpose);
-      
+
       // Should handle the conflict (port already exposed error)
       expect([400, 409]).toContain(secondResponse.status);
     });
@@ -304,7 +303,7 @@ describe('Process and Port Management Integration Flow', () => {
       });
 
       const response = await router.route(failingProcessRequest);
-      
+
       // Should handle spawn failure gracefully
       expect([400, 500]).toContain(response.status);
       const responseData = await response.json() as ApiErrorResponse;
