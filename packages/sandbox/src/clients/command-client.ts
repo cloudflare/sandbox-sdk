@@ -18,7 +18,6 @@ export interface ExecuteResponse extends BaseApiResponse {
   command: string;
 }
 
-
 /**
  * Client for command execution operations
  */
@@ -37,7 +36,7 @@ export class CommandClient extends BaseHttpClient {
     try {
       const data = this.withSession({ command }, sessionId);
 
-      const response = await this.postJson<ExecuteResponse>(
+      const response = await this.post<ExecuteResponse>(
         '/api/execute',
         data
       );

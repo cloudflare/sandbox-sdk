@@ -81,7 +81,7 @@ export abstract class BaseHttpClient {
   /**
    * Make a POST request with JSON body
    */
-  protected async postJson<T>(
+  protected async post<T>(
     endpoint: string,
     data: Record<string, any>,
     responseHandler?: ResponseHandler<T>

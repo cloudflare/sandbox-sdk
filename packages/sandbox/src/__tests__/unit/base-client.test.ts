@@ -58,7 +58,7 @@ class TestHttpClient extends BaseHttpClient {
   // Public test methods that expose protected functionality
   public async testRequest<T = BaseApiResponse>(endpoint: string, data?: Record<string, unknown>): Promise<T> {
     if (data) {
-      return this.postJson<T>(endpoint, this.withSession(data));
+      return this.post<T>(endpoint, this.withSession(data));
     }
     return this.get<T>(endpoint);
   }

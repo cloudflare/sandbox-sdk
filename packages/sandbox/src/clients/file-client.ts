@@ -92,7 +92,7 @@ export class FileClient extends BaseHttpClient {
         recursive: options?.recursive ?? false,
       }, options?.sessionId);
 
-      const response = await this.postJson<MkdirResponse>('/api/mkdir', data);
+      const response = await this.post<MkdirResponse>('/api/mkdir', data);
       
       this.logSuccess('Directory created', `${path} (recursive: ${data.recursive})`);
       return response;
@@ -117,7 +117,7 @@ export class FileClient extends BaseHttpClient {
         encoding: options?.encoding ?? 'utf8',
       }, options?.sessionId);
 
-      const response = await this.postJson<WriteFileResponse>('/api/write', data);
+      const response = await this.post<WriteFileResponse>('/api/write', data);
       
       this.logSuccess('File written', `${path} (${content.length} chars)`);
       return response;
@@ -140,7 +140,7 @@ export class FileClient extends BaseHttpClient {
         encoding: options?.encoding ?? 'utf8',
       }, options?.sessionId);
 
-      const response = await this.postJson<ReadFileResponse>('/api/read', data);
+      const response = await this.post<ReadFileResponse>('/api/read', data);
       
       this.logSuccess('File read', `${path} (${response.content.length} chars)`);
       return response;
@@ -160,7 +160,7 @@ export class FileClient extends BaseHttpClient {
     try {
       const data = this.withSession({ path }, sessionId);
 
-      const response = await this.postJson<FileOperationResponse>('/api/delete', data);
+      const response = await this.post<FileOperationResponse>('/api/delete', data);
       
       this.logSuccess('File deleted', path);
       return response;
@@ -181,7 +181,7 @@ export class FileClient extends BaseHttpClient {
     try {
       const data = this.withSession({ oldPath: path, newPath }, sessionId);
 
-      const response = await this.postJson<FileOperationResponse>('/api/rename', data);
+      const response = await this.post<FileOperationResponse>('/api/rename', data);
       
       this.logSuccess('File renamed', `${path} -> ${newPath}`);
       return response;
@@ -202,7 +202,7 @@ export class FileClient extends BaseHttpClient {
     try {
       const data = this.withSession({ sourcePath: path, destinationPath: newPath }, sessionId);
 
-      const response = await this.postJson<FileOperationResponse>('/api/move', data);
+      const response = await this.post<FileOperationResponse>('/api/move', data);
       
       this.logSuccess('File moved', `${path} -> ${newPath}`);
       return response;

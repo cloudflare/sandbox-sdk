@@ -92,7 +92,7 @@ export class ProcessClient extends BaseHttpClient {
         processId: options?.processId,
       }, options?.sessionId);
 
-      const response = await this.postJson<StartProcessResponse>(
+      const response = await this.post<StartProcessResponse>(
         '/api/process/start',
         data
       );

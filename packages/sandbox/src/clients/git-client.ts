@@ -48,7 +48,7 @@ export class GitClient extends BaseHttpClient {
         targetDir: options?.targetDir || this.extractRepoName(repoUrl),
       }, options?.sessionId);
 
-      const response = await this.postJson<GitCheckoutResponse>(
+      const response = await this.post<GitCheckoutResponse>(
         '/api/git/checkout',
         data
       );

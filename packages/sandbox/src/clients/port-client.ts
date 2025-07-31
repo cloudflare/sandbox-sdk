@@ -68,7 +68,7 @@ export class PortClient extends BaseHttpClient {
     try {
       const data = this.withSession({ port, name }, sessionId);
 
-      const response = await this.postJson<ExposePortResponse>(
+      const response = await this.post<ExposePortResponse>(
         '/api/expose-port',
         data
       );
