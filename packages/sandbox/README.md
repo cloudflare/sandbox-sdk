@@ -176,7 +176,7 @@ for await (const log of parseSSEStream<LogEvent>(logStream)) {
 Write content to a file.
 
 ```typescript
-await sandbox.writeFile("/app.js", "console.log('Hello!');");
+await sandbox.writeFile("/workspace/app.js", "console.log('Hello!');");
 ```
 
 #### `readFile(path, options?)`
@@ -314,7 +314,7 @@ const sandbox = getSandbox(env.Sandbox, "node-app");
 
 // Write a simple Express server
 await sandbox.writeFile(
-  "/app.js",
+  "/workspace/app.js",
   `
   const express = require('express');
   const app = express();
@@ -498,7 +498,7 @@ Maintain context across commands:
 const sessionId = crypto.randomUUID();
 
 // Commands in the same session share working directory
-await sandbox.exec("cd /app", { sessionId });
+await sandbox.exec("cd /workspace", { sessionId });
 await sandbox.exec("npm install", { sessionId });
 const app = await sandbox.startProcess("npm start", { sessionId });
 ```

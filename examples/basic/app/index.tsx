@@ -1426,7 +1426,7 @@ function FilesTab({
           <div className="input-group">
             <input
               type="text"
-              placeholder="File path (e.g., /app/package.json)"
+              placeholder="File path (e.g., /workspace/package.json)"
               value={selectedFile || ""}
               onChange={(e) => setSelectedFile(e.target.value)}
               className="file-input"
@@ -1455,7 +1455,7 @@ function FilesTab({
           <div className="input-group">
             <input
               type="text"
-              placeholder="File path (e.g., /app/hello.txt)"
+              placeholder="File path (e.g., /workspace/hello.txt)"
               value={newFileName}
               onChange={(e) => setNewFileName(e.target.value)}
               className="file-input"
@@ -1485,7 +1485,7 @@ function FilesTab({
           <div className="input-group">
             <input
               type="text"
-              placeholder="Directory path (e.g., /app/src)"
+              placeholder="Directory path (e.g., /workspace/src)"
               value={newDirName}
               onChange={(e) => setNewDirName(e.target.value)}
               className="file-input"

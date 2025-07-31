@@ -72,7 +72,7 @@ export async function handleStartProcessRequest(
         // Start the actual process
         try {
             const spawnOptions: SpawnOptions = {
-                cwd: options.cwd || process.cwd(),
+                cwd: options.cwd || "/workspace", // Default to /workspace for consistency with exec commands
                 env: { ...process.env, ...options.env },
                 detached: false,
                 shell: true,

@@ -56,21 +56,23 @@ COPY --from=bun-source /usr/local/bin/bun /usr/local/bin/bun
 COPY --from=bun-source /usr/local/bin/bunx /usr/local/bin/bunx
 
 
-# Set up working directory
-WORKDIR /app
+# Set up container server directory
+WORKDIR /container-server
 
 # Verify installations
 RUN python3 --version && \
     node --version && \
     npm --version && \
     bun --version
-    
 
-# Copy container source files
+# Copy container source files to server directory
 COPY container_src/ ./
+
+# Create clean workspace directory for users
+RUN mkdir -p /workspace
 
 # Expose the application port
 EXPOSE 3000
 
-# Run the application
+# Run the application from container server directory
 CMD ["bun", "index.ts"]

@@ -16,7 +16,7 @@ function executeCommand(
       shell: true,
       stdio: ["pipe", "pipe", "pipe"] as const,
       detached: options.background || false,
-      cwd: options.cwd,
+      cwd: options.cwd || "/workspace", // Default to /workspace instead of current working directory
       env: options.env ? { ...process.env, ...options.env } : process.env
     };
 
@@ -186,6 +186,7 @@ export async function handleStreamingExecuteRequest(
           shell: true,
           stdio: ["pipe", "pipe", "pipe"] as const,
           detached: background || false,
+          cwd: "/workspace", // Default to /workspace for consistency
         };
 
         const child = spawn(command, spawnOptions);
