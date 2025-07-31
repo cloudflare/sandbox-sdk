@@ -1160,6 +1160,54 @@ body {
   box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.2);
 }
 
+/* Command Options */
+.command-options {
+  margin-bottom: 1.5rem;
+}
+
+.option-group {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.option-input {
+  flex: 1;
+  min-width: 200px;
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+  color: #c9d1d9;
+  font-size: 0.875rem;
+  font-family: "Inter", sans-serif;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.option-input:focus {
+  outline: none;
+  border-color: #58a6ff;
+  box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.1);
+}
+
+.option-input::placeholder {
+  color: #6e7681;
+}
+
+.option-input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+@media (max-width: 768px) {
+  .option-group {
+    flex-direction: column;
+  }
+  .option-input {
+    min-width: auto;
+  }
+}
+
 .command-prompt {
   color: #3fb950;
   font-family: "Fira Code", monospace;

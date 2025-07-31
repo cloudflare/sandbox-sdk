@@ -2278,9 +2278,14 @@ function SandboxTester() {
   >("disconnected");
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [commandInput, setCommandInput] = useState("");
+  const [commandOptions, setCommandOptions] = useState({
+    cwd: "",
+    env: "",
+  });
   const [results, setResults] = useState<CommandResult[]>([]);
   const [isExecuting, setIsExecuting] = useState(false);
   const resultsEndRef = useRef<HTMLDivElement>(null);
+  const commandInputRef = useRef<HTMLInputElement>(null);
 
   // Auto-scroll to bottom when new results are added
   useEffect(() => {
@@ -2416,11 +2421,27 @@ function SandboxTester() {
       };
       setResults((prev) => [...prev, newResult]);
 
-      // Execute the command
-      console.log("Executing command:", trimmedCommand);
-      const result = await client.execute(trimmedCommand, [], {
+      // Parse command options
+      const options: { sessionId?: string; cwd?: string; env?: Record<string, string> } = {
         sessionId: sessionId || undefined,
-      });
+      };
+
+      if (commandOptions.cwd.trim()) {
+        options.cwd = commandOptions.cwd.trim();
+      }
+
+      if (commandOptions.env.trim()) {
+        const env: Record<string, string> = {};
+        commandOptions.env.split(",").forEach((pair) => {
+          const [key, value] = pair.split("=");
+          if (key && value) env[key.trim()] = value.trim();
+        });
+        options.env = env;
+      }
+
+      // Execute the command
+      console.log("Executing command:", trimmedCommand, "with options:", options);
+      const result = await client.execute(trimmedCommand, [], options);
       console.log("Result:", result);
 
       // Update the result with the response
@@ -2437,6 +2458,11 @@ function SandboxTester() {
       });
 
       setCommandInput("");
+
+      // Refocus the input for better UX
+      setTimeout(() => {
+        commandInputRef.current?.focus();
+      }, 0);
     } catch (error: any) {
       console.error("Failed to execute command:", error);
       setResults((prev) => {
@@ -2448,6 +2474,11 @@ function SandboxTester() {
         }
         return updated;
       });
+
+      // Refocus the input even on error
+      setTimeout(() => {
+        commandInputRef.current?.focus();
+      }, 100);
     } finally {
       setIsExecuting(false);
     }
@@ -2479,18 +2510,32 @@ function SandboxTester() {
       };
       setResults((prev) => [...prev, newResult]);
 
-      // Execute the command with streaming
-      console.log("Executing streaming command:", trimmedCommand);
-      await client.executeStream(trimmedCommand, [], {
+      // Parse command options (same as regular execute)
+      const options: { sessionId?: string; cwd?: string; env?: Record<string, string> } = {
         sessionId: sessionId || undefined,
-      });
+      };
+
+      if (commandOptions.cwd.trim()) {
+        options.cwd = commandOptions.cwd.trim();
+      }
+
+      if (commandOptions.env.trim()) {
+        const env: Record<string, string> = {};
+        commandOptions.env.split(",").forEach((pair) => {
+          const [key, value] = pair.split("=");
+          if (key && value) env[key.trim()] = value.trim();
+        });
+        options.env = env;
+      }
+
+      // Execute the command with streaming
+      console.log("Executing streaming command:", trimmedCommand, "with options:", options);
+      await client.executeStream(trimmedCommand, [], options);
       const commandParts = trimmedCommand.split(" ");
       const cmd = commandParts[0];
       const args = commandParts.slice(1);
       // Get the async generator
-      const streamGenerator = client.execStream(cmd, args, {
-        sessionId: sessionId || undefined,
-      });
+      const streamGenerator = client.execStream(cmd, args, options);
       // Iterate through the stream events
       for await (const event of streamGenerator) {
         console.log("Stream event:", event);
@@ -2517,6 +2562,11 @@ function SandboxTester() {
       console.log("Streaming command completed");
 
       setCommandInput("");
+
+      // Refocus the input for better UX
+      setTimeout(() => {
+        commandInputRef.current?.focus();
+      }, 0);
     } catch (error: any) {
       console.error("Failed to execute streaming command:", error);
       setResults((prev) => {
@@ -2528,6 +2578,11 @@ function SandboxTester() {
         }
         return updated;
       });
+
+      // Refocus the input even on error
+      setTimeout(() => {
+        commandInputRef.current?.focus();
+      }, 100);
     } finally {
       setIsExecuting(false);
     }
@@ -2622,6 +2677,7 @@ function SandboxTester() {
             <div className="command-bar">
               <span className="command-prompt">$</span>
               <input
+                ref={commandInputRef}
                 type="text"
                 className="command-input"
                 value={commandInput}
@@ -2655,6 +2711,32 @@ function SandboxTester() {
                 <button type="button" onClick={clearResults} className="btn">
                   Clear
                 </button>
+              </div>
+            </div>
+
+            {/* Command Options */}
+            <div className="command-options">
+              <div className="option-group">
+                <input
+                  type="text"
+                  placeholder="Working Directory (optional)"
+                  value={commandOptions.cwd}
+                  onChange={(e) =>
+                    setCommandOptions((prev) => ({ ...prev, cwd: e.target.value }))
+                  }
+                  className="option-input"
+                  disabled={isExecuting}
+                />
+                <input
+                  type="text"
+                  placeholder="Environment (KEY1=val1,KEY2=val2)"
+                  value={commandOptions.env}
+                  onChange={(e) =>
+                    setCommandOptions((prev) => ({ ...prev, env: e.target.value }))
+                  }
+                  className="option-input"
+                  disabled={isExecuting}
+                />
               </div>
             </div>
 
