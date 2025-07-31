@@ -8,8 +8,6 @@ FROM cloudflare/sandbox-test:0.1.3
 # arm64 build of the image.
 # FROM --platform=linux/arm64 cloudflare/sandbox-test:0.1.3
 
+# Expose the ports you want to expose
 EXPOSE 8080
 EXPOSE 3001
-
-# Run the same command as the original image
-CMD ["bun", "index.ts"]

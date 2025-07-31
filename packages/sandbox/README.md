@@ -66,10 +66,8 @@ npm install @cloudflare/sandbox
 ```dockerfile
 FROM docker.io/cloudflare/sandbox:0.1.3
 
+# Expose the ports you want to expose
 EXPOSE 3000
-
-# Run the same command as the original image
-CMD ["bun", "index.ts"]
 ```
 
 2. **Configure wrangler.json**:
@@ -284,7 +282,7 @@ The SDK handles:
 
 ```dockerfile
 # In your Dockerfile (only needed for local dev)
-FROM oven/bun:latest
+FROM docker.io/cloudflare/sandbox:0.1.3
 
 # Expose the ports you'll be using
 EXPOSE 3000  # For a web server
