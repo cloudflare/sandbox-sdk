@@ -7,7 +7,8 @@
   },
   "description": "A sandboxed environment for running commands",
   "dependencies": {
-    "@cloudflare/containers": "^0.0.25"
+    "@cloudflare/containers": "^0.0.25",
+    "zod": "^3.22.3"
   },
   "tags": [
     "sandbox",
@@ -18,9 +19,16 @@
   ],
   "scripts": {
     "build": "rm -rf dist && tsup src/*.ts --outDir dist --dts --sourcemap --format esm",
+    "check": "biome check && npm run typecheck",
+    "fix": "biome check --fix && npm run typecheck",
+    "typecheck": "tsc --noEmit",
     "docker:local": "docker build . -t cloudflare/sandbox-test:$npm_package_version",
     "docker:publish": "docker buildx build --platform linux/amd64,linux/arm64 -t cloudflare/sandbox:$npm_package_version --push .",
-    "docker:publish:beta": "docker buildx build --platform linux/amd64,linux/arm64 -t cloudflare/sandbox:$npm_package_version-beta --push ."
+    "docker:publish:beta": "docker buildx build --platform linux/amd64,linux/arm64 -t cloudflare/sandbox:$npm_package_version-beta --push .",
+    "test": "npm run test:unit && npm run test:container",
+    "test:coverage": "vitest run --coverage --config vitest.unit.config.ts",
+    "test:unit": "vitest run --config vitest.unit.config.ts",
+    "test:container": "vitest run --config vitest.container.config.ts"
   },
   "exports": {
     ".": {

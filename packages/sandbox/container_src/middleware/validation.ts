@@ -1,0 +1,170 @@
+// Validation Middleware
+import type { Middleware, NextFunction, RequestContext, ValidatedRequestContext, ValidationResult } from '../core/types';
+import type { RequestValidator } from '../validation/request-validator';
+
+export class ValidationMiddleware implements Middleware {
+  constructor(private validator: RequestValidator) {}
+
+  async handle(
+    request: Request,
+    context: RequestContext,
+    next: NextFunction
+  ): Promise<Response> {
+    const url = new URL(request.url);
+    const pathname = url.pathname;
+
+    console.log(`[ValidationMiddleware] Processing ${request.method} ${pathname}`);
+
+    // Skip validation for certain endpoints
+    if (this.shouldSkipValidation(pathname)) {
+      console.log(`[ValidationMiddleware] Skipping validation for ${pathname}`);
+      return await next();
+    }
+
+    // Only validate requests with JSON bodies
+    if (request.method === 'POST' || request.method === 'PUT') {
+      try {
+        const contentType = request.headers.get('content-type');
+        if (contentType?.includes('application/json')) {
+          // Parse request body for validation
+          const body = await request.json();
+          
+          // Validate based on endpoint
+          const validationResult = this.validateByEndpoint(pathname, body);
+          console.log(`[ValidationMiddleware] Validation result for ${pathname}:`, {
+            isValid: validationResult.isValid,
+            hasData: !!validationResult.data,
+            errorCount: validationResult.errors?.length || 0
+          });
+          
+          if (!validationResult.isValid) {
+            return new Response(
+              JSON.stringify({
+                error: 'Validation Error',
+                message: 'Request validation failed',
+                details: validationResult.errors,
+                timestamp: new Date().toISOString(),
+              }),
+              {
+                status: 400,
+                headers: {
+                  'Content-Type': 'application/json',
+                  ...context.corsHeaders,
+                },
+              }
+            );
+          }
+
+          // Create new request with validated data
+          const validatedRequest = new Request(request.url, {
+            method: request.method,
+            headers: request.headers,
+            body: JSON.stringify(validationResult.data),
+          });
+
+          // Store validated data in context for handlers
+          const validatedContext = context as ValidatedRequestContext<unknown>;
+          validatedContext.originalRequest = request;
+          validatedContext.validatedData = validationResult.data;
+          
+          console.log(`[ValidationMiddleware] Storing validated data in context for ${pathname}`);
+          return await next();
+        }
+      } catch (error) {
+        return new Response(
+          JSON.stringify({
+            error: 'Invalid JSON',
+            message: 'Request body must be valid JSON',
+            timestamp: new Date().toISOString(),
+          }),
+          {
+            status: 400,
+            headers: {
+              'Content-Type': 'application/json',
+              ...context.corsHeaders,
+            },
+          }
+        );
+      }
+    }
+
+    return await next();
+  }
+
+  private shouldSkipValidation(pathname: string): boolean {
+    const exactPatterns = [
+      '/',
+      '/api/ping',
+      '/api/commands',
+      '/api/session/list',
+      '/api/exposed-ports',
+      '/api/process/list',
+    ];
+    
+    const prefixPatterns = [
+      '/proxy/',
+    ];
+
+    const exactMatch = exactPatterns.includes(pathname);
+    const prefixMatch = prefixPatterns.some(pattern => pathname.startsWith(pattern));
+    const shouldSkip = exactMatch || prefixMatch;
+    
+    console.log(`[ValidationMiddleware] shouldSkipValidation for ${pathname}:`, {
+      shouldSkip,
+      exactMatch,
+      prefixMatch
+    });
+    
+    return shouldSkip;
+  }
+
+  private validateByEndpoint(pathname: string, body: unknown): ValidationResult<unknown> {
+    switch (pathname) {
+      case '/api/execute':
+      case '/api/execute/stream':
+        return this.validator.validateExecuteRequest(body);
+
+      case '/api/read':
+        return this.validator.validateFileRequest(body, 'read');
+
+      case '/api/write':
+        return this.validator.validateFileRequest(body, 'write');
+
+      case '/api/delete':
+        return this.validator.validateFileRequest(body, 'delete');
+
+      case '/api/rename':
+        return this.validator.validateFileRequest(body, 'rename');
+
+      case '/api/move':
+        return this.validator.validateFileRequest(body, 'move');
+
+      case '/api/mkdir':
+        return this.validator.validateFileRequest(body, 'mkdir');
+
+      case '/api/expose-port':
+        return this.validator.validatePortRequest(body);
+
+      case '/api/process/start':
+        return this.validator.validateProcessRequest(body);
+
+      case '/api/git/checkout':
+        return this.validator.validateGitRequest(body);
+
+      default:
+        // For dynamic routes, try to determine validation type
+        if (pathname.startsWith('/api/process/') && pathname.split('/').length > 3) {
+          // Individual process operations don't need body validation
+          return { isValid: true, data: body, errors: [] };
+        }
+
+        if (pathname.startsWith('/api/exposed-ports/') && pathname.split('/').length > 3) {
+          // Individual port operations don't need body validation
+          return { isValid: true, data: body, errors: [] };
+        }
+
+        // Default: no validation required
+        return { isValid: true, data: body, errors: [] };
+    }
+  }
+}

@@ -1,5 +1,9 @@
 import { Container, getContainer } from "@cloudflare/containers";
-import { HttpClient } from "./client";
+import { SandboxClient } from "./clients";
+import {
+  ProcessNotFoundError,
+  SandboxError
+} from "./errors";
 import { isLocalhostPattern } from "./request-handler";
 import {
   logSecurityEvent,
@@ -8,6 +12,7 @@ import {
   validatePort
 } from "./security";
 import type {
+  ExecEvent,
   ExecOptions,
   ExecResult,
   ISandbox,
@@ -15,10 +20,6 @@ import type {
   ProcessOptions,
   ProcessStatus,
   StreamOptions
-} from "./types";
-import {
-  ProcessNotFoundError,
-  SandboxError
 } from "./types";
 
 export function getSandbox(ns: DurableObjectNamespace<Sandbox>, id: string) {
@@ -33,35 +34,36 @@ export function getSandbox(ns: DurableObjectNamespace<Sandbox>, id: string) {
 export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   defaultPort = 3000; // Default port for the container's Bun server
   sleepAfter = "3m"; // Sleep the sandbox if no requests are made in this timeframe
-  client: HttpClient;
+
+  client: SandboxClient;
   private sandboxName: string | null = null;
+  private portTokens: Map<number, string> = new Map();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
-    this.client = new HttpClient({
+    this.client = new SandboxClient({
       onCommandComplete: (success, exitCode, _stdout, _stderr, command) => {
         console.log(
           `[Container] Command completed: ${command}, Success: ${success}, Exit code: ${exitCode}`
         );
       },
-      onCommandStart: (command) => {
-        console.log(
-          `[Container] Command started: ${command}`
-        );
-      },
       onError: (error, _command) => {
         console.error(`[Container] Command error: ${error}`);
-      },
-      onOutput: (stream, data, _command) => {
-        console.log(`[Container] [${stream}] ${data}`);
       },
       port: 3000, // Control plane port
       stub: this,
     });
 
-    // Load the sandbox name from storage on initialization
+    // Load the sandbox name and port tokens from storage on initialization
     this.ctx.blockConcurrencyWhile(async () => {
       this.sandboxName = await this.ctx.storage.get<string>('sandboxName') || null;
+      const storedTokens = await this.ctx.storage.get<Record<string, string>>('portTokens') || {};
+
+      // Convert stored tokens back to Map
+      this.portTokens = new Map();
+      for (const [portStr, token] of Object.entries(storedTokens)) {
+        this.portTokens.set(parseInt(portStr, 10), token);
+      }
     });
   }
 
@@ -87,7 +89,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   override onStop() {
     console.log("Sandbox successfully shut down");
     if (this.client) {
-      this.client.clearSession();
+      this.client.setSessionId(null);
     }
   }
 
@@ -148,7 +150,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         result = await this.executeWithStreaming(command, options, startTime, timestamp);
       } else {
         // Regular execution
-        const response = await this.client.execute(
+        const response = await this.client.commands.execute(
           command,
           options?.sessionId
         );
@@ -185,10 +187,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     let stderr = '';
 
     try {
-      const stream = await this.client.executeCommandStream(command, options.sessionId);
+      const stream = await this.client.commands.executeStream(command, options.sessionId);
       const { parseSSEStream } = await import('./sse-parser');
 
-      for await (const event of parseSSEStream<import('./types').ExecEvent>(stream)) {
+      for await (const event of parseSSEStream<ExecEvent>(stream)) {
         // Check for cancellation
         if (options.signal?.aborted) {
           throw new Error('Operation was aborted');
@@ -212,9 +214,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           case 'complete': {
             // Use result from complete event if available
             const duration = Date.now() - startTime;
-            return event.result || {
-              success: event.exitCode === 0,
-              exitCode: event.exitCode || 0,
+            return {
+              success: (event.exitCode ?? 0) === 0,
+              exitCode: event.exitCode ?? 0,
               stdout,
               stderr,
               command,
@@ -225,7 +227,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           }
 
           case 'error':
-            throw new Error(event.error || 'Command execution failed');
+            throw new Error(event.data || 'Command execution failed');
         }
       }
 
@@ -241,7 +243,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   private mapExecuteResponseToExecResult(
-    response: import('./client').ExecuteResponse,
+    response: import('./clients').ExecuteResponse,
     duration: number,
     sessionId?: string
   ): ExecResult {
@@ -262,14 +264,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   async startProcess(command: string, options?: ProcessOptions): Promise<Process> {
     // Use the new HttpClient method to start the process
     try {
-      const response = await this.client.startProcess(command, {
+      const response = await this.client.processes.startProcess(command, {
         processId: options?.processId,
-        sessionId: options?.sessionId,
-        timeout: options?.timeout,
-        env: options?.env,
-        cwd: options?.cwd,
-        encoding: options?.encoding,
-        autoCleanup: options?.autoCleanup
+        sessionId: options?.sessionId
       });
 
       const process = response.process;
@@ -281,7 +278,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         startTime: new Date(process.startTime),
         endTime: undefined,
         exitCode: undefined,
-        sessionId: process.sessionId,
+        sessionId: options?.sessionId,
 
         async kill(): Promise<void> {
           throw new Error('Method will be replaced');
@@ -326,7 +323,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   async listProcesses(): Promise<Process[]> {
-    const response = await this.client.listProcesses();
+    const response = await this.client.processes.listProcesses();
 
     return response.processes.map(processData => ({
       id: processData.id,
@@ -336,7 +333,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       startTime: new Date(processData.startTime),
       endTime: processData.endTime ? new Date(processData.endTime) : undefined,
       exitCode: processData.exitCode,
-      sessionId: processData.sessionId,
+      sessionId: undefined, // Process list doesn't include sessionId from backend
 
       kill: async (signal?: string) => {
         await this.killProcess(processData.id, signal);
@@ -355,7 +352,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   async getProcess(id: string): Promise<Process | null> {
-    const response = await this.client.getProcess(id);
+    const response = await this.client.processes.getProcess(id);
     if (!response.process) {
       return null;
     }
@@ -369,7 +366,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       startTime: new Date(processData.startTime),
       endTime: processData.endTime ? new Date(processData.endTime) : undefined,
       exitCode: processData.exitCode,
-      sessionId: processData.sessionId,
+      sessionId: undefined, // Individual process doesn't include sessionId from backend
 
       kill: async (signal?: string) => {
         await this.killProcess(processData.id, signal);
@@ -390,7 +387,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   async killProcess(id: string, _signal?: string): Promise<void> {
     try {
       // Note: signal parameter is not currently supported by the HttpClient implementation
-      await this.client.killProcess(id);
+      await this.client.processes.killProcess(id);
     } catch (error) {
       if (error instanceof Error && error.message.includes('Process not found')) {
         throw new ProcessNotFoundError(id);
@@ -403,7 +400,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   async killAllProcesses(): Promise<number> {
-    const response = await this.client.killAllProcesses();
+    const response = await this.client.processes.killAllProcesses();
     return response.killedCount;
   }
 
@@ -414,12 +411,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     return 0;
   }
 
-  async getProcessLogs(id: string): Promise<{ stdout: string; stderr: string }> {
+  async getProcessLogs(id: string): Promise<{ stdout: string; stderr: string; processId: string }> {
     try {
-      const response = await this.client.getProcessLogs(id);
+      const response = await this.client.processes.getProcessLogs(id);
       return {
         stdout: response.stdout,
-        stderr: response.stderr
+        stderr: response.stderr,
+        processId: response.processId
       };
     } catch (error) {
       if (error instanceof Error && error.message.includes('Process not found')) {
@@ -437,11 +435,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       throw new Error('Operation was aborted');
     }
 
-    // Get the stream from HttpClient (need to add this method)
-    const stream = await this.client.executeCommandStream(command, options?.sessionId);
-
-    // Return the ReadableStream directly - can be converted to AsyncIterable by consumers
-    return stream;
+    // Get the stream from CommandClient
+    return this.client.commands.executeStream(command, options?.sessionId);
   }
 
   async streamProcessLogs(processId: string, options?: { signal?: AbortSignal }): Promise<ReadableStream<Uint8Array>> {
@@ -450,25 +445,25 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       throw new Error('Operation was aborted');
     }
 
-    // Get the stream from HttpClient
-    const stream = await this.client.streamProcessLogs(processId);
-
-    // Return the ReadableStream directly - can be converted to AsyncIterable by consumers
-    return stream;
+    // Get the stream from ProcessClient
+    return this.client.processes.streamProcessLogs(processId);
   }
 
   async gitCheckout(
     repoUrl: string,
     options: { branch?: string; targetDir?: string }
   ) {
-    return this.client.gitCheckout(repoUrl, options.branch, options.targetDir);
+    return this.client.git.checkout(repoUrl, {
+      branch: options.branch,
+      targetDir: options.targetDir
+    });
   }
 
   async mkdir(
     path: string,
     options: { recursive?: boolean } = {}
   ) {
-    return this.client.mkdir(path, options.recursive);
+    return this.client.files.mkdir(path, { recursive: options.recursive });
   }
 
   async writeFile(
@@ -476,43 +471,54 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     content: string,
     options: { encoding?: string } = {}
   ) {
-    return this.client.writeFile(path, content, options.encoding);
+    return this.client.files.writeFile(path, content, { encoding: options.encoding });
   }
 
   async deleteFile(path: string) {
-    return this.client.deleteFile(path);
+    return this.client.files.deleteFile(path);
   }
 
   async renameFile(
     oldPath: string,
     newPath: string
   ) {
-    return this.client.renameFile(oldPath, newPath);
+    return this.client.files.renameFile(oldPath, newPath);
   }
 
   async moveFile(
     sourcePath: string,
     destinationPath: string
   ) {
-    return this.client.moveFile(sourcePath, destinationPath);
+    return this.client.files.moveFile(sourcePath, destinationPath);
   }
 
   async readFile(
     path: string,
     options: { encoding?: string } = {}
   ) {
-    return this.client.readFile(path, options.encoding);
+    return this.client.files.readFile(path, { encoding: options.encoding });
   }
 
   async exposePort(port: number, options: { name?: string; hostname: string }) {
-    await this.client.exposePort(port, options?.name);
+    await this.client.ports.exposePort(port, options?.name);
 
     // We need the sandbox name to construct preview URLs
     if (!this.sandboxName) {
       throw new Error('Sandbox name not available. Ensure sandbox is accessed through getSandbox()');
     }
 
-    const url = this.constructPreviewUrl(port, this.sandboxName, options.hostname);
+    // Generate and store token for this port
+    const token = this.generatePortToken();
+    this.portTokens.set(port, token);
+    await this.persistPortTokens();
+
+    const url = this.constructPreviewUrl(port, this.sandboxName, options.hostname, token);
+
+    logSecurityEvent('PORT_TOKEN_GENERATED', {
+      port,
+      sandboxId: this.sandboxName,
+      tokenLength: token.length
+    }, 'low');
 
     return {
       url,
@@ -529,7 +535,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       throw new SecurityError(`Invalid port number: ${port}. Must be between 1024-65535 and not reserved.`);
     }
 
-    await this.client.unexposePort(port);
+    await this.client.ports.unexposePort(port);
+
+    // Clean up token for this port
+    if (this.portTokens.has(port)) {
+      this.portTokens.delete(port);
+      await this.persistPortTokens();
+    }
 
     logSecurityEvent('PORT_UNEXPOSED', {
       port
@@ -537,23 +549,80 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   async getExposedPorts(hostname: string) {
-    const response = await this.client.getExposedPorts();
+    const response = await this.client.ports.getExposedPorts();
 
     // We need the sandbox name to construct preview URLs
     if (!this.sandboxName) {
       throw new Error('Sandbox name not available. Ensure sandbox is accessed through getSandbox()');
     }
 
-    return response.ports.map(port => ({
-      url: this.constructPreviewUrl(port.port, this.sandboxName!, hostname),
-      port: port.port,
-      name: port.name,
-      exposedAt: port.exposedAt,
-    }));
+    return response.ports.map(port => {
+      // Get token for this port - must exist for all exposed ports
+      const token = this.portTokens.get(port.port);
+      if (!token) {
+        throw new Error(`Port ${port.port} is exposed but has no token. This should not happen.`);
+      }
+
+      return {
+        url: this.constructPreviewUrl(port.port, this.sandboxName!, hostname, token),
+        port: port.port,
+        name: port.name,
+        exposedAt: port.exposedAt,
+      };
+    });
   }
 
 
-  private constructPreviewUrl(port: number, sandboxId: string, hostname: string): string {
+  async isPortExposed(port: number): Promise<boolean> {
+    try {
+      const response = await this.client.ports.getExposedPorts();
+      return response.ports.some(exposedPort => exposedPort.port === port);
+    } catch (error) {
+      console.error(`[Sandbox] Error checking if port ${port} is exposed:`, error);
+      return false;
+    }
+  }
+
+  async validatePortToken(port: number, token: string): Promise<boolean> {
+    // First check if port is exposed
+    const isExposed = await this.isPortExposed(port);
+    if (!isExposed) {
+      return false;
+    }
+
+    // Get stored token for this port - must exist for all exposed ports
+    const storedToken = this.portTokens.get(port);
+    if (!storedToken) {
+      // This should not happen - all exposed ports must have tokens
+      console.error(`Port ${port} is exposed but has no token. This indicates a bug.`);
+      return false;
+    }
+
+    // Constant-time comparison to prevent timing attacks
+    return storedToken === token;
+  }
+
+  private generatePortToken(): string {
+    // Generate cryptographically secure 16-character token using Web Crypto API
+    // Available in Cloudflare Workers runtime
+    const array = new Uint8Array(12); // 12 bytes = 16 base64url chars (after padding removal)
+    crypto.getRandomValues(array);
+
+    // Convert to base64url format (URL-safe, no padding, lowercase)
+    const base64 = btoa(String.fromCharCode(...array));
+    return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '').toLowerCase();
+  }
+
+  private async persistPortTokens(): Promise<void> {
+    // Convert Map to plain object for storage
+    const tokensObj: Record<string, string> = {};
+    for (const [port, token] of this.portTokens.entries()) {
+      tokensObj[port.toString()] = token;
+    }
+    await this.ctx.storage.put('portTokens', tokensObj);
+  }
+
+  private constructPreviewUrl(port: number, sandboxId: string, hostname: string, token: string): string {
     if (!validatePort(port)) {
       logSecurityEvent('INVALID_PORT_REJECTED', {
         port,
@@ -586,8 +655,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       // Use URL constructor for safe URL building
       try {
         const baseUrl = new URL(`http://${host}:${mainPort}`);
-        // Construct subdomain safely
-        const subdomainHost = `${port}-${sanitizedSandboxId}.${host}`;
+        // Construct subdomain safely with mandatory token
+        const subdomainHost = `${port}-${sanitizedSandboxId}-${token}.${host}`;
         baseUrl.hostname = subdomainHost;
 
         const finalUrl = baseUrl.toString();
@@ -618,8 +687,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       const protocol = "https";
       const baseUrl = new URL(`${protocol}://${hostname}`);
 
-      // Construct subdomain safely
-      const subdomainHost = `${port}-${sanitizedSandboxId}.${hostname}`;
+      // Construct subdomain safely with mandatory token
+      const subdomainHost = `${port}-${sanitizedSandboxId}-${token}.${hostname}`;
       baseUrl.hostname = subdomainHost;
 
       const finalUrl = baseUrl.toString();
