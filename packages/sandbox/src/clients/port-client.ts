@@ -62,10 +62,11 @@ export class PortClient extends BaseHttpClient {
    */
   async exposePort(
     port: number,
-    name?: string
+    name?: string,
+    sessionId?: string
   ): Promise<ExposePortResponse> {
     try {
-      const data: ExposePortRequest = { port, name };
+      const data = this.withSession({ port, name }, sessionId);
 
       const response = await this.postJson<ExposePortResponse>(
         '/api/expose-port',
@@ -87,7 +88,7 @@ export class PortClient extends BaseHttpClient {
   /**
    * Unexpose a port and remove its preview URL
    */
-  async unexposePort(port: number): Promise<UnexposePortResponse> {
+  async unexposePort(port: number, sessionId?: string): Promise<UnexposePortResponse> {
     try {
       const response = await this.delete<UnexposePortResponse>(
         `/api/exposed-ports/${port}`
@@ -104,7 +105,7 @@ export class PortClient extends BaseHttpClient {
   /**
    * Get all currently exposed ports
    */
-  async getExposedPorts(): Promise<GetExposedPortsResponse> {
+  async getExposedPorts(sessionId?: string): Promise<GetExposedPortsResponse> {
     try {
       const response = await this.get<GetExposedPortsResponse>('/api/exposed-ports');
 

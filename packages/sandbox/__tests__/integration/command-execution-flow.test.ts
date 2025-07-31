@@ -10,8 +10,8 @@
 import { Container } from '@container/core/container';
 import { Router } from '@container/core/router';
 import { setupRoutes } from '@container/routes/setup';
-import { ExecuteResponse } from 'src/clients';
-import { ApiErrorResponse, ValidationErrorResponse } from 'src/clients/types';
+import type { ExecuteResponse } from 'src/clients';
+import type { ApiErrorResponse, ValidationErrorResponse } from 'src/clients/types';
 
 // Mock Bun globals for command execution
 const mockBunSpawn = vi.fn();

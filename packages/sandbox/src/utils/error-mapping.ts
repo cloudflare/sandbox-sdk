@@ -69,7 +69,13 @@ export function mapContainerError(errorResponse: ErrorResponse & { code?: string
 
     case 'COMMAND_PERMISSION_DENIED':
     case 'COMMAND_EXECUTION_ERROR':
+    case 'INVALID_COMMAND':  // Add missing command error code
+    case 'STREAM_START_ERROR':  // Add missing streaming error code
       return new CommandError(message, extractCommandFromMessage(message), code, details);
+
+    // Response parsing errors
+    case 'INVALID_JSON_RESPONSE':
+      return new SandboxError(message, code, operation as SandboxOperationType, details);
 
     // Process errors
     case 'PROCESS_NOT_FOUND':

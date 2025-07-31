@@ -141,7 +141,15 @@ export abstract class BaseHttpClient {
       return customHandler(response);
     }
 
-    return response.json();
+    try {
+      return await response.json();
+    } catch (error) {
+      // Handle malformed JSON responses gracefully
+      throw mapContainerError({
+        error: `Invalid JSON response: ${error instanceof Error ? error.message : 'Unknown parsing error'}`,
+        code: 'INVALID_JSON_RESPONSE'
+      });
+    }
   }
 
   /**
