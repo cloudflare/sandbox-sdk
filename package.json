@@ -11,7 +11,6 @@
     "test:unit": "npm run test:unit -w @cloudflare/sandbox",
     "test:integration": "npm run test:integration -w @cloudflare/sandbox",
     "test:container": "npm run test:container -w @cloudflare/sandbox",
-    "test:contracts": "npm run test:contracts -w @cloudflare/sandbox",
     "test:coverage": "npm run test:coverage -w @cloudflare/sandbox",
     "toc": "doctoc README.md --github --maxlevel 3 && node scripts/fix-toc-links.js"
   },

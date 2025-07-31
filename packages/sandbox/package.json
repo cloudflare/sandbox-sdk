@@ -28,8 +28,7 @@
     "test": "npm run test:unit && npm run test:container",
     "test:coverage": "vitest run --coverage --config vitest.unit.config.ts",
     "test:unit": "vitest run --config vitest.unit.config.ts",
-    "test:container": "vitest run --config vitest.container.config.ts",
-    "test:contracts": "vitest run --config vitest.contracts.config.ts"
+    "test:container": "vitest run --config vitest.container.config.ts"
   },
   "exports": {
     ".": {

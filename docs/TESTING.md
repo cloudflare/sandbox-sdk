@@ -11,7 +11,6 @@ npm test
 # Run specific SDK test suites
 npm run test:unit        # SDK unit tests (Node.js environment)
 npm run test:container   # SDK container service tests (Node.js with mocks)
-npm run test:contracts   # SDK contract validation tests
 
 # SDK development testing
 npm run test:coverage    # Generate SDK test coverage report
@@ -20,7 +19,7 @@ npm run test:watch       # Watch mode for SDK development
 
 ## SDK Test Architecture
 
-**Comprehensive mocked testing across 3 tiers for validating SDK changes:**
+**Comprehensive mocked testing across 2 tiers for validating SDK changes:**
 
 > **Note**: We use mocked testing because `vitest` + `@cloudflare/vitest-pool-workers` are not yet ready to work with containers and have significant compatibility issues. We cannot currently test in the actual Workers + Containers environment that production uses. The Containers team is working on resolving this, but we've implemented thorough contract validation and service logic testing to ensure comprehensive coverage in the meantime.
 
@@ -36,29 +35,28 @@ Tests individual SDK components without external dependencies:
 - Cross-client behavior consistency
 - Request/response serialization
 
-### 2. Contract Tests  
-**Environment**: Node.js
-**Location**: `src/__tests__/contracts/`  
-**Purpose**: Validate HTTP API contracts and cross-cutting concerns
-
-Tests API consistency and client behavior:
-- HTTP API contract validation with type-safe validation
-- Cross-cutting concerns (timestamps, error formats, session handling)
-- Client uniformity across all SDK clients
-- Response structure validation using discriminated unions
-
-### 3. Container Tests
+### 2. Container Tests
 **Environment**: Node.js (mocked container services)
 **Location**: `src/__tests__/container/`  
 **Requirements**: None (no Docker needed)
 **Purpose**: Test service layer business logic with intelligent mocking
 
 Tests individual services in isolation:
-- **GitService**: Repository operations, security validation
-- **PortService**: Port management, HTTP proxying  
-- **ProcessService**: Command execution, background processes
-- **FileService**: File operations, path validation
-- **SessionService**: Session management, context isolation
+- **Services**: GitService, PortService, ProcessService, FileService, SessionService
+- **Handlers**: HTTP endpoint implementations with mocked dependencies
+- **Security**: SecurityService validation and request validation
+
+### 3. Container Integration Tests
+**Environment**: Node.js (mocked container services)
+**Location**: `src/__tests__/container-integration/`  
+**Requirements**: None (no Docker needed)
+**Purpose**: Test complete workflows across multiple services
+
+Tests end-to-end workflows:
+- Command execution flow with validation → middleware → handler → response
+- File operations flow with session context and security integration
+- Git cross-service workflows (clone → file read → command execution)
+- Process and port management lifecycle workflows
 
 ## Service Testing Patterns
 
@@ -217,7 +215,6 @@ describe('GitService', () => {
 |---------|---------|-------------|
 | `npm test` | Run all test suites | Node.js |
 | `npm run test:unit` | Fast unit tests only | Node.js |
-| `npm run test:contracts` | Contract validation tests | Node.js |
 | `npm run test:container` | Service layer tests (mocked) | Node.js |
 | `npm run test:coverage` | Generate coverage report | Node.js |
 
