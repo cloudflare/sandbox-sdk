@@ -159,7 +159,7 @@ export async function handleStreamingExecuteRequest(
 ): Promise<Response> {
   try {
     const body = (await req.json()) as ExecuteRequest;
-    const { command, sessionId, background } = body;
+    const { command, sessionId, background, cwd, env } = body;
 
     if (!command || typeof command !== "string") {
       return new Response(
@@ -186,7 +186,8 @@ export async function handleStreamingExecuteRequest(
           shell: true,
           stdio: ["pipe", "pipe", "pipe"] as const,
           detached: background || false,
-          cwd: "/workspace", // Default to /workspace for consistency
+          cwd: cwd || "/workspace", // Default to /workspace but respect user's cwd option
+          env: env ? { ...process.env, ...env } : process.env
         };
 
         const child = spawn(command, spawnOptions);
