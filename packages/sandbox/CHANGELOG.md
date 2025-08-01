@@ -1,5 +1,11 @@
 # @cloudflare/sandbox
 
+## 0.2.0
+
+### Minor Changes
+
+- [#47](https://github.com/cloudflare/sandbox-sdk/pull/47) [`8a93d0c`](https://github.com/cloudflare/sandbox-sdk/commit/8a93d0cae18a25bda6506b8b0a08d9e9eb3bb290) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Change default directory to a clean /workspace
+
 ## 0.1.4
 
 ### Patch Changes
