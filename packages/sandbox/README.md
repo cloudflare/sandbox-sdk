@@ -17,6 +17,10 @@
   - [Basic Setup](#basic-setup)
 - [📚 API Reference](#api-reference)
   - [Core Methods](#core-methods)
+- [🧪 Code Interpreter](#code-interpreter)
+  - [Code Execution](#code-execution)
+  - [Rich Outputs](#rich-outputs)
+  - [Output Formats](#output-formats)
 - [🌐 Port Forwarding](#port-forwarding)
   - [Utility Methods](#utility-methods)
 - [💡 Examples](#examples)
@@ -24,6 +28,7 @@
   - [Build and Test Code](#build-and-test-code)
   - [Interactive Development Environment](#interactive-development-environment)
   - [Expose Services with Preview URLs](#expose-services-with-preview-urls)
+  - [Data Analysis with Code Interpreter](#data-analysis-with-code-interpreter)
 - [🏗️ Architecture](#architecture)
 - [🛠️ Advanced Usage](#advanced-usage)
   - [AsyncIterable Streaming Support](#asynciterable-streaming-support)
@@ -50,6 +55,9 @@ The Cloudflare Sandbox SDK enables you to run isolated code environments directl
 - **🔄 Git Integration**: Clone repositories directly into sandboxes
 - **🚀 Streaming Support**: Real-time output streaming for long-running commands
 - **🎮 Session Management**: Maintain state across multiple operations
+- **🧪 Code Interpreter**: Execute Python and JavaScript with rich outputs (charts, tables, formatted data)
+- **📊 Multi-Language Support**: Persistent execution contexts for Python and JavaScript/TypeScript
+- **🎨 Rich MIME Types**: Automatic processing of images, HTML, charts, and structured data
 
 <h2 id="quick-start">🚀 Quick Start</h2>
 
@@ -246,6 +254,123 @@ console.log(result.stdout); // "production"
 - `unexposePort(port)` - Remove port exposure
 - `getExposedPorts()` - List all exposed ports with their URLs
 
+<h2 id="code-interpreter">🧪 Code Interpreter</h2>
+
+The Sandbox SDK includes powerful code interpreter capabilities, allowing you to execute Python and JavaScript code with rich outputs including charts, tables, and formatted data.
+
+### Code Execution
+
+#### `createCodeContext(options?)`
+
+Creates a new code execution context with persistent state.
+
+```typescript
+// Create a Python context
+const pythonCtx = await sandbox.createCodeContext({ language: 'python' });
+
+// Create a JavaScript context
+const jsCtx = await sandbox.createCodeContext({ language: 'javascript' });
+```
+
+**Options:**
+- `language`: Programming language (`'python'` | `'javascript'` | `'typescript'`)
+- `cwd`: Working directory (default: `/workspace`)
+- `envVars`: Environment variables for the context
+
+#### `runCode(code, options?)`
+
+Executes code with optional streaming callbacks.
+
+```typescript
+// Simple execution
+const execution = await sandbox.runCode('print("Hello World")', { 
+  context: pythonCtx 
+});
+
+// With streaming callbacks
+await sandbox.runCode(`
+for i in range(5):
+    print(f"Step {i}")
+    time.sleep(1)
+`, { 
+  context: pythonCtx,
+  onStdout: (output) => console.log('Real-time:', output.text),
+  onResult: (result) => console.log('Result:', result)
+});
+```
+
+**Options:**
+- `context`: Context to run the code in
+- `language`: Language if no context provided
+- `onStdout`: Callback for stdout output
+- `onStderr`: Callback for stderr output
+- `onResult`: Callback for execution results
+- `onError`: Callback for errors
+
+#### `runCodeStream(code, options?)`
+
+Returns a streaming response for real-time processing.
+
+```typescript
+const stream = await sandbox.runCodeStream('import time; [print(i) for i in range(10)]');
+// Process the stream as needed
+```
+
+### Rich Outputs
+
+The code interpreter automatically detects and processes various output types:
+
+```typescript
+// Data visualization
+const execution = await sandbox.runCode(`
+import matplotlib.pyplot as plt
+import numpy as np
+
+x = np.linspace(0, 10, 100)
+y = np.sin(x)
+plt.plot(x, y)
+plt.title('Sine Wave')
+plt.show()
+`, { 
+  context: pythonCtx,
+  onResult: (result) => {
+    if (result.png) {
+      // Base64 encoded PNG image
+      console.log('Chart generated!');
+    }
+  }
+});
+
+// HTML tables with pandas
+const tableExecution = await sandbox.runCode(`
+import pandas as pd
+df = pd.DataFrame({
+    'name': ['Alice', 'Bob', 'Charlie'],
+    'score': [92, 88, 95]
+})
+df
+`, { context: pythonCtx });
+
+// Access HTML table in execution.results[0].html
+```
+
+### Output Formats
+
+Results can include multiple formats:
+- `text`: Plain text representation
+- `html`: HTML (often pandas DataFrames)
+- `png`/`jpeg`: Base64 encoded images
+- `svg`: Vector graphics
+- `json`: Structured data
+- `chart`: Parsed chart information
+
+Check available formats with `result.formats()`.
+
+#### Additional Code Interpreter Methods
+
+- `listCodeContexts()` - List all active code contexts
+- `deleteCodeContext(contextId)` - Delete a specific context
+
 <h2 id="port-forwarding">🌐 Port Forwarding</h2>
 
 The SDK automatically handles preview URL routing for exposed ports. Just add one line to your worker:
@@ -404,14 +529,100 @@ console.log(`Service available at: ${preview.url}`);
 // See the example in examples/basic/src/index.ts for the routing implementation.
 ```
 
+### Data Analysis with Code Interpreter
+
+```typescript
+const sandbox = getSandbox(env.Sandbox, "analysis");
+
+// Create a Python context for data analysis
+const pythonCtx = await sandbox.createCodeContext({ language: 'python' });
+
+// Load and analyze data
+const analysis = await sandbox.runCode(`
+import pandas as pd
+import matplotlib.pyplot as plt
+
+# Create sample data
+data = {
+    'Month': ['Jan', 'Feb', 'Mar', 'Apr', 'May'],
+    'Sales': [10000, 12000, 15000, 14000, 18000],
+    'Profit': [2000, 2500, 3200, 2800, 4000]
+}
+df = pd.DataFrame(data)
+
+# Display summary statistics
+print("Sales Summary:")
+print(df.describe())
+
+# Create visualization
+plt.figure(figsize=(10, 6))
+plt.subplot(1, 2, 1)
+plt.bar(df['Month'], df['Sales'])
+plt.title('Monthly Sales')
+plt.xlabel('Month')
+plt.ylabel('Sales ($)')
+
+plt.subplot(1, 2, 2)
+plt.plot(df['Month'], df['Profit'], marker='o', color='green')
+plt.title('Monthly Profit')
+plt.xlabel('Month')
+plt.ylabel('Profit ($)')
+
+plt.tight_layout()
+plt.show()
+
+# Return the data as JSON
+df.to_dict('records')
+`, { 
+  context: pythonCtx,
+  onResult: (result) => {
+    if (result.png) {
+      // Handle the chart image
+      console.log('Chart generated:', result.png.substring(0, 50) + '...');
+    }
+    if (result.json) {
+      // Handle the structured data
+      console.log('Data:', result.json);
+    }
+  }
+});
+
+// Multi-language workflow: Process in Python, analyze in JavaScript
+await sandbox.runCode(`
+# Save processed data
+df.to_json('/tmp/sales_data.json', orient='records')
+`, { context: pythonCtx });
+
+const jsCtx = await sandbox.createCodeContext({ language: 'javascript' });
+const jsAnalysis = await sandbox.runCode(`
+const fs = require('fs');
+const data = JSON.parse(fs.readFileSync('/tmp/sales_data.json', 'utf8'));
+
+// Calculate growth rate
+const growth = data.map((curr, idx) => {
+  if (idx === 0) return { ...curr, growth: 0 };
+  const prev = data[idx - 1];
+  return {
+    ...curr,
+    growth: ((curr.Sales - prev.Sales) / prev.Sales * 100).toFixed(2) + '%'
+  };
+});
+
+console.log('Growth Analysis:', growth);
+growth;
+`, { context: jsCtx });
+```
+
 <h2 id="architecture">🏗️ Architecture</h2>
 
 The SDK leverages Cloudflare's infrastructure:
 
 - **Durable Objects**: Manages sandbox lifecycle and state
-- **Containers**: Provides isolated execution environments
+- **Containers**: Provides isolated execution environments with Jupyter kernels
 - **Workers**: Handles HTTP routing and API interface
 - **Edge Network**: Enables global distribution and low latency
+- **Jupyter Integration**: Python (IPython) and JavaScript (TSLab) kernels for code execution
+- **MIME Processing**: Automatic detection and handling of rich output formats
 
 <h2 id="advanced-usage">🛠️ Advanced Usage</h2>
 
@@ -521,6 +732,9 @@ sandbox.client.onCommandComplete = (success, code) =>
 - Maximum container runtime is limited by Durable Object constraints
 - WebSocket support for preview URLs coming soon
 - Some system calls may be restricted in the container environment
+- Code interpreter has no internet access (sandbox restriction)
+- Some Python/JavaScript packages may not be pre-installed
+- Resource limits apply to code execution (CPU, memory)
 
 <h2 id="contributing">🤝 Contributing</h2>
 

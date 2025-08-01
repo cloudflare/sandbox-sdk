@@ -209,7 +209,7 @@ export class HttpClient {
     this.baseUrl = this.options.baseUrl!;
   }
 
-  private async doFetch(
+  protected async doFetch(
     path: string,
     options?: RequestInit
   ): Promise<Response> {

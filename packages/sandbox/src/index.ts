@@ -18,3 +18,18 @@ export { asyncIterableToSSEStream, parseSSEStream, responseToAsyncIterable } fro
 
 // Export event types for streaming
 export type { ExecEvent, LogEvent } from "./types";
+
+// Export code interpreter types
+export type {
+  CodeContext,
+  CreateContextOptions,
+  RunCodeOptions,
+  Execution,
+  Result,
+  OutputMessage,
+  ExecutionError,
+  ChartData
+} from "./interpreter-types";
+
+// Export the implementations
+export { ResultImpl } from "./interpreter-types";

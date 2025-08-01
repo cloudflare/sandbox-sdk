@@ -1,5 +1,7 @@
 import { Container, getContainer } from "@cloudflare/containers";
 import { HttpClient } from "./client";
+import { JupyterClient } from "./jupyter-client";
+import { CodeInterpreter } from "./interpreter";
 import { isLocalhostPattern } from "./request-handler";
 import {
   logSecurityEvent,
@@ -16,6 +18,12 @@ import type {
   ProcessStatus,
   StreamOptions
 } from "./types";
+import type {
+  CodeContext,
+  CreateContextOptions,
+  RunCodeOptions,
+  Execution
+} from "./interpreter-types";
 import {
   ProcessNotFoundError,
   SandboxError
@@ -33,12 +41,13 @@ export function getSandbox(ns: DurableObjectNamespace<Sandbox>, id: string) {
 export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   defaultPort = 3000; // Default port for the container's Bun server
   sleepAfter = "3m"; // Sleep the sandbox if no requests are made in this timeframe
-  client: HttpClient;
+  client: JupyterClient;
   private sandboxName: string | null = null;
+  private codeInterpreter: CodeInterpreter;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
-    this.client = new HttpClient({
+    this.client = new JupyterClient({
       onCommandComplete: (success, exitCode, _stdout, _stderr, command) => {
         console.log(
           `[Container] Command completed: ${command}, Success: ${success}, Exit code: ${exitCode}`
@@ -58,6 +67,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       port: 3000, // Control plane port
       stub: this,
     });
+
+    // Initialize code interpreter
+    this.codeInterpreter = new CodeInterpreter(this);
 
     // Load the sandbox name from storage on initialization
     this.ctx.blockConcurrencyWhile(async () => {
@@ -646,5 +658,42 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       }, 'high');
       throw new SecurityError(`Failed to construct preview URL: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
+  }
+
+  // Code Interpreter Methods
+
+  /**
+   * Create a new code execution context
+   */
+  async createCodeContext(options?: CreateContextOptions): Promise<CodeContext> {
+    return this.codeInterpreter.createCodeContext(options);
+  }
+
+  /**
+   * Run code with streaming callbacks
+   */
+  async runCode(code: string, options?: RunCodeOptions): Promise<Execution> {
+    return this.codeInterpreter.runCode(code, options);
+  }
+
+  /**
+   * Run code and return a streaming response
+   */
+  async runCodeStream(code: string, options?: RunCodeOptions): Promise<ReadableStream> {
+    return this.codeInterpreter.runCodeStream(code, options);
+  }
+
+  /**
+   * List all code contexts
+   */
+  async listCodeContexts(): Promise<CodeContext[]> {
+    return this.codeInterpreter.listCodeContexts();
+  }
+
+  /**
+   * Delete a code context
+   */
+  async deleteCodeContext(contextId: string): Promise<void> {
+    return this.codeInterpreter.deleteCodeContext(contextId);
   }
 }
