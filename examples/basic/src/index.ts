@@ -21,6 +21,7 @@ import {
   setupVue,
   setupStatic,
 } from "./endpoints";
+import { createSession, executeCell, deleteSession } from "./endpoints/notebook";
 import { corsHeaders, errorResponse, jsonResponse, parseJsonBody } from "./http";
 
 export { Sandbox } from "@cloudflare/sandbox";
@@ -65,6 +66,19 @@ export default {
     try {
       const sandbox = getUserSandbox(env) as unknown as Sandbox<unknown>;
 
+      // Notebook API endpoints
+      if (pathname === "/api/notebook/session" && request.method === "POST") {
+        return await createSession(sandbox, request);
+      }
+
+      if (pathname === "/api/notebook/execute" && request.method === "POST") {
+        return await executeCell(sandbox, request);
+      }
+
+      if (pathname === "/api/notebook/session" && request.method === "DELETE") {
+        return await deleteSession(sandbox, request);
+      }
+
       // Command Execution API
       if (pathname === "/api/execute" && request.method === "POST") {
         return await executeCommand(sandbox, request);
@@ -75,7 +89,7 @@ export default {
         return await executeCommandStream(sandbox, request);
       }
 
-      // Process Management APIs - Check if methods exist
+      // Process Management APIs
       if (pathname === "/api/process/list" && request.method === "GET") {
         return await listProcesses(sandbox);
       }
@@ -170,23 +184,6 @@ export default {
         return await setupStatic(sandbox, request);
       }
 
-      // Session Management APIs
-      if (pathname === "/api/session/create" && request.method === "POST") {
-        const body = await parseJsonBody(request);
-        const sessionId = body.sessionId || `session_${Date.now()}_${generateSecureRandomString()}`;
-
-        // Sessions are managed automatically by the SDK, just return the ID
-        return jsonResponse(sessionId);
-      }
-
-      if (pathname.startsWith("/api/session/clear/") && request.method === "POST") {
-        const sessionId = pathname.split("/").pop();
-
-        // In a real implementation, you might want to clean up session state
-        // For now, just return success
-        return jsonResponse({ message: "Session cleared", sessionId });
-      }
-
       // Health check endpoint
       if (pathname === "/health") {
         return jsonResponse({
@@ -213,7 +210,10 @@ export default {
             "POST /api/templates/nextjs - Setup Next.js project",
             "POST /api/templates/react - Setup React project",
             "POST /api/templates/vue - Setup Vue project",
-            "POST /api/templates/static - Setup static site"
+            "POST /api/templates/static - Setup static site",
+            "POST /api/notebook/session - Create notebook session",
+            "POST /api/notebook/execute - Execute notebook cell",
+            "DELETE /api/notebook/session - Delete notebook session",
           ]
         });
       }
@@ -237,6 +237,23 @@ export default {
             error: error.message
           }, 202); // 202 Accepted - processing in progress
         }
+      }
+
+      // Session Management APIs
+      if (pathname === "/api/session/create" && request.method === "POST") {
+        const body = await parseJsonBody(request);
+        const sessionId = body.sessionId || `session_${Date.now()}_${generateSecureRandomString()}`;
+
+        // Sessions are managed automatically by the SDK, just return the ID
+        return jsonResponse(sessionId);
+      }
+
+      if (pathname.startsWith("/api/session/clear/") && request.method === "POST") {
+        const sessionId = pathname.split("/").pop();
+
+        // In a real implementation, you might want to clean up session state
+        // For now, just return success
+        return jsonResponse({ message: "Session cleared", sessionId });
       }
 
       // Fallback: serve static assets for all other requests

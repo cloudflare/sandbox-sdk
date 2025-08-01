@@ -342,6 +342,14 @@ export interface GetProcessLogsResponse {
   processId: string;
 }
 
+// Import code interpreter types
+import type {
+  CodeContext,
+  CreateContextOptions,
+  RunCodeOptions,
+  Execution
+} from './interpreter-types';
+
 // Main Sandbox Interface
 
 export interface ISandbox {
@@ -362,6 +370,13 @@ export interface ISandbox {
   // Utility methods
   cleanupCompletedProcesses(): Promise<number>;
   getProcessLogs(id: string): Promise<{ stdout: string; stderr: string }>;
+
+  // Code Interpreter API
+  createCodeContext(options?: CreateContextOptions): Promise<CodeContext>;
+  runCode(code: string, options?: RunCodeOptions): Promise<Execution>;
+  runCodeStream(code: string, options?: RunCodeOptions): Promise<ReadableStream>;
+  listCodeContexts(): Promise<CodeContext[]>;
+  deleteCodeContext(contextId: string): Promise<void>;
 }
 
 // Type Guards

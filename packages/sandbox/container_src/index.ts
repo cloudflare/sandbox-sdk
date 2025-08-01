@@ -26,6 +26,7 @@ import {
   handleStreamProcessLogsRequest,
 } from "./handler/process";
 import type { ProcessRecord, SessionData } from "./types";
+import { JupyterServer, type CreateContextRequest } from "./jupyter-server";
 
 // In-memory session storage (in production, you'd want to use a proper database)
 const sessions = new Map<string, SessionData>();
@@ -55,8 +56,28 @@ function cleanupOldSessions() {
 // Run cleanup every 10 minutes
 setInterval(cleanupOldSessions, 10 * 60 * 1000);
 
+// Initialize Jupyter server
+const jupyterServer = new JupyterServer();
+let jupyterInitialized = false;
+
+// Initialize Jupyter immediately since startup.sh ensures it's ready
+(async () => {
+  try {
+    await jupyterServer.initialize();
+    jupyterInitialized = true;
+    console.log("[Container] Jupyter integration initialized successfully");
+  } catch (error) {
+    console.error("[Container] Failed to initialize Jupyter:", error);
+    // Log more details to help debug
+    if (error instanceof Error) {
+      console.error("[Container] Error details:", error.message);
+      console.error("[Container] Stack trace:", error.stack);
+    }
+  }
+})();
+
 const server = serve({
-  fetch(req: Request) {
+  async fetch(req: Request) {
     const url = new URL(req.url);
     const pathname = url.pathname;
 
@@ -159,6 +180,7 @@ const server = serve({
               JSON.stringify({
                 message: "pong",
                 timestamp: new Date().toISOString(),
+                jupyter: jupyterInitialized ? "ready" : "not ready",
               }),
               {
                 headers: {
@@ -280,7 +302,151 @@ const server = serve({
           }
           break;
 
+        // Code interpreter endpoints
+        case "/api/contexts":
+          if (req.method === "POST") {
+            if (!jupyterInitialized) {
+              return new Response(
+                JSON.stringify({
+                  error: "Jupyter server is not ready. Please try again in a moment."
+                }),
+                {
+                  status: 503,
+                  headers: {
+                    "Content-Type": "application/json",
+                    ...corsHeaders,
+                  },
+                }
+              );
+            }
+            try {
+              const body = await req.json() as CreateContextRequest;
+              const context = await jupyterServer.createContext(body);
+              return new Response(
+                JSON.stringify({
+                  id: context.id,
+                  language: context.language,
+                  cwd: context.cwd,
+                  createdAt: context.createdAt,
+                  lastUsed: context.lastUsed
+                }),
+                {
+                  headers: {
+                    "Content-Type": "application/json",
+                    ...corsHeaders,
+                  },
+                }
+              );
+            } catch (error) {
+              console.error("[Container] Error creating context:", error);
+              return new Response(
+                JSON.stringify({
+                  error: error instanceof Error ? error.message : "Failed to create context"
+                }),
+                {
+                  status: 500,
+                  headers: {
+                    "Content-Type": "application/json",
+                    ...corsHeaders,
+                  },
+                }
+              );
+            }
+          } else if (req.method === "GET") {
+            if (!jupyterInitialized) {
+              return new Response(
+                JSON.stringify({ contexts: [] }),
+                {
+                  headers: {
+                    "Content-Type": "application/json",
+                    ...corsHeaders,
+                  },
+                }
+              );
+            }
+            const contexts = await jupyterServer.listContexts();
+            return new Response(
+              JSON.stringify({ contexts }),
+              {
+                headers: {
+                  "Content-Type": "application/json",
+                  ...corsHeaders,
+                },
+              }
+            );
+          }
+          break;
+
+        case "/api/execute/code":
+          if (req.method === "POST") {
+            if (!jupyterInitialized) {
+              return new Response(
+                JSON.stringify({
+                  error: "Jupyter server is not ready. Please try again in a moment."
+                }),
+                {
+                  status: 503,
+                  headers: {
+                    "Content-Type": "application/json",
+                    ...corsHeaders,
+                  },
+                }
+              );
+            }
+            try {
+              const body = await req.json() as { context_id: string; code: string; language?: string };
+              return await jupyterServer.executeCode(body.context_id, body.code, body.language);
+            } catch (error) {
+              console.error("[Container] Error executing code:", error);
+              return new Response(
+                JSON.stringify({
+                  error: error instanceof Error ? error.message : "Failed to execute code"
+                }),
+                {
+                  status: 500,
+                  headers: {
+                    "Content-Type": "application/json",
+                    ...corsHeaders,
+                  },
+                }
+              );
+            }
+          }
+          break;
+
         default:
+          // Handle dynamic routes for contexts
+          if (pathname.startsWith("/api/contexts/") && pathname.split('/').length === 4) {
+            const contextId = pathname.split('/')[3];
+            if (req.method === "DELETE") {
+              try {
+                await jupyterServer.deleteContext(contextId);
+                return new Response(
+                  JSON.stringify({ success: true }),
+                  {
+                    headers: {
+                      "Content-Type": "application/json",
+                      ...corsHeaders,
+                    },
+                  }
+                );
+              } catch (error) {
+                return new Response(
+                  JSON.stringify({
+                    error: error instanceof Error ? error.message : "Failed to delete context"
+                  }),
+                  {
+                    status: error instanceof Error && error.message.includes("not found") ? 404 : 500,
+                    headers: {
+                      "Content-Type": "application/json",
+                      ...corsHeaders,
+                    },
+                  }
+                );
+              }
+            }
+          }
+          
           // Handle dynamic routes for individual processes
           if (pathname.startsWith("/api/process/")) {
             const segments = pathname.split('/');
@@ -357,5 +523,9 @@ console.log(`   GET  /api/process/{id}/logs - Get process logs`);
 console.log(`   GET  /api/process/{id}/stream - Stream process logs (SSE)`);
 console.log(`   DELETE /api/process/kill-all - Kill all processes`);
 console.log(`   GET  /proxy/{port}/* - Proxy requests to exposed ports`);
+console.log(`   POST /api/contexts - Create a code execution context`);
+console.log(`   GET  /api/contexts - List all contexts`);
+console.log(`   DELETE /api/contexts/{id} - Delete a context`);
+console.log(`   POST /api/execute/code - Execute code in a context (streaming)`);
 console.log(`   GET  /api/ping - Health check`);
 console.log(`   GET  /api/commands - List available commands`);

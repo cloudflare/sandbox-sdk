@@ -371,6 +371,67 @@ class SandboxApiClient {
       method: "POST",
     });
   }
+
+  // Notebook API methods
+  async createNotebookSession(language: string = 'python') {
+    return this.doFetch("/api/notebook/session", {
+      method: "POST",
+      body: JSON.stringify({ language }),
+    });
+  }
+
+  async *executeNotebookCell(code: string, sessionId: string, language: string = 'python'): AsyncGenerator<any> {
+    const response = await fetch(`${this.baseUrl}/api/notebook/execute`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "text/event-stream",
+      },
+      body: JSON.stringify({ code, sessionId, language }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    const reader = response.body!.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            const data = line.slice(6);
+            if (data === "[DONE]") continue;
+            
+            try {
+              const event = JSON.parse(data);
+              yield event;
+            } catch (e) {
+              console.warn("Failed to parse SSE event:", line, e);
+            }
+          }
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  }
+
+  async deleteNotebookSession(sessionId: string) {
+    return this.doFetch("/api/notebook/session", {
+      method: "DELETE",
+      body: JSON.stringify({ sessionId }),
+    });
+  }
 }
 
 interface CommandResult {
@@ -383,7 +444,7 @@ interface CommandResult {
   timestamp: Date;
 }
 
-type TabType = "commands" | "processes" | "ports" | "streaming" | "files";
+type TabType = "commands" | "processes" | "ports" | "streaming" | "files" | "notebook";
 
 interface ProcessInfo {
   id: string;
@@ -2270,8 +2331,433 @@ function StreamingTab({
   );
 }
 
+interface NotebookCell {
+  id: string;
+  code: string;
+  output: any[];
+  status: 'idle' | 'running' | 'completed' | 'error';
+  executionCount: number;
+}
+
+function NotebookTab({
+  client,
+  connectionStatus,
+}: {
+  client: SandboxApiClient | null;
+  connectionStatus: "disconnected" | "connecting" | "connected";
+}) {
+  const [cells, setCells] = useState<NotebookCell[]>([]);
+  const [notebookSessionId, setNotebookSessionId] = useState<string | null>(null);
+  const [language, setLanguage] = useState<'python' | 'javascript'>('python');
+  const [activeCell, setActiveCell] = useState<string | null>(null);
+  const cellRefs = useRef<{ [key: string]: HTMLTextAreaElement | null }>({});
+
+  // Initialize notebook session
+  useEffect(() => {
+    const initSession = async () => {
+      if (!client || connectionStatus !== "connected") return;
+      
+      try {
+        const session = await client.createNotebookSession(language);
+        setNotebookSessionId(session.sessionId);
+        // Add first cell automatically
+        addCell();
+      } catch (error) {
+        console.error("Failed to create notebook session:", error);
+      }
+    };
+
+    if (connectionStatus === "connected") {
+      initSession();
+    }
+
+    return () => {
+      if (notebookSessionId && client) {
+        client.deleteNotebookSession(notebookSessionId);
+      }
+    };
+  }, [client, connectionStatus, language]);
+
+  const addCell = () => {
+    const newCell: NotebookCell = {
+      id: `cell-${Date.now()}`,
+      code: '',
+      output: [],
+      status: 'idle',
+      executionCount: 0,
+    };
+    setCells(prev => [...prev, newCell]);
+    
+    // Focus new cell after render
+    setTimeout(() => {
+      const textarea = cellRefs.current[newCell.id];
+      if (textarea) {
+        textarea.focus();
+      }
+    }, 100);
+  };
+
+  const deleteCell = (cellId: string) => {
+    setCells(prev => prev.filter(cell => cell.id !== cellId));
+  };
+
+  const updateCellCode = (cellId: string, code: string) => {
+    setCells(prev => prev.map(cell => 
+      cell.id === cellId ? { ...cell, code } : cell
+    ));
+  };
+
+  const runCell = async (cellId: string, runAndAddNew: boolean = false) => {
+    if (!client || !notebookSessionId || connectionStatus !== "connected") return;
+
+    const cell = cells.find(c => c.id === cellId);
+    if (!cell || !cell.code.trim()) return;
+
+    // Update cell status
+    setCells(prev => prev.map(c => 
+      c.id === cellId 
+        ? { ...c, status: 'running', output: [], executionCount: c.executionCount + 1 } 
+        : c
+    ));
+
+    try {
+      const outputs: any[] = [];
+      
+      // Execute cell and collect outputs
+      for await (const event of client.executeNotebookCell(cell.code, notebookSessionId, language)) {
+        switch (event.type) {
+          case 'stdout':
+            outputs.push({ type: 'stdout', text: event.text });
+            break;
+          case 'stderr':
+            outputs.push({ type: 'stderr', text: event.text });
+            break;
+          case 'result':
+            outputs.push({ 
+              type: 'result', 
+              data: event,
+              png: event.png,
+              html: event.html,
+              text: event.text,
+              json: event.json
+            });
+            break;
+          case 'error':
+            outputs.push({ 
+              type: 'error', 
+              ename: event.ename,
+              evalue: event.evalue,
+              traceback: event.traceback 
+            });
+            break;
+        }
+        
+        // Update output in real-time
+        setCells(prev => prev.map(c => 
+          c.id === cellId ? { ...c, output: [...outputs] } : c
+        ));
+      }
+
+      // Mark as completed
+      setCells(prev => prev.map(c => 
+        c.id === cellId ? { ...c, status: 'completed' } : c
+      ));
+
+      if (runAndAddNew) {
+        addCell();
+      }
+    } catch (error) {
+      console.error("Cell execution error:", error);
+      setCells(prev => prev.map(c => 
+        c.id === cellId 
+          ? { 
+              ...c, 
+              status: 'error', 
+              output: [...c.output, { 
+                type: 'error', 
+                text: `Execution error: ${error}` 
+              }]
+            } 
+          : c
+      ));
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent, cellId: string) => {
+    if (e.ctrlKey && e.key === 'Enter') {
+      e.preventDefault();
+      runCell(cellId);
+    } else if (e.shiftKey && e.key === 'Enter') {
+      e.preventDefault();
+      runCell(cellId, true);
+    }
+  };
+
+  const renderOutput = (output: any) => {
+    switch (output.type) {
+      case 'stdout':
+        return <pre className="notebook-stdout">{output.text}</pre>;
+      
+      case 'stderr':
+        return <pre className="notebook-stderr">{output.text}</pre>;
+      
+      case 'error':
+        return (
+          <div className="notebook-error">
+            <div className="error-name">{output.ename}: {output.evalue}</div>
+            {output.traceback && (
+              <pre className="error-traceback">{output.traceback.join('\n')}</pre>
+            )}
+          </div>
+        );
+      
+      case 'result':
+        if (output.png) {
+          return <img src={`data:image/png;base64,${output.png}`} alt="Plot" className="notebook-image" />;
+        }
+        if (output.html) {
+          return <div dangerouslySetInnerHTML={{ __html: output.html }} className="notebook-html" />;
+        }
+        if (output.json) {
+          return <pre className="notebook-json">{JSON.stringify(output.json, null, 2)}</pre>;
+        }
+        if (output.text) {
+          return <pre className="notebook-text">{output.text}</pre>;
+        }
+        return null;
+      
+      default:
+        return null;
+    }
+  };
+
+  const loadExample = (type: 'plot' | 'data' | 'js') => {
+    const examples = {
+      plot: {
+        lang: 'python' as const,
+        code: `# Create a beautiful visualization
+import matplotlib.pyplot as plt
+import numpy as np
+
+# Generate data
+x = np.linspace(0, 10, 100)
+y1 = np.sin(x)
+y2 = np.cos(x)
+
+# Create figure
+plt.figure(figsize=(10, 6))
+plt.plot(x, y1, 'b-', label='sin(x)', linewidth=2)
+plt.plot(x, y2, 'r--', label='cos(x)', linewidth=2)
+plt.fill_between(x, y1, y2, alpha=0.2)
+
+plt.title('Trigonometric Functions', fontsize=16)
+plt.xlabel('x', fontsize=12)
+plt.ylabel('y', fontsize=12)
+plt.legend(loc='upper right')
+plt.grid(True, alpha=0.3)
+plt.show()`
+      },
+      data: {
+        lang: 'python' as const,
+        code: `# Data analysis with pandas
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+
+# Create sample data
+np.random.seed(42)
+data = {
+    'Date': pd.date_range('2024-01-01', periods=30),
+    'Sales': np.random.randint(100, 500, 30),
+    'Customers': np.random.randint(20, 100, 30)
+}
+
+df = pd.DataFrame(data)
+df['Revenue'] = df['Sales'] * np.random.uniform(10, 20, 30)
+
+print("Sales Data Summary:")
+print(df.describe())
+
+# Create visualization
+fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8))
+
+# Sales over time
+ax1.plot(df['Date'], df['Sales'], 'b-', linewidth=2)
+ax1.set_title('Daily Sales')
+ax1.set_ylabel('Sales')
+ax1.grid(True, alpha=0.3)
+
+# Revenue distribution
+ax2.hist(df['Revenue'], bins=15, color='green', alpha=0.7, edgecolor='black')
+ax2.set_title('Revenue Distribution')
+ax2.set_xlabel('Revenue')
+ax2.set_ylabel('Frequency')
+
+plt.tight_layout()
+plt.show()
+
+# Show data table
+df.head()`
+      },
+      js: {
+        lang: 'javascript' as const,
+        code: `// JavaScript example with console output
+console.log("Hello from JavaScript!");
+
+// Generate fibonacci sequence
+function fibonacci(n) {
+    const sequence = [0, 1];
+    for (let i = 2; i < n; i++) {
+        sequence[i] = sequence[i-1] + sequence[i-2];
+    }
+    return sequence;
+}
+
+const fib = fibonacci(10);
+console.log("Fibonacci sequence:", fib);
+
+// Create a simple data structure
+const data = {
+    name: "Code Interpreter Demo",
+    features: ["Multi-language", "Rich outputs", "Persistent contexts"],
+    stats: {
+        languages: 2,
+        performance: "Edge-optimized",
+        latency: "<50ms"
+    }
+};
+
+console.log("\\nDemo Info:");
+console.log(JSON.stringify(data, null, 2));
+
+// Return a result
+{ fibonacci: fib, info: data }`
+      }
+    };
+
+    const example = examples[type];
+    
+    // Change language if needed
+    if (example.lang !== language) {
+      setLanguage(example.lang);
+    }
+
+    // Add cell with example code
+    const newCell: NotebookCell = {
+      id: `cell-${Date.now()}`,
+      code: example.code,
+      output: [],
+      status: 'idle',
+      executionCount: 0,
+    };
+    setCells(prev => [...prev, newCell]);
+  };
+
+  return (
+    <div className="notebook-tab">
+      <div className="notebook-header">
+        <h2>📓 Interactive Notebook</h2>
+        <div className="notebook-controls">
+          <select 
+            value={language} 
+            onChange={(e) => setLanguage(e.target.value as 'python' | 'javascript')}
+            className="language-selector"
+          >
+            <option value="python">Python</option>
+            <option value="javascript">JavaScript</option>
+          </select>
+          <button onClick={addCell} className="btn btn-primary">
+            + Add Cell
+          </button>
+        </div>
+      </div>
+
+      <div className="example-buttons">
+        <button onClick={() => loadExample('plot')} className="btn btn-example">
+          📊 Plot Example
+        </button>
+        <button onClick={() => loadExample('data')} className="btn btn-example">
+          📈 Data Analysis
+        </button>
+        <button onClick={() => loadExample('js')} className="btn btn-example">
+          🟨 JavaScript
+        </button>
+      </div>
+
+      <div className="notebook-cells">
+        {cells.length === 0 ? (
+          <div className="notebook-welcome">
+            <h3>Welcome to Cloudflare Notebook</h3>
+            <p>Click "Add Cell" to start coding, or try one of the examples above!</p>
+            <div className="shortcuts-info">
+              <h4>Keyboard Shortcuts:</h4>
+              <div><kbd>Ctrl</kbd>+<kbd>Enter</kbd> Run cell</div>
+              <div><kbd>Shift</kbd>+<kbd>Enter</kbd> Run cell and add new</div>
+            </div>
+          </div>
+        ) : (
+          cells.map((cell, index) => (
+            <div 
+              key={cell.id} 
+              className={`notebook-cell ${cell.status} ${activeCell === cell.id ? 'active' : ''}`}
+            >
+              <div className="cell-header">
+                <span className="cell-number">[{index + 1}]</span>
+                <div className="cell-actions">
+                  <button 
+                    onClick={() => runCell(cell.id)}
+                    disabled={!cell.code.trim() || cell.status === 'running'}
+                    className="btn btn-run"
+                  >
+                    {cell.status === 'running' ? '⏳' : '▶'} Run
+                  </button>
+                  <button 
+                    onClick={() => deleteCell(cell.id)}
+                    className="btn btn-delete"
+                  >
+                    🗑️
+                  </button>
+                </div>
+              </div>
+              
+              <div className="cell-editor">
+                <textarea
+                  ref={el => { cellRefs.current[cell.id] = el; }}
+                  value={cell.code}
+                  onChange={(e) => updateCellCode(cell.id, e.target.value)}
+                  onKeyDown={(e) => handleKeyDown(e, cell.id)}
+                  onFocus={() => setActiveCell(cell.id)}
+                  onBlur={() => setActiveCell(null)}
+                  placeholder={`Enter ${language} code...`}
+                  className="cell-input"
+                  spellCheck={false}
+                />
+              </div>
+
+              {cell.output.length > 0 && (
+                <div className="cell-output">
+                  {cell.executionCount > 0 && (
+                    <span className="execution-count">[{cell.executionCount}]</span>
+                  )}
+                  <div className="output-content">
+                    {cell.output.map((output, idx) => (
+                      <div key={idx} className="output-item">
+                        {renderOutput(output)}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
 function SandboxTester() {
-  const [activeTab, setActiveTab] = useState<TabType>("commands");
+  const [activeTab, setActiveTab] = useState<TabType>("notebook");
   const [client, setClient] = useState<SandboxApiClient | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<
     "disconnected" | "connecting" | "connected"
@@ -2628,13 +3114,13 @@ function SandboxTester() {
   return (
     <div className="sandbox-tester-container">
       <div className="header">
-        <h1>Sandbox SDK Tester</h1>
+        <h1>Cloudflare Sandbox Notebook</h1>
         <div className={`connection-status ${connectionStatus}`}>
           {connectionStatus === "connected"
-            ? `Sandbox Ready (${sessionId})`
+            ? `Ready`
             : connectionStatus === "connecting"
-            ? "Initializing Sandbox..."
-            : "Sandbox Disconnected"}
+            ? "Initializing..."
+            : "Disconnected"}
         </div>
       </div>
 
@@ -2668,6 +3154,12 @@ function SandboxTester() {
           onClick={() => setActiveTab("files")}
         >
           📁 Files
+        </button>
+        <button
+          className={`tab-button ${activeTab === "notebook" ? "active" : ""}`}
+          onClick={() => setActiveTab("notebook")}
+        >
+          📓 Notebook
         </button>
       </div>
 
@@ -2851,6 +3343,10 @@ function SandboxTester() {
 
         {activeTab === "files" && (
           <FilesTab client={client} connectionStatus={connectionStatus} />
+        )}
+
+        {activeTab === "notebook" && (
+          <NotebookTab client={client} connectionStatus={connectionStatus} />
         )}
       </div>
     </div>

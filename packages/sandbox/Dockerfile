@@ -31,6 +31,7 @@ RUN apt-get update && apt-get install -y \
     python3.11 \
     python3.11-dev \
     python3-pip \
+    python3.11-venv \
     # Other useful tools
     sudo \
     ca-certificates \
@@ -55,6 +56,17 @@ RUN apt-get update && apt-get install -y ca-certificates curl gnupg \
 COPY --from=bun-source /usr/local/bin/bun /usr/local/bin/bun
 COPY --from=bun-source /usr/local/bin/bunx /usr/local/bin/bunx
 
+# Install Jupyter and kernels
+RUN pip3 install --no-cache-dir \
+    jupyter \
+    jupyterlab \
+    ipykernel \
+    notebook \
+    && python3 -m ipykernel install --user --name python3
+
+# Install JavaScript/TypeScript kernel (tslab)
+RUN npm install -g --unsafe-perm tslab \
+    && tslab install --python=python3
 
 # Set up container server directory
 WORKDIR /container-server
@@ -63,16 +75,24 @@ WORKDIR /container-server
 RUN python3 --version && \
     node --version && \
     npm --version && \
-    bun --version
+    bun --version && \
+    jupyter --version && \
+    jupyter kernelspec list
 
 # Copy container source files to server directory
+COPY container_src/package.json ./
+RUN bun install
+
 COPY container_src/ ./
 
 # Create clean workspace directory for users
 RUN mkdir -p /workspace
 
-# Expose the application port
-EXPOSE 3000
+# Expose the application port (3000 for control, 8888 for Jupyter)
+EXPOSE 3000 8888
 
-# Run the application from container server directory
-CMD ["bun", "index.ts"]
+# Make startup script executable
+RUN chmod +x startup.sh
+
+# Use startup script
+CMD ["./startup.sh"]
