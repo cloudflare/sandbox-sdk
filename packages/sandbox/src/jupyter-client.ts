@@ -2,9 +2,9 @@ import { HttpClient } from './client.js';
 import type { 
   CodeContext, 
   CreateContextOptions, 
+  ExecutionError, 
   OutputMessage,
-  Result,
-  ExecutionError
+  Result
 } from './interpreter-types.js';
 
 // API Response types

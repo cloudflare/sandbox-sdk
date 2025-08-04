@@ -1,5 +1,3 @@
-import { JupyterClient } from "./jupyter-client.js";
-import type { Sandbox } from "./sandbox.js";
 import {
   type CodeContext,
   type CreateContextOptions,
@@ -7,12 +5,14 @@ import {
   ResultImpl,
   type RunCodeOptions,
 } from "./interpreter-types.js";
+import type { JupyterClient } from "./jupyter-client.js";
+import type { Sandbox } from "./sandbox.js";
 
 export class CodeInterpreter {
   private jupyterClient: JupyterClient;
   private contexts = new Map<string, CodeContext>();
 
-  constructor(private sandbox: Sandbox) {
+  constructor(sandbox: Sandbox) {
     this.jupyterClient = sandbox.client as JupyterClient;
   }
 

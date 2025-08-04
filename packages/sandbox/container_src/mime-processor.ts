@@ -28,14 +28,13 @@ export interface ChartData {
   library?: 'matplotlib' | 'plotly' | 'altair' | 'seaborn' | 'unknown';
 }
 
-export class MimeProcessor {
-  static processJupyterMessage(msg: any): ExecutionResult | null {
+export function processJupyterMessage(msg: any): ExecutionResult | null {
     const msgType = msg.header?.msg_type || msg.msg_type;
     
     switch (msgType) {
       case 'execute_result':
       case 'display_data':
-        return this.processDisplayData(msg.content.data, msg.content.metadata);
+        return processDisplayData(msg.content.data, msg.content.metadata);
         
       case 'stream':
         return {
@@ -57,8 +56,8 @@ export class MimeProcessor {
         return null;
     }
   }
-  
-  private static processDisplayData(data: any, metadata?: any): ExecutionResult {
+
+function processDisplayData(data: any, metadata?: any): ExecutionResult {
     const result: ExecutionResult = {
       type: 'result',
       timestamp: Date.now(),
@@ -69,18 +68,18 @@ export class MimeProcessor {
     
     // Interactive/Rich formats
     if (data['application/vnd.plotly.v1+json']) {
-      result.chart = this.extractPlotlyChart(data['application/vnd.plotly.v1+json']);
+      result.chart = extractPlotlyChart(data['application/vnd.plotly.v1+json']);
       result.json = data['application/vnd.plotly.v1+json'];
     }
     
     if (data['application/vnd.vega.v5+json']) {
-      result.chart = this.extractVegaChart(data['application/vnd.vega.v5+json'], 'vega');
+      result.chart = extractVegaChart(data['application/vnd.vega.v5+json'], 'vega');
       result.json = data['application/vnd.vega.v5+json'];
     }
     
     if (data['application/vnd.vegalite.v4+json'] || data['application/vnd.vegalite.v5+json']) {
       const vegaData = data['application/vnd.vegalite.v4+json'] || data['application/vnd.vegalite.v5+json'];
-      result.chart = this.extractVegaChart(vegaData, 'vega-lite');
+      result.chart = extractVegaChart(vegaData, 'vega-lite');
       result.json = vegaData;
     }
     
@@ -89,7 +88,7 @@ export class MimeProcessor {
       result.html = data['text/html'];
       
       // Check if it's a pandas DataFrame
-      if (this.isPandasDataFrame(data['text/html'])) {
+      if (isPandasDataFrame(data['text/html'])) {
         result.data = { type: 'dataframe', html: data['text/html'] };
       }
     }
@@ -99,7 +98,7 @@ export class MimeProcessor {
       result.png = data['image/png'];
       
       // Try to detect if it's a chart
-      if (this.isLikelyChart(data, metadata)) {
+      if (isLikelyChart(data, metadata)) {
         result.chart = {
           type: 'unknown',
           library: 'matplotlib',
@@ -143,8 +142,8 @@ export class MimeProcessor {
     
     return result;
   }
-  
-  private static extractPlotlyChart(plotlyData: any): ChartData {
+
+function extractPlotlyChart(plotlyData: any): ChartData {
     const data = plotlyData.data || plotlyData;
     const layout = plotlyData.layout || {};
     
@@ -174,8 +173,8 @@ export class MimeProcessor {
       library: 'plotly'
     };
   }
-  
-  private static extractVegaChart(vegaData: any, format: 'vega' | 'vega-lite'): ChartData {
+
+function extractVegaChart(vegaData: any, format: 'vega' | 'vega-lite'): ChartData {
     // Try to detect chart type from mark or encoding
     let chartType: ChartData['type'] = 'unknown';
     
@@ -210,14 +209,14 @@ export class MimeProcessor {
       library: 'altair' // Altair outputs Vega-Lite
     };
   }
-  
-  private static isPandasDataFrame(html: string): boolean {
+
+function isPandasDataFrame(html: string): boolean {
     // Simple heuristic to detect pandas DataFrame HTML
     return html.includes('dataframe') || 
            (html.includes('<table') && html.includes('<thead') && html.includes('<tbody'));
   }
-  
-  private static isLikelyChart(data: any, metadata?: any): boolean {
+
+function isLikelyChart(data: any, metadata?: any): boolean {
     // Check metadata for hints
     if (metadata?.needs?.includes('matplotlib')) {
       return true;
@@ -237,8 +236,8 @@ export class MimeProcessor {
     
     return false;
   }
-  
-  static extractFormats(result: ExecutionResult): string[] {
+
+export function extractFormats(result: ExecutionResult): string[] {
     const formats: string[] = [];
     
     if (result.text) formats.push('text');
@@ -254,4 +253,3 @@ export class MimeProcessor {
     
     return formats;
   }
-}

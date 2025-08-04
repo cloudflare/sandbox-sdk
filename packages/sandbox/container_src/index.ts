@@ -25,8 +25,8 @@ import {
   handleStartProcessRequest,
   handleStreamProcessLogsRequest,
 } from "./handler/process";
+import { type CreateContextRequest, JupyterServer } from "./jupyter-server";
 import type { ProcessRecord, SessionData } from "./types";
-import { JupyterServer, type CreateContextRequest } from "./jupyter-server";
 
 // In-memory session storage (in production, you'd want to use a proper database)
 const sessions = new Map<string, SessionData>();

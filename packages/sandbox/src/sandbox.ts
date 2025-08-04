@@ -10,8 +10,8 @@ import { JupyterClient } from "./jupyter-client";
 import { isLocalhostPattern } from "./request-handler";
 import {
   logSecurityEvent,
-  sanitizeSandboxId,
   SecurityError,
+  sanitizeSandboxId,
   validatePort,
 } from "./security";
 import { parseSSEStream } from "./sse-parser";
