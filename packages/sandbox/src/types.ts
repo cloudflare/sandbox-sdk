@@ -347,7 +347,6 @@ import type {
   CodeContext,
   CreateContextOptions,
   RunCodeOptions,
-  Execution,
   ExecutionResult
 } from './interpreter-types';
 

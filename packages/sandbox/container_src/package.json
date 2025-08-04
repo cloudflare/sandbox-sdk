@@ -1,7 +1,7 @@
 {
   "name": "sandbox-server",
   "version": "1.0.0",
-  "description": "A server for the sandbox package with Jupyter integration",
+  "description": "A server for the sandbox package",
   "main": "index.ts",
   "scripts": {
     "start": "bun run index.ts"

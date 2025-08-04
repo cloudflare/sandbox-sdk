@@ -1,7 +1,6 @@
 import type React from "react";
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import type { CreateSessionResponse, ExecuteCellResponse, ExampleResponse } from "../src/types";
 import "./style.css";
 
 // Simple API client to replace direct HttpClient usage
@@ -374,14 +373,18 @@ class SandboxApiClient {
   }
 
   // Notebook API methods
-  async createNotebookSession(language: string = 'python') {
+  async createNotebookSession(language: string = "python") {
     return this.doFetch("/api/notebook/session", {
       method: "POST",
       body: JSON.stringify({ language }),
     });
   }
 
-  async *executeNotebookCell(code: string, sessionId: string, language: string = 'python'): AsyncGenerator<any> {
+  async *executeNotebookCell(
+    code: string,
+    sessionId: string,
+    language: string = "python"
+  ): AsyncGenerator<any> {
     const response = await fetch(`${this.baseUrl}/api/notebook/execute`, {
       method: "POST",
       headers: {
@@ -412,7 +415,7 @@ class SandboxApiClient {
           if (line.startsWith("data: ")) {
             const data = line.slice(6);
             if (data === "[DONE]") continue;
-            
+
             try {
               const event = JSON.parse(data);
               yield event;
@@ -445,7 +448,14 @@ interface CommandResult {
   timestamp: Date;
 }
 
-type TabType = "commands" | "processes" | "ports" | "streaming" | "files" | "notebook" | "examples";
+type TabType =
+  | "commands"
+  | "processes"
+  | "ports"
+  | "streaming"
+  | "files"
+  | "notebook"
+  | "examples";
 
 interface ProcessInfo {
   id: string;
@@ -2336,7 +2346,7 @@ interface NotebookCell {
   id: string;
   code: string;
   output: any[];
-  status: 'idle' | 'running' | 'completed' | 'error';
+  status: "idle" | "running" | "completed" | "error";
   executionCount: number;
 }
 
@@ -2348,8 +2358,10 @@ function NotebookTab({
   connectionStatus: "disconnected" | "connecting" | "connected";
 }) {
   const [cells, setCells] = useState<NotebookCell[]>([]);
-  const [notebookSessionId, setNotebookSessionId] = useState<string | null>(null);
-  const [language, setLanguage] = useState<'python' | 'javascript'>('python');
+  const [notebookSessionId, setNotebookSessionId] = useState<string | null>(
+    null
+  );
+  const [language, setLanguage] = useState<"python" | "javascript">("python");
   const [activeCell, setActiveCell] = useState<string | null>(null);
   const cellRefs = useRef<{ [key: string]: HTMLTextAreaElement | null }>({});
 
@@ -2357,7 +2369,7 @@ function NotebookTab({
   useEffect(() => {
     const initSession = async () => {
       if (!client || connectionStatus !== "connected") return;
-      
+
       try {
         const session = await client.createNotebookSession(language);
         setNotebookSessionId(session.sessionId);
@@ -2382,13 +2394,13 @@ function NotebookTab({
   const addCell = () => {
     const newCell: NotebookCell = {
       id: `cell-${Date.now()}`,
-      code: '',
+      code: "",
       output: [],
-      status: 'idle',
+      status: "idle",
       executionCount: 0,
     };
-    setCells(prev => [...prev, newCell]);
-    
+    setCells((prev) => [...prev, newCell]);
+
     // Focus new cell after render
     setTimeout(() => {
       const textarea = cellRefs.current[newCell.id];
@@ -2399,96 +2411,115 @@ function NotebookTab({
   };
 
   const deleteCell = (cellId: string) => {
-    setCells(prev => prev.filter(cell => cell.id !== cellId));
+    setCells((prev) => prev.filter((cell) => cell.id !== cellId));
   };
 
   const updateCellCode = (cellId: string, code: string) => {
-    setCells(prev => prev.map(cell => 
-      cell.id === cellId ? { ...cell, code } : cell
-    ));
+    setCells((prev) =>
+      prev.map((cell) => (cell.id === cellId ? { ...cell, code } : cell))
+    );
   };
 
   const runCell = async (cellId: string, runAndAddNew: boolean = false) => {
-    if (!client || !notebookSessionId || connectionStatus !== "connected") return;
+    if (!client || !notebookSessionId || connectionStatus !== "connected")
+      return;
 
-    const cell = cells.find(c => c.id === cellId);
+    const cell = cells.find((c) => c.id === cellId);
     if (!cell || !cell.code.trim()) return;
 
     // Update cell status
-    setCells(prev => prev.map(c => 
-      c.id === cellId 
-        ? { ...c, status: 'running', output: [], executionCount: c.executionCount + 1 } 
-        : c
-    ));
+    setCells((prev) =>
+      prev.map((c) =>
+        c.id === cellId
+          ? {
+              ...c,
+              status: "running",
+              output: [],
+              executionCount: c.executionCount + 1,
+            }
+          : c
+      )
+    );
 
     try {
       const outputs: any[] = [];
-      
+
       // Execute cell and collect outputs
-      for await (const event of client.executeNotebookCell(cell.code, notebookSessionId, language)) {
+      for await (const event of client.executeNotebookCell(
+        cell.code,
+        notebookSessionId,
+        language
+      )) {
         switch (event.type) {
-          case 'stdout':
-            outputs.push({ type: 'stdout', text: event.text });
+          case "stdout":
+            outputs.push({ type: "stdout", text: event.text });
             break;
-          case 'stderr':
-            outputs.push({ type: 'stderr', text: event.text });
+          case "stderr":
+            outputs.push({ type: "stderr", text: event.text });
             break;
-          case 'result':
-            outputs.push({ 
-              type: 'result', 
+          case "result":
+            outputs.push({
+              type: "result",
               data: event,
               png: event.png,
               html: event.html,
               text: event.text,
-              json: event.json
+              json: event.json,
             });
             break;
-          case 'error':
-            outputs.push({ 
-              type: 'error', 
+          case "error":
+            outputs.push({
+              type: "error",
               ename: event.ename,
               evalue: event.evalue,
-              traceback: event.traceback 
+              traceback: event.traceback,
             });
             break;
         }
-        
+
         // Update output in real-time
-        setCells(prev => prev.map(c => 
-          c.id === cellId ? { ...c, output: [...outputs] } : c
-        ));
+        setCells((prev) =>
+          prev.map((c) =>
+            c.id === cellId ? { ...c, output: [...outputs] } : c
+          )
+        );
       }
 
       // Mark as completed
-      setCells(prev => prev.map(c => 
-        c.id === cellId ? { ...c, status: 'completed' } : c
-      ));
+      setCells((prev) =>
+        prev.map((c) => (c.id === cellId ? { ...c, status: "completed" } : c))
+      );
 
       if (runAndAddNew) {
         addCell();
       }
     } catch (error) {
       console.error("Cell execution error:", error);
-      setCells(prev => prev.map(c => 
-        c.id === cellId 
-          ? { 
-              ...c, 
-              status: 'error', 
-              output: [...c.output, { 
-                type: 'error', 
-                text: `Execution error: ${error}` 
-              }]
-            } 
-          : c
-      ));
+      setCells((prev) =>
+        prev.map((c) =>
+          c.id === cellId
+            ? {
+                ...c,
+                status: "error",
+                output: [
+                  ...c.output,
+                  {
+                    type: "error",
+                    text: `Execution error: ${error}`,
+                  },
+                ],
+              }
+            : c
+        )
+      );
     }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent, cellId: string) => {
-    if (e.ctrlKey && e.key === 'Enter') {
+    if (e.ctrlKey && e.key === "Enter") {
       e.preventDefault();
       runCell(cellId);
-    } else if (e.shiftKey && e.key === 'Enter') {
+    } else if (e.shiftKey && e.key === "Enter") {
       e.preventDefault();
       runCell(cellId, true);
     }
@@ -2496,46 +2527,65 @@ function NotebookTab({
 
   const renderOutput = (output: any) => {
     switch (output.type) {
-      case 'stdout':
+      case "stdout":
         return <pre className="notebook-stdout">{output.text}</pre>;
-      
-      case 'stderr':
+
+      case "stderr":
         return <pre className="notebook-stderr">{output.text}</pre>;
-      
-      case 'error':
+
+      case "error":
         return (
           <div className="notebook-error">
-            <div className="error-name">{output.ename}: {output.evalue}</div>
+            <div className="error-name">
+              {output.ename}: {output.evalue}
+            </div>
             {output.traceback && (
-              <pre className="error-traceback">{output.traceback.join('\n')}</pre>
+              <pre className="error-traceback">
+                {output.traceback.join("\n")}
+              </pre>
             )}
           </div>
         );
-      
-      case 'result':
+
+      case "result":
         if (output.png) {
-          return <img src={`data:image/png;base64,${output.png}`} alt="Plot" className="notebook-image" />;
+          return (
+            <img
+              src={`data:image/png;base64,${output.png}`}
+              alt="Plot"
+              className="notebook-image"
+            />
+          );
         }
         if (output.html) {
-          return <div dangerouslySetInnerHTML={{ __html: output.html }} className="notebook-html" />;
+          return (
+            <div
+              dangerouslySetInnerHTML={{ __html: output.html }}
+              className="notebook-html"
+            />
+          );
         }
         if (output.json) {
-          return <pre className="notebook-json">{JSON.stringify(output.json, null, 2)}</pre>;
+          return (
+            <pre className="notebook-json">
+              {JSON.stringify(output.json, null, 2)}
+            </pre>
+          );
         }
         if (output.text) {
           return <pre className="notebook-text">{output.text}</pre>;
         }
         return null;
-      
+
       default:
         return null;
     }
   };
 
-  const loadExample = (type: 'plot' | 'data' | 'js') => {
+  const loadExample = (type: "plot" | "data" | "js") => {
     const examples = {
       plot: {
-        lang: 'python' as const,
+        lang: "python" as const,
         code: `# Create a beautiful visualization
 import matplotlib.pyplot as plt
 import numpy as np
@@ -2556,10 +2606,10 @@ plt.xlabel('x', fontsize=12)
 plt.ylabel('y', fontsize=12)
 plt.legend(loc='upper right')
 plt.grid(True, alpha=0.3)
-plt.show()`
+plt.show()`,
       },
       data: {
-        lang: 'python' as const,
+        lang: "python" as const,
         code: `# Data analysis with pandas
 import pandas as pd
 import numpy as np
@@ -2598,10 +2648,10 @@ plt.tight_layout()
 plt.show()
 
 # Show data table
-df.head()`
+df.head()`,
       },
       js: {
-        lang: 'javascript' as const,
+        lang: "javascript" as const,
         code: `// JavaScript example with console output
 console.log("Hello from JavaScript!");
 
@@ -2632,12 +2682,12 @@ console.log("\\nDemo Info:");
 console.log(JSON.stringify(data, null, 2));
 
 // Return a result
-{ fibonacci: fib, info: data }`
-      }
+{ fibonacci: fib, info: data }`,
+      },
     };
 
     const example = examples[type];
-    
+
     // Change language if needed
     if (example.lang !== language) {
       setLanguage(example.lang);
@@ -2648,10 +2698,10 @@ console.log(JSON.stringify(data, null, 2));
       id: `cell-${Date.now()}`,
       code: example.code,
       output: [],
-      status: 'idle',
+      status: "idle",
       executionCount: 0,
     };
-    setCells(prev => [...prev, newCell]);
+    setCells((prev) => [...prev, newCell]);
   };
 
   return (
@@ -2659,9 +2709,11 @@ console.log(JSON.stringify(data, null, 2));
       <div className="notebook-header">
         <h2>📓 Interactive Notebook</h2>
         <div className="notebook-controls">
-          <select 
-            value={language} 
-            onChange={(e) => setLanguage(e.target.value as 'python' | 'javascript')}
+          <select
+            value={language}
+            onChange={(e) =>
+              setLanguage(e.target.value as "python" | "javascript")
+            }
             className="language-selector"
           >
             <option value="python">Python</option>
@@ -2674,13 +2726,13 @@ console.log(JSON.stringify(data, null, 2));
       </div>
 
       <div className="example-buttons">
-        <button onClick={() => loadExample('plot')} className="btn btn-example">
+        <button onClick={() => loadExample("plot")} className="btn btn-example">
           📊 Plot Example
         </button>
-        <button onClick={() => loadExample('data')} className="btn btn-example">
+        <button onClick={() => loadExample("data")} className="btn btn-example">
           📈 Data Analysis
         </button>
-        <button onClick={() => loadExample('js')} className="btn btn-example">
+        <button onClick={() => loadExample("js")} className="btn btn-example">
           🟨 JavaScript
         </button>
       </div>
@@ -2689,30 +2741,39 @@ console.log(JSON.stringify(data, null, 2));
         {cells.length === 0 ? (
           <div className="notebook-welcome">
             <h3>Welcome to Cloudflare Notebook</h3>
-            <p>Click "Add Cell" to start coding, or try one of the examples above!</p>
+            <p>
+              Click "Add Cell" to start coding, or try one of the examples
+              above!
+            </p>
             <div className="shortcuts-info">
               <h4>Keyboard Shortcuts:</h4>
-              <div><kbd>Ctrl</kbd>+<kbd>Enter</kbd> Run cell</div>
-              <div><kbd>Shift</kbd>+<kbd>Enter</kbd> Run cell and add new</div>
+              <div>
+                <kbd>Ctrl</kbd>+<kbd>Enter</kbd> Run cell
+              </div>
+              <div>
+                <kbd>Shift</kbd>+<kbd>Enter</kbd> Run cell and add new
+              </div>
             </div>
           </div>
         ) : (
           cells.map((cell, index) => (
-            <div 
-              key={cell.id} 
-              className={`notebook-cell ${cell.status} ${activeCell === cell.id ? 'active' : ''}`}
+            <div
+              key={cell.id}
+              className={`notebook-cell ${cell.status} ${
+                activeCell === cell.id ? "active" : ""
+              }`}
             >
               <div className="cell-header">
                 <span className="cell-number">[{index + 1}]</span>
                 <div className="cell-actions">
-                  <button 
+                  <button
                     onClick={() => runCell(cell.id)}
-                    disabled={!cell.code.trim() || cell.status === 'running'}
+                    disabled={!cell.code.trim() || cell.status === "running"}
                     className="btn btn-run"
                   >
-                    {cell.status === 'running' ? '⏳' : '▶'} Run
+                    {cell.status === "running" ? "⏳" : "▶"} Run
                   </button>
-                  <button 
+                  <button
                     onClick={() => deleteCell(cell.id)}
                     className="btn btn-delete"
                   >
@@ -2720,10 +2781,12 @@ console.log(JSON.stringify(data, null, 2));
                   </button>
                 </div>
               </div>
-              
+
               <div className="cell-editor">
                 <textarea
-                  ref={el => { cellRefs.current[cell.id] = el; }}
+                  ref={(el) => {
+                    cellRefs.current[cell.id] = el;
+                  }}
                   value={cell.code}
                   onChange={(e) => updateCellCode(cell.id, e.target.value)}
                   onKeyDown={(e) => handleKeyDown(e, cell.id)}
@@ -2738,7 +2801,9 @@ console.log(JSON.stringify(data, null, 2));
               {cell.output.length > 0 && (
                 <div className="cell-output">
                   {cell.executionCount > 0 && (
-                    <span className="execution-count">[{cell.executionCount}]</span>
+                    <span className="execution-count">
+                      [{cell.executionCount}]
+                    </span>
                   )}
                   <div className="output-content">
                     {cell.output.map((output, idx) => (
@@ -2764,8 +2829,8 @@ function ExamplesTab({
   client: SandboxApiClient | null;
   connectionStatus: "disconnected" | "connecting" | "connected";
 }) {
-  const [results, setResults] = useState<{[key: string]: any}>({});
-  const [loading, setLoading] = useState<{[key: string]: boolean}>({});
+  const [results, setResults] = useState<{ [key: string]: any }>({});
+  const [loading, setLoading] = useState<{ [key: string]: boolean }>({});
   const [sessionId, setSessionId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -2776,9 +2841,10 @@ function ExamplesTab({
           const response = await fetch("/api/notebook/session", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ language: "python" })
+            body: JSON.stringify({ language: "python" }),
           });
-          const data: CreateSessionResponse = await response.json();
+          const data: { sessionId: string; language: string } =
+            await response.json();
           setSessionId(data.sessionId);
         } catch (error) {
           console.error("Failed to create session:", error);
@@ -2790,20 +2856,23 @@ function ExamplesTab({
 
   const runExample = async (exampleName: string, endpoint: string) => {
     if (!client || connectionStatus !== "connected") return;
-    
-    setLoading(prev => ({ ...prev, [exampleName]: true }));
-    
+
+    setLoading((prev) => ({ ...prev, [exampleName]: true }));
+
     try {
       const response = await fetch(endpoint, {
         method: "GET",
-        headers: { "Content-Type": "application/json" }
+        headers: { "Content-Type": "application/json" },
       });
       const data = await response.json();
-      setResults(prev => ({ ...prev, [exampleName]: data }));
+      setResults((prev) => ({ ...prev, [exampleName]: data }));
     } catch (error: any) {
-      setResults(prev => ({ ...prev, [exampleName]: { error: error.message } }));
+      setResults((prev) => ({
+        ...prev,
+        [exampleName]: { error: error.message },
+      }));
     } finally {
-      setLoading(prev => ({ ...prev, [exampleName]: false }));
+      setLoading((prev) => ({ ...prev, [exampleName]: false }));
     }
   };
 
@@ -2813,7 +2882,7 @@ function ExamplesTab({
       title: "Basic Python Execution",
       description: "Simple Python print statement and output capture",
       endpoint: "/api/examples/basic-python",
-      code: `print("Hello from Python!")`
+      code: `print("Hello from Python!")`,
     },
     {
       name: "chart",
@@ -2832,7 +2901,7 @@ plt.title('Sine Wave')
 plt.xlabel('X')
 plt.ylabel('Y')
 plt.grid(True)
-plt.show()`
+plt.show()`,
     },
     {
       name: "javascript",
@@ -2845,7 +2914,7 @@ console.log('Sum:', sum);
 console.log('Average:', sum / data.length);
 
 // Return object for inspection
-{ sum, average: sum / data.length }`
+{ sum, average: sum / data.length }`,
     },
     {
       name: "error",
@@ -2855,8 +2924,8 @@ console.log('Average:', sum / data.length);
       code: `# This will cause an error
 x = 10
 y = 0
-result = x / y`
-    }
+result = x / y`,
+    },
   ];
 
   return (
@@ -2864,7 +2933,8 @@ result = x / y`
       <div className="examples-header">
         <h2>Code Interpreter Examples</h2>
         <p className="examples-description">
-          Try these examples to see the code interpreter in action. Each example demonstrates different features.
+          Try these examples to see the code interpreter in action. Each example
+          demonstrates different features.
         </p>
       </div>
 
@@ -2873,7 +2943,7 @@ result = x / y`
           <div key={example.name} className="example-card">
             <h3>{example.title}</h3>
             <p className="example-description">{example.description}</p>
-            
+
             <div className="example-code">
               <pre>{example.code}</pre>
             </div>
@@ -2881,7 +2951,9 @@ result = x / y`
             <button
               className="btn btn-primary"
               onClick={() => runExample(example.name, example.endpoint)}
-              disabled={loading[example.name] || connectionStatus !== "connected"}
+              disabled={
+                loading[example.name] || connectionStatus !== "connected"
+              }
             >
               {loading[example.name] ? "Running..." : "Run Example"}
             </button>
@@ -2889,24 +2961,29 @@ result = x / y`
             {results[example.name] && (
               <div className="example-result">
                 <h4>Result:</h4>
-                
+
                 {results[example.name].error ? (
                   <div className="error-output">
-                    {typeof results[example.name].error === 'string' ? (
+                    {typeof results[example.name].error === "string" ? (
                       <>
                         <strong>Error:</strong> {results[example.name].error}
                       </>
                     ) : results[example.name].error.name ? (
                       <>
-                        <strong>Error: {results[example.name].error.name}</strong>
+                        <strong>
+                          Error: {results[example.name].error.name}
+                        </strong>
                         <p>{results[example.name].error.message}</p>
                         {results[example.name].error.traceback && (
-                          <pre className="traceback">{results[example.name].error.traceback.join('\n')}</pre>
+                          <pre className="traceback">
+                            {results[example.name].error.traceback.join("\n")}
+                          </pre>
                         )}
                       </>
                     ) : (
                       <>
-                        <strong>Error:</strong> {JSON.stringify(results[example.name].error)}
+                        <strong>Error:</strong>{" "}
+                        {JSON.stringify(results[example.name].error)}
                       </>
                     )}
                   </div>
@@ -2918,25 +2995,30 @@ result = x / y`
                         <pre>{results[example.name].output}</pre>
                       </div>
                     )}
-                    
+
                     {results[example.name].chart && (
                       <div className="chart-output">
                         <strong>Chart:</strong>
-                        <img 
-                          src={results[example.name].chart} 
+                        <img
+                          src={results[example.name].chart}
                           alt="Generated chart"
-                          style={{ maxWidth: '100%', marginTop: '10px' }}
+                          style={{ maxWidth: "100%", marginTop: "10px" }}
                         />
                       </div>
                     )}
-                    
+
                     {results[example.name].result && (
                       <div className="result-output">
                         <strong>Result Data:</strong>
-                        <pre>{JSON.stringify(results[example.name].result, null, 2)}</pre>
+                        <pre>
+                          {JSON.stringify(
+                            results[example.name].result,
+                            null,
+                            2
+                          )}
+                        </pre>
                       </div>
                     )}
-                    
                   </>
                 )}
               </div>
@@ -2947,9 +3029,7 @@ result = x / y`
 
       <div className="examples-advanced">
         <h3>Try More Examples</h3>
-        <p>
-          These examples just scratch the surface! You can:
-        </p>
+        <p>These examples just scratch the surface! You can:</p>
         <ul>
           <li>Process data with pandas DataFrames</li>
           <li>Create complex visualizations with multiple subplots</li>
@@ -2958,7 +3038,8 @@ result = x / y`
           <li>Generate reports with rich HTML output</li>
         </ul>
         <p>
-          Check out the <strong>Notebook</strong> tab to write and run your own code interactively!
+          Check out the <strong>Notebook</strong> tab to write and run your own
+          code interactively!
         </p>
       </div>
     </div>
@@ -3117,7 +3198,11 @@ function SandboxTester() {
       setResults((prev) => [...prev, newResult]);
 
       // Parse command options
-      const options: { sessionId?: string; cwd?: string; env?: Record<string, string> } = {
+      const options: {
+        sessionId?: string;
+        cwd?: string;
+        env?: Record<string, string>;
+      } = {
         sessionId: sessionId || undefined,
       };
 
@@ -3135,7 +3220,12 @@ function SandboxTester() {
       }
 
       // Execute the command
-      console.log("Executing command:", trimmedCommand, "with options:", options);
+      console.log(
+        "Executing command:",
+        trimmedCommand,
+        "with options:",
+        options
+      );
       const result = await client.execute(trimmedCommand, [], options);
       console.log("Result:", result);
 
@@ -3206,7 +3296,11 @@ function SandboxTester() {
       setResults((prev) => [...prev, newResult]);
 
       // Parse command options (same as regular execute)
-      const options: { sessionId?: string; cwd?: string; env?: Record<string, string> } = {
+      const options: {
+        sessionId?: string;
+        cwd?: string;
+        env?: Record<string, string>;
+      } = {
         sessionId: sessionId || undefined,
       };
 
@@ -3224,7 +3318,12 @@ function SandboxTester() {
       }
 
       // Execute the command with streaming
-      console.log("Executing streaming command:", trimmedCommand, "with options:", options);
+      console.log(
+        "Executing streaming command:",
+        trimmedCommand,
+        "with options:",
+        options
+      );
       await client.executeStream(trimmedCommand, [], options);
       const commandParts = trimmedCommand.split(" ");
       const cmd = commandParts[0];
@@ -3429,7 +3528,10 @@ function SandboxTester() {
                   placeholder="Working Directory (optional)"
                   value={commandOptions.cwd}
                   onChange={(e) =>
-                    setCommandOptions((prev) => ({ ...prev, cwd: e.target.value }))
+                    setCommandOptions((prev) => ({
+                      ...prev,
+                      cwd: e.target.value,
+                    }))
                   }
                   className="option-input"
                   disabled={isExecuting}
@@ -3439,7 +3541,10 @@ function SandboxTester() {
                   placeholder="Environment (KEY1=val1,KEY2=val2)"
                   value={commandOptions.env}
                   onChange={(e) =>
-                    setCommandOptions((prev) => ({ ...prev, env: e.target.value }))
+                    setCommandOptions((prev) => ({
+                      ...prev,
+                      env: e.target.value,
+                    }))
                   }
                   className="option-input"
                   disabled={isExecuting}
