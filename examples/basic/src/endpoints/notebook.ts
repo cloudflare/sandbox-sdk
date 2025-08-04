@@ -12,7 +12,7 @@ export async function createSession(sandbox: Sandbox, request: Request): Promise
     
     // Create a code context for this session
     const context = await sandbox.createCodeContext({ language });
-    const sessionId = `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const sessionId = `session-${Date.now()}-${crypto.randomUUID()}`;
     
     sessions.set(sessionId, {
       contextId: context.id,
