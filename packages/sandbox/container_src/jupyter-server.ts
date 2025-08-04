@@ -1,5 +1,19 @@
 import { KernelManager, ServerConnection, Kernel } from "@jupyterlab/services";
+import type { 
+  IIOPubMessage,
+  IDisplayDataMsg,
+  IExecuteResultMsg,
+  IStreamMsg,
+  IErrorMsg
+} from "@jupyterlab/services/lib/kernel/messages";
+import { 
+  isDisplayDataMsg,
+  isExecuteResultMsg,
+  isStreamMsg,
+  isErrorMsg
+} from "@jupyterlab/services/lib/kernel/messages";
 import { v4 as uuidv4 } from "uuid";
+import type { ExecutionResult } from "./mime-processor";
 
 export interface JupyterContext {
   id: string;
@@ -35,6 +49,12 @@ export class JupyterServer {
       token: "",
       appUrl: "",
       wsUrl: "ws://localhost:8888",
+      appendToken: false,
+      init: {
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      }
     });
 
     this.kernelManager = new KernelManager({ serverSettings });
@@ -62,9 +82,6 @@ export class JupyterServer {
     });
 
     const connection = this.kernelManager.connectTo({ model: kernelModel });
-
-    // Wait for kernel to be ready
-    // connection.ready is not a promise in newer versions
 
     const context: JupyterContext = {
       id: uuidv4(),
@@ -157,7 +174,7 @@ export class JupyterServer {
         });
 
         // Handle different message types
-        future.onIOPub = (msg: any) => {
+        future.onIOPub = (msg: IIOPubMessage) => {
           const result = processJupyterMessage(msg);
           if (result) {
             controller.enqueue(
@@ -317,39 +334,63 @@ export class JupyterServer {
 }
 
 // MIME processing function
-function processJupyterMessage(msg: any): any {
-  const msgType = msg.header.msg_type;
-
-  switch (msgType) {
-    case "execute_result":
-    case "display_data":
-      return {
-        type: "result",
-        data: msg.content.data,
-        metadata: msg.content.metadata,
-        execution_count: msg.content.execution_count,
+function processJupyterMessage(msg: IIOPubMessage): ExecutionResult | null {
+  if (isExecuteResultMsg(msg) || isDisplayDataMsg(msg)) {
+    const data = msg.content.data;
+    const result: ExecutionResult = {
+      type: "result",
+      data: data,
+      metadata: msg.content.metadata,
+      execution_count: isExecuteResultMsg(msg) ? (msg.content.execution_count ?? undefined) : undefined,
+      timestamp: Date.now()
+    };
+    
+    // Extract specific formats (handle multiline strings)
+    if (data) {
+      const extractValue = (value: any): string | undefined => {
+        if (typeof value === 'string') return value;
+        if (Array.isArray(value)) return value.join('');
+        return undefined;
       };
-
-    case "stream":
-      return {
-        type: msg.content.name === "stdout" ? "stdout" : "stderr",
-        text: msg.content.text,
-      };
-
-    case "error":
-      return {
-        type: "error",
-        ename: msg.content.ename,
-        evalue: msg.content.evalue,
-        traceback: msg.content.traceback,
-      };
-
-    case "status":
-      // We handle status in onReply, skip here
-      return null;
-
-    default:
-      console.log("[JupyterServer] Unhandled message type:", msgType);
-      return null;
+      
+      if (data['text/plain']) result.text = extractValue(data['text/plain']);
+      if (data['text/html']) result.html = extractValue(data['text/html']);
+      if (data['image/png']) result.png = extractValue(data['image/png']);
+      if (data['image/jpeg']) result.jpeg = extractValue(data['image/jpeg']);
+      if (data['image/svg+xml']) result.svg = extractValue(data['image/svg+xml']);
+      if (data['text/latex']) result.latex = extractValue(data['text/latex']);
+      if (data['text/markdown']) result.markdown = extractValue(data['text/markdown']);
+      if (data['application/javascript']) result.javascript = extractValue(data['application/javascript']);
+      if (data['application/json']) result.json = data['application/json']; // JSON is not multiline
+    }
+    
+    return result;
   }
+  
+  if (isStreamMsg(msg)) {
+    return {
+      type: msg.content.name === "stdout" ? "stdout" : "stderr",
+      text: msg.content.text,
+      timestamp: Date.now()
+    };
+  }
+  
+  if (isErrorMsg(msg)) {
+    return {
+      type: "error",
+      ename: msg.content.ename,
+      evalue: msg.content.evalue,
+      traceback: msg.content.traceback,
+      timestamp: Date.now()
+    };
+  }
+  
+  // Other message types we don't need to process
+  const msgType = msg.header.msg_type;
+  if (msgType === "status" || msgType === "execute_input") {
+    return null;
+  }
+  
+  console.log("[JupyterServer] Unhandled message type:", msgType);
+  return null;
 }

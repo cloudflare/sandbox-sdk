@@ -11,6 +11,8 @@ jupyter notebook \
   --NotebookApp.password='' \
   --NotebookApp.allow_origin='*' \
   --NotebookApp.disable_check_xsrf=True \
+  --NotebookApp.allow_remote_access=True \
+  --NotebookApp.allow_credentials=True \
   > /tmp/jupyter.log 2>&1 &
 
 JUPYTER_PID=$!

@@ -2437,3 +2437,150 @@ button:focus {
 .notebook-html tr:hover {
   background-color: #161b22;
 }
+
+/* Examples Tab Styles */
+.examples-tab {
+  padding: 20px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.examples-header {
+  margin-bottom: 30px;
+  text-align: center;
+}
+
+.examples-header h2 {
+  font-size: 24px;
+  margin-bottom: 10px;
+  color: #f0f6fc;
+}
+
+.examples-description {
+  color: #8b949e;
+  margin-bottom: 20px;
+}
+
+.examples-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
+  gap: 20px;
+  margin-bottom: 40px;
+}
+
+.example-card {
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  padding: 20px;
+}
+
+.example-card h3 {
+  font-size: 18px;
+  margin-bottom: 10px;
+  color: #f0f6fc;
+}
+
+.example-description {
+  color: #8b949e;
+  margin-bottom: 15px;
+  font-size: 14px;
+}
+
+.example-code {
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  padding: 15px;
+  margin-bottom: 15px;
+  overflow-x: auto;
+}
+
+.example-code pre {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #c9d1d9;
+  font-family: 'Fira Code', monospace;
+}
+
+.example-result {
+  margin-top: 20px;
+  padding: 15px;
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+}
+
+.example-result h4 {
+  font-size: 14px;
+  margin-bottom: 10px;
+  color: #f0f6fc;
+}
+
+.stdout-output,
+.result-output,
+.chart-output,
+.error-output {
+  margin-bottom: 15px;
+}
+
+.stdout-output strong,
+.result-output strong,
+.chart-output strong,
+.error-output strong {
+  display: block;
+  margin-bottom: 5px;
+  color: #8b949e;
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.stdout-output pre,
+.result-output pre {
+  background: #161b22;
+  padding: 10px;
+  border-radius: 4px;
+  font-size: 13px;
+  overflow-x: auto;
+  margin: 0;
+  color: #c9d1d9;
+  font-family: 'Fira Code', monospace;
+}
+
+.error-output {
+  color: #f85149;
+}
+
+.error-output .traceback {
+  background: #161b22;
+  padding: 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  overflow-x: auto;
+  margin-top: 10px;
+  font-family: 'Fira Code', monospace;
+}
+
+.examples-advanced {
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  padding: 20px;
+}
+
+.examples-advanced h3 {
+  font-size: 18px;
+  margin-bottom: 15px;
+  color: #f0f6fc;
+}
+
+.examples-advanced ul {
+  margin: 15px 0;
+  padding-left: 20px;
+}
+
+.examples-advanced li {
+  margin-bottom: 8px;
+  color: #8b949e;
+}

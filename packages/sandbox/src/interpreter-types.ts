@@ -238,6 +238,30 @@ export interface ExecutionError {
   lineNumber?: number;
 }
 
+// Serializable execution result
+export interface ExecutionResult {
+  code: string;
+  logs: {
+    stdout: string[];
+    stderr: string[];
+  };
+  error?: ExecutionError;
+  executionCount?: number;
+  results: Array<{
+    text?: string;
+    html?: string;
+    png?: string;
+    jpeg?: string;
+    svg?: string;
+    latex?: string;
+    markdown?: string;
+    javascript?: string;
+    json?: any;
+    chart?: ChartData;
+    data?: any;
+  }>;
+}
+
 // Execution Result Container
 export class Execution {
   /**
@@ -267,6 +291,31 @@ export class Execution {
     public readonly code: string,
     public readonly context: CodeContext
   ) {}
+  
+  /**
+   * Convert to a plain object for serialization
+   */
+  toJSON(): ExecutionResult {
+    return {
+      code: this.code,
+      logs: this.logs,
+      error: this.error,
+      executionCount: this.executionCount,
+      results: this.results.map(result => ({
+        text: result.text,
+        html: result.html,
+        png: result.png,
+        jpeg: result.jpeg,
+        svg: result.svg,
+        latex: result.latex,
+        markdown: result.markdown,
+        javascript: result.javascript,
+        json: result.json,
+        chart: result.chart,
+        data: result.data
+      }))
+    };
+  }
 }
 
 // Implementation of Result

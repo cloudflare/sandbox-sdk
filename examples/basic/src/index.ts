@@ -184,6 +184,106 @@ export default {
         return await setupStatic(sandbox, request);
       }
 
+      // Code Interpreter Example APIs
+      if (pathname === "/api/examples/basic-python" && request.method === "GET") {
+        try {
+          const pythonCtx = await sandbox.createCodeContext({ language: 'python' });
+          const execution = await sandbox.runCode('print("Hello from Python!")', { 
+            context: pythonCtx 
+          });
+          
+          // The execution object now has a toJSON method
+          return jsonResponse({
+            output: execution.logs.stdout.join(''),
+            errors: execution.error
+          });
+        } catch (error: any) {
+          return errorResponse(error.message || "Failed to run example", 500);
+        }
+      }
+
+      if (pathname === "/api/examples/chart" && request.method === "GET") {
+        try {
+          const ctx = await sandbox.createCodeContext({ language: 'python' });
+          const execution = await sandbox.runCode(`
+import matplotlib.pyplot as plt
+import numpy as np
+
+x = np.linspace(0, 10, 100)
+y = np.sin(x)
+
+plt.figure(figsize=(8, 6))
+plt.plot(x, y, 'b-', linewidth=2)
+plt.title('Sine Wave')
+plt.xlabel('X')
+plt.ylabel('Y')
+plt.grid(True)
+plt.show()
+          `, { context: ctx });
+          
+          const chartResult = execution.results[0];
+          const formats: string[] = [];
+          if (chartResult) {
+            if (chartResult.text) formats.push('text');
+            if (chartResult.html) formats.push('html');
+            if (chartResult.png) formats.push('png');
+            if (chartResult.jpeg) formats.push('jpeg');
+            if (chartResult.svg) formats.push('svg');
+          }
+          
+          return jsonResponse({
+            chart: chartResult?.png ? `data:image/png;base64,${chartResult.png}` : null,
+            formats
+          });
+        } catch (error: any) {
+          return errorResponse(error.message || "Failed to run example", 500);
+        }
+      }
+
+      if (pathname === "/api/examples/javascript" && request.method === "GET") {
+        try {
+          const jsCtx = await sandbox.createCodeContext({ language: 'javascript' });
+          const execution = await sandbox.runCode(`
+const data = [1, 2, 3, 4, 5];
+const sum = data.reduce((a, b) => a + b, 0);
+console.log('Sum:', sum);
+console.log('Average:', sum / data.length);
+
+// Return object for inspection
+{ sum, average: sum / data.length }
+          `, { context: jsCtx });
+          
+          return jsonResponse({
+            output: execution.logs.stdout.join('\n'),
+            result: execution.results[0]?.json || null
+          });
+        } catch (error: any) {
+          return errorResponse(error.message || "Failed to run example", 500);
+        }
+      }
+
+      if (pathname === "/api/examples/error" && request.method === "GET") {
+        try {
+          const ctx = await sandbox.createCodeContext({ language: 'python' });
+          const execution = await sandbox.runCode(`
+# This will cause an error
+x = 10
+y = 0
+result = x / y
+          `, { context: ctx });
+          
+          return jsonResponse({
+            error: execution.error ? {
+              name: execution.error.name,
+              message: execution.error.value,
+              traceback: execution.error.traceback
+            } : null
+          });
+        } catch (error: any) {
+          return errorResponse(error.message || "Failed to run example", 500);
+        }
+      }
+
       // Health check endpoint
       if (pathname === "/health") {
         return jsonResponse({
@@ -214,6 +314,10 @@ export default {
             "POST /api/notebook/session - Create notebook session",
             "POST /api/notebook/execute - Execute notebook cell",
             "DELETE /api/notebook/session - Delete notebook session",
+            "GET /api/examples/basic-python - Basic Python example",
+            "GET /api/examples/chart - Chart generation example",
+            "GET /api/examples/javascript - JavaScript execution example",
+            "GET /api/examples/error - Error handling example",
           ]
         });
       }

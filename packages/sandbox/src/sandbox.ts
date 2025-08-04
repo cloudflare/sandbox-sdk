@@ -22,7 +22,8 @@ import type {
   CodeContext,
   CreateContextOptions,
   RunCodeOptions,
-  Execution
+  Execution,
+  ExecutionResult
 } from "./interpreter-types";
 import {
   ProcessNotFoundError,
@@ -672,8 +673,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   /**
    * Run code with streaming callbacks
    */
-  async runCode(code: string, options?: RunCodeOptions): Promise<Execution> {
-    return this.codeInterpreter.runCode(code, options);
+  async runCode(code: string, options?: RunCodeOptions): Promise<ExecutionResult> {
+    const execution = await this.codeInterpreter.runCode(code, options);
+    // Convert to plain object for RPC serialization
+    return execution.toJSON();
   }
 
   /**

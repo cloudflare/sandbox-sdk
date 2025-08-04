@@ -62,6 +62,10 @@ RUN pip3 install --no-cache-dir \
     jupyterlab \
     ipykernel \
     notebook \
+    matplotlib \
+    numpy \
+    pandas \
+    seaborn \
     && python3 -m ipykernel install --user --name python3
 
 # Install JavaScript/TypeScript kernel (tslab)

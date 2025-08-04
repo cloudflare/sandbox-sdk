@@ -1,6 +1,7 @@
 import type React from "react";
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
+import type { CreateSessionResponse, ExecuteCellResponse, ExampleResponse } from "../src/types";
 import "./style.css";
 
 // Simple API client to replace direct HttpClient usage
@@ -444,7 +445,7 @@ interface CommandResult {
   timestamp: Date;
 }
 
-type TabType = "commands" | "processes" | "ports" | "streaming" | "files" | "notebook";
+type TabType = "commands" | "processes" | "ports" | "streaming" | "files" | "notebook" | "examples";
 
 interface ProcessInfo {
   id: string;
@@ -2756,6 +2757,205 @@ console.log(JSON.stringify(data, null, 2));
   );
 }
 
+function ExamplesTab({
+  client,
+  connectionStatus,
+}: {
+  client: SandboxApiClient | null;
+  connectionStatus: "disconnected" | "connecting" | "connected";
+}) {
+  const [results, setResults] = useState<{[key: string]: any}>({});
+  const [loading, setLoading] = useState<{[key: string]: boolean}>({});
+  const [sessionId, setSessionId] = useState<string | null>(null);
+
+  useEffect(() => {
+    // Create a session for the examples
+    const initSession = async () => {
+      if (client && connectionStatus === "connected") {
+        try {
+          const response = await fetch("/api/notebook/session", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ language: "python" })
+          });
+          const data: CreateSessionResponse = await response.json();
+          setSessionId(data.sessionId);
+        } catch (error) {
+          console.error("Failed to create session:", error);
+        }
+      }
+    };
+    initSession();
+  }, [client, connectionStatus]);
+
+  const runExample = async (exampleName: string, endpoint: string) => {
+    if (!client || connectionStatus !== "connected") return;
+    
+    setLoading(prev => ({ ...prev, [exampleName]: true }));
+    
+    try {
+      const response = await fetch(endpoint, {
+        method: "GET",
+        headers: { "Content-Type": "application/json" }
+      });
+      const data = await response.json();
+      setResults(prev => ({ ...prev, [exampleName]: data }));
+    } catch (error: any) {
+      setResults(prev => ({ ...prev, [exampleName]: { error: error.message } }));
+    } finally {
+      setLoading(prev => ({ ...prev, [exampleName]: false }));
+    }
+  };
+
+  const examples = [
+    {
+      name: "basic-python",
+      title: "Basic Python Execution",
+      description: "Simple Python print statement and output capture",
+      endpoint: "/api/examples/basic-python",
+      code: `print("Hello from Python!")`
+    },
+    {
+      name: "chart",
+      title: "Data Visualization",
+      description: "Generate charts with matplotlib",
+      endpoint: "/api/examples/chart",
+      code: `import matplotlib.pyplot as plt
+import numpy as np
+
+x = np.linspace(0, 10, 100)
+y = np.sin(x)
+
+plt.figure(figsize=(8, 6))
+plt.plot(x, y, 'b-', linewidth=2)
+plt.title('Sine Wave')
+plt.xlabel('X')
+plt.ylabel('Y')
+plt.grid(True)
+plt.show()`
+    },
+    {
+      name: "javascript",
+      title: "JavaScript Execution",
+      description: "Run JavaScript code and get results",
+      endpoint: "/api/examples/javascript",
+      code: `const data = [1, 2, 3, 4, 5];
+const sum = data.reduce((a, b) => a + b, 0);
+console.log('Sum:', sum);
+console.log('Average:', sum / data.length);
+
+// Return object for inspection
+{ sum, average: sum / data.length }`
+    },
+    {
+      name: "error",
+      title: "Error Handling",
+      description: "See how errors are captured and displayed",
+      endpoint: "/api/examples/error",
+      code: `# This will cause an error
+x = 10
+y = 0
+result = x / y`
+    }
+  ];
+
+  return (
+    <div className="examples-tab">
+      <div className="examples-header">
+        <h2>Code Interpreter Examples</h2>
+        <p className="examples-description">
+          Try these examples to see the code interpreter in action. Each example demonstrates different features.
+        </p>
+      </div>
+
+      <div className="examples-grid">
+        {examples.map((example) => (
+          <div key={example.name} className="example-card">
+            <h3>{example.title}</h3>
+            <p className="example-description">{example.description}</p>
+            
+            <div className="example-code">
+              <pre>{example.code}</pre>
+            </div>
+
+            <button
+              className="btn btn-primary"
+              onClick={() => runExample(example.name, example.endpoint)}
+              disabled={loading[example.name] || connectionStatus !== "connected"}
+            >
+              {loading[example.name] ? "Running..." : "Run Example"}
+            </button>
+
+            {results[example.name] && (
+              <div className="example-result">
+                <h4>Result:</h4>
+                
+                {results[example.name].error ? (
+                  <div className="error-output">
+                    <strong>Error:</strong> {results[example.name].error}
+                  </div>
+                ) : (
+                  <>
+                    {results[example.name].output && (
+                      <div className="stdout-output">
+                        <strong>Output:</strong>
+                        <pre>{results[example.name].output}</pre>
+                      </div>
+                    )}
+                    
+                    {results[example.name].chart && (
+                      <div className="chart-output">
+                        <strong>Chart:</strong>
+                        <img 
+                          src={results[example.name].chart} 
+                          alt="Generated chart"
+                          style={{ maxWidth: '100%', marginTop: '10px' }}
+                        />
+                      </div>
+                    )}
+                    
+                    {results[example.name].result && (
+                      <div className="result-output">
+                        <strong>Result Data:</strong>
+                        <pre>{JSON.stringify(results[example.name].result, null, 2)}</pre>
+                      </div>
+                    )}
+                    
+                    {results[example.name].error && results[example.name].error.traceback && (
+                      <div className="error-output">
+                        <strong>Error: {results[example.name].error.name}</strong>
+                        <p>{results[example.name].error.message}</p>
+                        <pre className="traceback">{results[example.name].error.traceback.join('\n')}</pre>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+
+      <div className="examples-advanced">
+        <h3>Try More Examples</h3>
+        <p>
+          These examples just scratch the surface! You can:
+        </p>
+        <ul>
+          <li>Process data with pandas DataFrames</li>
+          <li>Create complex visualizations with multiple subplots</li>
+          <li>Share data between Python and JavaScript contexts</li>
+          <li>Build interactive data analysis workflows</li>
+          <li>Generate reports with rich HTML output</li>
+        </ul>
+        <p>
+          Check out the <strong>Notebook</strong> tab to write and run your own code interactively!
+        </p>
+      </div>
+    </div>
+  );
+}
+
 function SandboxTester() {
   const [activeTab, setActiveTab] = useState<TabType>("notebook");
   const [client, setClient] = useState<SandboxApiClient | null>(null);
@@ -3161,6 +3361,12 @@ function SandboxTester() {
         >
           📓 Notebook
         </button>
+        <button
+          className={`tab-button ${activeTab === "examples" ? "active" : ""}`}
+          onClick={() => setActiveTab("examples")}
+        >
+          🧪 Examples
+        </button>
       </div>
 
       <div className="tab-content-area">
@@ -3347,6 +3553,9 @@ function SandboxTester() {
 
         {activeTab === "notebook" && (
           <NotebookTab client={client} connectionStatus={connectionStatus} />
+        )}
+        {activeTab === "examples" && (
+          <ExamplesTab client={client} connectionStatus={connectionStatus} />
         )}
       </div>
     </div>

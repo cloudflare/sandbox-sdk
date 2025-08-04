@@ -347,7 +347,8 @@ import type {
   CodeContext,
   CreateContextOptions,
   RunCodeOptions,
-  Execution
+  Execution,
+  ExecutionResult
 } from './interpreter-types';
 
 // Main Sandbox Interface
@@ -373,7 +374,7 @@ export interface ISandbox {
 
   // Code Interpreter API
   createCodeContext(options?: CreateContextOptions): Promise<CodeContext>;
-  runCode(code: string, options?: RunCodeOptions): Promise<Execution>;
+  runCode(code: string, options?: RunCodeOptions): Promise<ExecutionResult>;
   runCodeStream(code: string, options?: RunCodeOptions): Promise<ReadableStream>;
   listCodeContexts(): Promise<CodeContext[]>;
   deleteCodeContext(contextId: string): Promise<void>;
