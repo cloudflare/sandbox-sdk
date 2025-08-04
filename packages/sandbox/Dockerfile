@@ -42,7 +42,7 @@ RUN apt-get update && apt-get install -y \
 # Set Python 3.11 as default python3
 RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
 
-# Install Node.js 20 LTS (matching E2B's setup)
+# Install Node.js 20 LTS
 # Using the official NodeSource repository setup script
 RUN apt-get update && apt-get install -y ca-certificates curl gnupg \
     && mkdir -p /etc/apt/keyrings \
