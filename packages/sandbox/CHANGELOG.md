@@ -1,5 +1,11 @@
 # @cloudflare/sandbox
 
+## 0.2.1
+
+### Patch Changes
+
+- [#49](https://github.com/cloudflare/sandbox-sdk/pull/49) [`d81d2a5`](https://github.com/cloudflare/sandbox-sdk/commit/d81d2a563c9af8947d5444019ed4d6156db563e3) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Implement code interpreter API
+
 ## 0.2.0
 
 ### Minor Changes
