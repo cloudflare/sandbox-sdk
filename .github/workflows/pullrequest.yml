@@ -23,7 +23,16 @@ jobs:
           node-version: 20
           cache: "npm"
 
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
       - run: npm install
       - run: npm run build
+
+      # Install container dependencies before type checking
+      - name: Install container dependencies
+        run: cd packages/sandbox/container_src && bun install
+
       - run: npm run check
       - run: CI=true npm run test

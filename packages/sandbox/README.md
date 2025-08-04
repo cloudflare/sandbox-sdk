@@ -748,11 +748,21 @@ cd sandbox-sdk
 # Install dependencies
 npm install
 
+# Install Bun (if not already installed)
+# Visit https://bun.sh for installation instructions
+curl -fsSL https://bun.sh/install | bash
+
+# Install container dependencies (required for TypeScript checking)
+cd packages/sandbox/container_src && bun install && cd -
+
 # Run tests
 npm test
 
 # Build the project
 npm run build
+
+# Run type checking and linting
+npm run check
 ```
 
 <h2 id="license">📄 License</h2>
