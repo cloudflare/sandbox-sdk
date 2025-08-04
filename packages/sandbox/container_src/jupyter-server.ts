@@ -227,10 +227,10 @@ export class JupyterServer {
   private getKernelName(language: string): string {
     const kernelMap: Record<string, string> = {
       python: "python3",
-      javascript: "tslab",
-      typescript: "tslab",
-      js: "tslab",
-      ts: "tslab",
+      javascript: "javascript",
+      typescript: "javascript",
+      js: "javascript",
+      ts: "javascript",
     };
     return kernelMap[language.toLowerCase()] || "python3";
   }

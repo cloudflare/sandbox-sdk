@@ -2892,7 +2892,23 @@ result = x / y`
                 
                 {results[example.name].error ? (
                   <div className="error-output">
-                    <strong>Error:</strong> {results[example.name].error}
+                    {typeof results[example.name].error === 'string' ? (
+                      <>
+                        <strong>Error:</strong> {results[example.name].error}
+                      </>
+                    ) : results[example.name].error.name ? (
+                      <>
+                        <strong>Error: {results[example.name].error.name}</strong>
+                        <p>{results[example.name].error.message}</p>
+                        {results[example.name].error.traceback && (
+                          <pre className="traceback">{results[example.name].error.traceback.join('\n')}</pre>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        <strong>Error:</strong> {JSON.stringify(results[example.name].error)}
+                      </>
+                    )}
                   </div>
                 ) : (
                   <>
@@ -2921,13 +2937,6 @@ result = x / y`
                       </div>
                     )}
                     
-                    {results[example.name].error && results[example.name].error.traceback && (
-                      <div className="error-output">
-                        <strong>Error: {results[example.name].error.name}</strong>
-                        <p>{results[example.name].error.message}</p>
-                        <pre className="traceback">{results[example.name].error.traceback.join('\n')}</pre>
-                      </div>
-                    )}
                   </>
                 )}
               </div>

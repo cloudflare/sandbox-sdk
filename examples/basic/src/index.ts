@@ -249,13 +249,12 @@ const sum = data.reduce((a, b) => a + b, 0);
 console.log('Sum:', sum);
 console.log('Average:', sum / data.length);
 
-// Return object for inspection
-{ sum, average: sum / data.length }
+// Return the result - wrap in parentheses to make it an expression
+({ sum, average: sum / data.length })
           `, { context: jsCtx });
           
           return jsonResponse({
-            output: execution.logs.stdout.join('\n'),
-            result: execution.results[0]?.json || null
+            output: execution.logs.stdout.join('\n')
           });
         } catch (error: any) {
           return errorResponse(error.message || "Failed to run example", 500);

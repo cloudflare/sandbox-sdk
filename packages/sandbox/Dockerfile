@@ -42,12 +42,12 @@ RUN apt-get update && apt-get install -y \
 # Set Python 3.11 as default python3
 RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
 
-# Install Node.js 22 LTS
+# Install Node.js 20 LTS (matching E2B's setup)
 # Using the official NodeSource repository setup script
 RUN apt-get update && apt-get install -y ca-certificates curl gnupg \
     && mkdir -p /etc/apt/keyrings \
     && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg \
-    && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main" | tee /etc/apt/sources.list.d/nodesource.list \
+    && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" | tee /etc/apt/sources.list.d/nodesource.list \
     && apt-get update \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
@@ -68,9 +68,9 @@ RUN pip3 install --no-cache-dir \
     seaborn \
     && python3 -m ipykernel install --user --name python3
 
-# Install JavaScript/TypeScript kernel (tslab)
-RUN npm install -g --unsafe-perm tslab \
-    && tslab install --python=python3
+# Install JavaScript kernel (ijavascript) - using E2B's fork
+RUN npm install -g --unsafe-perm git+https://github.com/e2b-dev/ijavascript.git \
+    && ijsinstall --install=global
 
 # Set up container server directory
 WORKDIR /container-server
