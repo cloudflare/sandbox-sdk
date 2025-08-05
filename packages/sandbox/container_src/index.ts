@@ -1,6 +1,9 @@
 import { randomBytes } from "node:crypto";
 import { serve } from "bun";
-import { handleExecuteRequest, handleStreamingExecuteRequest } from "./handler/exec";
+import {
+  handleExecuteRequest,
+  handleStreamingExecuteRequest,
+} from "./handler/exec";
 import {
   handleDeleteFileRequest,
   handleMkdirRequest,
@@ -40,7 +43,7 @@ const processes = new Map<string, ProcessRecord>();
 
 // Generate a unique session ID using cryptographically secure randomness
 function generateSessionId(): string {
-  return `session_${Date.now()}_${randomBytes(6).toString('hex')}`;
+  return `session_${Date.now()}_${randomBytes(6).toString("hex")}`;
 }
 
 // Clean up old sessions (older than 1 hour)
@@ -62,15 +65,22 @@ const jupyterService = new JupyterService();
 
 // Start Jupyter initialization in background (non-blocking)
 console.log("[Container] Starting Jupyter initialization in background...");
-console.log("[Container] API endpoints are available immediately. Jupyter-dependent features will be available shortly.");
+console.log(
+  "[Container] API endpoints are available immediately. Jupyter-dependent features will be available shortly."
+);
 
-jupyterService.initialize()
+jupyterService
+  .initialize()
   .then(() => {
-    console.log("[Container] ✅ Jupyter fully initialized - all features available");
+    console.log(
+      "[Container] Jupyter fully initialized - all features available"
+    );
   })
   .catch((error) => {
-    console.error("[Container] ❌ Jupyter initialization failed:", error.message);
-    console.error("[Container] The API will continue in degraded mode without code execution capabilities");
+    console.error("[Container] Jupyter initialization failed:", error.message);
+    console.error(
+      "[Container] The API will continue in degraded mode without code execution capabilities"
+    );
   });
 
 const server = serve({
@@ -178,7 +188,11 @@ const server = serve({
               JSON.stringify({
                 message: "pong",
                 timestamp: new Date().toISOString(),
-                jupyter: health.ready ? "ready" : health.initializing ? "initializing" : "not ready",
+                jupyter: health.ready
+                  ? "ready"
+                  : health.initializing
+                  ? "initializing"
+                  : "not ready",
                 jupyterHealth: health,
               }),
               {
@@ -305,7 +319,7 @@ const server = serve({
         case "/api/contexts":
           if (req.method === "POST") {
             try {
-              const body = await req.json() as CreateContextRequest;
+              const body = (await req.json()) as CreateContextRequest;
               const context = await jupyterService.createContext(body);
               return new Response(
                 JSON.stringify({
@@ -313,7 +327,7 @@ const server = serve({
                   language: context.language,
                   cwd: context.cwd,
                   createdAt: context.createdAt,
-                  lastUsed: context.lastUsed
+                  lastUsed: context.lastUsed,
                 }),
                 {
                   headers: {
@@ -325,12 +339,14 @@ const server = serve({
             } catch (error) {
               if (error instanceof JupyterNotReadyError) {
                 // This happens when request times out waiting for Jupyter
-                console.log(`[Container] Request timed out waiting for Jupyter (${error.progress}% complete)`);
+                console.log(
+                  `[Container] Request timed out waiting for Jupyter (${error.progress}% complete)`
+                );
                 return new Response(
                   JSON.stringify({
                     error: error.message,
                     status: "initializing",
-                    progress: error.progress
+                    progress: error.progress,
                   }),
                   {
                     status: 503,
@@ -342,11 +358,42 @@ const server = serve({
                   }
                 );
               }
+
+              // Check if it's a circuit breaker error
+              if (
+                error instanceof Error &&
+                error.message.includes("Circuit breaker is open")
+              ) {
+                console.log(
+                  "[Container] Circuit breaker is open:",
+                  error.message
+                );
+                return new Response(
+                  JSON.stringify({
+                    error:
+                      "Service temporarily unavailable due to high error rate. Please try again later.",
+                    status: "circuit_open",
+                    details: error.message,
+                  }),
+                  {
+                    status: 503,
+                    headers: {
+                      "Content-Type": "application/json",
+                      "Retry-After": "60",
+                      ...corsHeaders,
+                    },
+                  }
+                );
+              }
+
               // Only log actual errors with stack traces
               console.error("[Container] Error creating context:", error);
               return new Response(
                 JSON.stringify({
-                  error: error instanceof Error ? error.message : "Failed to create context"
+                  error:
+                    error instanceof Error
+                      ? error.message
+                      : "Failed to create context",
                 }),
                 {
                   status: 500,
@@ -359,34 +406,74 @@ const server = serve({
             }
           } else if (req.method === "GET") {
             const contexts = await jupyterService.listContexts();
-            return new Response(
-              JSON.stringify({ contexts }),
-              {
-                headers: {
-                  "Content-Type": "application/json",
-                  ...corsHeaders,
-                },
-              }
-            );
+            return new Response(JSON.stringify({ contexts }), {
+              headers: {
+                "Content-Type": "application/json",
+                ...corsHeaders,
+              },
+            });
           }
           break;
 
         case "/api/execute/code":
           if (req.method === "POST") {
             try {
-              const body = await req.json() as { context_id: string; code: string; language?: string };
-              return await jupyterService.executeCode(body.context_id, body.code, body.language);
+              const body = (await req.json()) as {
+                context_id: string;
+                code: string;
+                language?: string;
+              };
+              return await jupyterService.executeCode(
+                body.context_id,
+                body.code,
+                body.language
+              );
             } catch (error) {
+              // Check if it's a circuit breaker error
+              if (
+                error instanceof Error &&
+                error.message.includes("Circuit breaker is open")
+              ) {
+                console.log(
+                  "[Container] Circuit breaker is open for code execution:",
+                  error.message
+                );
+                return new Response(
+                  JSON.stringify({
+                    error:
+                      "Service temporarily unavailable due to high error rate. Please try again later.",
+                    status: "circuit_open",
+                    details: error.message,
+                  }),
+                  {
+                    status: 503,
+                    headers: {
+                      "Content-Type": "application/json",
+                      "Retry-After": "30",
+                      ...corsHeaders,
+                    },
+                  }
+                );
+              }
+
               // Don't log stack traces for expected initialization state
-              if (error instanceof Error && error.message.includes("initializing")) {
-                console.log("[Container] Code execution deferred - Jupyter still initializing");
+              if (
+                error instanceof Error &&
+                error.message.includes("initializing")
+              ) {
+                console.log(
+                  "[Container] Code execution deferred - Jupyter still initializing"
+                );
               } else {
                 console.error("[Container] Error executing code:", error);
               }
               // Error response is already handled by jupyterService.executeCode for not ready state
               return new Response(
                 JSON.stringify({
-                  error: error instanceof Error ? error.message : "Failed to execute code"
+                  error:
+                    error instanceof Error
+                      ? error.message
+                      : "Failed to execute code",
                 }),
                 {
                   status: 500,
@@ -402,28 +489,30 @@ const server = serve({
 
         default:
           // Handle dynamic routes for contexts
-          if (pathname.startsWith("/api/contexts/") && pathname.split('/').length === 4) {
-            const contextId = pathname.split('/')[3];
+          if (
+            pathname.startsWith("/api/contexts/") &&
+            pathname.split("/").length === 4
+          ) {
+            const contextId = pathname.split("/")[3];
             if (req.method === "DELETE") {
               try {
                 await jupyterService.deleteContext(contextId);
-                return new Response(
-                  JSON.stringify({ success: true }),
-                  {
-                    headers: {
-                      "Content-Type": "application/json",
-                      ...corsHeaders,
-                    },
-                  }
-                );
+                return new Response(JSON.stringify({ success: true }), {
+                  headers: {
+                    "Content-Type": "application/json",
+                    ...corsHeaders,
+                  },
+                });
               } catch (error) {
                 if (error instanceof JupyterNotReadyError) {
-                  console.log(`[Container] Request timed out waiting for Jupyter (${error.progress}% complete)`);
+                  console.log(
+                    `[Container] Request timed out waiting for Jupyter (${error.progress}% complete)`
+                  );
                   return new Response(
                     JSON.stringify({
                       error: error.message,
                       status: "initializing",
-                      progress: error.progress
+                      progress: error.progress,
                     }),
                     {
                       status: 503,
@@ -437,10 +526,17 @@ const server = serve({
                 }
                 return new Response(
                   JSON.stringify({
-                    error: error instanceof Error ? error.message : "Failed to delete context"
+                    error:
+                      error instanceof Error
+                        ? error.message
+                        : "Failed to delete context",
                   }),
                   {
-                    status: error instanceof Error && error.message.includes("not found") ? 404 : 500,
+                    status:
+                      error instanceof Error &&
+                      error.message.includes("not found")
+                        ? 404
+                        : 500,
                     headers: {
                       "Content-Type": "application/json",
                       ...corsHeaders,
@@ -450,22 +546,42 @@ const server = serve({
               }
             }
           }
-          
+
           // Handle dynamic routes for individual processes
           if (pathname.startsWith("/api/process/")) {
-            const segments = pathname.split('/');
+            const segments = pathname.split("/");
             if (segments.length >= 4) {
               const processId = segments[3];
               const action = segments[4]; // Optional: logs, stream, etc.
 
               if (!action && req.method === "GET") {
-                return handleGetProcessRequest(processes, req, corsHeaders, processId);
+                return handleGetProcessRequest(
+                  processes,
+                  req,
+                  corsHeaders,
+                  processId
+                );
               } else if (!action && req.method === "DELETE") {
-                return handleKillProcessRequest(processes, req, corsHeaders, processId);
+                return handleKillProcessRequest(
+                  processes,
+                  req,
+                  corsHeaders,
+                  processId
+                );
               } else if (action === "logs" && req.method === "GET") {
-                return handleGetProcessLogsRequest(processes, req, corsHeaders, processId);
+                return handleGetProcessLogsRequest(
+                  processes,
+                  req,
+                  corsHeaders,
+                  processId
+                );
               } else if (action === "stream" && req.method === "GET") {
-                return handleStreamProcessLogsRequest(processes, req, corsHeaders, processId);
+                return handleStreamProcessLogsRequest(
+                  processes,
+                  req,
+                  corsHeaders,
+                  processId
+                );
               }
             }
           }
@@ -481,7 +597,10 @@ const server = serve({
           });
       }
     } catch (error) {
-      console.error(`[Container] Error handling ${req.method} ${pathname}:`, error);
+      console.error(
+        `[Container] Error handling ${req.method} ${pathname}:`,
+        error
+      );
       return new Response(
         JSON.stringify({
           error: "Internal server error",
@@ -500,7 +619,7 @@ const server = serve({
   hostname: "0.0.0.0",
   port: 3000,
   // We don't need this, but typescript complains
-  websocket: { async message() { } },
+  websocket: { async message() {} },
 });
 
 console.log(`🚀 Bun server running on http://0.0.0.0:${server.port}`);
@@ -530,6 +649,8 @@ console.log(`   GET  /proxy/{port}/* - Proxy requests to exposed ports`);
 console.log(`   POST /api/contexts - Create a code execution context`);
 console.log(`   GET  /api/contexts - List all contexts`);
 console.log(`   DELETE /api/contexts/{id} - Delete a context`);
-console.log(`   POST /api/execute/code - Execute code in a context (streaming)`);
+console.log(
+  `   POST /api/execute/code - Execute code in a context (streaming)`
+);
 console.log(`   GET  /api/ping - Health check`);
 console.log(`   GET  /api/commands - List available commands`);

@@ -1,19 +1,10 @@
-import { type Kernel, KernelManager, ServerConnection } from "@jupyterlab/services";
-import type { 
-  IDisplayDataMsg,
-  IErrorMsg, 
-  IExecuteResultMsg,
-  IIOPubMessage,
-  IStreamMsg
-} from "@jupyterlab/services/lib/kernel/messages";
-import { 
-  isDisplayDataMsg,
-  isErrorMsg, 
-  isExecuteResultMsg,
-  isStreamMsg
-} from "@jupyterlab/services/lib/kernel/messages";
+import {
+  type Kernel,
+  KernelManager,
+  ServerConnection,
+} from "@jupyterlab/services";
+import type { IIOPubMessage } from "@jupyterlab/services/lib/kernel/messages";
 import { v4 as uuidv4 } from "uuid";
-import type { ExecutionResult } from "./mime-processor";
 import { processJupyterMessage } from "./mime-processor";
 
 export interface JupyterContext {
@@ -23,6 +14,8 @@ export interface JupyterContext {
   cwd: string;
   createdAt: Date;
   lastUsed: Date;
+  pooled?: boolean; // Track if this context is from the pool
+  inUse?: boolean; // Track if pooled context is currently in use
 }
 
 export interface CreateContextRequest {
@@ -38,10 +31,19 @@ export interface ExecuteCodeRequest {
   env_vars?: Record<string, string>;
 }
 
+interface ContextPool {
+  available: JupyterContext[];
+  inUse: Set<string>; // context IDs currently in use
+  minSize: number;
+  maxSize: number;
+  warming: boolean; // Track if pool is currently being warmed
+}
+
 export class JupyterServer {
   private kernelManager: KernelManager;
   private contexts = new Map<string, JupyterContext>();
   private defaultContexts = new Map<string, string>(); // language -> context_id
+  private contextPools = new Map<string, ContextPool>(); // language -> pool
 
   constructor() {
     // Configure connection to local Jupyter server
@@ -53,9 +55,9 @@ export class JupyterServer {
       appendToken: false,
       init: {
         headers: {
-          'Content-Type': 'application/json'
-        }
-      }
+          "Content-Type": "application/json",
+        },
+      },
     });
 
     this.kernelManager = new KernelManager({ serverSettings });
@@ -66,12 +68,191 @@ export class JupyterServer {
     console.log("[JupyterServer] Kernel manager initialized");
 
     // Don't create default context during initialization - use lazy loading instead
+
+    // Initialize pools for common languages (but don't warm them yet)
+    this.initializePool("python", 0, 3);
+    this.initializePool("javascript", 0, 2);
+  }
+
+  /**
+   * Initialize a context pool for a specific language
+   */
+  private initializePool(language: string, minSize = 0, maxSize = 5) {
+    const pool: ContextPool = {
+      available: [],
+      inUse: new Set(),
+      minSize,
+      maxSize,
+      warming: false,
+    };
+
+    this.contextPools.set(language, pool);
+
+    // Pre-warm contexts in background if minSize > 0
+    if (minSize > 0) {
+      setTimeout(() => this.warmPool(language, minSize), 0);
+    }
+  }
+
+  /**
+   * Enable pool warming for a language (called after Jupyter is ready)
+   */
+  async enablePoolWarming(language: string, minSize: number) {
+    const pool = this.contextPools.get(language);
+    if (!pool) {
+      this.initializePool(language, minSize, 3);
+      return;
+    }
+
+    // Update min size and warm if needed
+    pool.minSize = minSize;
+    const toWarm = minSize - pool.available.length;
+    if (toWarm > 0) {
+      await this.warmPool(language, toWarm);
+    }
+  }
+
+  /**
+   * Pre-warm a pool with the specified number of contexts
+   */
+  private async warmPool(language: string, count: number) {
+    const pool = this.contextPools.get(language);
+    if (!pool || pool.warming) return;
+
+    pool.warming = true;
+    console.log(`[JupyterServer] Pre-warming ${count} ${language} contexts`);
+
+    try {
+      const promises: Promise<JupyterContext>[] = [];
+      for (let i = 0; i < count; i++) {
+        promises.push(this.createPooledContext(language));
+      }
+
+      const contexts = await Promise.all(promises);
+      pool.available.push(...contexts);
+      console.log(
+        `[JupyterServer] Pre-warmed ${contexts.length} ${language} contexts`
+      );
+    } catch (error) {
+      console.error(
+        `[JupyterServer] Error pre-warming ${language} pool:`,
+        error
+      );
+    } finally {
+      pool.warming = false;
+    }
+  }
+
+  /**
+   * Create a context specifically for the pool
+   */
+  private async createPooledContext(language: string): Promise<JupyterContext> {
+    const context = await this.createContext({ language });
+    context.pooled = true;
+    context.inUse = false;
+    return context;
+  }
+
+  /**
+   * Get a context from the pool or create a new one
+   */
+  private async getPooledContext(
+    language: string,
+    cwd?: string,
+    envVars?: Record<string, string>
+  ): Promise<JupyterContext | null> {
+    const pool = this.contextPools.get(language);
+    if (!pool) return null;
+
+    // Find an available context in the pool
+    const availableContext = pool.available.find((ctx) => !ctx.inUse);
+
+    if (availableContext) {
+      // Mark as in use
+      availableContext.inUse = true;
+      pool.inUse.add(availableContext.id);
+
+      // Remove from available list
+      pool.available = pool.available.filter(
+        (ctx) => ctx.id !== availableContext.id
+      );
+
+      // Update context properties if needed
+      if (cwd && cwd !== availableContext.cwd) {
+        await this.changeWorkingDirectory(availableContext, cwd);
+        availableContext.cwd = cwd;
+      }
+
+      if (envVars) {
+        await this.setEnvironmentVariables(availableContext, envVars);
+      }
+
+      availableContext.lastUsed = new Date();
+      console.log(
+        `[JupyterServer] Reusing pooled ${language} context ${availableContext.id}`
+      );
+
+      // Warm another context in background if we're below minSize
+      if (pool.available.length < pool.minSize && !pool.warming) {
+        setTimeout(() => this.warmPool(language, 1), 0);
+      }
+
+      return availableContext;
+    }
+
+    // No available context, check if we can create a new one
+    if (pool.inUse.size < pool.maxSize) {
+      console.log(
+        `[JupyterServer] No pooled ${language} context available, creating new one`
+      );
+      return null; // Let the caller create a new context
+    }
+
+    // Pool is at max capacity
+    console.log(
+      `[JupyterServer] ${language} context pool at max capacity (${pool.maxSize})`
+    );
+    return null;
+  }
+
+  /**
+   * Release a pooled context back to the pool
+   */
+  private releasePooledContext(context: JupyterContext) {
+    if (!context.pooled) return;
+
+    const pool = this.contextPools.get(context.language);
+    if (!pool) return;
+
+    // Mark as not in use
+    context.inUse = false;
+    pool.inUse.delete(context.id);
+
+    // Add back to available list
+    pool.available.push(context);
+
+    console.log(
+      `[JupyterServer] Released ${context.language} context ${context.id} back to pool`
+    );
   }
 
   async createContext(req: CreateContextRequest): Promise<JupyterContext> {
     const language = req.language || "python";
     const cwd = req.cwd || "/workspace";
 
+    // Try to get a context from the pool first
+    const pooledContext = await this.getPooledContext(
+      language,
+      cwd,
+      req.envVars
+    );
+    if (pooledContext) {
+      // Add to active contexts map
+      this.contexts.set(pooledContext.id, pooledContext);
+      return pooledContext;
+    }
+
+    // Create a new context if pool didn't provide one
     const kernelModel = await this.kernelManager.startNew({
       name: this.getKernelName(language),
     });
@@ -102,7 +283,9 @@ export class JupyterServer {
     return context;
   }
 
-  private async getOrCreateDefaultContext(language: string): Promise<JupyterContext | undefined> {
+  private async getOrCreateDefaultContext(
+    language: string
+  ): Promise<JupyterContext | undefined> {
     // Check if we already have a default context for this language
     const defaultContextId = this.defaultContexts.get(language);
     if (defaultContextId) {
@@ -113,7 +296,9 @@ export class JupyterServer {
     }
 
     // Create new default context lazily
-    console.log(`[JupyterServer] Creating default ${language} context on first use`);
+    console.log(
+      `[JupyterServer] Creating default ${language} context on first use`
+    );
     const context = await this.createContext({ language });
     this.defaultContexts.set(language, context.id);
     return context;
@@ -301,10 +486,7 @@ export class JupyterServer {
       throw new Error(`Context ${contextId} not found`);
     }
 
-    // Shutdown the kernel
-    await context.connection.shutdown();
-
-    // Remove from maps
+    // Remove from active contexts map
     this.contexts.delete(contextId);
 
     // Remove from default contexts if it was a default
@@ -314,10 +496,18 @@ export class JupyterServer {
         break;
       }
     }
+
+    // If it's a pooled context, release it back to the pool
+    if (context.pooled) {
+      this.releasePooledContext(context);
+    } else {
+      // Only shutdown non-pooled contexts
+      await context.connection.shutdown();
+    }
   }
 
   async shutdown() {
-    // Shutdown all kernels
+    // Shutdown all active contexts
     for (const context of this.contexts.values()) {
       try {
         await context.connection.shutdown();
@@ -326,8 +516,64 @@ export class JupyterServer {
       }
     }
 
+    // Shutdown all pooled contexts
+    for (const pool of this.contextPools.values()) {
+      for (const context of pool.available) {
+        try {
+          await context.connection.shutdown();
+        } catch (error) {
+          console.error(
+            "[JupyterServer] Error shutting down pooled kernel:",
+            error
+          );
+        }
+      }
+    }
+
     this.contexts.clear();
     this.defaultContexts.clear();
+    this.contextPools.clear();
+  }
+
+  /**
+   * Get pool statistics for monitoring
+   */
+  async getPoolStats(): Promise<
+    Record<
+      string,
+      {
+        available: number;
+        inUse: number;
+        total: number;
+        minSize: number;
+        maxSize: number;
+        warming: boolean;
+      }
+    >
+  > {
+    const stats: Record<
+      string,
+      {
+        available: number;
+        inUse: number;
+        total: number;
+        minSize: number;
+        maxSize: number;
+        warming: boolean;
+      }
+    > = {};
+
+    for (const [language, pool] of this.contextPools.entries()) {
+      stats[language] = {
+        available: pool.available.length,
+        inUse: pool.inUse.size,
+        total: pool.available.length + pool.inUse.size,
+        minSize: pool.minSize,
+        maxSize: pool.maxSize,
+        warming: pool.warming,
+      };
+    }
+
+    return stats;
   }
 }
-
