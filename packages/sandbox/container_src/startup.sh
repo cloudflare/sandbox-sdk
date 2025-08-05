@@ -12,19 +12,10 @@ notify_jupyter_ready() {
   echo "[Startup] Jupyter is ready, notified Bun server"
 }
 
-# Start Jupyter notebook server in background
+# Start Jupyter server in background
 echo "[Startup] Starting Jupyter server..."
-jupyter notebook \
-  --ip=0.0.0.0 \
-  --port=8888 \
-  --no-browser \
-  --allow-root \
-  --NotebookApp.token='' \
-  --NotebookApp.password='' \
-  --NotebookApp.allow_origin='*' \
-  --NotebookApp.disable_check_xsrf=True \
-  --NotebookApp.allow_remote_access=True \
-  --NotebookApp.allow_credentials=True \
+jupyter server \
+  --config=/container-server/jupyter_config.py \
   > /tmp/jupyter.log 2>&1 &
 
 JUPYTER_PID=$!

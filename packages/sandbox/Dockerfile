@@ -37,6 +37,7 @@ RUN apt-get update && apt-get install -y \
     ca-certificates \
     gnupg \
     lsb-release \
+    strace \
     && rm -rf /var/lib/apt/lists/*
 
 # Set Python 3.11 as default python3
@@ -56,17 +57,20 @@ RUN apt-get update && apt-get install -y ca-certificates curl gnupg \
 COPY --from=bun-source /usr/local/bin/bun /usr/local/bin/bun
 COPY --from=bun-source /usr/local/bin/bunx /usr/local/bin/bunx
 
-# Install Jupyter and kernels
+# Install minimal Jupyter components
 RUN pip3 install --no-cache-dir \
-    jupyter \
-    jupyterlab \
+    jupyter-server \
+    jupyter-client \
     ipykernel \
-    notebook \
+    orjson \
+    && python3 -m ipykernel install --user --name python3
+
+# Install scientific packages
+RUN pip3 install --no-cache-dir \
     matplotlib \
     numpy \
     pandas \
-    seaborn \
-    && python3 -m ipykernel install --user --name python3
+    seaborn
 
 # Install JavaScript kernel (ijavascript) - using E2B's fork
 RUN npm install -g --unsafe-perm git+https://github.com/e2b-dev/ijavascript.git \
