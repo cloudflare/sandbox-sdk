@@ -28,18 +28,21 @@ BUN_PID=$!
 # Monitor Jupyter readiness in background
 (
   echo "[Startup] Monitoring Jupyter readiness in background..."
-  MAX_ATTEMPTS=30
+  MAX_ATTEMPTS=60
   ATTEMPT=0
-  DELAY=0.5
-  MAX_DELAY=5
-  
+
+  # Track start time for reporting
+  START_TIME=$(date +%s.%N)
+
   while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
     if check_jupyter_ready; then
       notify_jupyter_ready
-      echo "[Startup] Jupyter server is ready after $ATTEMPT attempts"
+      END_TIME=$(date +%s.%N)
+      ELAPSED=$(awk "BEGIN {printf \"%.2f\", $END_TIME - $START_TIME}")
+      echo "[Startup] Jupyter server is ready after $ELAPSED seconds ($ATTEMPT attempts)"
       break
     fi
-    
+
     # Check if Jupyter process is still running
     if ! kill -0 $JUPYTER_PID 2>/dev/null; then
       echo "[Startup] WARNING: Jupyter process died. Check /tmp/jupyter.log for details"
@@ -47,21 +50,27 @@ BUN_PID=$!
       # Don't exit - let Bun server continue running in degraded mode
       break
     fi
-    
+
     ATTEMPT=$((ATTEMPT + 1))
-    echo "[Startup] Jupyter not ready yet (attempt $ATTEMPT/$MAX_ATTEMPTS, delay ${DELAY}s)"
-    
-    # Sleep with exponential backoff
-    sleep $DELAY
-    
-    # Increase delay exponentially with jitter, cap at MAX_DELAY
-    DELAY=$(awk "BEGIN {printf \"%.2f\", $DELAY * 1.5 + (rand() * 0.5)}")
-    # Use awk for comparison since bc might not be available
-    if [ $(awk "BEGIN {print ($DELAY > $MAX_DELAY)}") -eq 1 ]; then
-      DELAY=$MAX_DELAY
+
+    # Start with faster checks
+    if [ $ATTEMPT -eq 1 ]; then
+      DELAY=0.5  # Start at 0.5s
+    else
+      # Exponential backoff with 1.3x multiplier (less aggressive than 1.5x)
+      DELAY=$(awk "BEGIN {printf \"%.2f\", $DELAY * 1.3}")
+      # Cap at 2s max (instead of 5s)
+      if [ $(awk "BEGIN {print ($DELAY > 2)}") -eq 1 ]; then
+        DELAY=2
+      fi
     fi
+
+    # Log with current delay for transparency
+    echo "[Startup] Jupyter not ready yet (attempt $ATTEMPT/$MAX_ATTEMPTS, next check in ${DELAY}s)"
+
+    sleep $DELAY
   done
-  
+
   if [ $ATTEMPT -eq $MAX_ATTEMPTS ]; then
     echo "[Startup] WARNING: Jupyter failed to become ready within attempts"
     echo "[Startup] Jupyter logs:"
