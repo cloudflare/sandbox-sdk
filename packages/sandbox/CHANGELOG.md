@@ -1,5 +1,11 @@
 # @cloudflare/sandbox
 
+## 0.2.2
+
+### Patch Changes
+
+- [#51](https://github.com/cloudflare/sandbox-sdk/pull/51) [`4aceb32`](https://github.com/cloudflare/sandbox-sdk/commit/4aceb3215c836f59afcb88b2b325016b3f623f46) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Handle intermittent interpreter failures and decouple jupyter startup
+
 ## 0.2.1
 
 ### Patch Changes
