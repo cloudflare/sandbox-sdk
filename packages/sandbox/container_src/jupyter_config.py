@@ -42,3 +42,7 @@ c.MappingKernelManager.cull_interval = 0
 
 # Disable terminals
 c.ServerApp.terminals_enabled = False
+
+# Disable all extensions to speed up startup
+c.ServerApp.jpserver_extensions = {}
+c.ServerApp.nbserver_extensions = {}
