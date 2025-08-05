@@ -1,5 +1,11 @@
 # @cloudflare/sandbox
 
+## 0.2.3
+
+### Patch Changes
+
+- [#53](https://github.com/cloudflare/sandbox-sdk/pull/53) [`c87db11`](https://github.com/cloudflare/sandbox-sdk/commit/c87db117693a86cfb667bf09fb7720d6a6e0524d) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Improve jupyterlab config to speed up startup
+
 ## 0.2.2
 
 ### Patch Changes
