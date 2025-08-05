@@ -1,4 +1,5 @@
 import type { Sandbox } from "@cloudflare/sandbox";
+import { JupyterNotReadyError, isJupyterNotReadyError, isRetryableError } from "@cloudflare/sandbox";
 import { corsHeaders, errorResponse, jsonResponse, parseJsonBody } from "../http";
 
 // Active sessions (in production, use Durable Objects or KV)
@@ -21,6 +22,33 @@ export async function createSession(sandbox: Sandbox, request: Request): Promise
     
     return jsonResponse({ sessionId, language });
   } catch (error: any) {
+    // Handle Jupyter initialization timeout (request waited but Jupyter wasn't ready in time)
+    if (isJupyterNotReadyError(error)) {
+      console.log("[Notebook] Request timed out waiting for Jupyter initialization");
+      return new Response(
+        JSON.stringify({ 
+          error: error.message,
+          retryAfter: error.retryAfter,
+          progress: error.progress
+        }),
+        {
+          status: 503,
+          headers: {
+            "Content-Type": "application/json",
+            "Retry-After": String(error.retryAfter),
+            ...corsHeaders()
+          }
+        }
+      );
+    }
+    
+    // Check if error is retryable
+    if (isRetryableError(error)) {
+      console.log("[Notebook] Retryable error:", error.message);
+      return errorResponse(error.message, 503);
+    }
+    
+    // Log actual errors
     console.error("Create session error:", error);
     return errorResponse(error.message || "Failed to create session", 500);
   }
@@ -94,6 +122,33 @@ export async function executeCell(sandbox: Sandbox, request: Request): Promise<R
       }
     });
   } catch (error: any) {
+    // Handle Jupyter initialization timeout (request waited but Jupyter wasn't ready in time)
+    if (isJupyterNotReadyError(error)) {
+      console.log("[Notebook] Request timed out waiting for Jupyter initialization");
+      return new Response(
+        JSON.stringify({ 
+          error: error.message,
+          retryAfter: error.retryAfter,
+          progress: error.progress
+        }),
+        {
+          status: 503,
+          headers: {
+            "Content-Type": "application/json",
+            "Retry-After": String(error.retryAfter),
+            ...corsHeaders()
+          }
+        }
+      );
+    }
+    
+    // Check if error is retryable
+    if (isRetryableError(error)) {
+      console.log("[Notebook] Retryable error:", error.message);
+      return errorResponse(error.message, 503);
+    }
+    
+    // Log actual errors
     console.error("Execute cell error:", error);
     return errorResponse(error.message || "Failed to execute code", 500);
   }
@@ -113,6 +168,33 @@ export async function deleteSession(sandbox: Sandbox, request: Request): Promise
     
     return jsonResponse({ success: true });
   } catch (error: any) {
+    // Handle Jupyter initialization timeout (request waited but Jupyter wasn't ready in time)
+    if (isJupyterNotReadyError(error)) {
+      console.log("[Notebook] Request timed out waiting for Jupyter initialization");
+      return new Response(
+        JSON.stringify({ 
+          error: error.message,
+          retryAfter: error.retryAfter,
+          progress: error.progress
+        }),
+        {
+          status: 503,
+          headers: {
+            "Content-Type": "application/json",
+            "Retry-After": String(error.retryAfter),
+            ...corsHeaders()
+          }
+        }
+      );
+    }
+    
+    // Check if error is retryable
+    if (isRetryableError(error)) {
+      console.log("[Notebook] Retryable error:", error.message);
+      return errorResponse(error.message, 503);
+    }
+    
+    // Log actual errors
     console.error("Delete session error:", error);
     return errorResponse(error.message || "Failed to delete session", 500);
   }

@@ -1,4 +1,5 @@
 import { HttpClient } from './client.js';
+import { parseErrorResponse } from './errors.js';
 import type { 
   CodeContext, 
   CreateContextOptions, 
@@ -18,10 +19,6 @@ interface ContextResponse {
 
 interface ContextListResponse {
   contexts: ContextResponse[];
-}
-
-interface ErrorResponse {
-  error: string;
 }
 
 // Streaming execution data from the server
@@ -67,8 +64,7 @@ export class JupyterClient extends HttpClient {
     });
     
     if (!response.ok) {
-      const errorData = await response.json().catch(() => ({ error: 'Unknown error' })) as ErrorResponse;
-      throw new Error(errorData.error || `Failed to create context: ${response.status}`);
+      throw await parseErrorResponse(response);
     }
     
     const data = await response.json() as ContextResponse;
@@ -101,8 +97,7 @@ export class JupyterClient extends HttpClient {
     });
     
     if (!response.ok) {
-      const errorData = await response.json().catch(() => ({ error: 'Unknown error' })) as ErrorResponse;
-      throw new Error(errorData.error || `Failed to execute code: ${response.status}`);
+      throw await parseErrorResponse(response);
     }
     
     if (!response.body) {
@@ -230,8 +225,7 @@ export class JupyterClient extends HttpClient {
     });
     
     if (!response.ok) {
-      const errorData = await response.json().catch(() => ({ error: 'Unknown error' })) as ErrorResponse;
-      throw new Error(errorData.error || `Failed to list contexts: ${response.status}`);
+      throw await parseErrorResponse(response);
     }
     
     const data = await response.json() as ContextListResponse;
@@ -251,8 +245,7 @@ export class JupyterClient extends HttpClient {
     });
     
     if (!response.ok) {
-      const errorData = await response.json().catch(() => ({ error: 'Unknown error' })) as ErrorResponse;
-      throw new Error(errorData.error || `Failed to delete context: ${response.status}`);
+      throw await parseErrorResponse(response);
     }
   }
   

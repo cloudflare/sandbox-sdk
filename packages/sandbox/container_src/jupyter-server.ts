@@ -65,13 +65,7 @@ export class JupyterServer {
     await this.kernelManager.ready;
     console.log("[JupyterServer] Kernel manager initialized");
 
-    // Create default Python context
-    const pythonContext = await this.createContext({ language: "python" });
-    this.defaultContexts.set("python", pythonContext.id);
-    console.log(
-      "[JupyterServer] Default Python context created:",
-      pythonContext.id
-    );
+    // Don't create default context during initialization - use lazy loading instead
   }
 
   async createContext(req: CreateContextRequest): Promise<JupyterContext> {
@@ -108,6 +102,23 @@ export class JupyterServer {
     return context;
   }
 
+  private async getOrCreateDefaultContext(language: string): Promise<JupyterContext | undefined> {
+    // Check if we already have a default context for this language
+    const defaultContextId = this.defaultContexts.get(language);
+    if (defaultContextId) {
+      const context = this.contexts.get(defaultContextId);
+      if (context) {
+        return context;
+      }
+    }
+
+    // Create new default context lazily
+    console.log(`[JupyterServer] Creating default ${language} context on first use`);
+    const context = await this.createContext({ language });
+    this.defaultContexts.set(language, context.id);
+    return context;
+  }
+
   async executeCode(
     contextId: string | undefined,
     code: string,
@@ -126,24 +137,10 @@ export class JupyterServer {
           }
         );
       }
-    } else if (language) {
-      // Use default context for the language
-      const defaultContextId = this.defaultContexts.get(language);
-      if (defaultContextId) {
-        context = this.contexts.get(defaultContextId);
-      }
-
-      // Create new default context if needed
-      if (!context) {
-        context = await this.createContext({ language });
-        this.defaultContexts.set(language, context.id);
-      }
     } else {
-      // Use default Python context
-      const pythonContextId = this.defaultContexts.get("python");
-      context = pythonContextId
-        ? this.contexts.get(pythonContextId)
-        : undefined;
+      // Use or create default context for the language
+      const lang = language || "python";
+      context = await this.getOrCreateDefaultContext(lang);
     }
 
     if (!context) {

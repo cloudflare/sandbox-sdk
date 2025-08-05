@@ -25,7 +25,8 @@ import {
   handleStartProcessRequest,
   handleStreamProcessLogsRequest,
 } from "./handler/process";
-import { type CreateContextRequest, JupyterServer } from "./jupyter-server";
+import type { CreateContextRequest } from "./jupyter-server";
+import { JupyterNotReadyError, JupyterService } from "./jupyter-service";
 import type { ProcessRecord, SessionData } from "./types";
 
 // In-memory session storage (in production, you'd want to use a proper database)
@@ -56,25 +57,21 @@ function cleanupOldSessions() {
 // Run cleanup every 10 minutes
 setInterval(cleanupOldSessions, 10 * 60 * 1000);
 
-// Initialize Jupyter server
-const jupyterServer = new JupyterServer();
-let jupyterInitialized = false;
+// Initialize Jupyter service with graceful degradation
+const jupyterService = new JupyterService();
 
-// Initialize Jupyter immediately since startup.sh ensures it's ready
-(async () => {
-  try {
-    await jupyterServer.initialize();
-    jupyterInitialized = true;
-    console.log("[Container] Jupyter integration initialized successfully");
-  } catch (error) {
-    console.error("[Container] Failed to initialize Jupyter:", error);
-    // Log more details to help debug
-    if (error instanceof Error) {
-      console.error("[Container] Error details:", error.message);
-      console.error("[Container] Stack trace:", error.stack);
-    }
-  }
-})();
+// Start Jupyter initialization in background (non-blocking)
+console.log("[Container] Starting Jupyter initialization in background...");
+console.log("[Container] API endpoints are available immediately. Jupyter-dependent features will be available shortly.");
+
+jupyterService.initialize()
+  .then(() => {
+    console.log("[Container] ✅ Jupyter fully initialized - all features available");
+  })
+  .catch((error) => {
+    console.error("[Container] ❌ Jupyter initialization failed:", error.message);
+    console.error("[Container] The API will continue in degraded mode without code execution capabilities");
+  });
 
 const server = serve({
   async fetch(req: Request) {
@@ -176,11 +173,13 @@ const server = serve({
 
         case "/api/ping":
           if (req.method === "GET") {
+            const health = await jupyterService.getHealthStatus();
             return new Response(
               JSON.stringify({
                 message: "pong",
                 timestamp: new Date().toISOString(),
-                jupyter: jupyterInitialized ? "ready" : "not ready",
+                jupyter: health.ready ? "ready" : health.initializing ? "initializing" : "not ready",
+                jupyterHealth: health,
               }),
               {
                 headers: {
@@ -305,23 +304,9 @@ const server = serve({
         // Code interpreter endpoints
         case "/api/contexts":
           if (req.method === "POST") {
-            if (!jupyterInitialized) {
-              return new Response(
-                JSON.stringify({
-                  error: "Jupyter server is not ready. Please try again in a moment."
-                }),
-                {
-                  status: 503,
-                  headers: {
-                    "Content-Type": "application/json",
-                    ...corsHeaders,
-                  },
-                }
-              );
-            }
             try {
               const body = await req.json() as CreateContextRequest;
-              const context = await jupyterServer.createContext(body);
+              const context = await jupyterService.createContext(body);
               return new Response(
                 JSON.stringify({
                   id: context.id,
@@ -338,6 +323,26 @@ const server = serve({
                 }
               );
             } catch (error) {
+              if (error instanceof JupyterNotReadyError) {
+                // This happens when request times out waiting for Jupyter
+                console.log(`[Container] Request timed out waiting for Jupyter (${error.progress}% complete)`);
+                return new Response(
+                  JSON.stringify({
+                    error: error.message,
+                    status: "initializing",
+                    progress: error.progress
+                  }),
+                  {
+                    status: 503,
+                    headers: {
+                      "Content-Type": "application/json",
+                      "Retry-After": String(error.retryAfter),
+                      ...corsHeaders,
+                    },
+                  }
+                );
+              }
+              // Only log actual errors with stack traces
               console.error("[Container] Error creating context:", error);
               return new Response(
                 JSON.stringify({
@@ -353,18 +358,7 @@ const server = serve({
               );
             }
           } else if (req.method === "GET") {
-            if (!jupyterInitialized) {
-              return new Response(
-                JSON.stringify({ contexts: [] }),
-                {
-                  headers: {
-                    "Content-Type": "application/json",
-                    ...corsHeaders,
-                  },
-                }
-              );
-            }
-            const contexts = await jupyterServer.listContexts();
+            const contexts = await jupyterService.listContexts();
             return new Response(
               JSON.stringify({ contexts }),
               {
@@ -379,25 +373,17 @@ const server = serve({
 
         case "/api/execute/code":
           if (req.method === "POST") {
-            if (!jupyterInitialized) {
-              return new Response(
-                JSON.stringify({
-                  error: "Jupyter server is not ready. Please try again in a moment."
-                }),
-                {
-                  status: 503,
-                  headers: {
-                    "Content-Type": "application/json",
-                    ...corsHeaders,
-                  },
-                }
-              );
-            }
             try {
               const body = await req.json() as { context_id: string; code: string; language?: string };
-              return await jupyterServer.executeCode(body.context_id, body.code, body.language);
+              return await jupyterService.executeCode(body.context_id, body.code, body.language);
             } catch (error) {
-              console.error("[Container] Error executing code:", error);
+              // Don't log stack traces for expected initialization state
+              if (error instanceof Error && error.message.includes("initializing")) {
+                console.log("[Container] Code execution deferred - Jupyter still initializing");
+              } else {
+                console.error("[Container] Error executing code:", error);
+              }
+              // Error response is already handled by jupyterService.executeCode for not ready state
               return new Response(
                 JSON.stringify({
                   error: error instanceof Error ? error.message : "Failed to execute code"
@@ -420,7 +406,7 @@ const server = serve({
             const contextId = pathname.split('/')[3];
             if (req.method === "DELETE") {
               try {
-                await jupyterServer.deleteContext(contextId);
+                await jupyterService.deleteContext(contextId);
                 return new Response(
                   JSON.stringify({ success: true }),
                   {
@@ -431,6 +417,24 @@ const server = serve({
                   }
                 );
               } catch (error) {
+                if (error instanceof JupyterNotReadyError) {
+                  console.log(`[Container] Request timed out waiting for Jupyter (${error.progress}% complete)`);
+                  return new Response(
+                    JSON.stringify({
+                      error: error.message,
+                      status: "initializing",
+                      progress: error.progress
+                    }),
+                    {
+                      status: 503,
+                      headers: {
+                        "Content-Type": "application/json",
+                        "Retry-After": "5",
+                        ...corsHeaders,
+                      },
+                    }
+                  );
+                }
                 return new Response(
                   JSON.stringify({
                     error: error instanceof Error ? error.message : "Failed to delete context"

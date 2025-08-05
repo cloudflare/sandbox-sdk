@@ -5,6 +5,20 @@ export type {
   MkdirResponse, MoveFileResponse,
   ReadFileResponse, RenameFileResponse, WriteFileResponse
 } from "./client";
+// Export errors
+export {
+  CodeExecutionError,
+  ContainerNotReadyError,
+  ContextNotFoundError,
+  isJupyterNotReadyError,
+  isRetryableError,
+  isSandboxError,
+  JupyterNotReadyError,
+  parseErrorResponse,
+  SandboxError,
+  type SandboxErrorResponse, 
+  SandboxNetworkError
+} from "./errors";
 // Export code interpreter types
 export type {
   ChartData, 
