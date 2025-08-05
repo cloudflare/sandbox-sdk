@@ -2,7 +2,8 @@
 
 # Function to check if Jupyter is ready
 check_jupyter_ready() {
-  curl -s http://localhost:8888/api > /dev/null 2>&1
+  # Check if API is responsive and kernelspecs are available
+  curl -s http://localhost:8888/api/kernelspecs > /dev/null 2>&1
 }
 
 # Function to notify Bun server that Jupyter is ready

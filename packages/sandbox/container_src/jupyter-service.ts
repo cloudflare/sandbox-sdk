@@ -133,16 +133,26 @@ export class JupyterService {
    * Pre-warm context pools for better performance
    */
   private async warmContextPools() {
+    // Delay pre-warming to avoid startup rush that triggers Bun WebSocket bug
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+
     try {
       console.log(
         "[JupyterService] Pre-warming context pools for better performance"
       );
 
-      // Enable pool warming with min sizes
+      // Warm one at a time with delay between them
       await this.jupyterServer.enablePoolWarming("python", 1);
+
+      // Small delay between different language kernels
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+
       await this.jupyterServer.enablePoolWarming("javascript", 1);
     } catch (error) {
       console.error("[JupyterService] Error pre-warming context pools:", error);
+      console.error(
+        "[JupyterService] Pre-warming failed but service continues"
+      );
     }
   }
 
