@@ -37,7 +37,7 @@ export function getSandbox(ns: DurableObjectNamespace<Sandbox>, id: string) {
 
 export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   defaultPort = 3000; // Default port for the container's Bun server
-  sleepAfter = "3m"; // Sleep the sandbox if no requests are made in this timeframe
+  sleepAfter = "20m"; // Keep container warm for 20 minutes to avoid cold starts
   client: JupyterClient;
   private sandboxName: string | null = null;
   private codeInterpreter: CodeInterpreter;
