@@ -115,7 +115,8 @@ async function handleAIRequest(input: string, env: Env): Promise<string> {
 
 	// Extract final response text
 	const message = response.output?.find((item) => item.type === 'message');
-	const text = message?.content?.find((c: any) => c.type === 'output_text')?.text;
+	const textContent = message?.content?.find((c: any) => c.type === 'output_text');
+	const text = textContent && 'text' in textContent ? textContent.text : undefined;
 
 	return text || 'No response generated';
 }
