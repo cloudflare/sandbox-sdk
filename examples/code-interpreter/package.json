@@ -1,0 +1,24 @@
+{
+  "name": "@cloudflare/sandbox-code-interpreter-example",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "description": "An example of using the sandbox package with code interpreter",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "start": "wrangler dev",
+    "cf-typegen": "wrangler types"
+  },
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.5.2",
+    "wrangler": "^4.27.0"
+  },
+  "dependencies": {
+    "@cloudflare/sandbox": "^0.2.2",
+    "openai": "^5.12.0",
+    "zod": "^3.25.76"
+  }
+}
