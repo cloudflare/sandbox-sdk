@@ -1,14 +1,12 @@
-# Cloudflare GPT-OSS with Python Sandbox
+# Code interpreter tool for gpt-oss on Workers AI
 
-A Cloudflare Worker that integrates the GPT-OSS model with Python code execution capabilities using the Cloudflare Sandbox SDK.
+A sample Cloudflare Worker that integrates the gpt-oss model on Workers AI with Python code execution capabilities using the Cloudflare Sandbox SDK.
 
 ## Features
 
-- ✅ **GPT-OSS Model Integration**: Uses Cloudflare's `@cf/openai/gpt-oss-120b` model via direct API calls
-- ✅ **Python Code Execution**: Executes Python code in a secure sandboxed environment
-- ✅ **Function Calling**: Implements function calling to bridge the model with code execution
-- ✅ **Type Safety**: Full TypeScript support with OpenAI SDK types
-- ✅ **Container-based Isolation**: Runs Python in Docker containers via Durable Objects
+- ✅ **gpt-oss Model Integration**: Uses OpenAI's `@cf/openai/gpt-oss-120b` model running on Workers AI via direct API calls
+- ✅ **Function Calling**: Implements function calling to provide a code execution environment to the model using the Sandbox SDK
+- ✅ **Container-based Isolation**: Python code runs in docker container backed Durable Objects
 
 ## How It Works
 
