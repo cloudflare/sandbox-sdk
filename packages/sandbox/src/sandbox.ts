@@ -534,6 +534,16 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     return this.client.readFile(path, options.encoding);
   }
 
+  async listFiles(
+    path: string,
+    options: {
+      recursive?: boolean;
+      includeHidden?: boolean;
+    } = {}
+  ) {
+    return this.client.listFiles(path, options);
+  }
+
   async exposePort(port: number, options: { name?: string; hostname: string }) {
     await this.client.exposePort(port, options?.name);
 

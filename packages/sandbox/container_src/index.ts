@@ -6,6 +6,7 @@ import {
 } from "./handler/exec";
 import {
   handleDeleteFileRequest,
+  handleListFilesRequest,
   handleMkdirRequest,
   handleMoveFileRequest,
   handleReadFileRequest,
@@ -276,6 +277,12 @@ const server = serve({
         case "/api/move":
           if (req.method === "POST") {
             return handleMoveFileRequest(req, corsHeaders);
+          }
+          break;
+
+        case "/api/list-files":
+          if (req.method === "POST") {
+            return handleListFilesRequest(req, corsHeaders);
           }
           break;
 

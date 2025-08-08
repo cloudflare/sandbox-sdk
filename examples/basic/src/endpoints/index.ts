@@ -7,6 +7,7 @@ export { listProcesses } from "./processList";
 export { getProcessLogs, streamProcessLogs } from "./processLogs";
 export { startProcess } from "./processStart";
 export { readFile } from "./fileRead";
+export { listFiles } from "./fileList";
 export { deleteFile } from "./fileDelete";
 export { renameFile } from "./fileRename";
 export { moveFile } from "./fileMove";

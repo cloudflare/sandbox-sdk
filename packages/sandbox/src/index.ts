@@ -3,6 +3,7 @@ export type {
   DeleteFileResponse,
   ExecuteResponse,
   GitCheckoutResponse,
+  ListFilesResponse,
   MkdirResponse,
   MoveFileResponse,
   ReadFileResponse,

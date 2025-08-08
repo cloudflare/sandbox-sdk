@@ -11,6 +11,7 @@ import {
   streamProcessLogs,
   unexposePort,
   readFile,
+  listFiles,
   deleteFile,
   renameFile,
   moveFile,
@@ -145,6 +146,10 @@ export default {
 
       if (pathname === "/api/read" && request.method === "POST") {
         return await readFile(sandbox, request);
+      }
+
+      if (pathname === "/api/list-files" && request.method === "POST") {
+        return await listFiles(sandbox, request);
       }
 
       if (pathname === "/api/delete" && request.method === "POST") {
@@ -301,6 +306,7 @@ result = x / y
             "GET /api/exposed-ports - List exposed ports",
             "POST /api/write - Write file",
             "POST /api/read - Read file",
+            "POST /api/list-files - List files in directory",
             "POST /api/delete - Delete file",
             "POST /api/rename - Rename file",
             "POST /api/move - Move file",

@@ -1,8 +1,9 @@
 import { spawn } from "node:child_process";
-import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { mkdir, readdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import type {
     DeleteFileRequest,
+    ListFilesRequest,
     MkdirRequest,
     MoveFileRequest,
     ReadFileRequest,
@@ -829,6 +830,214 @@ export async function handleMoveFileRequest(
         return new Response(
             JSON.stringify({
                 error: "Failed to move file",
+                message: error instanceof Error ? error.message : "Unknown error",
+            }),
+            {
+                headers: {
+                    "Content-Type": "application/json",
+                    ...corsHeaders,
+                },
+                status: 500,
+            }
+        );
+    }
+}
+
+
+async function executeListFiles(
+    path: string,
+    options?: {
+        recursive?: boolean;
+        includeHidden?: boolean;
+    }
+): Promise<{
+    success: boolean;
+    exitCode: number;
+    files: Array<{
+        name: string;
+        path: string;
+        type: 'file' | 'directory' | 'symlink' | 'other';
+        size: number;
+        modifiedAt: string;
+        mode: string;
+        permissions: {
+            readable: boolean;
+            writable: boolean;
+            executable: boolean;
+        };
+    }>;
+}> {
+    try {
+        const files: Array<{
+            name: string;
+            path: string;
+            type: 'file' | 'directory' | 'symlink' | 'other';
+            size: number;
+            modifiedAt: string;
+            mode: string;
+            permissions: {
+                readable: boolean;
+                writable: boolean;
+                executable: boolean;
+            };
+        }> = [];
+
+        // Helper function to convert numeric mode to string like "rwxr-xr-x"
+        function modeToString(mode: number): string {
+            const perms = ['---', '--x', '-w-', '-wx', 'r--', 'r-x', 'rw-', 'rwx'];
+            const user = (mode >> 6) & 7;
+            const group = (mode >> 3) & 7;
+            const other = mode & 7;
+            return perms[user] + perms[group] + perms[other];
+        }
+
+        // Helper function to extract permission booleans for current user
+        function getPermissions(mode: number): { readable: boolean; writable: boolean; executable: boolean } {
+            // Extract user permissions (owner permissions)
+            const userPerms = (mode >> 6) & 7;
+            return {
+                readable: (userPerms & 4) !== 0,
+                writable: (userPerms & 2) !== 0,
+                executable: (userPerms & 1) !== 0
+            };
+        }
+
+        async function scanDirectory(dirPath: string): Promise<void> {
+            const entries = await readdir(dirPath);
+            
+            for (const entry of entries) {
+                // Skip hidden files unless includeHidden is true
+                if (!options?.includeHidden && entry.startsWith('.')) {
+                    continue;
+                }
+
+                const fullPath = join(dirPath, entry);
+                const stats = await stat(fullPath);
+                
+                let type: 'file' | 'directory' | 'symlink' | 'other';
+                if (stats.isDirectory()) {
+                    type = 'directory';
+                } else if (stats.isFile()) {
+                    type = 'file';
+                } else if (stats.isSymbolicLink()) {
+                    type = 'symlink';
+                } else {
+                    type = 'other';
+                }
+
+                // Extract mode (permissions) - stats.mode is a number
+                const mode = stats.mode & 0o777; // Get only permission bits
+                
+                const fileInfo = {
+                    name: entry,
+                    path: fullPath,
+                    type,
+                    size: stats.size,
+                    modifiedAt: stats.mtime.toISOString(),
+                    mode: modeToString(mode),
+                    permissions: getPermissions(mode)
+                };
+
+                files.push(fileInfo);
+
+                // Recursively scan subdirectories if requested
+                if (options?.recursive && type === 'directory') {
+                    await scanDirectory(fullPath);
+                }
+            }
+        }
+
+        await scanDirectory(path);
+
+        console.log(`[Server] Listed ${files.length} files in: ${path}`);
+        return {
+            exitCode: 0,
+            files,
+            success: true,
+        };
+    } catch (error) {
+        console.error(`[Server] Error listing files in: ${path}`, error);
+        throw error;
+    }
+}
+
+export async function handleListFilesRequest(
+    req: Request,
+    corsHeaders: Record<string, string>
+): Promise<Response> {
+    try {
+        const body = (await req.json()) as ListFilesRequest;
+        const { path, options } = body;
+
+        if (!path || typeof path !== "string") {
+            return new Response(
+                JSON.stringify({
+                    error: "Path is required and must be a string",
+                }),
+                {
+                    headers: {
+                        "Content-Type": "application/json",
+                        ...corsHeaders,
+                    },
+                    status: 400,
+                }
+            );
+        }
+
+        // Basic safety check - prevent dangerous paths
+        const dangerousPatterns = [
+            /^\/etc/, // System directories
+            /^\/var/, // System directories  
+            /^\/usr/, // System directories
+            /^\/bin/, // System directories
+            /^\/sbin/, // System directories
+            /^\/boot/, // System directories
+            /^\/dev/, // System directories
+            /^\/proc/, // System directories
+            /^\/sys/, // System directories
+            /^\/tmp\/\.\./, // Path traversal attempts
+            /\.\./, // Path traversal attempts
+        ];
+
+        if (dangerousPatterns.some((pattern) => pattern.test(path))) {
+            return new Response(
+                JSON.stringify({
+                    error: "Dangerous path not allowed",
+                }),
+                {
+                    headers: {
+                        "Content-Type": "application/json",
+                        ...corsHeaders,
+                    },
+                    status: 400,
+                }
+            );
+        }
+
+        console.log(`[Server] Listing files in: ${path}`);
+
+        const result = await executeListFiles(path, options);
+
+        return new Response(
+            JSON.stringify({
+                exitCode: result.exitCode,
+                files: result.files,
+                path,
+                success: result.success,
+                timestamp: new Date().toISOString(),
+            }),
+            {
+                headers: {
+                    "Content-Type": "application/json",
+                    ...corsHeaders,
+                },
+            }
+        );
+    } catch (error) {
+        console.error("[Server] Error in handleListFilesRequest:", error);
+        return new Response(
+            JSON.stringify({
+                error: "Failed to list files",
                 message: error instanceof Error ? error.message : "Unknown error",
             }),
             {

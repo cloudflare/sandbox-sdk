@@ -125,6 +125,35 @@ export interface MoveFileResponse {
   timestamp: string;
 }
 
+interface ListFilesRequest {
+  path: string;
+  options?: {
+    recursive?: boolean;
+    includeHidden?: boolean;
+  };
+  sessionId?: string;
+}
+
+export interface ListFilesResponse {
+  success: boolean;
+  exitCode: number;
+  path: string;
+  files: Array<{
+    name: string;
+    path: string;
+    type: 'file' | 'directory' | 'symlink' | 'other';
+    size: number;
+    modifiedAt: string;
+    mode: string;
+    permissions: {
+      readable: boolean;
+      writable: boolean;
+      executable: boolean;
+    };
+  }>;
+  timestamp: string;
+}
+
 interface PreviewInfo {
   url: string;
   port: number;
@@ -615,6 +644,50 @@ export class HttpClient {
       return data;
     } catch (error) {
       console.error("[HTTP Client] Error moving file:", error);
+      throw error;
+    }
+  }
+
+  async listFiles(
+    path: string,
+    options?: {
+      recursive?: boolean;
+      includeHidden?: boolean;
+    },
+    sessionId?: string
+  ): Promise<ListFilesResponse> {
+    try {
+      const targetSessionId = sessionId || this.sessionId;
+
+      const response = await this.doFetch(`/api/list-files`, {
+        body: JSON.stringify({
+          path,
+          options,
+          sessionId: targetSessionId,
+        } as ListFilesRequest),
+        headers: {
+          "Content-Type": "application/json",
+        },
+        method: "POST",
+      });
+
+      if (!response.ok) {
+        const errorData = (await response.json().catch(() => ({}))) as {
+          error?: string;
+        };
+        throw new Error(
+          errorData.error || `HTTP error! status: ${response.status}`
+        );
+      }
+
+      const data: ListFilesResponse = await response.json();
+      console.log(
+        `[HTTP Client] Listed ${data.files.length} files in: ${path}, Success: ${data.success}`
+      );
+
+      return data;
+    } catch (error) {
+      console.error("[HTTP Client] Error listing files:", error);
       throw error;
     }
   }

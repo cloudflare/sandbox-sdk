@@ -92,6 +92,15 @@ export interface MoveFileRequest {
   sessionId?: string;
 }
 
+export interface ListFilesRequest {
+  path: string;
+  options?: {
+    recursive?: boolean;
+    includeHidden?: boolean;
+  };
+  sessionId?: string;
+}
+
 export interface ExposePortRequest {
   port: number;
   name?: string;
