@@ -141,13 +141,16 @@ export class JupyterService {
         "[JupyterService] Pre-warming context pools for better performance"
       );
 
-      // Warm one at a time with delay between them
+      // Only pre-warm Python contexts to avoid Bun WebSocket validation errors
+      // JavaScript contexts will be created on-demand
       await this.jupyterServer.enablePoolWarming("python", 1);
 
-      // Small delay between different language kernels
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-
-      await this.jupyterServer.enablePoolWarming("javascript", 1);
+      // Commenting out JavaScript pre-warming due to kernel message validation errors
+      // The errors appear to be related to Bun's handling of WebSocket messages
+      // JavaScript contexts still work fine when created on-demand
+      // 
+      // await new Promise((resolve) => setTimeout(resolve, 1000));
+      // await this.jupyterServer.enablePoolWarming("javascript", 1);
     } catch (error) {
       console.error("[JupyterService] Error pre-warming context pools:", error);
       console.error(
