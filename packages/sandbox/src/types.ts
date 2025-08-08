@@ -474,7 +474,8 @@ export interface ListFilesResponse {
   path: string;
   files: Array<{
     name: string;
-    path: string;
+    absolutePath: string;
+    relativePath: string;
     type: 'file' | 'directory' | 'symlink' | 'other';
     size: number;
     modifiedAt: string;

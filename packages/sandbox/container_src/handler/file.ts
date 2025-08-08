@@ -855,7 +855,8 @@ async function executeListFiles(
     exitCode: number;
     files: Array<{
         name: string;
-        path: string;
+        absolutePath: string;
+        relativePath: string;
         type: 'file' | 'directory' | 'symlink' | 'other';
         size: number;
         modifiedAt: string;
@@ -868,9 +869,11 @@ async function executeListFiles(
     }>;
 }> {
     try {
+        const basePath = path.endsWith('/') ? path.slice(0, -1) : path;
         const files: Array<{
             name: string;
-            path: string;
+            absolutePath: string;
+            relativePath: string;
             type: 'file' | 'directory' | 'symlink' | 'other';
             size: number;
             modifiedAt: string;
@@ -927,10 +930,18 @@ async function executeListFiles(
 
                 // Extract mode (permissions) - stats.mode is a number
                 const mode = stats.mode & 0o777; // Get only permission bits
-                
+
+                // Calculate relative path from base directory
+                const relativePath = fullPath.startsWith(`${basePath}/`)
+                    ? fullPath.substring(basePath.length + 1)
+                    : fullPath === basePath
+                        ? '.'
+                        : entry;
+
                 const fileInfo = {
                     name: entry,
-                    path: fullPath,
+                    absolutePath: fullPath,
+                    relativePath,
                     type,
                     size: stats.size,
                     modifiedAt: stats.mtime.toISOString(),

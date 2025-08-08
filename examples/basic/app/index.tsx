@@ -6,7 +6,8 @@ import "./style.css";
 // Type definitions
 interface FileInfo {
   name: string;
-  path: string;
+  absolutePath: string;
+  relativePath: string;
   type: 'file' | 'directory' | 'symlink' | 'other';
   size: number;
   modifiedAt: string;
@@ -1515,11 +1516,11 @@ function FilesTab({
         includeHidden: listHidden,
       });
       
-      // Sort files for proper tree display
+      // Sort files for proper tree display using relativePath
       const sortedFiles = (result.files || []).sort((a, b) => {
-        // Split paths into segments for proper comparison
-        const aSegments = a.path.split('/').filter(s => s);
-        const bSegments = b.path.split('/').filter(s => s);
+        // Use relativePath for cleaner sorting
+        const aSegments = a.relativePath.split('/').filter(s => s);
+        const bSegments = b.relativePath.split('/').filter(s => s);
         
         // Compare segment by segment
         const minLength = Math.min(aSegments.length, bSegments.length);
@@ -1797,11 +1798,8 @@ function FilesTab({
               <h4>Files ({listedFiles.length}):</h4>
               <div className="file-list">
                 {listedFiles.map((file, index) => {
-                  // Calculate indentation level based on path depth when recursive
-                  const relativePath = file.path.startsWith(listPath) 
-                    ? file.path.slice(listPath.length).replace(/^\//, '')
-                    : file.path;
-                  const depth = listRecursive ? (relativePath.split('/').length - 1) : 0;
+                  // Calculate indentation level using the relativePath field
+                  const depth = listRecursive ? (file.relativePath.split('/').filter(s => s).length - 1) : 0;
                   
                   // For directories, add a trailing slash for clarity
                   const displayName = file.type === 'directory' ? `${file.name}/` : file.name;
@@ -1824,7 +1822,7 @@ function FilesTab({
                          file.permissions.executable ? '⚙️' : '📄'}
                       </span>
                       <span className="file-mode">{file.mode}</span>
-                      <span className="file-name" title={file.path}>
+                      <span className="file-name" title={file.absolutePath}>
                         {displayName}
                       </span>
                       <span className="file-details">
