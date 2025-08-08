@@ -16,8 +16,10 @@ import {
 } from "./security";
 import { parseSSEStream } from "./sse-parser";
 import type {
+  ExecEvent,
   ExecOptions,
   ExecResult,
+  ExecuteResponse,
   ISandbox,
   Process,
   ProcessOptions,
@@ -208,9 +210,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         options.sessionId
       );
 
-      for await (const event of parseSSEStream<import("./types").ExecEvent>(
-        stream
-      )) {
+      for await (const event of parseSSEStream<ExecEvent>(stream)) {
         // Check for cancellation
         if (options.signal?.aborted) {
           throw new Error("Operation was aborted");
@@ -264,7 +264,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   private mapExecuteResponseToExecResult(
-    response: import("./client").ExecuteResponse,
+    response: ExecuteResponse,
     duration: number,
     sessionId?: string
   ): ExecResult {
