@@ -371,6 +371,25 @@ export interface ISandbox {
   cleanupCompletedProcesses(): Promise<number>;
   getProcessLogs(id: string): Promise<{ stdout: string; stderr: string }>;
 
+  // File operations
+  gitCheckout(repoUrl: string, options: { branch?: string; targetDir?: string }): Promise<import('./client').GitCheckoutResponse>;
+  mkdir(path: string, options?: { recursive?: boolean }): Promise<import('./client').MkdirResponse>;
+  writeFile(path: string, content: string, options?: { encoding?: string }): Promise<import('./client').WriteFileResponse>;
+  deleteFile(path: string): Promise<import('./client').DeleteFileResponse>;
+  renameFile(oldPath: string, newPath: string): Promise<import('./client').RenameFileResponse>;
+  moveFile(sourcePath: string, destinationPath: string): Promise<import('./client').MoveFileResponse>;
+  readFile(path: string, options?: { encoding?: string }): Promise<import('./client').ReadFileResponse>;
+  listFiles(path: string, options?: { recursive?: boolean; includeHidden?: boolean }): Promise<import('./client').ListFilesResponse>;
+
+  // Port management
+  exposePort(port: number, options: { name?: string; hostname: string }): Promise<{ url: string; port: number; name?: string }>;
+  unexposePort(port: number): Promise<void>;
+  getExposedPorts(hostname: string): Promise<Array<{ url: string; port: number; name?: string; exposedAt: string }>>;
+
+  // Environment management
+  setEnvVars(envVars: Record<string, string>): Promise<void>;
+  setSandboxName(name: string): Promise<void>;
+
   // Code Interpreter API
   createCodeContext(options?: CreateContextOptions): Promise<CodeContext>;
   runCode(code: string, options?: RunCodeOptions): Promise<ExecutionResult>;
