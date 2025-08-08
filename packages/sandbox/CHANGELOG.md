@@ -1,5 +1,11 @@
 # @cloudflare/sandbox
 
+## 0.2.4
+
+### Patch Changes
+
+- [#57](https://github.com/cloudflare/sandbox-sdk/pull/57) [`12bbd12`](https://github.com/cloudflare/sandbox-sdk/commit/12bbd1229c07ef8c1c0bf58a4235a27938155b08) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Add listFiles method
+
 ## 0.2.3
 
 ### Patch Changes
