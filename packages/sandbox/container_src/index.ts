@@ -324,8 +324,7 @@ const server = serve({
               console.error("[Container] Failed to create session:", error);
               return new Response(
                 JSON.stringify({ 
-                  error: "Failed to create session",
-                  message: error instanceof Error ? error.message : String(error)
+                  error: "Failed to create session"
                 }),
                 { status: 500, headers: { "Content-Type": "application/json", ...corsHeaders }}
               );
@@ -397,8 +396,7 @@ const server = serve({
               console.error("[Container] Session exec failed:", error);
               return new Response(
                 JSON.stringify({ 
-                  error: "Command execution failed",
-                  message: error instanceof Error ? error.message : String(error)
+                  error: "Command execution failed"
                 }),
                 { status: 500, headers: { "Content-Type": "application/json", ...corsHeaders }}
               );
@@ -694,8 +692,7 @@ const server = serve({
       );
       return new Response(
         JSON.stringify({
-          error: "Internal server error",
-          message: error instanceof Error ? error.message : "Unknown error",
+          error: "Internal server error"
         }),
         {
           headers: {
