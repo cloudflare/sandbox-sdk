@@ -30,6 +30,7 @@ import { type ChildProcess, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
+import type { ExecEvent } from '../../src/types';
 
 // Configuration constants
 const CONFIG = {
@@ -60,18 +61,19 @@ export interface SessionOptions {
 }
 
 interface ControlMessage {
-  type: 'exec' | 'exit';
+  type: 'exec' | 'exec_stream' | 'exit';
   id: string;
   command?: string;
 }
 
 interface ControlResponse {
-  type: 'result' | 'error' | 'ready';
+  type: 'result' | 'error' | 'ready' | 'stream_event';
   id: string;
   stdout?: string;
   stderr?: string;
   exitCode?: number;
   error?: string;
+  event?: ExecEvent;
 }
 
 // Cache the namespace support check
@@ -425,6 +427,250 @@ echo "DONE:\${msg.id}"
           }
         }, COMMAND_TIMEOUT_MS);
       }
+      
+      if (msg.type === 'exec_stream' && msg.command) {
+        if (!shellAlive) {
+          process.stdout.write(JSON.stringify({
+            type: 'stream_event',
+            id: msg.id,
+            event: {
+              type: 'error',
+              timestamp: new Date().toISOString(),
+              command: msg.command,
+              error: 'Shell is not alive'
+            }
+          }) + '\\n');
+          continue;
+        }
+        
+        // Create temp files for this command
+        const cmdFile = \`\${TEMP_DIR}/cmd_\${msg.id}.sh\`;
+        const outFile = \`\${TEMP_DIR}/out_\${msg.id}\`;
+        const errFile = \`\${TEMP_DIR}/err_\${msg.id}\`;
+        const exitFile = \`\${TEMP_DIR}/exit_\${msg.id}\`;
+        
+        // Track these files as active
+        activeFiles.add(cmdFile);
+        activeFiles.add(outFile);
+        activeFiles.add(errFile);
+        activeFiles.add(exitFile);
+        
+        // Initialize processing state to prevent race conditions
+        processingState.set(msg.id, false);
+        
+        // Write command to file
+        fs.writeFileSync(cmdFile, msg.command, 'utf8');
+        
+        // Start streaming output
+        let stdoutSize = 0;
+        let stderrSize = 0;
+        
+        // Send start event
+        process.stdout.write(JSON.stringify({
+          type: 'stream_event',
+          id: msg.id,
+          event: {
+            type: 'start',
+            timestamp: new Date().toISOString(),
+            command: msg.command
+          }
+        }) + '\\n');
+        
+        // Set up streaming interval to check for new output
+        const streamingInterval = setInterval(() => {
+          try {
+            // Check for new stdout
+            if (fs.existsSync(outFile)) {
+              const currentStdout = fs.readFileSync(outFile, 'utf8');
+              if (currentStdout.length > stdoutSize) {
+                const newData = currentStdout.slice(stdoutSize);
+                stdoutSize = currentStdout.length;
+                process.stdout.write(JSON.stringify({
+                  type: 'stream_event',
+                  id: msg.id,
+                  event: {
+                    type: 'stdout',
+                    timestamp: new Date().toISOString(),
+                    data: newData,
+                    command: msg.command
+                  }
+                }) + '\\n');
+              }
+            }
+            
+            // Check for new stderr
+            if (fs.existsSync(errFile)) {
+              const currentStderr = fs.readFileSync(errFile, 'utf8');
+              if (currentStderr.length > stderrSize) {
+                const newData = currentStderr.slice(stderrSize);
+                stderrSize = currentStderr.length;
+                process.stdout.write(JSON.stringify({
+                  type: 'stream_event',
+                  id: msg.id,
+                  event: {
+                    type: 'stderr',
+                    timestamp: new Date().toISOString(),
+                    data: newData,
+                    command: msg.command
+                  }
+                }) + '\\n');
+              }
+            }
+          } catch (e) {
+            // Files might not exist yet, that's ok
+          }
+        }, 50); // Check every 50ms for real-time feel
+        
+        // Execute command with same pattern as regular exec
+        const execScript = \`
+# Execute command with output redirection in current shell
+source \${cmdFile} > \${outFile} 2> \${errFile}
+echo $? > \${exitFile}
+echo "STREAM_DONE:\${msg.id}"
+\`;
+        
+        shell.stdin.write(execScript);
+        
+        // Set up listener for completion
+        const onStreamData = (chunk) => {
+          const output = chunk.toString();
+          if (output.includes(\`STREAM_DONE:\${msg.id}\`)) {
+            // Check if already processed (prevents race condition)
+            if (processingState.get(msg.id)) {
+              return;
+            }
+            processingState.set(msg.id, true);
+            
+            clearInterval(streamingInterval);
+            shell.stdout.off('data', onStreamData);
+            
+            try {
+              // Read final results
+              const stdout = fs.existsSync(outFile) ? fs.readFileSync(outFile, 'utf8') : '';
+              const stderr = fs.existsSync(errFile) ? fs.readFileSync(errFile, 'utf8') : '';
+              const exitCode = fs.existsSync(exitFile) ? parseInt(fs.readFileSync(exitFile, 'utf8').trim()) : 1;
+              
+              // Send any remaining output
+              if (stdout.length > stdoutSize) {
+                const newData = stdout.slice(stdoutSize);
+                process.stdout.write(JSON.stringify({
+                  type: 'stream_event',
+                  id: msg.id,
+                  event: {
+                    type: 'stdout',
+                    timestamp: new Date().toISOString(),
+                    data: newData,
+                    command: msg.command
+                  }
+                }) + '\\n');
+              }
+              
+              if (stderr.length > stderrSize) {
+                const newData = stderr.slice(stderrSize);
+                process.stdout.write(JSON.stringify({
+                  type: 'stream_event',
+                  id: msg.id,
+                  event: {
+                    type: 'stderr',
+                    timestamp: new Date().toISOString(),
+                    data: newData,
+                    command: msg.command
+                  }
+                }) + '\\n');
+              }
+              
+              // Send completion event
+              process.stdout.write(JSON.stringify({
+                type: 'stream_event',
+                id: msg.id,
+                event: {
+                  type: 'complete',
+                  timestamp: new Date().toISOString(),
+                  command: msg.command,
+                  exitCode: exitCode,
+                  result: {
+                    stdout,
+                    stderr,
+                    exitCode,
+                    success: exitCode === 0
+                  }
+                }
+              }) + '\\n');
+              
+              // Cleanup temp files
+              const filesToClean = [cmdFile, outFile, errFile, exitFile];
+              filesToClean.forEach(file => {
+                try {
+                  fs.unlinkSync(file);
+                  activeFiles.delete(file);
+                } catch (e) {
+                  // File might already be deleted
+                }
+              });
+              
+              // Clean up processing state
+              processingState.delete(msg.id);
+            } catch (error) {
+              process.stdout.write(JSON.stringify({
+                type: 'stream_event',
+                id: msg.id,
+                event: {
+                  type: 'error',
+                  timestamp: new Date().toISOString(),
+                  command: msg.command,
+                  error: \`Failed to read output: \${error.message}\`
+                }
+              }) + '\\n');
+              
+              // Still try to clean up files on error
+              [cmdFile, outFile, errFile, exitFile].forEach(file => {
+                try {
+                  fs.unlinkSync(file);
+                  activeFiles.delete(file);
+                } catch (e) {}
+              });
+              processingState.delete(msg.id);
+            }
+          }
+        };
+        
+        shell.stdout.on('data', onStreamData);
+        
+        // Timeout protection
+        const streamTimeoutId = setTimeout(() => {
+          // Check if already processed
+          if (!processingState.get(msg.id)) {
+            processingState.set(msg.id, true);
+            
+            clearInterval(streamingInterval);
+            shell.stdout.off('data', onStreamData);
+            
+            process.stdout.write(JSON.stringify({
+              type: 'stream_event',
+              id: msg.id,
+              event: {
+                type: 'error',
+                timestamp: new Date().toISOString(),
+                command: msg.command,
+                error: \`Command timeout after \${COMMAND_TIMEOUT_MS/1000} seconds\`
+              }
+            }) + '\\n');
+            
+            // Cleanup files
+            const filesToClean = [cmdFile, outFile, errFile, exitFile];
+            filesToClean.forEach(file => {
+              try {
+                fs.unlinkSync(file);
+                activeFiles.delete(file);
+              } catch (e) {
+                console.error(\`[Control] Failed to cleanup \${file}: \${e.message}\`);
+              }
+            });
+            
+            processingState.delete(msg.id);
+          }
+        }, COMMAND_TIMEOUT_MS);
+      }
     } catch (e) {
       console.error('[Control] Failed to parse command:', e);
     }
@@ -528,6 +774,125 @@ process.stdin.resume();
       this.control!.stdin?.write(`${JSON.stringify(msg)}\n`);
     });
   }
+
+  async *execStream(command: string): AsyncGenerator<ExecEvent> {
+    if (!this.ready || !this.control) {
+      throw new Error(`Session '${this.options.name}' not initialized`);
+    }
+    
+    const id = randomUUID();
+    const timestamp = new Date().toISOString();
+    
+    // Yield start event
+    yield {
+      type: 'start',
+      timestamp,
+      command,
+    };
+    
+    // Set up streaming callback handling
+    const streamingCallbacks = new Map<string, {
+      resolve: () => void;
+      reject: (error: Error) => void;
+      events: ExecEvent[];
+      complete: boolean;
+    }>();
+    
+    // Temporarily override message handling to capture streaming events
+    const originalHandler = this.control!.stdout?.listeners('data')[0];
+    
+    const streamHandler = (data: Buffer) => {
+      const lines = data.toString().split('\n');
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const msg: any = JSON.parse(line);
+          if (msg.type === 'stream_event' && msg.id === id) {
+            const callback = streamingCallbacks.get(id);
+            if (callback) {
+              callback.events.push(msg.event);
+              if (msg.event.type === 'complete' || msg.event.type === 'error') {
+                callback.complete = true;
+                callback.resolve();
+              }
+            }
+          } else {
+            // Pass through other messages to original handler
+            originalHandler?.(data);
+          }
+        } catch (e) {
+          console.error(`[Session] Failed to parse stream message: ${line}`);
+        }
+      }
+    };
+    
+    try {
+      // Set up promise for completion
+      const streamPromise = new Promise<void>((resolve, reject) => {
+        streamingCallbacks.set(id, {
+          resolve,
+          reject,
+          events: [],
+          complete: false
+        });
+        
+        // Set up timeout
+        setTimeout(() => {
+          const callback = streamingCallbacks.get(id);
+          if (callback && !callback.complete) {
+            streamingCallbacks.delete(id);
+            reject(new Error(`Stream timeout: ${command}`));
+          }
+        }, CONFIG.COMMAND_TIMEOUT_MS);
+      });
+      
+      // Replace stdout handler temporarily
+      this.control!.stdout?.off('data', originalHandler as any);
+      this.control!.stdout?.on('data', streamHandler);
+      
+      // Send streaming exec command to control process
+      const msg: ControlMessage = { type: 'exec_stream', id, command };
+      this.control!.stdin?.write(`${JSON.stringify(msg)}\n`);
+      
+      // Yield events as they come in
+      const callback = streamingCallbacks.get(id)!;
+      let lastEventIndex = 0;
+      
+      while (!callback.complete) {
+        // Yield any new events
+        while (lastEventIndex < callback.events.length) {
+          yield callback.events[lastEventIndex];
+          lastEventIndex++;
+        }
+        
+        // Wait a bit before checking again
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      
+      // Yield any remaining events
+      while (lastEventIndex < callback.events.length) {
+        yield callback.events[lastEventIndex];
+        lastEventIndex++;
+      }
+      
+      await streamPromise;
+      
+    } catch (error) {
+      yield {
+        type: 'error',
+        timestamp: new Date().toISOString(),
+        command,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    } finally {
+      // Restore original handler
+      this.control!.stdout?.off('data', streamHandler);
+      if (originalHandler) {
+        this.control!.stdout?.on('data', originalHandler as any);
+      }
+      streamingCallbacks.delete(id);
+    }
+  }
   
   destroy(): void {
     if (this.control) {
@@ -587,6 +952,17 @@ export class SessionManager {
       });
     }
     return defaultSession.exec(command);
+  }
+  
+  async *execStream(command: string): AsyncGenerator<ExecEvent> {
+    let defaultSession = this.sessions.get('default');
+    if (!defaultSession) {
+      defaultSession = await this.createSession({ 
+        name: 'default',
+        isolation: true 
+      });
+    }
+    yield* defaultSession.execStream(command);
   }
   
   destroyAll(): void {

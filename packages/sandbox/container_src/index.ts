@@ -31,7 +31,7 @@ import {
 } from "./handler/process";
 import type { CreateContextRequest } from "./jupyter-server";
 import { JupyterNotReadyError, JupyterService } from "./jupyter-service";
-import type { ProcessRecord, CreateSessionRequest, SessionExecRequest } from "./types";
+import type { CreateSessionRequest, ProcessRecord, SessionExecRequest } from "./types";
 import { SessionManager } from "./utils/isolation";
 
 // In-memory storage for exposed ports
@@ -133,8 +133,6 @@ const server = serve({
             },
           });
 
-        // Session management endpoints moved further down (lines 339+)
-        // to use the new SimpleSessionManager
 
         case "/api/execute":
           if (req.method === "POST") {
@@ -144,7 +142,7 @@ const server = serve({
 
         case "/api/execute/stream":
           if (req.method === "POST") {
-            return handleStreamingExecuteRequest(req, corsHeaders);
+            return handleStreamingExecuteRequest(req, corsHeaders, sessionManager);
           }
           break;
 
@@ -288,7 +286,6 @@ const server = serve({
           }
           break;
 
-        // Session management endpoints for secure execution
         case "/api/session/create":
           if (req.method === "POST") {
             try {
@@ -324,7 +321,8 @@ const server = serve({
               console.error("[Container] Failed to create session:", error);
               return new Response(
                 JSON.stringify({ 
-                  error: "Failed to create session"
+                  error: "Failed to create session",
+                  message: error instanceof Error ? error.message : String(error)
                 }),
                 { status: 500, headers: { "Content-Type": "application/json", ...corsHeaders }}
               );
@@ -369,7 +367,6 @@ const server = serve({
               const session = sessionManager.getSession(name);
               if (!session) {
                 console.error(`[Container] Session '${name}' not found!`);
-                // List available sessions for debugging
                 const availableSessions = sessionManager.listSessions();
                 console.log(`[Container] Available sessions: ${availableSessions.join(', ') || 'none'}`);
                 
@@ -396,7 +393,8 @@ const server = serve({
               console.error("[Container] Session exec failed:", error);
               return new Response(
                 JSON.stringify({ 
-                  error: "Command execution failed"
+                  error: "Command execution failed",
+                  message: error instanceof Error ? error.message : String(error)
                 }),
                 { status: 500, headers: { "Content-Type": "application/json", ...corsHeaders }}
               );
@@ -404,7 +402,6 @@ const server = serve({
           }
           break;
 
-        // Code interpreter endpoints
         case "/api/contexts":
           if (req.method === "POST") {
             try {
@@ -427,7 +424,6 @@ const server = serve({
               );
             } catch (error) {
               if (error instanceof JupyterNotReadyError) {
-                // This happens when request times out waiting for Jupyter
                 console.log(
                   `[Container] Request timed out waiting for Jupyter (${error.progress}% complete)`
                 );
@@ -692,7 +688,8 @@ const server = serve({
       );
       return new Response(
         JSON.stringify({
-          error: "Internal server error"
+          error: "Internal server error",
+          message: error instanceof Error ? error.message : "Unknown error"
         }),
         {
           headers: {

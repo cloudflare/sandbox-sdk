@@ -1093,4 +1093,43 @@ export class HttpClient {
       throw error;
     }
   }
+
+  async execInSessionStream(
+    sessionName: string,
+    command: string
+  ): Promise<ReadableStream<Uint8Array>> {
+    try {
+      const response = await this.doFetch(`/api/execute/stream`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ 
+          command, 
+          sessionId: sessionName.startsWith('session-') ? sessionName.slice(8) : sessionName
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = (await response.json().catch(() => ({}))) as {
+          error?: string;
+        };
+        throw new Error(
+          errorData.error || `Failed to stream execute in session: ${response.status}`
+        );
+      }
+
+      if (!response.body) {
+        throw new Error("No response body for streaming execution");
+      }
+
+      console.log(
+        `[HTTP Client] Started streaming command in session ${sessionName}: ${command}`
+      );
+      return response.body;
+    } catch (error) {
+      console.error("[HTTP Client] Error streaming execute in session:", error);
+      throw error;
+    }
+  }
 }

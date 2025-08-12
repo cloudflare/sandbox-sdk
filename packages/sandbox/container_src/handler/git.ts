@@ -74,7 +74,7 @@ export async function handleGitCheckoutRequest(
 ): Promise<Response> {
   try {
     const body = (await req.json()) as GitCheckoutRequest;
-    const { repoUrl, branch = "main", targetDir, sessionId } = body;
+    const { repoUrl, branch = "main", targetDir } = body;
 
     if (!repoUrl || typeof repoUrl !== "string") {
       return new Response(

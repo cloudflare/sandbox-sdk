@@ -45,6 +45,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private sandboxName: string | null = null;
   private codeInterpreter: CodeInterpreter;
   private defaultSessionInitialized = false;
+  private sessionCache = new Map<string, ExecutionSession>();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -203,19 +204,25 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           timestamp
         );
       } else {
-        // Regular execution - use the sandbox's session (no more sessionId)
-        const response = await this.client.execute(command, {
-          sessionId: options?.sessionId, // Keep for backward compat, will be deprecated
-          cwd: options?.cwd,
-          env: options?.env,
-        });
+        // Check if sessionId is provided - if so, use ExecutionSession
+        if (options?.sessionId) {
+          const session = await this.getOrCreateSessionForId(options.sessionId, options);
+          const sessionResult = await session.exec(command);
+          result = sessionResult;
+        } else {
+          // Regular execution - use the sandbox's implicit session
+          const response = await this.client.execute(command, {
+            cwd: options?.cwd,
+            env: options?.env,
+          });
 
-        const duration = Date.now() - startTime;
-        result = this.mapExecuteResponseToExecResult(
-          response,
-          duration,
-          options?.sessionId
-        );
+          const duration = Date.now() - startTime;
+          result = this.mapExecuteResponseToExecResult(
+            response,
+            duration,
+            undefined
+          );
+        }
       }
 
       // Call completion callback if provided
@@ -246,10 +253,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     let stderr = "";
 
     try {
-      const stream = await this.client.executeCommandStream(
-        command,
-        options.sessionId
-      );
+      // Check if sessionId is provided - if so, use ExecutionSession
+      let stream: ReadableStream<Uint8Array>;
+      if (options.sessionId) {
+        const session = await this.getOrCreateSessionForId(options.sessionId, options);
+        stream = await session.execStream(command);
+      } else {
+        stream = await this.client.executeCommandStream(command);
+      }
 
       for await (const event of parseSSEStream<ExecEvent>(stream)) {
         // Check for cancellation
@@ -835,6 +846,23 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * Create a new execution session with isolation
    * Returns a session object with exec() method
    */
+  // Internal method to get or create a session for backward compatibility
+  private async getOrCreateSessionForId(sessionId: string, options?: ExecOptions): Promise<ExecutionSession> {
+    if (this.sessionCache.has(sessionId)) {
+      return this.sessionCache.get(sessionId)!;
+    }
+    
+    const session = await this.createSession({
+      name: sessionId,
+      env: options?.env,
+      cwd: options?.cwd,
+      isolation: true // Always use isolation for sessionId-based sessions
+    });
+    
+    this.sessionCache.set(sessionId, session);
+    return session;
+  }
+
   async createSession(options: {
     name?: string;
     env?: Record<string, string>;
@@ -859,6 +887,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           duration: 0,
           timestamp: new Date().toISOString()
         };
+      },
+      
+      execStream: async (command: string) => {
+        return await this.client.execInSessionStream(sessionName, command);
       },
       
       setEnvVars: async (vars: Record<string, string>) => {

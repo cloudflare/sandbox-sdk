@@ -27,7 +27,6 @@ function executeMkdir(
             stdio: ["pipe", "pipe", "pipe"],
         });
 
-
         let stdout = "";
         let stderr = "";
 
@@ -40,7 +39,6 @@ function executeMkdir(
         });
 
         mkdirChild.on("close", (code) => {
-
             if (code === 0) {
                 console.log(`[Server] Directory created successfully: ${path}`);
                 resolve({
@@ -63,7 +61,6 @@ function executeMkdir(
         });
 
         mkdirChild.on("error", (error) => {
-
             console.error(`[Server] Error creating directory: ${path}`, error);
             reject(error);
         });
@@ -76,7 +73,7 @@ export async function handleMkdirRequest(
 ): Promise<Response> {
     try {
         const body = (await req.json()) as MkdirRequest;
-        const { path, recursive = false, sessionId } = body;
+        const { path, recursive = false } = body;
 
         if (!path || typeof path !== "string") {
             return new Response(
@@ -169,8 +166,7 @@ export async function handleMkdirRequest(
 function executeWriteFile(
     path: string,
     content: string,
-    encoding: string,
-    sessionId?: string
+    encoding: string
 ): Promise<{
     success: boolean;
     exitCode: number;
@@ -208,7 +204,7 @@ export async function handleWriteFileRequest(
 ): Promise<Response> {
     try {
         const body = (await req.json()) as WriteFileRequest;
-        const { path, content, encoding = "utf-8", sessionId } = body;
+        const { path, content, encoding = "utf-8" } = body;
 
         if (!path || typeof path !== "string") {
             return new Response(
@@ -260,7 +256,7 @@ export async function handleWriteFileRequest(
             `[Server] Writing file: ${path} (content length: ${content.length})`
         );
 
-        const result = await executeWriteFile(path, content, encoding, sessionId);
+        const result = await executeWriteFile(path, content, encoding);
 
         return new Response(
             JSON.stringify({
@@ -297,8 +293,7 @@ export async function handleWriteFileRequest(
 
 function executeReadFile(
     path: string,
-    encoding: string,
-    sessionId?: string
+    encoding: string
 ): Promise<{
     success: boolean;
     exitCode: number;
@@ -332,7 +327,7 @@ export async function handleReadFileRequest(
 ): Promise<Response> {
     try {
         const body = (await req.json()) as ReadFileRequest;
-        const { path, encoding = "utf-8", sessionId } = body;
+        const { path, encoding = "utf-8" } = body;
 
         if (!path || typeof path !== "string") {
             return new Response(
@@ -382,7 +377,7 @@ export async function handleReadFileRequest(
 
         console.log(`[Server] Reading file: ${path}`);
 
-        const result = await executeReadFile(path, encoding, sessionId);
+        const result = await executeReadFile(path, encoding);
 
         return new Response(
             JSON.stringify({
@@ -419,8 +414,7 @@ export async function handleReadFileRequest(
 
 
 function executeDeleteFile(
-  path: string,
-  sessionId?: string
+  path: string
 ): Promise<{
   success: boolean;
   exitCode: number;
@@ -450,7 +444,7 @@ export async function handleDeleteFileRequest(
 ): Promise<Response> {
     try {
         const body = (await req.json()) as DeleteFileRequest;
-        const { path, sessionId } = body;
+        const { path } = body;
 
         if (!path || typeof path !== "string") {
             return new Response(
@@ -500,7 +494,7 @@ export async function handleDeleteFileRequest(
 
         console.log(`[Server] Deleting file: ${path}`);
 
-        const result = await executeDeleteFile(path, sessionId);
+        const result = await executeDeleteFile(path);
 
         return new Response(
             JSON.stringify({
@@ -537,8 +531,7 @@ export async function handleDeleteFileRequest(
 
 function executeRenameFile(
   oldPath: string,
-  newPath: string,
-  sessionId?: string
+  newPath: string
 ): Promise<{
   success: boolean;
   exitCode: number;
@@ -573,7 +566,7 @@ export async function handleRenameFileRequest(
 ): Promise<Response> {
     try {
         const body = (await req.json()) as RenameFileRequest;
-        const { oldPath, newPath, sessionId } = body;
+        const { oldPath, newPath } = body;
 
         if (!oldPath || typeof oldPath !== "string") {
             return new Response(
@@ -642,7 +635,7 @@ export async function handleRenameFileRequest(
 
         console.log(`[Server] Renaming file: ${oldPath} -> ${newPath}`);
 
-        const result = await executeRenameFile(oldPath, newPath, sessionId);
+        const result = await executeRenameFile(oldPath, newPath);
 
         return new Response(
             JSON.stringify({
@@ -680,8 +673,7 @@ export async function handleRenameFileRequest(
 
 function executeMoveFile(
   sourcePath: string,
-  destinationPath: string,
-  sessionId?: string
+  destinationPath: string
 ): Promise<{
   success: boolean;
   exitCode: number;
@@ -716,7 +708,7 @@ export async function handleMoveFileRequest(
 ): Promise<Response> {
     try {
         const body = (await req.json()) as MoveFileRequest;
-        const { sourcePath, destinationPath, sessionId } = body;
+        const { sourcePath, destinationPath } = body;
 
         if (!sourcePath || typeof sourcePath !== "string") {
             return new Response(
@@ -787,8 +779,7 @@ export async function handleMoveFileRequest(
 
         const result = await executeMoveFile(
             sourcePath,
-            destinationPath,
-            sessionId
+            destinationPath
         );
 
         return new Response(

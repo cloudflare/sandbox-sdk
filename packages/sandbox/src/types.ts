@@ -13,6 +13,11 @@ export interface ExecutionSession {
   exec(command: string): Promise<ExecResult>;
   
   /**
+   * Execute a command in this session with streaming output
+   */
+  execStream(command: string): Promise<ReadableStream<Uint8Array>>;
+  
+  /**
    * Update environment variables for this session
    */
   setEnvVars?(vars: Record<string, string>): Promise<void>;
