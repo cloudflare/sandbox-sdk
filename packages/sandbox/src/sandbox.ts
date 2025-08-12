@@ -20,6 +20,7 @@ import type {
   ExecOptions,
   ExecResult,
   ExecuteResponse,
+  ExecutionSession,
   ISandbox,
   Process,
   ProcessOptions,
@@ -43,6 +44,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   client: JupyterClient;
   private sandboxName: string | null = null;
   private codeInterpreter: CodeInterpreter;
+  private defaultSessionInitialized = false;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -88,10 +90,19 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   async setEnvVars(envVars: Record<string, string>): Promise<void> {
     this.envVars = { ...this.envVars, ...envVars };
     console.log(`[Sandbox] Updated environment variables`);
+    
+    // If we have a default session, update its environment too
+    if (this.defaultSessionInitialized) {
+      // This would update the session's environment variables
+      // For now, new exec calls will use these vars
+    }
   }
 
   override onStart() {
     console.log("Sandbox successfully started");
+    // Note: We don't initialize the default session here to avoid
+    // potential infinite loops. The session will be created lazily
+    // on first exec() call.
   }
 
   override onStop() {
@@ -136,9 +147,39 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     return 3000;
   }
 
-  // Enhanced exec method - always returns ExecResult with optional streaming
-  // This replaces the old exec method to match ISandbox interface
+  // Initialize the default session for this sandbox
+  private async initializeDefaultSession(): Promise<void> {
+    if (this.defaultSessionInitialized) return;
+    
+    try {
+      // Create a default session that persists state
+      const sessionName = `sandbox-${this.sandboxName || 'default'}`;
+      await this.client.createSession({
+        name: sessionName,
+        env: this.envVars || {},
+        cwd: '/workspace',
+        isolation: true
+      });
+      this.defaultSessionInitialized = true;
+      console.log(`[Sandbox] Default session initialized: ${sessionName}`);
+    } catch (error) {
+      console.warn("[Sandbox] Could not initialize default session:", error);
+      // Continue without session - will use legacy exec
+    }
+  }
+
+  // Enhanced exec method - now uses the sandbox's implicit session
   async exec(command: string, options?: ExecOptions): Promise<ExecResult> {
+    // Lazily initialize the default session on first use
+    if (!this.defaultSessionInitialized && !options?.sessionId) {
+      try {
+        await this.initializeDefaultSession();
+      } catch (error) {
+        console.warn("[Sandbox] Could not initialize default session:", error);
+        // Continue without session - will use legacy exec
+      }
+    }
+    
     const startTime = Date.now();
     const timestamp = new Date().toISOString();
 
@@ -162,9 +203,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           timestamp
         );
       } else {
-        // Regular execution
+        // Regular execution - use the sandbox's session (no more sessionId)
         const response = await this.client.execute(command, {
-          sessionId: options?.sessionId,
+          sessionId: options?.sessionId, // Keep for backward compat, will be deprecated
           cwd: options?.cwd,
           env: options?.env,
         });
@@ -784,5 +825,47 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    */
   async deleteCodeContext(contextId: string): Promise<void> {
     return this.codeInterpreter.deleteCodeContext(contextId);
+  }
+
+  // ============================================================================
+  // Session Management (Simple Isolation)
+  // ============================================================================
+
+  /**
+   * Create a new execution session with isolation
+   * Returns a session object with exec() method
+   */
+  async createSession(options: {
+    name?: string;
+    env?: Record<string, string>;
+    cwd?: string;
+    isolation?: boolean;
+  }): Promise<ExecutionSession> {
+    const sessionName = options.name || `session-${Date.now()}`;
+    
+    await this.client.createSession({
+      name: sessionName,
+      env: options.env,
+      cwd: options.cwd,
+      isolation: options.isolation
+    });
+    return {
+      name: sessionName,
+      exec: async (command: string) => {
+        const result = await this.client.execInSession(sessionName, command);
+        return {
+          ...result,
+          command,
+          duration: 0,
+          timestamp: new Date().toISOString()
+        };
+      },
+      
+      setEnvVars: async (vars: Record<string, string>) => {
+        // Sessions can have their own environment updates
+        // This would need server-side support
+        console.log(`[Session ${sessionName}] Environment variables update not yet implemented`);
+      }
+    };
   }
 }

@@ -1,16 +1,12 @@
 import { type SpawnOptions, spawn } from "node:child_process";
-import type { ExecuteOptions, ExecuteRequest, SessionData } from "../types";
+import type { ExecuteResponse } from "../../src/types";
+import type { ExecuteOptions, ExecuteRequest } from "../types";
+import type { SessionManager } from "../utils/isolation";
 
 function executeCommand(
-  sessions: Map<string, SessionData>,
   command: string,
   options: ExecuteOptions,
-): Promise<{
-  success: boolean;
-  stdout: string;
-  stderr: string;
-  exitCode: number;
-}> {
+): Promise<Omit<ExecuteResponse, 'command' | 'timestamp'>> {
   return new Promise((resolve, reject) => {
     const spawnOptions: SpawnOptions = {
       shell: true,
@@ -21,12 +17,6 @@ function executeCommand(
     };
 
     const child = spawn(command, spawnOptions);
-
-    // Store the process reference for cleanup if sessionId is provided
-    if (options.sessionId && sessions.has(options.sessionId)) {
-      const session = sessions.get(options.sessionId)!;
-      session.activeProcess = child;
-    }
 
     let stdout = "";
     let stderr = "";
@@ -55,19 +45,13 @@ function executeCommand(
 
       // Still handle errors
       child.on("error", (error) => {
-        console.error(`[Server] Background process error: ${command}`, error);
+        console.error(`[Exec] Background process error: ${command}`, error);
         // Don't reject since we might have already resolved
       });
     } else {
       // Normal synchronous execution
       child.on("close", (code) => {
-        // Clear the active process reference
-        if (options.sessionId && sessions.has(options.sessionId)) {
-          const session = sessions.get(options.sessionId)!;
-          session.activeProcess = null;
-        }
-
-        console.log(`[Server] Command completed: ${command}, Exit code: ${code}`);
+        console.log(`[Exec] Command completed: ${command}, Exit code: ${code}`);
 
         resolve({
           exitCode: code || 0,
@@ -78,12 +62,6 @@ function executeCommand(
       });
 
       child.on("error", (error) => {
-        // Clear the active process reference
-        if (options.sessionId && sessions.has(options.sessionId)) {
-          const session = sessions.get(options.sessionId)!;
-          session.activeProcess = null;
-        }
-
         reject(error);
       });
     }
@@ -91,9 +69,9 @@ function executeCommand(
 }
 
 export async function handleExecuteRequest(
-  sessions: Map<string, SessionData>,
   req: Request,
-  corsHeaders: Record<string, string>
+  corsHeaders: Record<string, string>,
+  sessionManager?: SessionManager
 ): Promise<Response> {
   try {
     const body = (await req.json()) as ExecuteRequest;
@@ -114,9 +92,52 @@ export async function handleExecuteRequest(
       );
     }
 
-    console.log(`[Server] Executing command: ${command}`);
+    console.log(`[Exec] Executing command: ${command}`);
 
-    const result = await executeCommand(sessions, command, { sessionId, background, cwd, env });
+    // ALWAYS use session manager for isolation (implicit sessions)
+    let result: Omit<ExecuteResponse, 'command' | 'timestamp'>;
+    if (sessionManager) {
+      try {
+        // Check if we have a session-specific session
+        let sessionName = 'default';
+        if (sessionId) {
+          // Use session-specific session for stateful operations
+          sessionName = `session-${sessionId}`;
+          const session = sessionManager.getSession(sessionName);
+          if (!session) {
+            // Create session on-demand with user's env/cwd
+            await sessionManager.createSession({
+              name: sessionName,
+              env: env || {},
+              cwd: typeof cwd === 'string' ? cwd : '/workspace',
+              isolation: true
+            });
+          }
+        }
+        
+        // Execute in the appropriate session
+        const execResult = sessionName === 'default' 
+          ? await sessionManager.exec(command)
+          : await sessionManager.getSession(sessionName)!.exec(command);
+          
+        result = {
+          ...execResult,
+          success: execResult.exitCode === 0
+        };
+      } catch (error) {
+        // Log security fallback prominently
+        console.warn("[Exec] WARNING: SESSION ISOLATION FAILED - Falling back to regular execution");
+        console.warn("[Exec] WARNING: This may expose control plane processes to sandboxed commands");
+        console.error("[Exec] Session execution error:", error);
+        
+        // Fallback to regular execution - but make it clear this is a degraded state
+        result = await executeCommand(command, { sessionId, background, cwd, env });
+      }
+    } else {
+      // Session manager not available - log warning
+      console.warn("[Exec] WARNING: Session manager not available - using regular execution");
+      result = await executeCommand(command, { sessionId, background, cwd, env });
+    }
 
     return new Response(
       JSON.stringify({
@@ -135,7 +156,7 @@ export async function handleExecuteRequest(
       }
     );
   } catch (error) {
-    console.error("[Server] Error in handleExecuteRequest:", error);
+    console.error("[Exec] Error in handleExecuteRequest:", error);
     return new Response(
       JSON.stringify({
         error: "Failed to execute command",
@@ -153,7 +174,6 @@ export async function handleExecuteRequest(
 }
 
 export async function handleStreamingExecuteRequest(
-  sessions: Map<string, SessionData>,
   req: Request,
   corsHeaders: Record<string, string>
 ): Promise<Response> {
@@ -177,7 +197,7 @@ export async function handleStreamingExecuteRequest(
     }
 
     console.log(
-      `[Server] Executing streaming command: ${command}`
+      `[Exec] Executing streaming command: ${command}`
     );
 
     const stream = new ReadableStream({
@@ -191,12 +211,6 @@ export async function handleStreamingExecuteRequest(
         };
 
         const child = spawn(command, spawnOptions);
-
-        // Store the process reference for cleanup if sessionId is provided
-        if (sessionId && sessions.has(sessionId)) {
-          const session = sessions.get(sessionId)!;
-          session.activeProcess = child;
-        }
 
         // For background processes, unref to prevent blocking
         if (background) {
@@ -253,14 +267,8 @@ export async function handleStreamingExecuteRequest(
         });
 
         child.on("close", (code) => {
-          // Clear the active process reference
-          if (sessionId && sessions.has(sessionId)) {
-            const session = sessions.get(sessionId)!;
-            session.activeProcess = null;
-          }
-
           console.log(
-            `[Server] Command completed: ${command}, Exit code: ${code}`
+            `[Exec] Command completed: ${command}, Exit code: ${code}`
           );
 
           // Send command completion event
@@ -291,12 +299,6 @@ export async function handleStreamingExecuteRequest(
         });
 
         child.on("error", (error) => {
-          // Clear the active process reference
-          if (sessionId && sessions.has(sessionId)) {
-            const session = sessions.get(sessionId)!;
-            session.activeProcess = null;
-          }
-
           controller.enqueue(
             new TextEncoder().encode(
               `data: ${JSON.stringify({
@@ -322,7 +324,7 @@ export async function handleStreamingExecuteRequest(
       },
     });
   } catch (error) {
-    console.error("[Server] Error in handleStreamingExecuteRequest:", error);
+    console.error("[Exec] Error in handleStreamingExecuteRequest:", error);
     return new Response(
       JSON.stringify({
         error: "Failed to execute streaming command",

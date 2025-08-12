@@ -8,15 +8,12 @@ import type {
     MoveFileRequest,
     ReadFileRequest,
     RenameFileRequest,
-    SessionData,
     WriteFileRequest
 } from "../types";
 
 function executeMkdir(
-    sessions: Map<string, SessionData>,
     path: string,
-    recursive: boolean,
-    sessionId?: string
+    recursive: boolean
 ): Promise<{
     success: boolean;
     stdout: string;
@@ -30,11 +27,6 @@ function executeMkdir(
             stdio: ["pipe", "pipe", "pipe"],
         });
 
-        // Store the process reference for cleanup if sessionId is provided
-        if (sessionId && sessions.has(sessionId)) {
-            const session = sessions.get(sessionId)!;
-            session.activeProcess = mkdirChild;
-        }
 
         let stdout = "";
         let stderr = "";
@@ -48,11 +40,6 @@ function executeMkdir(
         });
 
         mkdirChild.on("close", (code) => {
-            // Clear the active process reference
-            if (sessionId && sessions.has(sessionId)) {
-                const session = sessions.get(sessionId)!;
-                session.activeProcess = null;
-            }
 
             if (code === 0) {
                 console.log(`[Server] Directory created successfully: ${path}`);
@@ -76,11 +63,6 @@ function executeMkdir(
         });
 
         mkdirChild.on("error", (error) => {
-            // Clear the active process reference
-            if (sessionId && sessions.has(sessionId)) {
-                const session = sessions.get(sessionId)!;
-                session.activeProcess = null;
-            }
 
             console.error(`[Server] Error creating directory: ${path}`, error);
             reject(error);
@@ -89,7 +71,6 @@ function executeMkdir(
 }
 
 export async function handleMkdirRequest(
-    sessions: Map<string, SessionData>,
     req: Request,
     corsHeaders: Record<string, string>
 ): Promise<Response> {
@@ -147,7 +128,7 @@ export async function handleMkdirRequest(
             `[Server] Creating directory: ${path} (recursive: ${recursive})`
         );
 
-        const result = await executeMkdir(sessions, path, recursive, sessionId);
+        const result = await executeMkdir(path, recursive);
 
         return new Response(
             JSON.stringify({

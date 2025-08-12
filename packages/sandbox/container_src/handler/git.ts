@@ -1,13 +1,11 @@
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import type { GitCheckoutRequest, SessionData } from "../types";
+import type { GitCheckoutRequest } from "../types";
 
 function executeGitCheckout(
-  sessions: Map<string, SessionData>,
   repoUrl: string,
   branch: string,
-  targetDir: string,
-  sessionId?: string
+  targetDir: string
 ): Promise<{
   success: boolean;
   stdout: string;
@@ -25,11 +23,6 @@ function executeGitCheckout(
       }
     );
 
-    // Store the process reference for cleanup if sessionId is provided
-    if (sessionId && sessions.has(sessionId)) {
-      const session = sessions.get(sessionId)!;
-      session.activeProcess = cloneChild;
-    }
 
     let stdout = "";
     let stderr = "";
@@ -43,11 +36,6 @@ function executeGitCheckout(
     });
 
     cloneChild.on("close", (code) => {
-      // Clear the active process reference
-      if (sessionId && sessions.has(sessionId)) {
-        const session = sessions.get(sessionId)!;
-        session.activeProcess = null;
-      }
 
       if (code === 0) {
         console.log(
@@ -73,11 +61,6 @@ function executeGitCheckout(
     });
 
     cloneChild.on("error", (error) => {
-      // Clear the active process reference
-      if (sessionId && sessions.has(sessionId)) {
-        const session = sessions.get(sessionId)!;
-        session.activeProcess = null;
-      }
 
       console.error(`[Server] Error cloning repository: ${repoUrl}`, error);
       reject(error);
@@ -86,7 +69,6 @@ function executeGitCheckout(
 }
 
 export async function handleGitCheckoutRequest(
-  sessions: Map<string, SessionData>,
   req: Request,
   corsHeaders: Record<string, string>
 ): Promise<Response> {
@@ -137,11 +119,9 @@ export async function handleGitCheckoutRequest(
     );
 
     const result = await executeGitCheckout(
-      sessions,
       repoUrl,
       branch,
-      checkoutDir,
-      sessionId
+      checkoutDir
     );
 
     return new Response(

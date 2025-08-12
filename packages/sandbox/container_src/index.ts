@@ -31,10 +31,8 @@ import {
 } from "./handler/process";
 import type { CreateContextRequest } from "./jupyter-server";
 import { JupyterNotReadyError, JupyterService } from "./jupyter-service";
-import type { ProcessRecord, SessionData } from "./types";
-
-// In-memory session storage (in production, you'd want to use a proper database)
-const sessions = new Map<string, SessionData>();
+import type { ProcessRecord, CreateSessionRequest, SessionExecRequest } from "./types";
+import { SessionManager } from "./utils/isolation";
 
 // In-memory storage for exposed ports
 const exposedPorts = new Map<number, { name?: string; exposedAt: Date }>();
@@ -42,24 +40,43 @@ const exposedPorts = new Map<number, { name?: string; exposedAt: Date }>();
 // In-memory process storage - cleared on container restart
 const processes = new Map<string, ProcessRecord>();
 
-// Generate a unique session ID using cryptographically secure randomness
-function generateSessionId(): string {
-  return `session_${Date.now()}_${randomBytes(6).toString("hex")}`;
-}
+import { hasNamespaceSupport } from "./utils/isolation";
 
-// Clean up old sessions (older than 1 hour)
-function cleanupOldSessions() {
-  const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
-  for (const [sessionId, session] of sessions.entries()) {
-    if (session.createdAt < oneHourAgo && !session.activeProcess) {
-      sessions.delete(sessionId);
-      console.log(`[Server] Cleaned up old session: ${sessionId}`);
-    }
-  }
-}
+// Check isolation capabilities on startup
+const isolationAvailable = hasNamespaceSupport();
+console.log(`[Container] Process isolation: ${isolationAvailable ? 'ENABLED (production mode)' : 'DISABLED (development mode)'}`);
 
-// Run cleanup every 10 minutes
-setInterval(cleanupOldSessions, 10 * 60 * 1000);
+// Session manager for secure execution with isolation
+const sessionManager = new SessionManager();
+
+// Note: Default session will be created lazily on first use
+// to avoid initialization loops
+
+// Graceful shutdown handler  
+const SHUTDOWN_GRACE_PERIOD_MS = 500; // Grace period for cleanup
+
+process.on('SIGTERM', () => {
+  console.log('[Container] SIGTERM received, cleaning up sessions...');
+  sessionManager.destroyAll();
+  setTimeout(() => {
+    process.exit(0);
+  }, SHUTDOWN_GRACE_PERIOD_MS);
+});
+
+process.on('SIGINT', () => {
+  console.log('[Container] SIGINT received, cleaning up sessions...');
+  sessionManager.destroyAll();
+  setTimeout(() => {
+    process.exit(0);
+  }, SHUTDOWN_GRACE_PERIOD_MS);
+});
+
+// Cleanup on uncaught exceptions (log but still exit)
+process.on('uncaughtException', (error) => {
+  console.error('[Container] Uncaught exception:', error);
+  sessionManager.destroyAll();
+  process.exit(1);
+});
 
 // Initialize Jupyter service with graceful degradation
 const jupyterService = new JupyterService();
@@ -116,69 +133,18 @@ const server = serve({
             },
           });
 
-        case "/api/session/create":
-          if (req.method === "POST") {
-            const sessionId = generateSessionId();
-            const sessionData: SessionData = {
-              activeProcess: null,
-              createdAt: new Date(),
-              sessionId,
-            };
-            sessions.set(sessionId, sessionData);
-
-            console.log(`[Server] Created new session: ${sessionId}`);
-
-            return new Response(
-              JSON.stringify({
-                message: "Session created successfully",
-                sessionId,
-                timestamp: new Date().toISOString(),
-              }),
-              {
-                headers: {
-                  "Content-Type": "application/json",
-                  ...corsHeaders,
-                },
-              }
-            );
-          }
-          break;
-
-        case "/api/session/list":
-          if (req.method === "GET") {
-            const sessionList = Array.from(sessions.values()).map(
-              (session) => ({
-                createdAt: session.createdAt.toISOString(),
-                hasActiveProcess: !!session.activeProcess,
-                sessionId: session.sessionId,
-              })
-            );
-
-            return new Response(
-              JSON.stringify({
-                count: sessionList.length,
-                sessions: sessionList,
-                timestamp: new Date().toISOString(),
-              }),
-              {
-                headers: {
-                  "Content-Type": "application/json",
-                  ...corsHeaders,
-                },
-              }
-            );
-          }
-          break;
+        // Session management endpoints moved further down (lines 339+)
+        // to use the new SimpleSessionManager
 
         case "/api/execute":
           if (req.method === "POST") {
-            return handleExecuteRequest(sessions, req, corsHeaders);
+            return handleExecuteRequest(req, corsHeaders, sessionManager);
           }
           break;
 
         case "/api/execute/stream":
           if (req.method === "POST") {
-            return handleStreamingExecuteRequest(sessions, req, corsHeaders);
+            return handleStreamingExecuteRequest(req, corsHeaders);
           }
           break;
 
@@ -240,13 +206,13 @@ const server = serve({
 
         case "/api/git/checkout":
           if (req.method === "POST") {
-            return handleGitCheckoutRequest(sessions, req, corsHeaders);
+            return handleGitCheckoutRequest(req, corsHeaders);
           }
           break;
 
         case "/api/mkdir":
           if (req.method === "POST") {
-            return handleMkdirRequest(sessions, req, corsHeaders);
+            return handleMkdirRequest(req, corsHeaders);
           }
           break;
 
@@ -319,6 +285,124 @@ const server = serve({
         case "/api/process/kill-all":
           if (req.method === "DELETE") {
             return handleKillAllProcessesRequest(processes, req, corsHeaders);
+          }
+          break;
+
+        // Session management endpoints for secure execution
+        case "/api/session/create":
+          if (req.method === "POST") {
+            try {
+              const body = await req.json() as CreateSessionRequest;
+              const { name, env, cwd, isolation } = body;
+              
+              if (!name) {
+                return new Response(
+                  JSON.stringify({ error: "Session name is required" }),
+                  { status: 400, headers: { "Content-Type": "application/json", ...corsHeaders }}
+                );
+              }
+              
+              const session = await sessionManager.createSession({
+                name,
+                env: env || {},
+                cwd: cwd || '/workspace',
+                isolation: isolation !== false
+              });
+              
+              console.log(`[Container] Session '${name}' created successfully`);
+              console.log(`[Container] Available sessions now: ${sessionManager.listSessions().join(', ')}`);
+              
+              return new Response(
+                JSON.stringify({ 
+                  success: true, 
+                  name,
+                  message: `Session '${name}' created with${isolation !== false ? '' : 'out'} isolation`
+                }),
+                { headers: { "Content-Type": "application/json", ...corsHeaders }}
+              );
+            } catch (error) {
+              console.error("[Container] Failed to create session:", error);
+              return new Response(
+                JSON.stringify({ 
+                  error: "Failed to create session",
+                  message: error instanceof Error ? error.message : String(error)
+                }),
+                { status: 500, headers: { "Content-Type": "application/json", ...corsHeaders }}
+              );
+            }
+          }
+          break;
+          
+        case "/api/session/list":
+          if (req.method === "GET") {
+            const sessionList = sessionManager.listSessions();
+            return new Response(
+              JSON.stringify({
+                count: sessionList.length,
+                sessions: sessionList,
+                timestamp: new Date().toISOString(),
+              }),
+              {
+                headers: {
+                  "Content-Type": "application/json",
+                  ...corsHeaders,
+                },
+              }
+            );
+          }
+          break;
+          
+        case "/api/session/exec":
+          if (req.method === "POST") {
+            try {
+              const body = await req.json() as SessionExecRequest;
+              const { name, command } = body;
+              
+              console.log(`[Container] Session exec request for '${name}': ${command}`);
+              
+              if (!name || !command) {
+                return new Response(
+                  JSON.stringify({ error: "Session name and command are required" }),
+                  { status: 400, headers: { "Content-Type": "application/json", ...corsHeaders }}
+                );
+              }
+              
+              const session = sessionManager.getSession(name);
+              if (!session) {
+                console.error(`[Container] Session '${name}' not found!`);
+                // List available sessions for debugging
+                const availableSessions = sessionManager.listSessions();
+                console.log(`[Container] Available sessions: ${availableSessions.join(', ') || 'none'}`);
+                
+                return new Response(
+                  JSON.stringify({ 
+                    error: `Session '${name}' not found`,
+                    availableSessions 
+                  }),
+                  { status: 404, headers: { "Content-Type": "application/json", ...corsHeaders }}
+                );
+              }
+              
+              const result = await session.exec(command);
+              
+              return new Response(
+                JSON.stringify({
+                  command,
+                  ...result,
+                  success: result.exitCode === 0
+                }),
+                { headers: { "Content-Type": "application/json", ...corsHeaders }}
+              );
+            } catch (error) {
+              console.error("[Container] Session exec failed:", error);
+              return new Response(
+                JSON.stringify({ 
+                  error: "Command execution failed",
+                  message: error instanceof Error ? error.message : String(error)
+                }),
+                { status: 500, headers: { "Content-Type": "application/json", ...corsHeaders }}
+              );
+            }
           }
           break;
 

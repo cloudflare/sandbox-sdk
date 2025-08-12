@@ -115,3 +115,16 @@ export interface SessionData {
   activeProcess: ChildProcess | null;
   createdAt: Date;
 }
+
+// Session management API types
+export interface CreateSessionRequest {
+  name: string;
+  env?: Record<string, string>;
+  cwd?: string;
+  isolation?: boolean;
+}
+
+export interface SessionExecRequest {
+  name: string;
+  command: string;
+}

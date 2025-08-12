@@ -44,13 +44,21 @@ export {
 export type {
   DeleteFileResponse,
   ExecEvent,
+  ExecOptions,
+  ExecResult,
   ExecuteResponse,
+  ExecutionSession,
   GitCheckoutResponse,
+  ISandbox,
   ListFilesResponse,
   LogEvent,
   MkdirResponse,
   MoveFileResponse,
+  Process,
+  ProcessOptions,
+  ProcessStatus,
   ReadFileResponse,
   RenameFileResponse,
+  StreamOptions,
   WriteFileResponse
 } from "./types";

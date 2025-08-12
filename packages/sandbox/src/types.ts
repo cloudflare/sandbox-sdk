@@ -1,5 +1,23 @@
 // Core Types
 
+// Execution session returned by createSession()
+export interface ExecutionSession {
+  /**
+   * Session name
+   */
+  name: string;
+  
+  /**
+   * Execute a command in this session
+   */
+  exec(command: string): Promise<ExecResult>;
+  
+  /**
+   * Update environment variables for this session
+   */
+  setEnvVars?(vars: Record<string, string>): Promise<void>;
+}
+
 export interface BaseExecOptions {
   /**
    * Session ID for grouping related commands

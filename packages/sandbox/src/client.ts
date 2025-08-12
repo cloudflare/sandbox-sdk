@@ -1021,4 +1021,76 @@ export class HttpClient {
       throw error;
     }
   }
+
+  // Session management methods
+  async createSession(options: {
+    name: string;
+    env?: Record<string, string>;
+    cwd?: string;
+    isolation?: boolean;
+  }): Promise<{ success: boolean; name: string; message: string }> {
+    try {
+      const response = await this.doFetch(`/api/session/create`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(options),
+      });
+
+      if (!response.ok) {
+        const errorData = (await response.json().catch(() => ({}))) as {
+          error?: string;
+        };
+        throw new Error(
+          errorData.error || `Failed to create session: ${response.status}`
+        );
+      }
+
+      const data = await response.json() as { success: boolean; name: string; message: string };
+      console.log(`[HTTP Client] Session created: ${options.name}`);
+      return data;
+    } catch (error) {
+      console.error("[HTTP Client] Error creating session:", error);
+      throw error;
+    }
+  }
+
+  async execInSession(
+    sessionName: string,
+    command: string
+  ): Promise<{
+    stdout: string;
+    stderr: string;
+    exitCode: number;
+    success: boolean;
+  }> {
+    try {
+      const response = await this.doFetch(`/api/session/exec`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ name: sessionName, command }),
+      });
+
+      if (!response.ok) {
+        const errorData = (await response.json().catch(() => ({}))) as {
+          error?: string;
+        };
+        throw new Error(
+          errorData.error || `Failed to execute in session: ${response.status}`
+        );
+      }
+
+      const data = await response.json() as { stdout: string; stderr: string; exitCode: number; success: boolean };
+      console.log(
+        `[HTTP Client] Command executed in session ${sessionName}: ${command}`
+      );
+      return data;
+    } catch (error) {
+      console.error("[HTTP Client] Error executing in session:", error);
+      throw error;
+    }
+  }
 }
