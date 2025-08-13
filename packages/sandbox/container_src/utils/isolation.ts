@@ -64,7 +64,10 @@ interface ControlMessage {
   type: 'exec' | 'exec_stream' | 'exit';
   id: string;
   command?: string;
+  cwd?: string;
 }
+
+// Note: buildExecScript helper is now inlined within the generated control script
 
 interface ControlResponse {
   type: 'result' | 'error' | 'ready' | 'stream_event';
@@ -283,6 +286,31 @@ process.stdout.write(JSON.stringify({ type: 'ready', id: 'init' }) + '\\n');
 // Track processing state for each command
 const processingState = new Map();
 
+// Helper function to build exec script with optional cwd handling
+function buildExecScript(cmdFile, outFile, errFile, exitFile, msgId, msgCwd, completionMarker = "DONE") {
+  if (msgCwd) {
+    // If cwd is provided, change directory for this command
+    // Save current directory and restore after command
+    return \`
+# Execute command with cwd override
+PREV_DIR=$(pwd)
+cd "\${msgCwd}" || { echo "Failed to change directory to \${msgCwd}" > \${errFile}; echo 1 > \${exitFile}; echo "\${completionMarker}:\${msgId}"; return; }
+source \${cmdFile} > \${outFile} 2> \${errFile}
+echo $? > \${exitFile}
+cd "$PREV_DIR"
+echo "\${completionMarker}:\${msgId}"
+\`;
+  } else {
+    // Default behavior - execute in current directory
+    return \`
+# Execute command with output redirection in current shell
+source \${cmdFile} > \${outFile} 2> \${errFile}
+echo $? > \${exitFile}
+echo "\${completionMarker}:\${msgId}"
+\`;
+  }
+}
+
 // Handle commands from parent
 process.stdin.on('data', async (data) => {
   const lines = data.toString().split('\\n');
@@ -329,12 +357,8 @@ process.stdin.on('data', async (data) => {
         // - 'bash script.sh' creates a subshell (loses pwd, env vars)
         // - 'source script.sh' runs in current shell (preserves state)
         // File-based I/O handles any output type (binary, large, special chars)
-        const execScript = \`
-# Execute command with output redirection in current shell
-source \${cmdFile} > \${outFile} 2> \${errFile}
-echo $? > \${exitFile}
-echo "DONE:\${msg.id}"
-\`;
+        
+        const execScript = buildExecScript(cmdFile, outFile, errFile, exitFile, msg.id, msg.cwd);
         
         shell.stdin.write(execScript);
         
@@ -348,6 +372,8 @@ echo "DONE:\${msg.id}"
             }
             processingState.set(msg.id, true);
             
+            // Clear timeout to prevent double cleanup
+            clearTimeout(timeoutId);
             shell.stdout.off('data', onData);
             
             try {
@@ -397,9 +423,7 @@ echo "DONE:\${msg.id}"
           }
         };
         
-        shell.stdout.on('data', onData);
-        
-        // Timeout protection with better cleanup
+        // Set up timeout first so we can clear it on success
         const timeoutId = setTimeout(() => {
           // Check if already processed
           if (!processingState.get(msg.id)) {
@@ -419,13 +443,15 @@ echo "DONE:\${msg.id}"
                 fs.unlinkSync(file);
                 activeFiles.delete(file);
               } catch (e) {
-                console.error(\`[Control] Failed to cleanup \${file}: \${e.message}\`);
+                // Silent cleanup - file might already be deleted
               }
             });
             
             processingState.delete(msg.id);
           }
         }, COMMAND_TIMEOUT_MS);
+        
+        shell.stdout.on('data', onData);
       }
       
       if (msg.type === 'exec_stream' && msg.command) {
@@ -521,13 +547,8 @@ echo "DONE:\${msg.id}"
           }
         }, 50); // Check every 50ms for real-time feel
         
-        // Execute command with same pattern as regular exec
-        const execScript = \`
-# Execute command with output redirection in current shell
-source \${cmdFile} > \${outFile} 2> \${errFile}
-echo $? > \${exitFile}
-echo "STREAM_DONE:\${msg.id}"
-\`;
+        // Execute command with same pattern as regular exec, including cwd support
+        const execScript = buildExecScript(cmdFile, outFile, errFile, exitFile, msg.id, msg.cwd, "STREAM_DONE");
         
         shell.stdin.write(execScript);
         
@@ -541,6 +562,8 @@ echo "STREAM_DONE:\${msg.id}"
             }
             processingState.set(msg.id, true);
             
+            // Clear timeout to prevent double cleanup
+            clearTimeout(streamTimeoutId);
             clearInterval(streamingInterval);
             shell.stdout.off('data', onStreamData);
             
@@ -634,9 +657,7 @@ echo "STREAM_DONE:\${msg.id}"
           }
         };
         
-        shell.stdout.on('data', onStreamData);
-        
-        // Timeout protection
+        // Set up timeout first so we can clear it on success  
         const streamTimeoutId = setTimeout(() => {
           // Check if already processed
           if (!processingState.get(msg.id)) {
@@ -663,13 +684,15 @@ echo "STREAM_DONE:\${msg.id}"
                 fs.unlinkSync(file);
                 activeFiles.delete(file);
               } catch (e) {
-                console.error(\`[Control] Failed to cleanup \${file}: \${e.message}\`);
+                // Silent cleanup - file might already be deleted
               }
             });
             
             processingState.delete(msg.id);
           }
         }, COMMAND_TIMEOUT_MS);
+        
+        shell.stdout.on('data', onStreamData);
       }
     } catch (e) {
       console.error('[Control] Failed to parse command:', e);
@@ -752,7 +775,7 @@ process.stdin.resume();
     this.ready = false;
   }
   
-  async exec(command: string): Promise<ExecResult> {
+  async exec(command: string, options?: { cwd?: string }): Promise<ExecResult> {
     if (!this.ready || !this.control) {
       throw new Error(`Session '${this.options.name}' not initialized`);
     }
@@ -769,13 +792,18 @@ process.stdin.resume();
       // Store callback
       this.pendingCallbacks.set(id, { resolve, reject, timeout });
       
-      // Send command to control process
-      const msg: ControlMessage = { type: 'exec', id, command };
+      // Send command to control process with cwd override
+      const msg: ControlMessage = { 
+        type: 'exec', 
+        id, 
+        command,
+        cwd: options?.cwd // Pass through cwd override if provided
+      };
       this.control!.stdin?.write(`${JSON.stringify(msg)}\n`);
     });
   }
 
-  async *execStream(command: string): AsyncGenerator<ExecEvent> {
+  async *execStream(command: string, options?: { cwd?: string }): AsyncGenerator<ExecEvent> {
     if (!this.ready || !this.control) {
       throw new Error(`Session '${this.options.name}' not initialized`);
     }
@@ -851,7 +879,12 @@ process.stdin.resume();
       this.control!.stdout?.on('data', streamHandler);
       
       // Send streaming exec command to control process
-      const msg: ControlMessage = { type: 'exec_stream', id, command };
+      const msg: ControlMessage = { 
+        type: 'exec_stream', 
+        id, 
+        command,
+        cwd: options?.cwd // Pass through cwd override if provided
+      };
       this.control!.stdin?.write(`${JSON.stringify(msg)}\n`);
       
       // Yield events as they come in
@@ -894,6 +927,159 @@ process.stdin.resume();
     }
   }
   
+  // File Operations - Execute as shell commands to inherit session context
+  async writeFileOperation(path: string, content: string, encoding: string = 'utf-8'): Promise<{ success: boolean; exitCode: number; path: string }> {
+    // Escape content for safe heredoc usage
+    const safeContent = content.replace(/'/g, "'\\''");
+    
+    // Create parent directory if needed, then write file using heredoc
+    const command = `mkdir -p "$(dirname "${path}")" && cat > "${path}" << 'SANDBOX_EOF'
+${safeContent}
+SANDBOX_EOF`;
+    
+    const result = await this.exec(command);
+    
+    return {
+      success: result.exitCode === 0,
+      exitCode: result.exitCode,
+      path
+    };
+  }
+
+  async readFileOperation(path: string, encoding: string = 'utf-8'): Promise<{ success: boolean; exitCode: number; content: string; path: string }> {
+    const command = `cat "${path}"`;
+    const result = await this.exec(command);
+    
+    return {
+      success: result.exitCode === 0,
+      exitCode: result.exitCode,
+      content: result.stdout,
+      path
+    };
+  }
+
+  async mkdirOperation(path: string, recursive: boolean = false): Promise<{ success: boolean; exitCode: number; path: string; recursive: boolean }> {
+    const command = recursive ? `mkdir -p "${path}"` : `mkdir "${path}"`;
+    const result = await this.exec(command);
+    
+    return {
+      success: result.exitCode === 0,
+      exitCode: result.exitCode,
+      path,
+      recursive
+    };
+  }
+
+  async deleteFileOperation(path: string): Promise<{ success: boolean; exitCode: number; path: string }> {
+    const command = `rm "${path}"`;
+    const result = await this.exec(command);
+    
+    return {
+      success: result.exitCode === 0,
+      exitCode: result.exitCode,
+      path
+    };
+  }
+
+  async renameFileOperation(oldPath: string, newPath: string): Promise<{ success: boolean; exitCode: number; oldPath: string; newPath: string }> {
+    const command = `mv "${oldPath}" "${newPath}"`;
+    const result = await this.exec(command);
+    
+    return {
+      success: result.exitCode === 0,
+      exitCode: result.exitCode,
+      oldPath,
+      newPath
+    };
+  }
+
+  async moveFileOperation(sourcePath: string, destinationPath: string): Promise<{ success: boolean; exitCode: number; sourcePath: string; destinationPath: string }> {
+    const command = `mv "${sourcePath}" "${destinationPath}"`;
+    const result = await this.exec(command);
+    
+    return {
+      success: result.exitCode === 0,
+      exitCode: result.exitCode,
+      sourcePath,
+      destinationPath
+    };
+  }
+
+  async listFilesOperation(path: string, options?: { recursive?: boolean; includeHidden?: boolean }): Promise<{ success: boolean; exitCode: number; files: any[]; path: string }> {
+    // Build ls command with appropriate flags
+    let lsFlags = '-la'; // Long format with all files (including hidden)
+    if (!options?.includeHidden) {
+      lsFlags = '-l'; // Long format without hidden files  
+    }
+    if (options?.recursive) {
+      lsFlags += 'R'; // Recursive
+    }
+    
+    const command = `ls ${lsFlags} "${path}" 2>/dev/null || echo "DIRECTORY_NOT_FOUND"`;
+    const result = await this.exec(command);
+    
+    if (result.stdout.includes('DIRECTORY_NOT_FOUND')) {
+      return {
+        success: false,
+        exitCode: 1,
+        files: [],
+        path
+      };
+    }
+    
+    // Parse ls output into structured file data
+    const files = this.parseLsOutput(result.stdout, path);
+    
+    return {
+      success: result.exitCode === 0,
+      exitCode: result.exitCode,
+      files,
+      path
+    };
+  }
+
+  private parseLsOutput(lsOutput: string, basePath: string): any[] {
+    const lines = lsOutput.split('\n').filter(line => line.trim());
+    const files: any[] = [];
+    
+    for (const line of lines) {
+      // Skip total line and empty lines
+      if (line.startsWith('total') || !line.trim()) continue;
+      
+      // Parse ls -l format: permissions, links, user, group, size, date, name
+      const match = line.match(/^([\-dlrwx]+)\s+\d+\s+\S+\s+\S+\s+(\d+)\s+(\S+\s+\d+\s+[\d:]+)\s+(.+)$/);
+      if (!match) continue;
+      
+      const [, permissions, size, dateStr, name] = match;
+      
+      // Determine file type from first character of permissions
+      let type: 'file' | 'directory' | 'symlink' | 'other' = 'file';
+      if (permissions.startsWith('d')) type = 'directory';
+      else if (permissions.startsWith('l')) type = 'symlink';
+      else if (!permissions.startsWith('-')) type = 'other';
+      
+      // Extract permission booleans for user (first 3 chars after type indicator)
+      const userPerms = permissions.substring(1, 4);
+      
+      files.push({
+        name,
+        absolutePath: `${basePath}/${name}`,
+        relativePath: name,
+        type,
+        size: parseInt(size),
+        modifiedAt: dateStr, // Simplified date parsing
+        mode: permissions,
+        permissions: {
+          readable: userPerms[0] === 'r',
+          writable: userPerms[1] === 'w', 
+          executable: userPerms[2] === 'x'
+        }
+      });
+    }
+    
+    return files;
+  }
+
   destroy(): void {
     if (this.control) {
       // Send exit command
@@ -942,27 +1128,64 @@ export class SessionManager {
   listSessions(): string[] {
     return Array.from(this.sessions.keys());
   }
-  
-  async exec(command: string): Promise<ExecResult> {
+
+  // Helper to get or create default session - reduces duplication
+  private async getOrCreateDefaultSession(): Promise<Session> {
     let defaultSession = this.sessions.get('default');
     if (!defaultSession) {
       defaultSession = await this.createSession({ 
         name: 'default',
+        cwd: '/workspace', // Consistent default working directory
         isolation: true 
       });
     }
-    return defaultSession.exec(command);
+    return defaultSession;
   }
   
-  async *execStream(command: string): AsyncGenerator<ExecEvent> {
-    let defaultSession = this.sessions.get('default');
-    if (!defaultSession) {
-      defaultSession = await this.createSession({ 
-        name: 'default',
-        isolation: true 
-      });
-    }
-    yield* defaultSession.execStream(command);
+  async exec(command: string, options?: { cwd?: string }): Promise<ExecResult> {
+    const defaultSession = await this.getOrCreateDefaultSession();
+    return defaultSession.exec(command, options);
+  }
+  
+  async *execStream(command: string, options?: { cwd?: string }): AsyncGenerator<ExecEvent> {
+    const defaultSession = await this.getOrCreateDefaultSession();
+    yield* defaultSession.execStream(command, options);
+  }
+
+  // File Operations - Clean method names following existing pattern
+  async writeFile(path: string, content: string, encoding?: string): Promise<{ success: boolean; exitCode: number; path: string }> {
+    const defaultSession = await this.getOrCreateDefaultSession();
+    return defaultSession.writeFileOperation(path, content, encoding);
+  }
+
+  async readFile(path: string, encoding?: string): Promise<{ success: boolean; exitCode: number; content: string; path: string }> {
+    const defaultSession = await this.getOrCreateDefaultSession();
+    return defaultSession.readFileOperation(path, encoding);
+  }
+
+  async mkdir(path: string, recursive?: boolean): Promise<{ success: boolean; exitCode: number; path: string; recursive: boolean }> {
+    const defaultSession = await this.getOrCreateDefaultSession();
+    return defaultSession.mkdirOperation(path, recursive);
+  }
+
+  async deleteFile(path: string): Promise<{ success: boolean; exitCode: number; path: string }> {
+    const defaultSession = await this.getOrCreateDefaultSession();
+    return defaultSession.deleteFileOperation(path);
+  }
+
+  async renameFile(oldPath: string, newPath: string): Promise<{ success: boolean; exitCode: number; oldPath: string; newPath: string }> {
+    const defaultSession = await this.getOrCreateDefaultSession();
+    return defaultSession.renameFileOperation(oldPath, newPath);
+  }
+
+  async moveFile(sourcePath: string, destinationPath: string): Promise<{ success: boolean; exitCode: number; sourcePath: string; destinationPath: string }> {
+    const defaultSession = await this.getOrCreateDefaultSession();
+    return defaultSession.moveFileOperation(sourcePath, destinationPath);
+  }
+
+  async listFiles(path: string, options?: { recursive?: boolean; includeHidden?: boolean }): Promise<{ success: boolean; exitCode: number; files: any[]; path: string }> {
+    const defaultSession = await this.getOrCreateDefaultSession();
+    return defaultSession.listFilesOperation(path, options);
   }
   
   destroyAll(): void {

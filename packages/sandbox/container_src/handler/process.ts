@@ -60,7 +60,6 @@ export async function handleStartProcessRequest(
             command,
             status: 'starting',
             startTime,
-            sessionId: options.sessionId,
             stdout: '',
             stderr: '',
             outputListeners: new Set(),
@@ -155,7 +154,6 @@ export async function handleStartProcessRequest(
                         command: processRecord.command,
                         status: processRecord.status,
                         startTime: processRecord.startTime.toISOString(),
-                        sessionId: processRecord.sessionId
                     }
                 }),
                 {
@@ -202,7 +200,6 @@ export async function handleListProcessesRequest(
             startTime: record.startTime.toISOString(),
             endTime: record.endTime?.toISOString(),
             exitCode: record.exitCode,
-            sessionId: record.sessionId
         }));
 
         return new Response(
@@ -270,8 +267,7 @@ export async function handleGetProcessRequest(
                     startTime: record.startTime.toISOString(),
                     endTime: record.endTime?.toISOString(),
                     exitCode: record.exitCode,
-                    sessionId: record.sessionId
-                }
+                        }
             }),
             {
                 headers: {
@@ -528,8 +524,7 @@ export async function handleStreamProcessLogsRequest(
                         timestamp: new Date().toISOString(),
                         data: record.stdout,
                         processId,
-                        sessionId: record.sessionId
-                    })}\n\n`;
+                                })}\n\n`;
                     controller.enqueue(new TextEncoder().encode(event));
                 }
 
@@ -539,8 +534,7 @@ export async function handleStreamProcessLogsRequest(
                         timestamp: new Date().toISOString(),
                         data: record.stderr,
                         processId,
-                        sessionId: record.sessionId
-                    })}\n\n`;
+                                })}\n\n`;
                     controller.enqueue(new TextEncoder().encode(event));
                 }
 
@@ -550,8 +544,7 @@ export async function handleStreamProcessLogsRequest(
                     timestamp: new Date().toISOString(),
                     data: `Process status: ${record.status}`,
                     processId,
-                    sessionId: record.sessionId
-                })}\n\n`;
+                        })}\n\n`;
                 controller.enqueue(new TextEncoder().encode(statusEvent));
 
                 // Set up real-time streaming for ongoing output
@@ -563,8 +556,7 @@ export async function handleStreamProcessLogsRequest(
                         timestamp: new Date().toISOString(),
                         data,
                         processId,
-                        sessionId: record.sessionId
-                    })}\n\n`;
+                                })}\n\n`;
 
                     try {
                         controller.enqueue(new TextEncoder().encode(event));
@@ -582,8 +574,7 @@ export async function handleStreamProcessLogsRequest(
                         timestamp: new Date().toISOString(),
                         data: `Process status: ${status}`,
                         processId,
-                        sessionId: record.sessionId
-                    })}\n\n`;
+                                })}\n\n`;
 
                     try {
                         controller.enqueue(new TextEncoder().encode(event));

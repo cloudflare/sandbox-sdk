@@ -143,7 +143,6 @@ interface HttpClientOptions {
 export class HttpClient {
   private baseUrl: string;
   private options: HttpClientOptions;
-  private sessionId: string | null = null;
 
   constructor(options: HttpClientOptions = {}) {
     this.options = {
@@ -195,13 +194,11 @@ export class HttpClient {
 
   async execute(
     command: string,
-    options: Pick<BaseExecOptions, "sessionId" | "cwd" | "env">
+    options: Pick<BaseExecOptions, "cwd" | "env">
   ): Promise<ExecuteResponse> {
     try {
-      const targetSessionId = options.sessionId || this.sessionId;
       const executeRequest = {
         command,
-        sessionId: targetSessionId,
         cwd: options.cwd,
         env: options.env,
       } satisfies ExecuteRequest;
@@ -249,16 +246,12 @@ export class HttpClient {
   }
 
   async executeCommandStream(
-    command: string,
-    sessionId?: string
+    command: string
   ): Promise<ReadableStream<Uint8Array>> {
     try {
-      const targetSessionId = sessionId || this.sessionId;
-
       const response = await this.doFetch(`/api/execute/stream`, {
         body: JSON.stringify({
           command,
-          sessionId: targetSessionId,
         }),
         headers: {
           "Content-Type": "application/json",
@@ -292,17 +285,13 @@ export class HttpClient {
   async gitCheckout(
     repoUrl: string,
     branch: string = "main",
-    targetDir?: string,
-    sessionId?: string
+    targetDir?: string
   ): Promise<GitCheckoutResponse> {
     try {
-      const targetSessionId = sessionId || this.sessionId;
-
       const response = await this.doFetch(`/api/git/checkout`, {
         body: JSON.stringify({
           branch,
           repoUrl,
-          sessionId: targetSessionId,
           targetDir,
         } as GitCheckoutRequest),
         headers: {
@@ -335,16 +324,14 @@ export class HttpClient {
   async mkdir(
     path: string,
     recursive: boolean = false,
-    sessionId?: string
+    sessionName?: string
   ): Promise<MkdirResponse> {
     try {
-      const targetSessionId = sessionId || this.sessionId;
-
       const response = await this.doFetch(`/api/mkdir`, {
         body: JSON.stringify({
           path,
           recursive,
-          sessionId: targetSessionId,
+          sessionName,
         } as MkdirRequest),
         headers: {
           "Content-Type": "application/json",
@@ -363,7 +350,7 @@ export class HttpClient {
 
       const data: MkdirResponse = await response.json();
       console.log(
-        `[HTTP Client] Directory created: ${path}, Success: ${data.success}, Recursive: ${data.recursive}`
+        `[HTTP Client] Directory created: ${path}, Success: ${data.success}, Recursive: ${data.recursive}${sessionName ? ` in session: ${sessionName}` : ''}`
       );
 
       return data;
@@ -377,17 +364,15 @@ export class HttpClient {
     path: string,
     content: string,
     encoding: string = "utf-8",
-    sessionId?: string
+    sessionName?: string
   ): Promise<WriteFileResponse> {
     try {
-      const targetSessionId = sessionId || this.sessionId;
-
       const response = await this.doFetch(`/api/write`, {
         body: JSON.stringify({
           content,
           encoding,
           path,
-          sessionId: targetSessionId,
+          sessionName,
         } as WriteFileRequest),
         headers: {
           "Content-Type": "application/json",
@@ -406,7 +391,7 @@ export class HttpClient {
 
       const data: WriteFileResponse = await response.json();
       console.log(
-        `[HTTP Client] File written: ${path}, Success: ${data.success}`
+        `[HTTP Client] File written: ${path}, Success: ${data.success}${sessionName ? ` in session: ${sessionName}` : ''}`
       );
 
       return data;
@@ -419,16 +404,14 @@ export class HttpClient {
   async readFile(
     path: string,
     encoding: string = "utf-8",
-    sessionId?: string
+    sessionName?: string
   ): Promise<ReadFileResponse> {
     try {
-      const targetSessionId = sessionId || this.sessionId;
-
       const response = await this.doFetch(`/api/read`, {
         body: JSON.stringify({
           encoding,
           path,
-          sessionId: targetSessionId,
+          sessionName,
         } as ReadFileRequest),
         headers: {
           "Content-Type": "application/json",
@@ -447,7 +430,7 @@ export class HttpClient {
 
       const data: ReadFileResponse = await response.json();
       console.log(
-        `[HTTP Client] File read: ${path}, Success: ${data.success}, Content length: ${data.content.length}`
+        `[HTTP Client] File read: ${path}, Success: ${data.success}, Content length: ${data.content.length}${sessionName ? ` in session: ${sessionName}` : ''}`
       );
 
       return data;
@@ -459,15 +442,13 @@ export class HttpClient {
 
   async deleteFile(
     path: string,
-    sessionId?: string
+    sessionName?: string
   ): Promise<DeleteFileResponse> {
     try {
-      const targetSessionId = sessionId || this.sessionId;
-
       const response = await this.doFetch(`/api/delete`, {
         body: JSON.stringify({
           path,
-          sessionId: targetSessionId,
+          sessionName,
         } as DeleteFileRequest),
         headers: {
           "Content-Type": "application/json",
@@ -486,7 +467,7 @@ export class HttpClient {
 
       const data: DeleteFileResponse = await response.json();
       console.log(
-        `[HTTP Client] File deleted: ${path}, Success: ${data.success}`
+        `[HTTP Client] File deleted: ${path}, Success: ${data.success}${sessionName ? ` in session: ${sessionName}` : ''}`
       );
 
       return data;
@@ -499,16 +480,14 @@ export class HttpClient {
   async renameFile(
     oldPath: string,
     newPath: string,
-    sessionId?: string
+    sessionName?: string
   ): Promise<RenameFileResponse> {
     try {
-      const targetSessionId = sessionId || this.sessionId;
-
       const response = await this.doFetch(`/api/rename`, {
         body: JSON.stringify({
           newPath,
           oldPath,
-          sessionId: targetSessionId,
+          sessionName,
         } as RenameFileRequest),
         headers: {
           "Content-Type": "application/json",
@@ -527,7 +506,7 @@ export class HttpClient {
 
       const data: RenameFileResponse = await response.json();
       console.log(
-        `[HTTP Client] File renamed: ${oldPath} -> ${newPath}, Success: ${data.success}`
+        `[HTTP Client] File renamed: ${oldPath} -> ${newPath}, Success: ${data.success}${sessionName ? ` in session: ${sessionName}` : ''}`
       );
 
       return data;
@@ -540,16 +519,14 @@ export class HttpClient {
   async moveFile(
     sourcePath: string,
     destinationPath: string,
-    sessionId?: string
+    sessionName?: string
   ): Promise<MoveFileResponse> {
     try {
-      const targetSessionId = sessionId || this.sessionId;
-
       const response = await this.doFetch(`/api/move`, {
         body: JSON.stringify({
           destinationPath,
-          sessionId: targetSessionId,
           sourcePath,
+          sessionName,
         } as MoveFileRequest),
         headers: {
           "Content-Type": "application/json",
@@ -568,7 +545,7 @@ export class HttpClient {
 
       const data: MoveFileResponse = await response.json();
       console.log(
-        `[HTTP Client] File moved: ${sourcePath} -> ${destinationPath}, Success: ${data.success}`
+        `[HTTP Client] File moved: ${sourcePath} -> ${destinationPath}, Success: ${data.success}${sessionName ? ` in session: ${sessionName}` : ''}`
       );
 
       return data;
@@ -584,16 +561,14 @@ export class HttpClient {
       recursive?: boolean;
       includeHidden?: boolean;
     },
-    sessionId?: string
+    sessionName?: string
   ): Promise<ListFilesResponse> {
     try {
-      const targetSessionId = sessionId || this.sessionId;
-
       const response = await this.doFetch(`/api/list-files`, {
         body: JSON.stringify({
           path,
           options,
-          sessionId: targetSessionId,
+          sessionName,
         } as ListFilesRequest),
         headers: {
           "Content-Type": "application/json",
@@ -612,7 +587,7 @@ export class HttpClient {
 
       const data: ListFilesResponse = await response.json();
       console.log(
-        `[HTTP Client] Listed ${data.files.length} files in: ${path}, Success: ${data.success}`
+        `[HTTP Client] Listed ${data.files.length} files in: ${path}, Success: ${data.success}${sessionName ? ` in session: ${sessionName}` : ''}`
       );
 
       return data;
@@ -766,24 +741,12 @@ export class HttpClient {
     }
   }
 
-  getSessionId(): string | null {
-    return this.sessionId;
-  }
-
-  setSessionId(sessionId: string): void {
-    this.sessionId = sessionId;
-  }
-
-  clearSession(): void {
-    this.sessionId = null;
-  }
 
   // Process management methods
   async startProcess(
     command: string,
     options?: {
       processId?: string;
-      sessionId?: string;
       timeout?: number;
       env?: Record<string, string>;
       cwd?: string;
@@ -792,15 +755,10 @@ export class HttpClient {
     }
   ): Promise<StartProcessResponse> {
     try {
-      const targetSessionId = options?.sessionId || this.sessionId;
-
       const response = await this.doFetch("/api/process/start", {
         body: JSON.stringify({
           command,
-          options: {
-            ...options,
-            sessionId: targetSessionId,
-          },
+          options,
         } as StartProcessRequest),
         headers: {
           "Content-Type": "application/json",
@@ -1132,4 +1090,5 @@ export class HttpClient {
       throw error;
     }
   }
+
 }

@@ -210,43 +210,43 @@ const server = serve({
 
         case "/api/mkdir":
           if (req.method === "POST") {
-            return handleMkdirRequest(req, corsHeaders);
+            return handleMkdirRequest(req, corsHeaders, sessionManager);
           }
           break;
 
         case "/api/write":
           if (req.method === "POST") {
-            return handleWriteFileRequest(req, corsHeaders);
+            return handleWriteFileRequest(req, corsHeaders, sessionManager);
           }
           break;
 
         case "/api/read":
           if (req.method === "POST") {
-            return handleReadFileRequest(req, corsHeaders);
+            return handleReadFileRequest(req, corsHeaders, sessionManager);
           }
           break;
 
         case "/api/delete":
           if (req.method === "POST") {
-            return handleDeleteFileRequest(req, corsHeaders);
+            return handleDeleteFileRequest(req, corsHeaders, sessionManager);
           }
           break;
 
         case "/api/rename":
           if (req.method === "POST") {
-            return handleRenameFileRequest(req, corsHeaders);
+            return handleRenameFileRequest(req, corsHeaders, sessionManager);
           }
           break;
 
         case "/api/move":
           if (req.method === "POST") {
-            return handleMoveFileRequest(req, corsHeaders);
+            return handleMoveFileRequest(req, corsHeaders, sessionManager);
           }
           break;
 
         case "/api/list-files":
           if (req.method === "POST") {
-            return handleListFilesRequest(req, corsHeaders);
+            return handleListFilesRequest(req, corsHeaders, sessionManager);
           }
           break;
 

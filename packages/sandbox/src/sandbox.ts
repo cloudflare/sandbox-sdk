@@ -45,7 +45,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private sandboxName: string | null = null;
   private codeInterpreter: CodeInterpreter;
   private defaultSessionInitialized = false;
-  private sessionCache = new Map<string, ExecutionSession>();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -108,9 +107,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   override onStop() {
     console.log("Sandbox successfully shut down");
-    if (this.client) {
-      this.client.clearSession();
-    }
+    // Client cleanup if needed in the future
   }
 
   override onError(error: unknown) {
@@ -148,6 +145,18 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     return 3000;
   }
 
+  // Helper to ensure default session is initialized for consistent working directory
+  private async ensureDefaultSession(): Promise<void> {
+    if (!this.defaultSessionInitialized) {
+      await this.initializeDefaultSession();
+    }
+  }
+
+  // Helper to resolve relative paths to absolute paths using session working directory
+  private resolvePath(path: string): string {
+    return path.startsWith('/') ? path : `/workspace/${path}`;
+  }
+
   // Initialize the default session for this sandbox
   private async initializeDefaultSession(): Promise<void> {
     if (this.defaultSessionInitialized) return;
@@ -172,7 +181,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   // Enhanced exec method - now uses the sandbox's implicit session
   async exec(command: string, options?: ExecOptions): Promise<ExecResult> {
     // Lazily initialize the default session on first use
-    if (!this.defaultSessionInitialized && !options?.sessionId) {
+    if (!this.defaultSessionInitialized) {
       try {
         await this.initializeDefaultSession();
       } catch (error) {
@@ -204,25 +213,17 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           timestamp
         );
       } else {
-        // Check if sessionId is provided - if so, use ExecutionSession
-        if (options?.sessionId) {
-          const session = await this.getOrCreateSessionForId(options.sessionId, options);
-          const sessionResult = await session.exec(command);
-          result = sessionResult;
-        } else {
-          // Regular execution - use the sandbox's implicit session
-          const response = await this.client.execute(command, {
-            cwd: options?.cwd,
-            env: options?.env,
-          });
+        // Regular execution - use the sandbox's implicit session
+        const response = await this.client.execute(command, {
+          cwd: options?.cwd,
+          env: options?.env,
+        });
 
-          const duration = Date.now() - startTime;
-          result = this.mapExecuteResponseToExecResult(
-            response,
-            duration,
-            undefined
-          );
-        }
+        const duration = Date.now() - startTime;
+        result = this.mapExecuteResponseToExecResult(
+          response,
+          duration
+        );
       }
 
       // Call completion callback if provided
@@ -253,14 +254,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     let stderr = "";
 
     try {
-      // Check if sessionId is provided - if so, use ExecutionSession
-      let stream: ReadableStream<Uint8Array>;
-      if (options.sessionId) {
-        const session = await this.getOrCreateSessionForId(options.sessionId, options);
-        stream = await session.execStream(command);
-      } else {
-        stream = await this.client.executeCommandStream(command);
-      }
+      // Get streaming execution from client
+      const stream = await this.client.executeCommandStream(command);
 
       for await (const event of parseSSEStream<ExecEvent>(stream)) {
         // Check for cancellation
@@ -295,7 +290,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
                 command,
                 duration,
                 timestamp,
-                sessionId: options.sessionId,
               }
             );
           }
@@ -317,8 +311,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   private mapExecuteResponseToExecResult(
     response: ExecuteResponse,
-    duration: number,
-    sessionId?: string
+    duration: number
   ): ExecResult {
     return {
       success: response.success,
@@ -328,7 +321,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       command: response.command,
       duration,
       timestamp: response.timestamp,
-      sessionId,
     };
   }
 
@@ -341,7 +333,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     try {
       const response = await this.client.startProcess(command, {
         processId: options?.processId,
-        sessionId: options?.sessionId,
         timeout: options?.timeout,
         env: options?.env,
         cwd: options?.cwd,
@@ -358,7 +349,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         startTime: new Date(process.startTime),
         endTime: undefined,
         exitCode: undefined,
-        sessionId: process.sessionId,
 
         async kill(): Promise<void> {
           throw new Error("Method will be replaced");
@@ -412,7 +402,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       startTime: new Date(processData.startTime),
       endTime: processData.endTime ? new Date(processData.endTime) : undefined,
       exitCode: processData.exitCode,
-      sessionId: processData.sessionId,
 
       kill: async (signal?: string) => {
         await this.killProcess(processData.id, signal);
@@ -445,7 +434,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       startTime: new Date(processData.startTime),
       endTime: processData.endTime ? new Date(processData.endTime) : undefined,
       exitCode: processData.exitCode,
-      sessionId: processData.sessionId,
 
       kill: async (signal?: string) => {
         await this.killProcess(processData.id, signal);
@@ -525,11 +513,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       throw new Error("Operation was aborted");
     }
 
-    // Get the stream from HttpClient (need to add this method)
-    const stream = await this.client.executeCommandStream(
-      command,
-      options?.sessionId
-    );
+    // Get the stream from HttpClient
+    const stream = await this.client.executeCommandStream(command);
 
     // Return the ReadableStream directly - can be converted to AsyncIterable by consumers
     return stream;
@@ -555,11 +540,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     repoUrl: string,
     options: { branch?: string; targetDir?: string }
   ) {
-    return this.client.gitCheckout(repoUrl, options.branch, options.targetDir);
+    await this.ensureDefaultSession();
+    
+    const targetDir = options.targetDir ? this.resolvePath(options.targetDir) : options.targetDir;
+    return this.client.gitCheckout(repoUrl, options.branch, targetDir);
   }
 
   async mkdir(path: string, options: { recursive?: boolean } = {}) {
-    return this.client.mkdir(path, options.recursive);
+    await this.ensureDefaultSession();
+    return this.client.mkdir(this.resolvePath(path), options.recursive);
   }
 
   async writeFile(
@@ -567,23 +556,28 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     content: string,
     options: { encoding?: string } = {}
   ) {
-    return this.client.writeFile(path, content, options.encoding);
+    await this.ensureDefaultSession();
+    return this.client.writeFile(this.resolvePath(path), content, options.encoding);
   }
 
   async deleteFile(path: string) {
-    return this.client.deleteFile(path);
+    await this.ensureDefaultSession();
+    return this.client.deleteFile(this.resolvePath(path));
   }
 
   async renameFile(oldPath: string, newPath: string) {
-    return this.client.renameFile(oldPath, newPath);
+    await this.ensureDefaultSession();
+    return this.client.renameFile(this.resolvePath(oldPath), this.resolvePath(newPath));
   }
 
   async moveFile(sourcePath: string, destinationPath: string) {
-    return this.client.moveFile(sourcePath, destinationPath);
+    await this.ensureDefaultSession();
+    return this.client.moveFile(this.resolvePath(sourcePath), this.resolvePath(destinationPath));
   }
 
   async readFile(path: string, options: { encoding?: string } = {}) {
-    return this.client.readFile(path, options.encoding);
+    await this.ensureDefaultSession();
+    return this.client.readFile(this.resolvePath(path), options.encoding);
   }
 
   async listFiles(
@@ -593,7 +587,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       includeHidden?: boolean;
     } = {}
   ) {
-    return this.client.listFiles(path, options);
+    await this.ensureDefaultSession();
+    return this.client.listFiles(this.resolvePath(path), options);
   }
 
   async exposePort(port: number, options: { name?: string; hostname: string }) {
@@ -846,22 +841,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * Create a new execution session with isolation
    * Returns a session object with exec() method
    */
-  // Internal method to get or create a session for backward compatibility
-  private async getOrCreateSessionForId(sessionId: string, options?: ExecOptions): Promise<ExecutionSession> {
-    if (this.sessionCache.has(sessionId)) {
-      return this.sessionCache.get(sessionId)!;
-    }
-    
-    const session = await this.createSession({
-      name: sessionId,
-      env: options?.env,
-      cwd: options?.cwd,
-      isolation: true // Always use isolation for sessionId-based sessions
-    });
-    
-    this.sessionCache.set(sessionId, session);
-    return session;
-  }
 
   async createSession(options: {
     name?: string;
@@ -877,9 +856,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       cwd: options.cwd,
       isolation: options.isolation
     });
+    // Return comprehensive ExecutionSession object that implements all ISandbox methods
     return {
       name: sessionName,
-      exec: async (command: string) => {
+      
+      // Command execution - clean method names
+      exec: async (command: string, options?: ExecOptions) => {
         const result = await this.client.execInSession(sessionName, command);
         return {
           ...result,
@@ -889,14 +871,119 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         };
       },
       
-      execStream: async (command: string) => {
+      execStream: async (command: string, options?: StreamOptions) => {
         return await this.client.execInSessionStream(sessionName, command);
       },
       
-      setEnvVars: async (vars: Record<string, string>) => {
-        // Sessions can have their own environment updates
-        // This would need server-side support
+      // Process management - route to session-aware methods
+      startProcess: async (command: string, options?: ProcessOptions) => {
+        // For now, delegate to sandbox's process methods
+        // TODO: Implement session-aware process management
+        return await this.startProcess(command, options);
+      },
+      
+      listProcesses: async () => {
+        // For now, delegate to sandbox's process methods  
+        // TODO: Filter by session
+        return await this.listProcesses();
+      },
+      
+      getProcess: async (id: string) => {
+        return await this.getProcess(id);
+      },
+      
+      killProcess: async (id: string, signal?: string) => {
+        return await this.killProcess(id, signal);
+      },
+      
+      killAllProcesses: async () => {
+        // TODO: Kill only session processes
+        return await this.killAllProcesses();
+      },
+      
+      streamProcessLogs: async (processId: string, options?: { signal?: AbortSignal }) => {
+        return await this.streamProcessLogs(processId, options);
+      },
+      
+      getProcessLogs: async (id: string) => {
+        return await this.getProcessLogs(id);
+      },
+      
+      cleanupCompletedProcesses: async () => {
+        return await this.cleanupCompletedProcesses();
+      },
+      
+      // File operations - clean method names (no "InSession" suffix)
+      writeFile: async (path: string, content: string, options?: { encoding?: string }) => {
+        return await this.client.writeFile(path, content, options?.encoding, sessionName);
+      },
+      
+      readFile: async (path: string, options?: { encoding?: string }) => {
+        return await this.client.readFile(path, options?.encoding, sessionName);
+      },
+      
+      mkdir: async (path: string, options?: { recursive?: boolean }) => {
+        return await this.client.mkdir(path, options?.recursive, sessionName);
+      },
+      
+      deleteFile: async (path: string) => {
+        return await this.client.deleteFile(path, sessionName);
+      },
+      
+      renameFile: async (oldPath: string, newPath: string) => {
+        return await this.client.renameFile(oldPath, newPath, sessionName);
+      },
+      
+      moveFile: async (sourcePath: string, destinationPath: string) => {
+        return await this.client.moveFile(sourcePath, destinationPath, sessionName);
+      },
+      
+      listFiles: async (path: string, options?: { recursive?: boolean; includeHidden?: boolean }) => {
+        return await this.client.listFiles(path, options, sessionName);
+      },
+      
+      gitCheckout: async (repoUrl: string, options?: { branch?: string; targetDir?: string }) => {
+        return await this.gitCheckout(repoUrl, options || {});
+      },
+      
+      // Port management
+      exposePort: async (port: number, options: { name?: string; hostname: string }) => {
+        return await this.exposePort(port, options);
+      },
+      
+      unexposePort: async (port: number) => {
+        return await this.unexposePort(port);
+      },
+      
+      getExposedPorts: async (hostname: string) => {
+        return await this.getExposedPorts(hostname);
+      },
+      
+      // Environment management
+      setEnvVars: async (envVars: Record<string, string>) => {
+        // TODO: Implement session-specific environment updates
         console.log(`[Session ${sessionName}] Environment variables update not yet implemented`);
+      },
+      
+      // Code Interpreter API
+      createCodeContext: async (options?: any) => {
+        return await this.createCodeContext(options);
+      },
+      
+      runCode: async (code: string, options?: any) => {
+        return await this.runCode(code, options);
+      },
+      
+      runCodeStream: async (code: string, options?: any) => {
+        return await this.runCodeStream(code, options);
+      },
+      
+      listCodeContexts: async () => {
+        return await this.listCodeContexts();
+      },
+      
+      deleteCodeContext: async (contextId: string) => {
+        return await this.deleteCodeContext(contextId);
       }
     };
   }

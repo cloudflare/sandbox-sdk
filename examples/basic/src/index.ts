@@ -189,6 +189,7 @@ export default {
         return await setupStatic(sandbox, request);
       }
 
+
       // Code Interpreter Example APIs
       if (pathname === "/api/examples/basic-python" && request.method === "GET") {
         try {
@@ -351,18 +352,25 @@ result = x / y
       // Session Management APIs
       if (pathname === "/api/session/create" && request.method === "POST") {
         const body = await parseJsonBody(request);
-        const sessionId = body.sessionId || `session_${Date.now()}_${generateSecureRandomString()}`;
+        const { name, env, cwd, isolation = true } = body;
 
-        // Sessions are managed automatically by the SDK, just return the ID
-        return jsonResponse(sessionId);
+        // Use the new createSession API to create explicit sessions
+        const session = await sandbox.createSession({
+          name: name || `session_${Date.now()}_${generateSecureRandomString()}`,
+          env,
+          cwd,
+          isolation
+        });
+
+        return jsonResponse({ sessionName: session.name });
       }
 
       if (pathname.startsWith("/api/session/clear/") && request.method === "POST") {
-        const sessionId = pathname.split("/").pop();
+        const sessionName = pathname.split("/").pop();
 
-        // In a real implementation, you might want to clean up session state
-        // For now, just return success
-        return jsonResponse({ message: "Session cleared", sessionId });
+        // Note: The current SDK doesn't expose a direct session cleanup method
+        // Sessions are automatically cleaned up by the container lifecycle
+        return jsonResponse({ message: "Session cleanup initiated", sessionName });
       }
 
       // Fallback: serve static assets for all other requests

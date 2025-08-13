@@ -11,7 +11,7 @@ export async function handleExecuteRequest(
 ): Promise<Response> {
   try {
     const body = (await req.json()) as ExecuteRequest;
-    const { command, sessionId, background, cwd, env } = body;
+    const { command, background, cwd, env } = body;
 
     if (!command || typeof command !== "string") {
       return new Response(
@@ -34,24 +34,8 @@ export async function handleExecuteRequest(
       throw new Error("Session manager is required for secure execution");
     }
 
-    // Use session manager for isolation
-    let sessionName = 'default';
-    if (sessionId) {
-      sessionName = `session-${sessionId}`;
-      const session = sessionManager.getSession(sessionName);
-      if (!session) {
-        await sessionManager.createSession({
-          name: sessionName,
-          env: env || {},
-          cwd: typeof cwd === 'string' ? cwd : '/workspace',
-          isolation: true
-        });
-      }
-    }
-    
-    const execResult = sessionName === 'default' 
-      ? await sessionManager.exec(command)
-      : await sessionManager.getSession(sessionName)!.exec(command);
+    // Use session manager for global execution
+    const execResult = await sessionManager.exec(command, { cwd });
       
     const result = {
       ...execResult,
@@ -99,7 +83,7 @@ export async function handleStreamingExecuteRequest(
 ): Promise<Response> {
   try {
     const body = (await req.json()) as ExecuteRequest;
-    const { command, sessionId, background, cwd, env } = body;
+    const { command, background, cwd, env } = body;
 
     if (!command || typeof command !== "string") {
       return new Response(
@@ -125,25 +109,8 @@ export async function handleStreamingExecuteRequest(
     const stream = new ReadableStream({
       async start(controller) {
         try {
-          // Determine which session to use
-          let sessionName = 'default';
-          if (sessionId) {
-            sessionName = `session-${sessionId}`;
-            const session = sessionManager.getSession(sessionName);
-            if (!session) {
-              await sessionManager.createSession({
-                name: sessionName,
-                env: env || {},
-                cwd: typeof cwd === 'string' ? cwd : '/workspace',
-                isolation: true
-              });
-            }
-          }
-          
-          // Get the streaming generator from the appropriate session
-          const execGenerator = sessionName === 'default' 
-            ? sessionManager.execStream(command)
-            : sessionManager.getSession(sessionName)!.execStream(command);
+          // Use global session for streaming execution
+          const execGenerator = sessionManager.execStream(command, { cwd });
             
           // Stream events as they come
           for await (const event of execGenerator) {
