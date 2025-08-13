@@ -45,6 +45,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private sandboxName: string | null = null;
   private codeInterpreter: CodeInterpreter;
   private defaultSessionInitialized = false;
+  private defaultSessionName: string | undefined = undefined;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -171,6 +172,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         isolation: true
       });
       this.defaultSessionInitialized = true;
+      this.defaultSessionName = sessionName; // Store the session name
       console.log(`[Sandbox] Default session initialized: ${sessionName}`);
     } catch (error) {
       console.warn("[Sandbox] Could not initialize default session:", error);
@@ -213,8 +215,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           timestamp
         );
       } else {
-        // Regular execution - use the sandbox's implicit session
-        const response = await this.client.execute(command, {
+        // Regular execution - use the sandbox's default session
+        const response = await this.client.exec(this.defaultSessionName, command, {
           cwd: options?.cwd,
           env: options?.env,
         });
@@ -254,8 +256,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     let stderr = "";
 
     try {
-      // Get streaming execution from client
-      const stream = await this.client.executeCommandStream(command);
+      // Get streaming execution from client using default session
+      const stream = await this.client.execStream(this.defaultSessionName, command);
 
       for await (const event of parseSSEStream<ExecEvent>(stream)) {
         // Check for cancellation
@@ -508,13 +510,22 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     command: string,
     options?: StreamOptions
   ): Promise<ReadableStream<Uint8Array>> {
+    // Lazily initialize the default session on first use
+    if (!this.defaultSessionInitialized) {
+      try {
+        await this.initializeDefaultSession();
+      } catch (error) {
+        console.warn("[Sandbox] Could not initialize default session:", error);
+      }
+    }
+
     // Check for cancellation
     if (options?.signal?.aborted) {
       throw new Error("Operation was aborted");
     }
 
-    // Get the stream from HttpClient
-    const stream = await this.client.executeCommandStream(command);
+    // Get the stream from HttpClient using default session
+    const stream = await this.client.execStream(this.defaultSessionName, command);
 
     // Return the ReadableStream directly - can be converted to AsyncIterable by consumers
     return stream;
@@ -548,7 +559,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   async mkdir(path: string, options: { recursive?: boolean } = {}) {
     await this.ensureDefaultSession();
-    return this.client.mkdir(this.resolvePath(path), options.recursive);
+    return this.client.mkdir(path, options.recursive, this.defaultSessionName);
   }
 
   async writeFile(
@@ -557,27 +568,27 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     options: { encoding?: string } = {}
   ) {
     await this.ensureDefaultSession();
-    return this.client.writeFile(this.resolvePath(path), content, options.encoding);
+    return this.client.writeFile(path, content, options.encoding, this.defaultSessionName);
   }
 
   async deleteFile(path: string) {
     await this.ensureDefaultSession();
-    return this.client.deleteFile(this.resolvePath(path));
+    return this.client.deleteFile(path, this.defaultSessionName);
   }
 
   async renameFile(oldPath: string, newPath: string) {
     await this.ensureDefaultSession();
-    return this.client.renameFile(this.resolvePath(oldPath), this.resolvePath(newPath));
+    return this.client.renameFile(oldPath, newPath, this.defaultSessionName);
   }
 
   async moveFile(sourcePath: string, destinationPath: string) {
     await this.ensureDefaultSession();
-    return this.client.moveFile(this.resolvePath(sourcePath), this.resolvePath(destinationPath));
+    return this.client.moveFile(sourcePath, destinationPath, this.defaultSessionName);
   }
 
   async readFile(path: string, options: { encoding?: string } = {}) {
     await this.ensureDefaultSession();
-    return this.client.readFile(this.resolvePath(path), options.encoding);
+    return this.client.readFile(path, options.encoding, this.defaultSessionName);
   }
 
   async listFiles(
@@ -588,7 +599,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     } = {}
   ) {
     await this.ensureDefaultSession();
-    return this.client.listFiles(this.resolvePath(path), options);
+    return this.client.listFiles(path, options, this.defaultSessionName);
   }
 
   async exposePort(port: number, options: { name?: string; hostname: string }) {
@@ -862,7 +873,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       
       // Command execution - clean method names
       exec: async (command: string, options?: ExecOptions) => {
-        const result = await this.client.execInSession(sessionName, command);
+        const result = await this.client.exec(sessionName, command);
         return {
           ...result,
           command,
@@ -872,7 +883,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       },
       
       execStream: async (command: string, options?: StreamOptions) => {
-        return await this.client.execInSessionStream(sessionName, command);
+        return await this.client.execStream(sessionName, command);
       },
       
       // Process management - route to session-aware methods

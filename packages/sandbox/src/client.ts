@@ -192,95 +192,7 @@ export class HttpClient {
     }
   }
 
-  async execute(
-    command: string,
-    options: Pick<BaseExecOptions, "cwd" | "env">
-  ): Promise<ExecuteResponse> {
-    try {
-      const executeRequest = {
-        command,
-        cwd: options.cwd,
-        env: options.env,
-      } satisfies ExecuteRequest;
 
-      const response = await this.doFetch(`/api/execute`, {
-        body: JSON.stringify(executeRequest),
-        headers: {
-          "Content-Type": "application/json",
-        },
-        method: "POST",
-      });
-
-      if (!response.ok) {
-        const errorData = (await response.json().catch(() => ({}))) as {
-          error?: string;
-        };
-        throw new Error(
-          errorData.error || `HTTP error! status: ${response.status}`
-        );
-      }
-
-      const data: ExecuteResponse = await response.json();
-      console.log(
-        `[HTTP Client] Command executed: ${command}, Success: ${data.success}`
-      );
-
-      // Call the callback if provided
-      this.options.onCommandComplete?.(
-        data.success,
-        data.exitCode,
-        data.stdout,
-        data.stderr,
-        data.command
-      );
-
-      return data;
-    } catch (error) {
-      console.error("[HTTP Client] Error executing command:", error);
-      this.options.onError?.(
-        error instanceof Error ? error.message : "Unknown error",
-        command
-      );
-      throw error;
-    }
-  }
-
-  async executeCommandStream(
-    command: string
-  ): Promise<ReadableStream<Uint8Array>> {
-    try {
-      const response = await this.doFetch(`/api/execute/stream`, {
-        body: JSON.stringify({
-          command,
-        }),
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "text/event-stream",
-        },
-        method: "POST",
-      });
-
-      if (!response.ok) {
-        const errorData = (await response.json().catch(() => ({}))) as {
-          error?: string;
-        };
-        throw new Error(
-          errorData.error || `HTTP error! status: ${response.status}`
-        );
-      }
-
-      if (!response.body) {
-        throw new Error("No response body for streaming request");
-      }
-
-      console.log(`[HTTP Client] Started command stream: ${command}`);
-
-      return response.body;
-    } catch (error) {
-      console.error("[HTTP Client] Error in command stream:", error);
-      throw error;
-    }
-  }
 
   async gitCheckout(
     repoUrl: string,
@@ -1014,16 +926,55 @@ export class HttpClient {
     }
   }
 
-  async execInSession(
-    sessionName: string,
-    command: string
-  ): Promise<{
-    stdout: string;
-    stderr: string;
-    exitCode: number;
-    success: boolean;
-  }> {
+  async exec(
+    sessionName: string | undefined,
+    command: string,
+    options?: Pick<BaseExecOptions, "cwd" | "env">
+  ): Promise<ExecuteResponse> {
     try {
+      // If no session name provided, use regular execute endpoint
+      if (!sessionName) {
+        const executeRequest = {
+          command,
+          cwd: options?.cwd,
+          env: options?.env,
+        } satisfies ExecuteRequest;
+
+        const response = await this.doFetch(`/api/execute`, {
+          body: JSON.stringify(executeRequest),
+          headers: {
+            "Content-Type": "application/json",
+          },
+          method: "POST",
+        });
+
+        if (!response.ok) {
+          const errorData = (await response.json().catch(() => ({}))) as {
+            error?: string;
+          };
+          throw new Error(
+            errorData.error || `HTTP error! status: ${response.status}`
+          );
+        }
+
+        const data: ExecuteResponse = await response.json();
+        console.log(
+          `[HTTP Client] Command executed: ${command}, Success: ${data.success}`
+        );
+
+        // Call the callback if provided
+        this.options.onCommandComplete?.(
+          data.success,
+          data.exitCode,
+          data.stdout,
+          data.stderr,
+          data.command
+        );
+
+        return data;
+      }
+
+      // Execute in specific session
       const response = await this.doFetch(`/api/session/exec`, {
         method: "POST",
         headers: {
@@ -1045,18 +996,70 @@ export class HttpClient {
       console.log(
         `[HTTP Client] Command executed in session ${sessionName}: ${command}`
       );
-      return data;
+      
+      // Convert to ExecuteResponse format for consistency
+      const executeResponse: ExecuteResponse = {
+        ...data,
+        command,
+        timestamp: new Date().toISOString()
+      };
+
+      // Call the callback if provided
+      this.options.onCommandComplete?.(
+        executeResponse.success,
+        executeResponse.exitCode,
+        executeResponse.stdout,
+        executeResponse.stderr,
+        executeResponse.command
+      );
+
+      return executeResponse;
     } catch (error) {
       console.error("[HTTP Client] Error executing in session:", error);
+      this.options.onError?.(
+        error instanceof Error ? error.message : "Unknown error",
+        command
+      );
       throw error;
     }
   }
 
-  async execInSessionStream(
-    sessionName: string,
+  async execStream(
+    sessionName: string | undefined,
     command: string
   ): Promise<ReadableStream<Uint8Array>> {
     try {
+      // If no session name provided, use regular execute/stream endpoint
+      if (!sessionName) {
+        const response = await this.doFetch(`/api/execute/stream`, {
+          body: JSON.stringify({
+            command,
+          }),
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "text/event-stream",
+          },
+          method: "POST",
+        });
+
+        if (!response.ok) {
+          const errorData = (await response.json().catch(() => ({}))) as {
+            error?: string;
+          };
+          throw new Error(
+            errorData.error || `HTTP error! status: ${response.status}`
+          );
+        }
+
+        if (!response.body) {
+          throw new Error("No response body for streaming request");
+        }
+
+        console.log(`[HTTP Client] Started command stream: ${command}`);
+        return response.body;
+      }
+
+      // Stream in specific session
       const response = await this.doFetch(`/api/execute/stream`, {
         method: "POST",
         headers: {

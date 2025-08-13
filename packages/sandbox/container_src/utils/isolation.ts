@@ -289,10 +289,10 @@ const processingState = new Map();
 // Helper function to build exec script with optional cwd handling
 function buildExecScript(cmdFile, outFile, errFile, exitFile, msgId, msgCwd, completionMarker = "DONE") {
   if (msgCwd) {
-    // If cwd is provided, change directory for this command
-    // Save current directory and restore after command
+    // If cwd is provided, change directory for this command only
+    // For temporary operations that need specific working directory
     return \`
-# Execute command with cwd override
+# Execute command with temporary cwd override
 PREV_DIR=$(pwd)
 cd "\${msgCwd}" || { echo "Failed to change directory to \${msgCwd}" > \${errFile}; echo 1 > \${exitFile}; echo "\${completionMarker}:\${msgId}"; return; }
 source \${cmdFile} > \${outFile} 2> \${errFile}
@@ -301,9 +301,9 @@ cd "$PREV_DIR"
 echo "\${completionMarker}:\${msgId}"
 \`;
   } else {
-    // Default behavior - execute in current directory
+    // Default behavior - execute in current directory (preserves session state)
     return \`
-# Execute command with output redirection in current shell
+# Execute command in current shell - maintains working directory changes
 source \${cmdFile} > \${outFile} 2> \${errFile}
 echo $? > \${exitFile}
 echo "\${completionMarker}:\${msgId}"
