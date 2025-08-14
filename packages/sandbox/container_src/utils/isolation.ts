@@ -27,10 +27,11 @@
  */
 
 import { type ChildProcess, spawn } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
-import type { ExecEvent } from '../../src/types';
+import type { ExecEvent, ExecResult } from '../../src/types';
+import type { ProcessRecord, ProcessStatus } from '../types';
 
 // Configuration constants
 const CONFIG = {
@@ -47,7 +48,8 @@ const CONFIG = {
 } as const;
 
 // Types
-export interface ExecResult {
+// Internal execution result from the isolated process
+export interface RawExecResult {
   stdout: string;
   stderr: string;
   exitCode: number;
@@ -117,10 +119,11 @@ export class Session {
   private ready = false;
   private canIsolate: boolean;
   private pendingCallbacks = new Map<string, {
-    resolve: (result: ExecResult) => void;
+    resolve: (result: RawExecResult) => void;
     reject: (error: Error) => void;
     timeout: NodeJS.Timeout;
   }>();
+  private processes = new Map<string, ProcessRecord>();  // Session-specific processes
   
   constructor(private options: SessionOptions) {
     this.canIsolate = (options.isolation === true) && hasNamespaceSupport();
@@ -781,8 +784,9 @@ process.stdin.resume();
     }
     
     const id = randomUUID();
+    const startTime = Date.now();
     
-    return new Promise((resolve, reject) => {
+    return new Promise<RawExecResult>((resolve, reject) => {
       // Set up timeout
       const timeout = setTimeout(() => {
         this.pendingCallbacks.delete(id);
@@ -800,7 +804,13 @@ process.stdin.resume();
         cwd: options?.cwd // Pass through cwd override if provided
       };
       this.control!.stdin?.write(`${JSON.stringify(msg)}\n`);
-    });
+    }).then(raw => ({
+      ...raw,
+      success: raw.exitCode === 0,
+      command,
+      duration: Date.now() - startTime,
+      timestamp: new Date().toISOString()
+    }));
   }
 
   async *execStream(command: string, options?: { cwd?: string }): AsyncGenerator<ExecEvent> {
@@ -1047,7 +1057,7 @@ SANDBOX_EOF`;
       if (line.startsWith('total') || !line.trim()) continue;
       
       // Parse ls -l format: permissions, links, user, group, size, date, name
-      const match = line.match(/^([\-dlrwx]+)\s+\d+\s+\S+\s+\S+\s+(\d+)\s+(\S+\s+\d+\s+[\d:]+)\s+(.+)$/);
+      const match = line.match(/^([-dlrwx]+)\s+\d+\s+\S+\s+\S+\s+(\d+)\s+(\S+\s+\d+\s+[\d:]+)\s+(.+)$/);
       if (!match) continue;
       
       const [, permissions, size, dateStr, name] = match;
@@ -1080,7 +1090,126 @@ SANDBOX_EOF`;
     return files;
   }
 
+  // Process Management Methods
+  
+  async startProcess(command: string, options?: {
+    processId?: string;
+    timeout?: number;
+    env?: Record<string, string>;
+    cwd?: string;
+    encoding?: string;
+    autoCleanup?: boolean;
+  }): Promise<ProcessRecord> {
+    const processId = options?.processId || `proc_${Date.now()}_${randomBytes(6).toString('hex')}`;
+    
+    // Check if process ID already exists in this session
+    if (this.processes.has(processId)) {
+      throw new Error(`Process already exists in session: ${processId}`);
+    }
+    
+    console.log(`[Session ${this.options.name}] Starting process: ${command} (ID: ${processId})`);
+    
+    // Create process record
+    const processRecord: ProcessRecord = {
+      id: processId,
+      command,
+      status: 'starting',
+      startTime: new Date(),
+      stdout: '',
+      stderr: '',
+      outputListeners: new Set(),
+      statusListeners: new Set()
+    };
+    
+    this.processes.set(processId, processRecord);
+    
+    // Start the process using session's exec
+    const execPromise = this.exec(command, { cwd: options?.cwd });
+    
+    // Handle process completion
+    execPromise.then(result => {
+      processRecord.status = result.exitCode === 0 ? 'completed' : 'failed';
+      processRecord.exitCode = result.exitCode;
+      processRecord.endTime = new Date();
+      processRecord.stdout = result.stdout;
+      processRecord.stderr = result.stderr;
+      
+      // Notify status listeners
+      for (const listener of processRecord.statusListeners) {
+        listener(processRecord.status);
+      }
+    }).catch(error => {
+      processRecord.status = 'error';
+      processRecord.endTime = new Date();
+      processRecord.stderr += `\nError: ${error.message}`;
+      
+      // Notify status listeners
+      for (const listener of processRecord.statusListeners) {
+        listener('error');
+      }
+    });
+    
+    // Set status to running
+    processRecord.status = 'running';
+    
+    return processRecord;
+  }
+  
+  getProcess(processId: string): ProcessRecord | undefined {
+    return this.processes.get(processId);
+  }
+  
+  listProcesses(): ProcessRecord[] {
+    return Array.from(this.processes.values());
+  }
+  
+  killProcess(processId: string): boolean {
+    const process = this.processes.get(processId);
+    if (!process) {
+      return false;
+    }
+    
+    // If process has a child process, kill it
+    if (process.childProcess && !process.childProcess.killed) {
+      process.childProcess.kill('SIGTERM');
+      process.status = 'killed';
+      process.endTime = new Date();
+      
+      // Notify status listeners
+      for (const listener of process.statusListeners) {
+        listener('killed');
+      }
+      return true;
+    }
+    
+    // Mark as killed even if no active child process
+    if (process.status === 'running' || process.status === 'starting') {
+      process.status = 'killed';
+      process.endTime = new Date();
+      
+      // Notify status listeners
+      for (const listener of process.statusListeners) {
+        listener('killed');
+      }
+    }
+    
+    return true;
+  }
+  
+  killAllProcesses(): number {
+    let killedCount = 0;
+    for (const [id, _] of this.processes) {
+      if (this.killProcess(id)) {
+        killedCount++;
+      }
+    }
+    return killedCount;
+  }
+
   destroy(): void {
+    // Kill all processes first
+    this.killAllProcesses();
+    
     if (this.control) {
       // Send exit command
       const msg: ControlMessage = { type: 'exit', id: 'destroy' };

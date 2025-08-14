@@ -26,6 +26,7 @@ export interface ProcessRecord {
 
 export interface StartProcessRequest {
   command: string;
+  sessionName?: string;  // Optional session context for process
   options?: {
     processId?: string;
     timeout?: number;
@@ -44,12 +45,14 @@ export interface ExecuteOptions {
 
 export interface ExecuteRequest extends ExecuteOptions {
   command: string;
+  sessionName?: string;  // Optional session context for streaming
 }
 
 export interface GitCheckoutRequest {
   repoUrl: string;
   branch?: string;
   targetDir?: string;
+  sessionName?: string;  // Optional session context
 }
 
 export interface MkdirRequest {

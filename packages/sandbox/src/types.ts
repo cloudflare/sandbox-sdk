@@ -285,8 +285,11 @@ export interface StartProcessResponse {
     id: string;
     pid?: number;
     command: string;
-      status: ProcessStatus;
+    status: ProcessStatus;
     startTime: string;
+    endTime?: string | null;
+    exitCode?: number | null;
+    sessionName: string;
   };
 }
 

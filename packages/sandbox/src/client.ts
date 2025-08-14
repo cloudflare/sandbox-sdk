@@ -28,14 +28,14 @@ interface GitCheckoutRequest {
   repoUrl: string;
   branch?: string;
   targetDir?: string;
-  sessionId?: string;
+  sessionName: string;
 }
 
 
 interface MkdirRequest {
   path: string;
   recursive?: boolean;
-  sessionId?: string;
+  sessionName: string;
 }
 
 
@@ -43,34 +43,34 @@ interface WriteFileRequest {
   path: string;
   content: string;
   encoding?: string;
-  sessionId?: string;
+  sessionName: string;
 }
 
 
 interface ReadFileRequest {
   path: string;
   encoding?: string;
-  sessionId?: string;
+  sessionName: string;
 }
 
 
 interface DeleteFileRequest {
   path: string;
-  sessionId?: string;
+  sessionName: string;
 }
 
 
 interface RenameFileRequest {
   oldPath: string;
   newPath: string;
-  sessionId?: string;
+  sessionName: string;
 }
 
 
 interface MoveFileRequest {
   sourcePath: string;
   destinationPath: string;
-  sessionId?: string;
+  sessionName: string;
 }
 
 
@@ -80,7 +80,7 @@ interface ListFilesRequest {
     recursive?: boolean;
     includeHidden?: boolean;
   };
-  sessionId?: string;
+  sessionName: string;
 }
 
 
@@ -196,6 +196,7 @@ export class HttpClient {
 
   async gitCheckout(
     repoUrl: string,
+    sessionName: string,
     branch: string = "main",
     targetDir?: string
   ): Promise<GitCheckoutResponse> {
@@ -205,6 +206,7 @@ export class HttpClient {
           branch,
           repoUrl,
           targetDir,
+          sessionName,
         } as GitCheckoutRequest),
         headers: {
           "Content-Type": "application/json",
@@ -236,7 +238,7 @@ export class HttpClient {
   async mkdir(
     path: string,
     recursive: boolean = false,
-    sessionName?: string
+    sessionName: string
   ): Promise<MkdirResponse> {
     try {
       const response = await this.doFetch(`/api/mkdir`, {
@@ -276,7 +278,7 @@ export class HttpClient {
     path: string,
     content: string,
     encoding: string = "utf-8",
-    sessionName?: string
+    sessionName: string
   ): Promise<WriteFileResponse> {
     try {
       const response = await this.doFetch(`/api/write`, {
@@ -316,7 +318,7 @@ export class HttpClient {
   async readFile(
     path: string,
     encoding: string = "utf-8",
-    sessionName?: string
+    sessionName: string
   ): Promise<ReadFileResponse> {
     try {
       const response = await this.doFetch(`/api/read`, {
@@ -354,7 +356,7 @@ export class HttpClient {
 
   async deleteFile(
     path: string,
-    sessionName?: string
+    sessionName: string
   ): Promise<DeleteFileResponse> {
     try {
       const response = await this.doFetch(`/api/delete`, {
@@ -392,7 +394,7 @@ export class HttpClient {
   async renameFile(
     oldPath: string,
     newPath: string,
-    sessionName?: string
+    sessionName: string
   ): Promise<RenameFileResponse> {
     try {
       const response = await this.doFetch(`/api/rename`, {
@@ -431,7 +433,7 @@ export class HttpClient {
   async moveFile(
     sourcePath: string,
     destinationPath: string,
-    sessionName?: string
+    sessionName: string
   ): Promise<MoveFileResponse> {
     try {
       const response = await this.doFetch(`/api/move`, {
@@ -469,11 +471,11 @@ export class HttpClient {
 
   async listFiles(
     path: string,
+    sessionName: string,
     options?: {
       recursive?: boolean;
       includeHidden?: boolean;
-    },
-    sessionName?: string
+    }
   ): Promise<ListFilesResponse> {
     try {
       const response = await this.doFetch(`/api/list-files`, {
@@ -657,6 +659,7 @@ export class HttpClient {
   // Process management methods
   async startProcess(
     command: string,
+    sessionName: string,
     options?: {
       processId?: string;
       timeout?: number;
@@ -670,6 +673,7 @@ export class HttpClient {
       const response = await this.doFetch("/api/process/start", {
         body: JSON.stringify({
           command,
+          sessionName,
           options,
         } as StartProcessRequest),
         headers: {
@@ -699,9 +703,12 @@ export class HttpClient {
     }
   }
 
-  async listProcesses(): Promise<ListProcessesResponse> {
+  async listProcesses(sessionName?: string): Promise<ListProcessesResponse> {
     try {
-      const response = await this.doFetch("/api/process/list", {
+      const url = sessionName 
+        ? `/api/process/list?session=${encodeURIComponent(sessionName)}`
+        : "/api/process/list";
+      const response = await this.doFetch(url, {
         headers: {
           "Content-Type": "application/json",
         },
@@ -792,13 +799,16 @@ export class HttpClient {
     }
   }
 
-  async killAllProcesses(): Promise<{
+  async killAllProcesses(sessionName?: string): Promise<{
     success: boolean;
     killedCount: number;
     message: string;
   }> {
     try {
-      const response = await this.doFetch("/api/process/kill-all", {
+      const url = sessionName 
+        ? `/api/process/kill-all?session=${encodeURIComponent(sessionName)}`
+        : "/api/process/kill-all";
+      const response = await this.doFetch(url, {
         headers: {
           "Content-Type": "application/json",
         },
@@ -927,55 +937,13 @@ export class HttpClient {
   }
 
   async exec(
-    sessionName: string | undefined,
+    sessionName: string,
     command: string,
     options?: Pick<BaseExecOptions, "cwd" | "env">
   ): Promise<ExecuteResponse> {
     try {
-      // If no session name provided, use regular execute endpoint
-      if (!sessionName) {
-        const executeRequest = {
-          command,
-          cwd: options?.cwd,
-          env: options?.env,
-        } satisfies ExecuteRequest;
-
-        const response = await this.doFetch(`/api/execute`, {
-          body: JSON.stringify(executeRequest),
-          headers: {
-            "Content-Type": "application/json",
-          },
-          method: "POST",
-        });
-
-        if (!response.ok) {
-          const errorData = (await response.json().catch(() => ({}))) as {
-            error?: string;
-          };
-          throw new Error(
-            errorData.error || `HTTP error! status: ${response.status}`
-          );
-        }
-
-        const data: ExecuteResponse = await response.json();
-        console.log(
-          `[HTTP Client] Command executed: ${command}, Success: ${data.success}`
-        );
-
-        // Call the callback if provided
-        this.options.onCommandComplete?.(
-          data.success,
-          data.exitCode,
-          data.stdout,
-          data.stderr,
-          data.command
-        );
-
-        return data;
-      }
-
-      // Execute in specific session
-      const response = await this.doFetch(`/api/session/exec`, {
+      // Always use session-specific endpoint
+      const response = await this.doFetch(`/api/exec`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -1025,49 +993,19 @@ export class HttpClient {
   }
 
   async execStream(
-    sessionName: string | undefined,
+    sessionName: string,
     command: string
   ): Promise<ReadableStream<Uint8Array>> {
     try {
-      // If no session name provided, use regular execute/stream endpoint
-      if (!sessionName) {
-        const response = await this.doFetch(`/api/execute/stream`, {
-          body: JSON.stringify({
-            command,
-          }),
-          headers: {
-            "Content-Type": "application/json",
-            Accept: "text/event-stream",
-          },
-          method: "POST",
-        });
-
-        if (!response.ok) {
-          const errorData = (await response.json().catch(() => ({}))) as {
-            error?: string;
-          };
-          throw new Error(
-            errorData.error || `HTTP error! status: ${response.status}`
-          );
-        }
-
-        if (!response.body) {
-          throw new Error("No response body for streaming request");
-        }
-
-        console.log(`[HTTP Client] Started command stream: ${command}`);
-        return response.body;
-      }
-
-      // Stream in specific session
-      const response = await this.doFetch(`/api/execute/stream`, {
+      // Always use session-specific streaming endpoint
+      const response = await this.doFetch(`/api/exec/stream`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ 
-          command, 
-          sessionId: sessionName.startsWith('session-') ? sessionName.slice(8) : sessionName
+          name: sessionName,
+          command
         }),
       });
 
