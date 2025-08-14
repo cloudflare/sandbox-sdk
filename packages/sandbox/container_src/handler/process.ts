@@ -393,11 +393,23 @@ export async function handleGetProcessLogsRequest(
             );
         }
         
+        // Get the session and use its getProcessLogs method to ensure logs are updated from files
+        const session = sessionManager.getSession(result.sessionName);
+        if (!session) {
+            return createErrorResponse(
+                "Session not found",
+                result.sessionName,
+                500,
+                corsHeaders
+            );
+        }
+        
+        // This will update logs from temp files before returning
+        const logs = await session.getProcessLogs(processId);
+        
         return createSuccessResponse({
-            logs: {
-                stdout: result.process.stdout,
-                stderr: result.process.stderr,
-            },
+            stdout: logs.stdout,
+            stderr: logs.stderr,
             processId,
             sessionName: result.sessionName,
             timestamp: new Date().toISOString(),
