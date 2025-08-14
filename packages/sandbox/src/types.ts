@@ -257,7 +257,6 @@ export interface ProcessRecord {
   exitCode?: number;
 
   // Internal fields
-  childProcess?: any;  // Node.js ChildProcess
   stdout: string;      // Accumulated output (ephemeral)
   stderr: string;      // Accumulated output (ephemeral)
 

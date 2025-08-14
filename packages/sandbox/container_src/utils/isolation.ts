@@ -548,7 +548,7 @@ process.stdin.on('data', async (data) => {
           } catch (e) {
             // Files might not exist yet, that's ok
           }
-        }, 50); // Check every 50ms for real-time feel
+        }, 100); // Check every 100ms for real-time feel
         
         // Execute command with same pattern as regular exec, including cwd support
         const execScript = buildExecScript(cmdFile, outFile, errFile, exitFile, msg.id, msg.cwd, "STREAM_DONE");

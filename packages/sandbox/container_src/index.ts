@@ -55,7 +55,7 @@ const sessionManager = new SessionManager();
 // to avoid initialization loops
 
 // Graceful shutdown handler
-const SHUTDOWN_GRACE_PERIOD_MS = 500; // Grace period for cleanup
+const SHUTDOWN_GRACE_PERIOD_MS = 5000; // Grace period for cleanup (5 seconds for proper async cleanup)
 
 process.on("SIGTERM", async () => {
   console.log("[Container] SIGTERM received, cleaning up sessions...");
