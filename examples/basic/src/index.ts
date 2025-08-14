@@ -356,7 +356,7 @@ result = x / y
 
         // Use the new createSession API to create explicit sessions
         const session = await sandbox.createSession({
-          name: name || `session_${Date.now()}_${generateSecureRandomString()}`,
+          id: name || `session_${Date.now()}_${generateSecureRandomString()}`,
           env,
           cwd,
           isolation

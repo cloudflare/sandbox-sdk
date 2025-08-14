@@ -1,5 +1,5 @@
 import type { ProcessRecord, ProcessStatus, StartProcessRequest } from "../types";
-import type { SessionManager } from "../utils/isolation";
+import type { Session, SessionManager } from "../utils/isolation";
 
 // Process management handlers - all processes are tracked per-session
 
@@ -114,34 +114,28 @@ export async function handleStartProcessRequest(
         console.log(`[Server] Starting process: ${command}${sessionId ? ` in session: ${sessionId}` : ' (default session)'}`);
 
         // Get the session (use default if not specified)
-        const targetSessionId = sessionId || 'default';
-        let session = sessionManager.getSession(targetSessionId);
+        let session: Session;
         
-        if (!session) {
-            if (targetSessionId === 'default') {
-                // Create default session if it doesn't exist
-                await sessionManager.createSession({
-                    name: 'default',
-                    cwd: '/workspace',
-                    isolation: true
-                });
-                session = sessionManager.getSession('default');
-            }
-            
-            if (!session) {
+        if (sessionId) {
+            const specificSession = sessionManager.getSession(sessionId);
+            if (!specificSession) {
                 return createErrorResponse(
-                    `Session '${targetSessionId}' not found`,
+                    `Session '${sessionId}' not found`,
                     undefined,
                     404,
                     corsHeaders
                 );
             }
+            session = specificSession;
+        } else {
+            // Use the centralized method to get or create default session
+            session = await sessionManager.getOrCreateDefaultSession();
         }
         
         const processRecord = await session.startProcess(command, options);
 
         return createSuccessResponse({
-            process: processRecordToInfo(processRecord, targetSessionId)
+            process: processRecordToInfo(processRecord, sessionId || 'default')
         }, corsHeaders);
     } catch (error) {
         console.error("[Server] Error starting process:", error);

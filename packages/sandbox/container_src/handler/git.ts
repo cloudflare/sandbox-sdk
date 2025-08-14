@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import type { GitCheckoutRequest } from "../types";
-import type { SessionManager } from "../utils/isolation";
+import type { Session, SessionManager } from "../utils/isolation";
 
 async function executeGitCheckout(
   sessionManager: SessionManager,
@@ -18,25 +18,16 @@ async function executeGitCheckout(
   const command = `git clone -b ${branch} ${repoUrl} ${targetDir}`;
   
   // Use specific session if provided, otherwise use default session
-  const session = sessionId 
-    ? sessionManager.getSession(sessionId) 
-    : sessionManager.getSession('default');
-    
-  if (!session) {
-    // Create default session if it doesn't exist
-    if (!sessionId || sessionId === 'default') {
-      await sessionManager.createSession({
-        name: 'default',
-        cwd: '/workspace',
-        isolation: true
-      });
-      const defaultSession = sessionManager.getSession('default');
-      if (!defaultSession) {
-        throw new Error('Failed to create default session');
-      }
-      return defaultSession.exec(command);
+  let session: Session | undefined;
+  
+  if (sessionId) {
+    session = sessionManager.getSession(sessionId);
+    if (!session) {
+      throw new Error(`Session '${sessionId}' not found`);
     }
-    throw new Error(`Session '${sessionId}' not found`);
+  } else {
+    // Use the centralized method to get or create default session
+    session = await sessionManager.getOrCreateDefaultSession();
   }
   
   return session.exec(command);

@@ -1152,7 +1152,7 @@ SANDBOX_EOF`;
     } catch (error) {
       processRecord.status = 'error';
       processRecord.endTime = new Date();
-      processRecord.stderr = `Failed to start process: ${error.message}`;
+      processRecord.stderr = `Failed to start process: ${error instanceof Error ? error.message : String(error)}`;
       
       // Notify status listeners
       for (const listener of processRecord.statusListeners) {
@@ -1474,11 +1474,11 @@ export class SessionManager {
   }
 
   // Helper to get or create default session - reduces duplication
-  private async getOrCreateDefaultSession(): Promise<Session> {
+  async getOrCreateDefaultSession(): Promise<Session> {
     let defaultSession = this.sessions.get('default');
     if (!defaultSession) {
       defaultSession = await this.createSession({ 
-        name: 'default',
+        id: 'default',
         cwd: '/workspace', // Consistent default working directory
         isolation: true 
       });
