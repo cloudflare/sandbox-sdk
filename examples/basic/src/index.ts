@@ -108,7 +108,7 @@ export default {
       }
 
       if (pathname.startsWith("/api/process/") && pathname.endsWith("/stream") && request.method === "GET") {
-        return await streamProcessLogs(sandbox, pathname);
+        return await streamProcessLogs(sandbox, pathname, request);
       }
 
       if (pathname.startsWith("/api/process/") && request.method === "GET") {

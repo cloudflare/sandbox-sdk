@@ -178,13 +178,14 @@ class SandboxApiClient {
     });
   }
 
-  async *streamProcessLogs(processId: string): AsyncGenerator<any> {
+  async *streamProcessLogs(processId: string, options?: { signal?: AbortSignal }): AsyncGenerator<any> {
     const response = await fetch(
       `${this.baseUrl}/api/process/${processId}/stream`,
       {
         headers: {
           Accept: "text/event-stream",
         },
+        signal: options?.signal,  // Pass the abort signal to fetch
       }
     );
 
@@ -2191,6 +2192,12 @@ function StreamingTab({
       return;
 
     const streamId = `logs_${selectedProcessId}_${Date.now()}`;
+    
+    // Create an AbortController for this stream
+    const abortController = new AbortController();
+    
+    // Store the abort controller so it can be aborted when user clicks stop
+    streamAbortControllers.current.set(streamId, abortController);
 
     // Add stream to active streams
     const newStream: ActiveStream = {
@@ -2206,8 +2213,10 @@ function StreamingTab({
     setActiveStreams((prev) => [...prev, newStream]);
 
     try {
-      // Use the new streamProcessLogs AsyncIterable method
-      const logStreamIterable = client.streamProcessLogs(selectedProcessId);
+      // Use the new streamProcessLogs AsyncIterable method with abort signal
+      const logStreamIterable = client.streamProcessLogs(selectedProcessId, {
+        signal: abortController.signal
+      });
 
       for await (const logEvent of logStreamIterable) {
         const streamEvent: LogStreamEvent = {
@@ -2227,7 +2236,27 @@ function StreamingTab({
           )
         );
       }
+      
+      // Clean up abort controller when stream completes naturally
+      streamAbortControllers.current.delete(streamId);
     } catch (error) {
+      // Clean up abort controller on error
+      streamAbortControllers.current.delete(streamId);
+      
+      // Don't log abort errors or add error events for user cancellation
+      if (error instanceof Error && error.name === 'AbortError') {
+        console.log("Log streaming aborted by user");
+        // Just mark the stream as inactive without adding error event
+        setActiveStreams((prev) =>
+          prev.map((stream) =>
+            stream.id === streamId
+              ? { ...stream, isActive: false }
+              : stream
+          )
+        );
+        return;
+      }
+      
       console.error("Log streaming error:", error);
 
       const errorEvent: LogStreamEvent = {
@@ -2254,6 +2283,9 @@ function StreamingTab({
     }
   };
 
+  // Map to store abort controllers for active streams
+  const streamAbortControllers = useRef<Map<string, AbortController>>(new Map());
+  
   // Stop a stream
   const stopStream = (streamId: string) => {
     setActiveStreams((prev) =>
@@ -2261,6 +2293,13 @@ function StreamingTab({
         stream.id === streamId ? { ...stream, isActive: false } : stream
       )
     );
+    
+    // Abort the fetch if an abort controller exists
+    const controller = streamAbortControllers.current.get(streamId);
+    if (controller) {
+      controller.abort();
+      streamAbortControllers.current.delete(streamId);
+    }
   };
 
   // Clear a stream

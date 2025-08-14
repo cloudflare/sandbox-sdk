@@ -867,7 +867,8 @@ export class HttpClient {
   }
 
   async streamProcessLogs(
-    processId: string
+    processId: string,
+    options?: { signal?: AbortSignal }
   ): Promise<ReadableStream<Uint8Array>> {
     try {
       const response = await this.doFetch(`/api/process/${processId}/stream`, {
@@ -876,6 +877,7 @@ export class HttpClient {
           "Cache-Control": "no-cache",
         },
         method: "GET",
+        signal: options?.signal,
       });
 
       if (!response.ok) {

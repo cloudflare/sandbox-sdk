@@ -17,7 +17,7 @@ export async function getProcessLogs(sandbox: Sandbox<unknown>, pathname: string
     }
 }
 
-export async function streamProcessLogs(sandbox: Sandbox<unknown>, pathname: string) {
+export async function streamProcessLogs(sandbox: Sandbox<unknown>, pathname: string, request: Request) {
     const pathParts = pathname.split("/");
     const processId = pathParts[pathParts.length - 2];
 
@@ -40,6 +40,9 @@ export async function streamProcessLogs(sandbox: Sandbox<unknown>, pathname: str
     // Use the SDK's streaming with beautiful AsyncIterable API
     if (typeof sandbox.streamProcessLogs === 'function') {
         try {
+            // Create an AbortController that will be triggered when client disconnects
+            const abortController = new AbortController();
+            
             // Create SSE stream from AsyncIterable
             const encoder = new TextEncoder();
             const { readable, writable } = new TransformStream();
@@ -48,26 +51,36 @@ export async function streamProcessLogs(sandbox: Sandbox<unknown>, pathname: str
             // Stream logs in the background
             (async () => {
                 try {
-                    // Get the ReadableStream from sandbox
+                    // Get the ReadableStream from sandbox (can't pass abort signal through Worker binding)
                     const stream = await sandbox.streamProcessLogs(processId);
                     
-                    // Convert to AsyncIterable using parseSSEStream
-                    for await (const logEvent of parseSSEStream<LogEvent>(stream)) {
+                    // Convert to AsyncIterable using parseSSEStream with local abort signal
+                    for await (const logEvent of parseSSEStream<LogEvent>(stream, abortController.signal)) {
                         // Forward each typed event as SSE
                         await writer.write(encoder.encode(`data: ${JSON.stringify(logEvent)}\n\n`));
                     }
                 } catch (error: any) {
-                    // Send error event
-                    await writer.write(encoder.encode(`data: ${JSON.stringify({
-                        type: 'error',
-                        timestamp: new Date().toISOString(),
-                        data: error.message,
-                        processId
-                    })}\n\n`));
+                    // Don't send error event for abort
+                    if (error.name === 'AbortError') {
+                        console.log('Stream aborted by client');
+                    } else {
+                        // Send error event
+                        await writer.write(encoder.encode(`data: ${JSON.stringify({
+                            type: 'error',
+                            timestamp: new Date().toISOString(),
+                            data: error.message,
+                            processId
+                        })}\n\n`));
+                    }
                 } finally {
                     await writer.close();
                 }
             })();
+
+            // Handle client disconnect by aborting
+            request.signal.addEventListener('abort', () => {
+                abortController.abort();
+            });
 
             // Return stream with proper headers
             return new Response(readable, {

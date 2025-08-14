@@ -68,14 +68,14 @@ function processRecordToInfo(
     };
 }
 
-function findProcessAcrossSessions(
+async function findProcessAcrossSessions(
     processId: string,
     sessionManager: SessionManager
-): { process: ProcessRecord; sessionName: string } | null {
+): Promise<{ process: ProcessRecord; sessionName: string } | null> {
     for (const sessionName of sessionManager.listSessions()) {
         const session = sessionManager.getSession(sessionName);
         if (session) {
-            const process = session.getProcess(processId);
+            const process = await session.getProcess(processId);
             if (process) {
                 return { process, sessionName };
             }
@@ -186,14 +186,14 @@ export async function handleListProcessesRequest(
                     corsHeaders
                 );
             }
-            const processes = session.listProcesses();
+            const processes = await session.listProcesses();
             allProcesses = processes.map(p => processRecordToInfo(p, sessionName));
         } else {
             // List processes from all sessions
             for (const name of sessionManager.listSessions()) {
                 const session = sessionManager.getSession(name);
                 if (session) {
-                    const processes = session.listProcesses();
+                    const processes = await session.listProcesses();
                     allProcesses.push(...processes.map(p => processRecordToInfo(p, name)));
                 }
             }
@@ -231,7 +231,7 @@ export async function handleGetProcessRequest(
             );
         }
         
-        const result = findProcessAcrossSessions(processId, sessionManager);
+        const result = await findProcessAcrossSessions(processId, sessionManager);
         if (!result) {
             return createErrorResponse(
                 "Process not found",
@@ -276,9 +276,9 @@ export async function handleKillProcessRequest(
         for (const sessionName of sessionManager.listSessions()) {
             const session = sessionManager.getSession(sessionName);
             if (session) {
-                const process = session.getProcess(processId);
+                const process = await session.getProcess(processId);
                 if (process) {
-                    const killed = session.killProcess(processId);
+                    const killed = await session.killProcess(processId);
                     return createSuccessResponse({
                         success: killed,
                         processId,
@@ -339,13 +339,13 @@ export async function handleKillAllProcessesRequest(
                     corsHeaders
                 );
             }
-            killedCount = session.killAllProcesses();
+            killedCount = await session.killAllProcesses();
         } else {
             // Kill processes in all sessions
             for (const name of sessionManager.listSessions()) {
                 const session = sessionManager.getSession(name);
                 if (session) {
-                    killedCount += session.killAllProcesses();
+                    killedCount += await session.killAllProcesses();
                 }
             }
         }
@@ -383,7 +383,7 @@ export async function handleGetProcessLogsRequest(
             );
         }
         
-        const result = findProcessAcrossSessions(processId, sessionManager);
+        const result = await findProcessAcrossSessions(processId, sessionManager);
         if (!result) {
             return createErrorResponse(
                 "Process not found",
@@ -429,7 +429,7 @@ export async function handleStreamProcessLogsRequest(
             );
         }
         
-        const result = findProcessAcrossSessions(processId, sessionManager);
+        const result = await findProcessAcrossSessions(processId, sessionManager);
         if (!result) {
             return createErrorResponse(
                 "Process not found",
@@ -440,6 +440,21 @@ export async function handleStreamProcessLogsRequest(
         }
 
         const { process: targetProcess, sessionName } = result;
+        
+        // Get the session to start monitoring
+        const session = sessionManager.getSession(sessionName);
+        if (!session) {
+            return createErrorResponse(
+                "Session not found",
+                sessionName,
+                404,
+                corsHeaders
+            );
+        }
+
+        // Store listeners outside the stream for proper cleanup
+        let outputListener: ((stream: 'stdout' | 'stderr', data: string) => void) | null = null;
+        let statusListener: ((status: ProcessStatus) => void) | null = null;
 
         // Create a stream that sends updates
         const stream = new ReadableStream({
@@ -450,7 +465,8 @@ export async function handleStreamProcessLogsRequest(
                         type: 'stdout', 
                         data: targetProcess.stdout,
                         processId,
-                        sessionName
+                        sessionName,
+                        timestamp: new Date().toISOString()
                     })}\n\n`));
                 }
                 
@@ -459,7 +475,8 @@ export async function handleStreamProcessLogsRequest(
                         type: 'stderr', 
                         data: targetProcess.stderr,
                         processId,
-                        sessionName
+                        sessionName,
+                        timestamp: new Date().toISOString()
                     })}\n\n`));
                 }
                 
@@ -470,30 +487,33 @@ export async function handleStreamProcessLogsRequest(
                         status: targetProcess.status,
                         exitCode: targetProcess.exitCode,
                         processId,
-                        sessionName
+                        sessionName,
+                        timestamp: new Date().toISOString()
                     })}\n\n`));
                     controller.close();
                     return;
                 }
                 
                 // Set up listeners for live updates
-                const outputListener = (stream: 'stdout' | 'stderr', data: string) => {
+                outputListener = (stream: 'stdout' | 'stderr', data: string) => {
                     controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ 
                         type: stream, 
                         data,
                         processId,
-                        sessionName
+                        sessionName,
+                        timestamp: new Date().toISOString()
                     })}\n\n`));
                 };
                 
-                const statusListener = (status: ProcessStatus) => {
+                statusListener = (status: ProcessStatus) => {
                     if (status === 'completed' || status === 'failed' || status === 'killed') {
                         controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ 
                             type: 'complete', 
                             status,
                             exitCode: targetProcess.exitCode,
                             processId,
-                            sessionName
+                            sessionName,
+                            timestamp: new Date().toISOString()
                         })}\n\n`));
                         controller.close();
                     }
@@ -501,6 +521,24 @@ export async function handleStreamProcessLogsRequest(
                 
                 targetProcess.outputListeners.add(outputListener);
                 targetProcess.statusListeners.add(statusListener);
+                
+                // Start monitoring the process for output changes
+                session.startProcessMonitoring(targetProcess);
+            },
+            cancel() {
+                // Clean up when stream is closed (client disconnects)
+                // Remove only this stream's listeners, not all listeners
+                if (outputListener) {
+                    targetProcess.outputListeners.delete(outputListener);
+                }
+                if (statusListener) {
+                    targetProcess.statusListeners.delete(statusListener);
+                }
+                
+                // Stop monitoring if no more listeners
+                if (targetProcess.outputListeners.size === 0) {
+                    session.stopProcessMonitoring(targetProcess);
+                }
             }
         });
 

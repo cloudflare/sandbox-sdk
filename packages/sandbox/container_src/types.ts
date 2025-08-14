@@ -17,11 +17,13 @@ export interface ProcessRecord {
   startTime: Date;
   endTime?: Date;
   exitCode?: number;
-  childProcess?: ChildProcess;
+  stdoutFile?: string;  // Path to temp file containing stdout
+  stderrFile?: string;  // Path to temp file containing stderr
   stdout: string;
   stderr: string;
   outputListeners: Set<(stream: 'stdout' | 'stderr', data: string) => void>;
   statusListeners: Set<(status: ProcessStatus) => void>;
+  monitoringInterval?: NodeJS.Timeout;  // For polling temp files when streaming
 }
 
 export interface StartProcessRequest {

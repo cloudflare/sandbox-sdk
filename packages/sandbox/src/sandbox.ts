@@ -660,7 +660,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       },
       
       streamProcessLogs: async (processId: string, options?: { signal?: AbortSignal }) => {
-        return await this.client.streamProcessLogs(processId);
+        return await this.client.streamProcessLogs(processId, options);
       },
       
       getProcessLogs: async (id: string) => {

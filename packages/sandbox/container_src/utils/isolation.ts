@@ -1109,6 +1109,10 @@ SANDBOX_EOF`;
     
     console.log(`[Session ${this.options.name}] Starting process: ${command} (ID: ${processId})`);
     
+    // Create separate temp files for stdout and stderr
+    const stdoutFile = `/tmp/proc_${processId}.stdout`;
+    const stderrFile = `/tmp/proc_${processId}.stderr`;
+    
     // Create process record
     const processRecord: ProcessRecord = {
       id: processId,
@@ -1123,66 +1127,212 @@ SANDBOX_EOF`;
     
     this.processes.set(processId, processRecord);
     
-    // Start the process using session's exec
-    const execPromise = this.exec(command, { cwd: options?.cwd });
+    // Start the process in background with nohup
+    // Keep stdout and stderr separate
+    const backgroundCommand = `nohup ${command} > ${stdoutFile} 2> ${stderrFile} & echo $!`;
     
-    // Handle process completion
-    execPromise.then(result => {
-      processRecord.status = result.exitCode === 0 ? 'completed' : 'failed';
-      processRecord.exitCode = result.exitCode;
-      processRecord.endTime = new Date();
-      processRecord.stdout = result.stdout;
-      processRecord.stderr = result.stderr;
+    try {
+      // Execute the background command and get PID directly
+      const result = await this.exec(backgroundCommand, { cwd: options?.cwd });
+      const pid = parseInt(result.stdout.trim(), 10);
       
-      // Notify status listeners
-      for (const listener of processRecord.statusListeners) {
-        listener(processRecord.status);
+      if (isNaN(pid)) {
+        throw new Error(`Failed to get process PID from output: ${result.stdout}`);
       }
-    }).catch(error => {
+      
+      processRecord.pid = pid;
+      processRecord.status = 'running';
+      
+      // Store the output file paths for later retrieval
+      processRecord.stdoutFile = stdoutFile;
+      processRecord.stderrFile = stderrFile;
+      
+      console.log(`[Session ${this.options.name}] Process ${processId} started with PID ${pid}`);
+      
+    } catch (error) {
       processRecord.status = 'error';
       processRecord.endTime = new Date();
-      processRecord.stderr += `\nError: ${error.message}`;
+      processRecord.stderr = `Failed to start process: ${error.message}`;
       
       // Notify status listeners
       for (const listener of processRecord.statusListeners) {
         listener('error');
       }
-    });
-    
-    // Set status to running
-    processRecord.status = 'running';
+      
+      // Clean up temp files
+      this.exec(`rm -f ${stdoutFile} ${stderrFile}`).catch(() => {});
+      
+      throw error;
+    }
     
     return processRecord;
   }
   
-  getProcess(processId: string): ProcessRecord | undefined {
-    return this.processes.get(processId);
+  // Check and update process status on-demand
+  private async updateProcessStatus(processRecord: ProcessRecord): Promise<void> {
+    if (!processRecord.pid || processRecord.status !== 'running') {
+      return; // Nothing to check
+    }
+    
+    try {
+      // Check if process is still running (kill -0 just checks, doesn't actually kill)
+      const checkResult = await this.exec(`kill -0 ${processRecord.pid} 2>/dev/null && echo "running" || echo "stopped"`);
+      const isRunning = checkResult.stdout.trim() === 'running';
+      
+      if (!isRunning) {
+        // Process has stopped
+        processRecord.status = 'completed';
+        processRecord.endTime = new Date();
+        
+        // Try to get exit status from wait (may not work if process already reaped)
+        try {
+          const waitResult = await this.exec(`wait ${processRecord.pid} 2>/dev/null; echo $?`);
+          const exitCode = parseInt(waitResult.stdout.trim(), 10);
+          if (!isNaN(exitCode)) {
+            processRecord.exitCode = exitCode;
+            if (exitCode !== 0) {
+              processRecord.status = 'failed';
+            }
+          }
+        } catch {
+          // Can't get exit code, that's okay
+        }
+        
+        // Read final output if not already cached
+        if ((processRecord.stdoutFile || processRecord.stderrFile) && (!processRecord.stdout && !processRecord.stderr)) {
+          await this.updateProcessLogs(processRecord);
+        }
+        
+        // Notify status listeners
+        for (const listener of processRecord.statusListeners) {
+          listener(processRecord.status);
+        }
+        
+        console.log(`[Session ${this.options.name}] Process ${processRecord.id} completed with status: ${processRecord.status}`);
+      }
+    } catch (error) {
+      console.error(`[Session ${this.options.name}] Error checking process ${processRecord.id} status:`, error);
+    }
   }
   
-  listProcesses(): ProcessRecord[] {
-    return Array.from(this.processes.values());
+  // Update process logs from output files
+  private async updateProcessLogs(processRecord: ProcessRecord): Promise<void> {
+    if (!processRecord.stdoutFile && !processRecord.stderrFile) {
+      return;
+    }
+    
+    try {
+      // Read stdout
+      if (processRecord.stdoutFile) {
+        const result = await this.exec(`cat ${processRecord.stdoutFile} 2>/dev/null || true`);
+        const newStdout = result.stdout;
+        
+        // Check if there's new stdout
+        if (newStdout.length > processRecord.stdout.length) {
+          const delta = newStdout.substring(processRecord.stdout.length);
+          processRecord.stdout = newStdout;
+          
+          // Notify output listeners if any
+          for (const listener of processRecord.outputListeners) {
+            listener('stdout', delta);
+          }
+        }
+      }
+      
+      // Read stderr
+      if (processRecord.stderrFile) {
+        const result = await this.exec(`cat ${processRecord.stderrFile} 2>/dev/null || true`);
+        const newStderr = result.stdout; // Note: reading stderr file content from result.stdout
+        
+        // Check if there's new stderr
+        if (newStderr.length > processRecord.stderr.length) {
+          const delta = newStderr.substring(processRecord.stderr.length);
+          processRecord.stderr = newStderr;
+          
+          // Notify output listeners if any
+          for (const listener of processRecord.outputListeners) {
+            listener('stderr', delta);
+          }
+        }
+      }
+    } catch (error) {
+      console.error(`[Session ${this.options.name}] Error reading process ${processRecord.id} logs:`, error);
+    }
   }
   
-  killProcess(processId: string): boolean {
+  async getProcess(processId: string): Promise<ProcessRecord | undefined> {
+    const process = this.processes.get(processId);
+    if (process) {
+      // Update status before returning
+      await this.updateProcessStatus(process);
+    }
+    return process;
+  }
+  
+  async listProcesses(): Promise<ProcessRecord[]> {
+    const processes = Array.from(this.processes.values());
+    
+    // Update status for all running processes
+    for (const process of processes) {
+      if (process.status === 'running') {
+        await this.updateProcessStatus(process);
+      }
+    }
+    
+    return processes;
+  }
+  
+  async killProcess(processId: string): Promise<boolean> {
     const process = this.processes.get(processId);
     if (!process) {
       return false;
     }
     
-    // If process has a child process, kill it
-    if (process.childProcess && !process.childProcess.killed) {
-      process.childProcess.kill('SIGTERM');
+    // Stop monitoring first
+    this.stopProcessMonitoring(process);
+    
+    // Only try to kill if process is running
+    if (process.pid && (process.status === 'running' || process.status === 'starting')) {
+      try {
+        // Send SIGTERM to the process
+        await this.exec(`kill ${process.pid} 2>/dev/null || true`);
+        console.log(`[Session ${this.options.name}] Sent SIGTERM to process ${processId} (PID: ${process.pid})`);
+        
+        // Give it a moment to terminate gracefully (500ms), then force kill if needed
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        // Check if still running and force kill if needed
+        const checkResult = await this.exec(`kill -0 ${process.pid} 2>/dev/null && echo "running" || echo "stopped"`);
+        if (checkResult.stdout.trim() === 'running') {
+          await this.exec(`kill -9 ${process.pid} 2>/dev/null || true`);
+          console.log(`[Session ${this.options.name}] Force killed process ${processId} (PID: ${process.pid})`);
+        }
+      } catch (error) {
+        console.error(`[Session ${this.options.name}] Error killing process ${processId}:`, error);
+      }
+      
       process.status = 'killed';
       process.endTime = new Date();
+      
+      // Read final output before cleanup
+      if (process.stdoutFile || process.stderrFile) {
+        await this.updateProcessLogs(process);
+      }
       
       // Notify status listeners
       for (const listener of process.statusListeners) {
         listener('killed');
       }
+      
+      // Clean up temp files
+      if (process.stdoutFile || process.stderrFile) {
+        this.exec(`rm -f ${process.stdoutFile} ${process.stderrFile}`).catch(() => {});
+      }
+      
       return true;
     }
     
-    // Mark as killed even if no active child process
+    // Process not running, just update status
     if (process.status === 'running' || process.status === 'starting') {
       process.status = 'killed';
       process.endTime = new Date();
@@ -1196,19 +1346,84 @@ SANDBOX_EOF`;
     return true;
   }
   
-  killAllProcesses(): number {
+  async killAllProcesses(): Promise<number> {
     let killedCount = 0;
     for (const [id, _] of this.processes) {
-      if (this.killProcess(id)) {
+      if (await this.killProcess(id)) {
         killedCount++;
       }
     }
     return killedCount;
   }
+  
+  // Get process logs (updates from files if needed)
+  async getProcessLogs(processId: string): Promise<{ stdout: string; stderr: string }> {
+    const process = this.processes.get(processId);
+    if (!process) {
+      throw new Error(`Process not found: ${processId}`);
+    }
+    
+    // Update logs from files
+    if (process.stdoutFile || process.stderrFile) {
+      await this.updateProcessLogs(process);
+    }
+    
+    // Return current logs
+    return {
+      stdout: process.stdout,
+      stderr: process.stderr
+    };
+  }
+  
+  // Start monitoring a process for output changes
+  startProcessMonitoring(processRecord: ProcessRecord): void {
+    // Don't monitor if already monitoring or process not running
+    if (processRecord.monitoringInterval || processRecord.status !== 'running') {
+      return;
+    }
+    
+    console.log(`[Session ${this.options.name}] Starting monitoring for process ${processRecord.id}`);
+    
+    // Poll every 100ms for near real-time updates
+    processRecord.monitoringInterval = setInterval(async () => {
+      // Stop monitoring if no listeners or process not running
+      if (processRecord.outputListeners.size === 0 || processRecord.status !== 'running') {
+        this.stopProcessMonitoring(processRecord);
+        return;
+      }
+      
+      // Update logs from temp files (this will notify listeners if there's new content)
+      await this.updateProcessLogs(processRecord);
+      
+      // Also check if process is still running
+      await this.updateProcessStatus(processRecord);
+    }, 100);
+  }
+  
+  // Stop monitoring a process
+  stopProcessMonitoring(processRecord: ProcessRecord): void {
+    if (processRecord.monitoringInterval) {
+      console.log(`[Session ${this.options.name}] Stopping monitoring for process ${processRecord.id}`);
+      clearInterval(processRecord.monitoringInterval);
+      processRecord.monitoringInterval = undefined;
+    }
+  }
 
-  destroy(): void {
-    // Kill all processes first
-    this.killAllProcesses();
+  async destroy(): Promise<void> {
+    // Stop all monitoring intervals first
+    for (const process of this.processes.values()) {
+      this.stopProcessMonitoring(process);
+    }
+    
+    // Kill all processes
+    await this.killAllProcesses();
+    
+    // Clean up all temp files
+    for (const [id, process] of this.processes) {
+      if (process.stdoutFile || process.stderrFile) {
+        await this.exec(`rm -f ${process.stdoutFile} ${process.stderrFile}`).catch(() => {});
+      }
+    }
     
     if (this.control) {
       // Send exit command
@@ -1317,9 +1532,9 @@ export class SessionManager {
     return defaultSession.listFilesOperation(path, options);
   }
   
-  destroyAll(): void {
+  async destroyAll(): Promise<void> {
     for (const session of this.sessions.values()) {
-      session.destroy();
+      await session.destroy();
     }
     this.sessions.clear();
   }

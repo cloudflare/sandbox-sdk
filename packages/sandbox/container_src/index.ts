@@ -57,26 +57,26 @@ const sessionManager = new SessionManager();
 // Graceful shutdown handler
 const SHUTDOWN_GRACE_PERIOD_MS = 500; // Grace period for cleanup
 
-process.on("SIGTERM", () => {
+process.on("SIGTERM", async () => {
   console.log("[Container] SIGTERM received, cleaning up sessions...");
-  sessionManager.destroyAll();
+  await sessionManager.destroyAll();
   setTimeout(() => {
     process.exit(0);
   }, SHUTDOWN_GRACE_PERIOD_MS);
 });
 
-process.on("SIGINT", () => {
+process.on("SIGINT", async () => {
   console.log("[Container] SIGINT received, cleaning up sessions...");
-  sessionManager.destroyAll();
+  await sessionManager.destroyAll();
   setTimeout(() => {
     process.exit(0);
   }, SHUTDOWN_GRACE_PERIOD_MS);
 });
 
 // Cleanup on uncaught exceptions (log but still exit)
-process.on("uncaughtException", (error) => {
+process.on("uncaughtException", async (error) => {
   console.error("[Container] Uncaught exception:", error);
-  sessionManager.destroyAll();
+  await sessionManager.destroyAll();
   process.exit(1);
 });
 
@@ -489,47 +489,19 @@ const server = serve({
                 );
               }
 
-              // Create a streaming response
+              // Create a streaming response using the actual streaming method
               const stream = new ReadableStream({
                 async start(controller) {
                   try {
-                    const result = await session.exec(command);
-
-                    // Send stdout if any
-                    if (result.stdout) {
+                    // Use the streaming generator method
+                    for await (const event of session.execStream(command)) {
+                      // Forward each event as SSE
                       controller.enqueue(
                         new TextEncoder().encode(
-                          `data: ${JSON.stringify({
-                            type: "stdout",
-                            data: result.stdout,
-                          })}\n\n`
+                          `data: ${JSON.stringify(event)}\n\n`
                         )
                       );
                     }
-
-                    // Send stderr if any
-                    if (result.stderr) {
-                      controller.enqueue(
-                        new TextEncoder().encode(
-                          `data: ${JSON.stringify({
-                            type: "stderr",
-                            data: result.stderr,
-                          })}\n\n`
-                        )
-                      );
-                    }
-
-                    // Send completion
-                    controller.enqueue(
-                      new TextEncoder().encode(
-                        `data: ${JSON.stringify({
-                          type: "complete",
-                          exitCode: result.exitCode,
-                          success: result.success,
-                        })}\n\n`
-                      )
-                    );
-
                     controller.close();
                   } catch (error) {
                     controller.enqueue(
