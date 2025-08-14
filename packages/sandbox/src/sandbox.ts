@@ -147,14 +147,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   // Helper to ensure default session is initialized
   private async ensureDefaultSession(): Promise<ExecutionSession> {
     if (!this.defaultSession) {
-      const sessionName = `sandbox-${this.sandboxName || 'default'}`;
+      const sessionId = `sandbox-${this.sandboxName || 'default'}`;
       this.defaultSession = await this.createSession({
-        name: sessionName,
+        id: sessionId,
         env: this.envVars || {},
         cwd: '/workspace',
         isolation: true
       });
-      console.log(`[Sandbox] Default session initialized: ${sessionName}`);
+      console.log(`[Sandbox] Default session initialized: ${sessionId}`);
     }
     return this.defaultSession;
   }
@@ -530,26 +530,26 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    */
 
   async createSession(options: {
-    name?: string;
+    id?: string;
     env?: Record<string, string>;
     cwd?: string;
     isolation?: boolean;
   }): Promise<ExecutionSession> {
-    const sessionName = options.name || `session-${Date.now()}`;
+    const sessionId = options.id || `session-${Date.now()}`;
     
     await this.client.createSession({
-      name: sessionName,
+      id: sessionId,
       env: options.env,
       cwd: options.cwd,
       isolation: options.isolation
     });
     // Return comprehensive ExecutionSession object that implements all ISandbox methods
     return {
-      name: sessionName,
+      id: sessionId,
       
       // Command execution - clean method names
       exec: async (command: string, options?: ExecOptions) => {
-        const result = await this.client.exec(sessionName, command);
+        const result = await this.client.exec(sessionId, command);
         return {
           ...result,
           command,
@@ -559,13 +559,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       },
       
       execStream: async (command: string, options?: StreamOptions) => {
-        return await this.client.execStream(sessionName, command);
+        return await this.client.execStream(sessionId, command);
       },
       
       // Process management - route to session-aware methods
       startProcess: async (command: string, options?: ProcessOptions) => {
         // Use session-specific process management
-        const response = await this.client.startProcess(command, sessionName, {
+        const response = await this.client.startProcess(command, sessionId, {
           processId: options?.processId,
           timeout: options?.timeout,
           env: options?.env,
@@ -599,7 +599,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       
       listProcesses: async () => {
         // Get processes for this specific session
-        const response = await this.client.listProcesses(sessionName);
+        const response = await this.client.listProcesses(sessionId);
         
         // Convert to Process objects with bound methods
         return response.processes.map(p => ({
@@ -655,7 +655,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       
       killAllProcesses: async () => {
         // Kill all processes for this specific session
-        const response = await this.client.killAllProcesses(sessionName);
+        const response = await this.client.killAllProcesses(sessionId);
         return response.killedCount;
       },
       
@@ -675,35 +675,35 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       
       // File operations - clean method names (no "InSession" suffix)
       writeFile: async (path: string, content: string, options?: { encoding?: string }) => {
-        return await this.client.writeFile(path, content, options?.encoding, sessionName);
+        return await this.client.writeFile(path, content, options?.encoding, sessionId);
       },
       
       readFile: async (path: string, options?: { encoding?: string }) => {
-        return await this.client.readFile(path, options?.encoding, sessionName);
+        return await this.client.readFile(path, options?.encoding, sessionId);
       },
       
       mkdir: async (path: string, options?: { recursive?: boolean }) => {
-        return await this.client.mkdir(path, options?.recursive, sessionName);
+        return await this.client.mkdir(path, options?.recursive, sessionId);
       },
       
       deleteFile: async (path: string) => {
-        return await this.client.deleteFile(path, sessionName);
+        return await this.client.deleteFile(path, sessionId);
       },
       
       renameFile: async (oldPath: string, newPath: string) => {
-        return await this.client.renameFile(oldPath, newPath, sessionName);
+        return await this.client.renameFile(oldPath, newPath, sessionId);
       },
       
       moveFile: async (sourcePath: string, destinationPath: string) => {
-        return await this.client.moveFile(sourcePath, destinationPath, sessionName);
+        return await this.client.moveFile(sourcePath, destinationPath, sessionId);
       },
       
       listFiles: async (path: string, options?: { recursive?: boolean; includeHidden?: boolean }) => {
-        return await this.client.listFiles(path, sessionName, options);
+        return await this.client.listFiles(path, sessionId, options);
       },
       
       gitCheckout: async (repoUrl: string, options?: { branch?: string; targetDir?: string }) => {
-        return await this.client.gitCheckout(repoUrl, sessionName, options?.branch, options?.targetDir);
+        return await this.client.gitCheckout(repoUrl, sessionId, options?.branch, options?.targetDir);
       },
       
       // Port management
@@ -722,7 +722,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       // Environment management
       setEnvVars: async (envVars: Record<string, string>) => {
         // TODO: Implement session-specific environment updates
-        console.log(`[Session ${sessionName}] Environment variables update not yet implemented`);
+        console.log(`[Session ${sessionId}] Environment variables update not yet implemented`);
       },
       
       // Code Interpreter API

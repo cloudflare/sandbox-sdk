@@ -4,7 +4,7 @@ import type { SessionManager } from "../utils/isolation";
 
 async function executeGitCheckout(
   sessionManager: SessionManager,
-  sessionName: string | undefined,
+  sessionId: string | undefined,
   repoUrl: string,
   branch: string,
   targetDir: string
@@ -18,13 +18,13 @@ async function executeGitCheckout(
   const command = `git clone -b ${branch} ${repoUrl} ${targetDir}`;
   
   // Use specific session if provided, otherwise use default session
-  const session = sessionName 
-    ? sessionManager.getSession(sessionName) 
+  const session = sessionId 
+    ? sessionManager.getSession(sessionId) 
     : sessionManager.getSession('default');
     
   if (!session) {
     // Create default session if it doesn't exist
-    if (!sessionName || sessionName === 'default') {
+    if (!sessionId || sessionId === 'default') {
       await sessionManager.createSession({
         name: 'default',
         cwd: '/workspace',
@@ -36,7 +36,7 @@ async function executeGitCheckout(
       }
       return defaultSession.exec(command);
     }
-    throw new Error(`Session '${sessionName}' not found`);
+    throw new Error(`Session '${sessionId}' not found`);
   }
   
   return session.exec(command);
@@ -49,7 +49,7 @@ export async function handleGitCheckoutRequest(
 ): Promise<Response> {
   try {
     const body = (await req.json()) as GitCheckoutRequest;
-    const { repoUrl, branch = "main", targetDir, sessionName } = body;
+    const { repoUrl, branch = "main", targetDir, sessionId } = body;
 
     if (!repoUrl || typeof repoUrl !== "string") {
       return new Response(
@@ -90,12 +90,12 @@ export async function handleGitCheckoutRequest(
       `repo_${Date.now()}_${randomBytes(6).toString('hex')}`;
 
     console.log(
-      `[Server] Checking out repository: ${repoUrl} to ${checkoutDir}${sessionName ? ` in session: ${sessionName}` : ''}`
+      `[Server] Checking out repository: ${repoUrl} to ${checkoutDir}${sessionId ? ` in session: ${sessionId}` : ''}`
     );
 
     const result = await executeGitCheckout(
       sessionManager,
-      sessionName,
+      sessionId,
       repoUrl,
       branch,
       checkoutDir

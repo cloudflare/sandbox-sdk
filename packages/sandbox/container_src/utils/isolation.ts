@@ -56,7 +56,7 @@ export interface RawExecResult {
 }
 
 export interface SessionOptions {
-  name: string;
+  id: string;
   env?: Record<string, string>;
   cwd?: string;
   isolation?: boolean;
@@ -128,7 +128,7 @@ export class Session {
   constructor(private options: SessionOptions) {
     this.canIsolate = (options.isolation === true) && hasNamespaceSupport();
     if (options.isolation === true && !this.canIsolate) {
-      console.log(`[Session] Isolation requested for '${options.name}' but not available`);
+      console.log(`[Session] Isolation requested for '${options.id}' but not available`);
     }
   }
   
@@ -144,7 +144,7 @@ export class Session {
       stdio: ['pipe', 'pipe', 'pipe'],
       env: {
         ...process.env,
-        SESSION_NAME: this.options.name,
+        SESSION_ID: this.options.id,
         SESSION_CWD: this.options.cwd || CONFIG.DEFAULT_CWD,
         SESSION_ISOLATED: this.canIsolate ? '1' : '0',
         ...this.options.env
@@ -167,16 +167,16 @@ export class Session {
     
     // Handle control process errors
     this.control.stderr?.on('data', (data: Buffer) => {
-      console.error(`[Session] Control stderr for '${this.options.name}': ${data.toString()}`);
+      console.error(`[Session] Control stderr for '${this.options.id}': ${data.toString()}`);
     });
     
     this.control.on('error', (error) => {
-      console.error(`[Session] Control process error for '${this.options.name}':`, error);
+      console.error(`[Session] Control process error for '${this.options.id}':`, error);
       this.cleanup(error);
     });
     
     this.control.on('exit', (code) => {
-      console.log(`[Session] Control process exited for '${this.options.name}' with code ${code}`);
+      console.log(`[Session] Control process exited for '${this.options.id}' with code ${code}`);
       this.cleanup(new Error(`Control process exited with code ${code}`));
     });
     
@@ -186,7 +186,7 @@ export class Session {
     // Clean up temp script
     await fs.unlink(scriptPath).catch(() => {});
     
-    console.log(`[Session] Session '${this.options.name}' initialized successfully`);
+    console.log(`[Session] Session '${this.options.id}' initialized successfully`);
   }
   
   /**
@@ -205,7 +205,7 @@ const path = require('path');
 const crypto = require('crypto');
 
 // Parse environment
-const sessionName = process.env.SESSION_NAME || 'default';
+const sessionId = process.env.SESSION_ID || 'default';
 const sessionCwd = process.env.SESSION_CWD || '${CONFIG.DEFAULT_CWD}';
 const isIsolated = process.env.SESSION_ISOLATED === '1';
 
@@ -215,7 +215,7 @@ const CLEANUP_INTERVAL_MS = ${CONFIG.CLEANUP_INTERVAL_MS};
 const TEMP_FILE_MAX_AGE_MS = ${CONFIG.TEMP_FILE_MAX_AGE_MS};
 const TEMP_DIR = '${CONFIG.TEMP_DIR}';
 
-console.error(\`[Control] Starting control process for session '\${sessionName}'\`);
+console.error(\`[Control] Starting control process for session '\${sessionId}'\`);
 
 // Track active command files for cleanup
 const activeFiles = new Set();
@@ -780,7 +780,7 @@ process.stdin.resume();
   
   async exec(command: string, options?: { cwd?: string }): Promise<ExecResult> {
     if (!this.ready || !this.control) {
-      throw new Error(`Session '${this.options.name}' not initialized`);
+      throw new Error(`Session '${this.options.id}' not initialized`);
     }
     
     const id = randomUUID();
@@ -815,7 +815,7 @@ process.stdin.resume();
 
   async *execStream(command: string, options?: { cwd?: string }): AsyncGenerator<ExecEvent> {
     if (!this.ready || !this.control) {
-      throw new Error(`Session '${this.options.name}' not initialized`);
+      throw new Error(`Session '${this.options.id}' not initialized`);
     }
     
     const id = randomUUID();
@@ -1107,7 +1107,7 @@ SANDBOX_EOF`;
       throw new Error(`Process already exists in session: ${processId}`);
     }
     
-    console.log(`[Session ${this.options.name}] Starting process: ${command} (ID: ${processId})`);
+    console.log(`[Session ${this.options.id}] Starting process: ${command} (ID: ${processId})`);
     
     // Create separate temp files for stdout and stderr
     const stdoutFile = `/tmp/proc_${processId}.stdout`;
@@ -1136,7 +1136,7 @@ SANDBOX_EOF`;
       const result = await this.exec(backgroundCommand, { cwd: options?.cwd });
       const pid = parseInt(result.stdout.trim(), 10);
       
-      if (isNaN(pid)) {
+      if (Number.isNaN(pid)) {
         throw new Error(`Failed to get process PID from output: ${result.stdout}`);
       }
       
@@ -1147,7 +1147,7 @@ SANDBOX_EOF`;
       processRecord.stdoutFile = stdoutFile;
       processRecord.stderrFile = stderrFile;
       
-      console.log(`[Session ${this.options.name}] Process ${processId} started with PID ${pid}`);
+      console.log(`[Session ${this.options.id}] Process ${processId} started with PID ${pid}`);
       
     } catch (error) {
       processRecord.status = 'error';
@@ -1188,7 +1188,7 @@ SANDBOX_EOF`;
         try {
           const waitResult = await this.exec(`wait ${processRecord.pid} 2>/dev/null; echo $?`);
           const exitCode = parseInt(waitResult.stdout.trim(), 10);
-          if (!isNaN(exitCode)) {
+          if (!Number.isNaN(exitCode)) {
             processRecord.exitCode = exitCode;
             if (exitCode !== 0) {
               processRecord.status = 'failed';
@@ -1208,10 +1208,10 @@ SANDBOX_EOF`;
           listener(processRecord.status);
         }
         
-        console.log(`[Session ${this.options.name}] Process ${processRecord.id} completed with status: ${processRecord.status}`);
+        console.log(`[Session ${this.options.id}] Process ${processRecord.id} completed with status: ${processRecord.status}`);
       }
     } catch (error) {
-      console.error(`[Session ${this.options.name}] Error checking process ${processRecord.id} status:`, error);
+      console.error(`[Session ${this.options.id}] Error checking process ${processRecord.id} status:`, error);
     }
   }
   
@@ -1256,7 +1256,7 @@ SANDBOX_EOF`;
         }
       }
     } catch (error) {
-      console.error(`[Session ${this.options.name}] Error reading process ${processRecord.id} logs:`, error);
+      console.error(`[Session ${this.options.id}] Error reading process ${processRecord.id} logs:`, error);
     }
   }
   
@@ -1296,7 +1296,7 @@ SANDBOX_EOF`;
       try {
         // Send SIGTERM to the process
         await this.exec(`kill ${process.pid} 2>/dev/null || true`);
-        console.log(`[Session ${this.options.name}] Sent SIGTERM to process ${processId} (PID: ${process.pid})`);
+        console.log(`[Session ${this.options.id}] Sent SIGTERM to process ${processId} (PID: ${process.pid})`);
         
         // Give it a moment to terminate gracefully (500ms), then force kill if needed
         await new Promise(resolve => setTimeout(resolve, 500));
@@ -1305,10 +1305,10 @@ SANDBOX_EOF`;
         const checkResult = await this.exec(`kill -0 ${process.pid} 2>/dev/null && echo "running" || echo "stopped"`);
         if (checkResult.stdout.trim() === 'running') {
           await this.exec(`kill -9 ${process.pid} 2>/dev/null || true`);
-          console.log(`[Session ${this.options.name}] Force killed process ${processId} (PID: ${process.pid})`);
+          console.log(`[Session ${this.options.id}] Force killed process ${processId} (PID: ${process.pid})`);
         }
       } catch (error) {
-        console.error(`[Session ${this.options.name}] Error killing process ${processId}:`, error);
+        console.error(`[Session ${this.options.id}] Error killing process ${processId}:`, error);
       }
       
       process.status = 'killed';
@@ -1382,7 +1382,7 @@ SANDBOX_EOF`;
       return;
     }
     
-    console.log(`[Session ${this.options.name}] Starting monitoring for process ${processRecord.id}`);
+    console.log(`[Session ${this.options.id}] Starting monitoring for process ${processRecord.id}`);
     
     // Poll every 100ms for near real-time updates
     processRecord.monitoringInterval = setInterval(async () => {
@@ -1403,7 +1403,7 @@ SANDBOX_EOF`;
   // Stop monitoring a process
   stopProcessMonitoring(processRecord: ProcessRecord): void {
     if (processRecord.monitoringInterval) {
-      console.log(`[Session ${this.options.name}] Stopping monitoring for process ${processRecord.id}`);
+      console.log(`[Session ${this.options.id}] Stopping monitoring for process ${processRecord.id}`);
       clearInterval(processRecord.monitoringInterval);
       processRecord.monitoringInterval = undefined;
     }
@@ -1451,7 +1451,7 @@ export class SessionManager {
   
   async createSession(options: SessionOptions): Promise<Session> {
     // Clean up existing session with same name
-    const existing = this.sessions.get(options.name);
+    const existing = this.sessions.get(options.id);
     if (existing) {
       existing.destroy();
     }
@@ -1460,13 +1460,13 @@ export class SessionManager {
     const session = new Session(options);
     await session.initialize();
     
-    this.sessions.set(options.name, session);
-    console.log(`[SessionManager] Created session '${options.name}'`);
+    this.sessions.set(options.id, session);
+    console.log(`[SessionManager] Created session '${options.id}'`);
     return session;
   }
   
-  getSession(name: string): Session | undefined {
-    return this.sessions.get(name);
+  getSession(id: string): Session | undefined {
+    return this.sessions.get(id);
   }
   
   listSessions(): string[] {

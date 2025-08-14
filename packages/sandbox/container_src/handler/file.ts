@@ -85,7 +85,7 @@ export async function handleMkdirRequest(
 ): Promise<Response> {
     try {
         const body = (await req.json()) as MkdirRequest;
-        const { path, recursive = false, sessionName } = body;
+        const { path, recursive = false, sessionId } = body;
 
         // Validate path
         const pathError = validatePath(path);
@@ -93,15 +93,15 @@ export async function handleMkdirRequest(
             return createPathErrorResponse(pathError, corsHeaders);
         }
 
-        console.log(`[Server] Creating directory: ${path} (recursive: ${recursive})${sessionName ? ` in session: ${sessionName}` : ''}`);
+        console.log(`[Server] Creating directory: ${path} (recursive: ${recursive})${sessionId ? ` in session: ${sessionId}` : ''}`);
 
         // Use specific session if provided, otherwise default session
-        const result = sessionName
-            ? await sessionManager.getSession(sessionName)?.mkdirOperation(path, recursive)
+        const result = sessionId
+            ? await sessionManager.getSession(sessionId)?.mkdirOperation(path, recursive)
             : await sessionManager.mkdir(path, recursive);
         
         if (!result) {
-            return createServerErrorResponse("handleMkdirRequest", new Error(`Session '${sessionName}' not found`), corsHeaders);
+            return createServerErrorResponse("handleMkdirRequest", new Error(`Session '${sessionId}' not found`), corsHeaders);
         }
 
         return new Response(
@@ -133,7 +133,7 @@ export async function handleWriteFileRequest(
 ): Promise<Response> {
     try {
         const body = (await req.json()) as WriteFileRequest;
-        const { path, content, encoding = "utf-8", sessionName } = body;
+        const { path, content, encoding = "utf-8", sessionId } = body;
 
         // Validate path
         const pathError = validatePath(path);
@@ -141,15 +141,15 @@ export async function handleWriteFileRequest(
             return createPathErrorResponse(pathError, corsHeaders);
         }
 
-        console.log(`[Server] Writing file: ${path} (content length: ${content.length})${sessionName ? ` in session: ${sessionName}` : ''}`);
+        console.log(`[Server] Writing file: ${path} (content length: ${content.length})${sessionId ? ` in session: ${sessionId}` : ''}`);
 
         // Use specific session if provided, otherwise default session
-        const result = sessionName
-            ? await sessionManager.getSession(sessionName)?.writeFileOperation(path, content, encoding)
+        const result = sessionId
+            ? await sessionManager.getSession(sessionId)?.writeFileOperation(path, content, encoding)
             : await sessionManager.writeFile(path, content, encoding);
         
         if (!result) {
-            return createServerErrorResponse("handleWriteFileRequest", new Error(`Session '${sessionName}' not found`), corsHeaders);
+            return createServerErrorResponse("handleWriteFileRequest", new Error(`Session '${sessionId}' not found`), corsHeaders);
         }
 
         return new Response(
@@ -178,7 +178,7 @@ export async function handleReadFileRequest(
 ): Promise<Response> {
     try {
         const body = (await req.json()) as ReadFileRequest;
-        const { path, encoding = "utf-8", sessionName } = body;
+        const { path, encoding = "utf-8", sessionId } = body;
 
         // Validate path
         const pathError = validatePath(path);
@@ -186,15 +186,15 @@ export async function handleReadFileRequest(
             return createPathErrorResponse(pathError, corsHeaders);
         }
 
-        console.log(`[Server] Reading file: ${path}${sessionName ? ` in session: ${sessionName}` : ''}`);
+        console.log(`[Server] Reading file: ${path}${sessionId ? ` in session: ${sessionId}` : ''}`);
 
         // Use specific session if provided, otherwise default session
-        const result = sessionName
-            ? await sessionManager.getSession(sessionName)?.readFileOperation(path, encoding)
+        const result = sessionId
+            ? await sessionManager.getSession(sessionId)?.readFileOperation(path, encoding)
             : await sessionManager.readFile(path, encoding);
         
         if (!result) {
-            return createServerErrorResponse("handleReadFileRequest", new Error(`Session '${sessionName}' not found`), corsHeaders);
+            return createServerErrorResponse("handleReadFileRequest", new Error(`Session '${sessionId}' not found`), corsHeaders);
         }
 
         return new Response(
@@ -224,7 +224,7 @@ export async function handleDeleteFileRequest(
 ): Promise<Response> {
     try {
         const body = (await req.json()) as DeleteFileRequest;
-        const { path, sessionName } = body;
+        const { path, sessionId } = body;
 
         // Validate path
         const pathError = validatePath(path);
@@ -232,15 +232,15 @@ export async function handleDeleteFileRequest(
             return createPathErrorResponse(pathError, corsHeaders);
         }
 
-        console.log(`[Server] Deleting file: ${path}${sessionName ? ` in session: ${sessionName}` : ''}`);
+        console.log(`[Server] Deleting file: ${path}${sessionId ? ` in session: ${sessionId}` : ''}`);
 
         // Use specific session if provided, otherwise default session
-        const result = sessionName
-            ? await sessionManager.getSession(sessionName)?.deleteFileOperation(path)
+        const result = sessionId
+            ? await sessionManager.getSession(sessionId)?.deleteFileOperation(path)
             : await sessionManager.deleteFile(path);
         
         if (!result) {
-            return createServerErrorResponse("handleDeleteFileRequest", new Error(`Session '${sessionName}' not found`), corsHeaders);
+            return createServerErrorResponse("handleDeleteFileRequest", new Error(`Session '${sessionId}' not found`), corsHeaders);
         }
 
         return new Response(
@@ -269,7 +269,7 @@ export async function handleRenameFileRequest(
 ): Promise<Response> {
     try {
         const body = (await req.json()) as RenameFileRequest;
-        const { oldPath, newPath, sessionName } = body;
+        const { oldPath, newPath, sessionId } = body;
 
         // Validate paths
         const pathError = validatePath(oldPath, newPath);
@@ -277,15 +277,15 @@ export async function handleRenameFileRequest(
             return createPathErrorResponse(pathError, corsHeaders);
         }
 
-        console.log(`[Server] Renaming file: ${oldPath} -> ${newPath}${sessionName ? ` in session: ${sessionName}` : ''}`);
+        console.log(`[Server] Renaming file: ${oldPath} -> ${newPath}${sessionId ? ` in session: ${sessionId}` : ''}`);
 
         // Use specific session if provided, otherwise default session
-        const result = sessionName
-            ? await sessionManager.getSession(sessionName)?.renameFileOperation(oldPath, newPath)
+        const result = sessionId
+            ? await sessionManager.getSession(sessionId)?.renameFileOperation(oldPath, newPath)
             : await sessionManager.renameFile(oldPath, newPath);
         
         if (!result) {
-            return createServerErrorResponse("handleRenameFileRequest", new Error(`Session '${sessionName}' not found`), corsHeaders);
+            return createServerErrorResponse("handleRenameFileRequest", new Error(`Session '${sessionId}' not found`), corsHeaders);
         }
 
         return new Response(
@@ -315,7 +315,7 @@ export async function handleMoveFileRequest(
 ): Promise<Response> {
     try {
         const body = (await req.json()) as MoveFileRequest;
-        const { sourcePath, destinationPath, sessionName } = body;
+        const { sourcePath, destinationPath, sessionId } = body;
 
         // Validate paths
         const pathError = validatePath(sourcePath, destinationPath);
@@ -323,15 +323,15 @@ export async function handleMoveFileRequest(
             return createPathErrorResponse(pathError, corsHeaders);
         }
 
-        console.log(`[Server] Moving file: ${sourcePath} -> ${destinationPath}${sessionName ? ` in session: ${sessionName}` : ''}`);
+        console.log(`[Server] Moving file: ${sourcePath} -> ${destinationPath}${sessionId ? ` in session: ${sessionId}` : ''}`);
 
         // Use specific session if provided, otherwise default session
-        const result = sessionName
-            ? await sessionManager.getSession(sessionName)?.moveFileOperation(sourcePath, destinationPath)
+        const result = sessionId
+            ? await sessionManager.getSession(sessionId)?.moveFileOperation(sourcePath, destinationPath)
             : await sessionManager.moveFile(sourcePath, destinationPath);
         
         if (!result) {
-            return createServerErrorResponse("handleMoveFileRequest", new Error(`Session '${sessionName}' not found`), corsHeaders);
+            return createServerErrorResponse("handleMoveFileRequest", new Error(`Session '${sessionId}' not found`), corsHeaders);
         }
 
         return new Response(
@@ -361,7 +361,7 @@ export async function handleListFilesRequest(
 ): Promise<Response> {
     try {
         const body = (await req.json()) as ListFilesRequest;
-        const { path, options, sessionName } = body;
+        const { path, options, sessionId } = body;
 
         // Validate path (note: listFiles allows root directory listing)
         const pathError = validatePath(path);
@@ -374,15 +374,15 @@ export async function handleListFilesRequest(
             return createPathErrorResponse("Dangerous path not allowed", corsHeaders);
         }
 
-        console.log(`[Server] Listing files in: ${path}${sessionName ? ` in session: ${sessionName}` : ''}`);
+        console.log(`[Server] Listing files in: ${path}${sessionId ? ` in session: ${sessionId}` : ''}`);
 
         // Use specific session if provided, otherwise default session
-        const result = sessionName
-            ? await sessionManager.getSession(sessionName)?.listFilesOperation(path, options)
+        const result = sessionId
+            ? await sessionManager.getSession(sessionId)?.listFilesOperation(path, options)
             : await sessionManager.listFiles(path, options);
         
         if (!result) {
-            return createServerErrorResponse("handleListFilesRequest", new Error(`Session '${sessionName}' not found`), corsHeaders);
+            return createServerErrorResponse("handleListFilesRequest", new Error(`Session '${sessionId}' not found`), corsHeaders);
         }
 
         return new Response(

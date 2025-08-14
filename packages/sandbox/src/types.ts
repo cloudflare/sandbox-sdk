@@ -288,7 +288,7 @@ export interface StartProcessResponse {
     startTime: string;
     endTime?: string | null;
     exitCode?: number | null;
-    sessionName: string;
+    sessionId: string;
   };
 }
 
@@ -382,9 +382,9 @@ export interface ISandbox {
 // Sessions are full-featured sandbox objects with scoped execution context
 export interface ExecutionSession extends Omit<ISandbox, 'createSession' | 'setSandboxName'> {
   /**
-   * Session name
+   * Session ID
    */
-  name: string;
+  id: string;
   
   // Inherits all ISandbox methods:
   // - Command execution: exec, execStream

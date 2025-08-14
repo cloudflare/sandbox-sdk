@@ -12,7 +12,7 @@ interface ProcessInfo {
     startTime: string;
     endTime?: string | null;
     exitCode?: number | null;
-    sessionName: string;
+    sessionId: string;
 }
 
 // Helper functions to reduce repetition
@@ -54,7 +54,7 @@ function createSuccessResponse(
 
 function processRecordToInfo(
     record: ProcessRecord,
-    sessionName: string
+    sessionId: string
 ): ProcessInfo {
     return {
         id: record.id,
@@ -64,20 +64,20 @@ function processRecordToInfo(
         startTime: record.startTime.toISOString(),
         endTime: record.endTime ? record.endTime.toISOString() : null,
         exitCode: record.exitCode ?? null,
-        sessionName
+        sessionId
     };
 }
 
 async function findProcessAcrossSessions(
     processId: string,
     sessionManager: SessionManager
-): Promise<{ process: ProcessRecord; sessionName: string } | null> {
-    for (const sessionName of sessionManager.listSessions()) {
-        const session = sessionManager.getSession(sessionName);
+): Promise<{ process: ProcessRecord; sessionId: string } | null> {
+    for (const sessionId of sessionManager.listSessions()) {
+        const session = sessionManager.getSession(sessionId);
         if (session) {
             const process = await session.getProcess(processId);
             if (process) {
-                return { process, sessionName };
+                return { process, sessionId };
             }
         }
     }
@@ -91,7 +91,7 @@ export async function handleStartProcessRequest(
 ): Promise<Response> {
     try {
         const body = (await req.json()) as StartProcessRequest;
-        const { command, sessionName, options = {} } = body;
+        const { command, sessionId, options = {} } = body;
 
         if (!command || typeof command !== "string") {
             return createErrorResponse(
@@ -111,14 +111,14 @@ export async function handleStartProcessRequest(
             );
         }
 
-        console.log(`[Server] Starting process: ${command}${sessionName ? ` in session: ${sessionName}` : ' (default session)'}`);
+        console.log(`[Server] Starting process: ${command}${sessionId ? ` in session: ${sessionId}` : ' (default session)'}`);
 
         // Get the session (use default if not specified)
-        const targetSessionName = sessionName || 'default';
-        let session = sessionManager.getSession(targetSessionName);
+        const targetSessionId = sessionId || 'default';
+        let session = sessionManager.getSession(targetSessionId);
         
         if (!session) {
-            if (targetSessionName === 'default') {
+            if (targetSessionId === 'default') {
                 // Create default session if it doesn't exist
                 await sessionManager.createSession({
                     name: 'default',
@@ -130,7 +130,7 @@ export async function handleStartProcessRequest(
             
             if (!session) {
                 return createErrorResponse(
-                    `Session '${targetSessionName}' not found`,
+                    `Session '${targetSessionId}' not found`,
                     undefined,
                     404,
                     corsHeaders
@@ -141,7 +141,7 @@ export async function handleStartProcessRequest(
         const processRecord = await session.startProcess(command, options);
 
         return createSuccessResponse({
-            process: processRecordToInfo(processRecord, targetSessionName)
+            process: processRecordToInfo(processRecord, targetSessionId)
         }, corsHeaders);
     } catch (error) {
         console.error("[Server] Error starting process:", error);
@@ -171,23 +171,23 @@ export async function handleListProcessesRequest(
         
         // Get the session name from query params if provided
         const url = new URL(req.url);
-        const sessionName = url.searchParams.get('session');
+        const sessionId = url.searchParams.get('session');
         
         let allProcesses: ProcessInfo[] = [];
         
-        if (sessionName) {
+        if (sessionId) {
             // List processes from specific session
-            const session = sessionManager.getSession(sessionName);
+            const session = sessionManager.getSession(sessionId);
             if (!session) {
                 return createErrorResponse(
-                    `Session '${sessionName}' not found`,
+                    `Session '${sessionId}' not found`,
                     undefined,
                     404,
                     corsHeaders
                 );
             }
             const processes = await session.listProcesses();
-            allProcesses = processes.map(p => processRecordToInfo(p, sessionName));
+            allProcesses = processes.map(p => processRecordToInfo(p, sessionId));
         } else {
             // List processes from all sessions
             for (const name of sessionManager.listSessions()) {
@@ -242,7 +242,7 @@ export async function handleGetProcessRequest(
         }
         
         return createSuccessResponse({
-            process: processRecordToInfo(result.process, result.sessionName),
+            process: processRecordToInfo(result.process, result.sessionId),
             timestamp: new Date().toISOString(),
         }, corsHeaders);
     } catch (error) {
@@ -273,8 +273,8 @@ export async function handleKillProcessRequest(
         }
         
         // Search for and kill the process across all sessions
-        for (const sessionName of sessionManager.listSessions()) {
-            const session = sessionManager.getSession(sessionName);
+        for (const sessionId of sessionManager.listSessions()) {
+            const session = sessionManager.getSession(sessionId);
             if (session) {
                 const process = await session.getProcess(processId);
                 if (process) {
@@ -282,7 +282,7 @@ export async function handleKillProcessRequest(
                     return createSuccessResponse({
                         success: killed,
                         processId,
-                        sessionName,
+                        sessionId,
                         message: killed ? `Process ${processId} killed` : `Failed to kill process ${processId}`,
                         timestamp: new Date().toISOString(),
                     }, corsHeaders);
@@ -324,16 +324,16 @@ export async function handleKillAllProcessesRequest(
         
         // Get the session name from query params if provided
         const url = new URL(req.url);
-        const sessionName = url.searchParams.get('session');
+        const sessionId = url.searchParams.get('session');
         
         let killedCount = 0;
         
-        if (sessionName) {
+        if (sessionId) {
             // Kill processes in specific session
-            const session = sessionManager.getSession(sessionName);
+            const session = sessionManager.getSession(sessionId);
             if (!session) {
                 return createErrorResponse(
-                    `Session '${sessionName}' not found`,
+                    `Session '${sessionId}' not found`,
                     undefined,
                     404,
                     corsHeaders
@@ -394,11 +394,11 @@ export async function handleGetProcessLogsRequest(
         }
         
         // Get the session and use its getProcessLogs method to ensure logs are updated from files
-        const session = sessionManager.getSession(result.sessionName);
+        const session = sessionManager.getSession(result.sessionId);
         if (!session) {
             return createErrorResponse(
                 "Session not found",
-                result.sessionName,
+                result.sessionId,
                 500,
                 corsHeaders
             );
@@ -411,7 +411,7 @@ export async function handleGetProcessLogsRequest(
             stdout: logs.stdout,
             stderr: logs.stderr,
             processId,
-            sessionName: result.sessionName,
+            sessionId: result.sessionId,
             timestamp: new Date().toISOString(),
         }, corsHeaders);
     } catch (error) {
@@ -451,14 +451,14 @@ export async function handleStreamProcessLogsRequest(
             );
         }
 
-        const { process: targetProcess, sessionName } = result;
+        const { process: targetProcess, sessionId } = result;
         
         // Get the session to start monitoring
-        const session = sessionManager.getSession(sessionName);
+        const session = sessionManager.getSession(sessionId);
         if (!session) {
             return createErrorResponse(
                 "Session not found",
-                sessionName,
+                sessionId,
                 404,
                 corsHeaders
             );
@@ -477,7 +477,7 @@ export async function handleStreamProcessLogsRequest(
                         type: 'stdout', 
                         data: targetProcess.stdout,
                         processId,
-                        sessionName,
+                        sessionId,
                         timestamp: new Date().toISOString()
                     })}\n\n`));
                 }
@@ -487,7 +487,7 @@ export async function handleStreamProcessLogsRequest(
                         type: 'stderr', 
                         data: targetProcess.stderr,
                         processId,
-                        sessionName,
+                        sessionId,
                         timestamp: new Date().toISOString()
                     })}\n\n`));
                 }
@@ -499,7 +499,7 @@ export async function handleStreamProcessLogsRequest(
                         status: targetProcess.status,
                         exitCode: targetProcess.exitCode,
                         processId,
-                        sessionName,
+                        sessionId,
                         timestamp: new Date().toISOString()
                     })}\n\n`));
                     controller.close();
@@ -512,7 +512,7 @@ export async function handleStreamProcessLogsRequest(
                         type: stream, 
                         data,
                         processId,
-                        sessionName,
+                        sessionId,
                         timestamp: new Date().toISOString()
                     })}\n\n`));
                 };
@@ -524,7 +524,7 @@ export async function handleStreamProcessLogsRequest(
                             status,
                             exitCode: targetProcess.exitCode,
                             processId,
-                            sessionName,
+                            sessionId,
                             timestamp: new Date().toISOString()
                         })}\n\n`));
                         controller.close();

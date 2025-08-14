@@ -362,15 +362,15 @@ result = x / y
           isolation
         });
 
-        return jsonResponse({ sessionName: session.name });
+        return jsonResponse({ sessionId: session.id });
       }
 
       if (pathname.startsWith("/api/session/clear/") && request.method === "POST") {
-        const sessionName = pathname.split("/").pop();
+        const sessionId = pathname.split("/").pop();
 
         // Note: The current SDK doesn't expose a direct session cleanup method
         // Sessions are automatically cleaned up by the container lifecycle
-        return jsonResponse({ message: "Session cleanup initiated", sessionName });
+        return jsonResponse({ message: "Session cleanup initiated", sessionId });
       }
 
       // Fallback: serve static assets for all other requests

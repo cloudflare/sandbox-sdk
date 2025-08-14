@@ -286,11 +286,11 @@ const server = serve({
           if (req.method === "POST") {
             try {
               const body = (await req.json()) as CreateSessionRequest;
-              const { name, env, cwd, isolation } = body;
+              const { id, env, cwd, isolation } = body;
 
-              if (!name) {
+              if (!id) {
                 return new Response(
-                  JSON.stringify({ error: "Session name is required" }),
+                  JSON.stringify({ error: "Session ID is required" }),
                   {
                     status: 400,
                     headers: {
@@ -302,13 +302,13 @@ const server = serve({
               }
 
               const session = await sessionManager.createSession({
-                name,
+                id,
                 env: env || {},
                 cwd: cwd || "/workspace",
                 isolation: isolation !== false,
               });
 
-              console.log(`[Container] Session '${name}' created successfully`);
+              console.log(`[Container] Session '${id}' created successfully`);
               console.log(
                 `[Container] Available sessions now: ${sessionManager
                   .listSessions()
@@ -318,8 +318,8 @@ const server = serve({
               return new Response(
                 JSON.stringify({
                   success: true,
-                  name,
-                  message: `Session '${name}' created with${
+                  id,
+                  message: `Session '${id}' created with${
                     isolation !== false ? "" : "out"
                   } isolation`,
                 }),
@@ -373,16 +373,16 @@ const server = serve({
           if (req.method === "POST") {
             try {
               const body = (await req.json()) as SessionExecRequest;
-              const { name, command } = body;
+              const { id, command } = body;
 
               console.log(
-                `[Container] Session exec request for '${name}': ${command}`
+                `[Container] Session exec request for '${id}': ${command}`
               );
 
-              if (!name || !command) {
+              if (!id || !command) {
                 return new Response(
                   JSON.stringify({
-                    error: "Session name and command are required",
+                    error: "Session ID and command are required",
                   }),
                   {
                     status: 400,
@@ -394,9 +394,9 @@ const server = serve({
                 );
               }
 
-              const session = sessionManager.getSession(name);
+              const session = sessionManager.getSession(id);
               if (!session) {
-                console.error(`[Container] Session '${name}' not found!`);
+                console.error(`[Container] Session '${id}' not found!`);
                 const availableSessions = sessionManager.listSessions();
                 console.log(
                   `[Container] Available sessions: ${
@@ -406,7 +406,7 @@ const server = serve({
 
                 return new Response(
                   JSON.stringify({
-                    error: `Session '${name}' not found`,
+                    error: `Session '${id}' not found`,
                     availableSessions,
                   }),
                   {
@@ -448,16 +448,16 @@ const server = serve({
           if (req.method === "POST") {
             try {
               const body = (await req.json()) as SessionExecRequest;
-              const { name, command } = body;
+              const { id, command } = body;
 
               console.log(
-                `[Container] Session streaming exec request for '${name}': ${command}`
+                `[Container] Session streaming exec request for '${id}': ${command}`
               );
 
-              if (!name || !command) {
+              if (!id || !command) {
                 return new Response(
                   JSON.stringify({
-                    error: "Session name and command are required",
+                    error: "Session ID and command are required",
                   }),
                   {
                     status: 400,
@@ -469,14 +469,14 @@ const server = serve({
                 );
               }
 
-              const session = sessionManager.getSession(name);
+              const session = sessionManager.getSession(id);
               if (!session) {
-                console.error(`[Container] Session '${name}' not found!`);
+                console.error(`[Container] Session '${id}' not found!`);
                 const availableSessions = sessionManager.listSessions();
 
                 return new Response(
                   JSON.stringify({
-                    error: `Session '${name}' not found`,
+                    error: `Session '${id}' not found`,
                     availableSessions,
                   }),
                   {

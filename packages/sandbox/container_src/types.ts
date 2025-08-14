@@ -28,7 +28,7 @@ export interface ProcessRecord {
 
 export interface StartProcessRequest {
   command: string;
-  sessionName?: string;  // Optional session context for process
+  sessionId?: string;  // Optional session context for process
   options?: {
     processId?: string;
     timeout?: number;
@@ -47,50 +47,50 @@ export interface ExecuteOptions {
 
 export interface ExecuteRequest extends ExecuteOptions {
   command: string;
-  sessionName?: string;  // Optional session context for streaming
+  sessionId?: string;  // Optional session context for streaming
 }
 
 export interface GitCheckoutRequest {
   repoUrl: string;
   branch?: string;
   targetDir?: string;
-  sessionName?: string;  // Optional session context
+  sessionId?: string;  // Optional session context
 }
 
 export interface MkdirRequest {
   path: string;
   recursive?: boolean;
-  sessionName?: string;  // Optional session context
+  sessionId?: string;  // Optional session context
 }
 
 export interface WriteFileRequest {
   path: string;
   content: string;
   encoding?: string;
-  sessionName?: string;  // Optional session context
+  sessionId?: string;  // Optional session context
 }
 
 export interface ReadFileRequest {
   path: string;
   encoding?: string;
-  sessionName?: string;  // Optional session context
+  sessionId?: string;  // Optional session context
 }
 
 export interface DeleteFileRequest {
   path: string;
-  sessionName?: string;  // Optional session context
+  sessionId?: string;  // Optional session context
 }
 
 export interface RenameFileRequest {
   oldPath: string;
   newPath: string;
-  sessionName?: string;  // Optional session context
+  sessionId?: string;  // Optional session context
 }
 
 export interface MoveFileRequest {
   sourcePath: string;
   destinationPath: string;
-  sessionName?: string;  // Optional session context
+  sessionId?: string;  // Optional session context
 }
 
 export interface ListFilesRequest {
@@ -99,7 +99,7 @@ export interface ListFilesRequest {
     recursive?: boolean;
     includeHidden?: boolean;
   };
-  sessionName?: string;  // Optional session context
+  sessionId?: string;  // Optional session context
 }
 
 export interface ExposePortRequest {
@@ -112,20 +112,20 @@ export interface UnexposePortRequest {
 }
 
 export interface SessionData {
-  name: string;
+  id: string;
   activeProcess: ChildProcess | null;
   createdAt: Date;
 }
 
 // Session management API types
 export interface CreateSessionRequest {
-  name: string;
+  id: string;
   env?: Record<string, string>;
   cwd?: string;
   isolation?: boolean;
 }
 
 export interface SessionExecRequest {
-  name: string;
+  id: string;
   command: string;
 }
