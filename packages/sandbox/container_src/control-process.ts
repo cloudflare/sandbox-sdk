@@ -26,6 +26,8 @@ import { type ChildProcess, spawn } from 'node:child_process';
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import * as os from 'node:os';
+import { escapeShellArg, escapeShellPath } from './shell-escape';
 
 // Parse environment configuration
 const sessionId = process.env.SESSION_ID || 'default';
@@ -36,7 +38,12 @@ let isIsolated = process.env.SESSION_ISOLATED === '1';
 const COMMAND_TIMEOUT_MS = parseInt(process.env.COMMAND_TIMEOUT_MS || '30000');
 const CLEANUP_INTERVAL_MS = parseInt(process.env.CLEANUP_INTERVAL_MS || '30000');
 const TEMP_FILE_MAX_AGE_MS = parseInt(process.env.TEMP_FILE_MAX_AGE_MS || '60000');
-const TEMP_DIR = process.env.TEMP_DIR || '/tmp';
+
+// Secure temp directory setup
+const BASE_TEMP_DIR = process.env.TEMP_DIR || '/tmp';
+let SECURE_TEMP_DIR: string;
+const TEMP_DIR_PERMISSIONS = 0o700; // rwx------ (only owner can access)
+const TEMP_FILE_PERMISSIONS = 0o600; // rw------- (only owner can read/write)
 
 // Message types for communication with parent process
 interface ControlMessage {
@@ -82,6 +89,107 @@ let shell: ChildProcess;
 let shellAlive = true;
 
 /**
+ * Initialize secure temp directory with proper permissions
+ * Creates a process-specific directory to prevent race conditions and unauthorized access
+ */
+function initializeSecureTempDir(): void {
+  // Create a unique directory name using process ID and random bytes
+  const processId = process.pid;
+  const randomBytes = crypto.randomBytes(8).toString('hex');
+  const dirName = `sandbox_${sessionId}_${processId}_${randomBytes}`;
+  
+  SECURE_TEMP_DIR = path.join(BASE_TEMP_DIR, dirName);
+  
+  try {
+    // Create the directory with restrictive permissions (700 - only owner can access)
+    fs.mkdirSync(SECURE_TEMP_DIR, { mode: TEMP_DIR_PERMISSIONS });
+    logError(`Created secure temp directory: ${SECURE_TEMP_DIR}`);
+    
+    // Register cleanup on process exit
+    const cleanup = () => {
+      try {
+        // Remove all files in the directory
+        const files = fs.readdirSync(SECURE_TEMP_DIR);
+        files.forEach(file => {
+          try {
+            fs.unlinkSync(path.join(SECURE_TEMP_DIR, file));
+          } catch (e) {
+            // Ignore individual file errors during cleanup
+          }
+        });
+        // Remove the directory itself
+        fs.rmdirSync(SECURE_TEMP_DIR);
+        logError(`Cleaned up secure temp directory: ${SECURE_TEMP_DIR}`);
+      } catch (e) {
+        logError(`Failed to cleanup temp directory: ${e}`);
+      }
+    };
+    
+    // Register cleanup handlers
+    process.on('exit', cleanup);
+    process.on('SIGTERM', cleanup);
+    process.on('SIGINT', cleanup);
+  } catch (error) {
+    logError(`Failed to create secure temp directory: ${error}`);
+    // Fall back to using the base temp dir if we can't create a secure one
+    SECURE_TEMP_DIR = BASE_TEMP_DIR;
+  }
+}
+
+/**
+ * Create a secure temp file with proper permissions
+ * @param prefix - File prefix (cmd, out, err, exit)
+ * @param id - Command ID
+ * @returns Full path to the created file
+ */
+function createSecureTempFile(prefix: string, id: string): string {
+  // Use crypto.randomBytes for additional entropy in filename
+  const randomSuffix = crypto.randomBytes(4).toString('hex');
+  const filename = `${prefix}_${id}_${randomSuffix}`;
+  const filepath = path.join(SECURE_TEMP_DIR, filename);
+  
+  // Create empty file with restrictive permissions (600 - only owner can read/write)
+  const fd = fs.openSync(filepath, 'w', TEMP_FILE_PERMISSIONS);
+  fs.closeSync(fd);
+  
+  return filepath;
+}
+
+/**
+ * Atomically cleanup temp files for a command
+ * Prevents race conditions by using atomic operations
+ * @param files - Array of file paths to clean up
+ * @param commandId - Command ID for logging
+ */
+function atomicCleanupFiles(files: string[], commandId: string): void {
+  files.forEach(file => {
+    try {
+      // First, remove from active files set to prevent re-use
+      activeFiles.delete(file);
+      
+      // Attempt to rename file before deletion (atomic operation)
+      const deletionMarker = `${file}.deleting`;
+      try {
+        fs.renameSync(file, deletionMarker);
+        fs.unlinkSync(deletionMarker);
+      } catch (renameError) {
+        // If rename fails, try direct deletion
+        fs.unlinkSync(file);
+      }
+    } catch (e) {
+      // File might already be deleted, which is fine
+      const error = e as NodeJS.ErrnoException;
+      if (error.code !== 'ENOENT') {
+        logError(`Failed to cleanup file ${file} for command ${commandId}: ${error.message}`);
+      }
+    }
+  });
+  
+  // Clean up processing state after files are removed
+  processingState.delete(commandId);
+}
+
+/**
  * Send a response to the parent process
  */
 function sendResponse(response: ControlResponse): void {
@@ -100,13 +208,18 @@ function logError(message: string, error?: unknown): void {
  */
 function cleanupTempFiles(): void {
   try {
-    const files = fs.readdirSync(TEMP_DIR);
+    // Only clean up files in our secure directory
+    if (!SECURE_TEMP_DIR || SECURE_TEMP_DIR === BASE_TEMP_DIR) {
+      return; // Skip cleanup if we're using the fallback shared directory
+    }
+    
+    const files = fs.readdirSync(SECURE_TEMP_DIR);
     const now = Date.now();
     
     files.forEach(file => {
       // Match our temp file pattern and check age
-      if (file.match(/^(cmd|out|err|exit)_[a-f0-9-]+/)) {
-        const filePath = path.join(TEMP_DIR, file);
+      if (file.match(/^(cmd|out|err|exit)_[a-f0-9-]+_[a-f0-9]+/)) {
+        const filePath = path.join(SECURE_TEMP_DIR, file);
         try {
           const stats = fs.statSync(filePath);
           // Remove files older than max age that aren't active
@@ -136,24 +249,35 @@ function buildExecScript(
   msgCwd?: string,
   completionMarker: string = 'DONE'
 ): string {
+  // Escape all file paths and identifiers to prevent injection
+  const safeCmdFile = escapeShellPath(cmdFile);
+  const safeOutFile = escapeShellPath(outFile);
+  const safeErrFile = escapeShellPath(errFile);
+  const safeExitFile = escapeShellPath(exitFile);
+  const safeCompletionMarker = escapeShellArg(completionMarker);
+  const safeMsgId = escapeShellArg(msgId);
+  
   if (msgCwd) {
+    // Escape the directory path (validation happens at SDK layer)
+    const safeMsgCwd = escapeShellPath(msgCwd);
+    
     // If cwd is provided, change directory for this command only
     return `
 # Execute command with temporary cwd override
 PREV_DIR=$(pwd)
-cd "${msgCwd}" || { echo "Failed to change directory to ${msgCwd}" > ${errFile}; echo 1 > ${exitFile}; echo "${completionMarker}:${msgId}"; return; }
-source ${cmdFile} > ${outFile} 2> ${errFile}
-echo $? > ${exitFile}
+cd ${safeMsgCwd} || { echo "Failed to change directory to ${safeMsgCwd}" > ${safeErrFile}; echo 1 > ${safeExitFile}; echo "${safeCompletionMarker}:${safeMsgId}"; return; }
+source ${safeCmdFile} > ${safeOutFile} 2> ${safeErrFile}
+echo $? > ${safeExitFile}
 cd "$PREV_DIR"
-echo "${completionMarker}:${msgId}"
+echo "${safeCompletionMarker}:${safeMsgId}"
 `;
   } else {
     // Default behavior - execute in current directory (preserves session state)
     return `
 # Execute command in current shell - maintains working directory changes
-source ${cmdFile} > ${outFile} 2> ${errFile}
-echo $? > ${exitFile}
-echo "${completionMarker}:${msgId}"
+source ${safeCmdFile} > ${safeOutFile} 2> ${safeErrFile}
+echo $? > ${safeExitFile}
+echo "${safeCompletionMarker}:${safeMsgId}"
 `;
   }
 }
@@ -180,11 +304,11 @@ async function handleExecCommand(msg: ControlMessage): Promise<void> {
     return;
   }
   
-  // Create temp files for this command
-  const cmdFile = `${TEMP_DIR}/cmd_${msg.id}.sh`;
-  const outFile = `${TEMP_DIR}/out_${msg.id}`;
-  const errFile = `${TEMP_DIR}/err_${msg.id}`;
-  const exitFile = `${TEMP_DIR}/exit_${msg.id}`;
+  // Create secure temp files for this command
+  const cmdFile = createSecureTempFile('cmd', msg.id);
+  const outFile = createSecureTempFile('out', msg.id);
+  const errFile = createSecureTempFile('err', msg.id);
+  const exitFile = createSecureTempFile('exit', msg.id);
   
   // Track these files as active
   activeFiles.add(cmdFile);
@@ -195,8 +319,8 @@ async function handleExecCommand(msg: ControlMessage): Promise<void> {
   // Initialize processing state to prevent race conditions
   processingState.set(msg.id, false);
   
-  // Write command to file
-  fs.writeFileSync(cmdFile, msg.command, 'utf8');
+  // Write command to file securely (file already has proper permissions)
+  fs.writeFileSync(cmdFile, msg.command, { encoding: 'utf8', mode: TEMP_FILE_PERMISSIONS });
   
   // Build and execute the script
   const execScript = buildExecScript(cmdFile, outFile, errFile, exitFile, msg.id, msg.cwd);
@@ -230,18 +354,8 @@ async function handleExecCommand(msg: ControlMessage): Promise<void> {
           exitCode
         });
         
-        // Cleanup temp files
-        [cmdFile, outFile, errFile, exitFile].forEach(file => {
-          try {
-            fs.unlinkSync(file);
-            activeFiles.delete(file);
-          } catch (e) {
-            // File might already be deleted
-          }
-        });
-        
-        // Clean up processing state
-        processingState.delete(msg.id);
+        // Atomic cleanup of temp files
+        atomicCleanupFiles([cmdFile, outFile, errFile, exitFile], msg.id);
       } catch (error) {
         sendResponse({
           type: 'error',
@@ -250,13 +364,7 @@ async function handleExecCommand(msg: ControlMessage): Promise<void> {
         });
         
         // Still try to clean up files on error
-        [cmdFile, outFile, errFile, exitFile].forEach(file => {
-          try {
-            fs.unlinkSync(file);
-            activeFiles.delete(file);
-          } catch (e) {}
-        });
-        processingState.delete(msg.id);
+        atomicCleanupFiles([cmdFile, outFile, errFile, exitFile], msg.id);
       }
     }
   };
@@ -274,15 +382,8 @@ async function handleExecCommand(msg: ControlMessage): Promise<void> {
         error: `Command timeout after ${COMMAND_TIMEOUT_MS/1000} seconds`
       });
       
-      // Cleanup files
-      [cmdFile, outFile, errFile, exitFile].forEach(file => {
-        try {
-          fs.unlinkSync(file);
-          activeFiles.delete(file);
-        } catch (e) {}
-      });
-      
-      processingState.delete(msg.id);
+      // Atomic cleanup of temp files
+      atomicCleanupFiles([cmdFile, outFile, errFile, exitFile], msg.id);
     }
   }, COMMAND_TIMEOUT_MS);
   
@@ -324,11 +425,11 @@ async function handleExecStreamCommand(msg: ControlMessage): Promise<void> {
     return;
   }
   
-  // Create temp files for this command
-  const cmdFile = `${TEMP_DIR}/cmd_${msg.id}.sh`;
-  const outFile = `${TEMP_DIR}/out_${msg.id}`;
-  const errFile = `${TEMP_DIR}/err_${msg.id}`;
-  const exitFile = `${TEMP_DIR}/exit_${msg.id}`;
+  // Create secure temp files for this command
+  const cmdFile = createSecureTempFile('cmd', msg.id);
+  const outFile = createSecureTempFile('out', msg.id);
+  const errFile = createSecureTempFile('err', msg.id);
+  const exitFile = createSecureTempFile('exit', msg.id);
   
   // Track these files as active
   activeFiles.add(cmdFile);
@@ -339,8 +440,8 @@ async function handleExecStreamCommand(msg: ControlMessage): Promise<void> {
   // Initialize processing state
   processingState.set(msg.id, false);
   
-  // Write command to file
-  fs.writeFileSync(cmdFile, msg.command, 'utf8');
+  // Write command to file securely (file already has proper permissions)
+  fs.writeFileSync(cmdFile, msg.command, { encoding: 'utf8', mode: TEMP_FILE_PERMISSIONS });
   
   // Track output sizes for incremental streaming
   let stdoutSize = 0;
@@ -473,15 +574,8 @@ async function handleExecStreamCommand(msg: ControlMessage): Promise<void> {
           }
         });
         
-        // Cleanup temp files
-        [cmdFile, outFile, errFile, exitFile].forEach(file => {
-          try {
-            fs.unlinkSync(file);
-            activeFiles.delete(file);
-          } catch (e) {}
-        });
-        
-        processingState.delete(msg.id);
+        // Atomic cleanup of temp files
+        atomicCleanupFiles([cmdFile, outFile, errFile, exitFile], msg.id);
       } catch (error) {
         sendResponse({
           type: 'stream_event',
@@ -495,13 +589,7 @@ async function handleExecStreamCommand(msg: ControlMessage): Promise<void> {
         });
         
         // Clean up files on error
-        [cmdFile, outFile, errFile, exitFile].forEach(file => {
-          try {
-            fs.unlinkSync(file);
-            activeFiles.delete(file);
-          } catch (e) {}
-        });
-        processingState.delete(msg.id);
+        atomicCleanupFiles([cmdFile, outFile, errFile, exitFile], msg.id);
       }
     }
   };
@@ -526,15 +614,8 @@ async function handleExecStreamCommand(msg: ControlMessage): Promise<void> {
         }
       });
       
-      // Cleanup files
-      [cmdFile, outFile, errFile, exitFile].forEach(file => {
-        try {
-          fs.unlinkSync(file);
-          activeFiles.delete(file);
-        } catch (e) {}
-      });
-      
-      processingState.delete(msg.id);
+      // Atomic cleanup of temp files
+      atomicCleanupFiles([cmdFile, outFile, errFile, exitFile], msg.id);
     }
   }, COMMAND_TIMEOUT_MS);
   
@@ -572,7 +653,7 @@ async function handleControlMessage(msg: ControlMessage): Promise<void> {
  * Initialize the shell process
  * 
  * Creates either an isolated shell using 'unshare' or a regular bash shell.
- * Isolation uses Linux namespaces (PID, mount) to prevent the shell from:
+ * Isolation uses Linux namespaces (PID) to prevent the shell from:
  * - Seeing control plane processes (Jupyter, Bun server)
  * - Accessing platform secrets in /proc/1/environ
  * - Hijacking control plane ports
@@ -637,13 +718,24 @@ function initializeShell(): void {
     logError(`Shell exited with code ${code}`);
     shellAlive = false;
     
-    // Clean up any remaining temp files
-    activeFiles.forEach(file => {
-      try { fs.unlinkSync(file); } catch (e) {}
+    // Clean up any remaining temp files atomically
+    const filesToClean = Array.from(activeFiles);
+    filesToClean.forEach(file => {
+      try {
+        fs.unlinkSync(file);
+        activeFiles.delete(file);
+      } catch (e) {
+        // Ignore errors during final cleanup
+      }
     });
     
     process.exit(code || 1);
   });
+  
+  // Mark shell as alive if successfully spawned
+  if (shell) {
+    shellAlive = true;
+  }
   
   // Send ready signal once shell is spawned
   sendResponse({ type: 'ready', id: 'init' });
@@ -653,6 +745,9 @@ function initializeShell(): void {
  * Main entry point
  */
 function main(): void {
+  // Initialize secure temp directory first
+  initializeSecureTempDir();
+  
   // Initialize the shell
   initializeShell();
   

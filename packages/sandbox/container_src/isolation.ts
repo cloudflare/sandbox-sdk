@@ -253,6 +253,13 @@ export class Session {
       throw new Error(`Session '${this.options.id}' not initialized`);
     }
     
+    // Validate cwd if provided - must be absolute path
+    if (options?.cwd) {
+      if (!options.cwd.startsWith('/')) {
+        throw new Error(`cwd must be an absolute path starting with '/', got: ${options.cwd}`);
+      }
+    }
+    
     const id = randomUUID();
     const startTime = Date.now();
     
@@ -286,6 +293,13 @@ export class Session {
   async *execStream(command: string, options?: { cwd?: string }): AsyncGenerator<ExecEvent> {
     if (!this.ready || !this.control) {
       throw new Error(`Session '${this.options.id}' not initialized`);
+    }
+    
+    // Validate cwd if provided - must be absolute path
+    if (options?.cwd) {
+      if (!options.cwd.startsWith('/')) {
+        throw new Error(`cwd must be an absolute path starting with '/', got: ${options.cwd}`);
+      }
     }
     
     const id = randomUUID();
@@ -570,6 +584,13 @@ SANDBOX_EOF`;
     encoding?: string;
     autoCleanup?: boolean;
   }): Promise<ProcessRecord> {
+    // Validate cwd if provided - must be absolute path
+    if (options?.cwd) {
+      if (!options.cwd.startsWith('/')) {
+        throw new Error(`cwd must be an absolute path starting with '/', got: ${options.cwd}`);
+      }
+    }
+    
     const processId = options?.processId || `proc_${Date.now()}_${randomBytes(6).toString('hex')}`;
     
     // Check if process ID already exists in this session
@@ -920,6 +941,13 @@ export class SessionManager {
   private sessions = new Map<string, Session>();
   
   async createSession(options: SessionOptions): Promise<Session> {
+    // Validate cwd if provided - must be absolute path
+    if (options.cwd) {
+      if (!options.cwd.startsWith('/')) {
+        throw new Error(`cwd must be an absolute path starting with '/', got: ${options.cwd}`);
+      }
+    }
+    
     // Clean up existing session with same name
     const existing = this.sessions.get(options.id);
     if (existing) {
