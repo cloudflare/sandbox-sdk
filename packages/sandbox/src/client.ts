@@ -950,7 +950,7 @@ export class HttpClient {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ name: sessionId, command }),
+        body: JSON.stringify({ id: sessionId, command }),
       });
 
       if (!response.ok) {
@@ -1006,7 +1006,7 @@ export class HttpClient {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ 
-          name: sessionId,
+          id: sessionId,
           command
         }),
       });

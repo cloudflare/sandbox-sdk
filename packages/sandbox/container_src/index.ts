@@ -26,17 +26,17 @@ import {
   handleStartProcessRequest,
   handleStreamProcessLogsRequest,
 } from "./handler/process";
+import { SessionManager } from "./isolation";
 import type { CreateContextRequest } from "./jupyter-server";
 import { JupyterNotReadyError, JupyterService } from "./jupyter-service";
 import type { CreateSessionRequest, SessionExecRequest } from "./types";
-import { SessionManager } from "./utils/isolation";
 
 // In-memory storage for exposed ports
 const exposedPorts = new Map<number, { name?: string; exposedAt: Date }>();
 
 // Processes are now tracked per-session in SessionManager
 
-import { hasNamespaceSupport } from "./utils/isolation";
+import { hasNamespaceSupport } from "./isolation";
 
 // Check isolation capabilities on startup
 const isolationAvailable = hasNamespaceSupport();

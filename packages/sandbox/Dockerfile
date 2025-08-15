@@ -87,6 +87,10 @@ RUN bun install
 
 COPY container_src/ ./
 
+# Compile TypeScript control process
+# Use npx -p typescript to ensure we get the right tsc command
+RUN npx -p typescript tsc control-process.ts --outDir . --module commonjs --target es2020 --esModuleInterop --skipLibCheck
+
 # Create clean workspace directory for users
 RUN mkdir -p /workspace
 
