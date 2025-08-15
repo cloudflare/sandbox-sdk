@@ -99,14 +99,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   override onStart() {
     console.log("Sandbox successfully started");
-    // Note: We don't initialize the default session here to avoid
-    // potential infinite loops. The session will be created lazily
-    // on first exec() call.
   }
 
   override onStop() {
     console.log("Sandbox successfully shut down");
-    // Client cleanup if needed in the future
   }
 
   override onError(error: unknown) {
@@ -160,14 +156,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
 
-  // Enhanced exec method - delegates to default session
   async exec(command: string, options?: ExecOptions): Promise<ExecResult> {
     const session = await this.ensureDefaultSession();
     return session.exec(command, options);
   }
 
-
-  // Background process management - delegates to default session
   async startProcess(
     command: string,
     options?: ProcessOptions

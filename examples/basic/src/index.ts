@@ -189,7 +189,6 @@ export default {
         return await setupStatic(sandbox, request);
       }
 
-
       // Code Interpreter Example APIs
       if (pathname === "/api/examples/basic-python" && request.method === "GET") {
         try {
@@ -354,7 +353,6 @@ result = x / y
         const body = await parseJsonBody(request);
         const { name, env, cwd, isolation = true } = body;
 
-        // Use the new createSession API to create explicit sessions
         const session = await sandbox.createSession({
           id: name || `session_${Date.now()}_${generateSecureRandomString()}`,
           env,

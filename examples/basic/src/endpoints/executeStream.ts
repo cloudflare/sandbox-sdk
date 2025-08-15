@@ -19,8 +19,7 @@ export async function executeCommandStream(sandbox: Sandbox<unknown>, request: R
         try {
             const encoder = new TextEncoder();
 
-            // Get the ReadableStream from sandbox - sessionId parameter removed
-            // The sandbox now automatically uses default sessions for process isolation
+            // Get the ReadableStream from sandbox
             const stream = await sandbox.execStream(command);
             
             // Convert to AsyncIterable using parseSSEStream

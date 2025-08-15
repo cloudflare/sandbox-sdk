@@ -28,7 +28,7 @@ export interface ProcessRecord {
 
 export interface StartProcessRequest {
   command: string;
-  sessionId?: string;  // Optional session context for process
+  sessionId: string;
   options?: {
     processId?: string;
     timeout?: number;
@@ -47,50 +47,50 @@ export interface ExecuteOptions {
 
 export interface ExecuteRequest extends ExecuteOptions {
   command: string;
-  sessionId?: string;  // Optional session context for streaming
+  sessionId: string;
 }
 
 export interface GitCheckoutRequest {
   repoUrl: string;
   branch?: string;
   targetDir?: string;
-  sessionId?: string;  // Optional session context
+  sessionId: string;
 }
 
 export interface MkdirRequest {
   path: string;
   recursive?: boolean;
-  sessionId?: string;  // Optional session context
+  sessionId: string;
 }
 
 export interface WriteFileRequest {
   path: string;
   content: string;
   encoding?: string;
-  sessionId?: string;  // Optional session context
+  sessionId: string;
 }
 
 export interface ReadFileRequest {
   path: string;
   encoding?: string;
-  sessionId?: string;  // Optional session context
+  sessionId: string;
 }
 
 export interface DeleteFileRequest {
   path: string;
-  sessionId?: string;  // Optional session context
+  sessionId: string;
 }
 
 export interface RenameFileRequest {
   oldPath: string;
   newPath: string;
-  sessionId?: string;  // Optional session context
+  sessionId: string;
 }
 
 export interface MoveFileRequest {
   sourcePath: string;
   destinationPath: string;
-  sessionId?: string;  // Optional session context
+  sessionId: string;
 }
 
 export interface ListFilesRequest {
@@ -99,7 +99,7 @@ export interface ListFilesRequest {
     recursive?: boolean;
     includeHidden?: boolean;
   };
-  sessionId?: string;  // Optional session context
+  sessionId: string;
 }
 
 export interface ExposePortRequest {

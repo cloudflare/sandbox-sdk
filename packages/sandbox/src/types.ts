@@ -380,21 +380,13 @@ export interface ISandbox {
 
 // Execution session returned by createSession()
 // Sessions are full-featured sandbox objects with scoped execution context
+// Inherits all ISandbox methods except createSession (sessions can't create sub-sessions),
+// and setSandboxName (sessions inherit sandbox name).
 export interface ExecutionSession extends Omit<ISandbox, 'createSession' | 'setSandboxName'> {
   /**
    * Session ID
    */
   id: string;
-  
-  // Inherits all ISandbox methods:
-  // - Command execution: exec, execStream
-  // - Process management: startProcess, listProcesses, getProcess, killProcess, etc.
-  // - File operations: writeFile, readFile, mkdir, deleteFile, etc.
-  // - Port management: exposePort, unexposePort, getExposedPorts
-  // - Code interpreter: createCodeContext, runCode, listCodeContexts, etc.
-  // - Environment: setEnvVars
-  // 
-  // Excludes: createSession (sessions can't create sub-sessions), setSandboxName (sessions inherit sandbox name)
 }
 
 // API Response Types

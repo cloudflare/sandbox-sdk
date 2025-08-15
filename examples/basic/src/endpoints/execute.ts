@@ -8,8 +8,6 @@ export async function executeCommand(sandbox: Sandbox<unknown>, request: Request
         return errorResponse("Command is required");
     }
 
-    // Use the new API - sessionId parameter has been removed
-    // The sandbox now automatically uses default sessions for process isolation
     const result = await sandbox.exec(command, { cwd, env });
     return jsonResponse({
         success: result.exitCode === 0,

@@ -192,7 +192,134 @@ export class HttpClient {
     }
   }
 
+  async createSession(options: {
+    id: string;
+    env?: Record<string, string>;
+    cwd?: string;
+    isolation?: boolean;
+  }): Promise<{ success: boolean; id: string; message: string }> {
+    try {
+      const response = await this.doFetch(`/api/session/create`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(options),
+      });
 
+      if (!response.ok) {
+        const errorData = (await response.json().catch(() => ({}))) as {
+          error?: string;
+        };
+        throw new Error(
+          errorData.error || `Failed to create session: ${response.status}`
+        );
+      }
+
+      const data = await response.json() as { success: boolean; id: string; message: string };
+      console.log(`[HTTP Client] Session created: ${options.id}`);
+      return data;
+    } catch (error) {
+      console.error("[HTTP Client] Error creating session:", error);
+      throw error;
+    }
+  }
+
+  async exec(
+    sessionId: string,
+    command: string,
+    options?: Pick<BaseExecOptions, "cwd" | "env">
+  ): Promise<ExecuteResponse> {
+    try {
+      // Always use session-specific endpoint
+      const response = await this.doFetch(`/api/execute`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ id: sessionId, command }),
+      });
+
+      if (!response.ok) {
+        const errorData = (await response.json().catch(() => ({}))) as {
+          error?: string;
+        };
+        throw new Error(
+          errorData.error || `Failed to execute in session: ${response.status}`
+        );
+      }
+
+      const data = await response.json() as { stdout: string; stderr: string; exitCode: number; success: boolean };
+      console.log(
+        `[HTTP Client] Command executed in session ${sessionId}: ${command}`
+      );
+      
+      // Convert to ExecuteResponse format for consistency
+      const executeResponse: ExecuteResponse = {
+        ...data,
+        command,
+        timestamp: new Date().toISOString()
+      };
+
+      // Call the callback if provided
+      this.options.onCommandComplete?.(
+        executeResponse.success,
+        executeResponse.exitCode,
+        executeResponse.stdout,
+        executeResponse.stderr,
+        executeResponse.command
+      );
+
+      return executeResponse;
+    } catch (error) {
+      console.error("[HTTP Client] Error executing in session:", error);
+      this.options.onError?.(
+        error instanceof Error ? error.message : "Unknown error",
+        command
+      );
+      throw error;
+    }
+  }
+
+  async execStream(
+    sessionId: string,
+    command: string
+  ): Promise<ReadableStream<Uint8Array>> {
+    try {
+      // Always use session-specific streaming endpoint
+      const response = await this.doFetch(`/api/execute/stream`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ 
+          id: sessionId,
+          command
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = (await response.json().catch(() => ({}))) as {
+          error?: string;
+        };
+        throw new Error(
+          errorData.error || `Failed to stream execute in session: ${response.status}`
+        );
+      }
+
+      if (!response.body) {
+        throw new Error("No response body for streaming execution");
+      }
+
+      console.log(
+        `[HTTP Client] Started streaming command in session ${sessionId}: ${command}`
+      );
+      return response.body;
+    } catch (error) {
+      console.error("[HTTP Client] Error streaming execute in session:", error);
+      throw error;
+    }
+  }
 
   async gitCheckout(
     repoUrl: string,
@@ -903,135 +1030,4 @@ export class HttpClient {
       throw error;
     }
   }
-
-  // Session management methods
-  async createSession(options: {
-    id: string;
-    env?: Record<string, string>;
-    cwd?: string;
-    isolation?: boolean;
-  }): Promise<{ success: boolean; id: string; message: string }> {
-    try {
-      const response = await this.doFetch(`/api/session/create`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(options),
-      });
-
-      if (!response.ok) {
-        const errorData = (await response.json().catch(() => ({}))) as {
-          error?: string;
-        };
-        throw new Error(
-          errorData.error || `Failed to create session: ${response.status}`
-        );
-      }
-
-      const data = await response.json() as { success: boolean; id: string; message: string };
-      console.log(`[HTTP Client] Session created: ${options.id}`);
-      return data;
-    } catch (error) {
-      console.error("[HTTP Client] Error creating session:", error);
-      throw error;
-    }
-  }
-
-  async exec(
-    sessionId: string,
-    command: string,
-    options?: Pick<BaseExecOptions, "cwd" | "env">
-  ): Promise<ExecuteResponse> {
-    try {
-      // Always use session-specific endpoint
-      const response = await this.doFetch(`/api/exec`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ id: sessionId, command }),
-      });
-
-      if (!response.ok) {
-        const errorData = (await response.json().catch(() => ({}))) as {
-          error?: string;
-        };
-        throw new Error(
-          errorData.error || `Failed to execute in session: ${response.status}`
-        );
-      }
-
-      const data = await response.json() as { stdout: string; stderr: string; exitCode: number; success: boolean };
-      console.log(
-        `[HTTP Client] Command executed in session ${sessionId}: ${command}`
-      );
-      
-      // Convert to ExecuteResponse format for consistency
-      const executeResponse: ExecuteResponse = {
-        ...data,
-        command,
-        timestamp: new Date().toISOString()
-      };
-
-      // Call the callback if provided
-      this.options.onCommandComplete?.(
-        executeResponse.success,
-        executeResponse.exitCode,
-        executeResponse.stdout,
-        executeResponse.stderr,
-        executeResponse.command
-      );
-
-      return executeResponse;
-    } catch (error) {
-      console.error("[HTTP Client] Error executing in session:", error);
-      this.options.onError?.(
-        error instanceof Error ? error.message : "Unknown error",
-        command
-      );
-      throw error;
-    }
-  }
-
-  async execStream(
-    sessionId: string,
-    command: string
-  ): Promise<ReadableStream<Uint8Array>> {
-    try {
-      // Always use session-specific streaming endpoint
-      const response = await this.doFetch(`/api/exec/stream`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ 
-          id: sessionId,
-          command
-        }),
-      });
-
-      if (!response.ok) {
-        const errorData = (await response.json().catch(() => ({}))) as {
-          error?: string;
-        };
-        throw new Error(
-          errorData.error || `Failed to stream execute in session: ${response.status}`
-        );
-      }
-
-      if (!response.body) {
-        throw new Error("No response body for streaming execution");
-      }
-
-      console.log(
-        `[HTTP Client] Started streaming command in session ${sessionId}: ${command}`
-      );
-      return response.body;
-    } catch (error) {
-      console.error("[HTTP Client] Error streaming execute in session:", error);
-      throw error;
-    }
-  }
-
 }

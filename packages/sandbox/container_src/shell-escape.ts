@@ -17,14 +17,14 @@ export function escapeShellArg(str: string): string {
 
   // Check if string contains any characters that need escaping
   // Safe characters: alphanumeric, dash, underscore, dot, slash
-  if (/^[a-zA-Z0-9._\-\/]+$/.test(str)) {
+  if (/^[a-zA-Z0-9._\-/]+$/.test(str)) {
     return str;
   }
 
   // For strings with special characters, use single quotes and escape single quotes
   // Single quotes preserve all characters literally except the single quote itself
   // To include a single quote, we end the quoted string, add an escaped quote, and start a new quoted string
-  return "'" + str.replace(/'/g, "'\\''") + "'";
+  return `'${str.replace(/'/g, "'\\''")}'`;
 }
 
 /**

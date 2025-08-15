@@ -10,7 +10,6 @@ export async function startProcess(sandbox: Sandbox<unknown>, request: Request) 
     }
 
     if (typeof sandbox.startProcess === 'function') {
-        // sessionId parameter removed - processes now run in default session context
         const process = await sandbox.startProcess(command, {
             processId,
             timeout,
