@@ -82,8 +82,8 @@ RUN python3 --version && \
     jupyter kernelspec list
 
 # Copy container source files to server directory
-COPY container_src/package.json ./
-RUN bun install
+COPY container_src/package.json container_src/bun.lock ./
+RUN bun install --frozen-lockfile
 
 COPY container_src/ ./
 
