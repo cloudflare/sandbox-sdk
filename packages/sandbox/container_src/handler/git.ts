@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
-import type { GitCheckoutRequest } from "../types";
 import type { Session, SessionManager } from "../isolation";
+import type { GitCheckoutRequest } from "../types";
 
 async function executeGitCheckout(
   sessionManager: SessionManager,
