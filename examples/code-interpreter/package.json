@@ -17,7 +17,7 @@
     "wrangler": "^4.27.0"
   },
   "dependencies": {
-    "@cloudflare/sandbox": "^0.2.4",
+    "@cloudflare/sandbox": "^0.3.0",
     "openai": "^5.12.0"
   }
 }
