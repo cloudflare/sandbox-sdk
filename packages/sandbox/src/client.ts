@@ -758,30 +758,6 @@ export class HttpClient {
     }
   }
 
-  async getCommands(): Promise<string[]> {
-    try {
-      const response = await fetch(`${this.baseUrl}/api/commands`, {
-        headers: {
-          "Content-Type": "application/json",
-        },
-        method: "GET",
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const data: CommandsResponse = await response.json();
-      console.log(
-        `[HTTP Client] Available commands: ${data.availableCommands.length}`
-      );
-      return data.availableCommands;
-    } catch (error) {
-      console.error("[HTTP Client] Error getting commands:", error);
-      throw error;
-    }
-  }
-
 
   // Process management methods
   async startProcess(

@@ -1,5 +1,5 @@
-import { randomBytes } from "node:crypto";
 import { serve } from "bun";
+import { handleExecuteRequest, handleStreamingExecuteRequest } from "./handler/exec";
 import {
   handleDeleteFileRequest,
   handleListFilesRequest,
@@ -25,10 +25,10 @@ import {
   handleStartProcessRequest,
   handleStreamProcessLogsRequest,
 } from "./handler/process";
+import { handleCreateSession, handleListSessions } from "./handler/session";
 import { hasNamespaceSupport, SessionManager } from "./isolation";
 import type { CreateContextRequest } from "./jupyter-server";
 import { JupyterNotReadyError, JupyterService } from "./jupyter-service";
-import type { CreateSessionRequest, SessionExecRequest } from "./types";
 
 // In-memory storage for exposed ports
 const exposedPorts = new Map<number, { name?: string; exposedAt: Date }>();
@@ -129,270 +129,27 @@ const server = serve({
 
         case "/api/session/create":
           if (req.method === "POST") {
-            try {
-              const body = (await req.json()) as CreateSessionRequest;
-              const { id, env, cwd, isolation } = body;
-
-              if (!id) {
-                return new Response(
-                  JSON.stringify({ error: "Session ID is required" }),
-                  {
-                    status: 400,
-                    headers: {
-                      "Content-Type": "application/json",
-                      ...corsHeaders,
-                    },
-                  }
-                );
-              }
-
-              const session = await sessionManager.createSession({
-                id,
-                env: env || {},
-                cwd: cwd || "/workspace",
-                isolation: isolation !== false,
-              });
-
-              console.log(`[Container] Session '${id}' created successfully`);
-              console.log(
-                `[Container] Available sessions now: ${sessionManager
-                  .listSessions()
-                  .join(", ")}`
-              );
-
-              return new Response(
-                JSON.stringify({
-                  success: true,
-                  id,
-                  message: `Session '${id}' created with${
-                    isolation !== false ? "" : "out"
-                  } isolation`,
-                }),
-                {
-                  headers: {
-                    "Content-Type": "application/json",
-                    ...corsHeaders,
-                  },
-                }
-              );
-            } catch (error) {
-              console.error("[Container] Failed to create session:", error);
-              return new Response(
-                JSON.stringify({
-                  error: "Failed to create session",
-                  message:
-                    error instanceof Error ? error.message : String(error),
-                }),
-                {
-                  status: 500,
-                  headers: {
-                    "Content-Type": "application/json",
-                    ...corsHeaders,
-                  },
-                }
-              );
-            }
+            return handleCreateSession(req, corsHeaders, sessionManager);
           }
           break;
 
         case "/api/session/list":
           if (req.method === "GET") {
-            const sessionList = sessionManager.listSessions();
-            return new Response(
-              JSON.stringify({
-                count: sessionList.length,
-                sessions: sessionList,
-                timestamp: new Date().toISOString(),
-              }),
-              {
-                headers: {
-                  "Content-Type": "application/json",
-                  ...corsHeaders,
-                },
-              }
-            );
+            return handleListSessions(corsHeaders, sessionManager);
           }
           break;
 
         case "/api/execute":
           if (req.method === "POST") {
-            try {
-              const body = (await req.json()) as SessionExecRequest;
-              const { id, command } = body;
-
-              console.log(
-                `[Container] Session exec request for '${id}': ${command}`
-              );
-
-              if (!id || !command) {
-                return new Response(
-                  JSON.stringify({
-                    error: "Session ID and command are required",
-                  }),
-                  {
-                    status: 400,
-                    headers: {
-                      "Content-Type": "application/json",
-                      ...corsHeaders,
-                    },
-                  }
-                );
-              }
-
-              const session = sessionManager.getSession(id);
-              if (!session) {
-                console.error(`[Container] Session '${id}' not found!`);
-                const availableSessions = sessionManager.listSessions();
-                console.log(
-                  `[Container] Available sessions: ${
-                    availableSessions.join(", ") || "none"
-                  }`
-                );
-
-                return new Response(
-                  JSON.stringify({
-                    error: `Session '${id}' not found`,
-                    availableSessions,
-                  }),
-                  {
-                    status: 404,
-                    headers: {
-                      "Content-Type": "application/json",
-                      ...corsHeaders,
-                    },
-                  }
-                );
-              }
-
-              const result = await session.exec(command);
-
-              return new Response(JSON.stringify(result), {
-                headers: { "Content-Type": "application/json", ...corsHeaders },
-              });
-            } catch (error) {
-              console.error("[Container] Session exec failed:", error);
-              return new Response(
-                JSON.stringify({
-                  error: "Command execution failed",
-                  message:
-                    error instanceof Error ? error.message : String(error),
-                }),
-                {
-                  status: 500,
-                  headers: {
-                    "Content-Type": "application/json",
-                    ...corsHeaders,
-                  },
-                }
-              );
-            }
+            return handleExecuteRequest(req, corsHeaders, sessionManager);
           }
           break;
   
         case "/api/execute/stream":
           if (req.method === "POST") {
-            try {
-              const body = (await req.json()) as SessionExecRequest;
-              const { id, command } = body;
-
-              console.log(
-                `[Container] Session streaming exec request for '${id}': ${command}`
-              );
-
-              if (!id || !command) {
-                return new Response(
-                  JSON.stringify({
-                    error: "Session ID and command are required",
-                  }),
-                  {
-                    status: 400,
-                    headers: {
-                      "Content-Type": "application/json",
-                      ...corsHeaders,
-                    },
-                  }
-                );
-              }
-
-              const session = sessionManager.getSession(id);
-              if (!session) {
-                console.error(`[Container] Session '${id}' not found!`);
-                const availableSessions = sessionManager.listSessions();
-
-                return new Response(
-                  JSON.stringify({
-                    error: `Session '${id}' not found`,
-                    availableSessions,
-                  }),
-                  {
-                    status: 404,
-                    headers: {
-                      "Content-Type": "application/json",
-                      ...corsHeaders,
-                    },
-                  }
-                );
-              }
-
-              // Create a streaming response using the actual streaming method
-              const stream = new ReadableStream({
-                async start(controller) {
-                  try {
-                    // Use the streaming generator method
-                    for await (const event of session.execStream(command)) {
-                      // Forward each event as SSE
-                      controller.enqueue(
-                        new TextEncoder().encode(
-                          `data: ${JSON.stringify(event)}\n\n`
-                        )
-                      );
-                    }
-                    controller.close();
-                  } catch (error) {
-                    controller.enqueue(
-                      new TextEncoder().encode(
-                        `data: ${JSON.stringify({
-                          type: "error",
-                          message:
-                            error instanceof Error
-                              ? error.message
-                              : String(error),
-                        })}\n\n`
-                      )
-                    );
-                    controller.close();
-                  }
-                },
-              });
-
-              return new Response(stream, {
-                headers: {
-                  "Content-Type": "text/event-stream",
-                  "Cache-Control": "no-cache",
-                  Connection: "keep-alive",
-                  ...corsHeaders,
-                },
-              });
-            } catch (error) {
-              console.error("[Container] Session stream exec failed:", error);
-              return new Response(
-                JSON.stringify({
-                  error: "Stream execution failed",
-                  message:
-                    error instanceof Error ? error.message : String(error),
-                }),
-                {
-                  status: 500,
-                  headers: {
-                    "Content-Type": "application/json",
-                    ...corsHeaders,
-                  },
-                }
-              );
-            }
+            return handleStreamingExecuteRequest(req, sessionManager, corsHeaders);
           }
           break;
-
 
         case "/api/ping":
           if (req.method === "GET") {
@@ -407,38 +164,6 @@ const server = serve({
                   ? "initializing"
                   : "not ready",
                 jupyterHealth: health,
-              }),
-              {
-                headers: {
-                  "Content-Type": "application/json",
-                  ...corsHeaders,
-                },
-              }
-            );
-          }
-          break;
-
-        case "/api/commands":
-          if (req.method === "GET") {
-            return new Response(
-              JSON.stringify({
-                availableCommands: [
-                  "ls",
-                  "pwd",
-                  "echo",
-                  "cat",
-                  "grep",
-                  "find",
-                  "whoami",
-                  "date",
-                  "uptime",
-                  "ps",
-                  "top",
-                  "df",
-                  "du",
-                  "free",
-                ],
-                timestamp: new Date().toISOString(),
               }),
               {
                 headers: {
@@ -874,4 +599,3 @@ console.log(
   `   POST /api/execute/code - Execute code in a context (streaming)`
 );
 console.log(`   GET  /api/ping - Health check`);
-console.log(`   GET  /api/commands - List available commands`);
