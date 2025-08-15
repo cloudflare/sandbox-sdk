@@ -135,3 +135,8 @@ dist
 .DS_Store
 
 container_dist
+
+# Compiled TypeScript files in container_src
+packages/sandbox/container_src/*.js
+packages/sandbox/container_src/**/*.js
+!packages/sandbox/container_src/**/*.d.ts

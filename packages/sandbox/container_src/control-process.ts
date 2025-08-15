@@ -3,14 +3,23 @@
 /**
  * Control Process for Isolated Command Execution
  * 
- * This process manages an isolated bash shell and executes commands within it.
- * It communicates with the parent process via stdin/stdout using JSON messages.
+ * This process manages a persistent bash shell with optional namespace isolation.
+ * It maintains session state (pwd, env vars) across commands while providing
+ * security isolation when requested.
  * 
  * Architecture:
  * - Receives commands via stdin as JSON messages
- * - Executes them in a bash shell (with optional PID namespace isolation)
+ * - Executes them in a persistent bash shell
+ * - Optionally uses Linux 'unshare' for PID namespace isolation
  * - Returns results via stdout as JSON messages
  * - Uses file-based IPC for reliable handling of any output type
+ * 
+ * Isolation (when enabled):
+ * - Uses 'unshare --pid --fork --mount-proc' from util-linux
+ * - Creates PID namespace: sandboxed code cannot see host processes
+ * - Mounts isolated /proc: hides platform secrets and control plane
+ * - Requires CAP_SYS_ADMIN capability (available in production)
+ * - Falls back gracefully to non-isolated mode if unavailable
  */
 
 import { type ChildProcess, spawn } from 'node:child_process';
@@ -21,7 +30,7 @@ import * as path from 'node:path';
 // Parse environment configuration
 const sessionId = process.env.SESSION_ID || 'default';
 const sessionCwd = process.env.SESSION_CWD || '/workspace';
-const isIsolated = process.env.SESSION_ISOLATED === '1';
+let isIsolated = process.env.SESSION_ISOLATED === '1';
 
 // Configuration constants (can be overridden via env vars)
 const COMMAND_TIMEOUT_MS = parseInt(process.env.COMMAND_TIMEOUT_MS || '30000');
@@ -82,7 +91,7 @@ function sendResponse(response: ControlResponse): void {
 /**
  * Log to stderr for debugging (visible in parent process logs)
  */
-function logError(message: string, error?: any): void {
+function logError(message: string, error?: unknown): void {
   console.error(`[Control] ${message}`, error || '');
 }
 
@@ -233,11 +242,11 @@ async function handleExecCommand(msg: ControlMessage): Promise<void> {
         
         // Clean up processing state
         processingState.delete(msg.id);
-      } catch (error: any) {
+      } catch (error) {
         sendResponse({
           type: 'error',
           id: msg.id,
-          error: `Failed to read output: ${error.message}`
+          error: `Failed to read output: ${error instanceof Error ? error.message : String(error)}`
         });
         
         // Still try to clean up files on error
@@ -473,7 +482,7 @@ async function handleExecStreamCommand(msg: ControlMessage): Promise<void> {
         });
         
         processingState.delete(msg.id);
-      } catch (error: any) {
+      } catch (error) {
         sendResponse({
           type: 'stream_event',
           id: msg.id,
@@ -481,7 +490,7 @@ async function handleExecStreamCommand(msg: ControlMessage): Promise<void> {
             type: 'error',
             timestamp: new Date().toISOString(),
             command: msg.command,
-            error: `Failed to read output: ${error.message}`
+            error: `Failed to read output: ${error instanceof Error ? error.message : String(error)}`
           }
         });
         
@@ -555,36 +564,72 @@ async function handleControlMessage(msg: ControlMessage): Promise<void> {
       break;
       
     default:
-      logError(`Unknown message type: ${(msg as any).type}`);
+      logError(`Unknown message type: ${(msg as ControlMessage).type}`);
   }
 }
 
 /**
  * Initialize the shell process
+ * 
+ * Creates either an isolated shell using 'unshare' or a regular bash shell.
+ * Isolation uses Linux namespaces (PID, mount) to prevent the shell from:
+ * - Seeing control plane processes (Jupyter, Bun server)
+ * - Accessing platform secrets in /proc/1/environ
+ * - Hijacking control plane ports
  */
 function initializeShell(): void {
-  logError(`Starting control process for session '${sessionId}'`);
+  logError(`Starting control process for session '${sessionId}' (isolation: ${isIsolated})`);
   
-  // Start the shell with or without isolation
-  const shellCommand = isIsolated
-    ? ['unshare', '--pid', '--fork', '--mount-proc', 'bash', '--norc']
-    : ['bash', '--norc'];
+  // Build shell command based on isolation requirements
+  let shellCommand: string[];
+  if (isIsolated) {
+    // Use unshare for PID namespace isolation
+    // --pid: Create new PID namespace (processes can't see host processes)
+    // --fork: Fork before exec (required for PID namespace to work properly)
+    // --mount-proc: Mount new /proc filesystem (hides host process info)
+    shellCommand = ['unshare', '--pid', '--fork', '--mount-proc', 'bash', '--norc'];
+    logError('Using namespace isolation via unshare');
+  } else {
+    // Regular bash shell without isolation
+    shellCommand = ['bash', '--norc'];
+    logError('Running without namespace isolation');
+  }
   
+  // Spawn the shell process
   shell = spawn(shellCommand[0], shellCommand.slice(1), {
     stdio: ['pipe', 'pipe', 'pipe'],
     cwd: sessionCwd,
     env: process.env
   });
   
-  // Handle shell errors
-  shell.on('error', (error) => {
-    logError('Shell error:', error);
+  // Handle shell spawn errors (e.g., unshare not found or permission denied)
+  shell.on('error', (error: Error & { code?: string }) => {
+    logError('Shell spawn error:', error);
     shellAlive = false;
+    
+    // Provide helpful error messages based on the error
+    let errorMessage = error.message;
+    if (isIsolated && error.code === 'ENOENT') {
+      errorMessage = 'unshare command not found. Namespace isolation requires Linux with util-linux installed.';
+    } else if (isIsolated && (error.code === 'EPERM' || error.code === 'EACCES')) {
+      errorMessage = 'Permission denied for namespace isolation. CAP_SYS_ADMIN capability required.';
+    }
+    
     sendResponse({
       type: 'error',
       id: 'shell',
-      error: error.message
+      error: errorMessage
     });
+    
+    // If isolation failed but not required, try fallback to regular bash
+    if (isIsolated && process.env.ISOLATION_FALLBACK !== '0') {
+      logError('Attempting fallback to non-isolated shell...');
+      isIsolated = false;
+      initializeShell(); // Recursive call with isolation disabled
+      return;
+    }
+    
+    process.exit(1);
   });
   
   // Handle shell exit
@@ -600,7 +645,7 @@ function initializeShell(): void {
     process.exit(code || 1);
   });
   
-  // Send ready signal
+  // Send ready signal once shell is spawned
   sendResponse({ type: 'ready', id: 'init' });
 }
 
@@ -623,7 +668,7 @@ function main(): void {
       try {
         const msg = JSON.parse(line) as ControlMessage;
         await handleControlMessage(msg);
-      } catch (e: any) {
+      } catch (e) {
         logError('Failed to parse command:', e);
       }
     }

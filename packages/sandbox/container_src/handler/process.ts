@@ -1,5 +1,5 @@
 import type { ProcessRecord, ProcessStatus, StartProcessRequest } from "../types";
-import type { Session, SessionManager } from "../utils/isolation";
+import type { Session, SessionManager } from "../isolation";
 
 // Process management handlers - all processes are tracked per-session
 

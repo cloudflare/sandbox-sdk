@@ -7,7 +7,7 @@ import type {
     RenameFileRequest,
     WriteFileRequest
 } from "../types";
-import type { SessionManager } from "../utils/isolation";
+import type { SessionManager } from "../isolation";
 
 // Common path validation patterns
 const DANGEROUS_PATH_PATTERNS = [
