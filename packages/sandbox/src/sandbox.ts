@@ -135,6 +135,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       return parseInt(proxyMatch[1]);
     }
 
+    if (url.port) {
+      return parseInt(url.port);
+    }
+
     // All other requests go to control plane on port 3000
     // This includes /api/* endpoints and any other control requests
     return 3000;
