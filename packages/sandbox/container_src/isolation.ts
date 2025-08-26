@@ -35,11 +35,11 @@ import type { ProcessRecord, ProcessStatus } from './types';
 // Configuration constants
 const CONFIG = {
   // Timeouts (in milliseconds)
-  COMMAND_TIMEOUT_MS: 30000,        // 30 seconds for command execution
   READY_TIMEOUT_MS: 5000,           // 5 seconds for control process to initialize
-  CLEANUP_INTERVAL_MS: 30000,       // Run cleanup every 30 seconds
-  TEMP_FILE_MAX_AGE_MS: 60000,      // Delete temp files older than 60 seconds
   SHUTDOWN_GRACE_PERIOD_MS: 500,    // Grace period for cleanup on shutdown
+  COMMAND_TIMEOUT_MS: parseInt(process.env.COMMAND_TIMEOUT_MS || '30000'),        // 30 seconds for command execution
+  CLEANUP_INTERVAL_MS: parseInt(process.env.CLEANUP_INTERVAL_MS || '30000'),       // Run cleanup every 30 seconds
+  TEMP_FILE_MAX_AGE_MS: parseInt(process.env.TEMP_FILE_MAX_AGE_MS || '60000'),      // Delete temp files older than 60 seconds
   
   // Default paths
   DEFAULT_CWD: '/workspace',
