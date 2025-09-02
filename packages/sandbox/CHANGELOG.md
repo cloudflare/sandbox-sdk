@@ -1,5 +1,21 @@
 # @cloudflare/sandbox
 
+## 0.3.1
+
+### Patch Changes
+
+- [#72](https://github.com/cloudflare/sandbox-sdk/pull/72) [`1dfb064`](https://github.com/cloudflare/sandbox-sdk/commit/1dfb0644a33d0ac6d5f7c64be880489efab1d292) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Configurable timeouts via environment variables in isolation.ts
+
+  Co-authored-by: CyrusNuevoDia <cyrus@cloudflare.com>
+
+- [#71](https://github.com/cloudflare/sandbox-sdk/pull/71) [`fb3c9c2`](https://github.com/cloudflare/sandbox-sdk/commit/fb3c9c22242d9d4f157c26f547f1e697ef7875f9) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Bump containers package version
+
+- [#72](https://github.com/cloudflare/sandbox-sdk/pull/72) [`1dfb064`](https://github.com/cloudflare/sandbox-sdk/commit/1dfb0644a33d0ac6d5f7c64be880489efab1d292) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Determine if the port is specified in the URL
+
+  Co-authored-by: peterp <peter@cloudflare.com>
+
+- [#70](https://github.com/cloudflare/sandbox-sdk/pull/70) [`e1fa354`](https://github.com/cloudflare/sandbox-sdk/commit/e1fa354ab1bc7b0e89db4901b67028ebf1a93d0a) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Fix escaped quotes in file write operations
+
 ## 0.3.0
 
 ### Minor Changes
