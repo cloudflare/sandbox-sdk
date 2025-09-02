@@ -423,12 +423,11 @@ export class Session {
   
   // File Operations - Execute as shell commands to inherit session context
   async writeFileOperation(path: string, content: string, encoding: string = 'utf-8'): Promise<{ success: boolean; exitCode: number; path: string }> {
-    // Escape content for safe heredoc usage
-    const safeContent = content.replace(/'/g, "'\\''");
-    
     // Create parent directory if needed, then write file using heredoc
+    // Note: The quoted heredoc delimiter 'SANDBOX_EOF' prevents variable expansion
+    // and treats the content literally, so no escaping is required
     const command = `mkdir -p "$(dirname "${path}")" && cat > "${path}" << 'SANDBOX_EOF'
-${safeContent}
+${content}
 SANDBOX_EOF`;
     
     const result = await this.exec(command);
