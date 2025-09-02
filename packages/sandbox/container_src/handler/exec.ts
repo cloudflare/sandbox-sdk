@@ -1,5 +1,5 @@
-import { SessionManager } from "../isolation";
-import { SessionExecRequest } from "../types";
+import type { SessionManager } from "../isolation";
+import type { SessionExecRequest } from "../types";
 
 export async function handleExecuteRequest(
   req: Request,
