@@ -2,6 +2,7 @@
 
 import type { 
   DeleteFileRequest,
+  ListFilesRequest,
   Logger, 
   MkdirRequest, 
   MoveFileRequest,
@@ -38,6 +39,8 @@ export class FileHandler extends BaseHandler<Request, Response> {
         return await this.handleMove(request, context);
       case '/api/mkdir':
         return await this.handleMkdir(request, context);
+      case '/api/list':
+        return await this.handleListFiles(request, context);
       default:
         return this.createErrorResponse('Invalid file endpoint', 404, context);
     }
@@ -46,13 +49,17 @@ export class FileHandler extends BaseHandler<Request, Response> {
   private async handleRead(request: Request, context: RequestContext): Promise<Response> {
     const body = this.getValidatedData<ReadFileRequest>(context);
     
+    // Extract sessionId from request body (main branch pattern)
+    const { id: sessionId, path } = body;
+    
     this.logger.info('Reading file', { 
       requestId: context.requestId,
-      path: body.path,
+      sessionId,
+      path,
       encoding: body.encoding
     });
 
-    const result = await this.fileService.readFile(body.path, {
+    const result = await this.fileService.read(path, sessionId, {
       encoding: body.encoding || 'utf-8',
     });
 
@@ -60,13 +67,13 @@ export class FileHandler extends BaseHandler<Request, Response> {
       this.logger.info('File read successfully', {
         requestId: context.requestId,
         path: body.path,
-        sizeBytes: result.data!.length,
+        sizeBytes: result.data.length,
       });
 
       return new Response(
         JSON.stringify({
           success: true,
-          content: result.data!,
+          content: result.data,
           path: body.path,
           exitCode: 0,
           encoding: body.encoding || 'utf-8',
@@ -84,10 +91,10 @@ export class FileHandler extends BaseHandler<Request, Response> {
       this.logger.error('File read failed', undefined, {
         requestId: context.requestId,
         path: body.path,
-        errorCode: result.error!.code,
-        errorMessage: result.error!.message,
+        errorCode: result.error.code,
+        errorMessage: result.error.message,
       });
-      return this.createErrorResponse(result.error!, 500, context);
+      return this.createErrorResponse(result.error, 500, context);
     }
   }
 
@@ -101,7 +108,8 @@ export class FileHandler extends BaseHandler<Request, Response> {
       encoding: body.encoding
     });
 
-    const result = await this.fileService.writeFile(body.path, body.content, {
+    const { id: sessionId } = body;
+    const result = await this.fileService.write(body.path, body.content, sessionId, {
       encoding: body.encoding || 'utf-8',
     });
 
@@ -131,10 +139,10 @@ export class FileHandler extends BaseHandler<Request, Response> {
       this.logger.error('File write failed', undefined, {
         requestId: context.requestId,
         path: body.path,
-        errorCode: result.error!.code,
-        errorMessage: result.error!.message,
+        errorCode: result.error.code,
+        errorMessage: result.error.message,
       });
-      return this.createErrorResponse(result.error!, 500, context);
+      return this.createErrorResponse(result.error, 500, context);
     }
   }
 
@@ -146,7 +154,8 @@ export class FileHandler extends BaseHandler<Request, Response> {
       path: body.path
     });
 
-    const result = await this.fileService.deleteFile(body.path);
+    const { id: sessionId } = body;
+    const result = await this.fileService.delete(body.path, sessionId);
 
     if (result.success) {
       this.logger.info('File deleted successfully', {
@@ -173,10 +182,10 @@ export class FileHandler extends BaseHandler<Request, Response> {
       this.logger.error('File delete failed', undefined, {
         requestId: context.requestId,
         path: body.path,
-        errorCode: result.error!.code,
-        errorMessage: result.error!.message,
+        errorCode: result.error.code,
+        errorMessage: result.error.message,
       });
-      return this.createErrorResponse(result.error!, 500, context);
+      return this.createErrorResponse(result.error, 500, context);
     }
   }
 
@@ -189,7 +198,8 @@ export class FileHandler extends BaseHandler<Request, Response> {
       newPath: body.newPath
     });
 
-    const result = await this.fileService.renameFile(body.oldPath, body.newPath);
+    const { id: sessionId } = body;
+    const result = await this.fileService.rename(body.oldPath, body.newPath, sessionId);
 
     if (result.success) {
       this.logger.info('File renamed successfully', {
@@ -219,10 +229,10 @@ export class FileHandler extends BaseHandler<Request, Response> {
         requestId: context.requestId,
         oldPath: body.oldPath,
         newPath: body.newPath,
-        errorCode: result.error!.code,
-        errorMessage: result.error!.message,
+        errorCode: result.error.code,
+        errorMessage: result.error.message,
       });
-      return this.createErrorResponse(result.error!, 500, context);
+      return this.createErrorResponse(result.error, 500, context);
     }
   }
 
@@ -235,7 +245,8 @@ export class FileHandler extends BaseHandler<Request, Response> {
       destinationPath: body.destinationPath
     });
 
-    const result = await this.fileService.moveFile(body.sourcePath, body.destinationPath);
+    const { id: sessionId } = body;
+    const result = await this.fileService.move(body.sourcePath, body.destinationPath, sessionId);
 
     if (result.success) {
       this.logger.info('File moved successfully', {
@@ -265,10 +276,10 @@ export class FileHandler extends BaseHandler<Request, Response> {
         requestId: context.requestId,
         sourcePath: body.sourcePath,
         destinationPath: body.destinationPath,
-        errorCode: result.error!.code,
-        errorMessage: result.error!.message,
+        errorCode: result.error.code,
+        errorMessage: result.error.message,
       });
-      return this.createErrorResponse(result.error!, 500, context);
+      return this.createErrorResponse(result.error, 500, context);
     }
   }
 
@@ -281,7 +292,8 @@ export class FileHandler extends BaseHandler<Request, Response> {
       recursive: body.recursive
     });
 
-    const result = await this.fileService.createDirectory(body.path, {
+    const { id: sessionId } = body;
+    const result = await this.fileService.mkdir(body.path, sessionId, {
       recursive: body.recursive,
     });
 
@@ -315,10 +327,54 @@ export class FileHandler extends BaseHandler<Request, Response> {
         requestId: context.requestId,
         path: body.path,
         recursive: body.recursive,
-        errorCode: result.error!.code,
-        errorMessage: result.error!.message,
+        errorCode: result.error.code,
+        errorMessage: result.error.message,
       });
-      return this.createErrorResponse(result.error!, 500, context);
+      return this.createErrorResponse(result.error, 500, context);
+    }
+  }
+
+  private async handleListFiles(request: Request, context: RequestContext): Promise<Response> {
+    const body = this.getValidatedData<ListFilesRequest>(context);
+    
+    this.logger.info('Listing files in directory', { 
+      requestId: context.requestId,
+      path: body.path
+    });
+
+    const { id: sessionId } = body;
+    const result = await this.fileService.listFiles(body.path, sessionId);
+
+    if (result.success) {
+      this.logger.info('Directory listing completed successfully', {
+        requestId: context.requestId,
+        path: body.path,
+        fileCount: result.data!.length,
+      });
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          exitCode: 0,
+          files: result.data!,
+          path: body.path,
+        }),
+        {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/json',
+            ...context.corsHeaders,
+          },
+        }
+      );
+    } else {
+      this.logger.error('Directory listing failed', undefined, {
+        requestId: context.requestId,
+        path: body.path,
+        errorCode: result.error.code,
+        errorMessage: result.error.message,
+      });
+      return this.createErrorResponse(result.error, 500, context);
     }
   }
 }

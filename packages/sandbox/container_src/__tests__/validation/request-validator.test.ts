@@ -79,7 +79,7 @@ describe('RequestValidator', () => {
       it('should validate execute request with all fields', async () => {
         const validRequest = {
           command: 'echo "hello"',
-          sessionId: 'session-123',
+          id: 'session-123',
           cwd: '/tmp',
           env: { NODE_ENV: 'test' },
           background: true
@@ -91,8 +91,10 @@ describe('RequestValidator', () => {
         // Only fields defined in ExecuteRequestSchema are included in result.data
         expect(result.data).toEqual({
           command: 'echo "hello"',
-          sessionId: 'session-123',
-          background: true
+          id: 'session-123',
+          background: true,
+          cwd: '/tmp',
+          env: { NODE_ENV: 'test' }
         });
         expect(result.errors).toHaveLength(0);
       });
@@ -181,19 +183,17 @@ describe('RequestValidator', () => {
         expect(result.errors.some(e => e.field === 'background')).toBe(true);
       });
 
-      it('should ignore fields not in schema (like env)', async () => {
-        const requestWithExtraFields = {
+      it('should reject invalid env field type', async () => {
+        const requestWithInvalidEnv = {
           command: 'ls',
-          env: 'invalid', // This field is not in ExecuteRequestSchema so will be ignored
+          env: 'invalid', // env should be an object, not a string
           extraField: 'also ignored'
         };
 
-        const result = requestValidator.validateExecuteRequest(requestWithExtraFields);
+        const result = requestValidator.validateExecuteRequest(requestWithInvalidEnv);
 
-        expect(result.isValid).toBe(true); // Validation passes because extra fields are ignored
-        expect(result.data).toEqual({
-          command: 'ls'
-        });
+        expect(result.isValid).toBe(false); // Validation fails due to invalid env type
+        expect(result.errors.some(e => e.field === 'env')).toBe(true);
       });
     });
   });
@@ -521,7 +521,7 @@ describe('RequestValidator', () => {
           repoUrl: 'https://github.com/user/awesome-repo.git',
           branch: 'develop',
           targetDir: '/tmp/project',
-          sessionId: 'session-456'
+          id: 'session-456'
         };
 
         const result = requestValidator.validateGitRequest(validRequest);

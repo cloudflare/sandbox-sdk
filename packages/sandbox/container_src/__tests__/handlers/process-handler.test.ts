@@ -18,7 +18,7 @@ const mockProcessService = {
   listProcesses: vi.fn(),
   streamProcessLogs: vi.fn(),
   executeCommand: vi.fn(),
-} as ProcessService;
+} satisfies Partial<ProcessService>;
 
 const mockLogger: Logger = {
   info: vi.fn(),
@@ -36,7 +36,6 @@ const mockContext: RequestContext = {
     'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
   },
-  sessionId: 'session-456',
 };
 
 // Helper to create validated context
@@ -54,12 +53,13 @@ describe('ProcessHandler', () => {
     
     // Import the ProcessHandler (dynamic import)
     const { ProcessHandler: ProcessHandlerClass } = await import('@container/handlers/process-handler');
-    processHandler = new ProcessHandlerClass(mockProcessService, mockLogger);
+    processHandler = new ProcessHandlerClass(mockProcessService as ProcessService, mockLogger);
   });
 
   describe('handleStart - POST /api/process/start', () => {
     it('should start process successfully', async () => {
       const startProcessData = {
+        id: 'test-session',
         command: 'echo "hello"',
         options: { cwd: '/tmp' }
       };
@@ -70,8 +70,7 @@ describe('ProcessHandler', () => {
         command: 'echo "hello"',
         status: 'running',
         startTime: new Date('2023-01-01T00:00:00Z'),
-        sessionId: 'session-456',
-        stdout: '',
+              stdout: '',
         stderr: '',
         outputListeners: new Set(),
         statusListeners: new Set(),
@@ -103,6 +102,7 @@ describe('ProcessHandler', () => {
       // Verify service was called correctly
       expect(mockProcessService.startProcess).toHaveBeenCalledWith(
         'echo "hello"',
+        'test-session',
         { cwd: '/tmp' }
       );
 
@@ -164,8 +164,7 @@ describe('ProcessHandler', () => {
           command: 'sleep 10',
           status: 'running',
           startTime: new Date('2023-01-01T00:00:00Z'),
-          sessionId: 'session-456',
-          stdout: '',
+                  stdout: '',
           stderr: '',
           outputListeners: new Set(),
           statusListeners: new Set(),
@@ -178,15 +177,14 @@ describe('ProcessHandler', () => {
           startTime: new Date('2023-01-01T00:01:00Z'),
           endTime: new Date('2023-01-01T00:01:30Z'),
           exitCode: 0,
-          sessionId: 'session-456',
-          stdout: '',
+                  stdout: '',
           stderr: '',
           outputListeners: new Set(),
           statusListeners: new Set(),
         }
       ];
 
-      (mockProcessService.listProcesses as any).mockResolvedValue({
+      mockProcessService.listProcesses.mockResolvedValue({
         success: true,
         data: mockProcesses
       });
@@ -209,12 +207,12 @@ describe('ProcessHandler', () => {
     });
 
     it('should filter processes by query parameters', async () => {
-      (mockProcessService.listProcesses as any).mockResolvedValue({
+      mockProcessService.listProcesses.mockResolvedValue({
         success: true,
         data: []
       });
 
-      const request = new Request('http://localhost:3000/api/process/list?sessionId=session-123&status=running', {
+      const request = new Request('http://localhost:3000/api/process/list?status=running', {
         method: 'GET'
       });
 
@@ -224,13 +222,12 @@ describe('ProcessHandler', () => {
       
       // Verify filtering parameters were passed to service
       expect(mockProcessService.listProcesses).toHaveBeenCalledWith({
-        sessionId: 'session-123',
         status: 'running'
       });
     });
 
     it('should handle process listing errors', async () => {
-      (mockProcessService.listProcesses as any).mockResolvedValue({
+      mockProcessService.listProcesses.mockResolvedValue({
         success: false,
         error: {
           message: 'Database error',
@@ -259,8 +256,7 @@ describe('ProcessHandler', () => {
         command: 'sleep 60',
         status: 'running',
         startTime: new Date('2023-01-01T00:00:00Z'),
-        sessionId: 'session-456',
-        stdout: 'Process output',
+              stdout: 'Process output',
         stderr: 'Error output',
         outputListeners: new Set(),
         statusListeners: new Set(),
@@ -415,8 +411,7 @@ describe('ProcessHandler', () => {
         command: 'echo test',
         status: 'completed',
         startTime: new Date('2023-01-01T00:00:00Z'),
-        sessionId: 'session-456',
-        stdout: 'test output',
+              stdout: 'test output',
         stderr: 'error output',
         outputListeners: new Set(),
         statusListeners: new Set(),
@@ -470,8 +465,7 @@ describe('ProcessHandler', () => {
         command: 'long-running-command',
         status: 'running',
         startTime: new Date('2023-01-01T00:00:00Z'),
-        sessionId: 'session-456',
-        stdout: 'existing output',
+              stdout: 'existing output',
         stderr: 'existing error',
         outputListeners: new Set(),
         statusListeners: new Set(),
@@ -633,7 +627,7 @@ describe('ProcessHandler', () => {
 
   describe('CORS headers', () => {
     it('should include CORS headers in all responses', async () => {
-      (mockProcessService.listProcesses as any).mockResolvedValue({
+      mockProcessService.listProcesses.mockResolvedValue({
         success: true,
         data: []
       });
@@ -675,7 +669,7 @@ describe('ProcessHandler', () => {
  *    objects into appropriate HTTP responses with correct status codes.
  * 
  * 4. **Query Parameter Processing**: Tests cover filtering functionality through
- *    URL query parameters (sessionId, status).
+ *    URL query parameters (status).
  * 
  * 5. **Streaming Response Testing**: SSE streaming functionality is tested by
  *    validating response headers and initial stream content.

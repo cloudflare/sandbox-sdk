@@ -1,12 +1,14 @@
 // Session Handler
 
 import type { Logger, RequestContext } from '../core/types';
-import type { SessionService } from '../services/session-service';
+import type { SessionManager } from '../isolation';
+import type { CreateSessionRequest } from '../validation/schemas';
+import { CreateSessionRequestSchema } from '../validation/schemas';
 import { BaseHandler } from './base-handler';
 
 export class SessionHandler extends BaseHandler<Request, Response> {
   constructor(
-    private sessionService: SessionService,
+    private sessionManager: SessionManager,
     logger: Logger
   ) {
     super(logger);
@@ -27,20 +29,48 @@ export class SessionHandler extends BaseHandler<Request, Response> {
   }
 
   private async handleCreate(request: Request, context: RequestContext): Promise<Response> {
-    this.logger.info('Creating new session', { requestId: context.requestId });
+    try {
+      // Parse and validate request body
+      const body = await request.json() as CreateSessionRequest;
+      const validationResult = CreateSessionRequestSchema.safeParse(body);
+      
+      if (!validationResult.success) {
+        this.logger.error('Session creation validation failed', undefined, {
+          requestId: context.requestId,
+          errors: validationResult.error.issues,
+        });
+        return this.createErrorResponse(
+          { message: 'Invalid session creation request', code: 'VALIDATION_ERROR' },
+          400,
+          context
+        );
+      }
 
-    const result = await this.sessionService.createSession();
-    
-    if (result.success) {
+      const { id, env, cwd, isolation } = validationResult.data;
+      this.logger.info('Creating new session', { 
+        requestId: context.requestId, 
+        sessionId: id,
+        cwd: cwd || '/workspace',
+        isolation: isolation !== false
+      });
+
+      // Create session directly using SessionManager (following main branch pattern)
+      await this.sessionManager.createSession({
+        id,
+        cwd: cwd || '/workspace',
+        isolation: isolation !== false, // Default to true
+      });
+      
       this.logger.info('Session created successfully', { 
         requestId: context.requestId, 
-        sessionId: result.data!.sessionId 
+        sessionId: id 
       });
       
       return new Response(
         JSON.stringify({
-          message: 'Session created successfully',
-          sessionId: result.data!.sessionId,
+          success: true,
+          id,
+          message: `Session '${id}' created with${isolation !== false ? '' : 'out'} isolation`,
           timestamp: new Date().toISOString(),
         }),
         {
@@ -51,26 +81,30 @@ export class SessionHandler extends BaseHandler<Request, Response> {
           },
         }
       );
-    } else {
+    } catch (error) {
       this.logger.error('Session creation failed', undefined, {
         requestId: context.requestId,
-        errorCode: result.error!.code,
-        errorMessage: result.error!.message,
+        error: error instanceof Error ? error.message : 'Unknown error',
       });
-      return this.createErrorResponse(result.error!, 500, context);
+      return this.createErrorResponse(
+        { message: 'Failed to create session', code: 'SESSION_CREATE_ERROR' },
+        500,
+        context
+      );
     }
   }
 
   private async handleList(request: Request, context: RequestContext): Promise<Response> {
-    this.logger.info('Listing sessions', { requestId: context.requestId });
+    try {
+      this.logger.info('Listing sessions', { requestId: context.requestId });
 
-    const result = await this.sessionService.listSessions();
-    
-    if (result.success) {
-      const sessionList = result.data!.map(session => ({
-        sessionId: session.sessionId,
-        createdAt: session.createdAt.toISOString(),
-        hasActiveProcess: !!session.activeProcess,
+      const sessionIds = this.sessionManager.listSessions();
+      
+      const sessionList = sessionIds.map((sessionId: string) => ({
+        id: sessionId,
+        sessionId: sessionId, // Keep both for compatibility
+        createdAt: new Date().toISOString(),
+        hasActiveProcess: false,
       }));
 
       return new Response(
@@ -87,13 +121,16 @@ export class SessionHandler extends BaseHandler<Request, Response> {
           },
         }
       );
-    } else {
+    } catch (error) {
       this.logger.error('Session listing failed', undefined, {
         requestId: context.requestId,
-        errorCode: result.error!.code,
-        errorMessage: result.error!.message,
+        error: error instanceof Error ? error.message : 'Unknown error',
       });
-      return this.createErrorResponse(result.error!, 500, context);
+      return this.createErrorResponse(
+        { message: 'Failed to list sessions', code: 'SESSION_LIST_ERROR' },
+        500,
+        context
+      );
     }
   }
 }

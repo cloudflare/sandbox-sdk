@@ -105,9 +105,13 @@ describe('Process and Port Management Integration Flow', () => {
       // Process start should succeed - exact response structure may vary
       expect(startResponseData).toHaveProperty('success', true);
 
-      // Integration test - actual process functionality is tested
+      // Verify process spawn was called (directly, not through shell)
+      expect(mockBunSpawn).toHaveBeenCalledWith(
+        expect.arrayContaining(['node', 'server.js']),
+        expect.any(Object)
+      );
     });
-    
+
     it('should list processes by session with proper filtering', async () => {
       // List processes
       const listProcessRequest = new Request('http://localhost:3000/api/process/list', {
@@ -300,10 +304,10 @@ describe('Process and Port Management Integration Flow', () => {
 
       const response = await router.route(failingProcessRequest);
 
-      // Session-based execution handles spawn failures gracefully
-      expect(response.status).toBe(200);
-      const responseData = await response.json() as StartProcessResponse;
-      expect(responseData.success).toBe(true); // Session-based execution succeeds
+      // Should handle spawn failure gracefully
+      expect([400, 500]).toContain(response.status);
+      const responseData = await response.json() as ApiErrorResponse;
+      expect(responseData.success).toBe(false);
     });
   });
 });

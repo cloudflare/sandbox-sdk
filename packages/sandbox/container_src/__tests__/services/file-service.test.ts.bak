@@ -5,10 +5,9 @@
  * Demonstrates testing services with security integration and Bun APIs.
  */
 
-import { vi, describe, it, beforeEach, expect } from 'vitest';
 import type { FileStats, Logger } from '@container/core/types';
 import type { FileService, SecurityService } from '@container/services/file-service';
-import type { SessionManager, Session } from '@container/isolation';
+import type { SessionManager } from '@container/isolation';
 
 // Mock the dependencies
 const mockSecurityService: SecurityService = {
@@ -55,7 +54,6 @@ global.Response = vi.fn().mockImplementation((stream: BodyInit | null | undefine
 
 describe('FileService', () => {
   let fileService: FileService;
-  let mockSession: Session; // Store session mock for individual test customization
 
   beforeEach(async () => {
     // Reset all mocks before each test
@@ -68,30 +66,20 @@ describe('FileService', () => {
     });
     
     // Set up session manager mocks with flexible responses
-    mockSession = {
+    const mockSession = {
       exec: vi.fn().mockResolvedValue({
         success: true,
         stdout: 'Hello, World!',
         stderr: '',
         exitCode: 0
-      }),
-      execStream: vi.fn(),
-      destroy: vi.fn(),
-    } as Session;
+      })
+    };
     
     mockSessionManager.getSession.mockReturnValue(mockSession);
     mockSessionManager.getOrCreateDefaultSession.mockResolvedValue(mockSession);
     
-    // Set up default successful session behavior (can be overridden by individual tests)
-    mockSession.exec.mockResolvedValue({
-      success: true,
-      stdout: 'Hello, World!',
-      stderr: '',
-      exitCode: 0
-    });
-    
-    // Reset mock for each test so individual tests can override
-    mockSession.exec.mockClear();
+    // Reset session exec mock before each test so individual tests can customize behavior
+    mockSession.exec.mockReset();
 
     // Import the FileService (dynamic import)
     const { FileService: FileServiceClass } = await import('../../services/file-service');
@@ -155,21 +143,13 @@ describe('FileService', () => {
 
     it('should return error when file does not exist', async () => {
       mockBunFile.exists.mockResolvedValue(false);
-      
-      // Mock session to return failure for this specific case
-      mockSession.exec.mockResolvedValueOnce({
-        success: false,
-        stdout: '',
-        stderr: 'cat: /tmp/nonexistent.txt: No such file or directory',
-        exitCode: 1
-      });
 
       const result = await fileService.read('/tmp/nonexistent.txt', 'test-session');
 
       expect(result.success).toBe(false);
       if (!result.success) {
-        expect(result.error.code).toBe('FILE_READ_ERROR');
-        expect(result.error.message).toContain('File read failed');
+        expect(result.error.code).toBe('FILE_NOT_FOUND');
+        expect(result.error.message).toBe('File not found: /tmp/nonexistent.txt');
         expect(result.error.details?.path).toBe('/tmp/nonexistent.txt');
       }
     });
@@ -178,25 +158,21 @@ describe('FileService', () => {
       mockBunFile.exists.mockResolvedValue(true);
       const bunError = new Error('Permission denied');
       mockBunFile.text.mockRejectedValue(bunError);
-      
-      // Mock session to return failure
-      mockSession.exec.mockResolvedValueOnce({
-        success: false,
-        stdout: '',
-        stderr: 'cat: /tmp/test.txt: Permission denied',
-        exitCode: 1
-      });
 
       const result = await fileService.read('/tmp/test.txt', 'test-session');
 
       expect(result.success).toBe(false);
       if (!result.success) {
         expect(result.error.code).toBe('FILE_READ_ERROR');
-        expect(result.error.message).toContain('File read failed');
-        expect(result.error.message).toContain('File read failed');
+        expect(result.error.message).toContain('Permission denied');
+        expect(result.error.details?.originalError).toBe('Permission denied');
       }
 
-      // Logger call verification (session-based execution may have different logging)
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        'Failed to read file',
+        bunError,
+        { path: '/tmp/test.txt' }
+      );
     });
   });
 
@@ -226,21 +202,13 @@ describe('FileService', () => {
     it('should handle write errors', async () => {
       const writeError = new Error('Disk full');
       mockBunWrite.mockRejectedValue(writeError);
-      
-      // Mock session to return failure
-      mockSession.exec.mockResolvedValueOnce({
-        success: false,
-        stdout: '',
-        stderr: 'bash: /tmp/test.txt: No space left on device',
-        exitCode: 1
-      });
 
       const result = await fileService.write('/tmp/test.txt', 'content', 'test-session');
 
       expect(result.success).toBe(false);
       if (!result.success) {
         expect(result.error.code).toBe('FILE_WRITE_ERROR');
-        expect(result.error.message).toContain('File write failed');
+        expect(result.error.details?.originalError).toBe('Disk full');
       }
     });
   });
@@ -260,24 +228,16 @@ describe('FileService', () => {
 
     it('should return error when file does not exist', async () => {
       mockBunFile.exists.mockResolvedValue(false);
-      
-      // Mock session to return failure for delete operation
-      mockSession.exec.mockResolvedValueOnce({
-        success: false,
-        stdout: '',
-        stderr: 'rm: cannot remove \'/tmp/nonexistent.txt\': No such file or directory',
-        exitCode: 1
-      });
 
       const result = await fileService.delete('/tmp/nonexistent.txt', 'test-session');
 
       expect(result.success).toBe(false);
       if (!result.success) {
-        expect(result.error.code).toBe('FILE_DELETE_ERROR');
-        expect(result.error.message).toContain('File delete failed');
+        expect(result.error.code).toBe('FILE_NOT_FOUND');
       }
 
       // Should not attempt to delete
+      expect(mockBunSpawn).not.toHaveBeenCalled();
     });
   });
 
@@ -296,25 +256,19 @@ describe('FileService', () => {
       expect(mockSecurityService.validatePath).toHaveBeenCalledWith('/tmp/new.txt');
       
       // Should use mv command
+      expect(mockBunSpawn).toHaveBeenCalledWith(['mv', '/tmp/old.txt', '/tmp/new.txt']);
     });
 
     it('should handle rename command failures', async () => {
       mockBunFile.exists.mockResolvedValue(true);
       const mockProcess = { exited: Promise.resolve(), exitCode: 1 };
       mockBunSpawn.mockReturnValue(mockProcess);
-      
-      mockSession.exec.mockResolvedValueOnce({
-        success: false,
-        stdout: '',
-        stderr: 'mv: cannot move \'/tmp/old.txt\' to \'/tmp/new.txt\': Permission denied',
-        exitCode: 1
-      });
 
       const result = await fileService.rename('/tmp/old.txt', '/tmp/new.txt', 'test-session');
 
       expect(result.success).toBe(false);
       if (!result.success) {
-        expect(result.error.code).toBe('FILE_RENAME_ERROR');
+        expect(result.error.code).toBe('RENAME_ERROR');
         expect(result.error.details?.exitCode).toBe(1);
       }
     });
@@ -346,25 +300,20 @@ describe('FileService', () => {
       expect(result.success).toBe(true);
       
       // Should use Bun.write for zero-copy operation
+      expect(mockBunWrite).toHaveBeenCalledWith('/tmp/dest.txt', mockBunFile);
       
       // Should remove source file
+      expect(mockBunSpawn).toHaveBeenCalledWith(['rm', '/tmp/source.txt']);
     });
 
     it('should return error when source does not exist', async () => {
       mockBunFile.exists.mockResolvedValue(false);
-      
-      mockSession.exec.mockResolvedValueOnce({
-        success: false,
-        stdout: '',
-        stderr: 'cp: cannot stat \'/tmp/nonexistent.txt\': No such file or directory',
-        exitCode: 1
-      });
 
       const result = await fileService.move('/tmp/nonexistent.txt', '/tmp/dest.txt', 'test-session');
 
       expect(result.success).toBe(false);
       if (!result.success) {
-        expect(result.error.code).toBe('FILE_MOVE_ERROR');
+        expect(result.error.code).toBe('FILE_NOT_FOUND');
       }
     });
   });
@@ -377,6 +326,7 @@ describe('FileService', () => {
       const result = await fileService.mkdir('/tmp/newdir', 'test-session');
 
       expect(result.success).toBe(true);
+      expect(mockBunSpawn).toHaveBeenCalledWith(['mkdir', '/tmp/newdir']);
     });
 
     it('should create directory recursively when requested', async () => {
@@ -386,24 +336,18 @@ describe('FileService', () => {
       const result = await fileService.mkdir('/tmp/nested/dir', 'test-session', { recursive: true });
 
       expect(result.success).toBe(true);
+      expect(mockBunSpawn).toHaveBeenCalledWith(['mkdir', '-p', '/tmp/nested/dir']);
     });
 
     it('should handle mkdir command failures', async () => {
       const mockProcess = { exited: Promise.resolve(), exitCode: 1 };
       mockBunSpawn.mockReturnValue(mockProcess);
-      
-      mockSession.exec.mockResolvedValueOnce({
-        success: false,
-        stdout: '',
-        stderr: 'mkdir: cannot create directory \'/tmp/newdir\': File exists',
-        exitCode: 1
-      });
 
       const result = await fileService.mkdir('/tmp/newdir', 'test-session');
 
       expect(result.success).toBe(false);
       if (!result.success) {
-        expect(result.error.code).toBe('FILE_MKDIR_ERROR');
+        expect(result.error.code).toBe('MKDIR_ERROR');
         expect(result.error.details?.exitCode).toBe(1);
       }
     });
@@ -423,13 +367,6 @@ describe('FileService', () => {
 
     it('should return false when file does not exist', async () => {
       mockBunFile.exists.mockResolvedValue(false);
-      
-      mockSession.exec.mockResolvedValueOnce({
-        success: true,
-        stdout: '',
-        stderr: '',
-        exitCode: 1  // Non-zero exit code means file doesn't exist
-      });
 
       const result = await fileService.exists('/tmp/nonexistent.txt', 'test-session');
 
@@ -442,22 +379,18 @@ describe('FileService', () => {
     it('should handle exists check errors', async () => {
       const existsError = new Error('Permission denied');
       mockBunFile.exists.mockRejectedValue(existsError);
-      
-      mockSession.exec.mockResolvedValueOnce({
-        success: false,
-        stdout: '',
-        stderr: 'stat: cannot stat \'/tmp/test.txt\': Permission denied',
-        exitCode: 1
-      });
 
       const result = await fileService.exists('/tmp/test.txt', 'test-session');
 
-      expect(result.success).toBe(true); // Exists check may succeed even with session errors
-      if (result.success) {
-        expect(typeof result.data).toBe('boolean');
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.code).toBe('EXISTS_ERROR');
       }
 
-      // Logger call verification removed - session-based execution handles logging differently
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        'Error checking file existence',
+        { path: '/tmp/test.txt', error: 'Permission denied' }
+      );
     });
   });
 
@@ -475,13 +408,6 @@ describe('FileService', () => {
         })
       };
       mockBunSpawn.mockReturnValue(mockProcess);
-      
-      mockSession.exec.mockResolvedValueOnce({
-        success: true,
-        stdout: 'regular file:1024:1672531200:1672531100',
-        stderr: '',
-        exitCode: 0
-      });
 
       const result = await fileService.stat('/tmp/test.txt', 'test-session');
 
@@ -493,6 +419,11 @@ describe('FileService', () => {
         expect(result.data.modified).toBeInstanceOf(Date);
         expect(result.data.created).toBeInstanceOf(Date);
       }
+
+      expect(mockBunSpawn).toHaveBeenCalledWith(
+        ['stat', '-c', '%F:%s:%Y:%W', '/tmp/test.txt'],
+        { stdout: 'pipe' }
+      );
     });
 
     it('should return error when file does not exist', async () => {
@@ -510,19 +441,12 @@ describe('FileService', () => {
       mockBunFile.exists.mockResolvedValue(true);
       const mockProcess = { exited: Promise.resolve(), exitCode: 1, stdout: null };
       mockBunSpawn.mockReturnValue(mockProcess);
-      
-      mockSession.exec.mockResolvedValueOnce({
-        success: false,
-        stdout: '',
-        stderr: 'stat: cannot stat \'/tmp/test.txt\': Permission denied',
-        exitCode: 1
-      });
 
       const result = await fileService.stat('/tmp/test.txt', 'test-session');
 
       expect(result.success).toBe(false);
       if (!result.success) {
-        expect(result.error.code).toBe('FILE_STAT_ERROR');
+        expect(result.error.code).toBe('STAT_ERROR');
         expect(result.error.details?.exitCode).toBe(1);
       }
     });
@@ -536,6 +460,7 @@ describe('FileService', () => {
       const result = await fileService.read('/tmp/test.txt', 'test-session');
 
       expect(result.success).toBe(true);
+      expect(global.Bun.file).toHaveBeenCalledWith('/tmp/test.txt');
     });
 
     it('should provide writeFile wrapper', async () => {
@@ -544,6 +469,7 @@ describe('FileService', () => {
       const result = await fileService.write('/tmp/test.txt', 'content', 'test-session');
 
       expect(result.success).toBe(true);
+      expect(mockBunWrite).toHaveBeenCalledWith('/tmp/test.txt', 'content');
     });
 
     it('should provide deleteFile wrapper', async () => {
@@ -596,32 +522,18 @@ describe('FileService', () => {
     it('should handle non-Error exceptions consistently', async () => {
       mockBunFile.exists.mockResolvedValue(true);
       mockBunFile.text.mockRejectedValue('String error');
-      
-      mockSession.exec.mockResolvedValueOnce({
-        success: false,
-        stdout: '',
-        stderr: 'Unexpected error occurred',
-        exitCode: 1
-      });
 
       const result = await fileService.read('/tmp/test.txt', 'test-session');
 
       expect(result.success).toBe(false);
       if (!result.success) {
-        expect(result.error.message).toContain('File read failed');
+        expect(result.error.details?.originalError).toBe('Unknown error');
       }
     });
 
     it('should include proper context in all error responses', async () => {
       const testPath = '/tmp/test.txt';
       mockBunFile.exists.mockResolvedValue(false);
-      
-      mockSession.exec.mockResolvedValueOnce({
-        success: false,
-        stdout: '',
-        stderr: 'cat: /tmp/test.txt: No such file or directory',
-        exitCode: 1
-      });
 
       const result = await fileService.read(testPath, 'test-session');
 

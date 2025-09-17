@@ -1,37 +1,31 @@
-// Bun-optimized File System Service
+// Session-Aware File System Service
 import type { 
+  FileInfo,
   FileStats, 
-  Logger, 
+  Logger,
   MkdirOptions, 
   ReadOptions, 
   ServiceResult, 
   WriteOptions 
 } from '../core/types';
+import type { SessionManager } from '../isolation';
+import { SessionAwareService } from './base/session-aware-service';
 
 export interface SecurityService {
   validatePath(path: string): { isValid: boolean; errors: string[] };
   sanitizePath(path: string): string;
 }
 
-// File system operations interface
-export interface FileSystemOperations {
-  read(path: string, options?: ReadOptions): Promise<ServiceResult<string>>;
-  write(path: string, content: string, options?: WriteOptions): Promise<ServiceResult<void>>;
-  delete(path: string): Promise<ServiceResult<void>>;
-  rename(oldPath: string, newPath: string): Promise<ServiceResult<void>>;
-  move(sourcePath: string, destinationPath: string): Promise<ServiceResult<void>>;
-  mkdir(path: string, options?: MkdirOptions): Promise<ServiceResult<void>>;
-  exists(path: string): Promise<ServiceResult<boolean>>;
-  stat(path: string): Promise<ServiceResult<FileStats>>;
-}
-
-export class FileService implements FileSystemOperations {
+export class FileService extends SessionAwareService {
   constructor(
     private security: SecurityService,
-    private logger: Logger
-  ) {}
+    sessionManager: SessionManager,
+    logger: Logger
+  ) {
+    super(sessionManager, logger);
+  }
 
-  async read(path: string, options: ReadOptions = {}): Promise<ServiceResult<string>> {
+  async read(path: string, sessionId?: string, options: ReadOptions = {}): Promise<ServiceResult<string>> {
     try {
       // Validate path for security
       const validation = this.security.validatePath(path);
@@ -48,32 +42,49 @@ export class FileService implements FileSystemOperations {
 
       this.logger.info('Reading file', { path, encoding: options.encoding });
 
-      // Use Bun's native file API for 3-5x better performance than Node.js fs
-      const file = Bun.file(path);
+      // Build file read command - ALL file logic consolidated here
+      const command = `cat "${path}"`;
+      const result = await this.executeInSession(command, sessionId);
       
-      // Check if file exists first
-      if (!(await file.exists())) {
+      if (!result.success) {
+        // Session execution failed
         return {
           success: false,
           error: {
-            message: `File not found: ${path}`,
-            code: 'FILE_NOT_FOUND',
-            details: { path }
+            message: `File read session error: ${result.error.message}`,
+            code: 'FILE_READ_SESSION_ERROR',
+            details: { ...result.error.details, path, encoding: options.encoding }
           }
         };
       }
 
-      const content = await file.text();
-      
-      this.logger.info('File read successfully', { 
-        path, 
-        sizeBytes: content.length 
-      });
+      // Process file read results - handle command success/failure
+      if (result.data.success) {
+        this.logger.info('File read successfully', { 
+          path, 
+          sizeBytes: result.data.stdout.length 
+        });
 
-      return {
-        success: true,
-        data: content
-      };
+        return {
+          success: true,
+          data: result.data.stdout
+        };
+      } else {
+        // File read command failed (file not found, permissions, etc.)
+        return {
+          success: false,
+          error: {
+            message: `File read failed: ${path}`,
+            code: 'FILE_READ_ERROR',
+            details: { 
+              path, 
+              encoding: options.encoding,
+              exitCode: result.data.exitCode,
+              stderr: result.data.stderr
+            }
+          }
+        };
+      }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       this.logger.error('Failed to read file', error instanceof Error ? error : undefined, { path });
@@ -89,7 +100,7 @@ export class FileService implements FileSystemOperations {
     }
   }
 
-  async write(path: string, content: string, options: WriteOptions = {}): Promise<ServiceResult<void>> {
+  async write(path: string, content: string, sessionId?: string, options: WriteOptions = {}): Promise<ServiceResult<void>> {
     try {
       // Validate path for security
       const validation = this.security.validatePath(path);
@@ -110,17 +121,52 @@ export class FileService implements FileSystemOperations {
         encoding: options.encoding 
       });
 
-      // Use Bun's optimized write with zero-copy operations
-      await Bun.write(path, content);
+      // Build file write command using heredoc - ALL file logic consolidated here
+      // Note: The quoted heredoc delimiter 'SANDBOX_EOF' prevents variable expansion
+      const command = `mkdir -p "$(dirname "${path}")" && cat > "${path}" << 'SANDBOX_EOF'
+${content}
+SANDBOX_EOF`;
+      const result = await this.executeInSession(command, sessionId);
       
-      this.logger.info('File written successfully', { 
-        path, 
-        sizeBytes: content.length 
-      });
+      if (!result.success) {
+        // Session execution failed
+        return {
+          success: false,
+          error: {
+            message: `File write session error: ${result.error.message}`,
+            code: 'FILE_WRITE_SESSION_ERROR',
+            details: { ...result.error.details, path, contentSize: content.length, encoding: options.encoding }
+          }
+        };
+      }
 
-      return {
-        success: true
-      };
+      // Process file write results - handle command success/failure
+      if (result.data.success) {
+        this.logger.info('File written successfully', { 
+          path, 
+          sizeBytes: content.length 
+        });
+
+        return {
+          success: true
+        };
+      } else {
+        // File write command failed (permissions, disk space, etc.)
+        return {
+          success: false,
+          error: {
+            message: `File write failed: ${path}`,
+            code: 'FILE_WRITE_ERROR',
+            details: { 
+              path, 
+              contentSize: content.length,
+              encoding: options.encoding,
+              exitCode: result.data.exitCode,
+              stderr: result.data.stderr
+            }
+          }
+        };
+      }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       this.logger.error('Failed to write file', error instanceof Error ? error : undefined, { path });
@@ -136,7 +182,7 @@ export class FileService implements FileSystemOperations {
     }
   }
 
-  async delete(path: string): Promise<ServiceResult<void>> {
+  async delete(path: string, sessionId?: string): Promise<ServiceResult<void>> {
     try {
       // Validate path for security
       const validation = this.security.validatePath(path);
@@ -153,28 +199,44 @@ export class FileService implements FileSystemOperations {
 
       this.logger.info('Deleting file', { path });
 
-      const file = Bun.file(path);
+      // Build file delete command - ALL file logic consolidated here
+      const command = `rm "${path}"`;
+      const result = await this.executeInSession(command, sessionId);
       
-      // Check if file exists
-      if (!(await file.exists())) {
+      if (!result.success) {
+        // Session execution failed
         return {
           success: false,
           error: {
-            message: `File not found: ${path}`,
-            code: 'FILE_NOT_FOUND',
-            details: { path }
+            message: `File delete session error: ${result.error.message}`,
+            code: 'FILE_DELETE_SESSION_ERROR',
+            details: { ...result.error.details, path }
           }
         };
       }
 
-      // Delete the file using fs.unlink since Bun.file doesn't have remove method
-      await Bun.spawn(['rm', path]).exited;
-      
-      this.logger.info('File deleted successfully', { path });
+      // Process file delete results - handle command success/failure
+      if (result.data.success) {
+        this.logger.info('File deleted successfully', { path });
 
-      return {
-        success: true
-      };
+        return {
+          success: true
+        };
+      } else {
+        // File delete command failed (file not found, permissions, etc.)
+        return {
+          success: false,
+          error: {
+            message: `File delete failed: ${path}`,
+            code: 'FILE_DELETE_ERROR',
+            details: { 
+              path,
+              exitCode: result.data.exitCode,
+              stderr: result.data.stderr
+            }
+          }
+        };
+      }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       this.logger.error('Failed to delete file', error instanceof Error ? error : undefined, { path });
@@ -190,7 +252,7 @@ export class FileService implements FileSystemOperations {
     }
   }
 
-  async rename(oldPath: string, newPath: string): Promise<ServiceResult<void>> {
+  async rename(oldPath: string, newPath: string, sessionId?: string): Promise<ServiceResult<void>> {
     try {
       // Validate both paths for security
       const oldValidation = this.security.validatePath(oldPath);
@@ -210,30 +272,35 @@ export class FileService implements FileSystemOperations {
 
       this.logger.info('Renaming file', { oldPath, newPath });
 
-      // Check if source file exists
-      const sourceFile = Bun.file(oldPath);
-      if (!(await sourceFile.exists())) {
+      // Build rename command - ALL rename logic consolidated here
+      const command = `mv "${oldPath}" "${newPath}"`;
+      const result = await this.executeInSession(command, sessionId);
+      
+      if (!result.success) {
+        // Session execution failed
         return {
           success: false,
           error: {
-            message: `Source file not found: ${oldPath}`,
-            code: 'FILE_NOT_FOUND',
-            details: { oldPath, newPath }
+            message: `Rename session error: ${result.error.message}`,
+            code: 'RENAME_SESSION_ERROR',
+            details: { ...result.error.details, oldPath, newPath }
           }
         };
       }
 
-      // Use system rename for efficiency
-      const proc = Bun.spawn(['mv', oldPath, newPath]);
-      await proc.exited;
-      
-      if (proc.exitCode !== 0) {
+      // Process rename results - handle command success/failure
+      if (!result.data.success) {
         return {
           success: false,
           error: {
-            message: `Rename operation failed with exit code ${proc.exitCode}`,
-            code: 'RENAME_ERROR',
-            details: { oldPath, newPath, exitCode: proc.exitCode }
+            message: `Rename operation failed`,
+            code: 'FILE_RENAME_ERROR',
+            details: { 
+              oldPath, 
+              newPath, 
+              exitCode: result.data.exitCode,
+              stderr: result.data.stderr
+            }
           }
         };
       }
@@ -251,14 +318,14 @@ export class FileService implements FileSystemOperations {
         success: false,
         error: {
           message: `Failed to rename file from ${oldPath} to ${newPath}: ${errorMessage}`,
-          code: 'RENAME_ERROR',
+          code: 'FILE_RENAME_ERROR',
           details: { oldPath, newPath, originalError: errorMessage }
         }
       };
     }
   }
 
-  async move(sourcePath: string, destinationPath: string): Promise<ServiceResult<void>> {
+  async move(sourcePath: string, destinationPath: string, sessionId?: string): Promise<ServiceResult<void>> {
     try {
       // Validate both paths for security
       const sourceValidation = this.security.validatePath(sourcePath);
@@ -278,26 +345,38 @@ export class FileService implements FileSystemOperations {
 
       this.logger.info('Moving file', { sourcePath, destinationPath });
 
-      // For move operations, we can use zero-copy operations with Bun
-      const sourceFile = Bun.file(sourcePath);
+      // Build move command - ALL move logic consolidated here  
+      const command = `mv "${sourcePath}" "${destinationPath}"`;
+      const result = await this.executeInSession(command, sessionId);
       
-      // Check if source exists
-      if (!(await sourceFile.exists())) {
+      if (!result.success) {
+        // Session execution failed
         return {
           success: false,
           error: {
-            message: `Source file not found: ${sourcePath}`,
-            code: 'FILE_NOT_FOUND',
-            details: { sourcePath, destinationPath }
+            message: `Move session error: ${result.error.message}`,
+            code: 'MOVE_SESSION_ERROR',
+            details: { ...result.error.details, sourcePath, destinationPath }
           }
         };
       }
 
-      // Use Bun's zero-copy file operations
-      await Bun.write(destinationPath, sourceFile);
-      
-      // Remove the source file using rm command
-      await Bun.spawn(['rm', sourcePath]).exited;
+      // Process move results - handle command success/failure
+      if (!result.data.success) {
+        return {
+          success: false,
+          error: {
+            message: `File move failed`,
+            code: 'FILE_MOVE_ERROR',
+            details: { 
+              sourcePath,
+              destinationPath,
+              exitCode: result.data.exitCode,
+              stderr: result.data.stderr
+            }
+          }
+        };
+      }
       
       this.logger.info('File moved successfully', { sourcePath, destinationPath });
 
@@ -312,14 +391,14 @@ export class FileService implements FileSystemOperations {
         success: false,
         error: {
           message: `Failed to move file from ${sourcePath} to ${destinationPath}: ${errorMessage}`,
-          code: 'MOVE_ERROR',
+          code: 'FILE_MOVE_ERROR',
           details: { sourcePath, destinationPath, originalError: errorMessage }
         }
       };
     }
   }
 
-  async mkdir(path: string, options: MkdirOptions = {}): Promise<ServiceResult<void>> {
+  async mkdir(path: string, sessionId?: string, options: MkdirOptions = {}): Promise<ServiceResult<void>> {
     try {
       // Validate path for security
       const validation = this.security.validatePath(path);
@@ -336,31 +415,45 @@ export class FileService implements FileSystemOperations {
 
       this.logger.info('Creating directory', { path, recursive: options.recursive });
 
-      const args = ['mkdir'];
-      if (options.recursive) {
-        args.push('-p');
-      }
-      args.push(path);
-
-      const proc = Bun.spawn(args);
-      await proc.exited;
+      // Build mkdir command - ALL directory logic consolidated here
+      const command = options.recursive ? `mkdir -p "${path}"` : `mkdir "${path}"`;
+      const result = await this.executeInSession(command, sessionId);
       
-      if (proc.exitCode !== 0) {
+      if (!result.success) {
+        // Session execution failed
         return {
           success: false,
           error: {
-            message: `mkdir operation failed with exit code ${proc.exitCode}`,
-            code: 'MKDIR_ERROR',
-            details: { path, options, exitCode: proc.exitCode }
+            message: `Directory creation session error: ${result.error.message}`,
+            code: 'MKDIR_SESSION_ERROR',
+            details: { ...result.error.details, path, recursive: options.recursive }
           }
         };
       }
-      
-      this.logger.info('Directory created successfully', { path });
 
-      return {
-        success: true
-      };
+      // Process mkdir results - handle command success/failure
+      if (result.data.success) {
+        this.logger.info('Directory created successfully', { path });
+
+        return {
+          success: true
+        };
+      } else {
+        // Directory creation command failed (permissions, parent doesn't exist, etc.)
+        return {
+          success: false,
+          error: {
+            message: `Directory creation failed: ${path}`,
+            code: 'FILE_MKDIR_ERROR',
+            details: { 
+              path,
+              recursive: options.recursive,
+              exitCode: result.data.exitCode,
+              stderr: result.data.stderr
+            }
+          }
+        };
+      }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       this.logger.error('Failed to create directory', error instanceof Error ? error : undefined, { path });
@@ -369,14 +462,14 @@ export class FileService implements FileSystemOperations {
         success: false,
         error: {
           message: `Failed to create directory ${path}: ${errorMessage}`,
-          code: 'MKDIR_ERROR',
+          code: 'FILE_MKDIR_ERROR',
           details: { path, options, originalError: errorMessage }
         }
       };
     }
   }
 
-  async exists(path: string): Promise<ServiceResult<boolean>> {
+  async exists(path: string, sessionId?: string): Promise<ServiceResult<boolean>> {
     try {
       // Validate path for security
       const validation = this.security.validatePath(path);
@@ -391,8 +484,24 @@ export class FileService implements FileSystemOperations {
         };
       }
 
-      const file = Bun.file(path);
-      const exists = await file.exists();
+      // Build existence check command - ALL existence logic consolidated here
+      const command = `test -e "${path}"`;
+      const result = await this.executeInSession(command, sessionId);
+      
+      if (!result.success) {
+        // Session execution failed
+        return {
+          success: false,
+          error: {
+            message: `Existence check session error: ${result.error.message}`,
+            code: 'EXISTS_SESSION_ERROR',
+            details: { ...result.error.details, path }
+          }
+        };
+      }
+
+      // test command: exit code 0 = exists, non-zero = doesn't exist
+      const exists = result.data.exitCode === 0;
       
       return {
         success: true,
@@ -413,7 +522,7 @@ export class FileService implements FileSystemOperations {
     }
   }
 
-  async stat(path: string): Promise<ServiceResult<FileStats>> {
+  async stat(path: string, sessionId?: string): Promise<ServiceResult<FileStats>> {
     try {
       // Validate path for security
       const validation = this.security.validatePath(path);
@@ -441,26 +550,39 @@ export class FileService implements FileSystemOperations {
         };
       }
 
-      // Get file stats using system stat command for full info
-      const proc = Bun.spawn(['stat', '-c', '%F:%s:%Y:%W', path], {
-        stdout: 'pipe',
-      });
+      // Build stat command - ALL stat logic consolidated here
+      const command = `stat -c '%F:%s:%Y:%W' "${path}"`;
+      const result = await this.executeInSession(command, sessionId);
       
-      const output = await new Response(proc.stdout).text();
-      await proc.exited;
-      
-      if (proc.exitCode !== 0) {
+      if (!result.success) {
+        // Session execution failed
         return {
           success: false,
           error: {
-            message: `stat operation failed with exit code ${proc.exitCode}`,
-            code: 'STAT_ERROR',
-            details: { path, exitCode: proc.exitCode }
+            message: `Stat session error: ${result.error.message}`,
+            code: 'STAT_SESSION_ERROR',
+            details: { ...result.error.details, path }
           }
         };
       }
 
-      const [type, size, modified, created] = output.trim().split(':');
+      // Process stat results - handle command success/failure
+      if (!result.data.success) {
+        return {
+          success: false,
+          error: {
+            message: `stat operation failed`,
+            code: 'FILE_STAT_ERROR',
+            details: { 
+              path, 
+              exitCode: result.data.exitCode,
+              stderr: result.data.stderr
+            }
+          }
+        };
+      }
+
+      const [type, size, modified, created] = result.data.stdout.trim().split(':');
       
       const stats: FileStats = {
         isFile: type.includes('regular file'),
@@ -482,40 +604,120 @@ export class FileService implements FileSystemOperations {
         success: false,
         error: {
           message: `Failed to get stats for ${path}: ${errorMessage}`,
-          code: 'STAT_ERROR',
+          code: 'FILE_STAT_ERROR',
           details: { path, originalError: errorMessage }
         }
       };
     }
   }
 
-  // Convenience methods with ServiceResult wrapper for higher-level operations
+  async listFiles(path: string, sessionId?: string): Promise<ServiceResult<FileInfo[]>> {
+    try {
+      // Validate path for security
+      const validation = this.security.validatePath(path);
+      if (!validation.isValid) {
+        return {
+          success: false,
+          error: {
+            message: `Security validation failed: ${validation.errors.join(', ')}`,
+            code: 'SECURITY_VALIDATION_FAILED',
+            details: { path, errors: validation.errors }
+          }
+        };
+      }
 
-  async readFile(path: string, options?: ReadOptions): Promise<ServiceResult<string>> {
-    return await this.read(path, options);
+      this.logger.info('Listing files in directory', { path });
+
+      // Build directory listing command - ALL listing logic consolidated here
+      // Use find with printf to get all file info in one call, avoiding multiple stat calls
+      const command = `find "${path}" -maxdepth 1 -mindepth 1 -printf '%f:%p:%y:%s:%T@:%C@\n'`;
+      const result = await this.executeInSession(command, sessionId);
+      
+      if (!result.success) {
+        // Session execution failed
+        return {
+          success: false,
+          error: {
+            message: `Directory listing session error: ${result.error.message}`,
+            code: 'LIST_SESSION_ERROR',
+            details: { ...result.error.details, path }
+          }
+        };
+      }
+
+      // Process listing results - handle command success/failure
+      if (!result.data.success) {
+        return {
+          success: false,
+          error: {
+            message: `Directory listing failed`,
+            code: 'LIST_ERROR',
+            details: { 
+              path, 
+              exitCode: result.data.exitCode,
+              stderr: result.data.stderr
+            }
+          }
+        };
+      }
+
+      // Parse find output into FileInfo objects - ALL parsing logic here
+      const files: FileInfo[] = [];
+      const lines = result.data.stdout.trim().split('\n').filter(line => line.length > 0);
+      
+      for (const line of lines) {
+        try {
+          const [name, fullPath, type, size, modified, created] = line.split(':');
+          
+          // Skip . and .. entries
+          if (name === '.' || name === '..') {
+            continue;
+          }
+
+          const fileInfo: FileInfo = {
+            name,
+            path: fullPath,
+            isFile: type === 'f',
+            isDirectory: type === 'd',
+            size: parseInt(size, 10),
+            modified: new Date(parseFloat(modified) * 1000),
+            created: new Date(parseFloat(created) * 1000),
+          };
+
+          files.push(fileInfo);
+        } catch (parseError) {
+          // Skip entries that can't be parsed - ALL error handling here
+          this.logger.warn('Failed to parse file entry', { 
+            line, 
+            error: parseError instanceof Error ? parseError.message : 'Unknown error' 
+          });
+        }
+      }
+
+      this.logger.info('Directory listing completed', { 
+        path, 
+        fileCount: files.length 
+      });
+
+      return {
+        success: true,
+        data: files
+      };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to list directory contents', error instanceof Error ? error : undefined, { path });
+      
+      return {
+        success: false,
+        error: {
+          message: `Failed to list directory ${path}: ${errorMessage}`,
+          code: 'LIST_ERROR',
+          details: { path, originalError: errorMessage }
+        }
+      };
+    }
   }
 
-  async writeFile(path: string, content: string, options?: WriteOptions): Promise<ServiceResult<void>> {
-    return await this.write(path, content, options);
-  }
-
-  async deleteFile(path: string): Promise<ServiceResult<void>> {
-    return await this.delete(path);
-  }
-
-  async renameFile(oldPath: string, newPath: string): Promise<ServiceResult<void>> {
-    return await this.rename(oldPath, newPath);
-  }
-
-  async moveFile(sourcePath: string, destinationPath: string): Promise<ServiceResult<void>> {
-    return await this.move(sourcePath, destinationPath);
-  }
-
-  async createDirectory(path: string, options?: MkdirOptions): Promise<ServiceResult<void>> {
-    return await this.mkdir(path, options);
-  }
-
-  async getFileStats(path: string): Promise<ServiceResult<FileStats>> {
-    return await this.stat(path);
-  }
+  // Note: Handler layer calls these methods directly (read, write, delete, etc.)
+  // No wrapper methods needed - keeping the interface clean and discoverable
 }

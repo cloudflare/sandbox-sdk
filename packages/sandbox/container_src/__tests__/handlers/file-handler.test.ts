@@ -12,23 +12,16 @@ import type { ContainerErrorResponse } from '@container/utils/error-mapping';
 
 // Mock the dependencies - use partial mock to avoid missing properties
 const mockFileService = {
-  readFile: vi.fn(),
-  writeFile: vi.fn(),
-  deleteFile: vi.fn(),
-  renameFile: vi.fn(),
-  moveFile: vi.fn(),
-  createDirectory: vi.fn(),
   read: vi.fn(),
   write: vi.fn(),
   delete: vi.fn(),
   rename: vi.fn(),
   move: vi.fn(),
   mkdir: vi.fn(),
+  listFiles: vi.fn(),
   exists: vi.fn(),
   stat: vi.fn(),
-  getFileStats: vi.fn(),
-  // Remove private properties to avoid type conflicts
-} as FileService;
+} satisfies Partial<FileService>;
 
 const mockLogger: Logger = {
   info: vi.fn(),
@@ -46,7 +39,6 @@ const mockContext: RequestContext = {
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
   },
-  sessionId: 'session-456',
 };
 
 // Helper to create validated context
@@ -64,19 +56,20 @@ describe('FileHandler', () => {
     
     // Import the FileHandler (dynamic import)
     const { FileHandler: FileHandlerClass } = await import('@container/handlers/file-handler');
-    fileHandler = new FileHandlerClass(mockFileService, mockLogger);
+    fileHandler = new FileHandlerClass(mockFileService as FileService, mockLogger);
   });
 
   describe('handleRead - POST /api/read', () => {
     it('should read file successfully', async () => {
       const readFileData = {
+        id: 'test-session',
         path: '/tmp/test.txt',
         encoding: 'utf-8'
       };
       const fileContent = 'Hello, World!';
 
       const validatedContext = createValidatedContext(readFileData);
-      (mockFileService.readFile as any).mockResolvedValue({
+      (mockFileService.read as any).mockResolvedValue({
         success: true,
         data: fileContent
       });
@@ -97,7 +90,7 @@ describe('FileHandler', () => {
       expect(responseData.exitCode).toBe(0);
 
       // Verify service was called correctly
-      expect(mockFileService.readFile).toHaveBeenCalledWith('/tmp/test.txt', {
+      expect(mockFileService.read).toHaveBeenCalledWith('/tmp/test.txt', 'test-session', {
         encoding: 'utf-8'
       });
 
@@ -122,12 +115,13 @@ describe('FileHandler', () => {
 
     it('should use default encoding when not specified', async () => {
       const readFileData = {
+        id: 'test-session',
         path: '/tmp/test.txt'
         // encoding not specified
       };
 
       const validatedContext = createValidatedContext(readFileData);
-      (mockFileService.readFile as any).mockResolvedValue({
+      (mockFileService.read as any).mockResolvedValue({
         success: true,
         data: 'file content'
       });
@@ -144,16 +138,16 @@ describe('FileHandler', () => {
       const responseData = await response.json() as ReadFileResponse;
       expect(responseData.encoding).toBe('utf-8'); // Default encoding
 
-      expect(mockFileService.readFile).toHaveBeenCalledWith('/tmp/test.txt', {
+      expect(mockFileService.read).toHaveBeenCalledWith('/tmp/test.txt', 'test-session', {
         encoding: 'utf-8'
       });
     });
 
     it('should handle file read errors', async () => {
-      const readFileData = { path: '/tmp/nonexistent.txt' };
+      const readFileData = { id: 'test-session', path: '/tmp/nonexistent.txt' };
       const validatedContext = createValidatedContext(readFileData);
 
-      (mockFileService.readFile as any).mockResolvedValue({
+      (mockFileService.read as any).mockResolvedValue({
         success: false,
         error: {
           message: 'File not found',
@@ -189,13 +183,14 @@ describe('FileHandler', () => {
   describe('handleWrite - POST /api/write', () => {
     it('should write file successfully', async () => {
       const writeFileData = {
+        id: 'test-session',
         path: '/tmp/output.txt',
         content: 'Hello, File!',
         encoding: 'utf-8'
       };
 
       const validatedContext = createValidatedContext(writeFileData);
-      (mockFileService.writeFile as any).mockResolvedValue({
+      (mockFileService.write as any).mockResolvedValue({
         success: true
       });
 
@@ -214,7 +209,7 @@ describe('FileHandler', () => {
       expect(responseData.exitCode).toBe(0);
 
       // Verify service was called correctly
-      expect(mockFileService.writeFile).toHaveBeenCalledWith('/tmp/output.txt', 'Hello, File!', {
+      expect(mockFileService.write).toHaveBeenCalledWith('/tmp/output.txt', 'Hello, File!', 'test-session', {
         encoding: 'utf-8'
       });
 
@@ -237,7 +232,7 @@ describe('FileHandler', () => {
       };
       const validatedContext = createValidatedContext(writeFileData);
 
-      (mockFileService.writeFile as any).mockResolvedValue({
+      (mockFileService.write as any).mockResolvedValue({
         success: false,
         error: {
           message: 'Permission denied',
@@ -263,11 +258,12 @@ describe('FileHandler', () => {
   describe('handleDelete - POST /api/delete', () => {
     it('should delete file successfully', async () => {
       const deleteFileData = {
+        id: 'test-session',
         path: '/tmp/delete-me.txt'
       };
 
       const validatedContext = createValidatedContext(deleteFileData);
-      (mockFileService.deleteFile as any).mockResolvedValue({
+      (mockFileService.delete as any).mockResolvedValue({
         success: true
       });
 
@@ -285,7 +281,7 @@ describe('FileHandler', () => {
       expect(responseData.path).toBe('/tmp/delete-me.txt');
       expect(responseData.exitCode).toBe(0);
 
-      expect(mockFileService.deleteFile).toHaveBeenCalledWith('/tmp/delete-me.txt');
+      expect(mockFileService.delete).toHaveBeenCalledWith('/tmp/delete-me.txt', 'test-session');
 
       expect(mockLogger.info).toHaveBeenCalledWith(
         'File deleted successfully',
@@ -297,10 +293,10 @@ describe('FileHandler', () => {
     });
 
     it('should handle file delete errors', async () => {
-      const deleteFileData = { path: '/tmp/nonexistent.txt' };
+      const deleteFileData = { id: 'test-session', path: '/tmp/nonexistent.txt' };
       const validatedContext = createValidatedContext(deleteFileData);
 
-      (mockFileService.deleteFile as any).mockResolvedValue({
+      (mockFileService.delete as any).mockResolvedValue({
         success: false,
         error: {
           message: 'File not found',
@@ -325,12 +321,13 @@ describe('FileHandler', () => {
   describe('handleRename - POST /api/rename', () => {
     it('should rename file successfully', async () => {
       const renameFileData = {
+        id: 'test-session',
         oldPath: '/tmp/old-name.txt',
         newPath: '/tmp/new-name.txt'
       };
 
       const validatedContext = createValidatedContext(renameFileData);
-      (mockFileService.renameFile as any).mockResolvedValue({
+      (mockFileService.rename as any).mockResolvedValue({
         success: true
       });
 
@@ -349,7 +346,7 @@ describe('FileHandler', () => {
       expect(responseData.newPath).toBe('/tmp/new-name.txt');
       expect(responseData.exitCode).toBe(0);
 
-      expect(mockFileService.renameFile).toHaveBeenCalledWith('/tmp/old-name.txt', '/tmp/new-name.txt');
+      expect(mockFileService.rename).toHaveBeenCalledWith('/tmp/old-name.txt', '/tmp/new-name.txt', 'test-session');
 
       expect(mockLogger.info).toHaveBeenCalledWith(
         'Renaming file',
@@ -368,7 +365,7 @@ describe('FileHandler', () => {
       };
       const validatedContext = createValidatedContext(renameFileData);
 
-      (mockFileService.renameFile as any).mockResolvedValue({
+      (mockFileService.rename as any).mockResolvedValue({
         success: false,
         error: {
           message: 'Source file not found',
@@ -404,12 +401,13 @@ describe('FileHandler', () => {
   describe('handleMove - POST /api/move', () => {
     it('should move file successfully', async () => {
       const moveFileData = {
+        id: 'test-session',
         sourcePath: '/tmp/source.txt',
         destinationPath: '/tmp/destination.txt'
       };
 
       const validatedContext = createValidatedContext(moveFileData);
-      (mockFileService.moveFile as any).mockResolvedValue({
+      (mockFileService.move as any).mockResolvedValue({
         success: true
       });
 
@@ -428,7 +426,7 @@ describe('FileHandler', () => {
       expect(responseData.newPath).toBe('/tmp/destination.txt');
       expect(responseData.exitCode).toBe(0);
 
-      expect(mockFileService.moveFile).toHaveBeenCalledWith('/tmp/source.txt', '/tmp/destination.txt');
+      expect(mockFileService.move).toHaveBeenCalledWith('/tmp/source.txt', '/tmp/destination.txt', 'test-session');
 
       expect(mockLogger.info).toHaveBeenCalledWith(
         'Moving file',
@@ -447,7 +445,7 @@ describe('FileHandler', () => {
       };
       const validatedContext = createValidatedContext(moveFileData);
 
-      (mockFileService.moveFile as any).mockResolvedValue({
+      (mockFileService.move as any).mockResolvedValue({
         success: false,
         error: {
           message: 'Permission denied on destination',
@@ -472,12 +470,13 @@ describe('FileHandler', () => {
   describe('handleMkdir - POST /api/mkdir', () => {
     it('should create directory successfully', async () => {
       const mkdirData = {
+        id: 'test-session',
         path: '/tmp/new-directory',
         recursive: true
       };
 
       const validatedContext = createValidatedContext(mkdirData);
-      (mockFileService.createDirectory as any).mockResolvedValue({
+      (mockFileService.mkdir as any).mockResolvedValue({
         success: true
       });
 
@@ -498,7 +497,7 @@ describe('FileHandler', () => {
       expect(responseData.stdout).toBe('');
       expect(responseData.stderr).toBe('');
 
-      expect(mockFileService.createDirectory).toHaveBeenCalledWith('/tmp/new-directory', {
+      expect(mockFileService.mkdir).toHaveBeenCalledWith('/tmp/new-directory', 'test-session', {
         recursive: true
       });
 
@@ -514,12 +513,13 @@ describe('FileHandler', () => {
 
     it('should create directory without recursive option', async () => {
       const mkdirData = {
+        id: 'test-session',
         path: '/tmp/simple-dir'
         // recursive not specified
       };
 
       const validatedContext = createValidatedContext(mkdirData);
-      (mockFileService.createDirectory as any).mockResolvedValue({
+      (mockFileService.mkdir as any).mockResolvedValue({
         success: true
       });
 
@@ -535,7 +535,7 @@ describe('FileHandler', () => {
       const responseData = await response.json() as MkdirResponse;
       expect(responseData.recursive).toBe(false); // Default to false
 
-      expect(mockFileService.createDirectory).toHaveBeenCalledWith('/tmp/simple-dir', {
+      expect(mockFileService.mkdir).toHaveBeenCalledWith('/tmp/simple-dir', 'test-session', {
         recursive: undefined
       });
     });
@@ -547,7 +547,7 @@ describe('FileHandler', () => {
       };
       const validatedContext = createValidatedContext(mkdirData);
 
-      (mockFileService.createDirectory as any).mockResolvedValue({
+      (mockFileService.mkdir as any).mockResolvedValue({
         success: false,
         error: {
           message: 'Permission denied',
@@ -608,10 +608,10 @@ describe('FileHandler', () => {
 
   describe('CORS headers', () => {
     it('should include CORS headers in all successful responses', async () => {
-      const readFileData = { path: '/tmp/test.txt' };
+      const readFileData = { id: 'test-session', path: '/tmp/test.txt' };
       const validatedContext = createValidatedContext(readFileData);
 
-      (mockFileService.readFile as any).mockResolvedValue({
+      (mockFileService.read as any).mockResolvedValue({
         success: true,
         data: 'file content'
       });
@@ -647,19 +647,19 @@ describe('FileHandler', () => {
       const operations = [
         {
           endpoint: '/api/read',
-          data: { path: '/tmp/test.txt' },
+          data: { id: 'test-session', path: '/tmp/test.txt' },
           mockResponse: { success: true, data: 'content' },
           expectedFields: ['success', 'content', 'path', 'exitCode', 'encoding', 'timestamp']
         },
         {
           endpoint: '/api/write',
-          data: { path: '/tmp/test.txt', content: 'data' },
+          data: { id: 'test-session', path: '/tmp/test.txt', content: 'data' },
           mockResponse: { success: true },
           expectedFields: ['success', 'exitCode', 'path', 'timestamp']
         },
         {
           endpoint: '/api/delete',
-          data: { path: '/tmp/test.txt' },
+          data: { id: 'test-session', path: '/tmp/test.txt' },
           mockResponse: { success: true },
           expectedFields: ['success', 'exitCode', 'path', 'timestamp']
         }
@@ -672,11 +672,11 @@ describe('FileHandler', () => {
 
         // Mock appropriate service method
         if (operation.endpoint === '/api/read') {
-          (mockFileService.readFile as any).mockResolvedValue(operation.mockResponse);
+          (mockFileService.read as any).mockResolvedValue(operation.mockResponse);
         } else if (operation.endpoint === '/api/write') {
-          (mockFileService.writeFile as any).mockResolvedValue(operation.mockResponse);
+          (mockFileService.write as any).mockResolvedValue(operation.mockResponse);
         } else if (operation.endpoint === '/api/delete') {
-          (mockFileService.deleteFile as any).mockResolvedValue(operation.mockResponse);
+          (mockFileService.delete as any).mockResolvedValue(operation.mockResponse);
         }
 
         const request = new Request(`http://localhost:3000${operation.endpoint}`, {

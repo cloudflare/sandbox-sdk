@@ -33,7 +33,6 @@ const mockContext: RequestContext = {
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
   },
-  sessionId: 'session-456',
 };
 
 // Helper to create validated context
@@ -50,7 +49,7 @@ describe('GitHandler', () => {
     vi.clearAllMocks();
     
     // Import the GitHandler (dynamic import)
-    const { GitHandler: GitHandlerClass } = await import('@container/handlers/git-handler');
+    const { GitHandler: GitHandlerClass } = await import('../../handlers/git-handler');
     gitHandler = new GitHandlerClass(mockGitService, mockLogger);
   });
 
@@ -60,7 +59,7 @@ describe('GitHandler', () => {
         repoUrl: 'https://github.com/user/awesome-repo.git',
         branch: 'develop',
         targetDir: '/tmp/my-project',
-        sessionId: 'session-456'
+        id: 'session-456'
       };
 
       const mockGitResult = {
@@ -95,10 +94,10 @@ describe('GitHandler', () => {
       // Verify service was called correctly
       expect(mockGitService.cloneRepository).toHaveBeenCalledWith(
         'https://github.com/user/awesome-repo.git',
+        'session-456',
         {
           branch: 'develop',
-          targetDir: '/tmp/my-project',
-          sessionId: 'session-456'
+          targetDir: '/tmp/my-project'
         }
       );
 
@@ -158,10 +157,10 @@ describe('GitHandler', () => {
       // Verify service was called with undefined optional parameters
       expect(mockGitService.cloneRepository).toHaveBeenCalledWith(
         'https://github.com/user/simple-repo.git',
+        undefined,
         {
           branch: undefined,
-          targetDir: undefined,
-          sessionId: undefined
+          targetDir: undefined
         }
       );
     });

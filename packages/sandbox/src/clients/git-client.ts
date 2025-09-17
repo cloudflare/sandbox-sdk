@@ -1,10 +1,11 @@
 import { BaseHttpClient } from './base-client';
-import type { BaseApiResponse, HttpClientOptions, SessionRequest } from './types';
+import type { BaseApiResponse, HttpClientOptions } from './types';
 
 /**
  * Request interface for Git checkout operations
  */
-export interface GitCheckoutRequest extends SessionRequest {
+export interface GitCheckoutRequest {
+  id: string;  // Session ID
   repoUrl: string;
   branch?: string;
   targetDir?: string;
@@ -35,18 +36,19 @@ export class GitClient extends BaseHttpClient {
    */
   async checkout(
     repoUrl: string,
+    sessionId: string,
     options?: {
       branch?: string;
       targetDir?: string;
-      sessionId?: string;
     }
   ): Promise<GitCheckoutResponse> {
     try {
-      const data = this.withSession({
+      const data: GitCheckoutRequest = {
+        id: sessionId,
         repoUrl,
         branch: options?.branch || 'main',
         targetDir: options?.targetDir || this.extractRepoName(repoUrl),
-      }, options?.sessionId);
+      };
 
       const response = await this.post<GitCheckoutResponse>(
         '/api/git/checkout',

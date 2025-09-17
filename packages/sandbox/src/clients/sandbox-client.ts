@@ -1,16 +1,35 @@
+import { BaseHttpClient } from './base-client';
 import { CommandClient } from './command-client';
 import { FileClient } from './file-client';
 import { GitClient } from './git-client';
 import { PortClient } from './port-client';
 import { ProcessClient } from './process-client';
-import type { HttpClientOptions } from './types';
+import type { BaseApiResponse, HttpClientOptions } from './types';
 import { UtilityClient } from './utility-client';
+
+/**
+ * Request interface for creating sessions
+ */
+export interface CreateSessionRequest {
+  id: string;
+  env?: Record<string, string>;
+  cwd?: string;
+  isolation?: boolean;
+}
+
+/**
+ * Response interface for creating sessions
+ */
+export interface CreateSessionResponse extends BaseApiResponse {
+  id: string;
+  message: string;
+}
 
 /**
  * Main sandbox client that composes all domain-specific clients
  * Provides organized access to all sandbox functionality
  */
-export class SandboxClient {
+export class SandboxClient extends BaseHttpClient {
   public readonly commands: CommandClient;
   public readonly files: FileClient;
   public readonly processes: ProcessClient;
@@ -25,6 +44,9 @@ export class SandboxClient {
       ...options,
     };
 
+    // Call parent constructor
+    super(clientOptions);
+
     // Initialize all domain clients with shared options
     this.commands = new CommandClient(clientOptions);
     this.files = new FileClient(clientOptions);
@@ -35,22 +57,32 @@ export class SandboxClient {
   }
 
   /**
-   * Set session ID for all clients
+   * Create a new session in the container
+   * This establishes a persistent session context for command execution
    */
-  public setSessionId(sessionId: string | null): void {
-    this.commands.setSessionId(sessionId);
-    this.files.setSessionId(sessionId);
-    this.processes.setSessionId(sessionId);
-    this.ports.setSessionId(sessionId);
-    this.git.setSessionId(sessionId);
-    this.utils.setSessionId(sessionId);
-  }
+  async createSession(options: {
+    id: string;
+    env?: Record<string, string>;
+    cwd?: string;
+    isolation?: boolean;
+  }): Promise<CreateSessionResponse> {
+    try {
+      const data: CreateSessionRequest = {
+        id: options.id,
+        env: options.env,
+        cwd: options.cwd || '/workspace',
+        isolation: options.isolation !== false, // Default to true
+      };
 
-  /**
-   * Get session ID from the command client (all clients share the same session)
-   */
-  public getSessionId(): string | null {
-    return this.commands.getSessionId();
+      const response = await this.post<CreateSessionResponse>('/api/session/create', data);
+      
+      this.logSuccess('Session created', `${options.id} (isolation: ${data.isolation})`);
+      
+      return response;
+    } catch (error) {
+      this.logError('createSession', error);
+      throw error;
+    }
   }
 
   /**

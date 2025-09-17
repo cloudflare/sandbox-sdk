@@ -60,7 +60,7 @@ describe('HTTP Request Flow', () => {
         }))
       );
 
-      await client.commands.execute('echo test');
+      await client.commands.execute('echo test', 'test-session');
 
       // Verify POST request structure (BaseHttpClient adds Content-Type for POST requests)
       const postCall = fetchMock.mock.calls.find((call: [string, RequestInit]) => 
@@ -112,7 +112,7 @@ describe('HTTP Request Flow', () => {
         })
       );
 
-      await client.commands.execute('echo test');
+      await client.commands.execute('echo test', 'test-session');
 
       const postCall = fetchMock.mock.calls.find((call: [string, RequestInit]) => call[1]?.method === 'POST');
       expect(postCall![1]).toEqual(expect.objectContaining({
@@ -149,7 +149,7 @@ describe('HTTP Request Flow', () => {
         }))
       );
 
-      await client.files.writeFile('/test.txt', 'content');
+      await client.files.writeFile('/test.txt', 'content', 'test-session');
 
       const postCall = fetchMock.mock.calls.find((call: [string, RequestInit]) => 
         call[1]?.method === 'POST' && call[0].includes('/api/write')
@@ -197,7 +197,7 @@ describe('HTTP Request Flow', () => {
         })
       );
 
-      await expect(client.commands.execute('echo test')).rejects.toThrow();
+      await expect(client.commands.execute('echo test', 'test-session')).rejects.toThrow();
     });
 
     it('should handle forbidden responses correctly', async () => {
@@ -212,7 +212,7 @@ describe('HTTP Request Flow', () => {
         })
       );
 
-      await expect(client.files.deleteFile('/protected/file.txt')).rejects.toThrow();
+      await expect(client.files.deleteFile('/protected/file.txt', 'test-session')).rejects.toThrow();
     });
   });
 
@@ -376,11 +376,11 @@ describe('HTTP Request Flow', () => {
         }));
       });
 
-      await client.commands.execute('echo test');
-      await client.files.writeFile('/test.txt', 'content');
-      await client.processes.startProcess('node app.js');
-      await client.ports.exposePort(3000);
-      await client.git.checkout('https://github.com/user/repo.git');
+      await client.commands.execute('echo test', 'test-session');
+      await client.files.writeFile('/test.txt', 'content', 'test-session');
+      await client.processes.startProcess('node app.js', 'test-session');
+      await client.ports.exposePort(3000, 'test-session');
+      await client.git.checkout('https://github.com/user/repo.git', 'test-session');
 
       const postCalls = fetchMock.mock.calls.filter((call: [string, RequestInit]) => call[1]?.method === 'POST');
       expect(postCalls.length).toBe(5);
@@ -414,7 +414,7 @@ describe('HTTP Request Flow', () => {
         }));
       });
 
-      await client.files.deleteFile('/test.txt'); // Uses POST
+      await client.files.deleteFile('/test.txt', 'test-session'); // Uses POST
       await client.processes.killProcess('process-123'); // Uses DELETE
       await client.ports.unexposePort(3000); // Uses DELETE
 
@@ -452,7 +452,7 @@ describe('HTTP Request Flow', () => {
         sessionId: 'complex-test-session'
       };
 
-      await client.processes.startProcess('node server.js', complexOptions);
+      await client.processes.startProcess('node server.js', complexOptions.sessionId, { processId: complexOptions.processId });
 
       const postCall = fetchMock.mock.calls.find((call: [string, RequestInit]) => 
         call[1]?.method === 'POST' && call[0].includes('/api/process/start')
@@ -468,7 +468,7 @@ describe('HTTP Request Flow', () => {
     });
 
     it('should handle empty request bodies for POST requests', async () => {
-      await client.files.readFile('/test.txt');
+      await client.files.readFile('/test.txt', 'test-session');
 
       const postCall = fetchMock.mock.calls.find((call: [string, RequestInit]) => 
         call[1]?.method === 'POST' && call[0].includes('/api/read')
@@ -484,7 +484,7 @@ describe('HTTP Request Flow', () => {
     it('should handle special characters in request bodies', async () => {
       const specialContent = 'Content with special chars: ñáéíóú & <script>alert("test")</script>';
       
-      await client.files.writeFile('/special.txt', specialContent);
+      await client.files.writeFile('/special.txt', specialContent, 'test-session');
 
       const postCall = fetchMock.mock.calls.find((call: [string, RequestInit]) => 
         call[1]?.method === 'POST' && call[0].includes('/api/write')
@@ -578,10 +578,10 @@ describe('HTTP Request Flow', () => {
       const requests = [
         client.utils.ping(),
         client.utils.getCommands(),
-        client.files.writeFile('/test1.txt', 'content1'),
-        client.files.writeFile('/test2.txt', 'content2'),
-        client.commands.execute('echo test1'),
-        client.commands.execute('echo test2')
+        client.files.writeFile('/test1.txt', 'content1', 'test-session'),
+        client.files.writeFile('/test2.txt', 'content2', 'test-session'),
+        client.commands.execute('echo test1', 'test-session'),
+        client.commands.execute('echo test2', 'test-session')
       ];
 
       const results = await Promise.all(requests);
@@ -621,8 +621,8 @@ describe('HTTP Request Flow', () => {
       const requests = [
         client.utils.ping(),
         client.utils.getCommands(),
-        client.files.readFile('/test.txt'),
-        client.commands.execute('echo test')
+        client.files.readFile('/test.txt', 'test-session'),
+        client.commands.execute('echo test', 'test-session')
       ];
 
       const results = await Promise.allSettled(requests);

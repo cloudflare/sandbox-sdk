@@ -250,7 +250,7 @@ describe('Command Execution Integration Flow', () => {
       const responseData = await response.json() as ExecuteResponse;
       expect(responseData.success).toBe(false);
       expect(responseData.exitCode).toBe(127);
-      expect(responseData.stderr).toContain('command not found');
+      expect(responseData.stderr).toContain('Command not found');
 
       // Note: Command failure is now handled gracefully with 200 status
       // The service succeeded in executing the command, even though the command itself failed
@@ -370,11 +370,11 @@ describe('Command Execution Integration Flow', () => {
 
       const response = await router.route(request);
 
-      // Session-based execution handles spawn failures gracefully
-      expect(response.status).toBe(200);
-      const responseData = await response.json() as ExecuteResponse;
-      expect(responseData.success).toBe(true); // Session-based execution handles spawn failures gracefully
-      expect(responseData.stdout).toContain('total 0');
+      // Spawn failure would be caught and return error response
+      expect(response.status).toBe(400);
+      const responseData = await response.json() as ApiErrorResponse;
+      expect(responseData.success).toBe(false);
+      expect(responseData.error).toContain('Failed to execute command');
     });
   });
 

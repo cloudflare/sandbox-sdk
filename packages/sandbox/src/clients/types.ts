@@ -73,9 +73,3 @@ export interface RequestConfig extends RequestInit {
  */
 export type ResponseHandler<T> = (response: Response) => Promise<T>;
 
-/**
- * Common session-aware request interface
- */
-export interface SessionRequest {
-  sessionId?: string;
-}

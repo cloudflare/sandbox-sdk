@@ -11,8 +11,11 @@ export type {
 export { CommandClient } from './command-client';
 // File client types
 export type {
+  FileInfo,
   FileOperationRequest,
   FileOperationResponse,
+  ListFilesRequest,
+  ListFilesResponse,
   MkdirRequest,
   MkdirResponse,
   ReadFileRequest,
@@ -58,7 +61,6 @@ export type {
   HttpClientOptions,
   RequestConfig,
   ResponseHandler,
-  SessionRequest,
 } from './types';
 // Utility client types
 export type {

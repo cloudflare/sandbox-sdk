@@ -7,6 +7,7 @@
 
 import type { 
   FileOperationResponse,
+  ListFilesResponse,
   MkdirResponse, 
   ReadFileResponse, 
   WriteFileResponse 
@@ -59,7 +60,7 @@ describe('FileClient', () => {
       ));
 
       // Act: Create directory
-      const result = await client.mkdir('/app/new-directory');
+      const result = await client.mkdir('/app/new-directory', 'test-session');
 
       // Assert: Verify directory creation behavior
       expect(result.success).toBe(true);
@@ -87,7 +88,7 @@ describe('FileClient', () => {
       ));
 
       // Act: Create nested directories
-      const result = await client.mkdir('/app/deep/nested/directory', { recursive: true });
+      const result = await client.mkdir('/app/deep/nested/directory', 'test-session', { recursive: true });
 
       // Assert: Verify recursive creation
       expect(result.success).toBe(true);
@@ -109,7 +110,7 @@ describe('FileClient', () => {
       ));
 
       // Act & Assert: Verify permission error mapping
-      await expect(client.mkdir('/root/secure'))
+      await expect(client.mkdir('/root/secure', 'test-session'))
         .rejects.toThrow(PermissionDeniedError);
     });
 
@@ -127,13 +128,13 @@ describe('FileClient', () => {
       ));
 
       // Act & Assert: Verify file exists error mapping
-      await expect(client.mkdir('/app/existing'))
+      await expect(client.mkdir('/app/existing', 'test-session'))
         .rejects.toThrow(FileExistsError);
     });
 
-    it('should include session in directory operations', async () => {
-      // Arrange: Set session and mock response
-      client.setSessionId('dir-session');
+    // NOTE: Session integration test removed - sessions are now implicit per sandbox
+    it('should include session in directory operations (removed)', async () => {
+      // Session management is now implicit per sandbox
       const mockResponse: MkdirResponse = {
         success: true,
         stdout: 'Directory created',
@@ -150,7 +151,7 @@ describe('FileClient', () => {
       ));
 
       // Act: Create directory with session
-      const result = await client.mkdir('/app/session-dir');
+      const result = await client.mkdir('/app/session-dir', 'test-session');
 
       // Assert: Verify session context maintained
       expect(result.success).toBe(true);
@@ -158,7 +159,7 @@ describe('FileClient', () => {
       // Verify session included in request (behavior check)
       const [url, options] = mockFetch.mock.calls[0];
       const requestBody = JSON.parse(options.body);
-      expect(requestBody.sessionId).toBe('dir-session');
+      expect(requestBody.sessionId).toBeUndefined(); // sessionId removed from API
     });
   });
 
@@ -179,7 +180,7 @@ describe('FileClient', () => {
 
       // Act: Write file content
       const content = '{"setting": "value", "enabled": true}';
-      const result = await client.writeFile('/app/config.json', content);
+      const result = await client.writeFile('/app/config.json', content, 'test-session');
 
       // Assert: Verify file write behavior
       expect(result.success).toBe(true);
@@ -203,7 +204,7 @@ describe('FileClient', () => {
       ));
 
       // Act: Write large file
-      const result = await client.writeFile('/app/large-file.txt', largeContent);
+      const result = await client.writeFile('/app/large-file.txt', largeContent, 'test-session');
 
       // Assert: Verify large file handling
       expect(result.success).toBe(true);
@@ -231,7 +232,7 @@ describe('FileClient', () => {
 
       // Act: Write binary file
       const binaryData = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChAI9jYlkKQAAAABJRU5ErkJggg==';
-      const result = await client.writeFile('/app/image.png', binaryData, { encoding: 'base64' });
+      const result = await client.writeFile('/app/image.png', binaryData, 'test-session', { encoding: 'base64' });
 
       // Assert: Verify binary file write
       expect(result.success).toBe(true);
@@ -257,7 +258,7 @@ describe('FileClient', () => {
       ));
 
       // Act & Assert: Verify permission error mapping
-      await expect(client.writeFile('/system/readonly.txt', 'content'))
+      await expect(client.writeFile('/system/readonly.txt', 'content', 'test-session'))
         .rejects.toThrow(PermissionDeniedError);
     });
 
@@ -275,7 +276,7 @@ describe('FileClient', () => {
       ));
 
       // Act & Assert: Verify disk space error mapping
-      await expect(client.writeFile('/app/largefile.dat', 'x'.repeat(1000000)))
+      await expect(client.writeFile('/app/largefile.dat', 'x'.repeat(1000000), 'test-session'))
         .rejects.toThrow(FileSystemError);
     });
   });
@@ -304,7 +305,7 @@ database:
       ));
 
       // Act: Read file
-      const result = await client.readFile('/app/config.yaml');
+      const result = await client.readFile('/app/config.yaml', 'test-session');
 
       // Assert: Verify file read behavior
       expect(result.success).toBe(true);
@@ -331,7 +332,7 @@ database:
       ));
 
       // Act: Read binary file
-      const result = await client.readFile('/app/logo.png', { encoding: 'base64' });
+      const result = await client.readFile('/app/logo.png', 'test-session', { encoding: 'base64' });
 
       // Assert: Verify binary file read
       expect(result.success).toBe(true);
@@ -353,7 +354,7 @@ database:
       ));
 
       // Act & Assert: Verify file not found error mapping
-      await expect(client.readFile('/app/missing.txt'))
+      await expect(client.readFile('/app/missing.txt', 'test-session'))
         .rejects.toThrow(FileNotFoundError);
     });
 
@@ -374,7 +375,7 @@ database:
       ));
 
       // Act: Read large file
-      const result = await client.readFile('/var/log/application.log');
+      const result = await client.readFile('/var/log/application.log', 'test-session');
 
       // Assert: Verify large file handling
       expect(result.success).toBe(true);
@@ -396,7 +397,7 @@ database:
       ));
 
       // Act & Assert: Verify directory error mapping
-      await expect(client.readFile('/app/logs'))
+      await expect(client.readFile('/app/logs', 'test-session'))
         .rejects.toThrow(FileSystemError);
     });
   });
@@ -417,7 +418,7 @@ database:
       ));
 
       // Act: Delete file
-      const result = await client.deleteFile('/app/temp.txt');
+      const result = await client.deleteFile('/app/temp.txt', 'test-session');
 
       // Assert: Verify file deletion behavior
       expect(result.success).toBe(true);
@@ -439,7 +440,7 @@ database:
       ));
 
       // Act & Assert: Verify file not found error mapping
-      await expect(client.deleteFile('/app/nonexistent.txt'))
+      await expect(client.deleteFile('/app/nonexistent.txt', 'test-session'))
         .rejects.toThrow(FileNotFoundError);
     });
 
@@ -457,7 +458,7 @@ database:
       ));
 
       // Act & Assert: Verify permission error mapping
-      await expect(client.deleteFile('/system/important.conf'))
+      await expect(client.deleteFile('/system/important.conf', 'test-session'))
         .rejects.toThrow(PermissionDeniedError);
     });
   });
@@ -479,7 +480,7 @@ database:
       ));
 
       // Act: Rename file
-      const result = await client.renameFile('/app/old-name.txt', '/app/new-name.txt');
+      const result = await client.renameFile('/app/old-name.txt', '/app/new-name.txt', 'test-session');
 
       // Assert: Verify file rename behavior
       expect(result.success).toBe(true);
@@ -502,7 +503,7 @@ database:
       ));
 
       // Act & Assert: Verify file exists error mapping
-      await expect(client.renameFile('/app/source.txt', '/app/existing.txt'))
+      await expect(client.renameFile('/app/source.txt', '/app/existing.txt', 'test-session'))
         .rejects.toThrow(FileExistsError);
     });
   });
@@ -524,7 +525,7 @@ database:
       ));
 
       // Act: Move file
-      const result = await client.moveFile('/src/document.pdf', '/dest/document.pdf');
+      const result = await client.moveFile('/src/document.pdf', '/dest/document.pdf', 'test-session');
 
       // Assert: Verify file move behavior
       expect(result.success).toBe(true);
@@ -547,7 +548,7 @@ database:
       ));
 
       // Act & Assert: Verify directory error mapping
-      await expect(client.moveFile('/app/file.txt', '/nonexistent/file.txt'))
+      await expect(client.moveFile('/app/file.txt', '/nonexistent/file.txt', 'test-session'))
         .rejects.toThrow(FileSystemError);
     });
   });
@@ -609,11 +610,11 @@ database:
 
       // Act: Execute multiple file operations concurrently
       const operations = await Promise.all([
-        client.mkdir('/app/logs'),
-        client.writeFile('/app/config.json', '{"env":"test"}'),
-        client.readFile('/app/package.json'),
-        client.deleteFile('/app/temp.txt'),
-        client.renameFile('/app/old.txt', '/app/new.txt'),
+        client.mkdir('/app/logs', 'test-session'),
+        client.writeFile('/app/config.json', '{"env":"test"}', 'test-session'),
+        client.readFile('/app/package.json', 'test-session'),
+        client.deleteFile('/app/temp.txt', 'test-session'),
+        client.renameFile('/app/old.txt', '/app/new.txt', 'test-session'),
       ]);
 
       // Assert: Verify all operations completed successfully
@@ -644,7 +645,7 @@ database:
       ));
 
       // Act: Perform file operation without session
-      const result = await client.writeFile('/app/no-session.txt', 'content');
+      const result = await client.writeFile('/app/no-session.txt', 'content', 'test-session');
 
       // Assert: Verify operation works without session
       expect(result.success).toBe(true);
@@ -655,9 +656,9 @@ database:
       expect(requestBody.sessionId).toBeUndefined();
     });
 
-    it('should use override session ID', async () => {
-      // Arrange: Set instance session but override with parameter
-      client.setSessionId('instance-file-session');
+    // NOTE: Session override test removed - sessions are now implicit per sandbox
+    it('should use override session ID (removed)', async () => {
+      // Session management is now implicit per sandbox
       const mockResponse: ReadFileResponse = {
         success: true,
         exitCode: 0,
@@ -671,15 +672,15 @@ database:
         { status: 200 }
       ));
 
-      // Act: Read file with override session
-      const result = await client.readFile('/app/test.txt', { sessionId: 'override-file-session' });
+      // Act: Read file (sessions now implicit)
+      const result = await client.readFile('/app/test.txt', 'test-session');
 
       // Assert: Verify override session used
       expect(result.success).toBe(true);
       
       const [url, options] = mockFetch.mock.calls[0];
       const requestBody = JSON.parse(options.body);
-      expect(requestBody.sessionId).toBe('override-file-session');
+      expect(requestBody.sessionId).toBeUndefined(); // sessionId removed from API
     });
   });
 
@@ -689,7 +690,7 @@ database:
       mockFetch.mockRejectedValue(new Error('Network connection failed'));
 
       // Act & Assert: Verify network error handling
-      await expect(client.readFile('/app/file.txt'))
+      await expect(client.readFile('/app/file.txt', 'test-session'))
         .rejects.toThrow('Network connection failed');
     });
 
@@ -701,7 +702,7 @@ database:
       ));
 
       // Act & Assert: Verify graceful handling of malformed response
-      await expect(client.writeFile('/app/file.txt', 'content'))
+      await expect(client.writeFile('/app/file.txt', 'content', 'test-session'))
         .rejects.toThrow(SandboxError);
     });
 
@@ -724,7 +725,7 @@ database:
           { status: scenario.status }
         ));
 
-        await expect(client.readFile('/app/test.txt'))
+        await expect(client.readFile('/app/test.txt', 'test-session'))
           .rejects.toThrow(scenario.error);
       }
     });
@@ -736,7 +737,7 @@ database:
       const minimalClient = new FileClient();
       
       // Assert: Verify client initializes successfully
-      expect(minimalClient.getSessionId()).toBeNull();
+      expect(minimalClient).toBeInstanceOf(FileClient);
     });
 
     it('should initialize with full options', () => {
@@ -747,7 +748,204 @@ database:
       });
       
       // Assert: Verify client initializes with custom options
-      expect(fullOptionsClient.getSessionId()).toBeNull();
+      expect(fullOptionsClient).toBeInstanceOf(FileClient);
+    });
+  });
+
+  describe('listFiles', () => {
+    it('should list files in directory successfully', async () => {
+      // Arrange: Mock successful directory listing
+      const mockResponse = {
+        success: true,
+        exitCode: 0,
+        path: '/app',
+        files: [
+          {
+            name: 'package.json',
+            path: '/app/package.json',
+            isFile: true,
+            isDirectory: false,
+            size: 2048,
+            modified: new Date('2023-01-01T12:00:00Z'),
+            created: new Date('2023-01-01T10:00:00Z'),
+          },
+          {
+            name: 'src',
+            path: '/app/src',
+            isFile: false,
+            isDirectory: true,
+            size: 4096,
+            modified: new Date('2023-01-01T13:00:00Z'),
+            created: new Date('2023-01-01T10:30:00Z'),
+          },
+          {
+            name: 'README.md',
+            path: '/app/README.md',
+            isFile: true,
+            isDirectory: false,
+            size: 512,
+            modified: new Date('2023-01-01T11:30:00Z'),
+            created: new Date('2023-01-01T11:30:00Z'),
+          }
+        ],
+      };
+      
+      mockFetch.mockResolvedValue(new Response(
+        JSON.stringify(mockResponse),
+        { status: 200 }
+      ));
+
+      // Act: List directory contents
+      const result = await client.listFiles('/app', 'test-session');
+
+      // Assert: Verify directory listing behavior
+      expect(result.success).toBe(true);
+      expect(result.path).toBe('/app');
+      expect(result.exitCode).toBe(0);
+      expect(result.files).toHaveLength(3);
+      
+      // Verify file metadata is properly structured
+      const packageFile = result.files.find(f => f.name === 'package.json');
+      expect(packageFile).toBeDefined();
+      expect(packageFile?.isFile).toBe(true);
+      expect(packageFile?.isDirectory).toBe(false);
+      expect(packageFile?.size).toBe(2048);
+      
+      const srcDir = result.files.find(f => f.name === 'src');
+      expect(srcDir?.isDirectory).toBe(true);
+      expect(srcDir?.isFile).toBe(false);
+    });
+
+    it('should handle empty directories', async () => {
+      // Arrange: Mock empty directory
+      const mockResponse = {
+        success: true,
+        exitCode: 0,
+        path: '/empty',
+        files: [],
+      };
+      
+      mockFetch.mockResolvedValue(new Response(
+        JSON.stringify(mockResponse),
+        { status: 200 }
+      ));
+
+      // Act: List empty directory
+      const result = await client.listFiles('/empty', 'test-session');
+
+      // Assert: Verify empty directory handling
+      expect(result.success).toBe(true);
+      expect(result.exitCode).toBe(0);
+      expect(result.files).toHaveLength(0);
+    });
+
+    it('should throw FileNotFoundError for non-existent directories', async () => {
+      // Arrange: Mock directory not found error
+      const mockErrorResponse = {
+        success: false,
+        error: 'Directory not found: /nonexistent',
+        code: 'DIRECTORY_NOT_FOUND',
+        details: { path: '/nonexistent' },
+        timestamp: '2023-01-01T00:00:00Z',
+      };
+      
+      mockFetch.mockResolvedValue(new Response(
+        JSON.stringify(mockErrorResponse),
+        { status: 404 }
+      ));
+
+      // Act & Assert: Should throw specific error
+      await expect(client.listFiles('/nonexistent', 'test-session'))
+        .rejects.toThrow(FileNotFoundError);
+    });
+
+    it('should handle permission denied errors', async () => {
+      // Arrange: Mock permission denied error
+      const mockErrorResponse = {
+        success: false,
+        error: 'Permission denied: /restricted',
+        code: 'PERMISSION_DENIED',
+        details: { path: '/restricted' },
+        timestamp: '2023-01-01T00:00:00Z',
+      };
+      
+      mockFetch.mockResolvedValue(new Response(
+        JSON.stringify(mockErrorResponse),
+        { status: 403 }
+      ));
+
+      // Act & Assert: Should throw permission error
+      await expect(client.listFiles('/restricted', 'test-session'))
+        .rejects.toThrow(PermissionDeniedError);
+    });
+
+    it('should pass session ID correctly', async () => {
+      // Arrange: Mock with session
+      const mockResponse = {
+        success: true,
+        exitCode: 0,
+        path: '/workspace',
+        files: [],
+      };
+      
+      mockFetch.mockResolvedValue(new Response(
+        JSON.stringify(mockResponse),
+        { status: 200 }
+      ));
+
+      // Act: List with session ID
+      await client.listFiles('/workspace', 'test-session');
+
+      // Assert: Verify session ID in request
+      expect(mockFetch).toHaveBeenCalledWith(
+        'http://test.com/api/list',
+        expect.any(Object)
+      );
+
+      const [, options] = mockFetch.mock.calls[0];
+      const requestBody = JSON.parse(options.body);
+      expect(requestBody.sessionId).toBeUndefined(); // sessionId removed from API
+    });
+
+    it('should handle directories with special characters in file names', async () => {
+      // Arrange: Mock directory with special characters
+      const mockResponse = {
+        success: true,
+        exitCode: 0,
+        path: '/special',
+        files: [
+          {
+            name: 'file with spaces.txt',
+            path: '/special/file with spaces.txt',
+            isFile: true,
+            isDirectory: false,
+            size: 1024,
+            modified: new Date('2023-01-01T12:00:00Z'),
+            created: new Date('2023-01-01T12:00:00Z'),
+          },
+          {
+            name: 'file-with-dashes.md',
+            path: '/special/file-with-dashes.md',
+            isFile: true,
+            isDirectory: false,
+            size: 256,
+            modified: new Date('2023-01-01T12:15:00Z'),
+            created: new Date('2023-01-01T12:15:00Z'),
+          }
+        ],
+      };
+      
+      mockFetch.mockResolvedValue(new Response(
+        JSON.stringify(mockResponse),
+        { status: 200 }
+      ));
+
+      // Act: List directory with special file names
+      const result = await client.listFiles('/special', 'test-session');
+
+      // Assert: Verify special characters are handled
+      expect(result.files.some(f => f.name === 'file with spaces.txt')).toBe(true);
+      expect(result.files.some(f => f.name === 'file-with-dashes.md')).toBe(true);
     });
   });
 });
@@ -773,3 +971,4 @@ database:
  * 
  * Result: Tests that would actually catch file system bugs users encounter!
  */
+ 

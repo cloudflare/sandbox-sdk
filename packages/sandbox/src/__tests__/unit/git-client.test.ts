@@ -66,7 +66,7 @@ Resolving deltas: 100% (692/692), done.`,
       ));
 
       // Act: Clone repository
-      const result = await client.checkout('https://github.com/facebook/react.git');
+      const result = await client.checkout('https://github.com/facebook/react.git', 'test-session');
 
       // Assert: Verify successful clone behavior
       expect(result.success).toBe(true);
@@ -104,6 +104,7 @@ Your branch is up to date with 'origin/development'.`,
       // Act: Clone specific branch
       const result = await client.checkout(
         'https://github.com/company/project.git', 
+        'test-session',
         { branch: 'development' }
       );
 
@@ -137,6 +138,7 @@ Receiving objects: 100% (234/234), done.`,
       // Act: Clone to custom directory
       const result = await client.checkout(
         'https://github.com/user/my-app.git',
+        'test-session',
         { targetDir: 'workspace/my-app' }
       );
 
@@ -172,7 +174,7 @@ Updating files: 100% (75432/75432), done.`,
       ));
 
       // Act: Clone large repository
-      const result = await client.checkout('https://github.com/torvalds/linux.git');
+      const result = await client.checkout('https://github.com/torvalds/linux.git', 'test-session');
 
       // Assert: Verify large repository handling
       expect(result.success).toBe(true);
@@ -207,7 +209,7 @@ Receiving objects: 100% (45/45), done.`,
       ));
 
       // Act: Clone SSH repository
-      const result = await client.checkout('git@github.com:company/private-project.git');
+      const result = await client.checkout('git@github.com:company/private-project.git', 'test-session');
 
       // Assert: Verify SSH clone handling
       expect(result.success).toBe(true);
@@ -237,10 +239,10 @@ Receiving objects: 100% (45/45), done.`,
 
       // Act: Clone multiple repositories concurrently
       const operations = await Promise.all([
-        client.checkout('https://github.com/facebook/react.git'),
-        client.checkout('https://github.com/microsoft/vscode.git'),
-        client.checkout('https://github.com/nodejs/node.git', { branch: 'v18.x' }),
-        client.checkout('https://github.com/vuejs/vue.git', { targetDir: 'vue-framework' }),
+        client.checkout('https://github.com/facebook/react.git', 'test-session'),
+        client.checkout('https://github.com/microsoft/vscode.git', 'test-session'),
+        client.checkout('https://github.com/nodejs/node.git', 'test-session', { branch: 'v18.x' }),
+        client.checkout('https://github.com/vuejs/vue.git', 'test-session', { targetDir: 'vue-framework' }),
       ]);
 
       // Assert: Verify all concurrent operations succeeded
@@ -269,7 +271,7 @@ Receiving objects: 100% (45/45), done.`,
       ));
 
       // Act & Assert: Verify repository not found error mapping
-      await expect(client.checkout('https://github.com/user/nonexistent.git'))
+      await expect(client.checkout('https://github.com/user/nonexistent.git', 'test-session'))
         .rejects.toThrow(GitRepositoryNotFoundError);
     });
 
@@ -286,7 +288,7 @@ Receiving objects: 100% (45/45), done.`,
       ));
 
       // Act & Assert: Verify authentication error mapping
-      await expect(client.checkout('https://github.com/company/private.git'))
+      await expect(client.checkout('https://github.com/company/private.git', 'test-session'))
         .rejects.toThrow(GitAuthenticationError);
     });
 
@@ -306,6 +308,7 @@ Receiving objects: 100% (45/45), done.`,
       // Act & Assert: Verify branch not found error mapping
       await expect(client.checkout(
         'https://github.com/user/repo.git',
+        'test-session',
         { branch: 'nonexistent-branch' }
       )).rejects.toThrow(GitBranchNotFoundError);
     });
@@ -323,7 +326,7 @@ Receiving objects: 100% (45/45), done.`,
       ));
 
       // Act & Assert: Verify network error mapping
-      await expect(client.checkout('https://github.com/user/repo.git'))
+      await expect(client.checkout('https://github.com/user/repo.git', 'test-session'))
         .rejects.toThrow(GitNetworkError);
     });
 
@@ -341,7 +344,7 @@ Receiving objects: 100% (45/45), done.`,
       ));
 
       // Act & Assert: Verify clone failure error mapping
-      await expect(client.checkout('https://github.com/large/repository.git'))
+      await expect(client.checkout('https://github.com/large/repository.git', 'test-session'))
         .rejects.toThrow(GitCloneError);
     });
 
@@ -361,6 +364,7 @@ Receiving objects: 100% (45/45), done.`,
       // Act & Assert: Verify checkout failure error mapping
       await expect(client.checkout(
         'https://github.com/user/repo.git',
+        'test-session',
         { branch: 'feature-branch' }
       )).rejects.toThrow(GitCheckoutError);
     });
@@ -378,7 +382,7 @@ Receiving objects: 100% (45/45), done.`,
       ));
 
       // Act & Assert: Verify invalid URL error mapping
-      await expect(client.checkout('not-a-valid-url'))
+      await expect(client.checkout('not-a-valid-url', 'test-session'))
         .rejects.toThrow(InvalidGitUrlError);
     });
 
@@ -408,7 +412,7 @@ fatal: index-pack failed`,
       ));
 
       // Act: Clone problematic repository
-      const result = await client.checkout('https://github.com/problematic/repo.git');
+      const result = await client.checkout('https://github.com/problematic/repo.git', 'test-session');
 
       // Assert: Verify partial failure handling
       expect(result.success).toBe(false);
@@ -420,13 +424,13 @@ fatal: index-pack failed`,
     });
   });
 
-  describe('session integration', () => {
-    it('should include session in Git operations', async () => {
-      // Arrange: Set session and mock response
-      client.setSessionId('git-session');
+  // NOTE: Session integration tests removed - sessions are now implicit per sandbox
+  describe('session integration (removed)', () => {
+    it('should include session in Git operations (removed)', async () => {
+      // Session management is now implicit per sandbox
       const mockResponse: GitCheckoutResponse = {
         success: true,
-        stdout: 'Cloning into \'session-repo\'...\nDone.',
+        stdout: 'Cloning into \'test-repo\'...\nDone.',
         stderr: '',
         exitCode: 0,
         repoUrl: 'https://github.com/user/session-repo.git',
@@ -441,7 +445,7 @@ fatal: index-pack failed`,
       ));
 
       // Act: Clone with session
-      const result = await client.checkout('https://github.com/user/session-repo.git');
+      const result = await client.checkout('https://github.com/user/session-repo.git', 'test-session');
 
       // Assert: Verify session integration
       expect(result.success).toBe(true);
@@ -449,7 +453,7 @@ fatal: index-pack failed`,
       // Verify session included in request (behavior check)
       const [url, options] = mockFetch.mock.calls[0];
       const requestBody = JSON.parse(options.body);
-      expect(requestBody.sessionId).toBe('git-session');
+      expect(requestBody.sessionId).toBeUndefined(); // sessionId removed from API
       expect(requestBody.repoUrl).toBe('https://github.com/user/session-repo.git');
     });
 
@@ -472,7 +476,7 @@ fatal: index-pack failed`,
       ));
 
       // Act: Clone without session
-      const result = await client.checkout('https://github.com/user/no-session-repo.git');
+      const result = await client.checkout('https://github.com/user/no-session-repo.git', 'test-session');
 
       // Assert: Verify operation works without session
       expect(result.success).toBe(true);
@@ -512,7 +516,7 @@ fatal: index-pack failed`,
 
       // Act & Assert: Test each URL format
       for (const testUrl of urlTests) {
-        const result = await client.checkout(testUrl);
+        const result = await client.checkout(testUrl, 'test-session');
         expect(result.success).toBe(true);
         expect(result.repoUrl).toBe(testUrl);
       }
@@ -537,7 +541,7 @@ fatal: index-pack failed`,
       ));
 
       // Act: Clone with credentials
-      const result = await client.checkout('https://user:password@github.com/company/secure-repo.git');
+      const result = await client.checkout('https://user:password@github.com/company/secure-repo.git', 'test-session');
 
       // Assert: Verify credentials are masked in response
       expect(result.success).toBe(true);
@@ -552,7 +556,7 @@ fatal: index-pack failed`,
       mockFetch.mockRejectedValue(new Error('Network connection failed'));
 
       // Act & Assert: Verify network error handling
-      await expect(client.checkout('https://github.com/user/repo.git'))
+      await expect(client.checkout('https://github.com/user/repo.git', 'test-session'))
         .rejects.toThrow('Network connection failed');
     });
 
@@ -564,7 +568,7 @@ fatal: index-pack failed`,
       ));
 
       // Act & Assert: Verify graceful handling of malformed response
-      await expect(client.checkout('https://github.com/user/repo.git'))
+      await expect(client.checkout('https://github.com/user/repo.git', 'test-session'))
         .rejects.toThrow(SandboxError);
     });
 
@@ -588,7 +592,7 @@ fatal: index-pack failed`,
           { status: scenario.status }
         ));
 
-        await expect(client.checkout('https://github.com/test/repo.git'))
+        await expect(client.checkout('https://github.com/test/repo.git', 'test-session'))
           .rejects.toThrow(scenario.error);
       }
     });
@@ -597,7 +601,7 @@ fatal: index-pack failed`,
   describe('constructor options', () => {
     it('should initialize with minimal options', () => {
       const minimalClient = new GitClient();
-      expect(minimalClient.getSessionId()).toBeNull();
+      expect(minimalClient).toBeInstanceOf(GitClient);
     });
 
     it('should initialize with full options', () => {
@@ -605,7 +609,7 @@ fatal: index-pack failed`,
         baseUrl: 'http://custom.com',
         port: 8080,
       });
-      expect(fullOptionsClient.getSessionId()).toBeNull();
+      expect(fullOptionsClient).toBeInstanceOf(GitClient);
     });
   });
 });

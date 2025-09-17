@@ -1,5 +1,7 @@
 // Dependency Injection Container
 // Import service interfaces
+
+import type { SessionManager } from '../isolation';
 import type { 
   CommandResult, 
   ExecuteRequest,
@@ -26,8 +28,8 @@ export interface SessionService {
 }
 
 export interface ProcessService {
-  startProcess(command: string, options: Record<string, unknown>): Promise<ServiceResult<ProcessRecord>>;
-  executeCommand(command: string, options: Record<string, unknown>): Promise<ServiceResult<CommandResult>>;
+  startProcess(command: string, sessionId: string, options?: Record<string, unknown>): Promise<ServiceResult<ProcessRecord>>;
+  executeCommand(command: string, sessionId: string, options?: Record<string, unknown>): Promise<ServiceResult<CommandResult>>;
   getProcess(id: string): Promise<ServiceResult<ProcessRecord>>;
   killProcess(id: string): Promise<ServiceResult<void>>;
   listProcesses(): Promise<ServiceResult<ProcessRecord[]>>;
@@ -35,13 +37,13 @@ export interface ProcessService {
 }
 
 export interface FileService {
-  read(path: string, options?: { encoding?: string }): Promise<ServiceResult<string>>;
-  write(path: string, content: string, options?: { encoding?: string }): Promise<ServiceResult<void>>;
-  delete(path: string): Promise<ServiceResult<void>>;
-  rename(oldPath: string, newPath: string): Promise<ServiceResult<void>>;
-  move(sourcePath: string, destinationPath: string): Promise<ServiceResult<void>>;
-  mkdir(path: string, options?: { recursive?: boolean }): Promise<ServiceResult<void>>;
-  exists(path: string): Promise<ServiceResult<boolean>>;
+  read(path: string, sessionId: string, options?: { encoding?: string }): Promise<ServiceResult<string>>;
+  write(path: string, content: string, sessionId: string, options?: { encoding?: string }): Promise<ServiceResult<void>>;
+  delete(path: string, sessionId: string): Promise<ServiceResult<void>>;
+  rename(oldPath: string, newPath: string, sessionId: string): Promise<ServiceResult<void>>;
+  move(sourcePath: string, destinationPath: string, sessionId: string): Promise<ServiceResult<void>>;
+  mkdir(path: string, sessionId: string, options?: { recursive?: boolean }): Promise<ServiceResult<void>>;
+  exists(path: string, sessionId: string): Promise<ServiceResult<boolean>>;
 }
 
 export interface PortService {
@@ -53,8 +55,8 @@ export interface PortService {
 }
 
 export interface GitService {
-  cloneRepository(repoUrl: string, options: { branch?: string; targetDir?: string }): Promise<ServiceResult<{ path: string; branch: string }>>;
-  checkoutBranch(repoPath: string, branch: string): Promise<ServiceResult<void>>;
+  cloneRepository(repoUrl: string, sessionId: string, options?: { branch?: string; targetDir?: string }): Promise<ServiceResult<{ path: string; branch: string }>>;
+  checkoutBranch(repoPath: string, branch: string, sessionId: string): Promise<ServiceResult<void>>;
 }
 
 export interface SecurityService {
@@ -122,6 +124,9 @@ export interface Dependencies {
   fileService: FileService;
   portService: PortService;
   gitService: GitService;
+  
+  // Session Management
+  sessionManager: SessionManager;
   
   // Infrastructure
   logger: Logger;
@@ -203,20 +208,25 @@ export class Container {
     const securityAdapter = new SecurityServiceAdapter(security);
     const validator = new RequestValidator(security);
     
+    // Initialize SessionManager from isolation.ts
+    const { SessionManager } = await import('../isolation');
+    const sessionManager = new SessionManager();
+    
     // Initialize stores
     const sessionStore = new InMemorySessionStore();
     const processStore = new InMemoryProcessStore();
     const portStore = new InMemoryPortStore();
     
-    // Initialize services
+    // Initialize services with SessionAwareService pattern
+    // SessionAwareService base class handles SessionManager injection
     const sessionService = new SessionService(sessionStore, logger);
-    const processService = new ProcessService(processStore, logger);
-    const fileService = new FileService(securityAdapter, logger);
+    const processService = new ProcessService(processStore, sessionManager, logger);
+    const fileService = new FileService(securityAdapter, sessionManager, logger);
     const portService = new PortService(portStore, securityAdapter, logger);
-    const gitService = new GitService(securityAdapter, logger);
+    const gitService = new GitService(securityAdapter, sessionManager, logger);
     
     // Initialize handlers
-    const sessionHandler = new SessionHandler(sessionService, logger);
+    const sessionHandler = new SessionHandler(sessionManager, logger);
     const executeHandler = new ExecuteHandler(processService, logger);
     const fileHandler = new FileHandler(fileService, logger);
     const processHandler = new ProcessHandler(processService, logger);
@@ -237,6 +247,9 @@ export class Container {
       fileService,
       portService,
       gitService,
+      
+      // Session Management
+      sessionManager,
       
       // Infrastructure
       logger,

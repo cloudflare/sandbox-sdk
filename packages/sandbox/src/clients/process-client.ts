@@ -1,12 +1,13 @@
 import { parseSSEStream } from '../sse-parser';
 import type { LogEvent } from '../types';
 import { BaseHttpClient } from './base-client';
-import type { BaseApiResponse, HttpClientOptions, SessionRequest } from './types';
+import type { BaseApiResponse, HttpClientOptions } from './types';
 
 /**
  * Request interface for starting processes
  */
-export interface StartProcessRequest extends SessionRequest {
+export interface StartProcessRequest {
+  id: string;  // Session ID - follows main branch pattern
   command: string;
   processId?: string;
 }
@@ -84,13 +85,15 @@ export class ProcessClient extends BaseHttpClient {
    */
   async startProcess(
     command: string,
-    options?: { processId?: string; sessionId?: string }
+    sessionId: string,
+    options?: { processId?: string }
   ): Promise<StartProcessResponse> {
     try {
-      const data = this.withSession({
+      const data: StartProcessRequest = {
+        id: sessionId,
         command,
         processId: options?.processId,
-      }, options?.sessionId);
+      };
 
       const response = await this.post<StartProcessResponse>(
         '/api/process/start',

@@ -7,7 +7,6 @@ export interface Handler<TRequest, TResponse> {
 }
 
 export interface RequestContext {
-  sessionId?: string;
   corsHeaders: Record<string, string>;
   requestId: string;
   timestamp: Date;
@@ -243,7 +242,6 @@ export interface ProcessRecord {
   startTime: Date;
   endTime?: Date;
   exitCode?: number;
-  sessionId?: string;
   stdout: string;
   stderr: string;
   outputListeners: Set<(stream: 'stdout' | 'stderr', data: string) => void>;
@@ -387,7 +385,7 @@ export interface GitCheckoutResponse {
   timestamp: string;
 }
 
-export type { MkdirRequest } from '../validation/schemas';
+export type { ListFilesRequest, MkdirRequest } from '../validation/schemas';
 
 export interface MkdirResponse {
   success: boolean;
@@ -397,6 +395,18 @@ export interface MkdirResponse {
   path: string;
   recursive: boolean;
   timestamp: string;
+}
+
+export interface FileInfo extends FileStats {
+  name: string;
+  path: string;
+}
+
+export interface ListFilesResponse {
+  success: boolean;
+  exitCode: number;
+  files: FileInfo[];
+  path: string;
 }
 
 // Import union types from Zod schemas

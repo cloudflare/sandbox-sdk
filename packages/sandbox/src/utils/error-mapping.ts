@@ -44,6 +44,7 @@ export function mapContainerError(errorResponse: ErrorResponse & { code?: string
   // File system errors
   switch (code) {
     case 'FILE_NOT_FOUND':
+    case 'DIRECTORY_NOT_FOUND':
       return new FileNotFoundError(path || 'unknown', operation || SandboxOperation.FILE_READ);
 
     case 'PERMISSION_DENIED':

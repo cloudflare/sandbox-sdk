@@ -53,7 +53,7 @@ export class ProcessHandler extends BaseHandler<Request, Response> {
       options: body.options
     });
 
-    const result = await this.processService.startProcess(body.command, body.options || {});
+    const result = await this.processService.startProcess(body.command, body.id, body.options || {});
 
     if (result.success) {
       const process = result.data!;
@@ -74,7 +74,6 @@ export class ProcessHandler extends BaseHandler<Request, Response> {
             command: process.command,
             status: process.status,
             startTime: process.startTime.toISOString(),
-            sessionId: process.sessionId,
           },
           message: 'Process started successfully',
           timestamp: new Date().toISOString(),
@@ -103,11 +102,9 @@ export class ProcessHandler extends BaseHandler<Request, Response> {
 
     // Extract query parameters for filtering
     const url = new URL(request.url);
-    const sessionId = url.searchParams.get('sessionId');
     const status = url.searchParams.get('status');
 
-    const filters: { sessionId?: string; status?: ProcessStatus } = {};
-    if (sessionId) filters.sessionId = sessionId;
+    const filters: { status?: ProcessStatus } = {};
     if (status) filters.status = status as ProcessStatus;
 
     const result = await this.processService.listProcesses(filters);
@@ -121,7 +118,6 @@ export class ProcessHandler extends BaseHandler<Request, Response> {
         startTime: process.startTime.toISOString(),
         endTime: process.endTime?.toISOString(),
         exitCode: process.exitCode,
-        sessionId: process.sessionId,
       }));
 
       return new Response(
@@ -172,7 +168,6 @@ export class ProcessHandler extends BaseHandler<Request, Response> {
             startTime: process.startTime.toISOString(),
             endTime: process.endTime?.toISOString(),
             exitCode: process.exitCode,
-            sessionId: process.sessionId,
             stdout: process.stdout,
             stderr: process.stderr,
           },

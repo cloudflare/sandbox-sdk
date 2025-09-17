@@ -25,7 +25,6 @@ const mockContext: RequestContext = {
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
   },
-  sessionId: 'session-456',
 };
 
 // Helper to create validated context
@@ -399,7 +398,6 @@ describe('MiscHandler', () => {
           'Access-Control-Allow-Methods': 'GET, POST',
           'Access-Control-Allow-Headers': 'Authorization',
         },
-        sessionId: 'session-alternative',
       };
 
       const request = new Request('http://localhost:3000/api/ping', {

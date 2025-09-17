@@ -497,9 +497,9 @@ describe('PortClient', () => {
   });
 
   describe('session integration', () => {
-    it('should include session in port operations', async () => {
-      // Arrange: Set session and mock response
-      client.setSessionId('port-session');
+    // NOTE: Session integration test removed - sessions are now implicit per sandbox
+    it('should include session in port operations (removed)', async () => {
+      // Session management is now implicit per sandbox
       const mockResponse: ExposePortResponse = {
         success: true,
         port: 4000,
@@ -521,7 +521,7 @@ describe('PortClient', () => {
       // Verify session included in request (behavior check)
       const [url, options] = mockFetch.mock.calls[0];
       const requestBody = JSON.parse(options.body);
-      expect(requestBody.sessionId).toBe('port-session');
+      expect(requestBody.sessionId).toBeUndefined(); // sessionId removed from API
       expect(requestBody.port).toBe(4000);
     });
 
@@ -638,7 +638,7 @@ describe('PortClient', () => {
   describe('constructor options', () => {
     it('should initialize with minimal options', () => {
       const minimalClient = new PortClient();
-      expect(minimalClient.getSessionId()).toBeNull();
+      expect(minimalClient).toBeInstanceOf(PortClient);
     });
 
     it('should initialize with full options', () => {
@@ -646,7 +646,7 @@ describe('PortClient', () => {
         baseUrl: 'http://custom.com',
         port: 8080,
       });
-      expect(fullOptionsClient.getSessionId()).toBeNull();
+      expect(fullOptionsClient).toBeInstanceOf(PortClient);
     });
   });
 });

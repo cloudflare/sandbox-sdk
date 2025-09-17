@@ -30,30 +30,35 @@ export class ExecuteHandler extends BaseHandler<Request, Response> {
     // Get validated data from context (set by validation middleware)
     const body = this.getValidatedData<ExecuteRequest>(context);
     
+    // Extract sessionId from request body (dual-mode: explicit or default)
+    const { id: sessionId, command } = body;
+    
     this.logger.info('Executing command', { 
       requestId: context.requestId,
-      command: body.command,
-      sessionId: body.sessionId,
+      sessionId,
+      command,
       background: body.background
     });
 
     // If this is a background process, start it as a process
     if (body.background) {
-      const processResult = await this.processService.startProcess(body.command, {
-        sessionId: body.sessionId,
+      const processResult = await this.processService.startProcess(command, sessionId, {
+        isolation: body.isolation,
+        env: body.env,
+        cwd: body.cwd,
       });
 
       if (processResult.success) {
         this.logger.info('Background process started successfully', {
           requestId: context.requestId,
-          processId: processResult.data!.id,
+          processId: processResult.data.id,
           command: body.command,
         });
         
         return new Response(
           JSON.stringify({
             success: true,
-            processId: processResult.data!.id,
+            processId: processResult.data.id,
             message: 'Background process started successfully',
             timestamp: new Date().toISOString(),
           }),
@@ -69,21 +74,22 @@ export class ExecuteHandler extends BaseHandler<Request, Response> {
         this.logger.error('Background process start failed', undefined, {
           requestId: context.requestId,
           command: body.command,
-          sessionId: body.sessionId,
-          errorCode: processResult.error!.code,
-          errorMessage: processResult.error!.message,
+          errorCode: processResult.error.code,
+          errorMessage: processResult.error.message,
         });
-        return this.createErrorResponse(processResult.error!, 400, context);
+        return this.createErrorResponse(processResult.error, 400, context);
       }
     }
 
     // For non-background commands, execute and return result
-    const result = await this.processService.executeCommand(body.command, {
-      sessionId: body.sessionId,
+    const result = await this.processService.executeCommand(command, sessionId, {
+      isolation: body.isolation,
+      env: body.env,
+      cwd: body.cwd,
     });
 
     if (result.success) {
-      const commandResult = result.data!;
+      const commandResult = result.data;
       
       this.logger.info('Command executed successfully', {
         requestId: context.requestId,
@@ -113,11 +119,10 @@ export class ExecuteHandler extends BaseHandler<Request, Response> {
       this.logger.error('Command execution failed', undefined, {
         requestId: context.requestId,
         command: body.command,
-        sessionId: body.sessionId,
-        errorCode: result.error!.code,
-        errorMessage: result.error!.message,
+        errorCode: result.error.code,
+        errorMessage: result.error.message,
       });
-      return this.createErrorResponse(result.error!, 400, context);
+      return this.createErrorResponse(result.error, 400, context);
     }
   }
 
@@ -127,27 +132,24 @@ export class ExecuteHandler extends BaseHandler<Request, Response> {
     
     this.logger.info('Starting streaming command execution', { 
       requestId: context.requestId,
-      command: body.command,
-      sessionId: body.sessionId
+      command: body.command
     });
 
     // Start the process for streaming
-    const processResult = await this.processService.startProcess(body.command, {
-      sessionId: body.sessionId,
-    });
+    const { id: sessionId } = body;
+    const processResult = await this.processService.startProcess(body.command, sessionId, {});
 
     if (!processResult.success) {
       this.logger.error('Streaming process start failed', undefined, {
         requestId: context.requestId,
         command: body.command,
-        sessionId: body.sessionId,
         errorCode: processResult.error!.code,
         errorMessage: processResult.error!.message,
       });
       return this.createErrorResponse(processResult.error!, 400, context);
     }
 
-    const process = processResult.data!;
+    const process = processResult.data;
 
     this.logger.info('Streaming process started successfully', {
       requestId: context.requestId,

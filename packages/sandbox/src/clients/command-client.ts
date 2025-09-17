@@ -1,10 +1,11 @@
 import { BaseHttpClient } from './base-client';
-import type { BaseApiResponse, HttpClientOptions, SessionRequest } from './types';
+import type { BaseApiResponse, HttpClientOptions } from './types';
 
 /**
  * Request interface for command execution
  */
-export interface ExecuteRequest extends SessionRequest {
+export interface ExecuteRequest {
+  id: string;  // Session ID - follows main branch pattern
   command: string;
 }
 
@@ -31,10 +32,10 @@ export class CommandClient extends BaseHttpClient {
    */
   async execute(
     command: string,
-    sessionId?: string
+    sessionId: string
   ): Promise<ExecuteResponse> {
     try {
-      const data = this.withSession({ command }, sessionId);
+      const data: ExecuteRequest = { id: sessionId, command };
 
       const response = await this.post<ExecuteResponse>(
         '/api/execute',
@@ -74,10 +75,10 @@ export class CommandClient extends BaseHttpClient {
    */
   async executeStream(
     command: string,
-    sessionId?: string
+    sessionId: string
   ): Promise<ReadableStream<Uint8Array>> {
     try {
-      const data = this.withSession({ command }, sessionId);
+      const data: ExecuteRequest = { id: sessionId, command };
 
       const response = await this.doFetch('/api/execute/stream', {
         method: 'POST',

@@ -197,6 +197,7 @@ describe('GitService', () => {
       }
 
       // Verify git clone command includes branch option
+      expect(mockBunSpawn).toHaveBeenCalledWith(
         ['git', 'clone', '--branch', 'develop', 'https://github.com/user/repo.git', '/tmp/custom-target'],
         expect.objectContaining({
           stdout: 'pipe',
@@ -342,6 +343,7 @@ describe('GitService', () => {
       expect(result.success).toBe(true);
       
       // Verify git checkout command was executed with correct cwd
+      expect(mockBunSpawn).toHaveBeenCalledWith(
         ['git', 'checkout', 'develop'],
         expect.objectContaining({
           cwd: '/tmp/repo',
@@ -440,6 +442,7 @@ describe('GitService', () => {
         expect(result.data).toBe('main');
       }
 
+      expect(mockBunSpawn).toHaveBeenCalledWith(
         ['git', 'branch', '--show-current'],
         expect.objectContaining({
           cwd: '/tmp/repo',
@@ -522,6 +525,7 @@ describe('GitService', () => {
         expect(result.data.filter(b => b === 'main')).toHaveLength(1);
       }
 
+      expect(mockBunSpawn).toHaveBeenCalledWith(
         ['git', 'branch', '-a'],
         expect.objectContaining({
           cwd: '/tmp/repo',

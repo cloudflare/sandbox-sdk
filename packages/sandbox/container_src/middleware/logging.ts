@@ -17,7 +17,6 @@ export class LoggingMiddleware implements Middleware {
       requestId: context.requestId,
       method,
       pathname,
-      sessionId: context.sessionId,
       timestamp: context.timestamp.toISOString(),
     });
 

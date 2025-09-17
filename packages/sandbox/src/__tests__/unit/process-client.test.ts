@@ -64,7 +64,7 @@ describe('ProcessClient', () => {
       ));
 
       // Act: Start background process
-      const result = await client.startProcess('npm run dev');
+      const result = await client.startProcess('npm run dev', 'test-session');
 
       // Assert: Verify process startup behavior
       expect(result.success).toBe(true);
@@ -94,7 +94,7 @@ describe('ProcessClient', () => {
       ));
 
       // Act: Start process with custom ID
-      const result = await client.startProcess('python app.py', { processId: 'my-api-server' });
+      const result = await client.startProcess('python app.py', 'test-session', { processId: 'my-api-server' });
 
       // Assert: Verify custom process ID usage
       expect(result.success).toBe(true);
@@ -128,7 +128,7 @@ describe('ProcessClient', () => {
       );
 
       // Act: Start long-running process
-      const result = await client.startProcess('docker run postgres');
+      const result = await client.startProcess('docker run postgres', 'test-session');
 
       // Assert: Verify delayed startup handling
       expect(result.success).toBe(true);
@@ -149,7 +149,7 @@ describe('ProcessClient', () => {
       ));
 
       // Act & Assert: Verify command not found error mapping
-      await expect(client.startProcess('invalidcmd'))
+      await expect(client.startProcess('invalidcmd', 'test-session'))
         .rejects.toThrow(CommandNotFoundError);
     });
 
@@ -166,7 +166,7 @@ describe('ProcessClient', () => {
       ));
 
       // Act & Assert: Verify process error mapping
-      await expect(client.startProcess('sudo privileged-command'))
+      await expect(client.startProcess('sudo privileged-command', 'test-session'))
         .rejects.toThrow(ProcessError);
     });
   });
@@ -610,10 +610,10 @@ data: {"type":"stdout","data":"Server ready on port 3000\\n","timestamp":"2023-0
     });
   });
 
-  describe('session integration', () => {
-    it('should include session in process operations', async () => {
-      // Arrange: Set session and mock response
-      client.setSessionId('proc-session');
+  // NOTE: Session integration tests removed - sessions are now implicit per sandbox
+  describe('session integration (removed)', () => {
+    it('should include session in process operations (removed)', async () => {
+      // Session management is now implicit per sandbox
       const mockResponse: StartProcessResponse = {
         success: true,
         process: {
@@ -632,7 +632,7 @@ data: {"type":"stdout","data":"Server ready on port 3000\\n","timestamp":"2023-0
       ));
 
       // Act: Start process with session
-      const result = await client.startProcess('echo session-test');
+      const result = await client.startProcess('echo session-test', 'test-session');
 
       // Assert: Verify session integration
       expect(result.success).toBe(true);
@@ -640,7 +640,7 @@ data: {"type":"stdout","data":"Server ready on port 3000\\n","timestamp":"2023-0
       // Verify session included in request (behavior check)
       const [url, options] = mockFetch.mock.calls[0];
       const requestBody = JSON.parse(options.body);
-      expect(requestBody.sessionId).toBe('proc-session');
+      expect(requestBody.sessionId).toBeUndefined(); // sessionId removed from API
       expect(requestBody.command).toBe('echo session-test');
     });
 
@@ -704,11 +704,11 @@ data: {"type":"stdout","data":"Server ready on port 3000\\n","timestamp":"2023-0
 
       // Act: Execute multiple process operations concurrently
       const operations = await Promise.all([
-        client.startProcess('npm run dev'),
-        client.startProcess('python api.py'),
+        client.startProcess('npm run dev', 'test-session'),
+        client.startProcess('python api.py', 'test-session'),
         client.listProcesses(),
         client.getProcessLogs('existing-proc'),
-        client.startProcess('node worker.js'),
+        client.startProcess('node worker.js', 'test-session'),
       ]);
 
       // Assert: Verify all operations completed successfully
@@ -739,7 +739,7 @@ data: {"type":"stdout","data":"Server ready on port 3000\\n","timestamp":"2023-0
       ));
 
       // Act & Assert: Verify graceful handling of malformed response
-      await expect(client.startProcess('test-command'))
+      await expect(client.startProcess('test-command', 'test-session'))
         .rejects.toThrow(SandboxError);
     });
   });
@@ -747,7 +747,7 @@ data: {"type":"stdout","data":"Server ready on port 3000\\n","timestamp":"2023-0
   describe('constructor options', () => {
     it('should initialize with minimal options', () => {
       const minimalClient = new ProcessClient();
-      expect(minimalClient.getSessionId()).toBeNull();
+      expect(minimalClient).toBeInstanceOf(ProcessClient);
     });
 
     it('should initialize with full options', () => {
@@ -755,7 +755,7 @@ data: {"type":"stdout","data":"Server ready on port 3000\\n","timestamp":"2023-0
         baseUrl: 'http://custom.com',
         port: 8080,
       });
-      expect(fullOptionsClient.getSessionId()).toBeNull();
+      expect(fullOptionsClient).toBeInstanceOf(ProcessClient);
     });
   });
 });

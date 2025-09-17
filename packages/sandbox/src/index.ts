@@ -30,6 +30,9 @@ export type {
   // Port client types
   ExposePortRequest,
   ExposePortResponse,
+
+  // File client types
+  FileInfo,
   FileOperationRequest,
   FileOperationResponse,
   GetExposedPortsResponse,
@@ -43,9 +46,9 @@ export type {
   HttpClientOptions as SandboxClientOptions,
   KillAllProcessesResponse,
   KillProcessResponse,
+  ListFilesRequest,
+  ListFilesResponse,
   ListProcessesResponse,
-
-  // File client types
   MkdirRequest,
   MkdirResponse,
 
@@ -56,7 +59,6 @@ export type {
   ReadFileResponse,
   RequestConfig,
   ResponseHandler,
-  SessionRequest,
 
   // Process client types
   StartProcessRequest,

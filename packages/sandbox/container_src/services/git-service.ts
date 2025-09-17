@@ -1,5 +1,7 @@
-// Git Operations Service
+// Session-Aware Git Operations Service
 import type { CloneOptions, Logger, ServiceResult } from '../core/types';
+import type { SessionManager } from '../isolation';
+import { SessionAwareService } from './base/session-aware-service';
 
 export interface SecurityService {
   validateGitUrl(url: string): { isValid: boolean; errors: string[] };
@@ -7,13 +9,16 @@ export interface SecurityService {
   sanitizePath(path: string): string;
 }
 
-export class GitService {
+export class GitService extends SessionAwareService {
   constructor(
     private security: SecurityService,
-    private logger: Logger
-  ) {}
+    sessionManager: SessionManager,
+    logger: Logger
+  ) {
+    super(sessionManager, logger);
+  }
 
-  async cloneRepository(repoUrl: string, options: CloneOptions = {}): Promise<ServiceResult<{ path: string; branch: string }>> {
+  async cloneRepository(repoUrl: string, sessionId?: string, options: CloneOptions = {}): Promise<ServiceResult<{ path: string; branch: string }>> {
     try {
       // Validate repository URL
       const urlValidation = this.security.validateGitUrl(repoUrl);
@@ -50,47 +55,50 @@ export class GitService {
         branch: options.branch 
       });
 
-      // Build git clone command
-      const args = ['git', 'clone'];
+      // Build git clone command - ALL git clone logic consolidated here
+      let command = 'git clone';
       
       if (options.branch) {
-        args.push('--branch', options.branch);
+        command += ` --branch "${options.branch}"`;
       }
       
-      args.push(repoUrl, targetDirectory);
+      command += ` "${repoUrl}" "${targetDirectory}"`;
 
-      // Execute git clone using Bun.spawn for better performance
-      const proc = Bun.spawn(args, {
-        stdout: 'pipe',
-        stderr: 'pipe',
-      });
+      // Execute git clone using session-aware command execution
+      const result = await this.executeInSession(command, sessionId);
 
-      const [stdout, stderr] = await Promise.all([
-        new Response(proc.stdout).text(),
-        new Response(proc.stderr).text(),
-      ]);
+      if (!result.success) {
+        // Session execution failed
+        return {
+          success: false,
+          error: {
+            message: `Git clone session error: ${result.error.message}`,
+            code: 'GIT_CLONE_SESSION_ERROR',
+            details: { ...result.error.details, repoUrl, targetDirectory }
+          }
+        };
+      }
 
-      await proc.exited;
-
-      if (proc.exitCode !== 0) {
-        this.logger.error('Git clone failed', undefined, { 
+      if (!result.data.success) {
+        this.logger.error('Git clone failed in session-aware service', undefined, { 
           repoUrl, 
           targetDirectory, 
-          exitCode: proc.exitCode,
-          stderr 
+          exitCode: result.data?.exitCode,
+          stderr: result.data?.stderr
         });
 
         return {
           success: false,
           error: {
-            message: 'Git clone operation failed',
+            message: `Git clone operation failed: ${result.data.stderr || 'Command failed'}`,
             code: 'GIT_CLONE_FAILED',
             details: { 
               repoUrl, 
               targetDirectory, 
-              exitCode: proc.exitCode, 
-              stderr,
-              stdout 
+              exitCode: result.data.exitCode, 
+              stderr: result.data.stderr,
+              stdout: result.data.stdout,
+              command: `git clone ${repoUrl} ${targetDirectory}`
             },
           },
         };
@@ -126,7 +134,7 @@ export class GitService {
     }
   }
 
-  async checkoutBranch(repoPath: string, branch: string): Promise<ServiceResult<void>> {
+  async checkoutBranch(repoPath: string, branch: string, sessionId?: string): Promise<ServiceResult<void>> {
     try {
       // Validate repository path
       const pathValidation = this.security.validatePath(repoPath);
@@ -155,39 +163,42 @@ export class GitService {
 
       this.logger.info('Checking out branch', { repoPath, branch });
 
-      // Execute git checkout
-      const proc = Bun.spawn(['git', 'checkout', branch], {
-        cwd: repoPath,
-        stdout: 'pipe',
-        stderr: 'pipe',
-      });
+      // Execute git checkout using session-aware command - ALL checkout logic here
+      const checkoutCommand = `cd "${repoPath}" && git checkout "${branch}"`;
+      const result = await this.executeInSession(checkoutCommand, sessionId);
 
-      const [stdout, stderr] = await Promise.all([
-        new Response(proc.stdout).text(),
-        new Response(proc.stderr).text(),
-      ]);
+      if (!result.success) {
+        // Session execution failed
+        return {
+          success: false,
+          error: {
+            message: `Git checkout session error: ${result.error.message}`,
+            code: 'GIT_CHECKOUT_SESSION_ERROR',
+            details: { ...result.error.details, repoPath, branch }
+          }
+        };
+      }
 
-      await proc.exited;
-
-      if (proc.exitCode !== 0) {
-        this.logger.error('Git checkout failed', undefined, { 
+      if (!result.data.success) {
+        this.logger.error('Git checkout failed in session-aware service', undefined, { 
           repoPath, 
           branch, 
-          exitCode: proc.exitCode,
-          stderr 
+          exitCode: result.data?.exitCode,
+          stderr: result.data?.stderr
         });
 
         return {
           success: false,
           error: {
-            message: 'Git checkout operation failed',
+            message: `Git checkout operation failed: ${result.data.stderr || 'Command failed'}`,
             code: 'GIT_CHECKOUT_FAILED',
             details: { 
               repoPath, 
               branch, 
-              exitCode: proc.exitCode, 
-              stderr,
-              stdout 
+              exitCode: result.data.exitCode, 
+              stderr: result.data.stderr,
+              stdout: result.data.stdout,
+              command: `git checkout ${branch}`
             },
           },
         };
@@ -213,7 +224,7 @@ export class GitService {
     }
   }
 
-  async getCurrentBranch(repoPath: string): Promise<ServiceResult<string>> {
+  async getCurrentBranch(repoPath: string, sessionId?: string): Promise<ServiceResult<string>> {
     try {
       // Validate repository path
       const pathValidation = this.security.validatePath(repoPath);
@@ -228,28 +239,38 @@ export class GitService {
         };
       }
 
-      // Get current branch
-      const proc = Bun.spawn(['git', 'branch', '--show-current'], {
-        cwd: repoPath,
-        stdout: 'pipe',
-        stderr: 'pipe',
-      });
+      // Get current branch using session-aware command - ALL branch detection logic here
+      const branchCommand = `cd "${repoPath}" && git branch --show-current`;
+      const result = await this.executeInSession(branchCommand, sessionId);
 
-      const stdout = await new Response(proc.stdout).text();
-      await proc.exited;
-
-      if (proc.exitCode !== 0) {
+      if (!result.success) {
+        // Session execution failed
         return {
           success: false,
           error: {
-            message: 'Failed to get current branch',
+            message: `Get current branch session error: ${result.error.message}`,
+            code: 'GIT_BRANCH_SESSION_ERROR',
+            details: { ...result.error.details, repoPath }
+          }
+        };
+      }
+
+      if (!result.data.success) {
+        return {
+          success: false,
+          error: {
+            message: `Failed to get current branch`,
             code: 'GIT_BRANCH_ERROR',
-            details: { repoPath, exitCode: proc.exitCode },
+            details: { 
+              repoPath, 
+              exitCode: result.data.exitCode,
+              stderr: result.data.stderr
+            },
           },
         };
       }
 
-      const currentBranch = stdout.trim();
+      const currentBranch = result.data.stdout.trim();
 
       return {
         success: true,
@@ -270,7 +291,7 @@ export class GitService {
     }
   }
 
-  async listBranches(repoPath: string): Promise<ServiceResult<string[]>> {
+  async listBranches(repoPath: string, sessionId?: string): Promise<ServiceResult<string[]>> {
     try {
       // Validate repository path
       const pathValidation = this.security.validatePath(repoPath);
@@ -285,29 +306,39 @@ export class GitService {
         };
       }
 
-      // List all branches
-      const proc = Bun.spawn(['git', 'branch', '-a'], {
-        cwd: repoPath,
-        stdout: 'pipe',
-        stderr: 'pipe',
-      });
+      // List all branches using session-aware command - ALL branch listing logic here
+      const listCommand = `cd "${repoPath}" && git branch -a`;
+      const result = await this.executeInSession(listCommand, sessionId);
 
-      const stdout = await new Response(proc.stdout).text();
-      await proc.exited;
-
-      if (proc.exitCode !== 0) {
+      if (!result.success) {
+        // Session execution failed
         return {
           success: false,
           error: {
-            message: 'Failed to list branches',
+            message: `List branches session error: ${result.error.message}`,
+            code: 'GIT_BRANCH_LIST_SESSION_ERROR',
+            details: { ...result.error.details, repoPath }
+          }
+        };
+      }
+
+      if (!result.data.success) {
+        return {
+          success: false,
+          error: {
+            message: `Failed to list branches`,
             code: 'GIT_BRANCH_LIST_ERROR',
-            details: { repoPath, exitCode: proc.exitCode },
+            details: { 
+              repoPath, 
+              exitCode: result.data.exitCode,
+              stderr: result.data.stderr
+            },
           },
         };
       }
 
-      // Parse branch output
-      const branches = stdout
+      // Parse branch output with enhanced error handling - ALL parsing logic here
+      const branches = result.data.stdout
         .split('\n')
         .map(line => line.trim())
         .filter(line => line.length > 0)

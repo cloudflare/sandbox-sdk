@@ -37,8 +37,7 @@ describe('Client Method Signatures Integration', () => {
       // Test CommandClient methods
       expect(typeof client.commands.execute).toBe('function');
       expect(typeof client.commands.executeStream).toBe('function');
-      expect(typeof client.commands.getSessionId).toBe('function');
-      expect(typeof client.commands.setSessionId).toBe('function');
+      // NOTE: Session management methods removed - sessions are now implicit
       
       // Test FileClient methods  
       expect(typeof client.files.writeFile).toBe('function');
@@ -47,33 +46,28 @@ describe('Client Method Signatures Integration', () => {
       expect(typeof client.files.mkdir).toBe('function');
       expect(typeof client.files.renameFile).toBe('function');
       expect(typeof client.files.moveFile).toBe('function');
-      expect(typeof client.files.getSessionId).toBe('function');
-      expect(typeof client.files.setSessionId).toBe('function');
+      // NOTE: Session management methods removed - sessions are now implicit
       
       // Test ProcessClient methods
       expect(typeof client.processes.startProcess).toBe('function');
       expect(typeof client.processes.listProcesses).toBe('function');
       expect(typeof client.processes.killProcess).toBe('function');
-      expect(typeof client.processes.getSessionId).toBe('function');
-      expect(typeof client.processes.setSessionId).toBe('function');
+      // NOTE: Session management methods removed - sessions are now implicit
       
       // Test PortClient methods
       expect(typeof client.ports.exposePort).toBe('function');
       expect(typeof client.ports.unexposePort).toBe('function');
       expect(typeof client.ports.getExposedPorts).toBe('function');
-      expect(typeof client.ports.getSessionId).toBe('function');
-      expect(typeof client.ports.setSessionId).toBe('function');
+      // NOTE: Session management methods removed - sessions are now implicit
       
       // Test GitClient methods
       expect(typeof client.git.checkout).toBe('function');
-      expect(typeof client.git.getSessionId).toBe('function');
-      expect(typeof client.git.setSessionId).toBe('function');
+      // NOTE: Session management methods removed - sessions are now implicit
       
       // Test UtilityClient methods
       expect(typeof client.utils.ping).toBe('function');
       expect(typeof client.utils.getCommands).toBe('function');
-      expect(typeof client.utils.getSessionId).toBe('function');
-      expect(typeof client.utils.setSessionId).toBe('function');
+      // NOTE: Session management methods removed - sessions are now implicit
     });
 
     it('should provide access to all expected domain clients', () => {
@@ -85,22 +79,8 @@ describe('Client Method Signatures Integration', () => {
       expect(client.utils).toBeInstanceOf(UtilityClient);
     });
 
-    it('should have session management methods on all clients', () => {
-      const clients = [
-        client.commands,
-        client.files,
-        client.processes,
-        client.ports,
-        client.git,
-        client.utils
-      ];
-
-      clients.forEach(domainClient => {
-        expect(typeof domainClient.getSessionId).toBe('function');
-        expect(typeof domainClient.setSessionId).toBe('function');
-        expect(domainClient.getSessionId()).toBeNull();
-      });
-    });
+    // NOTE: Session management test removed - sessions are now implicit per sandbox
+    // it('should have session management methods on all clients', () => { ... });
   });
 
   describe('method call parameter validation', () => {
@@ -121,7 +101,7 @@ describe('Client Method Signatures Integration', () => {
 
     it('should handle CommandClient method calls with proper parameter validation', async () => {
       // Test execute method
-      await client.commands.execute('echo test');
+      await client.commands.execute('echo test', 'test-session');
       expect(fetchMock).toHaveBeenCalledWith(
         'http://test.com/api/execute',
         expect.objectContaining({
@@ -136,13 +116,13 @@ describe('Client Method Signatures Integration', () => {
       fetchMock.mockClear();
 
       // Test executeStream method - returns Promise<ReadableStream>
-      const streamPromise = client.commands.executeStream('echo stream');
+      const streamPromise = client.commands.executeStream('echo stream', 'test-session');
       expect(streamPromise).toBeInstanceOf(Promise);
     });
 
     it('should handle FileClient method calls with proper parameter validation', async () => {
       // Test writeFile method
-      await client.files.writeFile('/test.txt', 'content');
+      await client.files.writeFile('/test.txt', 'content', 'test-session');
       expect(fetchMock).toHaveBeenCalledWith(
         'http://test.com/api/write',
         expect.objectContaining({
@@ -157,7 +137,7 @@ describe('Client Method Signatures Integration', () => {
       fetchMock.mockClear();
 
       // Test readFile method
-      await client.files.readFile('/test.txt');
+      await client.files.readFile('/test.txt', 'test-session');
       expect(fetchMock).toHaveBeenCalledWith(
         'http://test.com/api/read',
         expect.objectContaining({
@@ -169,7 +149,7 @@ describe('Client Method Signatures Integration', () => {
       fetchMock.mockClear();
 
       // Test deleteFile method
-      await client.files.deleteFile('/test.txt');
+      await client.files.deleteFile('/test.txt', 'test-session');
       expect(fetchMock).toHaveBeenCalledWith(
         'http://test.com/api/delete',
         expect.objectContaining({
@@ -181,7 +161,7 @@ describe('Client Method Signatures Integration', () => {
       fetchMock.mockClear();
 
       // Test mkdir method
-      await client.files.mkdir('/test-dir');
+      await client.files.mkdir('/test-dir', 'test-session');
       expect(fetchMock).toHaveBeenCalledWith(
         'http://test.com/api/mkdir',
         expect.objectContaining({
@@ -204,7 +184,7 @@ describe('Client Method Signatures Integration', () => {
       );
 
       // Test startProcess method
-      await client.processes.startProcess('node app.js', { sessionId: 'test-session' });
+      await client.processes.startProcess('node app.js', 'test-session');
       expect(fetchMock).toHaveBeenCalledWith(
         'http://test.com/api/process/start',
         expect.objectContaining({
@@ -272,7 +252,7 @@ describe('Client Method Signatures Integration', () => {
 
     it('should handle GitClient method calls with proper parameter validation', async () => {
       // Test checkout method
-      await client.git.checkout('https://github.com/user/repo.git', { branch: 'main' });
+      await client.git.checkout('https://github.com/user/repo.git', 'test-session', { branch: 'main' });
       expect(fetchMock).toHaveBeenCalledWith(
         'http://test.com/api/git/checkout',
         expect.objectContaining({
@@ -319,7 +299,7 @@ describe('Client Method Signatures Integration', () => {
         }))
       );
 
-      const result = await client.commands.execute('echo test');
+      const result = await client.commands.execute('echo test', 'test-session');
       expect(result).toHaveProperty('success');
       expect(result).toHaveProperty('stdout');
       expect(result).toHaveProperty('stderr');
@@ -343,7 +323,7 @@ describe('Client Method Signatures Integration', () => {
         }))
       );
 
-      const writeResult = await client.files.writeFile('/test.txt', 'content');
+      const writeResult = await client.files.writeFile('/test.txt', 'content', 'test-session');
       expect(writeResult).toHaveProperty('success');
       expect(writeResult).toHaveProperty('exitCode');
       expect(writeResult).toHaveProperty('path');
@@ -362,7 +342,7 @@ describe('Client Method Signatures Integration', () => {
         }))
       );
 
-      const readResult = await client.files.readFile('/test.txt');
+      const readResult = await client.files.readFile('/test.txt', 'test-session');
       expect(readResult).toHaveProperty('success');
       expect(readResult).toHaveProperty('content');
       expect(readResult).toHaveProperty('path');
@@ -382,7 +362,7 @@ describe('Client Method Signatures Integration', () => {
         }))
       );
 
-      const startResult = await client.processes.startProcess('node app.js');
+      const startResult = await client.processes.startProcess('node app.js', 'test-session');
       expect(startResult).toHaveProperty('success');
       expect(startResult).toHaveProperty('process');
       expect(startResult.process).toHaveProperty('id');
@@ -472,7 +452,7 @@ describe('Client Method Signatures Integration', () => {
         }))
       );
 
-      const checkoutResult = await client.git.checkout('https://github.com/user/repo.git');
+      const checkoutResult = await client.git.checkout('https://github.com/user/repo.git', 'test-session');
       expect(checkoutResult).toHaveProperty('success');
       expect(checkoutResult).toHaveProperty('repoUrl');
       expect(checkoutResult).toHaveProperty('branch');
@@ -531,11 +511,11 @@ describe('Client Method Signatures Integration', () => {
       );
 
       // Test that all client methods handle errors consistently
-      await expect(client.commands.execute('nonexistent-command')).rejects.toThrow();
-      await expect(client.files.readFile('/nonexistent/file.txt')).rejects.toThrow();
+      await expect(client.commands.execute('nonexistent-command', 'test-session')).rejects.toThrow();
+      await expect(client.files.readFile('/nonexistent/file.txt', 'test-session')).rejects.toThrow();
       await expect(client.processes.killProcess('nonexistent-process')).rejects.toThrow();
       await expect(client.ports.unexposePort(99999)).rejects.toThrow();
-      await expect(client.git.checkout('nonexistent-branch')).rejects.toThrow();
+      await expect(client.git.checkout('nonexistent-branch', 'test-session')).rejects.toThrow();
     });
 
     it('should propagate error details correctly across all clients', async () => {
@@ -554,11 +534,14 @@ describe('Client Method Signatures Integration', () => {
       );
 
       try {
-        await client.files.readFile('/test/file.txt');
+        await client.files.readFile('/test/file.txt', 'test-session');
         expect.fail('Expected error to be thrown');
-      } catch (error: any) {
+      } catch (error) {
         // Verify error contains expected details from container
-        expect(error.message).toContain('File not found');
+        expect(error).toBeInstanceOf(Error);
+        if (error instanceof Error) {
+          expect(error.message).toContain('File not found');
+        }
         // Additional error properties depend on error mapping implementation
       }
     });
@@ -577,11 +560,11 @@ describe('Client Method Signatures Integration', () => {
       );
 
       // Test that all methods return promises
-      const executePromise = client.commands.execute('echo test');
-      const writePromise = client.files.writeFile('/test.txt', 'content');
-      const startPromise = client.processes.startProcess('node app.js');
+      const executePromise = client.commands.execute('echo test', 'test-session');
+      const writePromise = client.files.writeFile('/test.txt', 'content', 'test-session');
+      const startPromise = client.processes.startProcess('node app.js', 'test-session');
       const exposePromise = client.ports.exposePort(3000);
-      const checkoutPromise = client.git.checkout('https://github.com/user/repo.git');
+      const checkoutPromise = client.git.checkout('https://github.com/user/repo.git', 'test-session');
       const pingPromise = client.utils.ping();
 
       expect(executePromise).toBeInstanceOf(Promise);
@@ -619,7 +602,7 @@ describe('Client Method Signatures Integration', () => {
       );
 
       // Test streaming methods return Promise<ReadableStream>
-      const executeStreamPromise = client.commands.executeStream('echo test');
+      const executeStreamPromise = client.commands.executeStream('echo test', 'test-session');
       expect(executeStreamPromise).toBeInstanceOf(Promise);
       
       const stream = await executeStreamPromise;

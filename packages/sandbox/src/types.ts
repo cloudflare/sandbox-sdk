@@ -5,11 +5,6 @@
 // Base execution options shared across command types
 export interface BaseExecOptions {
   /**
-   * Session ID for grouping related commands
-   */
-  sessionId?: string;
-
-  /**
    * Maximum execution time in milliseconds
    */
   timeout?: number;
@@ -94,10 +89,6 @@ export interface ExecResult {
    */
   timestamp: string;
 
-  /**
-   * Session ID if provided
-   */
-  sessionId?: string;
 }
 
 // Background process types
@@ -178,10 +169,6 @@ export interface Process {
    */
   readonly exitCode?: number;
 
-  /**
-   * Session ID if provided
-   */
-  readonly sessionId?: string;
 
   /**
    * Kill the process
@@ -208,7 +195,6 @@ export interface ExecEvent {
   exitCode?: number;
   result?: ExecResult;
   error?: string;
-  sessionId?: string;
 }
 
 export interface LogEvent {
@@ -216,7 +202,6 @@ export interface LogEvent {
   timestamp: string;
   data: string;
   processId: string;
-  sessionId?: string;
   exitCode?: number;
 }
 
@@ -252,6 +237,47 @@ export interface ISandbox {
   // Utility methods
   cleanupCompletedProcesses(): Promise<number>;
   getProcessLogs(id: string): Promise<{ stdout: string; stderr: string; processId: string }>;
+}
+
+// Session management options
+export interface SessionOptions {
+  /**
+   * Session name/identifier
+   */
+  name?: string;
+
+  /**
+   * Environment variables for the session
+   */
+  env?: Record<string, string>;
+
+  /**
+   * Working directory for the session
+   */
+  cwd?: string;
+
+  /**
+   * Enable process isolation for the session
+   */
+  isolation?: boolean;
+}
+
+// Execution session interface - bridges Sandbox and Container layers
+export interface ExecutionSession extends ISandbox {
+  /**
+   * Unique session identifier
+   */
+  readonly id: string;
+
+  /**
+   * Session name (if provided during creation)
+   */
+  readonly name?: string;
+
+  /**
+   * Destroy the session and cleanup resources
+   */
+  destroy(): Promise<void>;
 }
 
 // Type guards for runtime validation

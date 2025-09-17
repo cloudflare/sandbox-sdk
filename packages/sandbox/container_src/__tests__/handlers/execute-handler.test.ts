@@ -45,7 +45,6 @@ const mockContext: RequestContext = {
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
   },
-  sessionId: 'session-456',
 };
 
 describe('ExecuteHandler', () => {
@@ -90,11 +89,11 @@ describe('ExecuteHandler', () => {
       const request = new Request('http://localhost:3000/api/execute', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ command: 'echo "hello"', sessionId: 'session-456' })
+        body: JSON.stringify({ id: 'test-session', command: 'echo "hello"' })
       });
       const validatedContext = createValidatedContext({ 
-        command: 'echo "hello"', 
-        sessionId: 'session-456' 
+        id: 'test-session',
+        command: 'echo "hello"' 
       });
       
       const response = await executeHandler.handle(request, validatedContext);
@@ -109,8 +108,11 @@ describe('ExecuteHandler', () => {
       // Verify service was called correctly
       expect(mockProcessService.executeCommand).toHaveBeenCalledWith(
         'echo "hello"',
+        'test-session',
         expect.objectContaining({
-          sessionId: 'session-456'
+          cwd: undefined,
+          env: undefined,
+          isolation: undefined,
         })
       );
     });
@@ -132,9 +134,10 @@ describe('ExecuteHandler', () => {
       const request = new Request('http://localhost:3000/api/execute', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ command: 'nonexistent-command' })
+        body: JSON.stringify({ id: 'test-session', command: 'nonexistent-command' })
       });
       const validatedContext = createValidatedContext({ 
+        id: 'test-session',
         command: 'nonexistent-command' 
       });
       const response = await executeHandler.handle(request, validatedContext);
@@ -162,9 +165,10 @@ describe('ExecuteHandler', () => {
       const request = new Request('http://localhost:3000/api/execute', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ command: 'ls' })
+        body: JSON.stringify({ id: 'test-session', command: 'ls' })
       });
       const validatedContext = createValidatedContext({ 
+        id: 'test-session',
         command: 'ls' 
       });
       const response = await executeHandler.handle(request, validatedContext);
@@ -221,13 +225,13 @@ describe('ExecuteHandler', () => {
       const request = new Request('http://localhost:3000/api/execute', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ command: 'sleep 10', background: true })
+        body: JSON.stringify({ id: 'test-session', command: 'sleep 10', background: true })
       });
       const validatedContext = createValidatedContext({ 
+        id: 'test-session',
         command: 'sleep 10', 
         background: true,
-        sessionId: 'session-456'
-      });
+              });
       const response = await executeHandler.handle(request, validatedContext);
 
       // Verify response
@@ -240,8 +244,11 @@ describe('ExecuteHandler', () => {
       // Verify service was called correctly
       expect(mockProcessService.startProcess).toHaveBeenCalledWith(
         'sleep 10',
+        'test-session',
         expect.objectContaining({
-          sessionId: 'session-456'
+          cwd: undefined,
+          env: undefined,
+          isolation: undefined,
         })
       );
     });
@@ -282,9 +289,10 @@ describe('ExecuteHandler', () => {
       const request = new Request('http://localhost:3000/api/execute/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ command: 'echo "streaming test"' })
+        body: JSON.stringify({ id: 'test-session', command: 'echo "streaming test"' })
       });
       const validatedContext = createValidatedContext({ 
+        id: 'test-session',
         command: 'echo "streaming test"'
       });
       const response = await executeHandler.handle(request, validatedContext);
@@ -298,7 +306,8 @@ describe('ExecuteHandler', () => {
       // Verify service was called
       expect(mockProcessService.startProcess).toHaveBeenCalledWith(
         'echo "streaming test"',
-        expect.any(Object)
+        'test-session',
+        {}
       );
     });
   });

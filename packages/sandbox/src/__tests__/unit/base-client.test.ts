@@ -58,7 +58,7 @@ class TestHttpClient extends BaseHttpClient {
   // Public test methods that expose protected functionality
   public async testRequest<T = BaseApiResponse>(endpoint: string, data?: Record<string, unknown>): Promise<T> {
     if (data) {
-      return this.post<T>(endpoint, this.withSession(data));
+      return this.post<T>(endpoint, data);
     }
     return this.get<T>(endpoint);
   }
@@ -68,8 +68,8 @@ class TestHttpClient extends BaseHttpClient {
     return this.handleStreamResponse(response);
   }
 
-  public testSessionData(data: Record<string, any>, sessionId?: string) {
-    return this.withSession(data, sessionId);
+  public testSessionData(data: Record<string, any>) {
+    return data;
   }
 
   public async testErrorHandling(errorResponse: ErrorResponse & { code?: string }) {
@@ -327,90 +327,48 @@ describe('BaseHttpClient', () => {
     });
   });
 
-  describe('session management', () => {
-    it('should manage session state correctly', () => {
-      // Arrange: Fresh client with no session
-      expect(client.getSessionId()).toBeNull();
-
-      // Act: Set session
-      client.setSessionId('test-session-123');
-
-      // Assert: Verify session storage
-      expect(client.getSessionId()).toBe('test-session-123');
+  // NOTE: Session management tests removed - sessions are now implicit per sandbox
+  describe('session management (removed)', () => {
+    it('should manage session state correctly (removed)', () => {
+      // Session management is now implicit per sandbox
+      expect(client).toBeInstanceOf(TestHttpClient);
     });
 
-    it('should include session in request data when set', () => {
-      // Arrange: Set session and prepare data
-      client.setSessionId('active-session');
-      const baseData = { operation: 'file-read', path: '/app/config.json' };
+    // NOTE: Session inclusion test removed - sessions now implicit
+    // it('should include session in request data when set', () => { ... })
 
-      // Act: Add session to data
-      const dataWithSession = client.testSessionData(baseData);
+    // NOTE: Session override test removed - sessions now implicit
+    // it('should allow session override per request', () => { ... })
 
-      // Assert: Verify session inclusion
-      expect(dataWithSession).toEqual({
-        operation: 'file-read',
-        path: '/app/config.json',
-        sessionId: 'active-session'
-      });
-    });
-
-    it('should allow session override per request', () => {
-      // Arrange: Set instance session but prepare override
-      client.setSessionId('instance-session');
-      const baseData = { command: 'ls' };
-
-      // Act: Override with request-specific session
-      const dataWithOverride = client.testSessionData(baseData, 'request-session');
-
-      // Assert: Verify override takes precedence
-      expect(dataWithOverride).toEqual({
-        command: 'ls',
-        sessionId: 'request-session'
-      });
-    });
-
-    it('should work without session when none set', () => {
-      // Arrange: No session set
+    it('should process data correctly', () => {
+      // Arrange: Prepare test data
       const baseData = { operation: 'ping' };
 
-      // Act: Process data without session
-      const dataWithoutSession = client.testSessionData(baseData);
+      // Act: Process data (sessions now implicit)
+      const processedData = client.testSessionData(baseData);
 
-      // Assert: Verify no session addition
-      expect(dataWithoutSession).toEqual({ operation: 'ping' });
-      expect(dataWithoutSession.sessionId).toBeUndefined();
+      // Assert: Verify data processing
+      expect(processedData).toEqual({ operation: 'ping' });
     });
 
-    it('should handle session clearing', () => {
-      // Arrange: Set then clear session
-      client.setSessionId('temp-session');
-      expect(client.getSessionId()).toBe('temp-session');
+    // NOTE: Session clearing test removed - sessions now implicit
+    // it('should handle session clearing', () => { ... })
 
-      // Act: Clear session
-      client.setSessionId(null);
-
-      // Assert: Verify session cleared
-      expect(client.getSessionId()).toBeNull();
-    });
-
-    it('should integrate session with actual requests', async () => {
-      // Arrange: Set session and mock response
-      client.setSessionId('integrated-session');
+    it('should integrate data with actual requests', async () => {
+      // Arrange: Mock response (sessions now implicit)
       mockFetch.mockResolvedValue(new Response(
-        JSON.stringify({ success: true, sessionUsed: true }),
+        JSON.stringify({ success: true, requestProcessed: true }),
         { status: 200 }
       ));
 
-      // Act: Make request (should include session)
-      const result = await client.testRequest('/api/with-session', { action: 'test' });
+      // Act: Make request with data
+      const result = await client.testRequest('/api/with-data', { action: 'test' });
 
-      // Assert: Verify request included session
+      // Assert: Verify request processed correctly
       expect(result.success).toBe(true);
       
       const [url, options] = mockFetch.mock.calls[0];
       const requestBody = JSON.parse(options.body);
-      expect(requestBody.sessionId).toBe('integrated-session');
       expect(requestBody.action).toBe('test');
     });
   });
@@ -595,7 +553,7 @@ describe('BaseHttpClient', () => {
       const minimalClient = new TestHttpClient();
       
       // Assert: Verify basic initialization
-      expect(minimalClient.getSessionId()).toBeNull();
+      expect(minimalClient).toBeInstanceOf(TestHttpClient);
     });
 
     it('should initialize with error callback', () => {
@@ -608,7 +566,7 @@ describe('BaseHttpClient', () => {
       });
       
       // Assert: Verify initialization with callback
-      expect(clientWithCallback.getSessionId()).toBeNull();
+      expect(clientWithCallback).toBeInstanceOf(TestHttpClient);
       // Callback functionality tested in error handling section
     });
 
@@ -622,7 +580,7 @@ describe('BaseHttpClient', () => {
       });
       
       // Assert: Verify stub initialization
-      expect(stubClient.getSessionId()).toBeNull();
+      expect(stubClient).toBeInstanceOf(TestHttpClient);
       // Stub functionality tested in stub integration section
     });
   });

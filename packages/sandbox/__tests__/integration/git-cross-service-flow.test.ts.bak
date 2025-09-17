@@ -129,7 +129,14 @@ describe('Git Operations and Cross-Service Integration Flow', () => {
       const gitResponseData = await gitResponse.json() as GitCheckoutResponse;
       expect(gitResponseData.success).toBe(true);
 
-      // Integration test - actual Git functionality is tested
+      // Verify Git clone was called through Bun API (arguments + options)
+      expect(mockBunSpawn).toHaveBeenCalledWith(
+        expect.arrayContaining(['git', 'clone', '--branch', 'main']),
+        expect.objectContaining({
+          stdout: 'pipe',
+          stderr: 'pipe'
+        })
+      );
     });
 
     it('should handle Git clone with security validation and prevent malicious repositories', async () => {
@@ -226,10 +233,10 @@ describe('Git Operations and Cross-Service Integration Flow', () => {
       });
 
       const readResponse = await router.route(readRequest);
-      expect(readResponse.status).toBe(200); // File service returns 200 with error details
+      expect(readResponse.status).toBe(500); // File service should return error
       
       const responseData = await readResponse.json() as ApiErrorResponse;
-      expect(responseData.success).toBe(true); // File service handles non-existent files gracefully
+      expect(responseData.success).toBe(false);
     });
 
     it('should maintain session environment across Git and development operations', async () => {
@@ -289,10 +296,10 @@ describe('Git Operations and Cross-Service Integration Flow', () => {
       });
 
       const response = await router.route(commandRequest);
-      expect(response.status).toBe(200); // Session-based execution handles spawn failures gracefully
+      expect(response.status).toBe(400); // Should handle spawn failure gracefully
       
-      const responseData = await response.json() as ExecuteResponse;
-      expect(responseData.success).toBe(true); // Session-based execution succeeds
+      const responseData = await response.json() as ApiErrorResponse;
+      expect(responseData.success).toBe(false);
     });
   });
 });

@@ -53,7 +53,6 @@ export class Router {
 
     // Create request context
     const context: RequestContext = {
-      sessionId: this.extractSessionId(request),
       corsHeaders: this.getCorsHeaders(),
       requestId: this.generateRequestId(),
       timestamp: new Date(),
@@ -144,25 +143,6 @@ export class Router {
     return await next();
   }
 
-  /**
-   * Extract session ID from request headers or body
-   */
-  private extractSessionId(request: Request): string | undefined {
-    // Try to get from Authorization header
-    const authHeader = request.headers.get('Authorization');
-    if (authHeader?.startsWith('Bearer ')) {
-      return authHeader.substring(7);
-    }
-
-    // Try to get from X-Session-Id header
-    const sessionHeader = request.headers.get('X-Session-Id');
-    if (sessionHeader) {
-      return sessionHeader;
-    }
-
-    // Will be extracted from request body in individual handlers if needed
-    return undefined;
-  }
 
   /**
    * Get CORS headers

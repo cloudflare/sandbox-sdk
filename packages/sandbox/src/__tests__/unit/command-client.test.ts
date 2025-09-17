@@ -54,7 +54,7 @@ describe('CommandClient', () => {
       ));
 
       // Act: Execute command
-      const result = await client.execute('echo "Hello World"');
+      const result = await client.execute('echo "Hello World"', 'test-session');
 
       // Assert: Verify command execution behavior
       expect(result.success).toBe(true);
@@ -90,7 +90,7 @@ describe('CommandClient', () => {
       ));
 
       // Act: Execute non-existent command
-      const result = await client.execute('nonexistent-cmd');
+      const result = await client.execute('nonexistent-cmd', 'test-session');
 
       // Assert: Verify command failure is properly reported
       expect(result.success).toBe(false);
@@ -121,7 +121,7 @@ describe('CommandClient', () => {
       ));
 
       // Act & Assert: Verify proper error mapping
-      await expect(client.execute('invalidcmd'))
+      await expect(client.execute('invalidcmd', 'test-session'))
         .rejects.toThrow(CommandNotFoundError);
         
       // Verify error callback
@@ -136,7 +136,7 @@ describe('CommandClient', () => {
       mockFetch.mockRejectedValue(new Error('Network connection failed'));
 
       // Act & Assert: Verify network error handling
-      await expect(client.execute('ls'))
+      await expect(client.execute('ls', 'test-session'))
         .rejects.toThrow('Network connection failed');
         
       // Verify error callback called
@@ -164,7 +164,7 @@ describe('CommandClient', () => {
           { status: scenario.status }
         ));
 
-        await expect(client.execute('test-command'))
+        await expect(client.execute('test-command', 'test-session'))
           .rejects.toThrow(scenario.error);
       }
     });
@@ -187,7 +187,7 @@ describe('CommandClient', () => {
       ));
 
       // Act: Execute command that produces large output
-      const result = await client.execute('find / -type f');
+      const result = await client.execute('find / -type f', 'test-session');
 
       // Assert: Verify large output handling
       expect(result.success).toBe(true);
@@ -219,7 +219,7 @@ describe('CommandClient', () => {
       // Act: Execute multiple commands concurrently
       const commands = ['echo 1', 'echo 2', 'echo 3', 'pwd', 'ls'];
       const results = await Promise.all(
-        commands.map(cmd => client.execute(cmd))
+        commands.map(cmd => client.execute(cmd, 'test-session'))
       );
 
       // Assert: Verify all commands executed successfully
@@ -242,7 +242,7 @@ describe('CommandClient', () => {
       ));
 
       // Act & Assert: Verify graceful handling of malformed response
-      await expect(client.execute('ls'))
+      await expect(client.execute('ls', 'test-session'))
         .rejects.toThrow(SandboxError);
         
       // Verify error callback called
@@ -262,19 +262,24 @@ describe('CommandClient', () => {
       ));
 
       // Act & Assert: Verify empty command handling
-      await expect(client.execute(''))
+      await expect(client.execute('', 'test-session'))
         .rejects.toThrow(CommandError);
     });
 
-    it('should handle session context properly', async () => {
-      // Arrange: Set session and mock response
-      client.setSessionId('session-123');
+    // NOTE: Session management test removed - sessions are now implicit per sandbox
+    // it('should handle session context properly', async () => { ... })
+
+    // NOTE: Session override test removed - sessions are now implicit per sandbox
+    // it('should handle override session ID', async () => { ... })
+
+    it('should work without explicit session management', async () => {
+      // Arrange: Mock response (sessions now implicit)
       const mockResponse: ExecuteResponse = {
         success: true,
-        stdout: '/home/user\n',
+        stdout: 'test output\n',
         stderr: '',
         exitCode: 0,
-        command: 'pwd',
+        command: 'echo "test output"',
         timestamp: '2023-01-01T00:00:00Z',
       };
       
@@ -283,74 +288,12 @@ describe('CommandClient', () => {
         { status: 200 }
       ));
 
-      // Act: Execute command with session
-      const result = await client.execute('pwd');
+      // Act: Execute command (session handled implicitly)
+      const result = await client.execute('echo "test output"', 'test-session');
 
-      // Assert: Verify session context maintained
+      // Assert: Verify command execution works
       expect(result.success).toBe(true);
-      expect(result.stdout).toBe('/home/user\n');
-      
-      // Verify session included in request (behavior check, not structure)
-      const [url, options] = mockFetch.mock.calls[0];
-      const requestBody = JSON.parse(options.body);
-      expect(requestBody.sessionId).toBe('session-123');
-    });
-
-    it('should handle override session ID', async () => {
-      // Arrange: Set instance session but override with method parameter
-      client.setSessionId('instance-session');
-      const mockResponse: ExecuteResponse = {
-        success: true,
-        stdout: 'test\n',
-        stderr: '',
-        exitCode: 0,
-        command: 'echo test',
-        timestamp: '2023-01-01T00:00:00Z',
-      };
-      
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify(mockResponse),
-        { status: 200 }
-      ));
-
-      // Act: Execute with override session
-      const result = await client.execute('echo test', 'override-session');
-
-      // Assert: Verify override session used
-      expect(result.success).toBe(true);
-      
-      const [url, options] = mockFetch.mock.calls[0];
-      const requestBody = JSON.parse(options.body);
-      expect(requestBody.sessionId).toBe('override-session');
-    });
-
-    it('should work without session ID', async () => {
-      // Arrange: No session set, mock response
-      const mockResponse: ExecuteResponse = {
-        success: true,
-        stdout: 'no session\n',
-        stderr: '',
-        exitCode: 0,
-        command: 'echo "no session"',
-        timestamp: '2023-01-01T00:00:00Z',
-      };
-      
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify(mockResponse),
-        { status: 200 }
-      ));
-
-      // Act: Execute without session
-      const result = await client.execute('echo "no session"');
-
-      // Assert: Verify command works without session
-      expect(result.success).toBe(true);
-      expect(result.stdout).toBe('no session\n');
-      
-      // Verify no session in request
-      const [url, options] = mockFetch.mock.calls[0];
-      const requestBody = JSON.parse(options.body);
-      expect(requestBody.sessionId).toBeUndefined();
+      expect(result.stdout).toBe('test output\n');
     });
   });
 
@@ -381,7 +324,7 @@ describe('CommandClient', () => {
       }));
 
       // Act: Execute streaming command
-      const stream = await client.executeStream('tail -f app.log');
+      const stream = await client.executeStream('tail -f app.log', 'test-session');
 
       // Assert: Verify streaming response
       expect(stream).toBeInstanceOf(ReadableStream);
@@ -407,9 +350,8 @@ describe('CommandClient', () => {
       expect(content).toContain('"type":"complete"');
     });
 
-    it('should handle streaming command with session', async () => {
-      // Arrange: Set session and mock stream
-      client.setSessionId('stream-session');
+    it('should handle streaming commands', async () => {
+      // Arrange: Mock stream (session handled implicitly)
       const mockStream = new ReadableStream({
         start(controller) {
           controller.enqueue(new TextEncoder().encode(
@@ -424,15 +366,11 @@ describe('CommandClient', () => {
         headers: { 'Content-Type': 'text/event-stream' }
       }));
 
-      // Act: Execute streaming command with session
-      const stream = await client.executeStream('watch ls');
+      // Act: Execute streaming command
+      const stream = await client.executeStream('watch ls', 'test-session');
 
-      // Assert: Verify stream created and session included
+      // Assert: Verify stream created
       expect(stream).toBeInstanceOf(ReadableStream);
-      
-      const [url, options] = mockFetch.mock.calls[0];
-      const requestBody = JSON.parse(options.body);
-      expect(requestBody.sessionId).toBe('stream-session');
     });
 
     it('should handle streaming errors gracefully', async () => {
@@ -448,7 +386,7 @@ describe('CommandClient', () => {
       ));
 
       // Act & Assert: Verify streaming error handling
-      await expect(client.executeStream('invalid-stream-command'))
+      await expect(client.executeStream('invalid-stream-command', 'test-session'))
         .rejects.toThrow(CommandError);
         
       // Verify error callback called
@@ -466,7 +404,7 @@ describe('CommandClient', () => {
       }));
 
       // Act & Assert: Verify error for missing stream body
-      await expect(client.executeStream('test-command'))
+      await expect(client.executeStream('test-command', 'test-session'))
         .rejects.toThrow('No response body for streaming');
     });
 
@@ -475,7 +413,7 @@ describe('CommandClient', () => {
       mockFetch.mockRejectedValue(new Error('Connection lost during streaming'));
 
       // Act & Assert: Verify network error handling
-      await expect(client.executeStream('stream-command'))
+      await expect(client.executeStream('stream-command', 'test-session'))
         .rejects.toThrow('Connection lost during streaming');
         
       expect(onError).toHaveBeenCalledWith(
@@ -508,7 +446,7 @@ describe('CommandClient', () => {
       ));
 
       // Act: Execute command without callbacks
-      const result = await clientWithoutCallbacks.execute('echo test');
+      const result = await clientWithoutCallbacks.execute('echo test', 'test-session');
 
       // Assert: Verify operation succeeds without callbacks
       expect(result.success).toBe(true);
@@ -525,7 +463,7 @@ describe('CommandClient', () => {
       mockFetch.mockRejectedValue(new Error('Network failed'));
 
       // Act & Assert: Verify error handling without callbacks
-      await expect(clientWithoutCallbacks.execute('test'))
+      await expect(clientWithoutCallbacks.execute('test', 'test-session'))
         .rejects.toThrow('Network failed');
     });
 
@@ -545,7 +483,7 @@ describe('CommandClient', () => {
         { status: 200 }
       ));
 
-      await client.execute('echo success');
+      await client.execute('echo success', 'test-session');
       
       expect(onCommandComplete).toHaveBeenLastCalledWith(
         true, 0, 'success\n', '', 'echo success'
@@ -566,7 +504,7 @@ describe('CommandClient', () => {
         { status: 200 }
       ));
 
-      await client.execute('false');
+      await client.execute('false', 'test-session');
       
       expect(onCommandComplete).toHaveBeenLastCalledWith(
         false, 1, '', 'error\n', 'false'
@@ -580,7 +518,7 @@ describe('CommandClient', () => {
       const minimalClient = new CommandClient();
       
       // Assert: Verify client initializes successfully
-      expect(minimalClient.getSessionId()).toBeNull();
+      expect(minimalClient).toBeInstanceOf(CommandClient);
     });
 
     it('should initialize with full options', async () => {
@@ -593,7 +531,7 @@ describe('CommandClient', () => {
       });
       
       // Assert: Verify client initializes with custom options
-      expect(fullOptionsClient.getSessionId()).toBeNull();
+      expect(fullOptionsClient).toBeInstanceOf(CommandClient);
     });
   });
 });

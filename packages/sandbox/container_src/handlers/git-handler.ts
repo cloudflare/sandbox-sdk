@@ -34,14 +34,13 @@ export class GitHandler extends BaseHandler<Request, Response> {
       targetDir: body.targetDir
     });
 
-    const result = await this.gitService.cloneRepository(body.repoUrl, {
+    const result = await this.gitService.cloneRepository(body.repoUrl, body.id, {
       branch: body.branch,
       targetDir: body.targetDir,
-      sessionId: body.sessionId,
     });
 
     if (result.success) {
-      const gitResult = result.data!;
+      const gitResult = result.data;
       
       this.logger.info('Repository cloned successfully', {
         requestId: context.requestId,

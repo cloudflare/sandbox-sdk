@@ -7,6 +7,7 @@
 
 import type { Logger } from '@container/core/types';
 import type { ProcessService, ProcessStore } from '@container/services/process-service';
+import type { SessionManager } from '@container/isolation';
 
 // Mock the dependencies
 const mockProcessStore: ProcessStore = {
@@ -24,6 +25,12 @@ const mockLogger: Logger = {
   warn: vi.fn(),
   debug: vi.fn(),
 };
+
+const mockSessionManager = {
+  exec: vi.fn(),
+  getSession: vi.fn(),
+  getOrCreateDefaultSession: vi.fn(),
+} as SessionManager;
 
 describe('ProcessService', () => {
   let processService: ProcessService;
@@ -83,14 +90,42 @@ describe('ProcessService', () => {
       })
     } as any;
     
+    // Set up session manager mock with command-aware responses
+    const mockSession = {
+      exec: vi.fn().mockImplementation((command: string, options: any) => {
+        // Handle different command scenarios
+        if (command.includes('nonexistent-command')) {
+          return Promise.resolve({
+            exitCode: 127,
+            stdout: '',
+            stderr: 'command not found: nonexistent-command'
+          });
+        } else if (command.includes('nohup') && command.includes('echo $!')) {
+          // Background process command - return a PID
+          return Promise.resolve({
+            exitCode: 0,
+            stdout: '12345', // Mock PID
+            stderr: ''
+          });
+        } else {
+          return Promise.resolve({
+            exitCode: 0,
+            stdout: 'test output',
+            stderr: ''
+          });
+        }
+      })
+    };
+    vi.mocked(mockSessionManager.getSession).mockReturnValue(mockSession);
+    
     // Import the ProcessService (dynamic import to avoid module loading issues)
     const { ProcessService: ProcessServiceClass } = await import('@container/services/process-service');
-    processService = new ProcessServiceClass(mockProcessStore, mockLogger);
+    processService = new ProcessServiceClass(mockProcessStore, mockSessionManager, mockLogger);
   });
 
   describe('executeCommand', () => {
     it('should return ServiceResult with success true for valid command', async () => {
-      const result = await processService.executeCommand('echo "hello"', {
+      const result = await processService.executeCommand('echo "hello"', 'test-session', {
         cwd: '/tmp',
         env: {}
       });
@@ -105,7 +140,7 @@ describe('ProcessService', () => {
     });
 
     it('should return ServiceResult with success true but command failure for invalid command', async () => {
-      const result = await processService.executeCommand('nonexistent-command', {});
+      const result = await processService.executeCommand('nonexistent-command', 'test-session', {});
 
       // Service operation succeeded (command was executed)
       expect(result.success).toBe(true);
@@ -120,7 +155,7 @@ describe('ProcessService', () => {
     });
 
     it('should log command execution', async () => {
-      await processService.executeCommand('echo "test"', {});
+      await processService.executeCommand('echo "test"', 'test-session', {});
 
       expect(mockLogger.info).toHaveBeenCalledWith(
         'Executing command',
@@ -131,7 +166,7 @@ describe('ProcessService', () => {
 
   describe('startProcess', () => {
     it('should create background process and store it', async () => {
-      const result = await processService.startProcess('sleep 10', {
+      const result = await processService.startProcess('sleep 10', 'test-session', {
         cwd: '/tmp'
       });
 
@@ -155,7 +190,7 @@ describe('ProcessService', () => {
     });
 
     it('should return error for invalid process command', async () => {
-      const result = await processService.startProcess('', {});
+      const result = await processService.startProcess('', 'test-session', {});
 
       expect(result.success).toBe(false);
       if (!result.success) {

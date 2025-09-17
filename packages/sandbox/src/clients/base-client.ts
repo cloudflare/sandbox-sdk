@@ -11,7 +11,6 @@ import type {
 export abstract class BaseHttpClient {
   protected baseUrl: string;
   protected options: HttpClientOptions;
-  protected sessionId: string | null = null;
   private isTestEnvironment: boolean;
 
   constructor(options: HttpClientOptions = {}) {
@@ -176,32 +175,6 @@ export abstract class BaseHttpClient {
     throw error;
   }
 
-  /**
-   * Include session ID in request data if available
-   */
-  protected withSession(data: Record<string, any>, sessionId?: string): Record<string, any> {
-    const targetSessionId = sessionId || this.sessionId;
-
-    if (targetSessionId) {
-      return { ...data, sessionId: targetSessionId };
-    }
-
-    return data;
-  }
-
-  /**
-   * Set the session ID for subsequent requests
-   */
-  public setSessionId(sessionId: string | null): void {
-    this.sessionId = sessionId;
-  }
-
-  /**
-   * Get the current session ID
-   */
-  public getSessionId(): string | null {
-    return this.sessionId;
-  }
 
   /**
    * Create a streaming response handler for Server-Sent Events

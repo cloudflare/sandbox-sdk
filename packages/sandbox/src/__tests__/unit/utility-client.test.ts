@@ -573,7 +573,7 @@ describe('UtilityClient', () => {
   describe('constructor options', () => {
     it('should initialize with minimal options', () => {
       const minimalClient = new UtilityClient();
-      expect(minimalClient.getSessionId()).toBeNull();
+      expect(minimalClient).toBeInstanceOf(UtilityClient);
     });
 
     it('should initialize with full options', () => {
@@ -581,7 +581,7 @@ describe('UtilityClient', () => {
         baseUrl: 'http://custom.com',
         port: 8080,
       });
-      expect(fullOptionsClient.getSessionId()).toBeNull();
+      expect(fullOptionsClient).toBeInstanceOf(UtilityClient);
     });
   });
 });
