@@ -1,5 +1,5 @@
-import { randomUUID } from "crypto";
-import { processPool, type InterpreterLanguage, type RichOutput } from "./runtime/process-pool";
+import { randomUUID } from "node:crypto";
+import { type InterpreterLanguage, processPool, type RichOutput } from "./runtime/process-pool";
 
 export interface CreateContextRequest {
   language?: string;
@@ -118,10 +118,10 @@ export class InterpreterService {
           if (result.stdout) {
             controller.enqueue(
               encoder.encode(
-                JSON.stringify({
+                `${JSON.stringify({
                   type: "stdout",
                   text: result.stdout,
-                }) + "\n"
+                })}\n`
               )
             );
           }
@@ -129,10 +129,10 @@ export class InterpreterService {
           if (result.stderr) {
             controller.enqueue(
               encoder.encode(
-                JSON.stringify({
+                `${JSON.stringify({
                   type: "stderr",
                   text: result.stderr,
-                }) + "\n"
+                })}\n`
               )
             );
           }
@@ -142,11 +142,11 @@ export class InterpreterService {
               const outputData = self.formatOutputData(output);
               controller.enqueue(
                 encoder.encode(
-                  JSON.stringify({
+                  `${JSON.stringify({
                     type: "result",
                     ...outputData,
                     metadata: output.metadata || {},
-                  }) + "\n"
+                  })}\n`
                 )
               );
             }
@@ -155,32 +155,32 @@ export class InterpreterService {
           if (result.success) {
             controller.enqueue(
               encoder.encode(
-                JSON.stringify({
+                `${JSON.stringify({
                   type: "execution_complete",
                   execution_count: 1,
-                }) + "\n"
+                })}\n`
               )
             );
           } else if (result.error) {
             controller.enqueue(
               encoder.encode(
-                JSON.stringify({
+                `${JSON.stringify({
                   type: "error",
                   ename: result.error.type || "ExecutionError",
                   evalue: result.error.message || "Code execution failed",
                   traceback: result.error.traceback ? result.error.traceback.split('\n') : [],
-                }) + "\n"
+                })}\n`
               )
             );
           } else {
             controller.enqueue(
               encoder.encode(
-                JSON.stringify({
+                `${JSON.stringify({
                   type: "error",
                   ename: "ExecutionError",
                   evalue: result.stderr || "Code execution failed",
                   traceback: [],
-                }) + "\n"
+                })}\n`
               )
             );
           }
@@ -191,12 +191,12 @@ export class InterpreterService {
           
           controller.enqueue(
             encoder.encode(
-              JSON.stringify({
+              `${JSON.stringify({
                 type: "error",
                 ename: "InternalError",
                 evalue: error instanceof Error ? error.message : String(error),
                 traceback: [],
-              }) + "\n"
+              })}\n`
             )
           );
           
@@ -233,23 +233,6 @@ export class InterpreterService {
           `[InterpreterService] Unknown language ${language}, defaulting to python`
         );
         return "python";
-    }
-  }
-
-  private mapOutputType(type: string): string {
-    switch (type) {
-      case "text":
-        return "stream";
-      case "image":
-        return "display_data";
-      case "html":
-        return "display_data";
-      case "json":
-        return "display_data";
-      case "error":
-        return "error";
-      default:
-        return "display_data";
     }
   }
 

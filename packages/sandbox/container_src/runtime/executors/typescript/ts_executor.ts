@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 
-import * as readline from 'readline';
-import * as util from 'util';
-import * as vm from 'vm';
+import * as readline from 'node:readline';
+import * as util from 'node:util';
+import * as vm from 'node:vm';
 import { transformSync } from 'esbuild';
-import { RichOutput } from '../../process-pool';
+import type { RichOutput } from '../../process-pool';
 
 const rl = readline.createInterface({
   input: process.stdin,
@@ -43,13 +43,13 @@ rl.on('line', async (line: string) => {
     let stdout = '';
     let stderr = '';
     
-    (process.stdout.write as any) = function(chunk: string | Buffer, encoding?: BufferEncoding, callback?: () => void) {
+    (process.stdout.write as any) = (chunk: string | Buffer, encoding?: BufferEncoding, callback?: () => void) => {
       stdout += chunk.toString();
       if (callback) callback();
       return true;
     };
     
-    (process.stderr.write as any) = function(chunk: string | Buffer, encoding?: BufferEncoding, callback?: () => void) {
+    (process.stderr.write as any) = (chunk: string | Buffer, encoding?: BufferEncoding, callback?: () => void) => {
       stderr += chunk.toString();
       if (callback) callback();
       return true;
@@ -76,7 +76,7 @@ rl.on('line', async (line: string) => {
       
     } catch (error: unknown) {
       const err = error as Error;
-      if (err.message && err.message.includes('Transform failed')) {
+      if (err.message?.includes('Transform failed')) {
         stderr += `TypeScript compilation error: ${err.message}\n`;
       } else {
         stderr += err.stack || err.toString();

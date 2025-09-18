@@ -1,3 +1,4 @@
+import type { InterpreterClient } from "./interpreter-client.js";
 import {
   type CodeContext,
   type CreateContextOptions,
@@ -5,7 +6,6 @@ import {
   ResultImpl,
   type RunCodeOptions,
 } from "./interpreter-types.js";
-import type { InterpreterClient } from "./interpreter-client.js";
 import type { Sandbox } from "./sandbox.js";
 
 export class CodeInterpreter {

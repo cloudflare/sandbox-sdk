@@ -48,7 +48,7 @@ export function LaTeXRenderer({ content }: LaTeXRendererProps) {
           <div key={`block-${match.index}`} className="latex-display">
             <BlockMath 
               math={formula}
-              renderError={(error) => (
+              renderError={(error: Error) => (
                 <div style={{ color: "red" }}>
                   Error rendering LaTeX: {error.message}
                   <pre>{formula}</pre>
@@ -64,7 +64,7 @@ export function LaTeXRenderer({ content }: LaTeXRendererProps) {
           <InlineMath 
             key={`inline-${match.index}`}
             math={formula}
-            renderError={(error) => (
+            renderError={(error: Error) => (
               <span style={{ color: "red", fontSize: "0.9em" }}>
                 [Error: {formula}]
               </span>

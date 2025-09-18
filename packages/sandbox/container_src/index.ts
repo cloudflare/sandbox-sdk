@@ -29,12 +29,12 @@ import {
   handleStreamProcessLogsRequest,
 } from "./handler/process";
 import { handleCreateSession, handleListSessions } from "./handler/session";
-import { hasNamespaceSupport, SessionManager } from "./isolation";
 import type { CreateContextRequest } from "./interpreter-service";
 import {
   InterpreterNotReadyError,
   InterpreterService,
 } from "./interpreter-service";
+import { hasNamespaceSupport, SessionManager } from "./isolation";
 
 // In-memory storage for exposed ports
 const exposedPorts = new Map<number, { name?: string; exposedAt: Date }>();

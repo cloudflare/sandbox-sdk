@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 
 export type InterpreterLanguage = "python" | "javascript" | "typescript";
@@ -26,7 +26,7 @@ export interface ExecutionResult {
 }
 
 export interface RichOutput {
-  type: "text" | "image" | "html" | "json" | "error";
+  type: "text" | "image" | "jpeg" | "svg" | "html" | "json" | "latex" | "markdown" | "javascript" | "error";
   data: string;
   metadata?: Record<string, unknown>;
 }
@@ -89,8 +89,7 @@ console.log(JSON.stringify({"status": "pre-warmed"}));
 export class ProcessPoolManager {
   private pools: Map<InterpreterLanguage, InterpreterProcess[]> = new Map();
   private poolConfigs: Map<InterpreterLanguage, ExecutorPoolConfig> = new Map();
-  private cleanupInterval: NodeJS.Timeout;
-  private isPreWarmed: boolean = false;
+  private cleanupInterval?: NodeJS.Timeout;
 
   constructor(customConfigs: Partial<Record<InterpreterLanguage, Partial<ExecutorPoolConfig>>> = {}) {
     const executorEntries = Object.entries(DEFAULT_EXECUTOR_CONFIGS) as [InterpreterLanguage, ExecutorPoolConfig][];
@@ -327,7 +326,7 @@ export class ProcessPoolManager {
       };
       
       process.process.stdout?.on("data", responseHandler);
-      process.process.stdin?.write(request + "\n");
+      process.process.stdin?.write(`${request}\n`);
     });
   }
 
@@ -357,7 +356,6 @@ export class ProcessPoolManager {
 
     try {
       await Promise.all(warmupPromises);
-      this.isPreWarmed = true;
       const totalTime = Date.now() - startTime;
       console.log(`[ProcessPool] Pre-warming complete for all executors in ${totalTime}ms`);
     } catch (error) {
@@ -445,7 +443,9 @@ export class ProcessPoolManager {
   }
 
   async shutdown(): Promise<void> {
-    clearInterval(this.cleanupInterval);
+    if (this.cleanupInterval) {
+      clearInterval(this.cleanupInterval);
+    }
 
     const executors = Array.from(this.pools.keys());
     for (const executor of executors) {

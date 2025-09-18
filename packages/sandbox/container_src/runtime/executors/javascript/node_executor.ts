@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 
-import * as readline from 'readline';
-import * as vm from 'vm';
-import * as util from 'util';
-import { RichOutput } from '../../process-pool';
+import * as readline from 'node:readline';
+import * as util from 'node:util';
+import * as vm from 'node:vm';
+import type { RichOutput } from '../../process-pool';
 
 const rl = readline.createInterface({
   input: process.stdin,
@@ -42,13 +42,13 @@ rl.on('line', async (line: string) => {
     let stdout = '';
     let stderr = '';
     
-    (process.stdout.write as any) = function(chunk: string | Buffer, encoding?: BufferEncoding, callback?: () => void) {
+    (process.stdout.write as any) = (chunk: string | Buffer, encoding?: BufferEncoding, callback?: () => void) => {
       stdout += chunk.toString();
       if (callback) callback();
       return true;
     };
     
-    (process.stderr.write as any) = function(chunk: string | Buffer, encoding?: BufferEncoding, callback?: () => void) {
+    (process.stderr.write as any) = (chunk: string | Buffer, encoding?: BufferEncoding, callback?: () => void) => {
       stderr += chunk.toString();
       if (callback) callback();
       return true;

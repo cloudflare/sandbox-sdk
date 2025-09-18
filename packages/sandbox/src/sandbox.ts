@@ -1,12 +1,12 @@
 import { Container, getContainer } from "@cloudflare/containers";
 import { CodeInterpreter } from "./interpreter";
+import { InterpreterClient } from "./interpreter-client";
 import type {
   CodeContext,
   CreateContextOptions,
   ExecutionResult,
   RunCodeOptions,
 } from "./interpreter-types";
-import { InterpreterClient } from "./interpreter-client";
 import { isLocalhostPattern } from "./request-handler";
 import {
   logSecurityEvent,

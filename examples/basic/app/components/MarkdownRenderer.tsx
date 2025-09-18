@@ -47,8 +47,11 @@ export function MarkdownRenderer({ content }: MarkdownRendererProps) {
             </td>
           ),
           
-          code({inline, className, children, ...props}) {
-            if (inline) {
+          code({className, children, ...props}) {
+            // Detect inline vs block code by checking if there's a language class
+            const isBlock = className && className.startsWith('language-');
+            
+            if (!isBlock) {
               return (
                 <code style={{
                   background: "#2d333b",
