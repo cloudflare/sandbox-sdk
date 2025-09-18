@@ -15,6 +15,17 @@ export {
   SandboxNetworkError,
   ServiceUnavailableError,
 } from "./errors";
+
+// Backward compatibility exports (deprecated)
+/**
+ * @deprecated Use `InterpreterNotReadyError` instead. Will be removed in a future version.
+ */
+export { InterpreterNotReadyError as JupyterNotReadyError } from "./errors";
+
+/**
+ * @deprecated Use `isInterpreterNotReadyError` instead. Will be removed in a future version.
+ */
+export { isInterpreterNotReadyError as isJupyterNotReadyError } from "./errors";
 // Export code interpreter types
 export type {
   ChartData,
