@@ -1,5 +1,11 @@
 # @cloudflare/sandbox
 
+## 0.3.2
+
+### Patch Changes
+
+- [#76](https://github.com/cloudflare/sandbox-sdk/pull/76) [`ef9e320`](https://github.com/cloudflare/sandbox-sdk/commit/ef9e320dcef30e57797fef6ebd9a9383fa9720d9) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Replace Jupyter with lightweight interpreters for >90% faster cold starts for `.runCode` calls, while maintaining full code execution capabilities and rich output support.
+
 ## 0.3.1
 
 ### Patch Changes
