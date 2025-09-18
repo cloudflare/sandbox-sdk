@@ -28,7 +28,7 @@ export interface ChartData {
   library?: 'matplotlib' | 'plotly' | 'altair' | 'seaborn' | 'unknown';
 }
 
-export function processJupyterMessage(msg: any): ExecutionResult | null {
+export function processMessage(msg: any): ExecutionResult | null {
     const msgType = msg.header?.msg_type || msg.msg_type;
     
     switch (msgType) {

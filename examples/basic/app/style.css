@@ -2613,18 +2613,88 @@ button:focus {
 
 .example-result {
   margin-top: 20px;
-  padding: 15px;
+  padding: 20px;
   background: #0d1117;
   border: 1px solid #30363d;
-  border-radius: 4px;
+  border-radius: 6px;
 }
 
 .example-result h4 {
   font-size: 14px;
-  margin-bottom: 10px;
+  margin: 0 0 16px 0;
   color: #f0f6fc;
+  font-weight: 600;
 }
 
+/* Unified output section styling */
+.output-section {
+  margin-bottom: 20px;
+}
+
+.output-section:last-child {
+  margin-bottom: 0;
+}
+
+.output-label {
+  display: block;
+  margin-bottom: 8px;
+  color: #8b949e;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.output-content {
+  background: #161b22;
+  padding: 12px 16px;
+  border-radius: 6px;
+  border: 1px solid #30363d;
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-x: auto;
+  margin: 0;
+  color: #c9d1d9;
+  font-family: 'Fira Code', monospace;
+  display: block;
+}
+
+/* Image container styling */
+.output-content.image-container {
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background: #0d1117;
+}
+
+.output-content.image-container img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  border-radius: 4px;
+}
+
+/* Specific content type styling */
+.output-content.json-output {
+  background: #161b22;
+  max-height: 400px;
+  overflow: auto;
+}
+
+.output-content.latex-output {
+  background: #1c2128;
+  border-left: 3px solid #4CAF50;
+  font-family: 'Inter', sans-serif;
+}
+
+.output-content.markdown-output {
+  background: #ffffff08;
+  font-family: 'Inter', sans-serif;
+}
+
+/* Backwards compatibility for old class names */
 .stdout-output,
 .result-output,
 .chart-output,
@@ -2646,8 +2716,8 @@ button:focus {
 .stdout-output pre,
 .result-output pre {
   background: #161b22;
-  padding: 10px;
-  border-radius: 4px;
+  padding: 12px 16px;
+  border-radius: 6px;
   font-size: 13px;
   overflow-x: auto;
   margin: 0;
@@ -2690,4 +2760,53 @@ button:focus {
 .examples-advanced li {
   margin-bottom: 8px;
   color: #8b949e;
+}
+
+/* LaTeX Rendering Styles */
+.latex-container {
+  line-height: 1.8;
+}
+
+.latex-line {
+  margin: 0.5em 0;
+}
+
+.latex-display {
+  margin: 1em 0;
+  overflow-x: auto;
+}
+
+.latex-display .katex-display {
+  margin: 0.5em 0;
+}
+
+/* Markdown Rendering Styles */
+.markdown-container {
+  line-height: 1.6;
+}
+
+.markdown-container .inline-code {
+  background: #2d333b;
+  padding: 0.2em 0.4em;
+  border-radius: 3px;
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 0.9em;
+}
+
+.markdown-container .code-block {
+  background: #161b22;
+  padding: 1em;
+  border-radius: 6px;
+  border: 1px solid #30363d;
+  overflow-x: auto;
+  margin: 0.5em 0;
+}
+
+.markdown-container .code-block code {
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 0.9em;
+}
+
+.markdown-table {
+  margin: 1em 0;
 }

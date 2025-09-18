@@ -51,24 +51,12 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
 COPY --from=bun-source /usr/local/bin/bun /usr/local/bin/bun
 COPY --from=bun-source /usr/local/bin/bunx /usr/local/bin/bunx
 
-# Install minimal Jupyter components
-RUN pip3 install --no-cache-dir \
-    jupyter-server \
-    jupyter-client \
-    ipykernel \
-    orjson \
-    && python3 -m ipykernel install --user --name python3
-
-# Install scientific packages
+# Install essential Python packages for code execution
 RUN pip3 install --no-cache-dir \
     matplotlib \
     numpy \
     pandas \
-    seaborn
-
-# Install JavaScript kernel (ijavascript) - using E2B's fork
-RUN npm install -g git+https://github.com/e2b-dev/ijavascript.git \
-    && ijsinstall --install=global
+    ipython
 
 # Set up container server directory
 WORKDIR /container-server
@@ -77,9 +65,7 @@ WORKDIR /container-server
 RUN python3 --version && \
     node --version && \
     npm --version && \
-    bun --version && \
-    jupyter --version && \
-    jupyter kernelspec list
+    bun --version
 
 # Copy container source files to server directory
 COPY container_src/package.json container_src/bun.lock ./
@@ -87,15 +73,27 @@ RUN bun install --frozen-lockfile
 
 COPY container_src/ ./
 
-# Compile TypeScript control process
-# Use npx -p typescript to ensure we get the right tsc command
-RUN npx -p typescript tsc control-process.ts --outDir . --module commonjs --target es2020 --esModuleInterop --skipLibCheck
+# Compile TypeScript files using the locally installed TypeScript
+RUN npx tsc control-process.ts --outDir . --module commonjs --target es2020 --esModuleInterop --skipLibCheck
+RUN cd runtime/executors/javascript && npx tsc node_executor.ts --module commonjs --target es2020 --esModuleInterop --skipLibCheck
+RUN cd runtime/executors/typescript && npx tsc ts_executor.ts --module commonjs --target es2020 --esModuleInterop --skipLibCheck
 
-# Create clean workspace directory for users
+# Configure process pool sizes (can be overridden at runtime)
+ENV PYTHON_POOL_MIN_SIZE=3
+ENV PYTHON_POOL_MAX_SIZE=15
+ENV JAVASCRIPT_POOL_MIN_SIZE=3
+ENV JAVASCRIPT_POOL_MAX_SIZE=10
+ENV TYPESCRIPT_POOL_MIN_SIZE=3
+ENV TYPESCRIPT_POOL_MAX_SIZE=10
+
+# Create clean workspace directory for user code
+# Architecture:
+#   /container-server/ - SDK infrastructure (server, executors, dependencies)
+#   /workspace/ - User's clean workspace for their code
 RUN mkdir -p /workspace
 
-# Expose the application port (3000 for control, 8888 for Jupyter)
-EXPOSE 3000 8888
+# Expose the application port (3000 for control)
+EXPOSE 3000
 
 # Make startup script executable
 RUN chmod +x startup.sh

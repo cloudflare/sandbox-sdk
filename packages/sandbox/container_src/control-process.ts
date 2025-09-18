@@ -654,7 +654,7 @@ async function handleControlMessage(msg: ControlMessage): Promise<void> {
  * 
  * Creates either an isolated shell using 'unshare' or a regular bash shell.
  * Isolation uses Linux namespaces (PID) to prevent the shell from:
- * - Seeing control plane processes (Jupyter, Bun server)
+ * - Seeing control plane processes (Bun server)
  * - Accessing platform secrets in /proc/1/environ
  * - Hijacking control plane ports
  */

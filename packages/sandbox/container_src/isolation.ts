@@ -3,7 +3,7 @@
  * 
  * Implements PID namespace isolation to secure the sandbox environment.
  * Executed commands run in isolated namespaces, preventing them from:
- * - Seeing or killing control plane processes (Jupyter, Bun)
+ * - Seeing or killing control plane processes (Bun)
  * - Accessing platform secrets in /proc
  * - Hijacking control plane ports
  * 

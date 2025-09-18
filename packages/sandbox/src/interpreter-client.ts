@@ -62,7 +62,7 @@ export interface ExecutionCallbacks {
   onError?: (error: ExecutionError) => void | Promise<void>;
 }
 
-export class JupyterClient extends HttpClient {
+export class InterpreterClient extends HttpClient {
   private readonly maxRetries = 3;
   private readonly retryDelayMs = 1000;
 
@@ -239,7 +239,10 @@ export class JupyterClient extends HttpClient {
           break;
       }
     } catch (error) {
-      console.error("[JupyterClient] Error parsing execution result:", error);
+      console.error(
+        "[InterpreterClient] Error parsing execution result:",
+        error
+      );
     }
   }
 
@@ -295,7 +298,7 @@ export class JupyterClient extends HttpClient {
       } catch (error) {
         lastError = error as Error;
 
-        // Check if it's a retryable error (circuit breaker or Jupyter not ready)
+        // Check if it's a retryable error (circuit breaker or interpreter not ready)
         if (this.isRetryableError(error)) {
           // Don't retry on the last attempt
           if (attempt < this.maxRetries - 1) {

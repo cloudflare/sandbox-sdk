@@ -1,4 +1,5 @@
 import { getSandbox, proxyToSandbox, type Sandbox } from "@cloudflare/sandbox";
+import { codeExamples } from "../shared/examples";
 import {
   executeCommand,
   executeCommandStream,
@@ -189,104 +190,108 @@ export default {
         return await setupStatic(sandbox, request);
       }
 
-      // Code Interpreter Example APIs
-      if (pathname === "/api/examples/basic-python" && request.method === "GET") {
+      // Helper function to run code examples
+      async function runExample(exampleName: keyof typeof codeExamples) {
         try {
-          const pythonCtx = await sandbox.createCodeContext({ language: 'python' });
-          const execution = await sandbox.runCode('print("Hello from Python!")', { 
-            context: pythonCtx 
-          });
+          const example = codeExamples[exampleName];
+          const ctx = await sandbox.createCodeContext({ language: example.language });
+          const execution = await sandbox.runCode(example.code, { context: ctx });
           
-          // The execution object now has a toJSON method
-          return jsonResponse({
-            output: execution.logs.stdout.join(''),
-            errors: execution.error
-          });
-        } catch (error: any) {
-          return errorResponse(error.message || "Failed to run example", 500);
-        }
-      }
-
-      if (pathname === "/api/examples/chart" && request.method === "GET") {
-        try {
-          const ctx = await sandbox.createCodeContext({ language: 'python' });
-          const execution = await sandbox.runCode(`
-import matplotlib.pyplot as plt
-import numpy as np
-
-x = np.linspace(0, 10, 100)
-y = np.sin(x)
-
-plt.figure(figsize=(8, 6))
-plt.plot(x, y, 'b-', linewidth=2)
-plt.title('Sine Wave')
-plt.xlabel('X')
-plt.ylabel('Y')
-plt.grid(True)
-plt.show()
-          `, { context: ctx });
+          const result: any = {
+            stdout: execution.logs.stdout.join('\n'),
+            stderr: execution.logs.stderr.join('\n'),
+            error: execution.error || null
+          };
           
-          const chartResult = execution.results[0];
-          const formats: string[] = [];
-          if (chartResult) {
-            if (chartResult.text) formats.push('text');
-            if (chartResult.html) formats.push('html');
-            if (chartResult.png) formats.push('png');
-            if (chartResult.jpeg) formats.push('jpeg');
-            if (chartResult.svg) formats.push('svg');
+          // Process rich outputs - collect ALL outputs, not just the first
+          if (execution.results && execution.results.length > 0) {
+            // For multiple outputs (e.g., multiple plots), collect them all
+            const charts: string[] = [];
+            const htmlOutputs: string[] = [];
+            const latexOutputs: string[] = [];
+            const markdownOutputs: string[] = [];
+            
+            for (const output of execution.results) {
+              // Images (rename to user-friendly "chart")
+              if (output.png && !result.chart) {
+                result.chart = `data:image/png;base64,${output.png}`;
+              } else if (output.png) {
+                charts.push(`data:image/png;base64,${output.png}`);
+              }
+              
+              // SVG images
+              if (output.svg && !result.svg) {
+                result.svg = output.svg;
+              }
+              
+              // HTML content (tables, etc.)
+              if (output.html && !result.html) {
+                result.html = output.html;
+              } else if (output.html) {
+                htmlOutputs.push(output.html);
+              }
+              
+              // JSON structured data
+              if (output.json && !result.json) {
+                result.json = output.json;
+              }
+              
+              // LaTeX formulas - collect all of them
+              if (output.latex) {
+                latexOutputs.push(output.latex);
+              }
+              
+              // Markdown formatted text - collect all of them  
+              if (output.markdown) {
+                markdownOutputs.push(output.markdown);
+              }
+              
+              // Plain text - only include if we don't have other rich outputs
+              if (output.text && !result.text && !result.json && !result.html) {
+                result.text = output.text;
+              }
+            }
+            
+            // If we have multiple charts, include them
+            if (charts.length > 0) {
+              result.additionalCharts = charts;
+            }
+            
+            // Combine all LaTeX outputs
+            if (latexOutputs.length > 0) {
+              result.latex = latexOutputs.join('\n\n');
+            }
+            
+            // Combine all Markdown outputs
+            if (markdownOutputs.length > 0) {
+              result.markdown = markdownOutputs.join('\n\n');
+            }
           }
           
-          return jsonResponse({
-            chart: chartResult?.png ? `data:image/png;base64,${chartResult.png}` : null,
-            formats
-          });
+          return jsonResponse(result);
         } catch (error: any) {
           return errorResponse(error.message || "Failed to run example", 500);
         }
       }
 
-      if (pathname === "/api/examples/javascript" && request.method === "GET") {
-        try {
-          const jsCtx = await sandbox.createCodeContext({ language: 'javascript' });
-          const execution = await sandbox.runCode(`
-const data = [1, 2, 3, 4, 5];
-const sum = data.reduce((a, b) => a + b, 0);
-console.log('Sum:', sum);
-console.log('Average:', sum / data.length);
+      // Code Interpreter Example APIs - Map endpoints to example names
+      const exampleEndpoints: Record<string, keyof typeof codeExamples> = {
+        "/api/examples/stdout-stderr": "stdout-stderr",
+        "/api/examples/html-table": "html-table",
+        "/api/examples/chart-png": "chart-png",
+        "/api/examples/json-data": "json-data",
+        "/api/examples/latex-math": "latex-math",
+        "/api/examples/markdown-rich": "markdown-rich",
+        "/api/examples/multiple-outputs": "multiple-outputs",
+        "/api/examples/javascript-example": "javascript-example",
+        "/api/examples/typescript-example": "typescript-example",
+        "/api/examples/error-handling": "error-handling"
+      };
 
-// Return the result - wrap in parentheses to make it an expression
-({ sum, average: sum / data.length })
-          `, { context: jsCtx });
-          
-          return jsonResponse({
-            output: execution.logs.stdout.join('\n')
-          });
-        } catch (error: any) {
-          return errorResponse(error.message || "Failed to run example", 500);
-        }
+      if (request.method === "GET" && exampleEndpoints[pathname]) {
+        return runExample(exampleEndpoints[pathname]);
       }
 
-      if (pathname === "/api/examples/error" && request.method === "GET") {
-        try {
-          const ctx = await sandbox.createCodeContext({ language: 'python' });
-          const execution = await sandbox.runCode(`
-# This will cause an error
-x = 10
-y = 0
-result = x / y
-          `, { context: ctx });
-          
-          return jsonResponse({
-            error: execution.error ? {
-              name: execution.error.name,
-              message: execution.error.value,
-              traceback: execution.error.traceback
-            } : null
-          });
-        } catch (error: any) {
-          return errorResponse(error.message || "Failed to run example", 500);
-        }
-      }
 
       // Health check endpoint
       if (pathname === "/health") {

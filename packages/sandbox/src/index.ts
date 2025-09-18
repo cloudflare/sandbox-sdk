@@ -5,10 +5,10 @@ export {
   CodeExecutionError,
   ContainerNotReadyError,
   ContextNotFoundError,
-  isJupyterNotReadyError,
+  isInterpreterNotReadyError,
   isRetryableError,
   isSandboxError,
-  JupyterNotReadyError,
+  InterpreterNotReadyError,
   parseErrorResponse,
   SandboxError,
   type SandboxErrorResponse,
@@ -60,5 +60,5 @@ export type {
   ReadFileResponse,
   RenameFileResponse,
   StreamOptions,
-  WriteFileResponse
+  WriteFileResponse,
 } from "./types";

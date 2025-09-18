@@ -6,7 +6,7 @@ import type {
   ExecutionResult,
   RunCodeOptions,
 } from "./interpreter-types";
-import { JupyterClient } from "./jupyter-client";
+import { InterpreterClient } from "./interpreter-client";
 import { isLocalhostPattern } from "./request-handler";
 import {
   logSecurityEvent,
@@ -41,14 +41,14 @@ export function getSandbox(ns: DurableObjectNamespace<Sandbox>, id: string) {
 export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   defaultPort = 3000; // Default port for the container's Bun server
   sleepAfter = "20m"; // Keep container warm for 20 minutes to avoid cold starts
-  client: JupyterClient;
+  client: InterpreterClient;
   private sandboxName: string | null = null;
   private codeInterpreter: CodeInterpreter;
   private defaultSession: ExecutionSession | null = null;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
-    this.client = new JupyterClient({
+    this.client = new InterpreterClient({
       onCommandComplete: (success, exitCode, _stdout, _stderr, command) => {
         console.log(
           `[Container] Command completed: ${command}, Success: ${success}, Exit code: ${exitCode}`

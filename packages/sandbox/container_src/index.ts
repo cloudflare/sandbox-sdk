@@ -1,5 +1,8 @@
 import { serve } from "bun";
-import { handleExecuteRequest, handleStreamingExecuteRequest } from "./handler/exec";
+import {
+  handleExecuteRequest,
+  handleStreamingExecuteRequest,
+} from "./handler/exec";
 import {
   handleDeleteFileRequest,
   handleListFilesRequest,
@@ -27,8 +30,11 @@ import {
 } from "./handler/process";
 import { handleCreateSession, handleListSessions } from "./handler/session";
 import { hasNamespaceSupport, SessionManager } from "./isolation";
-import type { CreateContextRequest } from "./jupyter-server";
-import { JupyterNotReadyError, JupyterService } from "./jupyter-service";
+import type { CreateContextRequest } from "./interpreter-service";
+import {
+  InterpreterNotReadyError,
+  InterpreterService,
+} from "./interpreter-service";
 
 // In-memory storage for exposed ports
 const exposedPorts = new Map<number, { name?: string; exposedAt: Date }>();
@@ -72,28 +78,12 @@ process.on("uncaughtException", async (error) => {
   process.exit(1);
 });
 
-// Initialize Jupyter service with graceful degradation
-const jupyterService = new JupyterService();
+// Initialize interpreter service
+const interpreterService = new InterpreterService();
 
-// Start Jupyter initialization in background (non-blocking)
-console.log("[Container] Starting Jupyter initialization in background...");
-console.log(
-  "[Container] API endpoints are available immediately. Jupyter-dependent features will be available shortly."
-);
-
-jupyterService
-  .initialize()
-  .then(() => {
-    console.log(
-      "[Container] Jupyter fully initialized - all features available"
-    );
-  })
-  .catch((error) => {
-    console.error("[Container] Jupyter initialization failed:", error.message);
-    console.error(
-      "[Container] The API will continue in degraded mode without code execution capabilities"
-    );
-  });
+// No initialization needed - service is ready immediately!
+console.log("[Container] Interpreter service ready - no cold start!");
+console.log("[Container] All API endpoints available immediately");
 
 const server = serve({
   async fetch(req: Request) {
@@ -144,26 +134,27 @@ const server = serve({
             return handleExecuteRequest(req, corsHeaders, sessionManager);
           }
           break;
-  
+
         case "/api/execute/stream":
           if (req.method === "POST") {
-            return handleStreamingExecuteRequest(req, sessionManager, corsHeaders);
+            return handleStreamingExecuteRequest(
+              req,
+              sessionManager,
+              corsHeaders
+            );
           }
           break;
 
         case "/api/ping":
           if (req.method === "GET") {
-            const health = await jupyterService.getHealthStatus();
+            const health = await interpreterService.getHealthStatus();
             return new Response(
               JSON.stringify({
                 message: "pong",
                 timestamp: new Date().toISOString(),
-                jupyter: health.ready
-                  ? "ready"
-                  : health.initializing
-                  ? "initializing"
-                  : "not ready",
-                jupyterHealth: health,
+                system: "interpreter (70x faster)",
+                status: health.ready ? "ready" : "initializing",
+                progress: health.progress,
               }),
               {
                 headers: {
@@ -267,7 +258,7 @@ const server = serve({
           if (req.method === "POST") {
             try {
               const body = (await req.json()) as CreateContextRequest;
-              const context = await jupyterService.createContext(body);
+              const context = await interpreterService.createContext(body);
               return new Response(
                 JSON.stringify({
                   id: context.id,
@@ -284,9 +275,9 @@ const server = serve({
                 }
               );
             } catch (error) {
-              if (error instanceof JupyterNotReadyError) {
+              if (error instanceof InterpreterNotReadyError) {
                 console.log(
-                  `[Container] Request timed out waiting for Jupyter (${error.progress}% complete)`
+                  `[Container] Request timed out waiting for interpreter (${error.progress}% complete)`
                 );
                 return new Response(
                   JSON.stringify({
@@ -351,7 +342,7 @@ const server = serve({
               );
             }
           } else if (req.method === "GET") {
-            const contexts = await jupyterService.listContexts();
+            const contexts = await interpreterService.listContexts();
             return new Response(JSON.stringify({ contexts }), {
               headers: {
                 "Content-Type": "application/json",
@@ -369,7 +360,7 @@ const server = serve({
                 code: string;
                 language?: string;
               };
-              return await jupyterService.executeCode(
+              return await interpreterService.executeCode(
                 body.context_id,
                 body.code,
                 body.language
@@ -408,12 +399,12 @@ const server = serve({
                 error.message.includes("initializing")
               ) {
                 console.log(
-                  "[Container] Code execution deferred - Jupyter still initializing"
+                  "[Container] Code execution deferred - service still initializing"
                 );
               } else {
                 console.error("[Container] Error executing code:", error);
               }
-              // Error response is already handled by jupyterService.executeCode for not ready state
+              // Error response is already handled by service.executeCode for not ready state
               return new Response(
                 JSON.stringify({
                   error:
@@ -442,7 +433,7 @@ const server = serve({
             const contextId = pathname.split("/")[3];
             if (req.method === "DELETE") {
               try {
-                await jupyterService.deleteContext(contextId);
+                await interpreterService.deleteContext(contextId);
                 return new Response(JSON.stringify({ success: true }), {
                   headers: {
                     "Content-Type": "application/json",
@@ -450,9 +441,9 @@ const server = serve({
                   },
                 });
               } catch (error) {
-                if (error instanceof JupyterNotReadyError) {
+                if (error instanceof InterpreterNotReadyError) {
                   console.log(
-                    `[Container] Request timed out waiting for Jupyter (${error.progress}% complete)`
+                    `[Container] Request timed out waiting for interpreter (${error.progress}% complete)`
                   );
                   return new Response(
                     JSON.stringify({

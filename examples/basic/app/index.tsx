@@ -1,7 +1,11 @@
 import type React from "react";
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
+import "katex/dist/katex.min.css";
 import "./style.css";
+import { codeExamples } from "../shared/examples";
+import { LaTeXRenderer } from "./components/LaTeXRenderer";
+import { MarkdownRenderer } from "./components/MarkdownRenderer";
 
 // Type definitions
 interface FileInfo {
@@ -3097,57 +3101,8 @@ function ExamplesTab({
     }
   };
 
-  const examples = [
-    {
-      name: "basic-python",
-      title: "Basic Python Execution",
-      description: "Simple Python print statement and output capture",
-      endpoint: "/api/examples/basic-python",
-      code: `print("Hello from Python!")`,
-    },
-    {
-      name: "chart",
-      title: "Data Visualization",
-      description: "Generate charts with matplotlib",
-      endpoint: "/api/examples/chart",
-      code: `import matplotlib.pyplot as plt
-import numpy as np
-
-x = np.linspace(0, 10, 100)
-y = np.sin(x)
-
-plt.figure(figsize=(8, 6))
-plt.plot(x, y, 'b-', linewidth=2)
-plt.title('Sine Wave')
-plt.xlabel('X')
-plt.ylabel('Y')
-plt.grid(True)
-plt.show()`,
-    },
-    {
-      name: "javascript",
-      title: "JavaScript Execution",
-      description: "Run JavaScript code and get results",
-      endpoint: "/api/examples/javascript",
-      code: `const data = [1, 2, 3, 4, 5];
-const sum = data.reduce((a, b) => a + b, 0);
-console.log('Sum:', sum);
-console.log('Average:', sum / data.length);
-
-// Return object for inspection
-{ sum, average: sum / data.length }`,
-    },
-    {
-      name: "error",
-      title: "Error Handling",
-      description: "See how errors are captured and displayed",
-      endpoint: "/api/examples/error",
-      code: `# This will cause an error
-x = 10
-y = 0
-result = x / y`,
-    },
-  ];
+  // Convert the imported examples to an array
+  const examples = Object.values(codeExamples);
 
   return (
     <div className="examples-tab">
@@ -3210,34 +3165,110 @@ result = x / y`,
                   </div>
                 ) : (
                   <>
-                    {results[example.name].output && (
-                      <div className="stdout-output">
-                        <strong>Output:</strong>
-                        <pre>{results[example.name].output}</pre>
+                    {/* Standard output */}
+                    {results[example.name].stdout && (
+                      <div className="output-section">
+                        <strong className="output-label">Output (stdout):</strong>
+                        <pre className="output-content">{results[example.name].stdout}</pre>
                       </div>
                     )}
 
-                    {results[example.name].chart && (
-                      <div className="chart-output">
-                        <strong>Chart:</strong>
-                        <img
-                          src={results[example.name].chart}
-                          alt="Generated chart"
-                          style={{ maxWidth: "100%", marginTop: "10px" }}
+                    {/* Standard error */}
+                    {results[example.name].stderr && results[example.name].stderr.trim() && (
+                      <div className="output-section">
+                        <strong className="output-label" style={{ color: "#d73a49" }}>Error Output (stderr):</strong>
+                        <pre className="output-content" style={{ color: "#d73a49" }}>{results[example.name].stderr}</pre>
+                      </div>
+                    )}
+
+                    {/* For backwards compatibility with .output field */}
+                    {results[example.name].output && !results[example.name].stdout && (
+                      <div className="output-section">
+                        <strong className="output-label">Output:</strong>
+                        <pre className="output-content">{results[example.name].output}</pre>
+                      </div>
+                    )}
+
+                    {/* HTML content (tables, etc.) */}
+                    {results[example.name].html && (
+                      <div className="output-section">
+                        <strong className="output-label">HTML Output:</strong>
+                        <div
+                          className="output-content"
+                          dangerouslySetInnerHTML={{ __html: results[example.name].html }}
+                          style={{ 
+                            overflowX: "auto",
+                            maxWidth: "100%"
+                          }}
                         />
                       </div>
                     )}
 
-                    {results[example.name].result && (
-                      <div className="result-output">
-                        <strong>Result Data:</strong>
-                        <pre>
+                    {/* PNG Chart */}
+                    {results[example.name].chart && (
+                      <div className="output-section">
+                        <strong className="output-label">Chart (PNG):</strong>
+                        <div className="output-content image-container">
+                          <img
+                            src={results[example.name].chart}
+                            alt="Generated chart"
+                            style={{ maxWidth: "100%", height: "auto", display: "block" }}
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {/* SVG Graphics */}
+                    {results[example.name].svg && (
+                      <div className="output-section">
+                        <strong className="output-label">SVG Graphics:</strong>
+                        <div
+                          className="output-content"
+                          dangerouslySetInnerHTML={{ __html: results[example.name].svg }}
+                          style={{ maxWidth: "100%" }}
+                        />
+                      </div>
+                    )}
+
+                    {/* JSON data */}
+                    {results[example.name].json && (
+                      <div className="output-section">
+                        <strong className="output-label">JSON Data:</strong>
+                        <pre className="output-content json-output">
                           {JSON.stringify(
-                            results[example.name].result,
+                            results[example.name].json,
                             null,
                             2
                           )}
                         </pre>
+                      </div>
+                    )}
+
+                    {/* LaTeX formulas */}
+                    {results[example.name].latex && (
+                      <div className="output-section">
+                        <strong className="output-label">LaTeX Formula:</strong>
+                        <div className="output-content latex-output">
+                          <LaTeXRenderer content={results[example.name].latex} />
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Markdown formatted text */}
+                    {results[example.name].markdown && (
+                      <div className="output-section">
+                        <strong className="output-label">Markdown Output:</strong>
+                        <div className="output-content markdown-output">
+                          <MarkdownRenderer content={results[example.name].markdown} />
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Plain text (only if no other rich output) */}
+                    {results[example.name].text && (
+                      <div className="output-section">
+                        <strong className="output-label">Text Result:</strong>
+                        <pre className="output-content">{results[example.name].text}</pre>
                       </div>
                     )}
                   </>

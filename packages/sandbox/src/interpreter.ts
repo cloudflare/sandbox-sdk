@@ -5,15 +5,15 @@ import {
   ResultImpl,
   type RunCodeOptions,
 } from "./interpreter-types.js";
-import type { JupyterClient } from "./jupyter-client.js";
+import type { InterpreterClient } from "./interpreter-client.js";
 import type { Sandbox } from "./sandbox.js";
 
 export class CodeInterpreter {
-  private jupyterClient: JupyterClient;
+  private interpreterClient: InterpreterClient;
   private contexts = new Map<string, CodeContext>();
 
   constructor(sandbox: Sandbox) {
-    this.jupyterClient = sandbox.client as JupyterClient;
+    this.interpreterClient = sandbox.client as InterpreterClient;
   }
 
   /**
@@ -22,7 +22,7 @@ export class CodeInterpreter {
   async createCodeContext(
     options: CreateContextOptions = {}
   ): Promise<CodeContext> {
-    const context = await this.jupyterClient.createCodeContext(options);
+    const context = await this.interpreterClient.createCodeContext(options);
     this.contexts.set(context.id, context);
     return context;
   }
@@ -46,7 +46,7 @@ export class CodeInterpreter {
     const execution = new Execution(code, context);
 
     // Stream execution
-    await this.jupyterClient.runCodeStream(context.id, code, options.language, {
+    await this.interpreterClient.runCodeStream(context.id, code, options.language, {
       onStdout: (output) => {
         execution.logs.stdout.push(output.text);
         if (options.onStdout) return options.onStdout(output);
@@ -83,7 +83,7 @@ export class CodeInterpreter {
     }
 
     // Create streaming response
-    const response = await this.jupyterClient.doFetch("/api/execute/code", {
+    const response = await this.interpreterClient.doFetch("/api/execute/code", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -116,7 +116,7 @@ export class CodeInterpreter {
    * List all code contexts
    */
   async listCodeContexts(): Promise<CodeContext[]> {
-    const contexts = await this.jupyterClient.listCodeContexts();
+    const contexts = await this.interpreterClient.listCodeContexts();
 
     // Update local cache
     for (const context of contexts) {
@@ -130,7 +130,7 @@ export class CodeInterpreter {
    * Delete a code context
    */
   async deleteCodeContext(contextId: string): Promise<void> {
-    await this.jupyterClient.deleteCodeContext(contextId);
+    await this.interpreterClient.deleteCodeContext(contextId);
     this.contexts.delete(contextId);
   }
 

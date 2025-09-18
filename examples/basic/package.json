@@ -9,5 +9,11 @@
     "deploy": "vite build && wrangler deploy"
   },
   "author": "",
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "katex": "^0.16.22",
+    "react-katex": "^3.1.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
+  }
 }

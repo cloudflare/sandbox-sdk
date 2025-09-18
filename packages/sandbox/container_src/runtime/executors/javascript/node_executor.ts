@@ -1,0 +1,123 @@
+#!/usr/bin/env node
+
+import * as readline from 'readline';
+import * as vm from 'vm';
+import * as util from 'util';
+import { RichOutput } from '../../process-pool';
+
+const rl = readline.createInterface({
+  input: process.stdin,
+  output: process.stdout,
+  terminal: false
+});
+
+const sandbox = {
+  console: console,
+  process: process,
+  require: require,
+  Buffer: Buffer,
+  setTimeout: setTimeout,
+  setInterval: setInterval,
+  clearTimeout: clearTimeout,
+  clearInterval: clearInterval,
+  setImmediate: setImmediate,
+  clearImmediate: clearImmediate,
+  global: global,
+  __dirname: __dirname,
+  __filename: __filename
+};
+
+const context = vm.createContext(sandbox);
+
+console.log(JSON.stringify({ status: "ready" }));
+
+rl.on('line', async (line: string) => {
+  try {
+    const request = JSON.parse(line);
+    const { code, executionId } = request;
+    
+    const originalStdoutWrite = process.stdout.write;
+    const originalStderrWrite = process.stderr.write;
+    
+    let stdout = '';
+    let stderr = '';
+    
+    (process.stdout.write as any) = function(chunk: string | Buffer, encoding?: BufferEncoding, callback?: () => void) {
+      stdout += chunk.toString();
+      if (callback) callback();
+      return true;
+    };
+    
+    (process.stderr.write as any) = function(chunk: string | Buffer, encoding?: BufferEncoding, callback?: () => void) {
+      stderr += chunk.toString();
+      if (callback) callback();
+      return true;
+    };
+    
+    let result: unknown;
+    let success = true;
+    
+    try {
+      result = vm.runInContext(code, context, {
+        filename: `<execution-${executionId}>`,
+        timeout: 30000
+      });
+      
+    } catch (error: unknown) {
+      const err = error as Error;
+      stderr += err.stack || err.toString();
+      success = false;
+    } finally {
+      process.stdout.write = originalStdoutWrite;
+      process.stderr.write = originalStderrWrite;
+    }
+    
+    const outputs: RichOutput[] = [];
+    
+    if (result !== undefined) {
+      if (typeof result === 'object' && result !== null) {
+        outputs.push({
+          type: 'json',
+          data: JSON.stringify(result, null, 2),
+          metadata: {}
+        });
+      } else {
+        outputs.push({
+          type: 'text',
+          data: util.inspect(result, { showHidden: false, depth: null, colors: false }),
+          metadata: {}
+        });
+      }
+    }
+    
+    const response = {
+      stdout,
+      stderr,
+      success,
+      executionId,
+      outputs
+    };
+    
+    console.log(JSON.stringify(response));
+    
+  } catch (error: unknown) {
+    const err = error as Error;
+    console.log(JSON.stringify({
+      stdout: '',
+      stderr: `Error processing request: ${err.message}`,
+      success: false,
+      executionId: 'unknown',
+      outputs: []
+    }));
+  }
+});
+
+process.on('SIGTERM', () => {
+  rl.close();
+  process.exit(0);
+});
+
+process.on('SIGINT', () => {
+  rl.close();
+  process.exit(0);
+});

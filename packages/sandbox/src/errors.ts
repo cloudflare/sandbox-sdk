@@ -23,17 +23,17 @@ export class SandboxError extends Error {
 }
 
 /**
- * Error thrown when Jupyter functionality is requested but the service is still initializing.
+ * Error thrown when interpreter functionality is requested but the service is still initializing.
  *
- * Note: With the current implementation, requests wait for Jupyter to be ready.
+ * Note: With the current implementation, requests wait for interpreter to be ready.
  * This error is only thrown when:
- * 1. The request times out waiting for Jupyter (default: 30 seconds)
- * 2. Jupyter initialization actually fails
+ * 1. The request times out waiting for interpreter (default: 30 seconds)
+ * 2. interpreter initialization actually fails
  *
  * Most requests will succeed after a delay, not throw this error.
  */
-export class JupyterNotReadyError extends SandboxError {
-  public readonly code = "JUPYTER_NOT_READY";
+export class InterpreterNotReadyError extends SandboxError {
+  public readonly code = "INTERPRETER_NOT_READY";
   public readonly retryAfter: number;
   public readonly progress?: number;
 
@@ -42,7 +42,8 @@ export class JupyterNotReadyError extends SandboxError {
     options?: { retryAfter?: number; progress?: number }
   ) {
     super(
-      message || "Jupyter is still initializing. Please retry in a few seconds."
+      message ||
+        "Interpreter is still initializing. Please retry in a few seconds."
     );
     this.retryAfter = options?.retryAfter || 5;
     this.progress = options?.progress;
@@ -123,12 +124,12 @@ export class ServiceUnavailableError extends SandboxError {
 }
 
 /**
- * Type guard to check if an error is a JupyterNotReadyError
+ * Type guard to check if an error is a InterpreterNotReadyError
  */
-export function isJupyterNotReadyError(
+export function isInterpreterNotReadyError(
   error: unknown
-): error is JupyterNotReadyError {
-  return error instanceof JupyterNotReadyError;
+): error is InterpreterNotReadyError {
+  return error instanceof InterpreterNotReadyError;
 }
 
 /**
@@ -143,7 +144,7 @@ export function isSandboxError(error: unknown): error is SandboxError {
  */
 export function isRetryableError(error: unknown): boolean {
   if (
-    error instanceof JupyterNotReadyError ||
+    error instanceof InterpreterNotReadyError ||
     error instanceof ContainerNotReadyError ||
     error instanceof ServiceUnavailableError
   ) {
@@ -189,9 +190,9 @@ export async function parseErrorResponse(
       );
     }
 
-    // Jupyter initialization error
+    // Interpreter initialization error
     if (data.status === "initializing") {
-      return new JupyterNotReadyError(data.error, {
+      return new InterpreterNotReadyError(data.error, {
         retryAfter: parseInt(response.headers.get("Retry-After") || "5"),
         progress: data.progress,
       });
