@@ -89,7 +89,7 @@ EXPOSE 3000
     {
       "class_name": "Sandbox",
       "image": "./Dockerfile",
-      "max_instances": 1
+      "max_instances": 20
     }
   ],
   "durable_objects": {
