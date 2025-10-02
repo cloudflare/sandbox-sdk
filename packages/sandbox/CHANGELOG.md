@@ -1,5 +1,11 @@
 # @cloudflare/sandbox
 
+## 0.3.3
+
+### Patch Changes
+
+- [#83](https://github.com/cloudflare/sandbox-sdk/pull/83) [`eec5bb6`](https://github.com/cloudflare/sandbox-sdk/commit/eec5bb6203dd5d775b4b54e91c26de25eeb767ce) Thanks [@mikenomitch](https://github.com/mikenomitch)! - Bump containers package version
+
 ## 0.3.2
 
 ### Patch Changes
