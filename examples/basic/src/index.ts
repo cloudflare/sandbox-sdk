@@ -1,5 +1,4 @@
 import { getSandbox, proxyToSandbox, type Sandbox } from "@cloudflare/sandbox";
-import { codeExamples } from "../shared/examples";
 import {
   executeCommand,
   executeCommandStream,
@@ -12,7 +11,6 @@ import {
   streamProcessLogs,
   unexposePort,
   readFile,
-  listFiles,
   deleteFile,
   renameFile,
   moveFile,
@@ -23,7 +21,6 @@ import {
   setupVue,
   setupStatic,
 } from "./endpoints";
-import { createSession, executeCell, deleteSession } from "./endpoints/notebook";
 import { corsHeaders, errorResponse, jsonResponse, parseJsonBody } from "./http";
 
 export { Sandbox } from "@cloudflare/sandbox";
@@ -68,19 +65,6 @@ export default {
     try {
       const sandbox = getUserSandbox(env) as unknown as Sandbox<unknown>;
 
-      // Notebook API endpoints
-      if (pathname === "/api/notebook/session" && request.method === "POST") {
-        return await createSession(sandbox, request);
-      }
-
-      if (pathname === "/api/notebook/execute" && request.method === "POST") {
-        return await executeCell(sandbox, request);
-      }
-
-      if (pathname === "/api/notebook/session" && request.method === "DELETE") {
-        return await deleteSession(sandbox, request);
-      }
-
       // Command Execution API
       if (pathname === "/api/execute" && request.method === "POST") {
         return await executeCommand(sandbox, request);
@@ -91,7 +75,7 @@ export default {
         return await executeCommandStream(sandbox, request);
       }
 
-      // Process Management APIs
+      // Process Management APIs - Check if methods exist
       if (pathname === "/api/process/list" && request.method === "GET") {
         return await listProcesses(sandbox);
       }
@@ -109,7 +93,7 @@ export default {
       }
 
       if (pathname.startsWith("/api/process/") && pathname.endsWith("/stream") && request.method === "GET") {
-        return await streamProcessLogs(sandbox, pathname, request);
+        return await streamProcessLogs(sandbox, pathname);
       }
 
       if (pathname.startsWith("/api/process/") && request.method === "GET") {
@@ -149,10 +133,6 @@ export default {
         return await readFile(sandbox, request);
       }
 
-      if (pathname === "/api/list-files" && request.method === "POST") {
-        return await listFiles(sandbox, request);
-      }
-
       if (pathname === "/api/delete" && request.method === "POST") {
         return await deleteFile(sandbox, request);
       }
@@ -190,108 +170,22 @@ export default {
         return await setupStatic(sandbox, request);
       }
 
-      // Helper function to run code examples
-      async function runExample(exampleName: keyof typeof codeExamples) {
-        try {
-          const example = codeExamples[exampleName];
-          const ctx = await sandbox.createCodeContext({ language: example.language });
-          const execution = await sandbox.runCode(example.code, { context: ctx });
-          
-          const result: any = {
-            stdout: execution.logs.stdout.join('\n'),
-            stderr: execution.logs.stderr.join('\n'),
-            error: execution.error || null
-          };
-          
-          // Process rich outputs - collect ALL outputs, not just the first
-          if (execution.results && execution.results.length > 0) {
-            // For multiple outputs (e.g., multiple plots), collect them all
-            const charts: string[] = [];
-            const htmlOutputs: string[] = [];
-            const latexOutputs: string[] = [];
-            const markdownOutputs: string[] = [];
-            
-            for (const output of execution.results) {
-              // Images (rename to user-friendly "chart")
-              if (output.png && !result.chart) {
-                result.chart = `data:image/png;base64,${output.png}`;
-              } else if (output.png) {
-                charts.push(`data:image/png;base64,${output.png}`);
-              }
-              
-              // SVG images
-              if (output.svg && !result.svg) {
-                result.svg = output.svg;
-              }
-              
-              // HTML content (tables, etc.)
-              if (output.html && !result.html) {
-                result.html = output.html;
-              } else if (output.html) {
-                htmlOutputs.push(output.html);
-              }
-              
-              // JSON structured data
-              if (output.json && !result.json) {
-                result.json = output.json;
-              }
-              
-              // LaTeX formulas - collect all of them
-              if (output.latex) {
-                latexOutputs.push(output.latex);
-              }
-              
-              // Markdown formatted text - collect all of them  
-              if (output.markdown) {
-                markdownOutputs.push(output.markdown);
-              }
-              
-              // Plain text - only include if we don't have other rich outputs
-              if (output.text && !result.text && !result.json && !result.html) {
-                result.text = output.text;
-              }
-            }
-            
-            // If we have multiple charts, include them
-            if (charts.length > 0) {
-              result.additionalCharts = charts;
-            }
-            
-            // Combine all LaTeX outputs
-            if (latexOutputs.length > 0) {
-              result.latex = latexOutputs.join('\n\n');
-            }
-            
-            // Combine all Markdown outputs
-            if (markdownOutputs.length > 0) {
-              result.markdown = markdownOutputs.join('\n\n');
-            }
-          }
-          
-          return jsonResponse(result);
-        } catch (error: any) {
-          return errorResponse(error.message || "Failed to run example", 500);
-        }
+      // Session Management APIs
+      if (pathname === "/api/session/create" && request.method === "POST") {
+        const body = await parseJsonBody(request);
+        const sessionId = body.sessionId || `session_${Date.now()}_${generateSecureRandomString()}`;
+
+        // Sessions are managed automatically by the SDK, just return the ID
+        return jsonResponse(sessionId);
       }
 
-      // Code Interpreter Example APIs - Map endpoints to example names
-      const exampleEndpoints: Record<string, keyof typeof codeExamples> = {
-        "/api/examples/stdout-stderr": "stdout-stderr",
-        "/api/examples/html-table": "html-table",
-        "/api/examples/chart-png": "chart-png",
-        "/api/examples/json-data": "json-data",
-        "/api/examples/latex-math": "latex-math",
-        "/api/examples/markdown-rich": "markdown-rich",
-        "/api/examples/multiple-outputs": "multiple-outputs",
-        "/api/examples/javascript-example": "javascript-example",
-        "/api/examples/typescript-example": "typescript-example",
-        "/api/examples/error-handling": "error-handling"
-      };
+      if (pathname.startsWith("/api/session/clear/") && request.method === "POST") {
+        const sessionId = pathname.split("/").pop();
 
-      if (request.method === "GET" && exampleEndpoints[pathname]) {
-        return runExample(exampleEndpoints[pathname]);
+        // In a real implementation, you might want to clean up session state
+        // For now, just return success
+        return jsonResponse({ message: "Session cleared", sessionId });
       }
-
 
       // Health check endpoint
       if (pathname === "/health") {
@@ -311,7 +205,6 @@ export default {
             "GET /api/exposed-ports - List exposed ports",
             "POST /api/write - Write file",
             "POST /api/read - Read file",
-            "POST /api/list-files - List files in directory",
             "POST /api/delete - Delete file",
             "POST /api/rename - Rename file",
             "POST /api/move - Move file",
@@ -320,14 +213,7 @@ export default {
             "POST /api/templates/nextjs - Setup Next.js project",
             "POST /api/templates/react - Setup React project",
             "POST /api/templates/vue - Setup Vue project",
-            "POST /api/templates/static - Setup static site",
-            "POST /api/notebook/session - Create notebook session",
-            "POST /api/notebook/execute - Execute notebook cell",
-            "DELETE /api/notebook/session - Delete notebook session",
-            "GET /api/examples/basic-python - Basic Python example",
-            "GET /api/examples/chart - Chart generation example",
-            "GET /api/examples/javascript - JavaScript execution example",
-            "GET /api/examples/error - Error handling example",
+            "POST /api/templates/static - Setup static site"
           ]
         });
       }
@@ -351,29 +237,6 @@ export default {
             error: error.message
           }, 202); // 202 Accepted - processing in progress
         }
-      }
-
-      // Session Management APIs
-      if (pathname === "/api/session/create" && request.method === "POST") {
-        const body = await parseJsonBody(request);
-        const { name, env, cwd, isolation = true } = body;
-
-        const session = await sandbox.createSession({
-          id: name || `session_${Date.now()}_${generateSecureRandomString()}`,
-          env,
-          cwd,
-          isolation
-        });
-
-        return jsonResponse({ sessionId: session.id });
-      }
-
-      if (pathname.startsWith("/api/session/clear/") && request.method === "POST") {
-        const sessionId = pathname.split("/").pop();
-
-        // Note: The current SDK doesn't expose a direct session cleanup method
-        // Sessions are automatically cleaned up by the container lifecycle
-        return jsonResponse({ message: "Session cleanup initiated", sessionId });
       }
 
       // Fallback: serve static assets for all other requests

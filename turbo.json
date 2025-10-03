@@ -1,0 +1,100 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "globalEnv": ["NODE_ENV"],
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**"],
+      "inputs": [
+        "src/**/*.ts",
+        "src/**/*.tsx",
+        "package.json",
+        "tsconfig.json",
+        "tsconfig.*.json",
+        "wrangler.jsonc",
+        "Dockerfile"
+      ],
+      "env": ["NODE_ENV"]
+    },
+    "test": {
+      "dependsOn": ["test:unit", "test:integration"],
+      "outputs": ["coverage/**"]
+    },
+    "test:unit": {
+      "outputs": ["coverage/**"],
+      "inputs": [
+        "src/**/*.ts",
+        "src/__tests__/**/*.ts",
+        "vitest.unit.config.ts",
+        "vitest.*.config.ts"
+      ],
+      "env": ["NODE_ENV", "VITEST"]
+    },
+    "test:integration": {
+      "dependsOn": ["^build"],
+      "outputs": ["coverage/**"],
+      "inputs": [
+        "__tests__/**/*.ts",
+        "vitest.config.ts",
+        "vitest.*.config.ts"
+      ],
+      "env": ["NODE_ENV", "VITEST"]
+    },
+    "test:coverage": {
+      "dependsOn": ["build"],
+      "outputs": ["coverage/**"],
+      "env": ["NODE_ENV", "VITEST"]
+    },
+    "typecheck": {
+      "dependsOn": ["^build"],
+      "outputs": [],
+      "inputs": [
+        "src/**/*.ts",
+        "tsconfig.json",
+        "tsconfig.*.json"
+      ]
+    },
+    "check": {
+      "dependsOn": ["typecheck"],
+      "outputs": []
+    },
+    "docker:local": {
+      "dependsOn": ["^build"],
+      "cache": false,
+      "outputs": [],
+      "inputs": ["Dockerfile", "wrangler.jsonc"]
+    },
+    "docker:publish": {
+      "dependsOn": ["^build"],
+      "cache": false,
+      "outputs": [],
+      "inputs": ["Dockerfile", "wrangler.jsonc"]
+    },
+    "docker:publish:beta": {
+      "dependsOn": ["^build"],
+      "cache": false,
+      "outputs": [],
+      "inputs": ["Dockerfile", "wrangler.jsonc"]
+    },
+    "dev": {
+      "cache": false,
+      "persistent": true
+    },
+    "start": {
+      "cache": false,
+      "persistent": true
+    },
+    "deploy": {
+      "dependsOn": ["^build"],
+      "cache": false,
+      "outputs": []
+    },
+    "clean": {
+      "cache": false
+    }
+  },
+  "globalDependencies": [
+    "tsconfig.base.json",
+    "biome.json"
+  ]
+}

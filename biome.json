@@ -24,7 +24,9 @@
       "!**/wrangler.jsonc",
       "!./tsconfig.json",
       "!**/tsconfig.json",
-      "!**/normalize.css"
+      "!**/normalize.css",
+      "!coverage",
+      "!**/coverage"
     ]
   },
   "formatter": {

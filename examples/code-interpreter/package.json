@@ -14,10 +14,10 @@
   "license": "MIT",
   "devDependencies": {
     "typescript": "^5.5.2",
-    "wrangler": "^4.27.0"
+    "wrangler": "^4.26.0"
   },
   "dependencies": {
-    "@cloudflare/sandbox": "^0.3.2",
+    "@cloudflare/sandbox": "*",
     "openai": "^5.12.0"
   }
 }

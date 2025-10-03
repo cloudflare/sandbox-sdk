@@ -45,44 +45,75 @@ Thank you for your interest in contributing to the Cloudflare Sandbox SDK! This 
 
 ### Project Structure
 
+This is a Turborepo monorepo with multiple packages:
+
 ```
 sandbox-sdk/
 ├── packages/
-│   └── sandbox/              # Main SDK package
-│       ├── src/              # SDK source code
-│       ├── container_src/    # Container runtime code (uses Bun)
-│       └── Dockerfile        # Container image definition
+│   ├── sandbox/              # Main SDK package (@cloudflare/sandbox)
+│   │   ├── src/             # Client SDK + Durable Object
+│   │   ├── container_src/   # Container runtime code (uses Bun)
+│   │   └── Dockerfile       # Container image definition
+│   ├── sandbox-container/    # Container runtime package (@repo/sandbox-container)
+│   └── shared-types/        # Shared TypeScript types (@repo/shared-types)
+├── tooling/
+│   ├── typescript-config/    # Shared TypeScript configurations
+│   └── vitest-config/       # Shared Vitest configurations
 ├── examples/
-│   └── basic/                # Example implementation
-├── scripts/                  # Build and development scripts
+│   ├── basic/               # Basic usage example
+│   └── code-interpreter/    # Code interpreter example
 └── package.json             # Workspace configuration
 ```
 
 ### Development Workflow
 
 1. **Making Changes**
-   - The SDK code is in `packages/sandbox/src/`
+   - SDK code is in `packages/sandbox/src/`
    - Container runtime code is in `packages/sandbox/container_src/`
-   - Example code is in `examples/basic/`
+   - Shared types are in `packages/shared-types/src/`
+   - Example code is in `examples/`
 
 2. **Running Tests**
    ```bash
+   # Run all tests (Turborepo handles parallelization)
    npm test
+
+   # Run tests for specific package
+   npm test -w @cloudflare/sandbox
+
+   # Run specific test suites
+   npm run test:unit           # Fast unit tests
+   npm run test:integration    # Integration tests
    ```
 
 3. **Type Checking**
    ```bash
+   # Check all packages
    npm run typecheck
+
+   # Check specific package
+   npm run typecheck -w @cloudflare/sandbox
    ```
 
 4. **Linting**
    ```bash
+   # Lint and type check all packages
    npm run check
+
+   # Auto-fix linting issues
+   npm run fix
    ```
 
 5. **Building**
    ```bash
+   # Build all packages (Turborepo handles dependencies)
    npm run build
+
+   # Build specific package
+   npm run build -w @cloudflare/sandbox
+
+   # Second build should be nearly instant (FULL TURBO)
+   npm run build  # ~43ms with cache hit
    ```
 
 ### Testing Locally

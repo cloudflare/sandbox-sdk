@@ -1,40 +1,7 @@
 import type React from "react";
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import "katex/dist/katex.min.css";
 import "./style.css";
-import { codeExamples } from "../shared/examples";
-import { LaTeXRenderer } from "./components/LaTeXRenderer";
-import { MarkdownRenderer } from "./components/MarkdownRenderer";
-
-// Type definitions
-interface FileInfo {
-  name: string;
-  absolutePath: string;
-  relativePath: string;
-  type: 'file' | 'directory' | 'symlink' | 'other';
-  size: number;
-  modifiedAt: string;
-  mode: string;
-  permissions: {
-    readable: boolean;
-    writable: boolean;
-    executable: boolean;
-  };
-}
-
-interface ListFilesOptions {
-  recursive?: boolean;
-  includeHidden?: boolean;
-}
-
-interface ListFilesResponse {
-  success: boolean;
-  path: string;
-  files: FileInfo[];
-  count: number;
-  timestamp: string;
-}
 
 // Simple API client to replace direct HttpClient usage
 class SandboxApiClient {
@@ -182,14 +149,13 @@ class SandboxApiClient {
     });
   }
 
-  async *streamProcessLogs(processId: string, options?: { signal?: AbortSignal }): AsyncGenerator<any> {
+  async *streamProcessLogs(processId: string): AsyncGenerator<any> {
     const response = await fetch(
       `${this.baseUrl}/api/process/${processId}/stream`,
       {
         headers: {
           Accept: "text/event-stream",
         },
-        signal: options?.signal,  // Pass the abort signal to fetch
       }
     );
 
@@ -275,13 +241,6 @@ class SandboxApiClient {
     return this.doFetch("/api/move", {
       method: "POST",
       body: JSON.stringify({ sourcePath, destinationPath }),
-    });
-  }
-
-  async listFiles(path: string, options: ListFilesOptions = {}): Promise<ListFilesResponse> {
-    return this.doFetch("/api/list-files", {
-      method: "POST",
-      body: JSON.stringify({ path, options }),
     });
   }
 
@@ -412,71 +371,6 @@ class SandboxApiClient {
       method: "POST",
     });
   }
-
-  // Notebook API methods
-  async createNotebookSession(language: string = "python") {
-    return this.doFetch("/api/notebook/session", {
-      method: "POST",
-      body: JSON.stringify({ language }),
-    });
-  }
-
-  async *executeNotebookCell(
-    code: string,
-    sessionId: string,
-    language: string = "python"
-  ): AsyncGenerator<any> {
-    const response = await fetch(`${this.baseUrl}/api/notebook/execute`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "text/event-stream",
-      },
-      body: JSON.stringify({ code, sessionId, language }),
-    });
-
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-
-    const reader = response.body!.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-
-        for (const line of lines) {
-          if (line.startsWith("data: ")) {
-            const data = line.slice(6);
-            if (data === "[DONE]") continue;
-
-            try {
-              const event = JSON.parse(data);
-              yield event;
-            } catch (e) {
-              console.warn("Failed to parse SSE event:", line, e);
-            }
-          }
-        }
-      }
-    } finally {
-      reader.releaseLock();
-    }
-  }
-
-  async deleteNotebookSession(sessionId: string) {
-    return this.doFetch("/api/notebook/session", {
-      method: "DELETE",
-      body: JSON.stringify({ sessionId }),
-    });
-  }
 }
 
 interface CommandResult {
@@ -489,14 +383,7 @@ interface CommandResult {
   timestamp: Date;
 }
 
-type TabType =
-  | "commands"
-  | "processes"
-  | "ports"
-  | "streaming"
-  | "files"
-  | "notebook"
-  | "examples";
+type TabType = "commands" | "processes" | "ports" | "streaming" | "files";
 
 interface ProcessInfo {
   id: string;
@@ -1426,10 +1313,6 @@ function FilesTab({
   const [moveSourcePath, setMoveSourcePath] = useState("");
   const [moveDestPath, setMoveDestPath] = useState("");
   const [deleteFilePath, setDeleteFilePath] = useState("");
-  const [listPath, setListPath] = useState("/workspace");
-  const [listRecursive, setListRecursive] = useState(false);
-  const [listHidden, setListHidden] = useState(false);
-  const [listedFiles, setListedFiles] = useState<FileInfo[]>([]);
 
   // Git Operations
   const [gitRepoUrl, setGitRepoUrl] = useState("");
@@ -1513,63 +1396,6 @@ function FilesTab({
     }
   };
 
-  const handleListFiles = async () => {
-    if (!client || !listPath.trim()) return;
-    try {
-      const result = await client.listFiles(listPath, {
-        recursive: listRecursive,
-        includeHidden: listHidden,
-      });
-      
-      // Sort files for proper tree display using relativePath
-      const sortedFiles = (result.files || []).sort((a, b) => {
-        // Use relativePath for cleaner sorting
-        const aSegments = a.relativePath.split('/').filter(s => s);
-        const bSegments = b.relativePath.split('/').filter(s => s);
-        
-        // Compare segment by segment
-        const minLength = Math.min(aSegments.length, bSegments.length);
-        
-        for (let i = 0; i < minLength; i++) {
-          // If we're at the last segment for either path
-          const aIsLast = i === aSegments.length - 1;
-          const bIsLast = i === bSegments.length - 1;
-          
-          // If one is a parent of the other
-          if (aIsLast && !bIsLast) {
-            // a is a parent directory of b (if a is a directory)
-            return a.type === 'directory' ? -1 : 1;
-          }
-          if (!aIsLast && bIsLast) {
-            // b is a parent directory of a (if b is a directory)
-            return b.type === 'directory' ? 1 : -1;
-          }
-          
-          // If both are at the same level (both last or both not last)
-          if (aIsLast && bIsLast) {
-            // Same directory level - directories first, then alphabetical
-            if (a.type === 'directory' && b.type !== 'directory') return -1;
-            if (a.type !== 'directory' && b.type === 'directory') return 1;
-          }
-          
-          // Compare the segments alphabetically
-          const segmentCompare = aSegments[i].localeCompare(bSegments[i]);
-          if (segmentCompare !== 0) return segmentCompare;
-        }
-        
-        // If we get here, one path is a prefix of the other
-        // The shorter path (parent) should come first
-        return aSegments.length - bSegments.length;
-      });
-      
-      setListedFiles(sortedFiles);
-      addResult("success", `Listed ${result.count || 0} files in: ${listPath}`);
-    } catch (error: any) {
-      addResult("error", `Failed to list files: ${error.message}`);
-      setListedFiles([]);
-    }
-  };
-
   const handleGitCheckout = async () => {
     if (!client || !gitRepoUrl.trim()) return;
     try {
@@ -1600,7 +1426,7 @@ function FilesTab({
           <div className="input-group">
             <input
               type="text"
-              placeholder="File path (e.g., /workspace/package.json)"
+              placeholder="File path (e.g., /app/package.json)"
               value={selectedFile || ""}
               onChange={(e) => setSelectedFile(e.target.value)}
               className="file-input"
@@ -1629,7 +1455,7 @@ function FilesTab({
           <div className="input-group">
             <input
               type="text"
-              placeholder="File path (e.g., /workspace/hello.txt)"
+              placeholder="File path (e.g., /app/hello.txt)"
               value={newFileName}
               onChange={(e) => setNewFileName(e.target.value)}
               className="file-input"
@@ -1659,7 +1485,7 @@ function FilesTab({
           <div className="input-group">
             <input
               type="text"
-              placeholder="Directory path (e.g., /workspace/src)"
+              placeholder="Directory path (e.g., /app/src)"
               value={newDirName}
               onChange={(e) => setNewDirName(e.target.value)}
               className="file-input"
@@ -1759,91 +1585,6 @@ function FilesTab({
               Delete
             </button>
           </div>
-        </div>
-
-        {/* List Files */}
-        <div className="operation-group">
-          <h3>List Files</h3>
-          <div className="input-group">
-            <input
-              type="text"
-              placeholder="Directory path (e.g., /workspace)"
-              value={listPath}
-              onChange={(e) => setListPath(e.target.value)}
-              className="file-input"
-            />
-            <button
-              onClick={handleListFiles}
-              disabled={!listPath.trim() || connectionStatus !== "connected"}
-              className="action-button"
-            >
-              List Files
-            </button>
-          </div>
-          <div className="list-options">
-            <label>
-              <input
-                type="checkbox"
-                checked={listRecursive}
-                onChange={(e) => setListRecursive(e.target.checked)}
-              />
-              Recursive
-            </label>
-            <label>
-              <input
-                type="checkbox"
-                checked={listHidden}
-                onChange={(e) => setListHidden(e.target.checked)}
-              />
-              Include Hidden
-            </label>
-          </div>
-          {listedFiles.length > 0 && (
-            <div className="file-list-results">
-              <h4>Files ({listedFiles.length}):</h4>
-              <div className="file-list">
-                {listedFiles.map((file, index) => {
-                  // Calculate indentation level using the relativePath field
-                  const depth = listRecursive ? (file.relativePath.split('/').filter(s => s).length - 1) : 0;
-                  
-                  // For directories, add a trailing slash for clarity
-                  const displayName = file.type === 'directory' ? `${file.name}/` : file.name;
-                  
-                  // Add tree-like prefix for better hierarchy visualization
-                  const treePrefix = depth > 0 ? '├── ' : '';
-                  
-                  return (
-                    <div 
-                      key={index} 
-                      className="file-item"
-                      style={{ 
-                        paddingLeft: `${depth * 16 + 8}px`,
-                        fontWeight: file.type === 'directory' ? '500' : 'normal'
-                      }}
-                    >
-                      {depth > 0 && <span className="tree-prefix">{treePrefix}</span>}
-                      <span className="file-icon">
-                        {file.type === 'directory' ? '📁' : 
-                         file.permissions.executable ? '⚙️' : '📄'}
-                      </span>
-                      <span className="file-mode">{file.mode}</span>
-                      <span className="file-name" title={file.absolutePath}>
-                        {displayName}
-                      </span>
-                      <span className="file-details">
-                        {file.type === 'file' && (
-                          <span className="file-size">{file.size.toLocaleString()} bytes</span>
-                        )}
-                        <span className="file-date">
-                          {new Date(file.modifiedAt).toLocaleDateString()}
-                        </span>
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
         </div>
       </div>
       {/* Git Operations */}
@@ -2196,12 +1937,6 @@ function StreamingTab({
       return;
 
     const streamId = `logs_${selectedProcessId}_${Date.now()}`;
-    
-    // Create an AbortController for this stream
-    const abortController = new AbortController();
-    
-    // Store the abort controller so it can be aborted when user clicks stop
-    streamAbortControllers.current.set(streamId, abortController);
 
     // Add stream to active streams
     const newStream: ActiveStream = {
@@ -2217,10 +1952,8 @@ function StreamingTab({
     setActiveStreams((prev) => [...prev, newStream]);
 
     try {
-      // Use the new streamProcessLogs AsyncIterable method with abort signal
-      const logStreamIterable = client.streamProcessLogs(selectedProcessId, {
-        signal: abortController.signal
-      });
+      // Use the new streamProcessLogs AsyncIterable method
+      const logStreamIterable = client.streamProcessLogs(selectedProcessId);
 
       for await (const logEvent of logStreamIterable) {
         const streamEvent: LogStreamEvent = {
@@ -2240,27 +1973,7 @@ function StreamingTab({
           )
         );
       }
-      
-      // Clean up abort controller when stream completes naturally
-      streamAbortControllers.current.delete(streamId);
     } catch (error) {
-      // Clean up abort controller on error
-      streamAbortControllers.current.delete(streamId);
-      
-      // Don't log abort errors or add error events for user cancellation
-      if (error instanceof Error && error.name === 'AbortError') {
-        console.log("Log streaming aborted by user");
-        // Just mark the stream as inactive without adding error event
-        setActiveStreams((prev) =>
-          prev.map((stream) =>
-            stream.id === streamId
-              ? { ...stream, isActive: false }
-              : stream
-          )
-        );
-        return;
-      }
-      
       console.error("Log streaming error:", error);
 
       const errorEvent: LogStreamEvent = {
@@ -2287,9 +2000,6 @@ function StreamingTab({
     }
   };
 
-  // Map to store abort controllers for active streams
-  const streamAbortControllers = useRef<Map<string, AbortController>>(new Map());
-  
   // Stop a stream
   const stopStream = (streamId: string) => {
     setActiveStreams((prev) =>
@@ -2297,13 +2007,6 @@ function StreamingTab({
         stream.id === streamId ? { ...stream, isActive: false } : stream
       )
     );
-    
-    // Abort the fetch if an abort controller exists
-    const controller = streamAbortControllers.current.get(streamId);
-    if (controller) {
-      controller.abort();
-      streamAbortControllers.current.delete(streamId);
-    }
   };
 
   // Clear a stream
@@ -2567,737 +2270,6 @@ function StreamingTab({
   );
 }
 
-interface NotebookCell {
-  id: string;
-  code: string;
-  output: any[];
-  status: "idle" | "running" | "completed" | "error";
-  executionCount: number;
-}
-
-function NotebookTab({
-  client,
-  connectionStatus,
-}: {
-  client: SandboxApiClient | null;
-  connectionStatus: "disconnected" | "connecting" | "connected";
-}) {
-  const [cells, setCells] = useState<NotebookCell[]>([]);
-  const [notebookSessionId, setNotebookSessionId] = useState<string | null>(
-    null
-  );
-  const [language, setLanguage] = useState<"python" | "javascript">("python");
-  const [activeCell, setActiveCell] = useState<string | null>(null);
-  const cellRefs = useRef<{ [key: string]: HTMLTextAreaElement | null }>({});
-
-  // Initialize notebook session
-  useEffect(() => {
-    const initSession = async () => {
-      if (!client || connectionStatus !== "connected") return;
-
-      try {
-        const session = await client.createNotebookSession(language);
-        setNotebookSessionId(session.sessionId);
-        // Add first cell automatically
-        addCell();
-      } catch (error) {
-        console.error("Failed to create notebook session:", error);
-      }
-    };
-
-    if (connectionStatus === "connected") {
-      initSession();
-    }
-
-    return () => {
-      if (notebookSessionId && client) {
-        client.deleteNotebookSession(notebookSessionId);
-      }
-    };
-  }, [client, connectionStatus, language]);
-
-  const addCell = () => {
-    const newCell: NotebookCell = {
-      id: `cell-${Date.now()}`,
-      code: "",
-      output: [],
-      status: "idle",
-      executionCount: 0,
-    };
-    setCells((prev) => [...prev, newCell]);
-
-    // Focus new cell after render
-    setTimeout(() => {
-      const textarea = cellRefs.current[newCell.id];
-      if (textarea) {
-        textarea.focus();
-      }
-    }, 100);
-  };
-
-  const deleteCell = (cellId: string) => {
-    setCells((prev) => prev.filter((cell) => cell.id !== cellId));
-  };
-
-  const updateCellCode = (cellId: string, code: string) => {
-    setCells((prev) =>
-      prev.map((cell) => (cell.id === cellId ? { ...cell, code } : cell))
-    );
-  };
-
-  const runCell = async (cellId: string, runAndAddNew: boolean = false) => {
-    if (!client || !notebookSessionId || connectionStatus !== "connected")
-      return;
-
-    const cell = cells.find((c) => c.id === cellId);
-    if (!cell || !cell.code.trim()) return;
-
-    // Update cell status
-    setCells((prev) =>
-      prev.map((c) =>
-        c.id === cellId
-          ? {
-              ...c,
-              status: "running",
-              output: [],
-              executionCount: c.executionCount + 1,
-            }
-          : c
-      )
-    );
-
-    try {
-      const outputs: any[] = [];
-
-      // Execute cell and collect outputs
-      for await (const event of client.executeNotebookCell(
-        cell.code,
-        notebookSessionId,
-        language
-      )) {
-        switch (event.type) {
-          case "stdout":
-            outputs.push({ type: "stdout", text: event.text });
-            break;
-          case "stderr":
-            outputs.push({ type: "stderr", text: event.text });
-            break;
-          case "result":
-            outputs.push({
-              type: "result",
-              data: event,
-              png: event.png,
-              html: event.html,
-              text: event.text,
-              json: event.json,
-            });
-            break;
-          case "error":
-            outputs.push({
-              type: "error",
-              ename: event.ename,
-              evalue: event.evalue,
-              traceback: event.traceback,
-            });
-            break;
-        }
-
-        // Update output in real-time
-        setCells((prev) =>
-          prev.map((c) =>
-            c.id === cellId ? { ...c, output: [...outputs] } : c
-          )
-        );
-      }
-
-      // Mark as completed
-      setCells((prev) =>
-        prev.map((c) => (c.id === cellId ? { ...c, status: "completed" } : c))
-      );
-
-      if (runAndAddNew) {
-        addCell();
-      }
-    } catch (error) {
-      console.error("Cell execution error:", error);
-      setCells((prev) =>
-        prev.map((c) =>
-          c.id === cellId
-            ? {
-                ...c,
-                status: "error",
-                output: [
-                  ...c.output,
-                  {
-                    type: "error",
-                    text: `Execution error: ${error}`,
-                  },
-                ],
-              }
-            : c
-        )
-      );
-    }
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent, cellId: string) => {
-    if (e.ctrlKey && e.key === "Enter") {
-      e.preventDefault();
-      runCell(cellId);
-    } else if (e.shiftKey && e.key === "Enter") {
-      e.preventDefault();
-      runCell(cellId, true);
-    }
-  };
-
-  const renderOutput = (output: any) => {
-    switch (output.type) {
-      case "stdout":
-        return <pre className="notebook-stdout">{output.text}</pre>;
-
-      case "stderr":
-        return <pre className="notebook-stderr">{output.text}</pre>;
-
-      case "error":
-        return (
-          <div className="notebook-error">
-            <div className="error-name">
-              {output.ename}: {output.evalue}
-            </div>
-            {output.traceback && (
-              <pre className="error-traceback">
-                {output.traceback.join("\n")}
-              </pre>
-            )}
-          </div>
-        );
-
-      case "result":
-        if (output.png) {
-          return (
-            <img
-              src={`data:image/png;base64,${output.png}`}
-              alt="Plot"
-              className="notebook-image"
-            />
-          );
-        }
-        if (output.html) {
-          return (
-            <div
-              dangerouslySetInnerHTML={{ __html: output.html }}
-              className="notebook-html"
-            />
-          );
-        }
-        if (output.json) {
-          return (
-            <pre className="notebook-json">
-              {JSON.stringify(output.json, null, 2)}
-            </pre>
-          );
-        }
-        if (output.text) {
-          return <pre className="notebook-text">{output.text}</pre>;
-        }
-        return null;
-
-      default:
-        return null;
-    }
-  };
-
-  const loadExample = (type: "plot" | "data" | "js") => {
-    const examples = {
-      plot: {
-        lang: "python" as const,
-        code: `# Create a beautiful visualization
-import matplotlib.pyplot as plt
-import numpy as np
-
-# Generate data
-x = np.linspace(0, 10, 100)
-y1 = np.sin(x)
-y2 = np.cos(x)
-
-# Create figure
-plt.figure(figsize=(10, 6))
-plt.plot(x, y1, 'b-', label='sin(x)', linewidth=2)
-plt.plot(x, y2, 'r--', label='cos(x)', linewidth=2)
-plt.fill_between(x, y1, y2, alpha=0.2)
-
-plt.title('Trigonometric Functions', fontsize=16)
-plt.xlabel('x', fontsize=12)
-plt.ylabel('y', fontsize=12)
-plt.legend(loc='upper right')
-plt.grid(True, alpha=0.3)
-plt.show()`,
-      },
-      data: {
-        lang: "python" as const,
-        code: `# Data analysis with pandas
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-
-# Create sample data
-np.random.seed(42)
-data = {
-    'Date': pd.date_range('2024-01-01', periods=30),
-    'Sales': np.random.randint(100, 500, 30),
-    'Customers': np.random.randint(20, 100, 30)
-}
-
-df = pd.DataFrame(data)
-df['Revenue'] = df['Sales'] * np.random.uniform(10, 20, 30)
-
-print("Sales Data Summary:")
-print(df.describe())
-
-# Create visualization
-fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8))
-
-# Sales over time
-ax1.plot(df['Date'], df['Sales'], 'b-', linewidth=2)
-ax1.set_title('Daily Sales')
-ax1.set_ylabel('Sales')
-ax1.grid(True, alpha=0.3)
-
-# Revenue distribution
-ax2.hist(df['Revenue'], bins=15, color='green', alpha=0.7, edgecolor='black')
-ax2.set_title('Revenue Distribution')
-ax2.set_xlabel('Revenue')
-ax2.set_ylabel('Frequency')
-
-plt.tight_layout()
-plt.show()
-
-# Show data table
-df.head()`,
-      },
-      js: {
-        lang: "javascript" as const,
-        code: `// JavaScript example with console output
-console.log("Hello from JavaScript!");
-
-// Generate fibonacci sequence
-function fibonacci(n) {
-    const sequence = [0, 1];
-    for (let i = 2; i < n; i++) {
-        sequence[i] = sequence[i-1] + sequence[i-2];
-    }
-    return sequence;
-}
-
-const fib = fibonacci(10);
-console.log("Fibonacci sequence:", fib);
-
-// Create a simple data structure
-const data = {
-    name: "Code Interpreter Demo",
-    features: ["Multi-language", "Rich outputs", "Persistent contexts"],
-    stats: {
-        languages: 2,
-        performance: "Edge-optimized",
-        latency: "<50ms"
-    }
-};
-
-console.log("\\nDemo Info:");
-console.log(JSON.stringify(data, null, 2));
-
-// Return a result
-{ fibonacci: fib, info: data }`,
-      },
-    };
-
-    const example = examples[type];
-
-    // Change language if needed
-    if (example.lang !== language) {
-      setLanguage(example.lang);
-    }
-
-    // Add cell with example code
-    const newCell: NotebookCell = {
-      id: `cell-${Date.now()}`,
-      code: example.code,
-      output: [],
-      status: "idle",
-      executionCount: 0,
-    };
-    setCells((prev) => [...prev, newCell]);
-  };
-
-  return (
-    <div className="notebook-tab">
-      <div className="notebook-header">
-        <h2>📓 Interactive Notebook</h2>
-        <div className="notebook-controls">
-          <select
-            value={language}
-            onChange={(e) =>
-              setLanguage(e.target.value as "python" | "javascript")
-            }
-            className="language-selector"
-          >
-            <option value="python">Python</option>
-            <option value="javascript">JavaScript</option>
-          </select>
-          <button onClick={addCell} className="btn btn-primary">
-            + Add Cell
-          </button>
-        </div>
-      </div>
-
-      <div className="example-buttons">
-        <button onClick={() => loadExample("plot")} className="btn btn-example">
-          📊 Plot Example
-        </button>
-        <button onClick={() => loadExample("data")} className="btn btn-example">
-          📈 Data Analysis
-        </button>
-        <button onClick={() => loadExample("js")} className="btn btn-example">
-          🟨 JavaScript
-        </button>
-      </div>
-
-      <div className="notebook-cells">
-        {cells.length === 0 ? (
-          <div className="notebook-welcome">
-            <h3>Welcome to Cloudflare Notebook</h3>
-            <p>
-              Click "Add Cell" to start coding, or try one of the examples
-              above!
-            </p>
-            <div className="shortcuts-info">
-              <h4>Keyboard Shortcuts:</h4>
-              <div>
-                <kbd>Ctrl</kbd>+<kbd>Enter</kbd> Run cell
-              </div>
-              <div>
-                <kbd>Shift</kbd>+<kbd>Enter</kbd> Run cell and add new
-              </div>
-            </div>
-          </div>
-        ) : (
-          cells.map((cell, index) => (
-            <div
-              key={cell.id}
-              className={`notebook-cell ${cell.status} ${
-                activeCell === cell.id ? "active" : ""
-              }`}
-            >
-              <div className="cell-header">
-                <span className="cell-number">[{index + 1}]</span>
-                <div className="cell-actions">
-                  <button
-                    onClick={() => runCell(cell.id)}
-                    disabled={!cell.code.trim() || cell.status === "running"}
-                    className="btn btn-run"
-                  >
-                    {cell.status === "running" ? "⏳" : "▶"} Run
-                  </button>
-                  <button
-                    onClick={() => deleteCell(cell.id)}
-                    className="btn btn-delete"
-                  >
-                    🗑️
-                  </button>
-                </div>
-              </div>
-
-              <div className="cell-editor">
-                <textarea
-                  ref={(el) => {
-                    cellRefs.current[cell.id] = el;
-                  }}
-                  value={cell.code}
-                  onChange={(e) => updateCellCode(cell.id, e.target.value)}
-                  onKeyDown={(e) => handleKeyDown(e, cell.id)}
-                  onFocus={() => setActiveCell(cell.id)}
-                  onBlur={() => setActiveCell(null)}
-                  placeholder={`Enter ${language} code...`}
-                  className="cell-input"
-                  spellCheck={false}
-                />
-              </div>
-
-              {cell.output.length > 0 && (
-                <div className="cell-output">
-                  {cell.executionCount > 0 && (
-                    <span className="execution-count">
-                      [{cell.executionCount}]
-                    </span>
-                  )}
-                  <div className="output-content">
-                    {cell.output.map((output, idx) => (
-                      <div key={idx} className="output-item">
-                        {renderOutput(output)}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          ))
-        )}
-      </div>
-    </div>
-  );
-}
-
-function ExamplesTab({
-  client,
-  connectionStatus,
-}: {
-  client: SandboxApiClient | null;
-  connectionStatus: "disconnected" | "connecting" | "connected";
-}) {
-  const [results, setResults] = useState<{ [key: string]: any }>({});
-  const [loading, setLoading] = useState<{ [key: string]: boolean }>({});
-  const [sessionId, setSessionId] = useState<string | null>(null);
-
-  useEffect(() => {
-    // Create a session for the examples
-    const initSession = async () => {
-      if (client && connectionStatus === "connected") {
-        try {
-          const response = await fetch("/api/notebook/session", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ language: "python" }),
-          });
-          const data: { sessionId: string; language: string } =
-            await response.json();
-          setSessionId(data.sessionId);
-        } catch (error) {
-          console.error("Failed to create session:", error);
-        }
-      }
-    };
-    initSession();
-  }, [client, connectionStatus]);
-
-  const runExample = async (exampleName: string, endpoint: string) => {
-    if (!client || connectionStatus !== "connected") return;
-
-    setLoading((prev) => ({ ...prev, [exampleName]: true }));
-
-    try {
-      const response = await fetch(endpoint, {
-        method: "GET",
-        headers: { "Content-Type": "application/json" },
-      });
-      const data = await response.json();
-      setResults((prev) => ({ ...prev, [exampleName]: data }));
-    } catch (error: any) {
-      setResults((prev) => ({
-        ...prev,
-        [exampleName]: { error: error.message },
-      }));
-    } finally {
-      setLoading((prev) => ({ ...prev, [exampleName]: false }));
-    }
-  };
-
-  // Convert the imported examples to an array
-  const examples = Object.values(codeExamples);
-
-  return (
-    <div className="examples-tab">
-      <div className="examples-header">
-        <h2>Code Interpreter Examples</h2>
-        <p className="examples-description">
-          Try these examples to see the code interpreter in action. Each example
-          demonstrates different features.
-        </p>
-      </div>
-
-      <div className="examples-grid">
-        {examples.map((example) => (
-          <div key={example.name} className="example-card">
-            <h3>{example.title}</h3>
-            <p className="example-description">{example.description}</p>
-
-            <div className="example-code">
-              <pre>{example.code}</pre>
-            </div>
-
-            <button
-              className="btn btn-primary"
-              onClick={() => runExample(example.name, example.endpoint)}
-              disabled={
-                loading[example.name] || connectionStatus !== "connected"
-              }
-            >
-              {loading[example.name] ? "Running..." : "Run Example"}
-            </button>
-
-            {results[example.name] && (
-              <div className="example-result">
-                <h4>Result:</h4>
-
-                {results[example.name].error ? (
-                  <div className="error-output">
-                    {typeof results[example.name].error === "string" ? (
-                      <>
-                        <strong>Error:</strong> {results[example.name].error}
-                      </>
-                    ) : results[example.name].error.name ? (
-                      <>
-                        <strong>
-                          Error: {results[example.name].error.name}
-                        </strong>
-                        <p>{results[example.name].error.message}</p>
-                        {results[example.name].error.traceback && (
-                          <pre className="traceback">
-                            {results[example.name].error.traceback.join("\n")}
-                          </pre>
-                        )}
-                      </>
-                    ) : (
-                      <>
-                        <strong>Error:</strong>{" "}
-                        {JSON.stringify(results[example.name].error)}
-                      </>
-                    )}
-                  </div>
-                ) : (
-                  <>
-                    {/* Standard output */}
-                    {results[example.name].stdout && (
-                      <div className="output-section">
-                        <strong className="output-label">Output (stdout):</strong>
-                        <pre className="output-content">{results[example.name].stdout}</pre>
-                      </div>
-                    )}
-
-                    {/* Standard error */}
-                    {results[example.name].stderr && results[example.name].stderr.trim() && (
-                      <div className="output-section">
-                        <strong className="output-label" style={{ color: "#d73a49" }}>Error Output (stderr):</strong>
-                        <pre className="output-content" style={{ color: "#d73a49" }}>{results[example.name].stderr}</pre>
-                      </div>
-                    )}
-
-                    {/* For backwards compatibility with .output field */}
-                    {results[example.name].output && !results[example.name].stdout && (
-                      <div className="output-section">
-                        <strong className="output-label">Output:</strong>
-                        <pre className="output-content">{results[example.name].output}</pre>
-                      </div>
-                    )}
-
-                    {/* HTML content (tables, etc.) */}
-                    {results[example.name].html && (
-                      <div className="output-section">
-                        <strong className="output-label">HTML Output:</strong>
-                        <div
-                          className="output-content"
-                          dangerouslySetInnerHTML={{ __html: results[example.name].html }}
-                          style={{ 
-                            overflowX: "auto",
-                            maxWidth: "100%"
-                          }}
-                        />
-                      </div>
-                    )}
-
-                    {/* PNG Chart */}
-                    {results[example.name].chart && (
-                      <div className="output-section">
-                        <strong className="output-label">Chart (PNG):</strong>
-                        <div className="output-content image-container">
-                          <img
-                            src={results[example.name].chart}
-                            alt="Generated chart"
-                            style={{ maxWidth: "100%", height: "auto", display: "block" }}
-                          />
-                        </div>
-                      </div>
-                    )}
-
-                    {/* SVG Graphics */}
-                    {results[example.name].svg && (
-                      <div className="output-section">
-                        <strong className="output-label">SVG Graphics:</strong>
-                        <div
-                          className="output-content"
-                          dangerouslySetInnerHTML={{ __html: results[example.name].svg }}
-                          style={{ maxWidth: "100%" }}
-                        />
-                      </div>
-                    )}
-
-                    {/* JSON data */}
-                    {results[example.name].json && (
-                      <div className="output-section">
-                        <strong className="output-label">JSON Data:</strong>
-                        <pre className="output-content json-output">
-                          {JSON.stringify(
-                            results[example.name].json,
-                            null,
-                            2
-                          )}
-                        </pre>
-                      </div>
-                    )}
-
-                    {/* LaTeX formulas */}
-                    {results[example.name].latex && (
-                      <div className="output-section">
-                        <strong className="output-label">LaTeX Formula:</strong>
-                        <div className="output-content latex-output">
-                          <LaTeXRenderer content={results[example.name].latex} />
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Markdown formatted text */}
-                    {results[example.name].markdown && (
-                      <div className="output-section">
-                        <strong className="output-label">Markdown Output:</strong>
-                        <div className="output-content markdown-output">
-                          <MarkdownRenderer content={results[example.name].markdown} />
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Plain text (only if no other rich output) */}
-                    {results[example.name].text && (
-                      <div className="output-section">
-                        <strong className="output-label">Text Result:</strong>
-                        <pre className="output-content">{results[example.name].text}</pre>
-                      </div>
-                    )}
-                  </>
-                )}
-              </div>
-            )}
-          </div>
-        ))}
-      </div>
-
-      <div className="examples-advanced">
-        <h3>Try More Examples</h3>
-        <p>These examples just scratch the surface! You can:</p>
-        <ul>
-          <li>Process data with pandas DataFrames</li>
-          <li>Create complex visualizations with multiple subplots</li>
-          <li>Share data between Python and JavaScript contexts</li>
-          <li>Build interactive data analysis workflows</li>
-          <li>Generate reports with rich HTML output</li>
-        </ul>
-        <p>
-          Check out the <strong>Notebook</strong> tab to write and run your own
-          code interactively!
-        </p>
-      </div>
-    </div>
-  );
-}
-
 function SandboxTester() {
   const [activeTab, setActiveTab] = useState<TabType>("commands");
   const [client, setClient] = useState<SandboxApiClient | null>(null);
@@ -3306,14 +2278,9 @@ function SandboxTester() {
   >("disconnected");
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [commandInput, setCommandInput] = useState("");
-  const [commandOptions, setCommandOptions] = useState({
-    cwd: "",
-    env: "",
-  });
   const [results, setResults] = useState<CommandResult[]>([]);
   const [isExecuting, setIsExecuting] = useState(false);
   const resultsEndRef = useRef<HTMLDivElement>(null);
-  const commandInputRef = useRef<HTMLInputElement>(null);
 
   // Auto-scroll to bottom when new results are added
   useEffect(() => {
@@ -3449,36 +2416,11 @@ function SandboxTester() {
       };
       setResults((prev) => [...prev, newResult]);
 
-      // Parse command options
-      const options: {
-        sessionId?: string;
-        cwd?: string;
-        env?: Record<string, string>;
-      } = {
-        sessionId: sessionId || undefined,
-      };
-
-      if (commandOptions.cwd.trim()) {
-        options.cwd = commandOptions.cwd.trim();
-      }
-
-      if (commandOptions.env.trim()) {
-        const env: Record<string, string> = {};
-        commandOptions.env.split(",").forEach((pair) => {
-          const [key, value] = pair.split("=");
-          if (key && value) env[key.trim()] = value.trim();
-        });
-        options.env = env;
-      }
-
       // Execute the command
-      console.log(
-        "Executing command:",
-        trimmedCommand,
-        "with options:",
-        options
-      );
-      const result = await client.execute(trimmedCommand, [], options);
+      console.log("Executing command:", trimmedCommand);
+      const result = await client.execute(trimmedCommand, [], {
+        sessionId: sessionId || undefined,
+      });
       console.log("Result:", result);
 
       // Update the result with the response
@@ -3495,11 +2437,6 @@ function SandboxTester() {
       });
 
       setCommandInput("");
-
-      // Refocus the input for better UX
-      setTimeout(() => {
-        commandInputRef.current?.focus();
-      }, 0);
     } catch (error: any) {
       console.error("Failed to execute command:", error);
       setResults((prev) => {
@@ -3511,11 +2448,6 @@ function SandboxTester() {
         }
         return updated;
       });
-
-      // Refocus the input even on error
-      setTimeout(() => {
-        commandInputRef.current?.focus();
-      }, 100);
     } finally {
       setIsExecuting(false);
     }
@@ -3547,41 +2479,18 @@ function SandboxTester() {
       };
       setResults((prev) => [...prev, newResult]);
 
-      // Parse command options (same as regular execute)
-      const options: {
-        sessionId?: string;
-        cwd?: string;
-        env?: Record<string, string>;
-      } = {
-        sessionId: sessionId || undefined,
-      };
-
-      if (commandOptions.cwd.trim()) {
-        options.cwd = commandOptions.cwd.trim();
-      }
-
-      if (commandOptions.env.trim()) {
-        const env: Record<string, string> = {};
-        commandOptions.env.split(",").forEach((pair) => {
-          const [key, value] = pair.split("=");
-          if (key && value) env[key.trim()] = value.trim();
-        });
-        options.env = env;
-      }
-
       // Execute the command with streaming
-      console.log(
-        "Executing streaming command:",
-        trimmedCommand,
-        "with options:",
-        options
-      );
-      await client.executeStream(trimmedCommand, [], options);
+      console.log("Executing streaming command:", trimmedCommand);
+      await client.executeStream(trimmedCommand, [], {
+        sessionId: sessionId || undefined,
+      });
       const commandParts = trimmedCommand.split(" ");
       const cmd = commandParts[0];
       const args = commandParts.slice(1);
       // Get the async generator
-      const streamGenerator = client.execStream(cmd, args, options);
+      const streamGenerator = client.execStream(cmd, args, {
+        sessionId: sessionId || undefined,
+      });
       // Iterate through the stream events
       for await (const event of streamGenerator) {
         console.log("Stream event:", event);
@@ -3608,11 +2517,6 @@ function SandboxTester() {
       console.log("Streaming command completed");
 
       setCommandInput("");
-
-      // Refocus the input for better UX
-      setTimeout(() => {
-        commandInputRef.current?.focus();
-      }, 0);
     } catch (error: any) {
       console.error("Failed to execute streaming command:", error);
       setResults((prev) => {
@@ -3624,11 +2528,6 @@ function SandboxTester() {
         }
         return updated;
       });
-
-      // Refocus the input even on error
-      setTimeout(() => {
-        commandInputRef.current?.focus();
-      }, 100);
     } finally {
       setIsExecuting(false);
     }
@@ -3674,13 +2573,13 @@ function SandboxTester() {
   return (
     <div className="sandbox-tester-container">
       <div className="header">
-        <h1>Cloudflare Sandbox Notebook</h1>
+        <h1>Sandbox SDK Tester</h1>
         <div className={`connection-status ${connectionStatus}`}>
           {connectionStatus === "connected"
-            ? `Ready`
+            ? `Sandbox Ready (${sessionId})`
             : connectionStatus === "connecting"
-            ? "Initializing..."
-            : "Disconnected"}
+            ? "Initializing Sandbox..."
+            : "Sandbox Disconnected"}
         </div>
       </div>
 
@@ -3715,18 +2614,6 @@ function SandboxTester() {
         >
           📁 Files
         </button>
-        <button
-          className={`tab-button ${activeTab === "notebook" ? "active" : ""}`}
-          onClick={() => setActiveTab("notebook")}
-        >
-          📓 Notebook
-        </button>
-        <button
-          className={`tab-button ${activeTab === "examples" ? "active" : ""}`}
-          onClick={() => setActiveTab("examples")}
-        >
-          🧪 Examples
-        </button>
       </div>
 
       <div className="tab-content-area">
@@ -3735,7 +2622,6 @@ function SandboxTester() {
             <div className="command-bar">
               <span className="command-prompt">$</span>
               <input
-                ref={commandInputRef}
                 type="text"
                 className="command-input"
                 value={commandInput}
@@ -3769,38 +2655,6 @@ function SandboxTester() {
                 <button type="button" onClick={clearResults} className="btn">
                   Clear
                 </button>
-              </div>
-            </div>
-
-            {/* Command Options */}
-            <div className="command-options">
-              <div className="option-group">
-                <input
-                  type="text"
-                  placeholder="Working Directory (optional)"
-                  value={commandOptions.cwd}
-                  onChange={(e) =>
-                    setCommandOptions((prev) => ({
-                      ...prev,
-                      cwd: e.target.value,
-                    }))
-                  }
-                  className="option-input"
-                  disabled={isExecuting}
-                />
-                <input
-                  type="text"
-                  placeholder="Environment (KEY1=val1,KEY2=val2)"
-                  value={commandOptions.env}
-                  onChange={(e) =>
-                    setCommandOptions((prev) => ({
-                      ...prev,
-                      env: e.target.value,
-                    }))
-                  }
-                  className="option-input"
-                  disabled={isExecuting}
-                />
               </div>
             </div>
 
@@ -3915,13 +2769,6 @@ function SandboxTester() {
 
         {activeTab === "files" && (
           <FilesTab client={client} connectionStatus={connectionStatus} />
-        )}
-
-        {activeTab === "notebook" && (
-          <NotebookTab client={client} connectionStatus={connectionStatus} />
-        )}
-        {activeTab === "examples" && (
-          <ExamplesTab client={client} connectionStatus={connectionStatus} />
         )}
       </div>
     </div>

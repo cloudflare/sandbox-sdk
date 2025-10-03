@@ -1,75 +1,98 @@
-// biome-ignore-start assist/source/organizeImports: Need separate exports for deprecation warnings to work properly
-/**
- * @deprecated Use `InterpreterNotReadyError` instead. Will be removed in a future version.
- */
-export { InterpreterNotReadyError as JupyterNotReadyError } from "./errors";
+// Export the main Sandbox class and utilities
 
-/**
- * @deprecated Use `isInterpreterNotReadyError` instead. Will be removed in a future version.
- */
-export { isInterpreterNotReadyError as isJupyterNotReadyError } from "./errors";
-// biome-ignore-end assist/source/organizeImports: Need separate exports for deprecation warnings to work properly
 
-// Export API response types
+// Export the new client architecture
 export {
-  CodeExecutionError,
-  ContainerNotReadyError,
-  ContextNotFoundError,
-  InterpreterNotReadyError,
-  isInterpreterNotReadyError,
-  isRetryableError,
-  isSandboxError,
-  parseErrorResponse,
-  SandboxError,
-  type SandboxErrorResponse,
-  SandboxNetworkError,
-  ServiceUnavailableError,
-} from "./errors";
+  CommandClient,
+  FileClient,
+  GitClient,
+  PortClient,
+  ProcessClient,
+  SandboxClient,
+  UtilityClient
+} from "./clients";
+export { getSandbox, Sandbox } from "./sandbox";
 
-// Export code interpreter types
+// Legacy types are now imported from the new client architecture
+
+// Export all client types from new architecture
 export type {
-  ChartData,
-  CodeContext,
-  CreateContextOptions,
-  Execution,
-  ExecutionError,
-  OutputMessage,
-  Result,
-  RunCodeOptions,
-} from "./interpreter-types";
-// Export the implementations
-export { ResultImpl } from "./interpreter-types";
+  BaseApiResponse,
+  CommandsResponse, 
+  ContainerStub,
+  ErrorResponse,
+
+  // Command client types
+  ExecuteRequest,
+  ExecuteResponse as CommandExecuteResponse,
+  ExposedPortInfo,
+
+  // Port client types
+  ExposePortRequest,
+  ExposePortResponse,
+  FileOperationRequest,
+  FileOperationResponse,
+  GetExposedPortsResponse,
+  GetProcessLogsResponse,
+  GetProcessResponse,
+
+  // Git client types
+  GitCheckoutRequest,
+  GitCheckoutResponse,
+  // Base client types
+  HttpClientOptions as SandboxClientOptions,
+  KillAllProcessesResponse,
+  KillProcessResponse,
+  ListProcessesResponse,
+
+  // File client types
+  MkdirRequest,
+  MkdirResponse,
+
+  // Utility client types
+  PingResponse,
+  ProcessInfo,
+  ReadFileRequest,
+  ReadFileResponse,
+  RequestConfig,
+  ResponseHandler,
+  SessionRequest,
+
+  // Process client types
+  StartProcessRequest,
+  StartProcessResponse,
+  UnexposePortRequest,
+  UnexposePortResponse,
+  WriteFileRequest,
+  WriteFileResponse
+} from "./clients";
 // Re-export request handler utilities
 export {
-  proxyToSandbox,
-  type RouteInfo,
-  type SandboxEnv,
-} from "./request-handler";
-export { getSandbox, Sandbox } from "./sandbox";
+  proxyToSandbox, type RouteInfo, type SandboxEnv
+} from './request-handler';
 // Export SSE parser for converting ReadableStream to AsyncIterable
-export {
-  asyncIterableToSSEStream,
-  parseSSEStream,
-  responseToAsyncIterable,
-} from "./sse-parser";
+export { asyncIterableToSSEStream, parseSSEStream, responseToAsyncIterable } from "./sse-parser";
+// Export core SDK types for consumers
 export type {
-  DeleteFileResponse,
+  BaseExecOptions,
   ExecEvent,
   ExecOptions,
   ExecResult,
-  ExecuteResponse,
-  ExecutionSession,
-  GitCheckoutResponse,
   ISandbox,
-  ListFilesResponse,
   LogEvent,
-  MkdirResponse,
-  MoveFileResponse,
   Process,
   ProcessOptions,
   ProcessStatus,
-  ReadFileResponse,
-  RenameFileResponse,
-  StreamOptions,
-  WriteFileResponse,
-} from "./types";
+  StreamOptions
+} from "@repo/shared-types";
+// Export type guards for runtime validation
+export {
+  isExecResult,
+  isProcess,
+  isProcessStatus
+} from "@repo/shared-types";
+
+// Export interpreter functionality
+export { CodeInterpreter } from './interpreter.js';
+export type { InterpreterClient, ExecutionCallbacks } from './clients/interpreter-client.js';
+export * from '@repo/shared-types';

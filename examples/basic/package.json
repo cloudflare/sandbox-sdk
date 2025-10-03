@@ -11,12 +11,9 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "katex": "^0.16.22",
-    "react-katex": "^3.1.0",
-    "react-markdown": "^10.1.0",
-    "remark-gfm": "^4.0.1"
-  },
-  "devDependencies": {
-    "@types/react-katex": "^3.0.4"
+    "@cloudflare/sandbox": "*",
+    "react-markdown": "^9.0.1",
+    "react-katex": "^3.0.1",
+    "katex": "^0.16.9"
   }
 }

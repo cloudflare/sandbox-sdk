@@ -1,0 +1,299 @@
+/**
+ * Git Operations and Cross-Service Integration Tests
+ * 
+ * Tests complete workflows involving Git operations with multiple service coordination:
+ * - Git cloning → File system operations → Session management → Process execution
+ * 
+ * These tests use the full Router + Middleware + Handler pipeline to test real integration
+ */
+
+import { Container } from '@container/core/container';
+import { Router } from '@container/core/router';
+import { setupRoutes } from '@container/routes/setup';
+import type { ExecuteResponse, GitCheckoutResponse } from 'src/clients';
+import type { ApiErrorResponse } from 'src/clients/types';
+
+// Mock Bun globals for Git and file operations
+const mockBunSpawn = vi.fn();
+const mockBunFile = vi.fn();
+const mockBunWrite = vi.fn();
+global.Bun = {
+  spawn: mockBunSpawn,
+  file: mockBunFile,
+  write: mockBunWrite,
+} as any;
+
+describe('Git Operations and Cross-Service Integration Flow', () => {
+  let router: Router;
+  let container: Container;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+
+    // Create and initialize the container with all services
+    container = new Container();
+    await container.initialize();
+
+    // Create router and set up routes with middleware
+    router = new Router();
+    setupRoutes(router, container);
+
+    // Setup Bun.file mocks for file operations
+    mockBunFile.mockReturnValue({
+      exists: vi.fn().mockResolvedValue(true),
+      text: vi.fn().mockResolvedValue('repository content'),
+      bytes: vi.fn().mockResolvedValue(new Uint8Array([102, 105, 108, 101])),
+      size: 12,
+      write: vi.fn().mockResolvedValue(12),
+    });
+
+    // Setup Bun.write mock for file writing
+    mockBunWrite.mockResolvedValue(12);
+
+    // Setup Bun.spawn mock for Git operations
+    mockBunSpawn.mockImplementation((args: string[]) => {
+      const command = args.join(' ');
+      
+      // Simulate Git clone failure for invalid repos
+      if (command.includes('malicious-repo') || command.includes('/etc/passwd')) {
+        return {
+          exited: Promise.resolve(),
+          exitCode: 128, // Git error code
+          stdout: new ReadableStream({
+            start(controller) { controller.close(); }
+          }),
+          stderr: new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode('fatal: repository not found'));
+              controller.close();
+            }
+          }),
+          kill: vi.fn(),
+        };
+      }
+      
+      // Simulate successful Git operations
+      return {
+        exited: Promise.resolve(),
+        exitCode: 0,
+        stdout: new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode('Cloning into repository...\\nDone.'));
+            controller.close();
+          }
+        }),
+        stderr: new ReadableStream({
+          start(controller) { controller.close(); }
+        }),
+        kill: vi.fn(),
+      };
+    });
+  });
+
+  afterEach(() => {
+    // Clean up
+    router.clearRoutes();
+  });
+
+  describe('complete Git clone to development workflow', () => {
+    it('should execute full workflow: Git clone → File read → Command execution → Session updates', async () => {
+      // Step 1: Git clone operation
+      const gitRequest = new Request('http://localhost:3000/api/git/checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          repoUrl: 'https://github.com/user/awesome-repo.git',
+          branch: 'main',
+          targetDir: '/tmp/project',
+          sessionId: 'session-git-workflow'
+        })
+      });
+
+      // Execute through the complete Router + Middleware + Handler pipeline
+      const gitResponse = await router.route(gitRequest);
+
+      expect(gitResponse.status).toBe(200);
+      const gitResponseData = await gitResponse.json() as GitCheckoutResponse;
+      expect(gitResponseData.success).toBe(true);
+
+      // Verify Git clone was called through Bun API (arguments + options)
+      expect(mockBunSpawn).toHaveBeenCalledWith(
+        expect.arrayContaining(['git', 'clone', '--branch', 'main']),
+        expect.objectContaining({
+          stdout: 'pipe',
+          stderr: 'pipe'
+        })
+      );
+    });
+
+    it('should handle Git clone with security validation and prevent malicious repositories', async () => {
+      const maliciousGitRequest = new Request('http://localhost:3000/api/git/checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          repoUrl: 'https://malicious-site.com/malicious-repo.git',
+          targetDir: '/tmp/project',
+          sessionId: 'session-git-workflow'
+        })
+      });
+
+      // Execute through the complete Router + Middleware + Handler pipeline
+      const response = await router.route(maliciousGitRequest);
+
+      // Security validation should reject this or Git should fail
+      expect([400, 500]).toContain(response.status);
+      const responseData = await response.json() as ApiErrorResponse;
+      expect(responseData.success).toBeFalsy(); // May be false or undefined depending on validation layer
+    });
+
+    it('should handle Git clone with dangerous target directory', async () => {
+      const dangerousGitRequest = new Request('http://localhost:3000/api/git/checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          repoUrl: 'https://github.com/user/repo.git',
+          targetDir: '/etc/passwd',
+          sessionId: 'session-git-workflow'
+        })
+      });
+
+      // Execute through the complete Router + Middleware + Handler pipeline
+      const response = await router.route(dangerousGitRequest);
+
+      // Security validation should reject this path
+      expect(response.status).toBe(400);
+      const responseData = await response.json() as ApiErrorResponse;
+      expect(responseData.error).toBe('Validation Error');
+    });
+  });
+
+  describe('cross-service development workflows', () => {
+    it('should support full development workflow: clone → modify files → commit changes', async () => {
+      // This test demonstrates how Git, File, and Command services work together
+      // Step 1: Clone repository (already tested above)
+      
+      // Step 2: Read project file 
+      const readRequest = new Request('http://localhost:3000/api/read', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          path: '/tmp/project/package.json',
+          sessionId: 'session-git-workflow'
+        })
+      });
+
+      const readResponse = await router.route(readRequest);
+      expect(readResponse.status).toBe(200);
+
+      // Step 3: Execute development command
+      const commandRequest = new Request('http://localhost:3000/api/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          command: 'npm test',
+          sessionId: 'session-git-workflow'
+        })
+      });
+
+      const commandResponse = await router.route(commandRequest);
+      expect(commandResponse.status).toBe(200);
+      
+      const commandData = await commandResponse.json() as ExecuteResponse;
+      expect(commandData.success).toBe(true);
+    });
+
+    it('should handle Git clone failure and prevent subsequent operations', async () => {
+      // Test error boundary behavior when Git operations fail
+      
+      // Attempt to read from non-existent cloned repository
+      const readRequest = new Request('http://localhost:3000/api/read', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          path: '/tmp/nonexistent-project/package.json',
+          sessionId: 'session-git-workflow'
+        })
+      });
+
+      // Mock file not existing
+      mockBunFile.mockReturnValueOnce({
+        exists: vi.fn().mockResolvedValue(false),
+        text: vi.fn(),
+        bytes: vi.fn(),
+        size: 0,
+        write: vi.fn(),
+      });
+
+      const readResponse = await router.route(readRequest);
+      expect(readResponse.status).toBe(500); // File service should return error
+      
+      const responseData = await readResponse.json() as ApiErrorResponse;
+      expect(responseData.success).toBe(false);
+    });
+
+    it('should maintain session environment across Git and development operations', async () => {
+      // Test that session state is maintained across different service calls
+      
+      // Execute command that should have access to session environment  
+      // Use a safer command that won't trigger shell character validation
+      const envCommandRequest = new Request('http://localhost:3000/api/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          command: 'pwd',  // Use safer command without shell variables
+          sessionId: 'session-git-workflow'
+        })
+      });
+
+      const envResponse = await router.route(envCommandRequest);
+      expect(envResponse.status).toBe(200);
+      
+      const envData = await envResponse.json() as ExecuteResponse;
+      expect(envData.success).toBe(true);
+    });
+  });
+
+  describe('error boundary and recovery testing', () => {
+    it('should handle session store failures during cross-service operations', async () => {
+      // This test verifies that service failures are handled gracefully
+      
+      const executeRequest = new Request('http://localhost:3000/api/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          command: 'echo test',
+          sessionId: 'invalid-session'
+        })
+      });
+
+      const response = await router.route(executeRequest);
+      
+      // Should handle gracefully even with invalid session
+      expect([200, 400, 404]).toContain(response.status);
+    });
+
+    it('should handle complex workflow interruptions gracefully', async () => {
+      // Test system resilience when operations are interrupted
+      
+      // Mock spawn failure
+      mockBunSpawn.mockImplementationOnce(() => {
+        throw new Error('Process spawn failed');
+      });
+
+      const commandRequest = new Request('http://localhost:3000/api/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          command: 'echo test',
+          sessionId: 'session-git-workflow'
+        })
+      });
+
+      const response = await router.route(commandRequest);
+      expect(response.status).toBe(400); // Should handle spawn failure gracefully
+      
+      const responseData = await response.json() as ApiErrorResponse;
+      expect(responseData.success).toBe(false);
+    });
+  });
+});

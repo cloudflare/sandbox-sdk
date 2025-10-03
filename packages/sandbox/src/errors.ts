@@ -1,39 +1,377 @@
 /**
- * Standard error response from the sandbox API
+ * Error classes for the Cloudflare Sandbox SDK
+ * These are internal errors thrown by the SDK implementation
  */
-export interface SandboxErrorResponse {
-  error?: string;
-  status?: string;
-  progress?: number;
-}
 
 /**
- * Base error class for all Sandbox-related errors
+ * Strongly-typed operations for better type safety and IntelliSense
  */
-export class SandboxError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = this.constructor.name;
+export const SandboxOperation = {
+  // File Operations
+  FILE_READ: 'Read File',
+  FILE_WRITE: 'Write File',
+  FILE_DELETE: 'Delete File',
+  FILE_MOVE: 'Move File',
+  FILE_RENAME: 'Rename File',
+  DIRECTORY_CREATE: 'Create Directory',
 
-    // Maintains proper stack trace for where our error was thrown (only available on V8)
-    if (Error.captureStackTrace) {
-      Error.captureStackTrace(this, this.constructor);
-    }
+  // Command Operations
+  COMMAND_EXECUTE: 'Execute Command',
+  COMMAND_STREAM: 'Stream Command',
+
+  // Process Operations
+  PROCESS_START: 'Start Process',
+  PROCESS_KILL: 'Kill Process',
+  PROCESS_LIST: 'List Processes',
+  PROCESS_GET: 'Get Process',
+  PROCESS_LOGS: 'Get Process Logs',
+  PROCESS_STREAM_LOGS: 'Stream Process Logs',
+
+  // Port Operations
+  PORT_EXPOSE: 'Expose Port',
+  PORT_UNEXPOSE: 'Unexpose Port',
+  PORT_LIST: 'List Exposed Ports',
+  PORT_PROXY: 'Proxy Request',
+
+  // Git Operations
+  GIT_CLONE: 'Git Clone',
+  GIT_CHECKOUT: 'Git Checkout',
+  GIT_OPERATION: 'Git Operation',
+
+  // Code Interpreter Operations
+  CODE_EXECUTE: 'Execute Code',
+  CODE_CONTEXT_CREATE: 'Create Code Context',
+  CODE_CONTEXT_DELETE: 'Delete Code Context',
+  CODE_CONTEXT_LIST: 'List Code Contexts'
+} as const;
+
+export type SandboxOperationType = typeof SandboxOperation[keyof typeof SandboxOperation];
+
+export class SandboxError extends Error {
+  constructor(
+    message: string,
+    public code?: string,
+    public operation?: SandboxOperationType,
+    public details?: string,
+    public httpStatus?: number
+  ) {
+    super(message);
+    this.name = 'SandboxError';
+  }
+}
+
+export class ProcessNotFoundError extends SandboxError {
+  constructor(public processId: string) {
+    super(`Process not found: ${processId}`, 'PROCESS_NOT_FOUND', SandboxOperation.PROCESS_GET);
+    this.name = 'ProcessNotFoundError';
+  }
+}
+
+export class FileSystemError extends SandboxError {
+  constructor(
+    message: string,
+    public path: string,
+    code: string,
+    operation: SandboxOperationType,
+    details?: string,
+    httpStatus?: number
+  ) {
+    super(message, code, operation, details, httpStatus);
+    this.name = 'FileSystemError';
+  }
+}
+
+export class FileNotFoundError extends FileSystemError {
+  constructor(path: string, operation: SandboxOperationType = SandboxOperation.FILE_READ) {
+    super(
+      `File not found: ${path}`,
+      path,
+      'FILE_NOT_FOUND',
+      operation,
+      `The file or directory at "${path}" does not exist`,
+      404
+    );
+    this.name = 'FileNotFoundError';
+  }
+}
+
+export class PermissionDeniedError extends FileSystemError {
+  constructor(path: string, operation: SandboxOperationType = SandboxOperation.FILE_READ) {
+    super(
+      `Permission denied: ${path}`,
+      path,
+      'PERMISSION_DENIED',
+      operation,
+      `Insufficient permissions to access "${path}"`,
+      403
+    );
+    this.name = 'PermissionDeniedError';
+  }
+}
+
+export class FileExistsError extends FileSystemError {
+  constructor(path: string, operation: SandboxOperationType = SandboxOperation.FILE_WRITE) {
+    super(
+      `File already exists: ${path}`,
+      path,
+      'FILE_EXISTS',
+      operation,
+      `Cannot complete operation because "${path}" already exists`,
+      409
+    );
+    this.name = 'FileExistsError';
+  }
+}
+
+export class CommandError extends SandboxError {
+  constructor(
+    message: string,
+    public command: string,
+    code: string,
+    details?: string,
+    httpStatus?: number,
+    public exitCode?: number
+  ) {
+    super(message, code, SandboxOperation.COMMAND_EXECUTE, details, httpStatus);
+    this.name = 'CommandError';
+  }
+}
+
+export class CommandNotFoundError extends CommandError {
+  constructor(command: string) {
+    super(
+      `Command not found: ${command}`,
+      command,
+      'COMMAND_NOT_FOUND',
+      `The command "${command}" was not found in the system PATH`,
+      404
+    );
+    this.name = 'CommandNotFoundError';
+  }
+}
+
+export class ProcessError extends SandboxError {
+  constructor(
+    message: string,
+    public processId?: string,
+    code?: string,
+    operation?: SandboxOperationType,
+    details?: string,
+    httpStatus?: number
+  ) {
+    super(message, code, operation || SandboxOperation.PROCESS_GET, details, httpStatus);
+    this.name = 'ProcessError';
+  }
+}
+
+export class PortError extends SandboxError {
+  constructor(
+    message: string,
+    public port: number,
+    code: string,
+    operation: SandboxOperationType,
+    details?: string,
+    httpStatus?: number
+  ) {
+    super(message, code, operation, details, httpStatus);
+    this.name = 'PortError';
+  }
+}
+
+export class PortAlreadyExposedError extends PortError {
+  constructor(port: number) {
+    super(
+      `Port already exposed: ${port}`,
+      port,
+      'PORT_ALREADY_EXPOSED',
+      SandboxOperation.PORT_EXPOSE,
+      `Port ${port} is already exposed and cannot be exposed again`,
+      409
+    );
+    this.name = 'PortAlreadyExposedError';
+  }
+}
+
+export class PortNotExposedError extends PortError {
+  constructor(port: number, operation: SandboxOperationType = SandboxOperation.PORT_UNEXPOSE) {
+    super(
+      `Port not exposed: ${port}`,
+      port,
+      'PORT_NOT_EXPOSED',
+      operation,
+      `Port ${port} is not currently exposed`,
+      404
+    );
+    this.name = 'PortNotExposedError';
+  }
+}
+
+export class InvalidPortError extends PortError {
+  constructor(port: number, reason: string, operation: SandboxOperationType = SandboxOperation.PORT_EXPOSE) {
+    super(
+      `Invalid port: ${port}`,
+      port,
+      'INVALID_PORT_NUMBER',
+      operation,
+      reason,
+      400
+    );
+    this.name = 'InvalidPortError';
+  }
+}
+
+export class ServiceNotRespondingError extends PortError {
+  constructor(port: number) {
+    super(
+      `Service on port ${port} is not responding`,
+      port,
+      'SERVICE_NOT_RESPONDING',
+      SandboxOperation.PORT_PROXY,
+      `Failed to connect to service on port ${port}`,
+      502
+    );
+    this.name = 'ServiceNotRespondingError';
+  }
+}
+
+export class PortInUseError extends PortError {
+  constructor(port: number) {
+    super(
+      `Port in use: ${port}`,
+      port,
+      'PORT_IN_USE',
+      SandboxOperation.PORT_EXPOSE,
+      `Port ${port} is already in use by another service`,
+      409
+    );
+    this.name = 'PortInUseError';
+  }
+}
+
+export class GitError extends SandboxError {
+  constructor(
+    message: string,
+    public repository?: string,
+    public branch?: string,
+    code?: string,
+    operation?: SandboxOperationType,
+    details?: string,
+    httpStatus?: number
+  ) {
+    super(message, code, operation || SandboxOperation.GIT_OPERATION, details, httpStatus);
+    this.name = 'GitError';
+  }
+}
+
+export class GitRepositoryNotFoundError extends GitError {
+  constructor(repository: string) {
+    super(
+      `Git repository not found: ${repository}`,
+      repository,
+      undefined,
+      'GIT_REPOSITORY_NOT_FOUND',
+      SandboxOperation.GIT_CHECKOUT,
+      `Repository ${repository} does not exist or is not accessible`,
+      404
+    );
+    this.name = 'GitRepositoryNotFoundError';
+  }
+}
+
+export class GitAuthenticationError extends GitError {
+  constructor(repository: string) {
+    super(
+      `Git authentication failed: ${repository}`,
+      repository,
+      undefined,
+      'GIT_AUTH_FAILED',
+      SandboxOperation.GIT_CHECKOUT,
+      `Authentication failed for repository ${repository}`,
+      401
+    );
+    this.name = 'GitAuthenticationError';
+  }
+}
+
+export class GitBranchNotFoundError extends GitError {
+  constructor(branch: string, repository?: string) {
+    super(
+      `Git branch not found: ${branch}`,
+      repository,
+      branch,
+      'GIT_BRANCH_NOT_FOUND',
+      SandboxOperation.GIT_CHECKOUT,
+      `Branch "${branch}" does not exist in repository`,
+      404
+    );
+    this.name = 'GitBranchNotFoundError';
+  }
+}
+
+export class GitNetworkError extends GitError {
+  constructor(repository: string) {
+    super(
+      `Git network error: ${repository}`,
+      repository,
+      undefined,
+      'GIT_NETWORK_ERROR',
+      SandboxOperation.GIT_OPERATION,
+      `Network connectivity issue when accessing ${repository}`,
+      502
+    );
+    this.name = 'GitNetworkError';
+  }
+}
+
+export class GitCloneError extends GitError {
+  constructor(repository: string, reason?: string) {
+    super(
+      `Git clone failed: ${repository}`,
+      repository,
+      undefined,
+      'GIT_CLONE_FAILED',
+      SandboxOperation.GIT_CLONE,
+      reason || `Failed to clone repository ${repository}`,
+      500
+    );
+    this.name = 'GitCloneError';
+  }
+}
+
+export class GitCheckoutError extends GitError {
+  constructor(branch: string, repository?: string, reason?: string) {
+    super(
+      `Git checkout failed: ${branch}`,
+      repository,
+      branch,
+      'GIT_CHECKOUT_FAILED',
+      SandboxOperation.GIT_CHECKOUT,
+      reason || `Failed to checkout branch ${branch}`,
+      500
+    );
+    this.name = 'GitCheckoutError';
+  }
+}
+
+export class InvalidGitUrlError extends GitError {
+  constructor(url: string) {
+    super(
+      `Invalid Git URL: ${url}`,
+      url,
+      undefined,
+      'INVALID_GIT_URL',
+      SandboxOperation.GIT_OPERATION,
+      `Git URL "${url}" does not match expected format`,
+      400
+    );
+    this.name = 'InvalidGitUrlError';
   }
 }
 
 /**
  * Error thrown when interpreter functionality is requested but the service is still initializing.
- *
- * Note: With the current implementation, requests wait for interpreter to be ready.
- * This error is only thrown when:
- * 1. The request times out waiting for interpreter (default: 30 seconds)
- * 2. interpreter initialization actually fails
- *
- * Most requests will succeed after a delay, not throw this error.
  */
 export class InterpreterNotReadyError extends SandboxError {
-  public readonly code = "INTERPRETER_NOT_READY";
   public readonly retryAfter: number;
   public readonly progress?: number;
 
@@ -42,9 +380,11 @@ export class InterpreterNotReadyError extends SandboxError {
     options?: { retryAfter?: number; progress?: number }
   ) {
     super(
-      message ||
-        "Interpreter is still initializing. Please retry in a few seconds."
+      message || "Interpreter is still initializing. Please retry in a few seconds.",
+      "INTERPRETER_NOT_READY",
+      SandboxOperation.CODE_EXECUTE
     );
+    this.name = "InterpreterNotReadyError";
     this.retryAfter = options?.retryAfter || 5;
     this.progress = options?.progress;
   }
@@ -54,11 +394,15 @@ export class InterpreterNotReadyError extends SandboxError {
  * Error thrown when a context is not found
  */
 export class ContextNotFoundError extends SandboxError {
-  public readonly code = "CONTEXT_NOT_FOUND";
   public readonly contextId: string;
 
   constructor(contextId: string) {
-    super(`Context ${contextId} not found`);
+    super(
+      `Context ${contextId} not found`,
+      "CONTEXT_NOT_FOUND",
+      SandboxOperation.CODE_EXECUTE
+    );
+    this.name = "ContextNotFoundError";
     this.contextId = contextId;
   }
 }
@@ -67,7 +411,6 @@ export class ContextNotFoundError extends SandboxError {
  * Error thrown when code execution fails
  */
 export class CodeExecutionError extends SandboxError {
-  public readonly code = "CODE_EXECUTION_ERROR";
   public readonly executionError?: {
     ename?: string;
     evalue?: string;
@@ -75,145 +418,8 @@ export class CodeExecutionError extends SandboxError {
   };
 
   constructor(message: string, executionError?: any) {
-    super(message);
+    super(message, "CODE_EXECUTION_ERROR", SandboxOperation.CODE_EXECUTE);
+    this.name = "CodeExecutionError";
     this.executionError = executionError;
   }
-}
-
-/**
- * Error thrown when the sandbox container is not ready
- */
-export class ContainerNotReadyError extends SandboxError {
-  public readonly code = "CONTAINER_NOT_READY";
-
-  constructor(message?: string) {
-    super(
-      message ||
-        "Container is not ready. Please wait for initialization to complete."
-    );
-  }
-}
-
-/**
- * Error thrown when a network request to the sandbox fails
- */
-export class SandboxNetworkError extends SandboxError {
-  public readonly code = "NETWORK_ERROR";
-  public readonly statusCode?: number;
-  public readonly statusText?: string;
-
-  constructor(message: string, statusCode?: number, statusText?: string) {
-    super(message);
-    this.statusCode = statusCode;
-    this.statusText = statusText;
-  }
-}
-
-/**
- * Error thrown when service is temporarily unavailable (e.g., circuit breaker open)
- */
-export class ServiceUnavailableError extends SandboxError {
-  public readonly code = "SERVICE_UNAVAILABLE";
-  public readonly retryAfter?: number;
-
-  constructor(message?: string, retryAfter?: number) {
-    // Simple, user-friendly message without implementation details
-    super(message || "Service temporarily unavailable");
-    this.retryAfter = retryAfter;
-  }
-}
-
-/**
- * Type guard to check if an error is a InterpreterNotReadyError
- */
-export function isInterpreterNotReadyError(
-  error: unknown
-): error is InterpreterNotReadyError {
-  return error instanceof InterpreterNotReadyError;
-}
-
-/**
- * Type guard to check if an error is any SandboxError
- */
-export function isSandboxError(error: unknown): error is SandboxError {
-  return error instanceof SandboxError;
-}
-
-/**
- * Helper to determine if an error is retryable
- */
-export function isRetryableError(error: unknown): boolean {
-  if (
-    error instanceof InterpreterNotReadyError ||
-    error instanceof ContainerNotReadyError ||
-    error instanceof ServiceUnavailableError
-  ) {
-    return true;
-  }
-
-  if (error instanceof SandboxNetworkError) {
-    // Retry on 502, 503, 504 (gateway/service unavailable errors)
-    return error.statusCode
-      ? [502, 503, 504].includes(error.statusCode)
-      : false;
-  }
-
-  return false;
-}
-
-/**
- * Parse error response from the sandbox API and return appropriate error instance
- */
-export async function parseErrorResponse(
-  response: Response
-): Promise<SandboxError> {
-  let data: SandboxErrorResponse;
-
-  try {
-    data = (await response.json()) as SandboxErrorResponse;
-  } catch {
-    // If JSON parsing fails, return a generic network error
-    return new SandboxNetworkError(
-      `Request failed with status ${response.status}`,
-      response.status,
-      response.statusText
-    );
-  }
-
-  // Check for specific error types based on response
-  if (response.status === 503) {
-    // Circuit breaker error
-    if (data.status === "circuit_open") {
-      return new ServiceUnavailableError(
-        "Service temporarily unavailable",
-        parseInt(response.headers.get("Retry-After") || "30")
-      );
-    }
-
-    // Interpreter initialization error
-    if (data.status === "initializing") {
-      return new InterpreterNotReadyError(data.error, {
-        retryAfter: parseInt(response.headers.get("Retry-After") || "5"),
-        progress: data.progress,
-      });
-    }
-  }
-
-  // Check for context not found
-  if (
-    response.status === 404 &&
-    data.error?.includes("Context") &&
-    data.error?.includes("not found")
-  ) {
-    const contextId =
-      data.error.match(/Context (\S+) not found/)?.[1] || "unknown";
-    return new ContextNotFoundError(contextId);
-  }
-
-  // Default network error
-  return new SandboxNetworkError(
-    data.error || `Request failed with status ${response.status}`,
-    response.status,
-    response.statusText
-  );
 }
