@@ -36,9 +36,26 @@ interface ListFilesResponse {
   timestamp: string;
 }
 
+// Generate or retrieve a stable sandbox ID for this browser tab
+function getClientSandboxId(): string {
+  const storageKey = 'sandbox-client-id';
+
+  // Try to get existing ID from sessionStorage (persists across page reloads)
+  let sandboxId = sessionStorage.getItem(storageKey);
+
+  if (!sandboxId) {
+    // Generate new ID for this tab
+    sandboxId = `client-${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
+    sessionStorage.setItem(storageKey, sandboxId);
+  }
+
+  return sandboxId;
+}
+
 // Simple API client to replace direct HttpClient usage
 class SandboxApiClient {
   private baseUrl: string;
+  private sandboxId: string;
   private onCommandComplete?: (
     success: boolean,
     exitCode: number,
@@ -64,6 +81,7 @@ class SandboxApiClient {
     } = {}
   ) {
     this.baseUrl = options.baseUrl || window.location.origin;
+    this.sandboxId = getClientSandboxId();
     this.onCommandComplete = options.onCommandComplete;
     this.onCommandStart = options.onCommandStart;
     this.onError = options.onError;
@@ -73,6 +91,7 @@ class SandboxApiClient {
     const response = await fetch(`${this.baseUrl}${url}`, {
       headers: {
         "Content-Type": "application/json",
+        "X-Sandbox-Client-Id": this.sandboxId,
         ...options.headers,
       },
       ...options,

@@ -18,7 +18,7 @@
       "image": "./Dockerfile",
       "name": "sandbox",
       "max_instances": 5,
-      "instance_type": "standard-4"
+      "instance_type": "standard-2"
     }
   ],
   "durable_objects": {

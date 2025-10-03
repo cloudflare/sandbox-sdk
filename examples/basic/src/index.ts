@@ -41,12 +41,16 @@ type Env = {
 };
 
 // Helper to get sandbox instance with user-specific ID
-function getUserSandbox(env: Env) {
-  // For demo purposes, use a fixed sandbox ID. In production, you might extract from:
+function getUserSandbox(env: Env, request: Request) {
+  // Get client-provided sandbox ID from header (persists across page reloads, unique per tab)
+  const clientSandboxId = request.headers.get("X-Sandbox-Client-Id");
+
+  // Use client ID if provided, otherwise generate one
+  // In production, you would also use:
   // - Authentication headers
   // - URL parameters
   // - Session cookies
-  const sandboxId = "demo-user-sandbox";
+  const sandboxId = clientSandboxId || `sandbox-${Date.now()}-${generateSecureRandomString()}`;
   return getSandbox(env.Sandbox, sandboxId);
 }
 
@@ -66,7 +70,7 @@ export default {
     const pathname = url.pathname;
 
     try {
-      const sandbox = getUserSandbox(env) as unknown as Sandbox<unknown>;
+      const sandbox = getUserSandbox(env, request) as unknown as Sandbox<unknown>;
 
       // Notebook API endpoints
       if (pathname === "/api/notebook/session" && request.method === "POST") {
