@@ -46,7 +46,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private codeInterpreter: CodeInterpreter;
   private defaultSession: ExecutionSession | null = null;
 
-  constructor(ctx: DurableObjectState, env: Env) {
+  constructor(ctx: DurableObjectState<{}>, env: Env) {
     super(ctx, env);
     this.client = new InterpreterClient({
       onCommandComplete: (success, exitCode, _stdout, _stderr, command) => {
