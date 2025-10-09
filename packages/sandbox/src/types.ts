@@ -215,6 +215,54 @@ export interface StreamOptions extends BaseExecOptions {
   signal?: AbortSignal;
 }
 
+// File Streaming Types
+
+/**
+ * SSE events for file streaming
+ */
+export type FileStreamEvent =
+  | {
+      type: 'metadata';
+      mimeType: string;
+      size: number;
+      isBinary: boolean;
+      encoding: 'utf-8' | 'base64';
+    }
+  | {
+      type: 'chunk';
+      data: string; // base64 for binary, UTF-8 for text
+    }
+  | {
+      type: 'complete';
+      bytesRead: number;
+    }
+  | {
+      type: 'error';
+      error: string;
+    };
+
+/**
+ * File metadata from streaming
+ */
+export interface FileMetadata {
+  mimeType: string;
+  size: number;
+  isBinary: boolean;
+  encoding: 'utf-8' | 'base64';
+}
+
+/**
+ * File stream chunk - either string (text) or Uint8Array (binary, auto-decoded)
+ */
+export type FileChunk = string | Uint8Array;
+
+/**
+ * AsyncIterable of file chunks with metadata
+ */
+export interface FileStream extends AsyncIterable<FileChunk> {
+  metadata?: FileMetadata;
+}
+
 // Error Types
 
 export class SandboxError extends Error {
@@ -359,6 +407,7 @@ export interface ISandbox {
   renameFile(oldPath: string, newPath: string): Promise<RenameFileResponse>;
   moveFile(sourcePath: string, destinationPath: string): Promise<MoveFileResponse>;
   readFile(path: string, options?: { encoding?: string }): Promise<ReadFileResponse>;
+  readFileStream(path: string): Promise<ReadableStream<Uint8Array>>;
   listFiles(path: string, options?: { recursive?: boolean; includeHidden?: boolean }): Promise<ListFilesResponse>;
 
   // Port management
@@ -434,6 +483,26 @@ export interface ReadFileResponse {
   path: string;
   content: string;
   timestamp: string;
+
+  /**
+   * Encoding used for content (utf-8 for text, base64 for binary)
+   */
+  encoding?: 'utf-8' | 'base64';
+
+  /**
+   * Whether the file is detected as binary
+   */
+  isBinary?: boolean;
+
+  /**
+   * MIME type of the file (e.g., 'image/png', 'text/plain')
+   */
+  mimeType?: string;
+
+  /**
+   * File size in bytes
+   */
+  size?: number;
 }
 
 export interface DeleteFileResponse {

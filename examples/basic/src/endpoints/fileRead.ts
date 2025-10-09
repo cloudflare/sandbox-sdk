@@ -11,10 +11,14 @@ export async function readFile(sandbox: Sandbox<unknown>, request: Request) {
     }
 
     const result = await sandbox.readFile(path, { encoding });
-    return jsonResponse({ 
+    return jsonResponse({
       success: true,
-      path, 
-      content: result.content, // Extract the actual content string from the response
+      path,
+      content: result.content,
+      encoding: result.encoding,
+      isBinary: result.isBinary,
+      mimeType: result.mimeType,
+      size: result.size,
       timestamp: new Date().toISOString()
     });
   } catch (error: any) {

@@ -52,6 +52,8 @@ export {
   parseSSEStream,
   responseToAsyncIterable,
 } from "./sse-parser";
+// Export file streaming utilities
+export { streamFile, collectFile } from "./file-stream";
 export type {
   DeleteFileResponse,
   ExecEvent,
@@ -59,6 +61,10 @@ export type {
   ExecResult,
   ExecuteResponse,
   ExecutionSession,
+  FileChunk,
+  FileMetadata,
+  FileStream,
+  FileStreamEvent,
   GitCheckoutResponse,
   ISandbox,
   ListFilesResponse,

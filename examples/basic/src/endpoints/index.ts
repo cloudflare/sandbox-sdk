@@ -14,3 +14,4 @@ export { moveFile } from "./fileMove";
 export { createDirectory } from "./mkdir";
 export { gitCheckout } from "./gitCheckout";
 export { setupNextjs, setupReact, setupVue, setupStatic } from "./templates";
+export { createTestBinaryFile } from "./createTestBinary";

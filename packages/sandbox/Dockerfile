@@ -13,6 +13,7 @@ RUN apt-get update && apt-get install -y \
     git \
     unzip \
     zip \
+    file \
     # Process management
     procps \
     htop \

@@ -321,6 +321,12 @@ class SandboxApiClient {
     });
   }
 
+  async createTestBinaryFile() {
+    return this.doFetch("/api/create-test-binary", {
+      method: "POST",
+    });
+  }
+
   async setupNextjs(projectName?: string) {
     return this.doFetch("/api/templates/nextjs", {
       method: "POST",
@@ -1455,6 +1461,19 @@ function FilesTab({
   const [gitBranch, setGitBranch] = useState("main");
   const [gitTargetDir, setGitTargetDir] = useState("");
 
+  // Binary File Support
+  const [binaryFilePath, setBinaryFilePath] = useState("/workspace/demo-chart.png");
+  const [binaryFileMetadata, setBinaryFileMetadata] = useState<{
+    path: string;
+    mimeType: string;
+    size: number;
+    isBinary: boolean;
+    encoding: string;
+    content?: string;
+  } | null>(null);
+  const [isCreatingBinary, setIsCreatingBinary] = useState(false);
+  const [isReadingBinary, setIsReadingBinary] = useState(false);
+
   const addResult = (type: "success" | "error", message: string) => {
     setResults((prev) => [...prev, { type, message, timestamp: new Date() }]);
   };
@@ -1605,6 +1624,44 @@ function FilesTab({
       );
     } catch (error: any) {
       addResult("error", `Failed to clone repository: ${error.message}`);
+    }
+  };
+
+  const handleCreateTestBinary = async () => {
+    if (!client) return;
+    setIsCreatingBinary(true);
+    try {
+      const result = await client.createTestBinaryFile();
+      addResult("success", `Created test PNG: ${result.path}`);
+      setBinaryFilePath(result.path);
+      // Clear any existing metadata to show fresh state
+      setBinaryFileMetadata(null);
+    } catch (error: any) {
+      addResult("error", `Failed to create test binary: ${error.message}`);
+    } finally {
+      setIsCreatingBinary(false);
+    }
+  };
+
+  const handleReadBinaryFile = async () => {
+    if (!client || !binaryFilePath.trim()) return;
+    setIsReadingBinary(true);
+    try {
+      const result = await client.readFile(binaryFilePath);
+      setBinaryFileMetadata({
+        path: result.path,
+        mimeType: result.mimeType || "unknown",
+        size: result.size || 0,
+        isBinary: result.isBinary || false,
+        encoding: result.encoding || "utf-8",
+        content: result.content,
+      });
+      addResult("success", `Read binary file with metadata: ${binaryFilePath}`);
+    } catch (error: any) {
+      addResult("error", `Failed to read binary file: ${error.message}`);
+      setBinaryFileMetadata(null);
+    } finally {
+      setIsReadingBinary(false);
     }
   };
 
@@ -2050,6 +2107,115 @@ function FilesTab({
             </div>
           </button>
         </div>
+      </div>
+
+      {/* Binary File Support Showcase */}
+      <div className="binary-showcase-section">
+        <h2>🎨 Binary File Support Demo</h2>
+        <p className="section-description">
+          Test the new binary file reading capabilities with automatic format detection and metadata extraction.
+        </p>
+
+        <div className="operation-group">
+          <h3>Step 1: Create Test Binary File</h3>
+          <p className="help-text">Generate a PNG chart using matplotlib in the sandbox</p>
+          <button
+            onClick={handleCreateTestBinary}
+            disabled={isCreatingBinary || connectionStatus !== "connected"}
+            className="action-button create-binary"
+          >
+            {isCreatingBinary ? "Creating..." : "🎨 Create Test PNG Chart"}
+          </button>
+        </div>
+
+        <div className="operation-group">
+          <h3>Step 2: Read Binary File with Metadata</h3>
+          <div className="input-group">
+            <input
+              type="text"
+              placeholder="Binary file path"
+              value={binaryFilePath}
+              onChange={(e) => setBinaryFilePath(e.target.value)}
+              className="file-input"
+            />
+            <button
+              onClick={handleReadBinaryFile}
+              disabled={!binaryFilePath.trim() || isReadingBinary || connectionStatus !== "connected"}
+              className="action-button"
+            >
+              {isReadingBinary ? "Reading..." : "📖 Read & Display"}
+            </button>
+          </div>
+        </div>
+
+        {/* File Metadata Display */}
+        {binaryFileMetadata && (
+          <div className="binary-metadata-card">
+            <h4>📊 File Metadata</h4>
+            <div className="metadata-grid">
+              <div className="metadata-item">
+                <span className="metadata-label">File Type:</span>
+                <span className="metadata-value">
+                  {binaryFileMetadata.isBinary ? "🖼️" : "📄"} {binaryFileMetadata.mimeType}
+                </span>
+              </div>
+              <div className="metadata-item">
+                <span className="metadata-label">Size:</span>
+                <span className="metadata-value">
+                  {(binaryFileMetadata.size / 1024).toFixed(2)} KB
+                </span>
+              </div>
+              <div className="metadata-item">
+                <span className="metadata-label">Encoding:</span>
+                <span className="metadata-value metadata-encoding">
+                  {binaryFileMetadata.encoding}
+                </span>
+              </div>
+              <div className="metadata-item">
+                <span className="metadata-label">Binary:</span>
+                <span className={`metadata-value ${binaryFileMetadata.isBinary ? "binary-yes" : "binary-no"}`}>
+                  {binaryFileMetadata.isBinary ? "✓ Yes" : "✗ No"}
+                </span>
+              </div>
+            </div>
+
+            {/* File Preview */}
+            <div className="file-preview">
+              <h4>🔍 Preview</h4>
+              {binaryFileMetadata.isBinary && binaryFileMetadata.mimeType.startsWith("image/") ? (
+                <div className="image-preview">
+                  <img
+                    src={`data:${binaryFileMetadata.mimeType};base64,${binaryFileMetadata.content}`}
+                    alt="Binary file preview"
+                    className="preview-image"
+                  />
+                  <p className="preview-caption">
+                    ✅ Binary file successfully read and decoded from base64!
+                  </p>
+                </div>
+              ) : binaryFileMetadata.isBinary ? (
+                <div className="binary-preview">
+                  <p className="binary-info">
+                    📦 Binary file ({binaryFileMetadata.mimeType})
+                  </p>
+                  <pre className="base64-preview">
+                    {binaryFileMetadata.content?.substring(0, 200)}...
+                  </pre>
+                  <p className="preview-caption">
+                    Base64 encoded content (first 200 chars shown)
+                  </p>
+                </div>
+              ) : (
+                <div className="text-preview">
+                  <pre className="code-block">
+                    {binaryFileMetadata.content}
+                  </pre>
+                  <p className="preview-caption">Text file content</p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Results */}

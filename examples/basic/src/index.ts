@@ -22,6 +22,7 @@ import {
   setupReact,
   setupVue,
   setupStatic,
+  createTestBinaryFile,
 } from "./endpoints";
 import { createSession, executeCell, deleteSession } from "./endpoints/notebook";
 import { corsHeaders, errorResponse, jsonResponse, parseJsonBody } from "./http";
@@ -175,6 +176,10 @@ export default {
 
       if (pathname === "/api/git/checkout" && request.method === "POST") {
         return await gitCheckout(sandbox, request);
+      }
+
+      if (pathname === "/api/create-test-binary" && request.method === "POST") {
+        return await createTestBinaryFile(sandbox);
       }
 
       // Template Setup APIs

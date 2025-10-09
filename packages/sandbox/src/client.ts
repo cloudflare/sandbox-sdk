@@ -481,6 +481,45 @@ export class HttpClient {
     }
   }
 
+  async readFileStream(
+    path: string,
+    sessionId: string
+  ): Promise<ReadableStream<Uint8Array>> {
+    try {
+      const response = await this.doFetch(`/api/read/stream`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          path,
+          sessionId,
+        } as ReadFileRequest),
+      });
+
+      if (!response.ok) {
+        const errorData = (await response.json().catch(() => ({}))) as {
+          error?: string;
+        };
+        throw new Error(
+          errorData.error || `HTTP error! status: ${response.status}`
+        );
+      }
+
+      if (!response.body) {
+        throw new Error("No response body for file streaming");
+      }
+
+      console.log(
+        `[HTTP Client] Started streaming file: ${path}${sessionId ? ` in session: ${sessionId}` : ''}`
+      );
+      return response.body;
+    } catch (error) {
+      console.error("[HTTP Client] Error streaming file:", error);
+      throw error;
+    }
+  }
+
   async deleteFile(
     path: string,
     sessionId: string

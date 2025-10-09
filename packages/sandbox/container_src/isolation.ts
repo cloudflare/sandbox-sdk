@@ -446,16 +446,177 @@ SANDBOX_EOF`;
     };
   }
 
-  async readFileOperation(path: string, encoding: string = 'utf-8'): Promise<{ success: boolean; exitCode: number; content: string; path: string }> {
-    const command = `cat "${path}"`;
-    const result = await this.exec(command);
-    
+  async readFileOperation(path: string, encoding: string = 'utf-8'): Promise<{
+    success: boolean;
+    exitCode: number;
+    content: string;
+    path: string;
+    encoding?: 'utf-8' | 'base64';
+    isBinary?: boolean;
+    mimeType?: string;
+    size?: number;
+  }> {
+    // Step 1: Check if file exists and get metadata
+    const statCommand = `stat -c '%s' "${path}" 2>/dev/null || echo "FILE_NOT_FOUND"`;
+    const statResult = await this.exec(statCommand);
+
+    if (statResult.stdout.trim() === 'FILE_NOT_FOUND') {
+      // File doesn't exist - return error
+      return {
+        success: false,
+        exitCode: 1,
+        content: '',
+        path
+      };
+    }
+
+    const fileSize = parseInt(statResult.stdout.trim(), 10);
+
+    // Step 2: Detect MIME type using file command
+    const mimeCommand = `file --mime-type -b "${path}"`;
+    const mimeResult = await this.exec(mimeCommand);
+    const mimeType = mimeResult.stdout.trim();
+
+    // Step 3: Determine if file is binary based on MIME type
+    // Text MIME types: text/*, application/json, application/xml, application/javascript, etc.
+    const isBinary = !mimeType.startsWith('text/') &&
+                     !mimeType.includes('json') &&
+                     !mimeType.includes('xml') &&
+                     !mimeType.includes('javascript') &&
+                     !mimeType.includes('x-empty');
+
+    // Step 4: Read file with appropriate encoding
+    let content: string;
+    let actualEncoding: 'utf-8' | 'base64';
+
+    if (isBinary) {
+      // Use base64 for binary files
+      const base64Command = `base64 -w 0 "${path}"`;
+      const base64Result = await this.exec(base64Command);
+      content = base64Result.stdout;
+      actualEncoding = 'base64';
+    } else {
+      // Use cat for text files
+      const catCommand = `cat "${path}"`;
+      const catResult = await this.exec(catCommand);
+      content = catResult.stdout;
+      actualEncoding = 'utf-8';
+    }
+
     return {
-      success: result.exitCode === 0,
-      exitCode: result.exitCode,
-      content: result.stdout,
-      path
+      success: true,
+      exitCode: 0,
+      content,
+      path,
+      encoding: actualEncoding,
+      isBinary,
+      mimeType,
+      size: fileSize
     };
+  }
+
+  async readFileStreamOperation(path: string): Promise<ReadableStream<Uint8Array>> {
+    const encoder = new TextEncoder();
+
+    // Helper to send SSE event
+    const sseEvent = (event: any): Uint8Array => {
+      return encoder.encode(`data: ${JSON.stringify(event)}\n\n`);
+    };
+
+    // Create streaming response
+    return new ReadableStream({
+      start: async (controller) => {
+        try {
+          // Step 1: Get file metadata (same logic as readFileOperation)
+          const statCommand = `stat -c '%s' "${path}" 2>/dev/null || echo "FILE_NOT_FOUND"`;
+          const statResult = await this.exec(statCommand);
+
+          if (statResult.stdout.trim() === 'FILE_NOT_FOUND') {
+            // File doesn't exist - send error event
+            controller.enqueue(sseEvent({
+              type: 'error',
+              error: `File not found: ${path}`
+            }));
+            controller.close();
+            return;
+          }
+
+          const fileSize = parseInt(statResult.stdout.trim(), 10);
+
+          // Step 2: Detect MIME type
+          const mimeCommand = `file --mime-type -b "${path}"`;
+          const mimeResult = await this.exec(mimeCommand);
+          const mimeType = mimeResult.stdout.trim();
+
+          // Step 3: Determine if binary
+          const isBinary = !mimeType.startsWith('text/') &&
+                           !mimeType.includes('json') &&
+                           !mimeType.includes('xml') &&
+                           !mimeType.includes('javascript') &&
+                           !mimeType.includes('x-empty');
+
+          const encoding: 'utf-8' | 'base64' = isBinary ? 'base64' : 'utf-8';
+
+          // Step 4: Send metadata event
+          controller.enqueue(sseEvent({
+            type: 'metadata',
+            mimeType,
+            size: fileSize,
+            isBinary,
+            encoding
+          }));
+
+          // Step 5: Stream file in chunks
+          const CHUNK_SIZE = 65536; // 64KB chunks
+          let bytesRead = 0;
+
+          while (bytesRead < fileSize) {
+            const remainingBytes = fileSize - bytesRead;
+            const chunkSize = Math.min(CHUNK_SIZE, remainingBytes);
+
+            // Use dd to read chunk at specific offset
+            // bs=1 means 1 byte block size, skip=offset, count=chunkSize
+            let chunkCommand: string;
+            if (isBinary) {
+              // For binary, read and encode as base64
+              chunkCommand = `dd if="${path}" bs=1 skip=${bytesRead} count=${chunkSize} 2>/dev/null | base64 -w 0`;
+            } else {
+              // For text, just read
+              chunkCommand = `dd if="${path}" bs=1 skip=${bytesRead} count=${chunkSize} 2>/dev/null`;
+            }
+
+            const chunkResult = await this.exec(chunkCommand);
+
+            // Send chunk event
+            controller.enqueue(sseEvent({
+              type: 'chunk',
+              data: chunkResult.stdout
+            }));
+
+            bytesRead += chunkSize;
+          }
+
+          // Step 6: Send complete event
+          controller.enqueue(sseEvent({
+            type: 'complete',
+            bytesRead
+          }));
+
+          controller.close();
+        } catch (error) {
+          // Send error event
+          controller.enqueue(sseEvent({
+            type: 'error',
+            error: error instanceof Error ? error.message : String(error)
+          }));
+          controller.close();
+        }
+      },
+
+      cancel() {
+        console.log(`[Session] File stream cancelled for: ${path}`);
+      }
+    });
   }
 
   async mkdirOperation(path: string, recursive: boolean = false): Promise<{ success: boolean; exitCode: number; path: string; recursive: boolean }> {

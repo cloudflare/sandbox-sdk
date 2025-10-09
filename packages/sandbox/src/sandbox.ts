@@ -264,6 +264,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     return session.readFile(path, options);
   }
 
+  async readFileStream(path: string): Promise<ReadableStream<Uint8Array>> {
+    const session = await this.ensureDefaultSession();
+    return session.readFileStream(path);
+  }
+
   async listFiles(
     path: string,
     options: {
@@ -678,7 +683,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       readFile: async (path: string, options?: { encoding?: string }) => {
         return await this.client.readFile(path, options?.encoding, sessionId);
       },
-      
+
+      readFileStream: async (path: string) => {
+        return await this.client.readFileStream(path, sessionId);
+      },
+
       mkdir: async (path: string, options?: { recursive?: boolean }) => {
         return await this.client.mkdir(path, options?.recursive, sessionId);
       },

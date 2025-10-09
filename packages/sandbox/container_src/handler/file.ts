@@ -204,6 +204,11 @@ export async function handleReadFileRequest(
                 path,
                 success: result.success,
                 timestamp: new Date().toISOString(),
+                // New metadata fields for binary file support
+                encoding: result.encoding,
+                isBinary: result.isBinary,
+                mimeType: result.mimeType,
+                size: result.size,
             }),
             {
                 headers: {
@@ -402,5 +407,51 @@ export async function handleListFilesRequest(
         );
     } catch (error) {
         return createServerErrorResponse("handleListFilesRequest", error, corsHeaders);
+    }
+}
+
+export async function handleReadFileStreamRequest(
+    req: Request,
+    corsHeaders: Record<string, string>,
+    sessionManager: SessionManager
+): Promise<Response> {
+    try {
+        const body = (await req.json()) as ReadFileRequest;
+        const { path, sessionId } = body;
+
+        // Validate path
+        const pathError = validatePath(path);
+        if (pathError) {
+            return createPathErrorResponse(pathError, corsHeaders);
+        }
+
+        console.log(`[Server] Streaming file: ${path}${sessionId ? ` in session: ${sessionId}` : ''}`);
+
+        // Get the appropriate session
+        const session = sessionId
+            ? sessionManager.getSession(sessionId)
+            : await sessionManager.getOrCreateDefaultSession();
+
+        if (!session) {
+            return createServerErrorResponse(
+                "handleReadFileStreamRequest",
+                new Error(`Session '${sessionId}' not found`),
+                corsHeaders
+            );
+        }
+
+        // Create SSE stream
+        const stream = await session.readFileStreamOperation(path);
+
+        return new Response(stream, {
+            headers: {
+                "Content-Type": "text/event-stream",
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                ...corsHeaders,
+            },
+        });
+    } catch (error) {
+        return createServerErrorResponse("handleReadFileStreamRequest", error, corsHeaders);
     }
 }

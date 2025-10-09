@@ -9,6 +9,7 @@ import {
   handleMkdirRequest,
   handleMoveFileRequest,
   handleReadFileRequest,
+  handleReadFileStreamRequest,
   handleRenameFileRequest,
   handleWriteFileRequest,
 } from "./handler/file";
@@ -187,6 +188,12 @@ const server = serve({
         case "/api/read":
           if (req.method === "POST") {
             return handleReadFileRequest(req, corsHeaders, sessionManager);
+          }
+          break;
+
+        case "/api/read/stream":
+          if (req.method === "POST") {
+            return handleReadFileStreamRequest(req, corsHeaders, sessionManager);
           }
           break;
 
@@ -569,6 +576,7 @@ console.log(`   POST /api/git/checkout - Checkout a git repository`);
 console.log(`   POST /api/mkdir - Create a directory`);
 console.log(`   POST /api/write - Write a file`);
 console.log(`   POST /api/read - Read a file`);
+console.log(`   POST /api/read/stream - Stream a file (SSE)`);
 console.log(`   POST /api/delete - Delete a file`);
 console.log(`   POST /api/rename - Rename a file`);
 console.log(`   POST /api/move - Move a file`);
