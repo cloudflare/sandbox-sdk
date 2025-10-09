@@ -12,6 +12,7 @@ import {
   streamProcessLogs,
   unexposePort,
   readFile,
+  readFileStream,
   listFiles,
   deleteFile,
   renameFile,
@@ -152,6 +153,10 @@ export default {
 
       if (pathname === "/api/read" && request.method === "POST") {
         return await readFile(sandbox, request);
+      }
+
+      if (pathname === "/api/read/stream" && request.method === "POST") {
+        return await readFileStream(sandbox, request);
       }
 
       if (pathname === "/api/list-files" && request.method === "POST") {

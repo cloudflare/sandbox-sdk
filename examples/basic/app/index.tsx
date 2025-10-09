@@ -276,6 +276,110 @@ class SandboxApiClient {
     });
   }
 
+  async readFileStream(path: string): Promise<{
+    path: string;
+    mimeType: string;
+    size: number;
+    isBinary: boolean;
+    encoding: string;
+    content: string;
+  }> {
+    const response = await fetch(`${this.baseUrl}/api/read/stream`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Sandbox-Client-Id": this.sandboxId,
+      },
+      body: JSON.stringify({ path }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    // Parse SSE stream with proper buffering to handle chunk splitting
+    const reader = response.body?.getReader();
+    if (!reader) {
+      throw new Error("No response body");
+    }
+
+    const decoder = new TextDecoder();
+    let metadata: any = null;
+    let content = "";
+    let buffer = ""; // Buffer for incomplete lines
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+
+        if (value) {
+          // Add new data to buffer
+          buffer += decoder.decode(value, { stream: true });
+        }
+
+        if (done) break;
+
+        // Process complete lines from buffer
+        let newlineIndex = buffer.indexOf("\n");
+        while (newlineIndex !== -1) {
+          const line = buffer.slice(0, newlineIndex).trim();
+          buffer = buffer.slice(newlineIndex + 1);
+
+          if (line.startsWith("data: ")) {
+            try {
+              const data = JSON.parse(line.slice(6));
+
+              if (data.type === "metadata") {
+                metadata = data;
+              } else if (data.type === "chunk") {
+                content += data.data;
+              } else if (data.type === "complete") {
+                return {
+                  path,
+                  mimeType: metadata?.mimeType || "unknown",
+                  size: metadata?.size || 0,
+                  isBinary: metadata?.isBinary || false,
+                  encoding: metadata?.encoding || "utf-8",
+                  content,
+                };
+              } else if (data.type === "error") {
+                throw new Error(data.error);
+              }
+            } catch (parseError) {
+              console.error("Failed to parse SSE line:", line.substring(0, 100), parseError);
+              // Skip malformed lines
+            }
+          }
+
+          newlineIndex = buffer.indexOf("\n");
+        }
+      }
+
+      // Process any remaining data in buffer
+      if (buffer.trim().startsWith("data: ")) {
+        try {
+          const data = JSON.parse(buffer.trim().slice(6));
+          if (data.type === "complete") {
+            return {
+              path,
+              mimeType: metadata?.mimeType || "unknown",
+              size: metadata?.size || 0,
+              isBinary: metadata?.isBinary || false,
+              encoding: metadata?.encoding || "utf-8",
+              content,
+            };
+          }
+        } catch (e) {
+          // Ignore final buffer parsing errors
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+
+    throw new Error("Stream ended unexpectedly");
+  }
+
   async deleteFile(path: string) {
     return this.doFetch("/api/delete", {
       method: "POST",
@@ -1473,6 +1577,7 @@ function FilesTab({
   } | null>(null);
   const [isCreatingBinary, setIsCreatingBinary] = useState(false);
   const [isReadingBinary, setIsReadingBinary] = useState(false);
+  const [useStreaming, setUseStreaming] = useState(false);
 
   const addResult = (type: "success" | "error", message: string) => {
     setResults((prev) => [...prev, { type, message, timestamp: new Date() }]);
@@ -1647,7 +1752,10 @@ function FilesTab({
     if (!client || !binaryFilePath.trim()) return;
     setIsReadingBinary(true);
     try {
-      const result = await client.readFile(binaryFilePath);
+      const result = useStreaming
+        ? await client.readFileStream(binaryFilePath)
+        : await client.readFile(binaryFilePath);
+
       setBinaryFileMetadata({
         path: result.path,
         mimeType: result.mimeType || "unknown",
@@ -1656,7 +1764,7 @@ function FilesTab({
         encoding: result.encoding || "utf-8",
         content: result.content,
       });
-      addResult("success", `Read binary file with metadata: ${binaryFilePath}`);
+      addResult("success", `Read binary file with metadata${useStreaming ? ' (streamed)' : ''}: ${binaryFilePath}`);
     } catch (error: any) {
       addResult("error", `Failed to read binary file: ${error.message}`);
       setBinaryFileMetadata(null);
@@ -2130,6 +2238,24 @@ function FilesTab({
 
         <div className="operation-group">
           <h3>Step 2: Read Binary File with Metadata</h3>
+          <div className="streaming-toggle">
+            <label className="toggle-label">
+              <input
+                type="checkbox"
+                checked={useStreaming}
+                onChange={(e) => setUseStreaming(e.target.checked)}
+                className="toggle-checkbox"
+              />
+              <span className="toggle-text">
+                Use streaming (readFileStream)
+              </span>
+            </label>
+            <p className="help-text">
+              {useStreaming
+                ? "📡 Streams file in chunks via SSE - better for large files"
+                : "📄 Reads entire file at once - simpler but loads all into memory"}
+            </p>
+          </div>
           <div className="input-group">
             <input
               type="text"

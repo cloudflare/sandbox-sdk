@@ -567,7 +567,10 @@ SANDBOX_EOF`;
           }));
 
           // Step 5: Stream file in chunks
-          const CHUNK_SIZE = 65536; // 64KB chunks
+          // IMPORTANT: Chunk size MUST be divisible by 3 for base64 encoding!
+          // Base64 encodes 3 bytes at a time. If chunks aren't aligned,
+          // concatenating separately-encoded base64 strings corrupts the data.
+          const CHUNK_SIZE = 65535;
           let bytesRead = 0;
 
           while (bytesRead < fileSize) {

@@ -2981,6 +2981,45 @@ button:focus {
   border: 1px solid #30363d;
 }
 
+/* Streaming Toggle */
+.streaming-toggle {
+  margin-bottom: 1rem;
+  padding: 1rem;
+  background-color: rgba(88, 166, 255, 0.08);
+  border-radius: 6px;
+  border: 1px solid rgba(88, 166, 255, 0.2);
+}
+
+.toggle-label {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  user-select: none;
+}
+
+.toggle-checkbox {
+  width: 18px;
+  height: 18px;
+  margin-right: 0.75rem;
+  cursor: pointer;
+  accent-color: #58a6ff;
+}
+
+.toggle-text {
+  color: #c9d1d9;
+  font-size: 0.95rem;
+  font-weight: 500;
+  font-family: "Fira Code", monospace;
+}
+
+.streaming-toggle .help-text {
+  margin-top: 0.5rem;
+  margin-bottom: 0;
+  padding-left: 2rem;
+  color: #8b949e;
+  font-size: 0.85rem;
+}
+
 @media (max-width: 768px) {
   .metadata-grid {
     grid-template-columns: 1fr;
