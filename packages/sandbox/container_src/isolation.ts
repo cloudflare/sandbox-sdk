@@ -1174,7 +1174,7 @@ export class SessionManager {
     return defaultSession.writeFileOperation(path, content, encoding);
   }
 
-  async readFile(path: string, encoding?: string): Promise<{ success: boolean; exitCode: number; content: string; path: string }> {
+  async readFile(path: string, encoding?: string): Promise<{ success: boolean; exitCode: number; content: string; path: string; encoding?: 'utf-8' | 'base64'; isBinary?: boolean; mimeType?: string; size?: number }> {
     const defaultSession = await this.getOrCreateDefaultSession();
     return defaultSession.readFileOperation(path, encoding);
   }

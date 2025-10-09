@@ -4,7 +4,7 @@
  */
 
 import { parseSSEStream } from './sse-parser';
-import type { FileStreamEvent, FileMetadata, FileChunk } from './types';
+import type { FileChunk, FileMetadata, FileStreamEvent } from './types';
 
 /**
  * Convert ReadableStream of SSE file events to AsyncIterable of file chunks

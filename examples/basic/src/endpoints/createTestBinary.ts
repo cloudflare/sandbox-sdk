@@ -43,7 +43,7 @@ print("Chart saved to /workspace/demo-chart.png")
     // Check for errors
     if (execution.error) {
       console.error("Error creating chart:", execution.error);
-      return errorResponse(`Failed to create chart: ${execution.error.message}`);
+      return errorResponse(`Failed to create chart: ${execution.error.value}`);
     }
 
     // Return success with file path
