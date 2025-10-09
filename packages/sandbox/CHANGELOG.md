@@ -1,5 +1,11 @@
 # @cloudflare/sandbox
 
+## 0.3.5
+
+### Patch Changes
+
+- [#88](https://github.com/cloudflare/sandbox-sdk/pull/88) [`46eb4e6`](https://github.com/cloudflare/sandbox-sdk/commit/46eb4e6b6c671b682fc74f83563ccf5f316011cb) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Add binary file support with automatic MIME detection and streaming
+
 ## 0.3.4
 
 ### Patch Changes
