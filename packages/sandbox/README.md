@@ -50,10 +50,11 @@ The Cloudflare Sandbox SDK enables you to run isolated code environments directl
 - **🔒 Secure Isolation**: Each sandbox runs in its own container with full process isolation
 - **⚡ Edge-Native**: Runs on Cloudflare's global network for low latency worldwide
 - **📁 File System Access**: Read, write, and manage files within the sandbox
+- **🖼️ Binary File Support**: Automatic MIME type detection and base64 encoding for images, PDFs, and other binary files
 - **🔧 Command Execution**: Run any command or process inside the container
 - **🌐 Preview URLs**: Expose services running in your sandbox via public URLs
 - **🔄 Git Integration**: Clone repositories directly into sandboxes
-- **🚀 Streaming Support**: Real-time output streaming for long-running commands
+- **🚀 Streaming Support**: Real-time output streaming for long-running commands and file transfers
 - **🎮 Session Management**: Maintain state across multiple operations
 - **🧪 Code Interpreter**: Execute Python and JavaScript with rich outputs (charts, tables, formatted data)
 - **📊 Multi-Language Support**: Persistent execution contexts for Python and JavaScript/TypeScript
@@ -189,11 +190,57 @@ await sandbox.writeFile("/workspace/app.js", "console.log('Hello!');");
 
 #### `readFile(path, options?)`
 
-Read a file from the sandbox.
+Read a file from the sandbox with automatic binary detection.
 
 ```typescript
+// Read text files
 const file = await sandbox.readFile("/package.json");
-console.log(file.content);
+console.log(file.content); // UTF-8 text content
+
+// Read binary files - automatically detected and base64 encoded
+const image = await sandbox.readFile("/workspace/chart.png");
+console.log(image.mimeType); // "image/png"
+console.log(image.isBinary); // true
+console.log(image.encoding); // "base64"
+console.log(image.size); // File size in bytes
+
+// Use the base64 content directly in data URLs
+const dataUrl = `data:${image.mimeType};base64,${image.content}`;
+```
+
+#### `readFileStream(path)`
+
+Stream large files efficiently with automatic chunking and encoding.
+
+```typescript
+import { streamFile, collectFile } from '@cloudflare/sandbox';
+
+// Stream a large file
+const stream = await sandbox.readFileStream("/large-video.mp4");
+
+// Option 1: Process chunks as they arrive
+for await (const chunk of streamFile(stream)) {
+  if (chunk instanceof Uint8Array) {
+    // Binary chunk - already decoded from base64
+    console.log(`Received ${chunk.byteLength} bytes`);
+    // Process binary data...
+  } else {
+    // Text chunk
+    console.log('Text:', chunk);
+  }
+}
+
+// Option 2: Collect entire file into memory
+const { content, metadata } = await collectFile(stream);
+console.log(`MIME: ${metadata.mimeType}, Size: ${metadata.size} bytes`);
+
+if (content instanceof Uint8Array) {
+  // Binary file - ready to save or process
+  await writeToStorage(content);
+} else {
+  // Text file
+  console.log('Content:', content);
+}
 ```
 
 #### `gitCheckout(repoUrl, options?)`
@@ -241,7 +288,8 @@ console.log(result.stdout); // "production"
 #### File System Methods
 
 - `writeFile(path, content, options?)` - Write content to a file
-- `readFile(path, options?)` - Read a file from the sandbox
+- `readFile(path, options?)` - Read a file with automatic binary detection and base64 encoding
+- `readFileStream(path)` - Stream large files efficiently with chunking
 - `mkdir(path, options?)` - Create a directory
 - `deleteFile(path)` - Delete a file
 - `renameFile(oldPath, newPath)` - Rename a file
@@ -665,9 +713,14 @@ for await (const event of parseSSEStream<ExecEvent>(stream)) {
 
 The SDK exports utilities for working with Server-Sent Event streams:
 
+**Command Execution:**
 - **`parseSSEStream<T>(stream)`** - Convert ReadableStream to typed AsyncIterable
 - **`responseToAsyncIterable<T>(response)`** - Convert SSE Response to AsyncIterable
 - **`asyncIterableToSSEStream<T>(iterable)`** - Convert AsyncIterable back to SSE stream
+
+**File Streaming:**
+- **`streamFile(stream, signal?)`** - Convert file SSE stream to AsyncIterable with automatic base64 decoding
+- **`collectFile(stream, signal?)`** - Collect entire file from stream into memory
 
 #### Advanced Streaming Examples
 
