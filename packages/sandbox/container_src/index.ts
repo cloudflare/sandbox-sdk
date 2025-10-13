@@ -87,6 +87,7 @@ console.log("[Container] Interpreter service ready - no cold start!");
 console.log("[Container] All API endpoints available immediately");
 
 const server = serve({
+  idleTimeout: 255,
   async fetch(req: Request) {
     const url = new URL(req.url);
     const pathname = url.pathname;
