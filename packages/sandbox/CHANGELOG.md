@@ -1,5 +1,11 @@
 # @cloudflare/sandbox
 
+## 0.3.6
+
+### Patch Changes
+
+- [#90](https://github.com/cloudflare/sandbox-sdk/pull/90) [`66cc85b`](https://github.com/cloudflare/sandbox-sdk/commit/66cc85b679b466b3ffb1f00fbd697670fc186f06) Thanks [@eastlondoner](https://github.com/eastlondoner)! - set bun idletimeout
+
 ## 0.3.5
 
 ### Patch Changes
