@@ -1,5 +1,11 @@
 # @cloudflare/sandbox
 
+## 0.3.7
+
+### Patch Changes
+
+- [#98](https://github.com/cloudflare/sandbox-sdk/pull/98) [`d951819`](https://github.com/cloudflare/sandbox-sdk/commit/d951819b18e9cff9ce09851c6855f05039973b65) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Bake wrangler, vite & opencode in base image
+
 ## 0.3.6
 
 ### Patch Changes

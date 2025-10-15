@@ -11,7 +11,7 @@
 		"cf-typegen": "wrangler types"
 	},
 	"devDependencies": {
-		"@cloudflare/sandbox": "^0.3.6",
+		"@cloudflare/sandbox": "^0.3.7",
 		"@cloudflare/workers-types": "^4.20251003.0",
 		"typescript": "^5.8.3",
 		"wrangler": "^4.41.0"
