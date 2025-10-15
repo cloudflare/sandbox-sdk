@@ -1,0 +1,15 @@
+{
+	"name": "@cloudflare/sandbox-minimal-example",
+	"version": "1.0.0",
+	"type": "module",
+	"private": true,
+	"description": "A minimal example of using the Sandbox SDK",
+	"scripts": {
+		"deploy": "wrangler deploy",
+		"dev": "wrangler dev",
+		"start": "wrangler dev",
+		"cf-typegen": "wrangler types"
+	},
+	"author": "",
+	"license": "MIT"
+}
