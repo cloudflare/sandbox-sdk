@@ -1,7 +1,14 @@
 name: Pull Request
 
+permissions:
+  contents: read
+
 on:
   pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   # Unit tests (client + container)
@@ -43,6 +50,14 @@ jobs:
             echo "Sandbox tests failed"
             exit 1
           fi
+
+      - name: Upload sandbox test logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sandbox-test-logs-unit
+          path: sandbox_test.log
+          retention-days: 7
 
       - name: Run container unit tests
         run: npm run test -w @repo/sandbox-container

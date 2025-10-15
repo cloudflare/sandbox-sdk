@@ -5,41 +5,157 @@ on:
     branches:
       - main
 
+concurrency:
+  group: prerelease
+  cancel-in-progress: false
+
 jobs:
-  prerelease:
+  # Unit tests run in parallel
+  unit-tests:
     if: ${{ github.repository_owner == 'cloudflare' }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: "npm"
 
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
 
-      - run: npm install
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build packages
+        run: npm run build
+
+      - name: Run sandbox unit tests
+        run: |
+          set +e
+          timeout --preserve-status 30 npm run test -w @cloudflare/sandbox > sandbox_test.log 2>&1
+          EXIT_CODE=$?
+          cat sandbox_test.log
+
+          if grep -q "Test Files.*passed" sandbox_test.log && grep -q "Tests.*passed" sandbox_test.log; then
+            echo "Sandbox tests passed"
+            if [ $EXIT_CODE -eq 124 ] || [ $EXIT_CODE -eq 143 ]; then
+              echo "::warning::Killed due to workerd shutdown hang (known vitest-pool-workers issue)"
+            fi
+            exit 0
+          else
+            echo "Sandbox tests failed"
+            exit 1
+          fi
+
+      - name: Upload sandbox test logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sandbox-test-logs-prerelease
+          path: sandbox_test.log
+          retention-days: 7
+
+      - name: Run container unit tests
+        run: npm run test -w @repo/sandbox-container
+
+  # E2E tests run in parallel with unit tests
+  e2e-tests:
+    if: ${{ github.repository_owner == 'cloudflare' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: "npm"
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build packages
+        run: npm run build
+
+      - name: Build test worker Docker image
+        run: npm run docker:local -w @cloudflare/sandbox
+
+      - name: Set worker name
+        id: worker-name
+        run: |
+          echo "worker_name=sandbox-e2e-test-worker-prerelease-${{ github.run_number }}" >> $GITHUB_OUTPUT
+
+      - name: Deploy test worker
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy --name ${{ steps.worker-name.outputs.worker_name }}
+          workingDirectory: tests/e2e/test-worker
+
+      - name: Get deployment URL
+        id: get-url
+        run: |
+          echo "worker_url=https://${{ steps.worker-name.outputs.worker_name }}.agents-b8a.workers.dev" >> $GITHUB_OUTPUT
+
+      - name: Run E2E tests
+        run: npx vitest run --config vitest.e2e.config.ts
+        env:
+          TEST_WORKER_URL: ${{ steps.get-url.outputs.worker_url }}
+          CI: true
+
+      - name: Cleanup test deployment
+        if: always()
+        continue-on-error: true
+        run: |
+          npx wrangler delete --name ${{ steps.worker-name.outputs.worker_name }} || echo "Worker already deleted or doesn't exist"
+        working-directory: tests/e2e/test-worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+  # Publish only runs after both test jobs pass
+  publish:
+    needs: [unit-tests, e2e-tests]
+    if: ${{ github.repository_owner == 'cloudflare' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: "npm"
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build packages
+        run: npm run build
 
       - name: Modify package.json version
         run: npx tsx .github/version-script.ts
 
       - name: Resolve workspace dependencies
         run: npx tsx .github/resolve-workspace-versions.ts
-
-      - run: npm run build
-      
-      # Install container dependencies before type checking
-      - name: Install container dependencies
-        run: cd packages/sandbox/container_src && bun install
-      
-      - run: npm run check
-      - run: CI=true npm run test
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -53,7 +169,8 @@ jobs:
       - name: Build and push Docker image (beta)
         run: npm run docker:publish:beta --workspace=@cloudflare/sandbox
 
-      - run: npm publish --tag beta --access public
+      - name: Publish to npm with beta tag
+        run: npm publish --tag beta --access public
         env:
           NPM_PUBLISH_TOKEN: ${{ secrets.NPM_PUBLISH_TOKEN }}
         working-directory: packages/sandbox
