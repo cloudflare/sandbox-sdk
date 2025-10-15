@@ -6,8 +6,8 @@ on:
       - main
 
 concurrency:
-  group: release
-  cancel-in-progress: false
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   # Unit tests run in parallel
@@ -124,8 +124,59 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
-  # Publish only runs after both test jobs pass
-  publish:
+  # Prerelease publish - always runs after tests pass
+  publish-prerelease:
+    needs: [unit-tests, e2e-tests]
+    if: ${{ github.repository_owner == 'cloudflare' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: "npm"
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build packages
+        run: npm run build
+
+      - name: Modify package.json version
+        run: npx tsx .github/version-script.ts
+
+      - name: Resolve workspace dependencies
+        run: npx tsx .github/resolve-workspace-versions.ts
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_HUB_USERNAME }}
+          password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
+
+      - name: Build and push Docker image (beta)
+        run: npm run docker:publish:beta --workspace=@cloudflare/sandbox
+
+      - name: Publish to npm with beta tag
+        run: npm publish --tag beta --access public
+        env:
+          NPM_PUBLISH_TOKEN: ${{ secrets.NPM_PUBLISH_TOKEN }}
+        working-directory: packages/sandbox
+
+  # Release publish - only runs if changesets exist
+  publish-release:
     needs: [unit-tests, e2e-tests]
     if: ${{ github.repository_owner == 'cloudflare' }}
     runs-on: ubuntu-latest
