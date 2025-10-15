@@ -1,5 +1,5 @@
 {
-	"$schema": "../../node_modules/wrangler/config-schema.json",
+	"$schema": "node_modules/wrangler/config-schema.json",
 	"name": "sandbox-minimal-example",
 	"main": "src/index.ts",
 	"compatibility_date": "2025-05-06",
