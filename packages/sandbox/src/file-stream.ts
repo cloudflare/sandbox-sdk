@@ -1,162 +1,164 @@
+import type { FileChunk, FileMetadata, FileStreamEvent } from '@repo/shared';
+
 /**
- * File streaming utilities for reading binary and text files
- * Provides simple AsyncIterable API over SSE stream with automatic base64 decoding
+ * Parse SSE (Server-Sent Events) lines from a stream
  */
+async function* parseSSE(stream: ReadableStream<Uint8Array>): AsyncGenerator<FileStreamEvent> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
 
-import { parseSSEStream } from './sse-parser';
-import type { FileChunk, FileMetadata, FileStreamEvent } from './types';
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+
+      if (done) {
+        break;
+      }
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+
+      // Keep the last incomplete line in the buffer
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const data = line.slice(6); // Remove 'data: ' prefix
+          try {
+            const event = JSON.parse(data) as FileStreamEvent;
+            yield event;
+          } catch (error) {
+            console.error('Failed to parse SSE event:', error);
+          }
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
 
 /**
- * Convert ReadableStream of SSE file events to AsyncIterable of file chunks
- * Automatically decodes base64 for binary files and provides metadata
+ * Stream a file from the sandbox with automatic base64 decoding for binary files
  *
- * @param stream - The SSE ReadableStream from readFileStream()
- * @param signal - Optional AbortSignal for cancellation
- * @returns AsyncIterable that yields file chunks (string for text, Uint8Array for binary)
+ * @param stream - The ReadableStream from readFileStream()
+ * @returns AsyncGenerator that yields FileChunk (string for text, Uint8Array for binary)
  *
  * @example
- * ```typescript
+ * ```ts
  * const stream = await sandbox.readFileStream('/path/to/file.png');
- *
  * for await (const chunk of streamFile(stream)) {
  *   if (chunk instanceof Uint8Array) {
- *     // Binary chunk - already decoded from base64
- *     console.log('Binary chunk:', chunk.byteLength, 'bytes');
+ *     // Binary chunk
+ *     console.log('Binary chunk:', chunk.length, 'bytes');
  *   } else {
  *     // Text chunk
  *     console.log('Text chunk:', chunk);
  *   }
  * }
- *
- * // Access metadata
- * const iter = streamFile(stream);
- * for await (const chunk of iter) {
- *   console.log('MIME type:', iter.metadata?.mimeType);
- *   // process chunk...
- * }
  * ```
  */
-export async function* streamFile(
-  stream: ReadableStream<Uint8Array>,
-  signal?: AbortSignal
-): AsyncGenerator<FileChunk, void, undefined> {
-  let metadata: FileMetadata | undefined;
+export async function* streamFile(stream: ReadableStream<Uint8Array>): AsyncGenerator<FileChunk, FileMetadata> {
+  let metadata: FileMetadata | null = null;
 
-  try {
-    for await (const event of parseSSEStream<FileStreamEvent>(stream, signal)) {
-      switch (event.type) {
-        case 'metadata':
-          // Store metadata for access via iterator
-          metadata = {
-            mimeType: event.mimeType,
-            size: event.size,
-            isBinary: event.isBinary,
-            encoding: event.encoding,
-          };
-          // Store on generator function for external access
-          (streamFile as any).metadata = metadata;
-          break;
+  for await (const event of parseSSE(stream)) {
+    switch (event.type) {
+      case 'metadata':
+        metadata = {
+          mimeType: event.mimeType,
+          size: event.size,
+          isBinary: event.isBinary,
+          encoding: event.encoding,
+        };
+        break;
 
-        case 'chunk':
-          // Auto-decode base64 for binary files
-          if (metadata?.isBinary && metadata?.encoding === 'base64') {
-            // Decode base64 to Uint8Array
-            const binaryString = atob(event.data);
-            const bytes = new Uint8Array(binaryString.length);
-            for (let i = 0; i < binaryString.length; i++) {
-              bytes[i] = binaryString.charCodeAt(i);
-            }
-            yield bytes;
-          } else {
-            // Text file - yield as-is
-            yield event.data;
+      case 'chunk':
+        if (!metadata) {
+          throw new Error('Received chunk before metadata');
+        }
+
+        if (metadata.isBinary && metadata.encoding === 'base64') {
+          // Decode base64 to Uint8Array for binary files
+          const binaryString = atob(event.data);
+          const bytes = new Uint8Array(binaryString.length);
+          for (let i = 0; i < binaryString.length; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
           }
-          break;
+          yield bytes;
+        } else {
+          // Text files - yield as-is
+          yield event.data;
+        }
+        break;
 
-        case 'complete':
-          // Stream completed successfully
-          console.log(`[streamFile] File streaming complete: ${event.bytesRead} bytes read`);
-          return;
+      case 'complete':
+        if (!metadata) {
+          throw new Error('Stream completed without metadata');
+        }
+        return metadata;
 
-        case 'error':
-          // Stream error
-          throw new Error(`File streaming error: ${event.error}`);
-      }
+      case 'error':
+        throw new Error(`File streaming error: ${event.error}`);
     }
-  } catch (error) {
-    console.error('[streamFile] Error streaming file:', error);
-    throw error;
   }
+
+  throw new Error('Stream ended unexpectedly');
 }
 
 /**
- * Helper to collect entire file from stream into memory
- * Useful for smaller files where you want the complete content at once
+ * Collect an entire file into memory from a stream
  *
- * @param stream - The SSE ReadableStream from readFileStream()
- * @param signal - Optional AbortSignal for cancellation
- * @returns Object with content (string or Uint8Array) and metadata
+ * @param stream - The ReadableStream from readFileStream()
+ * @returns Object containing the file content and metadata
  *
  * @example
- * ```typescript
- * const stream = await sandbox.readFileStream('/path/to/image.png');
+ * ```ts
+ * const stream = await sandbox.readFileStream('/path/to/file.txt');
  * const { content, metadata } = await collectFile(stream);
- *
- * if (content instanceof Uint8Array) {
- *   console.log('Binary file:', metadata.mimeType, content.byteLength, 'bytes');
- * } else {
- *   console.log('Text file:', metadata.mimeType, content.length, 'chars');
- * }
+ * console.log('Content:', content);
+ * console.log('MIME type:', metadata.mimeType);
  * ```
  */
-export async function collectFile(
-  stream: ReadableStream<Uint8Array>,
-  signal?: AbortSignal
-): Promise<{ content: string | Uint8Array; metadata: FileMetadata }> {
-  let metadata: FileMetadata | undefined;
-  const chunks: FileChunk[] = [];
+export async function collectFile(stream: ReadableStream<Uint8Array>): Promise<{
+  content: string | Uint8Array;
+  metadata: FileMetadata;
+}> {
+  const chunks: Array<string | Uint8Array> = [];
 
-  for await (const chunk of streamFile(stream, signal)) {
-    chunks.push(chunk);
-    // Capture metadata from first iteration
-    if (!metadata && (streamFile as any).metadata) {
-      metadata = (streamFile as any).metadata;
-    }
+  // Iterate through the generator and get the return value (metadata)
+  const generator = streamFile(stream);
+  let result = await generator.next();
+
+  while (!result.done) {
+    chunks.push(result.value);
+    result = await generator.next();
   }
 
+  const metadata = result.value;
+
   if (!metadata) {
-    throw new Error('No metadata received from file stream');
+    throw new Error('Failed to get file metadata');
   }
 
   // Combine chunks based on type
-  if (chunks.length === 0) {
-    // Empty file
-    return {
-      content: metadata.isBinary ? new Uint8Array(0) : '',
-      metadata,
-    };
-  }
-
-  // Check if binary or text based on first chunk
-  if (chunks[0] instanceof Uint8Array) {
-    // Binary file - concatenate Uint8Arrays
-    const totalLength = chunks.reduce((sum, chunk) => {
-      return sum + (chunk as Uint8Array).byteLength;
-    }, 0);
-
-    const result = new Uint8Array(totalLength);
+  if (metadata.isBinary) {
+    // Binary file - combine Uint8Arrays
+    const totalLength = chunks.reduce((sum, chunk) =>
+      sum + (chunk instanceof Uint8Array ? chunk.length : 0), 0
+    );
+    const combined = new Uint8Array(totalLength);
     let offset = 0;
     for (const chunk of chunks) {
-      result.set(chunk as Uint8Array, offset);
-      offset += (chunk as Uint8Array).byteLength;
+      if (chunk instanceof Uint8Array) {
+        combined.set(chunk, offset);
+        offset += chunk.length;
+      }
     }
-
-    return { content: result, metadata };
+    return { content: combined, metadata };
   } else {
-    // Text file - concatenate strings
-    return {
-      content: chunks.join(''),
-      metadata,
-    };
+    // Text file - combine strings
+    const combined = chunks.filter(c => typeof c === 'string').join('');
+    return { content: combined, metadata };
   }
 }

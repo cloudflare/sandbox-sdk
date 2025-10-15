@@ -1,0 +1,53 @@
+# Build outputs (handled by multi-stage build)
+# Note: We need to include source files for the Docker build to compile
+**/node_modules
+**/.turbo
+
+# Git
+.git
+.gitignore
+.github
+
+# Documentation
+*.md
+!README.md
+docs/
+
+# Tests
+**/tests
+**/*.test.ts
+**/*.spec.ts
+vitest*.config.ts
+vitest.e2e.config.ts
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# Logs and temp files
+*.log
+.DS_Store
+.env
+.env.*
+!.env.example
+
+# Examples (not needed in container)
+examples/
+
+# CI/CD
+.changeset
+scripts/
+
+# Turbo cache
+.turbo/
+out/
+
+# Coverage
+coverage/
+.nyc_output/
+
+# Wrangler
+.wrangler/
+.dev.vars

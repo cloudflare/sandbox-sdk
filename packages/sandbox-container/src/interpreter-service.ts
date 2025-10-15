@@ -1,0 +1,278 @@
+import { randomUUID } from "node:crypto";
+import { type InterpreterLanguage, processPool, type RichOutput } from "./runtime/process-pool";
+
+export interface CreateContextRequest {
+  language?: string;
+  cwd?: string;
+}
+
+export interface Context {
+  id: string;
+  language: string;
+  cwd: string;
+  createdAt: string;
+  lastUsed: string;
+}
+
+export interface HealthStatus {
+  ready: boolean;
+  initializing: boolean;
+  progress: number;
+}
+
+export class InterpreterNotReadyError extends Error {
+  progress: number;
+  retryAfter: number;
+
+  constructor(message: string, progress: number = 100, retryAfter: number = 1) {
+    super(message);
+    this.progress = progress;
+    this.retryAfter = retryAfter;
+    this.name = "InterpreterNotReadyError";
+  }
+}
+
+export class InterpreterService {
+  private contexts: Map<string, Context> = new Map();
+
+  async getHealthStatus(): Promise<HealthStatus> {
+    return {
+      ready: true,
+      initializing: false,
+      progress: 100,
+    };
+  }
+
+  async createContext(request: CreateContextRequest): Promise<Context> {
+    const id = randomUUID();
+    const language = this.mapLanguage(request.language || "python");
+
+    const context: Context = {
+      id,
+      language,
+      cwd: request.cwd || "/workspace",
+      createdAt: new Date().toISOString(),
+      lastUsed: new Date().toISOString(),
+    };
+
+    this.contexts.set(id, context);
+    console.log(`[InterpreterService] Created context ${id} for ${language}`);
+
+    return context;
+  }
+
+  async listContexts(): Promise<Context[]> {
+    return Array.from(this.contexts.values());
+  }
+
+  async deleteContext(contextId: string): Promise<void> {
+    if (!this.contexts.has(contextId)) {
+      throw new Error(`Context ${contextId} not found`);
+    }
+
+    this.contexts.delete(contextId);
+    console.log(`[InterpreterService] Deleted context ${contextId}`);
+  }
+
+  async executeCode(
+    contextId: string,
+    code: string,
+    language?: string,
+    timeoutMs?: number
+  ): Promise<Response> {
+    const context = this.contexts.get(contextId);
+    if (!context) {
+      return new Response(
+        JSON.stringify({
+          error: `Context ${contextId} not found`,
+        }),
+        {
+          status: 404,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    }
+
+    context.lastUsed = new Date().toISOString();
+
+    const execLanguage = this.mapLanguage(language || context.language);
+
+    // Store reference to this for use in async function
+    const self = this;
+
+    const stream = new ReadableStream({
+      async start(controller) {
+        const encoder = new TextEncoder();
+        const startTime = Date.now();
+
+        try {
+          // Pass through user-provided timeout (undefined = unlimited)
+          const result = await processPool.execute(
+            execLanguage,
+            code,
+            contextId,
+            timeoutMs
+          );
+          
+          const totalTime = Date.now() - startTime;
+          console.log(`[InterpreterService] Code execution completed in ${totalTime}ms`);
+
+          if (result.stdout) {
+            controller.enqueue(
+              encoder.encode(
+                `${JSON.stringify({
+                  type: "stdout",
+                  text: result.stdout,
+                })}\n`
+              )
+            );
+          }
+
+          if (result.stderr) {
+            controller.enqueue(
+              encoder.encode(
+                `${JSON.stringify({
+                  type: "stderr",
+                  text: result.stderr,
+                })}\n`
+              )
+            );
+          }
+
+          if (result.outputs && result.outputs.length > 0) {
+            for (const output of result.outputs) {
+              const outputData = self.formatOutputData(output);
+              controller.enqueue(
+                encoder.encode(
+                  `${JSON.stringify({
+                    type: "result",
+                    ...outputData,
+                    metadata: output.metadata || {},
+                  })}\n`
+                )
+              );
+            }
+          }
+
+          if (result.success) {
+            controller.enqueue(
+              encoder.encode(
+                `${JSON.stringify({
+                  type: "execution_complete",
+                  execution_count: 1,
+                })}\n`
+              )
+            );
+          } else if (result.error) {
+            controller.enqueue(
+              encoder.encode(
+                `${JSON.stringify({
+                  type: "error",
+                  ename: result.error.type || "ExecutionError",
+                  evalue: result.error.message || "Code execution failed",
+                  traceback: result.error.traceback ? result.error.traceback.split('\n') : [],
+                })}\n`
+              )
+            );
+          } else {
+            controller.enqueue(
+              encoder.encode(
+                `${JSON.stringify({
+                  type: "error",
+                  ename: "ExecutionError",
+                  evalue: result.stderr || "Code execution failed",
+                  traceback: [],
+                })}\n`
+              )
+            );
+          }
+          
+          controller.close();
+        } catch (error) {
+          console.error(`[InterpreterService] Code execution failed:`, error);
+          
+          controller.enqueue(
+            encoder.encode(
+              `${JSON.stringify({
+                type: "error",
+                ename: "InternalError",
+                evalue: error instanceof Error ? error.message : String(error),
+                traceback: [],
+              })}\n`
+            )
+          );
+          
+          controller.close();
+        }
+      },
+    });
+
+    return new Response(stream, {
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+      },
+    });
+  }
+
+  private mapLanguage(language: string): InterpreterLanguage {
+    const normalized = language.toLowerCase();
+
+    switch (normalized) {
+      case "python":
+      case "python3":
+        return "python";
+      case "javascript":
+      case "js":
+      case "node":
+        return "javascript";
+      case "typescript":
+      case "ts":
+        return "typescript";
+      default:
+        console.warn(
+          `[InterpreterService] Unknown language ${language}, defaulting to python`
+        );
+        return "python";
+    }
+  }
+
+  private formatOutputData(output: RichOutput): Record<string, unknown> {
+    const result: Record<string, unknown> = {};
+    
+    switch (output.type) {
+      case "image":
+        result.png = output.data;
+        break;
+      case "jpeg":
+        result.jpeg = output.data;
+        break;
+      case "svg":
+        result.svg = output.data;
+        break;
+      case "html":
+        result.html = output.data;
+        break;
+      case "json":
+        result.json = typeof output.data === 'string' ? JSON.parse(output.data) : output.data;
+        break;
+      case "latex":
+        result.latex = output.data;
+        break;
+      case "markdown":
+        result.markdown = output.data;
+        break;
+      case "javascript":
+        result.javascript = output.data;
+        break;
+      case "text":
+        result.text = output.data;
+        break;
+      default:
+        result.text = output.data || '';
+    }
+    
+    return result;
+  }
+}

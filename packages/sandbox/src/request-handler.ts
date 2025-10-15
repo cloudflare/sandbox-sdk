@@ -13,6 +13,7 @@ export interface RouteInfo {
   port: number;
   sandboxId: string;
   path: string;
+  token: string;
 }
 
 export async function proxyToSandbox<E extends SandboxEnv>(
@@ -27,8 +28,39 @@ export async function proxyToSandbox<E extends SandboxEnv>(
       return null; // Not a request to an exposed container port
     }
 
-    const { sandboxId, port, path } = routeInfo;
+    const { sandboxId, port, path, token } = routeInfo;
     const sandbox = getSandbox(env.Sandbox, sandboxId);
+
+    // Critical security check: Validate token (mandatory for all user ports)
+    // Skip check for control plane port 3000
+    if (port !== 3000) {
+      // Validate the token matches the port
+      const isValidToken = await sandbox.validatePortToken(port, token);
+      if (!isValidToken) {
+        logSecurityEvent('INVALID_TOKEN_ACCESS_BLOCKED', {
+          port,
+          sandboxId,
+          path,
+          hostname: url.hostname,
+          url: request.url,
+          method: request.method,
+          userAgent: request.headers.get('User-Agent') || 'unknown'
+        }, 'high');
+
+        return new Response(
+          JSON.stringify({
+            error: `Access denied: Invalid token or port not exposed`,
+            code: 'INVALID_TOKEN'
+          }),
+          {
+            status: 404,
+            headers: {
+              'Content-Type': 'application/json'
+            }
+          }
+        );
+      }
+    }
 
     // Build proxy request with proper headers
     let proxyUrl: string;
@@ -52,6 +84,8 @@ export async function proxyToSandbox<E extends SandboxEnv>(
         'X-Sandbox-Name': sandboxId, // Pass the friendly name
       },
       body: request.body,
+      // @ts-expect-error - duplex required for body streaming in modern runtimes
+      duplex: 'half',
     });
 
     return sandbox.containerFetch(proxyRequest, port);
@@ -62,8 +96,8 @@ export async function proxyToSandbox<E extends SandboxEnv>(
 }
 
 function extractSandboxRoute(url: URL): RouteInfo | null {
-  // Parse subdomain pattern: port-sandboxId.domain
-  const subdomainMatch = url.hostname.match(/^(\d{4,5})-([^.-][^.]*[^.-]|[^.-])\.(.+)$/);
+  // Parse subdomain pattern: port-sandboxId-token.domain (tokens mandatory)
+  const subdomainMatch = url.hostname.match(/^(\d{4,5})-([^.-][^.]*[^.-]|[^.-])-([a-zA-Z0-9_-]{12,20})\.(.+)$/);
 
   if (!subdomainMatch) {
     // Log malformed subdomain attempts
@@ -78,7 +112,8 @@ function extractSandboxRoute(url: URL): RouteInfo | null {
 
   const portStr = subdomainMatch[1];
   const sandboxId = subdomainMatch[2];
-  const domain = subdomainMatch[3];
+  const token = subdomainMatch[3]; // Mandatory token
+  const domain = subdomainMatch[4];
 
   const port = parseInt(portStr, 10);
   if (!validatePort(port)) {
@@ -122,23 +157,42 @@ function extractSandboxRoute(url: URL): RouteInfo | null {
     sandboxId: sanitizedSandboxId,
     domain,
     path: url.pathname || "/",
-    hostname: url.hostname
+    hostname: url.hostname,
+    hasToken: !!token
   }, 'low');
 
   return {
     port,
     sandboxId: sanitizedSandboxId,
     path: url.pathname || "/",
+    token,
   };
 }
 
 export function isLocalhostPattern(hostname: string): boolean {
+  // Handle IPv6 addresses in brackets (with or without port)
+  if (hostname.startsWith('[')) {
+    if (hostname.includes(']:')) {
+      // [::1]:port format
+      const ipv6Part = hostname.substring(0, hostname.indexOf(']:') + 1);
+      return ipv6Part === '[::1]';
+    } else {
+      // [::1] format without port
+      return hostname === '[::1]';
+    }
+  }
+  
+  // Handle bare IPv6 without brackets
+  if (hostname === '::1') {
+    return true;
+  }
+  
+  // For IPv4 and regular hostnames, split on colon to remove port
   const hostPart = hostname.split(":")[0];
+  
   return (
     hostPart === "localhost" ||
     hostPart === "127.0.0.1" ||
-    hostPart === "::1" ||
-    hostPart === "[::1]" ||
     hostPart === "0.0.0.0"
   );
 }

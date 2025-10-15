@@ -1,6 +1,64 @@
-# Sandbox base image with development tools, Python, Node.js, and Bun
-FROM oven/bun:latest AS bun-source
-FROM ubuntu:22.04
+# Sandbox container image with full development environment
+# Multi-stage build optimized for Turborepo monorepo
+
+# ============================================================================
+# Stage 1: Prune monorepo to only include necessary packages
+# ============================================================================
+FROM node:20-alpine AS pruner
+
+WORKDIR /app
+
+# Install Turborepo globally
+RUN npm install -g turbo
+
+# Copy entire monorepo
+COPY . .
+
+# Prune to only @repo/sandbox-container and its dependencies (@repo/shared)
+# The --docker flag generates out/json and out/full directories
+RUN turbo prune @repo/sandbox-container --docker
+
+# ============================================================================
+# Stage 2: Install dependencies and build packages
+# ============================================================================
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+# Copy pruned lockfile and package.json files (for Docker layer caching)
+COPY --from=pruner /app/out/json/ .
+COPY --from=pruner /app/out/package-lock.json ./package-lock.json
+
+# Install ALL dependencies (including devDependencies for build)
+RUN npm ci
+
+# Copy pruned source code
+COPY --from=pruner /app/out/full/ .
+
+# Build all packages (Turborepo handles dependency order automatically)
+# This builds @repo/shared first, then @repo/sandbox-container
+RUN npx turbo run build
+
+# ============================================================================
+# Stage 3: Install production-only dependencies
+# ============================================================================
+FROM node:20-alpine AS prod-deps
+
+WORKDIR /app
+
+# Copy package files from builder
+COPY --from=builder /app/package.json ./package.json
+COPY --from=builder /app/package-lock.json ./package-lock.json
+COPY --from=builder /app/packages ./packages
+COPY --from=builder /app/tooling ./tooling
+
+# Install ONLY production dependencies (excludes typescript, @types/*, etc.)
+RUN npm ci --production
+
+# ============================================================================
+# Stage 4: Runtime - Ubuntu 22.04 with full development environment
+# ============================================================================
+FROM ubuntu:22.04 AS runtime
 
 # Prevent interactive prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
@@ -48,9 +106,9 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Bun from official image (avoids architecture compatibility issues)
-COPY --from=bun-source /usr/local/bin/bun /usr/local/bin/bun
-COPY --from=bun-source /usr/local/bin/bunx /usr/local/bin/bunx
+# Install Bun runtime from official image
+COPY --from=oven/bun:1 /usr/local/bin/bun /usr/local/bin/bun
+COPY --from=oven/bun:1 /usr/local/bin/bunx /usr/local/bin/bunx
 
 # Install essential Python packages for code execution
 RUN pip3 install --no-cache-dir \
@@ -59,25 +117,30 @@ RUN pip3 install --no-cache-dir \
     pandas \
     ipython
 
-# Set up container server directory
-WORKDIR /container-server
-
 # Verify installations
 RUN python3 --version && \
     node --version && \
     npm --version && \
     bun --version
 
-# Copy container source files to server directory
-COPY container_src/package.json container_src/bun.lock ./
-RUN bun install --frozen-lockfile
+# Set up runtime container server directory
+WORKDIR /container-server
 
-COPY container_src/ ./
+# Copy built sandbox-container package
+COPY --from=builder /app/packages/sandbox-container/dist ./dist
+COPY --from=builder /app/packages/sandbox-container/package.json ./package.json
 
-# Compile TypeScript files using the locally installed TypeScript
-RUN npx tsc control-process.ts --outDir . --module commonjs --target es2020 --esModuleInterop --skipLibCheck
-RUN cd runtime/executors/javascript && npx tsc node_executor.ts --module commonjs --target es2020 --esModuleInterop --skipLibCheck
-RUN cd runtime/executors/typescript && npx tsc ts_executor.ts --module commonjs --target es2020 --esModuleInterop --skipLibCheck
+# Copy Python executor to runtime location
+COPY --from=builder /app/packages/sandbox-container/src/runtime/executors/python/ipython_executor.py ./dist/runtime/executors/python/
+
+# Copy production-only node_modules (excludes typescript, @types/*, etc.)
+# Includes: @repo/shared, zod, esbuild (runtime dependencies)
+COPY --from=prod-deps /app/node_modules ./node_modules
+
+# Copy workspace packages so node_modules symlinks work
+# @repo/shared and @repo/typescript-config are symlinked in node_modules
+COPY --from=prod-deps /app/packages/shared ./packages/shared
+COPY --from=prod-deps /app/tooling/typescript-config ./tooling/typescript-config
 
 # Configure process pool sizes (can be overridden at runtime)
 ENV PYTHON_POOL_MIN_SIZE=3
@@ -96,7 +159,8 @@ RUN mkdir -p /workspace
 # Expose the application port (3000 for control)
 EXPOSE 3000
 
-# Make startup script executable
+# Copy and make startup script executable
+COPY packages/sandbox/startup.sh ./
 RUN chmod +x startup.sh
 
 # Use startup script

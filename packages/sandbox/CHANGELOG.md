@@ -1,23 +1,5 @@
 # @cloudflare/sandbox
 
-## 0.3.6
-
-### Patch Changes
-
-- [#90](https://github.com/cloudflare/sandbox-sdk/pull/90) [`66cc85b`](https://github.com/cloudflare/sandbox-sdk/commit/66cc85b679b466b3ffb1f00fbd697670fc186f06) Thanks [@eastlondoner](https://github.com/eastlondoner)! - set bun idletimeout
-
-## 0.3.5
-
-### Patch Changes
-
-- [#88](https://github.com/cloudflare/sandbox-sdk/pull/88) [`46eb4e6`](https://github.com/cloudflare/sandbox-sdk/commit/46eb4e6b6c671b682fc74f83563ccf5f316011cb) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Add binary file support with automatic MIME detection and streaming
-
-## 0.3.4
-
-### Patch Changes
-
-- [#86](https://github.com/cloudflare/sandbox-sdk/pull/86) [`feafd32`](https://github.com/cloudflare/sandbox-sdk/commit/feafd32a51f50dfaf4994bddcbfb56d46cada622) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Fix session reuse to reuse existing healthy session
-
 ## 0.3.3
 
 ### Patch Changes

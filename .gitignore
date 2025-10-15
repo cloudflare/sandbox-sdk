@@ -129,14 +129,23 @@ dist
 !.yarn/versions
 
 
-.wrangler 
-.dev.vars 
+.wrangler
+.dev.vars
 
 .DS_Store
 
-container_dist
+# Turborepo cache
+.turbo
 
-# Compiled TypeScript files in container_src
-packages/sandbox/container_src/*.js
-packages/sandbox/container_src/**/*.js
-!packages/sandbox/container_src/**/*.d.ts
+# Build artifacts (should only be in dist/ directories)
+**/*.js
+**/*.js.map
+**/*.d.ts
+!*.config.js
+!*.config.ts
+# Allow config files and scripts
+!scripts/**/*.js
+!examples/**/*.js
+# Allow source in dist directories
+!dist/**
+!node_modules/**

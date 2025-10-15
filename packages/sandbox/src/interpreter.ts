@@ -1,11 +1,14 @@
-import type { InterpreterClient } from "./interpreter-client.js";
 import {
   type CodeContext,
   type CreateContextOptions,
   Execution,
+  type ExecutionError,
+  type OutputMessage,
+  type Result,
   ResultImpl,
   type RunCodeOptions,
-} from "./interpreter-types.js";
+} from "@repo/shared";
+import type { InterpreterClient } from "./clients/interpreter-client.js";
 import type { Sandbox } from "./sandbox.js";
 
 export class CodeInterpreter {
@@ -13,7 +16,8 @@ export class CodeInterpreter {
   private contexts = new Map<string, CodeContext>();
 
   constructor(sandbox: Sandbox) {
-    this.interpreterClient = sandbox.client as InterpreterClient;
+    // In init-testing architecture, client is a SandboxClient with an interpreter property
+    this.interpreterClient = (sandbox.client as any).interpreter as InterpreterClient;
   }
 
   /**
@@ -47,19 +51,19 @@ export class CodeInterpreter {
 
     // Stream execution
     await this.interpreterClient.runCodeStream(context.id, code, options.language, {
-      onStdout: (output) => {
+      onStdout: (output: OutputMessage) => {
         execution.logs.stdout.push(output.text);
         if (options.onStdout) return options.onStdout(output);
       },
-      onStderr: (output) => {
+      onStderr: (output: OutputMessage) => {
         execution.logs.stderr.push(output.text);
         if (options.onStderr) return options.onStderr(output);
       },
-      onResult: async (result) => {
+      onResult: async (result: Result) => {
         execution.results.push(new ResultImpl(result) as any);
         if (options.onResult) return options.onResult(result);
       },
-      onError: (error) => {
+      onError: (error: ExecutionError) => {
         execution.error = error;
         if (options.onError) return options.onError(error);
       },
@@ -83,7 +87,8 @@ export class CodeInterpreter {
     }
 
     // Create streaming response
-    const response = await this.interpreterClient.doFetch("/api/execute/code", {
+    // Note: doFetch is protected but we need direct access for raw stream response
+    const response = await (this.interpreterClient as any).doFetch("/api/execute/code", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

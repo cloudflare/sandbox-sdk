@@ -1,0 +1,35 @@
+{
+  "name": "sandbox-e2e-test-worker",
+  "main": "index.ts",
+  "compatibility_date": "2025-05-06",
+  "compatibility_flags": ["nodejs_compat"],
+  "account_id": "b8afc92c7a87f699592038b756153d22",
+
+  "observability": {
+    "enabled": true
+  },
+
+  "containers": [
+    {
+      "class_name": "Sandbox",
+      "image": "./Dockerfile",
+      "name": "sandbox"
+    }
+  ],
+
+  "durable_objects": {
+    "bindings": [
+      {
+        "class_name": "Sandbox",
+        "name": "Sandbox"
+      }
+    ]
+  },
+
+  "migrations": [
+    {
+      "new_sqlite_classes": ["Sandbox"],
+      "tag": "v1"
+    }
+  ]
+}

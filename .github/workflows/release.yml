@@ -20,11 +20,23 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: "npm"
 
-      - run: npm install
-      - run: npm run build
+      - name: Install dependencies
+        run: npm install
+        
+      - name: Run type checking
+        run: npm run typecheck
+        
+      - name: Run linting
+        run: npm run check
+        
+      - name: Build packages
+        run: npm run build
+        
+      - name: Run full test suite
+        run: npm test
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3

@@ -1,0 +1,101 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "globalEnv": ["NODE_ENV"],
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**"],
+      "inputs": [
+        "src/**/*.ts",
+        "src/**/*.tsx",
+        "package.json",
+        "tsconfig.json",
+        "tsconfig.*.json",
+        "wrangler.jsonc",
+        "Dockerfile"
+      ],
+      "env": ["NODE_ENV"]
+    },
+    "test": {
+      "dependsOn": ["^build"],
+      "outputs": [],
+      "inputs": [
+        "src/**/*.ts",
+        "tests/**/*.ts",
+        "vitest.config.ts",
+        "package.json"
+      ],
+      "env": ["NODE_ENV"]
+    },
+    "typecheck": {
+      "dependsOn": ["^build"],
+      "outputs": [],
+      "inputs": [
+        "src/**/*.ts",
+        "tsconfig.json",
+        "tsconfig.*.json"
+      ]
+    },
+    "check": {
+      "dependsOn": ["typecheck"],
+      "outputs": [],
+      "inputs": [
+        "src/**/*.ts",
+        "biome.json"
+      ]
+    },
+    "docker:local": {
+      "dependsOn": ["^build"],
+      "cache": false,
+      "outputs": [],
+      "inputs": [
+        "Dockerfile",
+        "packages/sandbox/startup.sh",
+        "packages/sandbox-container/src/**",
+        "packages/shared/src/**"
+      ]
+    },
+    "docker:publish": {
+      "dependsOn": ["^build"],
+      "cache": false,
+      "outputs": [],
+      "inputs": ["Dockerfile", "wrangler.jsonc"]
+    },
+    "docker:publish:beta": {
+      "dependsOn": ["^build"],
+      "cache": false,
+      "outputs": [],
+      "inputs": ["Dockerfile", "wrangler.jsonc"]
+    },
+    "dev": {
+      "cache": false,
+      "persistent": true
+    },
+    "start": {
+      "cache": false,
+      "persistent": true
+    },
+    "deploy": {
+      "dependsOn": ["^build"],
+      "cache": false,
+      "outputs": []
+    },
+    "clean": {
+      "cache": false
+    },
+    "test:e2e": {
+      "dependsOn": ["^build", "docker:local"],
+      "cache": false,
+      "outputs": [],
+      "inputs": [
+        "tests/e2e/**/*.ts",
+        "vitest.e2e.config.ts",
+        "packages/sandbox/Dockerfile"
+      ]
+    }
+  },
+  "globalDependencies": [
+    "tooling/typescript-config/*.json",
+    "biome.json"
+  ]
+}

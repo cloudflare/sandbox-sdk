@@ -207,6 +207,7 @@ class SandboxApiClient {
       {
         headers: {
           Accept: "text/event-stream",
+          "X-Sandbox-Client-Id": this.sandboxId,
         },
         signal: options?.signal,  // Pass the abort signal to fetch
       }
@@ -469,6 +470,7 @@ class SandboxApiClient {
       headers: {
         "Content-Type": "application/json",
         Accept: "text/event-stream",
+        "X-Sandbox-Client-Id": this.sandboxId,
       },
       body: JSON.stringify({
         command: `${command} ${args.join(" ")}`,
@@ -560,6 +562,7 @@ class SandboxApiClient {
       headers: {
         "Content-Type": "application/json",
         Accept: "text/event-stream",
+        "X-Sandbox-Client-Id": this.sandboxId,
       },
       body: JSON.stringify({ code, sessionId, language }),
     });
@@ -3376,7 +3379,10 @@ function ExamplesTab({
         try {
           const response = await fetch("/api/notebook/session", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: {
+              "Content-Type": "application/json",
+              "X-Sandbox-Client-Id": getClientSandboxId(),
+            },
             body: JSON.stringify({ language: "python" }),
           });
           const data: { sessionId: string; language: string } =
@@ -3398,7 +3404,10 @@ function ExamplesTab({
     try {
       const response = await fetch(endpoint, {
         method: "GET",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "X-Sandbox-Client-Id": getClientSandboxId(),
+        },
       });
       const data = await response.json();
       setResults((prev) => ({ ...prev, [exampleName]: data }));
@@ -3985,7 +3994,7 @@ function SandboxTester() {
   return (
     <div className="sandbox-tester-container">
       <div className="header">
-        <h1>Cloudflare Sandbox Notebook</h1>
+        <h1>Cloudflare SDK Tester</h1>
         <div className={`connection-status ${connectionStatus}`}>
           {connectionStatus === "connected"
             ? `Ready`

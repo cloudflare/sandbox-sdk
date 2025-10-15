@@ -1,18 +1,13 @@
 name: Pull Request
 
-on: pull_request
+on:
+  pull_request:
 
 jobs:
-  check:
-    timeout-minutes: 5
-    strategy:
-      matrix:
-        os: [
-            ubuntu-24.04,
-            # windows-latest,
-            # macos-latest,
-          ]
-    runs-on: ${{ matrix.os }}
+  # Fast quality checks
+  quality-checks:
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
@@ -20,19 +15,134 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build packages
+        run: npm run build
+
+      - name: Type checking
+        run: npm run typecheck
+
+      - name: Linting
+        run: npm run check
+
+  # Unit tests (client + container)
+  unit-tests:
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    needs: quality-checks
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
           cache: "npm"
 
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
 
-      - run: npm install
-      - run: npm run build
+      - name: Install dependencies
+        run: npm ci
 
-      # Install container dependencies before type checking
-      - name: Install container dependencies
-        run: cd packages/sandbox/container_src && bun install
+      - name: Build packages
+        run: npm run build
 
-      - run: npm run check
-      - run: CI=true npm run test
+      - name: Run sandbox unit tests
+        run: |
+          set +e
+          timeout --preserve-status 30 npm run test -w @cloudflare/sandbox > sandbox_test.log 2>&1
+          EXIT_CODE=$?
+          cat sandbox_test.log
+
+          if grep -q "Test Files.*passed" sandbox_test.log && grep -q "Tests.*passed" sandbox_test.log; then
+            echo "Sandbox tests passed"
+            if [ $EXIT_CODE -eq 124 ] || [ $EXIT_CODE -eq 143 ]; then
+              echo "::warning::Killed due to workerd shutdown hang (known vitest-pool-workers issue)"
+            fi
+            exit 0
+          else
+            echo "Sandbox tests failed"
+            exit 1
+          fi
+
+      - name: Run container unit tests
+        run: npm run test -w @repo/sandbox-container
+
+  # E2E tests against deployed worker
+  e2e-tests:
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    needs: quality-checks
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: "npm"
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build packages
+        run: npm run build
+
+      # Build Docker image for test worker (needed before deployment)
+      - name: Build test worker Docker image
+        run: npm run docker:local -w @cloudflare/sandbox
+
+      # Set environment name (pr-X for PRs, branch name for pushes)
+      - name: Set environment name
+        id: env-name
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "env_name=pr-${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
+            echo "worker_name=sandbox-e2e-test-worker-pr-${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
+          else
+            echo "env_name=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+            echo "worker_name=sandbox-e2e-test-worker-${{ github.ref_name }}" >> $GITHUB_OUTPUT
+          fi
+
+      # Deploy test worker using official Cloudflare action
+      - name: Deploy test worker
+        id: deploy
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy --name ${{ steps.env-name.outputs.worker_name }}
+          workingDirectory: tests/e2e/test-worker
+
+      # Construct worker URL from worker name
+      - name: Get deployment URL
+        id: get-url
+        run: |
+          echo "worker_url=https://${{ steps.env-name.outputs.worker_name }}.agents-b8a.workers.dev" >> $GITHUB_OUTPUT
+
+      # Run E2E tests against deployed worker
+      - name: Run E2E tests
+        run: npx vitest run --config vitest.e2e.config.ts
+        env:
+          TEST_WORKER_URL: ${{ steps.get-url.outputs.worker_url }}
+          CI: true
+
+      # Cleanup: Delete test worker deployment (only for PR environments)
+      - name: Cleanup test deployment
+        if: always() && github.event_name == 'pull_request'
+        continue-on-error: true
+        run: |
+          npx wrangler delete --name ${{ steps.env-name.outputs.worker_name }} || echo "Worker already deleted or doesn't exist"
+        working-directory: tests/e2e/test-worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

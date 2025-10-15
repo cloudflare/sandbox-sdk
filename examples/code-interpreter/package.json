@@ -13,6 +13,7 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
+    "@cloudflare/sandbox": "*",
     "openai": "^5.12.0"
   }
 }

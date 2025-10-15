@@ -7,6 +7,24 @@
   "observability": {
     "enabled": true
   },
+
+  // IMPORTANT: Port exposure requires wildcard DNS routing
+  // To use exposePort(), configure a custom domain:
+  //
+  // 1. Add your domain to Cloudflare
+  // 2. Create wildcard DNS record: * → 192.0.2.0 (Proxied)
+  // 3. Uncomment and update the routes below
+  // 4. Deploy with: npx wrangler deploy
+  //
+  // See: ../../docs/PRODUCTION_DEPLOYMENT.md
+  //
+  // "routes": [
+  //   {
+  //     "pattern": "*.yourdomain.com/*",
+  //     "zone_name": "yourdomain.com"
+  //   }
+  // ],
+
   "assets": {
     "directory": "public",
     "binding": "ASSETS",

@@ -50,11 +50,10 @@ The Cloudflare Sandbox SDK enables you to run isolated code environments directl
 - **🔒 Secure Isolation**: Each sandbox runs in its own container with full process isolation
 - **⚡ Edge-Native**: Runs on Cloudflare's global network for low latency worldwide
 - **📁 File System Access**: Read, write, and manage files within the sandbox
-- **🖼️ Binary File Support**: Automatic MIME type detection and base64 encoding for images, PDFs, and other binary files
 - **🔧 Command Execution**: Run any command or process inside the container
 - **🌐 Preview URLs**: Expose services running in your sandbox via public URLs
 - **🔄 Git Integration**: Clone repositories directly into sandboxes
-- **🚀 Streaming Support**: Real-time output streaming for long-running commands and file transfers
+- **🚀 Streaming Support**: Real-time output streaming for long-running commands
 - **🎮 Session Management**: Maintain state across multiple operations
 - **🧪 Code Interpreter**: Execute Python and JavaScript with rich outputs (charts, tables, formatted data)
 - **📊 Multi-Language Support**: Persistent execution contexts for Python and JavaScript/TypeScript
@@ -73,9 +72,9 @@ npm install @cloudflare/sandbox
 1. **Create a Dockerfile** (temporary requirement, will be removed in future releases):
 
 ```dockerfile
-FROM docker.io/cloudflare/sandbox:0.3.6
+FROM docker.io/cloudflare/sandbox:0.3.3
 
-# Expose the ports you want to expose
+# Expose any ports you want
 EXPOSE 3000
 ```
 
@@ -190,57 +189,11 @@ await sandbox.writeFile("/workspace/app.js", "console.log('Hello!');");
 
 #### `readFile(path, options?)`
 
-Read a file from the sandbox with automatic binary detection.
+Read a file from the sandbox.
 
 ```typescript
-// Read text files
 const file = await sandbox.readFile("/package.json");
-console.log(file.content); // UTF-8 text content
-
-// Read binary files - automatically detected and base64 encoded
-const image = await sandbox.readFile("/workspace/chart.png");
-console.log(image.mimeType); // "image/png"
-console.log(image.isBinary); // true
-console.log(image.encoding); // "base64"
-console.log(image.size); // File size in bytes
-
-// Use the base64 content directly in data URLs
-const dataUrl = `data:${image.mimeType};base64,${image.content}`;
-```
-
-#### `readFileStream(path)`
-
-Stream large files efficiently with automatic chunking and encoding.
-
-```typescript
-import { streamFile, collectFile } from '@cloudflare/sandbox';
-
-// Stream a large file
-const stream = await sandbox.readFileStream("/large-video.mp4");
-
-// Option 1: Process chunks as they arrive
-for await (const chunk of streamFile(stream)) {
-  if (chunk instanceof Uint8Array) {
-    // Binary chunk - already decoded from base64
-    console.log(`Received ${chunk.byteLength} bytes`);
-    // Process binary data...
-  } else {
-    // Text chunk
-    console.log('Text:', chunk);
-  }
-}
-
-// Option 2: Collect entire file into memory
-const { content, metadata } = await collectFile(stream);
-console.log(`MIME: ${metadata.mimeType}, Size: ${metadata.size} bytes`);
-
-if (content instanceof Uint8Array) {
-  // Binary file - ready to save or process
-  await writeToStorage(content);
-} else {
-  // Text file
-  console.log('Content:', content);
-}
+console.log(file.content);
 ```
 
 #### `gitCheckout(repoUrl, options?)`
@@ -288,8 +241,7 @@ console.log(result.stdout); // "production"
 #### File System Methods
 
 - `writeFile(path, content, options?)` - Write content to a file
-- `readFile(path, options?)` - Read a file with automatic binary detection and base64 encoding
-- `readFileStream(path)` - Stream large files efficiently with chunking
+- `readFile(path, options?)` - Read a file from the sandbox
 - `mkdir(path, options?)` - Create a directory
 - `deleteFile(path)` - Delete a file
 - `renameFile(oldPath, newPath)` - Rename a file
@@ -429,6 +381,40 @@ Check available formats with `result.formats()`.
 
 <h2 id="port-forwarding">🌐 Port Forwarding</h2>
 
+### ⚠️ Production Deployment Requirement
+
+**Port exposure requires a custom domain with wildcard DNS routing.** The free `workers.dev` domain doesn't support the wildcard subdomains needed for preview URLs to work.
+
+**Quick Setup (5 minutes):**
+
+1. **Add your domain to Cloudflare** (if not already added)
+
+2. **Create wildcard DNS record** in the Cloudflare dashboard:
+   - Type: `A`
+   - Name: `*`
+   - IPv4 address: `192.0.2.0` (dummy IP, since Worker is the origin)
+   - Proxy status: ✅ Proxied (orange cloud)
+
+3. **Update wrangler.jsonc** with wildcard route:
+   ```jsonc
+   {
+     "routes": [
+       {
+         "pattern": "*.yourdomain.com/*",
+         "zone_name": "yourdomain.com"
+       }
+     ]
+   }
+   ```
+
+4. **Deploy**: `npx wrangler deploy`
+
+That's it! Your preview URLs will work: `https://8080-sandbox-abc123.yourdomain.com`
+
+> 📘 **For detailed instructions**, see the [Production Deployment Guide](./docs/PRODUCTION_DEPLOYMENT.md)
+
+### Basic Usage
+
 The SDK automatically handles preview URL routing for exposed ports. Just add one line to your worker:
 
 ```typescript
@@ -450,7 +436,7 @@ When you expose a port, the SDK returns a preview URL that automatically routes 
 
 ```typescript
 const preview = await sandbox.exposePort(3000);
-console.log(preview.url); // https://3000-sandbox-id.your-worker.dev
+console.log(preview.url); // https://3000-sandbox-id.yourdomain.com
 ```
 
 The SDK handles:
@@ -458,6 +444,9 @@ The SDK handles:
 - Subdomain routing (`3000-sandbox-id.domain.com`) for both production and local development
 - All localhost variants (127.0.0.1, ::1, etc.)
 - Request forwarding with proper headers
+- Security via cryptographic port tokens
+
+### Local Development Notes
 
 > **Important for Local Development**: When developing locally with `wrangler dev`, you must explicitly expose ports in your Dockerfile using the `EXPOSE` instruction. This is **only required for local development** - in production, all container ports are automatically accessible.
 
@@ -674,10 +663,9 @@ growth;
 The SDK leverages Cloudflare's infrastructure:
 
 - **Durable Objects**: Manages sandbox lifecycle and state
-- **Containers**: Provides isolated execution environments with Jupyter kernels
+- **Containers**: Provides isolated execution environments
 - **Workers**: Handles HTTP routing and API interface
 - **Edge Network**: Enables global distribution and low latency
-- **Jupyter Integration**: Python (IPython) and JavaScript (TSLab) kernels for code execution
 - **MIME Processing**: Automatic detection and handling of rich output formats
 
 <h2 id="advanced-usage">🛠️ Advanced Usage</h2>
@@ -713,14 +701,9 @@ for await (const event of parseSSEStream<ExecEvent>(stream)) {
 
 The SDK exports utilities for working with Server-Sent Event streams:
 
-**Command Execution:**
 - **`parseSSEStream<T>(stream)`** - Convert ReadableStream to typed AsyncIterable
 - **`responseToAsyncIterable<T>(response)`** - Convert SSE Response to AsyncIterable
 - **`asyncIterableToSSEStream<T>(iterable)`** - Convert AsyncIterable back to SSE stream
-
-**File Streaming:**
-- **`streamFile(stream, signal?)`** - Convert file SSE stream to AsyncIterable with automatic base64 decoding
-- **`collectFile(stream, signal?)`** - Collect entire file from stream into memory
 
 #### Advanced Streaming Examples
 
@@ -847,9 +830,6 @@ sandbox.client.onCommandComplete = (success, code) =>
 - Maximum container runtime is limited by Durable Object constraints
 - WebSocket support for preview URLs coming soon
 - Some system calls may be restricted in the container environment
-- Code interpreter has no internet access (sandbox restriction)
-- Some Python/JavaScript packages may not be pre-installed
-- Resource limits apply to code execution (CPU, memory)
 
 <h2 id="contributing">🤝 Contributing</h2>
 
@@ -862,13 +842,6 @@ cd sandbox-sdk
 
 # Install dependencies
 npm install
-
-# Install Bun (if not already installed)
-# Visit https://bun.sh for installation instructions
-curl -fsSL https://bun.sh/install | bash
-
-# Install container dependencies (required for TypeScript checking)
-cd packages/sandbox/container_src && bun install && cd -
 
 # Run tests
 npm test

@@ -1,0 +1,24 @@
+{
+  "name": "@repo/sandbox-container",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Container runtime for Cloudflare Sandbox SDK",
+  "type": "module",
+  "scripts": {
+    "build": "tsc --project tsconfig.json",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test tests",
+    "test:watch": "bun test --watch tests",
+    "clean": "rm -rf dist *.js *.js.map src/**/*.js src/**/*.js.map"
+  },
+  "dependencies": {
+    "@repo/shared": "*",
+    "esbuild": "^0.25.10",
+    "zod": "^3.22.3"
+  },
+  "devDependencies": {
+    "@repo/typescript-config": "*",
+    "@types/bun": "^1.2.19",
+    "typescript": "^5.8.3"
+  }
+}
