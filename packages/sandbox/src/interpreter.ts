@@ -10,6 +10,7 @@ import {
 } from "@repo/shared";
 import type { InterpreterClient } from "./clients/interpreter-client.js";
 import type { Sandbox } from "./sandbox.js";
+import { validateLanguage } from "./security.js";
 
 export class CodeInterpreter {
   private interpreterClient: InterpreterClient;
@@ -26,6 +27,9 @@ export class CodeInterpreter {
   async createCodeContext(
     options: CreateContextOptions = {}
   ): Promise<CodeContext> {
+    // Validate language before sending to container
+    validateLanguage(options.language);
+
     const context = await this.interpreterClient.createCodeContext(options);
     this.contexts.set(context.id, context);
     return context;
