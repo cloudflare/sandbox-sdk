@@ -92,8 +92,26 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   // RPC method to set environment variables
   async setEnvVars(envVars: Record<string, string>): Promise<void> {
+    // Update local state for new sessions
     this.envVars = { ...this.envVars, ...envVars };
-    console.log(`[Sandbox] Updated environment variables`);
+
+    // If default session already exists, update it directly
+    if (this.defaultSession) {
+      // Set environment variables by executing export commands in the existing session
+      for (const [key, value] of Object.entries(envVars)) {
+        const escapedValue = value.replace(/'/g, "'\\''");
+        const exportCommand = `export ${key}='${escapedValue}'`;
+
+        const result = await this.client.commands.execute(exportCommand, this.defaultSession);
+
+        if (result.exitCode !== 0) {
+          throw new Error(`Failed to set ${key}: ${result.stderr || 'Unknown error'}`);
+        }
+      }
+      console.log(`[Sandbox] Updated environment variables in existing session`);
+    } else {
+      console.log(`[Sandbox] Updated environment variables (will be set when session is created)`);
+    }
   }
 
   /**
