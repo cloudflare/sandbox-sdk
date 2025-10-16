@@ -1,5 +1,7 @@
-import { spawn } from 'node:child_process';
+import { execSync, spawn } from 'node:child_process';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 
 export interface WranglerDevOptions {
   cwd?: string;
@@ -11,7 +13,10 @@ export interface WranglerDevOptions {
  * Get the test worker URL and runner for E2E tests
  *
  * In CI: Uses the deployed worker URL from TEST_WORKER_URL env var (runner is null)
- * Locally: Spawns wrangler dev and returns both URL and runner for cleanup
+ * Locally: Auto-generates wrangler.jsonc if missing, then spawns wrangler dev
+ *
+ * NOTE: wrangler.jsonc is generated from wrangler.template.jsonc automatically
+ * on first run. You don't need to run any setup commands manually.
  */
 export async function getTestWorkerUrl(): Promise<{ url: string; runner: WranglerDevRunner | null }> {
   // CI mode: use deployed worker URL
@@ -20,9 +25,26 @@ export async function getTestWorkerUrl(): Promise<{ url: string; runner: Wrangle
     return { url: process.env.TEST_WORKER_URL, runner: null };
   }
 
-  // Local mode: spawn wrangler dev
+  // Local mode: ensure config exists before spawning wrangler dev
+  const testWorkerDir = 'tests/e2e/test-worker';
+  const configPath = join(testWorkerDir, 'wrangler.jsonc');
+
+  if (!existsSync(configPath)) {
+    console.log('wrangler.jsonc not found, generating from template...');
+    try {
+      execSync('./generate-config.sh', {
+        cwd: testWorkerDir,
+        stdio: 'inherit'
+      });
+      console.log('✅ Generated wrangler.jsonc');
+    } catch (error) {
+      throw new Error(`Failed to generate wrangler.jsonc: ${error}`);
+    }
+  }
+
+  // Spawn wrangler dev
   console.log('Spawning local wrangler dev...');
-  const runner = new WranglerDevRunner({ cwd: 'tests/e2e/test-worker' });
+  const runner = new WranglerDevRunner({ cwd: testWorkerDir });
   const url = await runner.getUrl();
   return { url, runner };
 }

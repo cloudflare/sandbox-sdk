@@ -336,25 +336,26 @@ export class SessionManager {
   }
 
   /**
-   * Set environment variables on an existing session
+   * Set environment variables on a session
    */
   async setEnvVars(sessionId: string, envVars: Record<string, string>): Promise<ServiceResult<void>> {
     try {
-      const session = this.sessions.get(sessionId);
+      // Get or create session on demand
+      let sessionResult = await this.getSession(sessionId);
 
-      if (!session) {
-        return {
-          success: false,
-          error: {
-            message: `Session '${sessionId}' not found`,
-            code: ErrorCode.INTERNAL_ERROR,
-            details: {
-              sessionId,
-              originalError: 'Session not found'
-            } satisfies InternalErrorContext,
-          },
-        };
+      // If session doesn't exist, create it automatically
+      if (!sessionResult.success && (sessionResult.error!.details as InternalErrorContext)?.originalError === 'Session not found') {
+        sessionResult = await this.createSession({
+          id: sessionId,
+          cwd: '/workspace',
+        });
       }
+
+      if (!sessionResult.success) {
+        return sessionResult as ServiceResult<void>;
+      }
+
+      const session = sessionResult.data;
 
       this.logger.info('Setting environment variables on session', { sessionId, vars: Object.keys(envVars) });
 

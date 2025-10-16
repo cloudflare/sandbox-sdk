@@ -120,10 +120,10 @@ export class InterpreterService {
           if (result.stdout) {
             controller.enqueue(
               encoder.encode(
-                `${JSON.stringify({
+                self.formatSSE({
                   type: "stdout",
-                  text: result.stdout,
-                })}\n`
+                  data: result.stdout,
+                })
               )
             );
           }
@@ -131,10 +131,10 @@ export class InterpreterService {
           if (result.stderr) {
             controller.enqueue(
               encoder.encode(
-                `${JSON.stringify({
+                self.formatSSE({
                   type: "stderr",
-                  text: result.stderr,
-                })}\n`
+                  data: result.stderr,
+                })
               )
             );
           }
@@ -144,11 +144,11 @@ export class InterpreterService {
               const outputData = self.formatOutputData(output);
               controller.enqueue(
                 encoder.encode(
-                  `${JSON.stringify({
+                  self.formatSSE({
                     type: "result",
                     ...outputData,
                     metadata: output.metadata || {},
-                  })}\n`
+                  })
                 )
               );
             }
@@ -157,32 +157,32 @@ export class InterpreterService {
           if (result.success) {
             controller.enqueue(
               encoder.encode(
-                `${JSON.stringify({
+                self.formatSSE({
                   type: "execution_complete",
                   execution_count: 1,
-                })}\n`
+                })
               )
             );
           } else if (result.error) {
             controller.enqueue(
               encoder.encode(
-                `${JSON.stringify({
+                self.formatSSE({
                   type: "error",
                   ename: result.error.type || "ExecutionError",
                   evalue: result.error.message || "Code execution failed",
                   traceback: result.error.traceback ? result.error.traceback.split('\n') : [],
-                })}\n`
+                })
               )
             );
           } else {
             controller.enqueue(
               encoder.encode(
-                `${JSON.stringify({
+                self.formatSSE({
                   type: "error",
                   ename: "ExecutionError",
                   evalue: result.stderr || "Code execution failed",
                   traceback: [],
-                })}\n`
+                })
               )
             );
           }
@@ -190,18 +190,18 @@ export class InterpreterService {
           controller.close();
         } catch (error) {
           console.error(`[InterpreterService] Code execution failed:`, error);
-          
+
           controller.enqueue(
             encoder.encode(
-              `${JSON.stringify({
+              self.formatSSE({
                 type: "error",
                 ename: "InternalError",
                 evalue: error instanceof Error ? error.message : String(error),
                 traceback: [],
-              })}\n`
+              })
             )
           );
-          
+
           controller.close();
         }
       },
@@ -240,7 +240,7 @@ export class InterpreterService {
 
   private formatOutputData(output: RichOutput): Record<string, unknown> {
     const result: Record<string, unknown> = {};
-    
+
     switch (output.type) {
       case "image":
         result.png = output.data;
@@ -272,7 +272,17 @@ export class InterpreterService {
       default:
         result.text = output.data || '';
     }
-    
+
     return result;
+  }
+
+  /**
+   * Format event as SSE (Server-Sent Events)
+   * SSE format requires "data: " prefix and double newline separator
+   * @param event - Event object to send
+   * @returns SSE-formatted string
+   */
+  private formatSSE(event: Record<string, unknown>): string {
+    return `data: ${JSON.stringify(event)}\n\n`;
   }
 }
