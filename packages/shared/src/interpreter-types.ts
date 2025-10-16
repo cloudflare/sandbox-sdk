@@ -232,7 +232,7 @@ export interface ExecutionError {
   /**
    * Error message
    */
-  value: string;
+  message: string;
 
   /**
    * Stack trace

@@ -315,7 +315,7 @@ export class InterpreterClient extends BaseHttpClient {
           if (callbacks.onError) {
             await callbacks.onError({
               name: data.ename || "Error",
-              value: data.evalue || "Unknown error",
+              message: data.evalue || "Unknown error",
               traceback: data.traceback || [],
             });
           }

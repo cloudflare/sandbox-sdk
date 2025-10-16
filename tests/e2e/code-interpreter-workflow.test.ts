@@ -441,7 +441,7 @@ for i in range(3):
     expect(stdoutEvents.length).toBeGreaterThan(0);
 
     // Verify output content
-    const allOutput = stdoutEvents.map((e) => e.data).join('');
+    const allOutput = stdoutEvents.map((e) => e.text).join('');
     expect(allOutput).toContain('Step 0');
     expect(allOutput).toContain('Step 1');
     expect(allOutput).toContain('Step 2');
