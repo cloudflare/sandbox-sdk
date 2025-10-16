@@ -352,6 +352,19 @@ export class ProcessHandler extends BaseHandler<Request, Response> {
           process.outputListeners.add(outputListener);
           process.statusListeners.add(statusListener);
 
+          // If process already completed, send exit event immediately
+          if (['completed', 'failed', 'killed', 'error'].includes(process.status)) {
+            const finalData = `data: ${JSON.stringify({
+              type: 'exit',
+              processId: process.id,
+              exitCode: process.exitCode,
+              data: `Process ${process.status} with exit code ${process.exitCode}`,
+              timestamp: new Date().toISOString(),
+            })}\n\n`;
+            controller.enqueue(new TextEncoder().encode(finalData));
+            controller.close();
+          }
+
           // Cleanup when stream is cancelled
           return () => {
             process.outputListeners.delete(outputListener);
