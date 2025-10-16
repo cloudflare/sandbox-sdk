@@ -10,7 +10,8 @@
 	"containers": [
 		{
 			"class_name": "Sandbox",
-			"image": "./Dockerfile"
+			"image": "./Dockerfile",
+			"instance_type": "basic"
 		}
 	],
 	"durable_objects": {
