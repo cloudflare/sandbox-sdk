@@ -276,8 +276,13 @@ export class InterpreterClient extends BaseHttpClient {
   ) {
     if (!line.trim()) return;
 
+    // Skip lines that don't start with "data: " (SSE format)
+    if (!line.startsWith('data: ')) return;
+
     try {
-      const data = JSON.parse(line) as StreamingExecutionData;
+      // Strip "data: " prefix and parse JSON
+      const jsonData = line.substring(6); // "data: " is 6 characters
+      const data = JSON.parse(jsonData) as StreamingExecutionData;
 
       switch (data.type) {
         case "stdout":

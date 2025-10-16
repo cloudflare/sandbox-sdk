@@ -122,7 +122,7 @@ export class InterpreterService {
               encoder.encode(
                 self.formatSSE({
                   type: "stdout",
-                  data: result.stdout,
+                  text: result.stdout,
                 })
               )
             );
@@ -133,7 +133,7 @@ export class InterpreterService {
               encoder.encode(
                 self.formatSSE({
                   type: "stderr",
-                  data: result.stderr,
+                  text: result.stderr,
                 })
               )
             );

@@ -36,7 +36,6 @@ export interface PoolConfig {
   maxProcesses: number;
   idleTimeout: number; // milliseconds
   minSize: number;
-  preWarmScript?: string;
 }
 
 export interface ExecutorPoolConfig extends PoolConfig {
@@ -49,38 +48,18 @@ const DEFAULT_EXECUTOR_CONFIGS: Record<InterpreterLanguage, ExecutorPoolConfig> 
     minSize: 3,
     maxProcesses: 15,
     idleTimeout: 5 * 60 * 1000, // 5 minutes
-    preWarmScript: `
-import json
-print(json.dumps({"status": "pre-warmed"}))
-`
   },
   javascript: {
     executor: "javascript",
     minSize: 3,
     maxProcesses: 10,
     idleTimeout: 5 * 60 * 1000,
-    preWarmScript: `
-const fs = require('fs');
-const path = require('path');
-const util = require('util');
-const crypto = require('crypto');
-for(let i = 0; i < 1000; i++) {
-  JSON.stringify({x: i, data: Math.random()});
-}
-console.log(JSON.stringify({"status": "pre-warmed"}));
-`
   },
   typescript: {
     executor: "typescript",
     minSize: 3,
     maxProcesses: 10,
     idleTimeout: 5 * 60 * 1000,
-    preWarmScript: `
-const { transformSync } = require('esbuild');
-const warmupCode = 'interface Test { x: number; } const test: Test = { x: 42 }; test.x';
-transformSync(warmupCode, { loader: 'ts', target: 'es2020', format: 'cjs' });
-console.log(JSON.stringify({"status": "pre-warmed"}));
-`
   }
 };
 
@@ -392,10 +371,6 @@ export class ProcessPoolManager {
         const sessionId = `pre-warm-${executor}-${i}-${Date.now()}`;
         const process = await this.createProcess(executor, sessionId);
 
-        if (config.preWarmScript) {
-          await this.executePreWarmScript(process, config.preWarmScript, executor);
-        }
-
         process.isAvailable = true;
         process.sessionId = undefined;
         pool.push(process);
@@ -407,30 +382,6 @@ export class ProcessPoolManager {
     const warmupTime = Date.now() - startTime;
     const actualCount = pool.filter(p => p.isAvailable).length;
     console.log(`[ProcessPool] Pre-warmed ${actualCount}/${config.minSize} ${executor} processes in ${warmupTime}ms`);
-  }
-
-  private async executePreWarmScript(
-    process: InterpreterProcess,
-    script: string,
-    executor: InterpreterLanguage
-  ): Promise<void> {
-    try {
-      const executionId = `pre-warm-${Date.now()}`;
-      const result = await this.executeCode(
-        process,
-        script,
-        executionId,
-        CONFIG.INTERPRETER_PREWARM_TIMEOUT_MS
-      );
-
-      if (result.success) {
-        console.log(`[ProcessPool] ${executor} pre-warm script executed successfully`);
-      } else {
-        console.warn(`[ProcessPool] ${executor} pre-warm script failed:`, result.stderr);
-      }
-    } catch (error) {
-      console.warn(`[ProcessPool] ${executor} pre-warm script error:`, error);
-    }
   }
 
   private cleanupIdleProcesses(): void {

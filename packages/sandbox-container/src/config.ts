@@ -12,18 +12,6 @@ const INTERPRETER_SPAWN_TIMEOUT_MS = parseInt(
 );
 
 /**
- * Timeout for internal pre-warm scripts that warm up interpreter pools.
- * These are system-level operations that should complete quickly.
- *
- * Default: 30 seconds
- * Environment variable: INTERPRETER_PREWARM_TIMEOUT_MS
- */
-const INTERPRETER_PREWARM_TIMEOUT_MS = parseInt(
-	process.env.INTERPRETER_PREWARM_TIMEOUT_MS || '30000',
-	10,
-);
-
-/**
  * Timeout for interpreter code execution (Python/JS/TS).
  * Users might legitimately run long computations (ML training, data processing, etc.)
  *
@@ -78,7 +66,6 @@ const DEFAULT_CWD = '/workspace';
 
 export const CONFIG = {
 	INTERPRETER_SPAWN_TIMEOUT_MS,
-	INTERPRETER_PREWARM_TIMEOUT_MS,
 	INTERPRETER_EXECUTION_TIMEOUT_MS,
 	COMMAND_TIMEOUT_MS,
 	MAX_OUTPUT_SIZE_BYTES,
