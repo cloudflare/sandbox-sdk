@@ -31,6 +31,7 @@ const app = await createApplication();
 
 // Start the Bun server
 const server = serve({
+  idleTimeout: 255,
   fetch: app.fetch,
   hostname: "0.0.0.0",
   port: 3000,

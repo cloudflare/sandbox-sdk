@@ -21,7 +21,6 @@ export interface ProcessStore {
   update(id: string, data: Partial<ProcessRecord>): Promise<void>;
   delete(id: string): Promise<void>;
   list(filters?: ProcessFilters): Promise<ProcessRecord[]>;
-  cleanup(olderThan: Date): Promise<number>;
 }
 
 export interface ProcessFilters {
@@ -66,22 +65,9 @@ export class InMemoryProcessStore implements ProcessStore {
 
     return processes;
   }
-
-  async cleanup(olderThan: Date): Promise<number> {
-    let cleaned = 0;
-    for (const [id, process] of Array.from(this.processes.entries())) {
-      if (process.startTime < olderThan && 
-          ['completed', 'failed', 'killed', 'error'].includes(process.status)) {
-        await this.delete(id);
-        cleaned++;
-      }
-    }
-    return cleaned;
-  }
 }
 
 export class ProcessService {
-  private cleanupInterval: Timer | null = null;
   private manager: ProcessManager;
 
   constructor(
@@ -90,9 +76,6 @@ export class ProcessService {
     private sessionManager: SessionManager
   ) {
     this.manager = new ProcessManager();
-
-    // Start cleanup process every 30 minutes
-    this.startCleanupProcess();
   }
 
   /**
@@ -498,26 +481,8 @@ export class ProcessService {
     }
   }
 
-
-  private startCleanupProcess(): void {
-    this.cleanupInterval = setInterval(async () => {
-      try {
-        // Use manager to calculate cleanup cutoff date
-        const thirtyMinutesAgo = this.manager.createCleanupCutoffDate(30);
-        await this.store.cleanup(thirtyMinutesAgo);
-      } catch (error) {
-        this.logger.error('Failed to cleanup processes', error instanceof Error ? error : undefined);
-      }
-    }, 30 * 60 * 1000); // 30 minutes
-  }
-
   // Cleanup method for graceful shutdown
   async destroy(): Promise<void> {
-    if (this.cleanupInterval) {
-      clearInterval(this.cleanupInterval);
-      this.cleanupInterval = null;
-    }
-
     // Kill all running processes
     await this.killAllProcesses();
   }

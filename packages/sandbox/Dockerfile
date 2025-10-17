@@ -110,6 +110,12 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
 COPY --from=oven/bun:1 /usr/local/bin/bun /usr/local/bin/bun
 COPY --from=oven/bun:1 /usr/local/bin/bunx /usr/local/bin/bunx
 
+# Install development tools globally
+RUN npm install -g \
+    wrangler \
+    vite \
+    opencode-ai
+
 # Install essential Python packages for code execution
 RUN pip3 install --no-cache-dir \
     matplotlib \

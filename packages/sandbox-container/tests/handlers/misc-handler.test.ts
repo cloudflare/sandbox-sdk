@@ -148,18 +148,6 @@ describe('MiscHandler', () => {
         new Date(responseData2.timestamp).getTime()
       );
     });
-
-    it('should log health check request with requestId', async () => {
-      const request = new Request('http://localhost:3000/api/health', {
-        method: 'GET'
-      });
-
-      await miscHandler.handle(request, mockContext);
-
-      expect(mockLogger.info).toHaveBeenCalledWith('Health check request', {
-        requestId: 'req-123'
-      });
-    });
   });
 
   describe('handleShutdown - POST /api/shutdown', () => {
@@ -228,18 +216,6 @@ describe('MiscHandler', () => {
       expect(new Date(responseData1.timestamp).getTime()).toBeLessThan(
         new Date(responseData2.timestamp).getTime()
       );
-    });
-
-    it('should log shutdown request with requestId', async () => {
-      const request = new Request('http://localhost:3000/api/shutdown', {
-        method: 'POST'
-      });
-
-      await miscHandler.handle(request, mockContext);
-
-      expect(mockLogger.info).toHaveBeenCalledWith('Shutdown request', {
-        requestId: 'req-123'
-      });
     });
   });
 

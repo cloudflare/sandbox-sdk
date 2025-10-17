@@ -70,11 +70,4 @@ export class ProcessManager {
   interpretExitCode(exitCode: number): ProcessStatus {
     return exitCode === 0 ? 'completed' : 'failed';
   }
-
-  /**
-   * Creates a cleanup cutoff date
-   */
-  createCleanupCutoffDate(minutesAgo: number): Date {
-    return new Date(Date.now() - minutesAgo * 60 * 1000);
-  }
 }
