@@ -1,5 +1,15 @@
 # @cloudflare/sandbox
 
+## 0.4.0
+
+### Minor Changes
+
+- [#95](https://github.com/cloudflare/sandbox-sdk/pull/95) [`7aee736`](https://github.com/cloudflare/sandbox-sdk/commit/7aee736bf07a4bf9020e2109bdaaa70214d52a01) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Rewrite SDK with cleaner design patterns and tests. Remove the unnecessary isolation cruft and fix foundational issues with streaming, sessions, validations and error handling. Cover the SDK with unit & e2e tests.
+
+### Patch Changes
+
+- [#106](https://github.com/cloudflare/sandbox-sdk/pull/106) [`da947cd`](https://github.com/cloudflare/sandbox-sdk/commit/da947cd9543fc99831eefb1e8741fc905cb8fa42) Thanks [@jahands](https://github.com/jahands)! - fix examples failing to deploy and prevent committing node_modules
+
 ## 0.3.3
 
 ### Patch Changes
