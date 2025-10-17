@@ -5,6 +5,10 @@ import type {
   ResponseHandler
 } from './types';
 
+// Container provisioning retry configuration
+const TIMEOUT_MS = 60_000;  // 60 seconds total timeout budget
+const MIN_TIME_FOR_RETRY_MS = 10_000;  // Need at least 10s remaining to retry (8s Container + 2s delay)
+
 /**
  * Abstract base class providing common HTTP functionality for all domain clients
  */
@@ -27,53 +31,58 @@ export abstract class BaseHttpClient {
   }
 
   /**
-   * Core HTTP request method with error handling and logging
+   * Core HTTP request method with automatic retry for container provisioning delays
    */
   protected async doFetch(
     path: string,
     options?: RequestInit
   ): Promise<Response> {
-    const url = this.options.stub
-      ? `http://localhost:${this.options.port}${path}`
-      : `${this.baseUrl}${path}`;
-    const method = options?.method || "GET";
+    const startTime = Date.now();
+    let attempt = 0;
 
-    // Only log HTTP details in non-test environments
-    if (!this.isTestEnvironment) {
-      console.log(`[HTTP Client] Making ${method} request to ${url}`);
-    }
+    while (true) {
+      const response = await this.executeFetch(path, options);
 
-    try {
-      let response: Response;
+      // Only retry container provisioning 503s, not user app 503s
+      if (response.status === 503) {
+        const isContainerProvisioning = await this.isContainerProvisioningError(response);
 
-      if (this.options.stub) {
-        response = await this.options.stub.containerFetch(
-          url,
-          options || {},
-          this.options.port
-        );
-      } else {
-        response = await fetch(url, options);
+        if (isContainerProvisioning) {
+          const elapsed = Date.now() - startTime;
+          const remaining = TIMEOUT_MS - elapsed;
+
+          // Check if we have enough time for another attempt
+          // (Need at least 10s: 8s for Container timeout + 2s delay)
+          if (remaining > MIN_TIME_FOR_RETRY_MS) {
+            // Exponential backoff: 2s, 4s, 8s, 16s (capped at 16s)
+            const delay = Math.min(2000 * 2 ** attempt, 16000);
+
+            if (!this.isTestEnvironment) {
+              console.log(
+                `[Sandbox SDK] Container provisioning in progress (attempt ${attempt + 1}), ` +
+                `retrying in ${delay}ms (${Math.floor(remaining / 1000)}s remaining)`
+              );
+            }
+
+            await new Promise(resolve => setTimeout(resolve, delay));
+            attempt++;
+            continue;
+          } else {
+            // Exhausted retries - log error and return response
+            // Let existing error handling convert to proper error
+            if (!this.isTestEnvironment) {
+              console.error(
+                `[Sandbox SDK] Container failed to provision after ${attempt + 1} attempts over 60s. ` +
+                `Check Cloudflare Containers status.`
+              );
+            }
+            return response;
+          }
+        }
       }
 
-      if (!this.isTestEnvironment) {
-        console.log(
-          `[HTTP Client] Response: ${response.status} ${response.statusText}`
-        );
-      }
-
-      if (!response.ok && !this.isTestEnvironment) {
-        console.error(
-          `[HTTP Client] Request failed: ${method} ${url} - ${response.status} ${response.statusText}`
-        );
-      }
-
+      // Return response (success, user app error, or non-retryable error)
       return response;
-    } catch (error) {
-      if (!this.isTestEnvironment) {
-        console.error(`[HTTP Client] Request error: ${method} ${url}`, error);
-      }
-      throw error;
     }
   }
 
@@ -220,6 +229,67 @@ export abstract class BaseHttpClient {
   protected logError(operation: string, error: unknown): void {
     if (!this.isTestEnvironment) {
       console.error(`[HTTP Client] Error in ${operation}:`, error);
+    }
+  }
+
+  /**
+   * Check if 503 response is from container provisioning (retryable)
+   * vs user application (not retryable)
+   */
+  private async isContainerProvisioningError(response: Response): Promise<boolean> {
+    try {
+      // Clone response so we don't consume the original body
+      const cloned = response.clone();
+      const text = await cloned.text();
+      // Container package returns specific message for provisioning errors
+      return text.includes('There is no Container instance available');
+    } catch {
+      // If we can't read the body, don't retry to be safe
+      return false;
+    }
+  }
+
+  private async executeFetch(path: string, options?: RequestInit): Promise<Response> {
+    const url = this.options.stub
+      ? `http://localhost:${this.options.port}${path}`
+      : `${this.baseUrl}${path}`;
+    const method = options?.method || "GET";
+
+    if (!this.isTestEnvironment) {
+      console.log(`[HTTP Client] Making ${method} request to ${url}`);
+    }
+
+    try {
+      let response: Response;
+
+      if (this.options.stub) {
+        response = await this.options.stub.containerFetch(
+          url,
+          options || {},
+          this.options.port
+        );
+      } else {
+        response = await fetch(url, options);
+      }
+
+      if (!this.isTestEnvironment) {
+        console.log(
+          `[HTTP Client] Response: ${response.status} ${response.statusText}`
+        );
+      }
+
+      if (!response.ok && !this.isTestEnvironment) {
+        console.error(
+          `[HTTP Client] Request failed: ${method} ${url} - ${response.status} ${response.statusText}`
+        );
+      }
+
+      return response;
+    } catch (error) {
+      if (!this.isTestEnvironment) {
+        console.error(`[HTTP Client] Request error: ${method} ${url}`, error);
+      }
+      throw error;
     }
   }
 }
