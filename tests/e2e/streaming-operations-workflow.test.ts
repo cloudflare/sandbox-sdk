@@ -97,7 +97,7 @@ describe('Streaming Operations Workflow', () => {
             command: 'echo "Line 1"; echo "Line 2"; echo "Line 3"',
           }),
         }),
-        { timeout: 60000, interval: 2000 }
+        { timeout: 90000, interval: 2000 }
       );
 
       expect(streamResponse.status).toBe(200);
@@ -128,7 +128,7 @@ describe('Streaming Operations Workflow', () => {
       const completeEvent = events.find((e) => e.type === 'complete');
       expect(completeEvent).toBeDefined();
       expect(completeEvent?.exitCode).toBe(0);
-    }, 60000);
+    }, 90000);
 
     test('should stream stderr events separately', async () => {
       currentSandboxId = createSandboxId();
@@ -143,7 +143,7 @@ describe('Streaming Operations Workflow', () => {
             command: "bash -c 'echo stdout message; echo stderr message >&2'",
           }),
         }),
-        { timeout: 60000, interval: 2000 }
+        { timeout: 90000, interval: 2000 }
       );
 
       expect(streamResponse.status).toBe(200);
@@ -167,7 +167,7 @@ describe('Streaming Operations Workflow', () => {
       // Verify stdout doesn't contain stderr and vice versa
       expect(stdoutData).not.toContain('stderr message');
       expect(stderrData).not.toContain('stdout message');
-    }, 60000);
+    }, 90000);
 
     test('should include all event types: start, stdout, complete', async () => {
       currentSandboxId = createSandboxId();
@@ -181,7 +181,7 @@ describe('Streaming Operations Workflow', () => {
             command: 'echo "Hello Streaming"',
           }),
         }),
-        { timeout: 60000, interval: 2000 }
+        { timeout: 90000, interval: 2000 }
       );
 
       const events = await collectSSEEvents(streamResponse);
@@ -202,7 +202,7 @@ describe('Streaming Operations Workflow', () => {
         expect(event.timestamp).toBeDefined();
         expect(typeof event.timestamp).toBe('string');
       }
-    }, 60000);
+    }, 90000);
 
     test('should handle command failures with non-zero exit code', async () => {
       currentSandboxId = createSandboxId();
@@ -217,7 +217,7 @@ describe('Streaming Operations Workflow', () => {
             command: 'false', // Always fails with exit code 1
           }),
         }),
-        { timeout: 60000, interval: 2000 }
+        { timeout: 90000, interval: 2000 }
       );
 
       const events = await collectSSEEvents(streamResponse);
@@ -226,7 +226,7 @@ describe('Streaming Operations Workflow', () => {
       const completeEvent = events.find((e) => e.type === 'complete');
       expect(completeEvent).toBeDefined();
       expect(completeEvent?.exitCode).not.toBe(0);
-    }, 60000);
+    }, 90000);
 
     test('should handle nonexistent commands with proper exit code', async () => {
       currentSandboxId = createSandboxId();
@@ -241,7 +241,7 @@ describe('Streaming Operations Workflow', () => {
             command: 'echo "init"',
           }),
         }),
-        { timeout: 60000, interval: 2000 }
+        { timeout: 90000, interval: 2000 }
       );
 
       // Try to stream a nonexistent command (should execute and fail with exit code 127)
@@ -272,7 +272,7 @@ describe('Streaming Operations Workflow', () => {
       // Verify stderr contains command not found message
       const stderrData = stderrEvents.map((e) => e.data).join('');
       expect(stderrData.toLowerCase()).toMatch(/command not found|not found/);
-    }, 60000);
+    }, 90000);
 
     test('should handle environment variables in streaming commands', async () => {
       currentSandboxId = createSandboxId();
@@ -287,7 +287,7 @@ describe('Streaming Operations Workflow', () => {
             command: "bash -c 'STREAM_VAR=streaming-value; echo $STREAM_VAR'",
           }),
         }),
-        { timeout: 60000, interval: 2000 }
+        { timeout: 90000, interval: 2000 }
       );
 
       const events1 = await collectSSEEvents(streamResponse1);
@@ -313,7 +313,7 @@ describe('Streaming Operations Workflow', () => {
             command: "bash -c 'for i in 1 2 3 4 5; do echo \"Count: $i\"; sleep 0.2; done'",
           }),
         }),
-        { timeout: 60000, interval: 2000 }
+        { timeout: 90000, interval: 2000 }
       );
 
       const events = await collectSSEEvents(streamResponse, 20);
@@ -332,7 +332,7 @@ describe('Streaming Operations Workflow', () => {
       const completeEvent = events.find((e) => e.type === 'complete');
       expect(completeEvent).toBeDefined();
       expect(completeEvent?.exitCode).toBe(0);
-    }, 60000);
+    }, 90000);
 
     test('should support concurrent streaming operations', async () => {
       currentSandboxId = createSandboxId();
@@ -347,7 +347,7 @@ describe('Streaming Operations Workflow', () => {
             command: 'echo "init"',
           }),
         }),
-        { timeout: 60000, interval: 2000 }
+        { timeout: 90000, interval: 2000 }
       );
 
       // Start two streaming commands concurrently
@@ -413,7 +413,7 @@ describe('Streaming Operations Workflow', () => {
             },
           }),
         }),
-        { timeout: 60000, interval: 2000 }
+        { timeout: 90000, interval: 2000 }
       );
 
       const sessionData = await sessionResponse.json();

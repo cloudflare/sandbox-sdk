@@ -53,7 +53,7 @@ describe('Build and Test Workflow', () => {
 
           }),
         }),
-        { timeout: 60000, interval: 1000 }
+        { timeout: 90000, interval: 1000 }
       );
 
       expect(echoResponse.status).toBe(200);

@@ -240,7 +240,7 @@ describe('Git Clone Workflow', () => {
 
           }),
         }, { expectSuccess: false }), // Don't throw on error - we expect this to fail
-        { timeout: 60000, interval: 2000 }
+        { timeout: 90000, interval: 2000 }
       );
 
       // Git clone should fail with appropriate error
@@ -266,7 +266,7 @@ describe('Git Clone Workflow', () => {
 
           }),
         }, { expectSuccess: false }), // Don't throw on error - we expect this to fail
-        { timeout: 60000, interval: 2000 }
+        { timeout: 90000, interval: 2000 }
       );
 
       // Should fail with authentication error

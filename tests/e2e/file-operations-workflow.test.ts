@@ -56,7 +56,7 @@ describe('File Operations Workflow (E2E)', () => {
           recursive: true,
         }),
       }),
-      { timeout: 60000, interval: 2000 }
+      { timeout: 90000, interval: 2000 }
     );
 
     const mkdirData = await mkdirResponse.json();
@@ -76,7 +76,7 @@ describe('File Operations Workflow (E2E)', () => {
     expect(lsResponse.status).toBe(200);
     expect(lsData.success).toBe(true);
     // Directory should exist (ls succeeds)
-  }, 60000);
+  }, 90000);
 
   test('should write files in subdirectories and read them back', async () => {
     currentSandboxId = createSandboxId();
@@ -93,7 +93,7 @@ describe('File Operations Workflow (E2E)', () => {
           recursive: true,
         }),
       }),
-      { timeout: 60000, interval: 2000 }
+      { timeout: 90000, interval: 2000 }
     );
 
     // Write file in subdirectory
@@ -123,7 +123,7 @@ describe('File Operations Workflow (E2E)', () => {
     expect(readResponse.status).toBe(200);
     expect(readData.content).toContain('debug');
     expect(readData.content).toContain('3000');
-  }, 60000);
+  }, 90000);
 
   test('should rename files', async () => {
     currentSandboxId = createSandboxId();
@@ -140,7 +140,7 @@ describe('File Operations Workflow (E2E)', () => {
           recursive: true,
         }),
       }),
-      { timeout: 60000, interval: 2000 }
+      { timeout: 90000, interval: 2000 }
     );
 
     await fetch(`${workerUrl}/api/file/write`, {
@@ -191,7 +191,7 @@ describe('File Operations Workflow (E2E)', () => {
     });
 
     expect(readOldResponse.status).toBe(500); // Should fail - file doesn't exist
-  }, 60000);
+  }, 90000);
 
   test('should move files between directories', async () => {
     currentSandboxId = createSandboxId();
@@ -220,7 +220,7 @@ describe('File Operations Workflow (E2E)', () => {
           }),
         });
       },
-      { timeout: 60000, interval: 2000 }
+      { timeout: 90000, interval: 2000 }
     );
 
     // Write file in source directory
@@ -272,7 +272,7 @@ describe('File Operations Workflow (E2E)', () => {
     });
 
     expect(readSourceResponse.status).toBe(500); // Should fail - file moved
-  }, 60000);
+  }, 90000);
 
   test('should delete files', async () => {
     currentSandboxId = createSandboxId();
@@ -289,7 +289,7 @@ describe('File Operations Workflow (E2E)', () => {
           recursive: true,
         }),
       }),
-      { timeout: 60000, interval: 2000 }
+      { timeout: 90000, interval: 2000 }
     );
 
     await fetch(`${workerUrl}/api/file/write`, {
@@ -337,7 +337,7 @@ describe('File Operations Workflow (E2E)', () => {
     });
 
     expect(readAfterResponse.status).toBe(500); // Should fail - file deleted
-  }, 60000);
+  }, 90000);
 
   test('should reject deleting directories with deleteFile', async () => {
     currentSandboxId = createSandboxId();
@@ -354,7 +354,7 @@ describe('File Operations Workflow (E2E)', () => {
           recursive: true,
         }),
       }),
-      { timeout: 60000, interval: 2000 }
+      { timeout: 90000, interval: 2000 }
     );
 
     // Try to delete directory with deleteFile - should fail
@@ -397,7 +397,7 @@ describe('File Operations Workflow (E2E)', () => {
 
       }),
     });
-  }, 60000);
+  }, 90000);
 
   test('should delete directories recursively using exec', async () => {
     currentSandboxId = createSandboxId();
@@ -414,7 +414,7 @@ describe('File Operations Workflow (E2E)', () => {
           recursive: true,
         }),
       }),
-      { timeout: 60000, interval: 2000 }
+      { timeout: 90000, interval: 2000 }
     );
 
     // Write files in different levels
@@ -465,7 +465,7 @@ describe('File Operations Workflow (E2E)', () => {
     const lsData = await lsResponse.json();
     // ls should fail or show empty result
     expect(lsData.success).toBe(false);
-  }, 60000);
+  }, 90000);
 
   test('should handle complete project scaffolding workflow', async () => {
     currentSandboxId = createSandboxId();
@@ -505,7 +505,7 @@ describe('File Operations Workflow (E2E)', () => {
           }),
         });
       },
-      { timeout: 60000, interval: 2000 }
+      { timeout: 90000, interval: 2000 }
     );
 
     // Step 2: Write initial files
@@ -661,7 +661,7 @@ describe('File Operations Workflow (E2E)', () => {
           content: 'Users control their sandbox!',
         }),
       }),
-      { timeout: 60000, interval: 2000 }
+      { timeout: 90000, interval: 2000 }
     );
 
     expect(writeResponse.status).toBe(200);
@@ -680,7 +680,7 @@ describe('File Operations Workflow (E2E)', () => {
     expect(readResponse.status).toBe(200);
     const readData = await readResponse.json();
     expect(readData.content).toBe('Users control their sandbox!');
-  }, 60000);
+  }, 90000);
 
   test('should read text files with correct encoding and metadata', async () => {
     currentSandboxId = createSandboxId();
@@ -696,7 +696,7 @@ describe('File Operations Workflow (E2E)', () => {
           content: 'Hello, World! This is a test.',
         }),
       }),
-      { timeout: 60000, interval: 2000 }
+      { timeout: 90000, interval: 2000 }
     );
 
     // Read the file and check metadata
@@ -717,7 +717,7 @@ describe('File Operations Workflow (E2E)', () => {
     expect(readData.isBinary).toBe(false);
     expect(readData.mimeType).toMatch(/text\/plain/);
     expect(readData.size).toBeGreaterThan(0);
-  }, 60000);
+  }, 90000);
 
   test('should write and read binary files with base64 encoding', async () => {
     currentSandboxId = createSandboxId();
@@ -735,7 +735,7 @@ describe('File Operations Workflow (E2E)', () => {
           command: `echo '${pngBase64}' | base64 -d > /workspace/test.png`,
         }),
       }),
-      { timeout: 60000, interval: 2000 }
+      { timeout: 90000, interval: 2000 }
     );
 
     // Read the binary file
@@ -759,7 +759,7 @@ describe('File Operations Workflow (E2E)', () => {
 
     // Verify the content is valid base64
     expect(readData.content).toMatch(/^[A-Za-z0-9+/=]+$/);
-  }, 60000);
+  }, 90000);
 
   test('should detect JSON files as text', async () => {
     currentSandboxId = createSandboxId();
@@ -777,7 +777,7 @@ describe('File Operations Workflow (E2E)', () => {
           content: jsonContent,
         }),
       }),
-      { timeout: 60000, interval: 2000 }
+      { timeout: 90000, interval: 2000 }
     );
 
     // Read and verify metadata
@@ -797,7 +797,7 @@ describe('File Operations Workflow (E2E)', () => {
     expect(readData.encoding).toBe('utf-8');
     expect(readData.isBinary).toBe(false);
     expect(readData.mimeType).toMatch(/json/);
-  }, 60000);
+  }, 90000);
 
   test('should stream large text files', async () => {
     currentSandboxId = createSandboxId();
@@ -815,7 +815,7 @@ describe('File Operations Workflow (E2E)', () => {
           content: largeContent,
         }),
       }),
-      { timeout: 60000, interval: 2000 }
+      { timeout: 90000, interval: 2000 }
     );
 
     // Stream the file
@@ -879,7 +879,7 @@ describe('File Operations Workflow (E2E)', () => {
     expect(receivedMetadata).toBe(true);
     expect(receivedChunks).toBeGreaterThan(0);
     expect(receivedComplete).toBe(true);
-  }, 60000);
+  }, 90000);
 
   test('should return error when deleting nonexistent file', async () => {
     currentSandboxId = createSandboxId();
@@ -894,7 +894,7 @@ describe('File Operations Workflow (E2E)', () => {
           path: '/workspace/this-file-does-not-exist.txt',
         }),
       }, { expectSuccess: false }), // Don't throw on error - we expect this to fail
-      { timeout: 60000, interval: 2000 }
+      { timeout: 90000, interval: 2000 }
     );
 
     // Should return error with FILE_NOT_FOUND
@@ -902,7 +902,7 @@ describe('File Operations Workflow (E2E)', () => {
     const errorData = await deleteResponse.json();
     expect(errorData.error).toBeTruthy();
     expect(errorData.error).toMatch(/not found|does not exist|no such file/i);
-  }, 60000);
+  }, 90000);
 
   test('should list files with metadata and permissions', async () => {
     currentSandboxId = createSandboxId();
@@ -918,7 +918,7 @@ describe('File Operations Workflow (E2E)', () => {
           recursive: true,
         }),
       }),
-      { timeout: 60000, interval: 2000 }
+      { timeout: 90000, interval: 2000 }
     );
 
     await fetch(`${workerUrl}/api/file/write`, {
@@ -971,7 +971,7 @@ describe('File Operations Workflow (E2E)', () => {
     const scriptFile = listData.files.find((f: any) => f.name === 'script.sh');
     expect(scriptFile).toBeDefined();
     expect(scriptFile.permissions.executable).toBe(true);
-  }, 60000);
+  }, 90000);
 
   test('should list files recursively with correct relative paths', async () => {
     currentSandboxId = createSandboxId();
@@ -987,7 +987,7 @@ describe('File Operations Workflow (E2E)', () => {
           recursive: true,
         }),
       }),
-      { timeout: 60000, interval: 2000 }
+      { timeout: 90000, interval: 2000 }
     );
 
     await fetch(`${workerUrl}/api/file/write`, {
@@ -1028,7 +1028,7 @@ describe('File Operations Workflow (E2E)', () => {
 
     const deepFile = listData.files.find((f: any) => f.name === 'deep.txt');
     expect(deepFile?.relativePath).toBe('level1/level2/deep.txt');
-  }, 60000);
+  }, 90000);
 
   test('should handle listFiles errors appropriately', async () => {
     currentSandboxId = createSandboxId();
@@ -1043,7 +1043,7 @@ describe('File Operations Workflow (E2E)', () => {
           path: '/workspace/does-not-exist',
         }),
       }, { expectSuccess: false }),
-      { timeout: 60000, interval: 2000 }
+      { timeout: 90000, interval: 2000 }
     );
 
     expect(notFoundResponse.status).toBe(500);
@@ -1072,5 +1072,5 @@ describe('File Operations Workflow (E2E)', () => {
     expect(wrongTypeResponse.status).toBe(500);
     const wrongTypeData = await wrongTypeResponse.json();
     expect(wrongTypeData.error).toMatch(/not a directory/i);
-  }, 60000);
+  }, 90000);
 });

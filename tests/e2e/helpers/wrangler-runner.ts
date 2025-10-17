@@ -12,8 +12,10 @@ export interface WranglerDevOptions {
 /**
  * Get the test worker URL and runner for E2E tests
  *
- * In CI: Uses the deployed worker URL from TEST_WORKER_URL env var (runner is null)
- * Locally: Auto-generates wrangler.jsonc if missing, then spawns wrangler dev
+ * Priority order:
+ * 1. TEST_WORKER_URL - Deployed worker (CI mode)
+ * 2. TEST_WORKER_URL_GLOBAL_SETUP - Shared wrangler dev from global setup (parallel local mode)
+ * 3. Spawn new wrangler dev - Fallback for serial local mode (deprecated)
  *
  * NOTE: wrangler.jsonc is generated from wrangler.template.jsonc automatically
  * on first run. You don't need to run any setup commands manually.
@@ -23,6 +25,12 @@ export async function getTestWorkerUrl(): Promise<{ url: string; runner: Wrangle
   if (process.env.TEST_WORKER_URL) {
     console.log('Using deployed test worker:', process.env.TEST_WORKER_URL);
     return { url: process.env.TEST_WORKER_URL, runner: null };
+  }
+
+  // Parallel local mode: use shared wrangler dev from global setup
+  if (process.env.TEST_WORKER_URL_GLOBAL_SETUP) {
+    console.log('Using shared wrangler dev from global setup:', process.env.TEST_WORKER_URL_GLOBAL_SETUP);
+    return { url: process.env.TEST_WORKER_URL_GLOBAL_SETUP, runner: null };
   }
 
   // Local mode: ensure config exists before spawning wrangler dev

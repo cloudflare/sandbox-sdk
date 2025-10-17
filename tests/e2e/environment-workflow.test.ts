@@ -42,7 +42,7 @@ describe('Environment Variables Workflow', () => {
             envVars: { TEST_VAR: 'hello_world' },
           }),
         }),
-        { timeout: 60000, interval: 2000 }
+        { timeout: 90000, interval: 2000 }
       );
 
       expect(setEnvResponse.status).toBe(200);
@@ -62,7 +62,7 @@ describe('Environment Variables Workflow', () => {
       const execData = await execResponse.json();
       expect(execData.success).toBe(true);
       expect(execData.stdout.trim()).toBe('hello_world');
-    }, 60000);
+    }, 90000);
 
     test('should set multiple environment variables at once', async () => {
       currentSandboxId = createSandboxId();
@@ -81,7 +81,7 @@ describe('Environment Variables Workflow', () => {
             },
           }),
         }),
-        { timeout: 60000, interval: 2000 }
+        { timeout: 90000, interval: 2000 }
       );
 
       expect(setEnvResponse.status).toBe(200);
@@ -101,7 +101,7 @@ describe('Environment Variables Workflow', () => {
       const execData = await execResponse.json();
       expect(execData.success).toBe(true);
       expect(execData.stdout.trim()).toBe('secret123|localhost|3000');
-    }, 60000);
+    }, 90000);
 
     test('should persist environment variables across multiple commands', async () => {
       currentSandboxId = createSandboxId();
@@ -116,7 +116,7 @@ describe('Environment Variables Workflow', () => {
             envVars: { PERSISTENT_VAR: 'still_here' },
           }),
         }),
-        { timeout: 60000, interval: 2000 }
+        { timeout: 90000, interval: 2000 }
       );
 
       expect(setEnvResponse.status).toBe(200);
@@ -162,7 +162,7 @@ describe('Environment Variables Workflow', () => {
       const exec3Data = await exec3Response.json();
       expect(exec3Data.success).toBe(true);
       expect(exec3Data.stdout.trim()).toBe('still_here');
-    }, 60000);
+    }, 90000);
 
     test('should make environment variables available to background processes', async () => {
       currentSandboxId = createSandboxId();
@@ -177,7 +177,7 @@ describe('Environment Variables Workflow', () => {
             envVars: { PROCESS_VAR: 'from_env' },
           }),
         }),
-        { timeout: 60000, interval: 2000 }
+        { timeout: 90000, interval: 2000 }
       );
 
       expect(setEnvResponse.status).toBe(200);
@@ -241,6 +241,6 @@ describe('Environment Variables Workflow', () => {
           path: '/workspace/env-test.sh',
         }),
       });
-    }, 60000);
+    }, 90000);
   });
 });

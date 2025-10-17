@@ -62,7 +62,7 @@ describe('Session State Isolation Workflow', () => {
             },
           }),
         }),
-        { timeout: 60000, interval: 2000 }
+        { timeout: 90000, interval: 2000 }
       );
 
       expect(session1Response.status).toBe(200);
@@ -166,7 +166,7 @@ describe('Session State Isolation Workflow', () => {
             recursive: true,
           }),
         }),
-        { timeout: 60000, interval: 2000 }
+        { timeout: 90000, interval: 2000 }
       );
 
       await fetch(`${workerUrl}/api/file/mkdir`, {
@@ -297,7 +297,7 @@ describe('Session State Isolation Workflow', () => {
           headers: createTestHeaders(currentSandboxId),
           body: JSON.stringify({}),
         }),
-        { timeout: 60000, interval: 2000 }
+        { timeout: 90000, interval: 2000 }
       );
 
       const session1Data = await session1Response.json();
@@ -394,7 +394,7 @@ describe('Session State Isolation Workflow', () => {
           headers: createTestHeaders(currentSandboxId),
           body: JSON.stringify({}),
         }),
-        { timeout: 60000, interval: 2000 }
+        { timeout: 90000, interval: 2000 }
       );
 
       const session1Data = await session1Response.json();
@@ -470,7 +470,7 @@ describe('Session State Isolation Workflow', () => {
           headers: createTestHeaders(currentSandboxId),
           body: JSON.stringify({}),
         }),
-        { timeout: 60000, interval: 2000 }
+        { timeout: 90000, interval: 2000 }
       );
 
       const session1Data = await session1Response.json();
@@ -556,7 +556,7 @@ describe('Session State Isolation Workflow', () => {
             env: { SESSION_NAME: 'session1' },
           }),
         }),
-        { timeout: 60000, interval: 2000 }
+        { timeout: 90000, interval: 2000 }
       );
 
       const session1Data = await session1Response.json();

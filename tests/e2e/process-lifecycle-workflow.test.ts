@@ -67,7 +67,7 @@ describe('Process Lifecycle Workflow', () => {
 
           }),
         }),
-        { timeout: 60000, interval: 2000 }
+        { timeout: 90000, interval: 2000 }
       );
 
       expect(startResponse.status).toBe(200);
@@ -97,7 +97,7 @@ describe('Process Lifecycle Workflow', () => {
       });
 
       expect(killResponse.status).toBe(200);
-    }, 60000);
+    }, 90000);
 
     test('should list all running processes', async () => {
       const sandboxId = createSandboxId();
@@ -113,7 +113,7 @@ describe('Process Lifecycle Workflow', () => {
 
           }),
         }),
-        { timeout: 60000, interval: 2000 }
+        { timeout: 90000, interval: 2000 }
       );
 
       const process1Data = await process1Response.json();
@@ -165,7 +165,7 @@ describe('Process Lifecycle Workflow', () => {
         method: 'DELETE',
         headers,
       });
-    }, 60000);
+    }, 90000);
 
     test('should get process logs after execution', async () => {
       const sandboxId = createSandboxId();
@@ -181,7 +181,7 @@ describe('Process Lifecycle Workflow', () => {
 
           }),
         }),
-        { timeout: 60000, interval: 2000 }
+        { timeout: 90000, interval: 2000 }
       );
 
       const startData = await startResponse.json();
@@ -199,7 +199,7 @@ describe('Process Lifecycle Workflow', () => {
       expect(logsResponse.status).toBe(200);
       const logsData = await logsResponse.json();
       expect(logsData.stdout).toContain('Hello from process');
-    }, 60000);
+    }, 90000);
 
     test('should stream process logs in real-time', async () => {
       const sandboxId = createSandboxId();
@@ -224,7 +224,7 @@ console.log("Line 3");
 
           }),
         }),
-        { timeout: 60000, interval: 2000 }
+        { timeout: 90000, interval: 2000 }
       );
 
       // Start the script
@@ -292,7 +292,7 @@ console.log("Line 3");
         method: 'DELETE',
         headers,
       });
-    }, 60000);
+    }, 90000);
 
     test.skipIf(skipPortExposureTests)('should expose port and verify HTTP access', async () => {
       const sandboxId = createSandboxId();
@@ -323,7 +323,7 @@ console.log("Server started on port 8080");
 
           }),
         }),
-        { timeout: 60000, interval: 2000 }
+        { timeout: 90000, interval: 2000 }
       );
 
       // Start the server
@@ -391,7 +391,7 @@ console.log("Server started on port 8080");
 
             }),
           }),
-          { timeout: 60000, interval: 2000 }
+          { timeout: 90000, interval: 2000 }
         );
 
         const data = await startResponse.json();
@@ -466,7 +466,7 @@ console.log("Server listening on port 8080");
 
           }),
         }),
-        { timeout: 60000, interval: 2000 }
+        { timeout: 90000, interval: 2000 }
       );
 
       // Step 2: Start the process
@@ -549,7 +549,7 @@ console.log("Server listening on port 8080");
           method: 'DELETE',
           headers,
         }, { expectSuccess: false }),
-        { timeout: 60000, interval: 2000 }
+        { timeout: 90000, interval: 2000 }
       );
 
       // Should return error
@@ -557,7 +557,7 @@ console.log("Server listening on port 8080");
       const errorData = await killResponse.json() as { error: string };
       expect(errorData.error).toBeTruthy();
       expect(errorData.error).toMatch(/not found|does not exist|invalid|unknown/i);
-    }, 60000);
+    }, 90000);
 
     test.skipIf(skipPortExposureTests)('should reject exposing reserved ports', async () => {
       currentSandboxId = createSandboxId();
@@ -573,7 +573,7 @@ console.log("Server listening on port 8080");
             name: 'ssh-server',
           }),
         }, { expectSuccess: false }),
-        { timeout: 60000, interval: 2000 }
+        { timeout: 90000, interval: 2000 }
       );
 
       // Should return error for reserved port
@@ -581,7 +581,7 @@ console.log("Server listening on port 8080");
       const errorData = await exposeResponse.json() as { error: string };
       expect(errorData.error).toBeTruthy();
       expect(errorData.error).toMatch(/reserved|not allowed|forbidden|invalid port/i);
-    }, 60000);
+    }, 90000);
 
     test.skipIf(skipPortExposureTests)('should return error when unexposing non-exposed port', async () => {
       currentSandboxId = createSandboxId();
@@ -596,7 +596,7 @@ console.log("Server listening on port 8080");
             command: 'echo "init"',
           }),
         }),
-        { timeout: 60000, interval: 2000 }
+        { timeout: 90000, interval: 2000 }
       );
 
       // Try to unexpose a port that was never exposed
@@ -609,6 +609,6 @@ console.log("Server listening on port 8080");
       const errorData = await unexposeResponse.json() as { error: string };
       expect(errorData.error).toBeTruthy();
       expect(errorData.error).toMatch(/not found|not exposed|does not exist/i);
-    }, 60000);
+    }, 90000);
   });
 });
