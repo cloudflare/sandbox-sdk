@@ -23,12 +23,28 @@ echo "=== Starting cleanup for $WORKER_NAME ==="
 
 # Step 1: Get container ID BEFORE deleting worker (critical order!)
 echo "Looking up container ID..."
-CONTAINER_ID=$(npx wrangler containers list --json 2>/dev/null | jq -r ".[] | select(.name==\"$WORKER_NAME\") | .id" || echo "")
 
-if [ -n "$CONTAINER_ID" ]; then
-  echo "✓ Found container: $CONTAINER_ID"
+# Get container list (wrangler outputs JSON by default, no --json flag needed)
+RAW_OUTPUT=$(npx wrangler containers list 2>&1)
+
+# Check if output looks like JSON (starts with '[')
+if echo "$RAW_OUTPUT" | grep -q '^\['; then
+  echo "✓ Got JSON output from wrangler containers list"
+
+  # Parse JSON to find container
+  CONTAINER_ID=$(echo "$RAW_OUTPUT" | jq -r ".[] | select(.name==\"$WORKER_NAME\") | .id" 2>/dev/null || echo "")
+
+  if [ -n "$CONTAINER_ID" ]; then
+    echo "✓ Found container: $CONTAINER_ID"
+  else
+    echo "⚠️  No container found for worker $WORKER_NAME"
+    echo "Available containers:"
+    echo "$RAW_OUTPUT" | jq -r '.[].name' 2>/dev/null || echo "(unable to parse container names)"
+  fi
 else
-  echo "⚠️  No container found for worker $WORKER_NAME"
+  echo "⚠️  Non-JSON output from wrangler containers list:"
+  echo "$RAW_OUTPUT"
+  CONTAINER_ID=""
 fi
 
 # Step 2: Delete worker
