@@ -1,5 +1,11 @@
 # @cloudflare/sandbox
 
+## 0.4.1
+
+### Patch Changes
+
+- [#111](https://github.com/cloudflare/sandbox-sdk/pull/111) [`1b5496b`](https://github.com/cloudflare/sandbox-sdk/commit/1b5496bfceaee53c31911b409476ea87bebffe4c) Thanks [@threepointone](https://github.com/threepointone)! - trigger a release
+
 ## 0.4.0
 
 ### Minor Changes
