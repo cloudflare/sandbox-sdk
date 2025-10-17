@@ -1,3 +1,5 @@
+import type { Logger } from '@repo/shared';
+
 /**
  * Minimal interface for container fetch functionality
  */
@@ -9,6 +11,7 @@ export interface ContainerStub {
  * Shared HTTP client configuration options
  */
 export interface HttpClientOptions {
+  logger?: Logger;
   baseUrl?: string;
   port?: number;
   stub?: ContainerStub;

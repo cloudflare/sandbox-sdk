@@ -16,13 +16,13 @@ import type {
   SessionOptions,
   StreamOptions
 } from "@repo/shared";
+import { createLogger, runWithLogger, TraceContext } from "@repo/shared";
 import { type ExecuteResponse, SandboxClient } from "./clients";
 import type { ErrorResponse } from './errors';
 import { CustomDomainRequiredError, ErrorCode } from './errors';
 import { CodeInterpreter } from "./interpreter";
 import { isLocalhostPattern } from "./request-handler";
 import {
-  logSecurityEvent,
   SecurityError,
   sanitizeSandboxId,
   validatePort
@@ -48,18 +48,27 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private portTokens: Map<number, string> = new Map();
   private defaultSession: string | null = null;
   envVars: Record<string, string> = {};
+  private logger: ReturnType<typeof createLogger>;
 
   constructor(ctx: DurableObject['ctx'], env: Env) {
     super(ctx, env);
+
+    const envObj = env as any;
+    // Set sandbox environment variables from env object
+    const sandboxEnvKeys = ['SANDBOX_LOG_LEVEL', 'SANDBOX_LOG_FORMAT'] as const;
+    sandboxEnvKeys.forEach(key => {
+      if (envObj?.[key]) {
+        this.envVars[key] = envObj[key];
+      }
+    });
+
+    this.logger = createLogger({
+      component: 'sandbox-do',
+      sandboxId: this.ctx.id.toString()
+    });
+
     this.client = new SandboxClient({
-      onCommandComplete: (success, exitCode, _stdout, _stderr, command) => {
-        console.log(
-          `[Container] Command completed: ${command}, Success: ${success}, Exit code: ${exitCode}`
-        );
-      },
-      onError: (error, _command) => {
-        console.error(`[Container] Command error: ${error}`);
-      },
+      logger: this.logger,
       port: 3000, // Control plane port
       stub: this,
     });
@@ -86,7 +95,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     if (!this.sandboxName) {
       this.sandboxName = name;
       await this.ctx.storage.put('sandboxName', name);
-      console.log(`[Sandbox] Stored sandbox name via RPC: ${name}`);
     }
   }
 
@@ -108,9 +116,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           throw new Error(`Failed to set ${key}: ${result.stderr || 'Unknown error'}`);
         }
       }
-      console.log(`[Sandbox] Updated environment variables in existing session`);
-    } else {
-      console.log(`[Sandbox] Updated environment variables (will be set when session is created)`);
     }
   }
 
@@ -118,39 +123,46 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * Cleanup and destroy the sandbox container
    */
   override async destroy(): Promise<void> {
-    console.log(`[Sandbox] Cleanup requested, destroying container`);
+    this.logger.info('Destroying sandbox container');
     await super.destroy();
   }
 
   override onStart() {
-    console.log("Sandbox successfully started");
+    this.logger.debug('Sandbox started');
   }
 
   override onStop() {
-    console.log("Sandbox successfully shut down");
+    this.logger.debug('Sandbox stopped');
   }
 
   override onError(error: unknown) {
-    console.log("Sandbox error:", error);
+    this.logger.error('Sandbox error', error instanceof Error ? error : new Error(String(error)));
   }
 
   // Override fetch to route internal container requests to appropriate ports
   override async fetch(request: Request): Promise<Response> {
-    const url = new URL(request.url);
+    // Extract or generate trace ID from request
+    const traceId = TraceContext.fromHeaders(request.headers) || TraceContext.generate();
 
-    // Capture and store the sandbox name from the header if present
-    if (!this.sandboxName && request.headers.has('X-Sandbox-Name')) {
-      const name = request.headers.get('X-Sandbox-Name')!;
-      this.sandboxName = name;
-      await this.ctx.storage.put('sandboxName', name);
-      console.log(`[Sandbox] Stored sandbox name: ${this.sandboxName}`);
-    }
+    // Create request-specific logger with trace ID
+    const requestLogger = this.logger.child({ traceId, operation: 'fetch' });
 
-    // Determine which port to route to
-    const port = this.determinePort(url);
+    return await runWithLogger(requestLogger, async () => {
+      const url = new URL(request.url);
 
-    // Route to the appropriate port
-    return await this.containerFetch(request, port);
+      // Capture and store the sandbox name from the header if present
+      if (!this.sandboxName && request.headers.has('X-Sandbox-Name')) {
+        const name = request.headers.get('X-Sandbox-Name')!;
+        this.sandboxName = name;
+        await this.ctx.storage.put('sandboxName', name);
+      }
+
+      // Determine which port to route to
+      const port = this.determinePort(url);
+
+      // Route to the appropriate port
+      return await this.containerFetch(request, port);
+    });
   }
 
   private determinePort(url: URL): number {
@@ -181,7 +193,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       });
 
       this.defaultSession = sessionId;
-      console.log(`[Sandbox] Default session initialized: ${sessionId}`);
+      this.logger.debug('Default session initialized', { sessionId });
     }
     return this.defaultSession;
   }
@@ -504,18 +516,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     return this.client.processes.streamProcessLogs(processId);
   }
 
-  /**
-   * Internal session-aware streamProcessLogs implementation
-   */
-  private async streamProcessLogsWithSession(processId: string, sessionId: string, options?: { signal?: AbortSignal }): Promise<ReadableStream<Uint8Array>> {
-    // Check for cancellation
-    if (options?.signal?.aborted) {
-      throw new Error('Operation was aborted');
-    }
-
-    return this.client.processes.streamProcessLogs(processId);
-  }
-
   async gitCheckout(
     repoUrl: string,
     options: { branch?: string; targetDir?: string; sessionId?: string }
@@ -625,12 +625,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     const url = this.constructPreviewUrl(port, this.sandboxName, options.hostname, token);
 
-    logSecurityEvent('PORT_TOKEN_GENERATED', {
-      port,
-      sandboxId: this.sandboxName,
-      tokenLength: token.length
-    }, 'low');
-
     return {
       url,
       port,
@@ -640,9 +634,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   async unexposePort(port: number) {
     if (!validatePort(port)) {
-      logSecurityEvent('INVALID_PORT_UNEXPOSE', {
-        port
-      }, 'high');
       throw new SecurityError(`Invalid port number: ${port}. Must be between 1024-65535 and not reserved.`);
     }
 
@@ -654,10 +645,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       this.portTokens.delete(port);
       await this.persistPortTokens();
     }
-
-    logSecurityEvent('PORT_UNEXPOSED', {
-      port
-    }, 'low');
   }
 
   async getExposedPorts(hostname: string) {
@@ -691,7 +678,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       const response = await this.client.ports.getExposedPorts(sessionId);
       return response.ports.some(exposedPort => exposedPort.port === port);
     } catch (error) {
-      console.error(`[Sandbox] Error checking if port ${port} is exposed:`, error);
+      this.logger.error('Error checking if port is exposed', error instanceof Error ? error : new Error(String(error)), { port });
       return false;
     }
   }
@@ -707,7 +694,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     const storedToken = this.portTokens.get(port);
     if (!storedToken) {
       // This should not happen - all exposed ports must have tokens
-      console.error(`Port ${port} is exposed but has no token. This indicates a bug.`);
+      this.logger.error('Port is exposed but has no token - bug detected', undefined, { port });
       return false;
     }
 
@@ -737,26 +724,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   private constructPreviewUrl(port: number, sandboxId: string, hostname: string, token: string): string {
     if (!validatePort(port)) {
-      logSecurityEvent('INVALID_PORT_REJECTED', {
-        port,
-        sandboxId,
-        hostname
-      }, 'high');
       throw new SecurityError(`Invalid port number: ${port}. Must be between 1024-65535 and not reserved.`);
     }
 
-    let sanitizedSandboxId: string;
-    try {
-      sanitizedSandboxId = sanitizeSandboxId(sandboxId);
-    } catch (error) {
-      logSecurityEvent('INVALID_SANDBOX_ID_REJECTED', {
-        sandboxId,
-        port,
-        hostname,
-        error: error instanceof Error ? error.message : 'Unknown error'
-      }, 'high');
-      throw error;
-    }
+    // Validate sandbox ID (will throw SecurityError if invalid)
+    const sanitizedSandboxId = sanitizeSandboxId(sandboxId);
 
     const isLocalhost = isLocalhostPattern(hostname);
 
@@ -772,24 +744,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         const subdomainHost = `${port}-${sanitizedSandboxId}-${token}.${host}`;
         baseUrl.hostname = subdomainHost;
 
-        const finalUrl = baseUrl.toString();
-
-        logSecurityEvent('PREVIEW_URL_CONSTRUCTED', {
-          port,
-          sandboxId: sanitizedSandboxId,
-          hostname,
-          resultUrl: finalUrl,
-          environment: 'localhost'
-        }, 'low');
-
-        return finalUrl;
+        return baseUrl.toString();
       } catch (error) {
-        logSecurityEvent('URL_CONSTRUCTION_FAILED', {
-          port,
-          sandboxId: sanitizedSandboxId,
-          hostname,
-          error: error instanceof Error ? error.message : 'Unknown error'
-        }, 'high');
         throw new SecurityError(`Failed to construct preview URL: ${error instanceof Error ? error.message : 'Unknown error'}`);
       }
     }
@@ -804,24 +760,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       const subdomainHost = `${port}-${sanitizedSandboxId}-${token}.${hostname}`;
       baseUrl.hostname = subdomainHost;
 
-      const finalUrl = baseUrl.toString();
-
-      logSecurityEvent('PREVIEW_URL_CONSTRUCTED', {
-        port,
-        sandboxId: sanitizedSandboxId,
-        hostname,
-        resultUrl: finalUrl,
-        environment: 'production'
-      }, 'low');
-
-      return finalUrl;
+      return baseUrl.toString();
     } catch (error) {
-      logSecurityEvent('URL_CONSTRUCTION_FAILED', {
-        port,
-        sandboxId: sanitizedSandboxId,
-        hostname,
-        error: error instanceof Error ? error.message : 'Unknown error'
-      }, 'high');
       throw new SecurityError(`Failed to construct preview URL: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
@@ -912,10 +852,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
               throw new Error(`Failed to set ${key}: ${result.stderr || 'Unknown error'}`);
             }
           }
-
-          console.log(`[Session ${sessionId}] Environment variables updated successfully`);
         } catch (error) {
-          console.error(`[Session ${sessionId}] Failed to set environment variables:`, error);
+          this.logger.error('Failed to set environment variables', error instanceof Error ? error : new Error(String(error)), { sessionId });
           throw error;
         }
       },

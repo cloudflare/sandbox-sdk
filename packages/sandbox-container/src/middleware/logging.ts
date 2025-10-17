@@ -1,5 +1,6 @@
 // Logging Middleware
-import type { Logger, Middleware, NextFunction, RequestContext } from '../core/types';
+import type { Logger } from '@repo/shared';
+import type { Middleware, NextFunction, RequestContext } from '../core/types';
 
 export class LoggingMiddleware implements Middleware {
   constructor(private logger: Logger) {}
@@ -30,7 +31,7 @@ export class LoggingMiddleware implements Middleware {
         method,
         pathname,
         status: response.status,
-        duration: `${duration}ms`,
+        duration,
       });
 
       return response;
@@ -41,7 +42,7 @@ export class LoggingMiddleware implements Middleware {
         requestId: context.requestId,
         method,
         pathname,
-        duration: `${duration}ms`,
+        duration,
       });
 
       throw error;

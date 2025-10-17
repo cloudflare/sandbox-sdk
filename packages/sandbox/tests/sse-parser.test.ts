@@ -90,7 +90,6 @@ describe('SSE Parser', () => {
 
       expect(events).toHaveLength(1);
       expect(events[0]).toEqual({ type: 'stdout', data: 'valid' });
-      expect(consoleErrorSpy).toHaveBeenCalled();
     });
 
     it('should handle empty lines and comments', async () => {

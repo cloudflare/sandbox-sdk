@@ -1,5 +1,6 @@
 // Centralized Router for handling HTTP requests
 
+import type { Logger } from '@repo/shared';
 import type { ErrorResponse } from '@repo/shared/errors';
 import { ErrorCode } from '@repo/shared/errors';
 import type {
@@ -14,6 +15,11 @@ import type {
 export class Router {
   private routes: RouteDefinition[] = [];
   private globalMiddleware: Middleware[] = [];
+  private logger: Logger;
+
+  constructor(logger: Logger) {
+    this.logger = logger;
+  }
 
   /**
    * Register a route with optional middleware
@@ -43,14 +49,12 @@ export class Router {
   async route(request: Request): Promise<Response> {
     const method = this.validateHttpMethod(request.method);
     const pathname = new URL(request.url).pathname;
-    
-    console.log(`[Router] Routing ${method} ${pathname}`);
 
     // Find matching route
     const route = this.matchRoute(method, pathname);
-    
+
     if (!route) {
-      console.log(`[Router] No route found for ${method} ${pathname}`);
+      this.logger.debug('No route found', { method, pathname });
       return this.createNotFoundResponse();
     }
 
@@ -74,7 +78,11 @@ export class Router {
         route.handler
       );
     } catch (error) {
-      console.error(`[Router] Error handling ${method} ${pathname}:`, error);
+      this.logger.error('Error handling request', error as Error, {
+        method,
+        pathname,
+        requestId: context.requestId
+      });
       return this.createErrorResponse(error instanceof Error ? error : new Error('Unknown error'));
     }
   }

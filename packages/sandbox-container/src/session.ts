@@ -28,7 +28,8 @@ import { watch } from 'node:fs';
 import { mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
-import type { ExecEvent } from '@repo/shared';
+import type { ExecEvent, Logger } from '@repo/shared';
+import { createNoOpLogger } from '@repo/shared';
 import type { Subprocess } from 'bun';
 import { CONFIG } from './config';
 
@@ -59,6 +60,9 @@ export interface SessionOptions {
 
   /** Maximum output size in bytes (overrides CONFIG.MAX_OUTPUT_SIZE_BYTES) */
   maxOutputSizeBytes?: number;
+
+  /** Logger instance for structured logging (optional - uses no-op logger if not provided) */
+  logger?: Logger;
 }
 
 export interface RawExecResult {
@@ -114,6 +118,7 @@ export class Session {
   private readonly options: SessionOptions;
   private readonly commandTimeoutMs: number | undefined;
   private readonly maxOutputSizeBytes: number;
+  private readonly logger: Logger;
   /** Map of running commands for tracking and killing */
   private runningCommands = new Map<string, CommandHandle>();
 
@@ -122,6 +127,8 @@ export class Session {
     this.options = options;
     this.commandTimeoutMs = options.commandTimeoutMs ?? CONFIG.COMMAND_TIMEOUT_MS;
     this.maxOutputSizeBytes = options.maxOutputSizeBytes ?? CONFIG.MAX_OUTPUT_SIZE_BYTES;
+    // Use provided logger or create no-op logger (for backward compatibility/tests)
+    this.logger = options.logger ?? createNoOpLogger();
   }
 
   /**
@@ -158,7 +165,10 @@ export class Session {
           return;
         }
 
-        console.error(`[Session ${this.id}] Shell process exited unexpectedly with code ${exitCode ?? 'unknown'}`);
+        this.logger.error('Shell process exited unexpectedly', new Error(`Exit code: ${exitCode ?? 'unknown'}`), {
+          sessionId: this.id,
+          exitCode: exitCode ?? 'unknown'
+        });
         this.ready = false;
 
         // Reject with clear error message
@@ -169,7 +179,9 @@ export class Session {
       }).catch((error) => {
         // Handle any errors from shell.exited promise
         if (!this.isDestroying) {
-          console.error(`[Session ${this.id}] Shell exit monitor error:`, error);
+          this.logger.error('Shell exit monitor error', error instanceof Error ? error : new Error(String(error)), {
+            sessionId: this.id
+          });
           this.ready = false;
           reject(error);
         }
@@ -191,7 +203,12 @@ export class Session {
     const exitCodeFile = join(this.sessionDir!, `${commandId}.exit`);
     const pidFile = join(this.sessionDir!, `${commandId}.pid`);
 
-    console.log(`[Session ${this.id}] exec() START: ${commandId} | Command: ${command.substring(0, 50)}...`);
+    this.logger.info('Command execution started', {
+      sessionId: this.id,
+      commandId,
+      operation: 'exec',
+      command: command.substring(0, 100)
+    });
 
     try {
       // Track command
@@ -201,16 +218,12 @@ export class Session {
       // State changes (cd, export, functions) persist across exec() calls
       const bashScript = this.buildFIFOScript(command, commandId, logFile, exitCodeFile, options?.cwd, false);
 
-      console.log(`[Session ${this.id}] exec() writing script to shell stdin`);
-
       // Write script to shell's stdin
       if (this.shell!.stdin && typeof this.shell!.stdin !== 'number') {
         this.shell!.stdin.write(`${bashScript}\n`);
       } else {
         throw new Error('Shell stdin is not available');
       }
-
-      console.log(`[Session ${this.id}] exec() waiting for exit code file: ${exitCodeFile}`);
 
       // Race between:
       // 1. Normal completion (exit code file appears)
@@ -220,8 +233,6 @@ export class Session {
         this.waitForExitCode(exitCodeFile),
         this.shellExitedPromise!
       ]);
-
-      console.log(`[Session ${this.id}] exec() got exit code: ${exitCode}, parsing log file`);
 
       // Read log file and parse prefixes
       const { stdout, stderr } = await this.parseLogFile(logFile);
@@ -234,7 +245,13 @@ export class Session {
 
       const duration = Date.now() - startTime;
 
-      console.log(`[Session ${this.id}] exec() COMPLETE: ${commandId} | Exit code: ${exitCode} | Duration: ${duration}ms`);
+      this.logger.info('Command execution completed', {
+        sessionId: this.id,
+        commandId,
+        operation: 'exec',
+        exitCode,
+        duration
+      });
 
       return {
         command,
@@ -245,7 +262,11 @@ export class Session {
         timestamp: new Date(startTime).toISOString(),
       };
     } catch (error) {
-      console.log(`[Session ${this.id}] exec() ERROR: ${commandId} | Error: ${error instanceof Error ? error.message : String(error)}`);
+      this.logger.error('Command execution failed', error instanceof Error ? error : new Error(String(error)), {
+        sessionId: this.id,
+        commandId,
+        operation: 'exec'
+      });
       // Untrack and clean up on error
       this.untrackCommand(commandId);
       await this.cleanupCommandFiles(logFile, exitCodeFile);
@@ -271,7 +292,12 @@ export class Session {
     const exitCodeFile = join(this.sessionDir!, `${commandId}.exit`);
     const pidFile = join(this.sessionDir!, `${commandId}.pid`);
 
-    console.log(`[Session ${this.id}] execStream() START: ${commandId} | Command: ${command.substring(0, 50)}...`);
+    this.logger.info('Streaming command execution started', {
+      sessionId: this.id,
+      commandId,
+      operation: 'execStream',
+      command: command.substring(0, 100)
+    });
 
     try {
       // Track command
@@ -281,23 +307,17 @@ export class Session {
       // Command runs concurrently, shell continues immediately
       const bashScript = this.buildFIFOScript(command, commandId, logFile, exitCodeFile, options?.cwd, true);
 
-      console.log(`[Session ${this.id}] execStream() writing script to shell stdin`);
-
       if (this.shell!.stdin && typeof this.shell!.stdin !== 'number') {
         this.shell!.stdin.write(`${bashScript}\n`);
       } else {
         throw new Error('Shell stdin is not available');
       }
 
-      console.log(`[Session ${this.id}] execStream() yielding start event`);
-
       yield {
         type: 'start',
         timestamp: new Date().toISOString(),
         command,
       };
-
-      console.log(`[Session ${this.id}] execStream() start event yielded, beginning polling loop`);
 
       // Hybrid approach: poll log file until exit code is written
       // (fs.watch on log file would trigger too often during writes)
@@ -336,13 +356,13 @@ export class Session {
               if (line.startsWith(STDOUT_PREFIX)) {
                 yield {
                   type: 'stdout',
-                  data: line.slice(STDOUT_PREFIX.length) + '\n',
+                  data: `${line.slice(STDOUT_PREFIX.length)}\n`,
                   timestamp: new Date().toISOString(),
                 };
               } else if (line.startsWith(STDERR_PREFIX)) {
                 yield {
                   type: 'stderr',
-                  data: line.slice(STDERR_PREFIX.length) + '\n',
+                  data: `${line.slice(STDERR_PREFIX.length)}\n`,
                   timestamp: new Date().toISOString(),
                 };
               }
@@ -367,13 +387,13 @@ export class Session {
             if (line.startsWith(STDOUT_PREFIX)) {
               yield {
                 type: 'stdout',
-                data: line.slice(STDOUT_PREFIX.length) + '\n',
+                data: `${line.slice(STDOUT_PREFIX.length)}\n`,
                 timestamp: new Date().toISOString(),
               };
             } else if (line.startsWith(STDERR_PREFIX)) {
               yield {
                 type: 'stderr',
-                data: line.slice(STDERR_PREFIX.length) + '\n',
+                data: `${line.slice(STDERR_PREFIX.length)}\n`,
                 timestamp: new Date().toISOString(),
               };
             }
@@ -389,7 +409,13 @@ export class Session {
 
       const duration = Date.now() - startTime;
 
-      console.log(`[Session ${this.id}] execStream() yielding complete event | Exit code: ${exitCode} | Duration: ${duration}ms`);
+      this.logger.info('Streaming command execution completed', {
+        sessionId: this.id,
+        commandId,
+        operation: 'execStream',
+        exitCode,
+        duration
+      });
 
       yield {
         type: 'complete',
@@ -411,10 +437,12 @@ export class Session {
 
       // Clean up temp files
       await this.cleanupCommandFiles(logFile, exitCodeFile);
-
-      console.log(`[Session ${this.id}] execStream() COMPLETE: ${commandId}`);
     } catch (error) {
-      console.log(`[Session ${this.id}] execStream() ERROR: ${commandId} | Error: ${error instanceof Error ? error.message : String(error)}`);
+      this.logger.error('Streaming command execution failed', error instanceof Error ? error : new Error(String(error)), {
+        sessionId: this.id,
+        commandId,
+        operation: 'execStream'
+      });
       // Untrack and clean up on error
       this.untrackCommand(commandId);
       await this.cleanupCommandFiles(logFile, exitCodeFile);
@@ -445,43 +473,28 @@ export class Session {
    * @returns true if command was killed, false if not found or already completed
    */
   async killCommand(commandId: string): Promise<boolean> {
-    console.log(`[Session ${this.id}] killCommand called: ${commandId}`);
-    console.log(`[Session ${this.id}] runningCommands map size: ${this.runningCommands.size}`);
-    console.log(`[Session ${this.id}] runningCommands map keys: ${Array.from(this.runningCommands.keys()).join(', ')}`);
-
     const handle = this.runningCommands.get(commandId);
     if (!handle) {
-      console.log(`[Session ${this.id}] killCommand: ${commandId} NOT FOUND in map`);
       return false; // Command not found or already completed
     }
-
-    console.log(`[Session ${this.id}] killCommand: ${commandId} found in map, checking PID file: ${handle.pidFile}`);
 
     try {
       // Try reading PID from file (might still exist if command running)
       const pidFile = Bun.file(handle.pidFile);
       const pidFileExists = await pidFile.exists();
-      console.log(`[Session ${this.id}] PID file exists: ${pidFileExists}`);
 
       if (pidFileExists) {
         const pidText = await pidFile.text();
         const pid = parseInt(pidText.trim(), 10);
-        console.log(`[Session ${this.id}] PID from file: "${pidText.trim()}" → parsed: ${pid}`);
 
         if (!Number.isNaN(pid)) {
           // Send SIGTERM for graceful termination
-          console.log(`[Session ${this.id}] Sending SIGTERM to PID ${pid}`);
           process.kill(pid, 'SIGTERM');
 
           // Clean up
           this.runningCommands.delete(commandId);
-          console.log(`[Session ${this.id}] killCommand: ${commandId} killed successfully`);
           return true;
-        } else {
-          console.log(`[Session ${this.id}] killCommand: PID is NaN`);
         }
-      } else {
-        console.log(`[Session ${this.id}] killCommand: PID file does not exist, command likely completed`);
       }
 
       // PID file gone = command already completed
@@ -489,7 +502,6 @@ export class Session {
       return false;
     } catch (error) {
       // Process already dead or PID invalid
-      console.log(`[Session ${this.id}] killCommand error:`, error);
       this.runningCommands.delete(commandId);
       return false;
     }
@@ -896,15 +908,12 @@ export class Session {
       exitCodeFile,
     };
     this.runningCommands.set(commandId, handle);
-    console.log(`[Session ${this.id}] trackCommand: ${commandId} | Total tracked: ${this.runningCommands.size}`);
   }
 
   /**
    * Untrack a command when it completes
    */
   private untrackCommand(commandId: string): void {
-    const existed = this.runningCommands.has(commandId);
     this.runningCommands.delete(commandId);
-    console.log(`[Session ${this.id}] untrackCommand: ${commandId} | Existed: ${existed} | Remaining: ${this.runningCommands.size}`);
   }
 }

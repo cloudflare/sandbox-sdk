@@ -20,9 +20,9 @@ export class SandboxClient {
   public readonly interpreter: InterpreterClient;
   public readonly utils: UtilityClient;
 
-  constructor(options: HttpClientOptions = {}) {
+  constructor(options: HttpClientOptions) {
     // Ensure baseUrl is provided for all clients
-    const clientOptions = {
+    const clientOptions: HttpClientOptions = {
       baseUrl: 'http://localhost:3000',
       ...options,
     };

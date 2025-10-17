@@ -5,6 +5,10 @@
   "compatibility_flags": ["nodejs_compat"],
   "account_id": "b8afc92c7a87f699592038b756153d22",
 
+  "env": {
+    "SANDBOX_LOG_LEVEL": "debug",
+    "SANDBOX_LOG_FORMAT": "pretty"
+  },
   "observability": {
     "enabled": true
   },

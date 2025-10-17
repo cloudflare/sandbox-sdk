@@ -26,9 +26,6 @@ export type {
  * Client for background process management
  */
 export class ProcessClient extends BaseHttpClient {
-  constructor(options: HttpClientOptions = {}) {
-    super(options);
-  }
 
   /**
    * Start a background process

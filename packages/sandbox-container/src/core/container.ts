@@ -1,3 +1,5 @@
+import type { Logger } from '@repo/shared';
+import { createLogger } from '@repo/shared';
 import { ExecuteHandler } from '../handlers/execute-handler';
 import { FileHandler } from '../handlers/file-handler';
 import { GitHandler } from '../handlers/git-handler';
@@ -17,8 +19,6 @@ import { InMemoryPortStore, PortService } from '../services/port-service';
 import { InMemoryProcessStore, ProcessService } from '../services/process-service';
 import { SessionManager } from '../services/session-manager';
 import { RequestValidator } from '../validation/request-validator';
-import { ConsoleLogger } from './logger';
-import type { Logger } from './types';
 
 export interface Dependencies {
   // Services
@@ -76,7 +76,7 @@ export class Container {
     }
 
     // Initialize infrastructure
-    const logger = new ConsoleLogger();
+    const logger = createLogger({ component: 'container' });
     const security = new SecurityService(logger);
     const securityAdapter = new SecurityServiceAdapter(security);
     const validator = new RequestValidator();
@@ -85,10 +85,8 @@ export class Container {
     const processStore = new InMemoryProcessStore();
     const portStore = new InMemoryPortStore();
 
-    // Initialize SessionManager (always - no test-specific conditionals)
-    console.log('[Container] Initializing SessionManager');
+    // Initialize SessionManager
     const sessionManager = new SessionManager(logger);
-    console.log('[Container] SessionManager created');
 
     // Initialize services
     const processService = new ProcessService(processStore, logger, sessionManager);
@@ -145,10 +143,5 @@ export class Container {
 
   isInitialized(): boolean {
     return this.initialized;
-  }
-
-  // Helper method to get all dependencies (for testing)
-  getAllDependencies(): Partial<Dependencies> {
-    return { ...this.dependencies };
   }
 }

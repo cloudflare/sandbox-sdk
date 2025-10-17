@@ -1,5 +1,9 @@
+import type { Logger } from "@repo/shared";
+import { createNoOpLogger } from "@repo/shared";
+import { getHttpStatus } from '@repo/shared/errors';
 import type { ErrorResponse as NewErrorResponse } from '../errors';
 import { createErrorFromResponse, ErrorCode } from '../errors';
+import type { SandboxError } from '../errors/classes';
 import type {
   HttpClientOptions,
   ResponseHandler
@@ -15,13 +19,12 @@ const MIN_TIME_FOR_RETRY_MS = 10_000;  // Need at least 10s remaining to retry (
 export abstract class BaseHttpClient {
   protected baseUrl: string;
   protected options: HttpClientOptions;
+  protected logger: Logger;
 
   constructor(options: HttpClientOptions = {}) {
-    this.options = {
-      ...options,
-    };
+    this.options = options;
+    this.logger = options.logger ?? createNoOpLogger();
     this.baseUrl = this.options.baseUrl!;
-    
   }
 
   /**
@@ -34,26 +37,16 @@ export abstract class BaseHttpClient {
     const startTime = Date.now();
     let attempt = 0;
 
-    console.log(`[DEBUG] doFetch called for ${options?.method || 'GET'} ${path}`);
-
     while (true) {
       const response = await this.executeFetch(path, options);
 
-      console.log(`[DEBUG] Response status: ${response.status}`);
-
       // Only retry container provisioning 503s, not user app 503s
       if (response.status === 503) {
-        console.log('[DEBUG] Got 503 response, checking if container provisioning error...');
-
         const isContainerProvisioning = await this.isContainerProvisioningError(response);
-
-        console.log('[DEBUG] isContainerProvisioning result:', isContainerProvisioning);
 
         if (isContainerProvisioning) {
           const elapsed = Date.now() - startTime;
           const remaining = TIMEOUT_MS - elapsed;
-
-          console.log(`[DEBUG] Elapsed: ${elapsed}ms, Remaining: ${remaining}ms`);
 
           // Check if we have enough time for another attempt
           // (Need at least 10s: 8s for Container timeout + 2s delay)
@@ -61,10 +54,11 @@ export abstract class BaseHttpClient {
             // Exponential backoff: 2s, 4s, 8s, 16s (capped at 16s)
             const delay = Math.min(2000 * 2 ** attempt, 16000);
 
-            console.log(
-              `[Sandbox SDK] Container provisioning in progress (attempt ${attempt + 1}), ` +
-              `retrying in ${delay}ms (${Math.floor(remaining / 1000)}s remaining)`
-            );
+            this.logger.info('Container provisioning in progress, retrying', {
+              attempt: attempt + 1,
+              delayMs: delay,
+              remainingSec: Math.floor(remaining / 1000)
+            });
 
             await new Promise(resolve => setTimeout(resolve, delay));
             attempt++;
@@ -72,20 +66,12 @@ export abstract class BaseHttpClient {
           } else {
             // Exhausted retries - log error and return response
             // Let existing error handling convert to proper error
-            console.error(
-              `[Sandbox SDK] Container failed to provision after ${attempt + 1} attempts over 60s.`
-            );
+            this.logger.error('Container failed to provision after multiple attempts', new Error(`Failed after ${attempt + 1} attempts over 60s`));
             return response;
           }
-        } else {
-          console.log('[DEBUG] Not a container provisioning error, returning 503 immediately');
         }
       }
 
-      // Return response (success, user app error, or non-retryable error)
-      if (response.status !== 200) {
-        console.log(`[DEBUG] Returning response with status ${response.status}`);
-      }
       return response;
     }
   }
@@ -219,17 +205,37 @@ export abstract class BaseHttpClient {
    * Utility method to log successful operations
    */
   protected logSuccess(operation: string, details?: string): void {
-    const message = details
-      ? `[HTTP Client] ${operation}: ${details}`
-      : `[HTTP Client] ${operation} completed successfully`;
-    console.log(message);
+    this.logger.info(`${operation} completed successfully`, details ? { details } : undefined);
   }
 
   /**
-   * Utility method to log errors
+   * Utility method to log errors intelligently
+   * Only logs unexpected errors (5xx), not expected errors (4xx)
+   *
+   * - 4xx errors (validation, not found, conflicts): Don't log (expected client errors)
+   * - 5xx errors (server failures, internal errors): DO log (unexpected server errors)
    */
   protected logError(operation: string, error: unknown): void {
-    console.error(`[HTTP Client] Error in ${operation}:`, error);
+    // Check if it's a SandboxError with HTTP status
+    if (error && typeof error === 'object' && 'httpStatus' in error) {
+      const httpStatus = (error as SandboxError).httpStatus;
+
+      // Only log server errors (5xx), not client errors (4xx)
+      if (httpStatus >= 500) {
+        this.logger.error(
+          `Unexpected error in ${operation}`,
+          error instanceof Error ? error : new Error(String(error)),
+          { httpStatus }
+        );
+      }
+      // 4xx errors are expected (validation, not found, etc.) - don't log
+    } else {
+      // Non-SandboxError (unexpected) - log it
+      this.logger.error(
+        `Error in ${operation}`,
+        error instanceof Error ? error : new Error(String(error))
+      );
+    }
   }
 
   /**
@@ -242,16 +248,10 @@ export abstract class BaseHttpClient {
       const cloned = response.clone();
       const text = await cloned.text();
 
-      console.log('[DEBUG] 503 response body:', text.substring(0, 200));
-
       // Container package returns specific message for provisioning errors
-      const isProvisioning = text.includes('There is no Container instance available');
-
-      console.log('[DEBUG] Is container provisioning error?', isProvisioning);
-
-      return isProvisioning;
+      return text.includes('There is no Container instance available');
     } catch (error) {
-      console.error('[DEBUG] Error checking response body:', error);
+      this.logger.error('Error checking response body', error instanceof Error ? error : new Error(String(error)));
       // If we can't read the body, don't retry to be safe
       return false;
     }
@@ -261,36 +261,19 @@ export abstract class BaseHttpClient {
     const url = this.options.stub
       ? `http://localhost:${this.options.port}${path}`
       : `${this.baseUrl}${path}`;
-    const method = options?.method || "GET";
-
-    console.log(`[HTTP Client] Making ${method} request to ${url}`);
 
     try {
-      let response: Response;
-
       if (this.options.stub) {
-        response = await this.options.stub.containerFetch(
+        return await this.options.stub.containerFetch(
           url,
           options || {},
           this.options.port
         );
       } else {
-        response = await fetch(url, options);
+        return await fetch(url, options);
       }
-
-      console.log(
-        `[HTTP Client] Response: ${response.status} ${response.statusText}`
-      );
-
-      if (!response.ok) {
-        console.error(
-          `[HTTP Client] Request failed: ${method} ${url} - ${response.status} ${response.statusText}`
-        );
-      }
-
-      return response;
     } catch (error) {
-      console.error(`[HTTP Client] Request error: ${method} ${url}`, error);
+      this.logger.error('HTTP request error', error instanceof Error ? error : new Error(String(error)), { method: options?.method || 'GET', url });
       throw error;
     }
   }

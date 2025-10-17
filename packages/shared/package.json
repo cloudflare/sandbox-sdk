@@ -17,6 +17,7 @@
   "scripts": {
     "build": "tsc --project tsconfig.json",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run --config vitest.config.ts",
     "clean": "rm -rf dist"
   },
   "devDependencies": {

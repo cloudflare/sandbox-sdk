@@ -23,9 +23,6 @@ export interface ExecuteResponse extends BaseApiResponse {
  * Client for command execution operations
  */
 export class CommandClient extends BaseHttpClient {
-  constructor(options: HttpClientOptions = {}) {
-    super(options);
-  }
 
   /**
    * Execute a command and return the complete result

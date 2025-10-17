@@ -16,6 +16,16 @@ export type {
   RunCodeOptions
 } from './interpreter-types.js';
 export { Execution, ResultImpl } from './interpreter-types.js';
+// Export logger infrastructure
+export type { LogContext, Logger, LogLevel } from './logger/index.js';
+export {
+  createLogger,
+  createNoOpLogger,
+  getLogger,
+  LogLevelEnum,
+  runWithLogger,
+  TraceContext
+} from './logger/index.js';
 // Export all request types (enforce contract between client and container)
 export type {
   DeleteFileRequest,

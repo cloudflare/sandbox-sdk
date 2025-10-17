@@ -18,9 +18,6 @@ export interface GitCheckoutRequest extends SessionRequest {
  * Client for Git repository operations
  */
 export class GitClient extends BaseHttpClient {
-  constructor(options: HttpClientOptions = {}) {
-    super(options);
-  }
 
   /**
    * Clone a Git repository

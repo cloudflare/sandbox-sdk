@@ -1,14 +1,13 @@
+import type { FileInfo, ListFilesOptions, Logger } from '@repo/shared';
 import type {
   FileNotFoundContext,
   FileSystemContext,
   ValidationFailedContext,
 } from '@repo/shared/errors';
 import { ErrorCode, Operation } from '@repo/shared/errors';
-import type { FileInfo, ListFilesOptions } from '@repo/shared';
 import type {
   FileMetadata,
   FileStats,
-  Logger,
   MkdirOptions,
   ReadOptions,
   ServiceResult,
@@ -72,8 +71,6 @@ export class FileService implements FileSystemOperations {
           }
         };
       }
-
-      this.logger.info('Reading file', { path, encoding: options.encoding });
 
       // 2. Check if file exists using session-aware check
       const existsResult = await this.exists(path, sessionId);
@@ -259,14 +256,6 @@ export class FileService implements FileSystemOperations {
         actualEncoding = 'utf-8';
       }
 
-      this.logger.info('File read successfully', {
-        path,
-        sizeBytes: fileSize,
-        encoding: actualEncoding,
-        mimeType,
-        isBinary
-      });
-
       return {
         success: true,
         data: content,
@@ -313,12 +302,6 @@ export class FileService implements FileSystemOperations {
         };
       }
 
-      this.logger.info('Writing file', {
-        path,
-        sizeBytes: content.length,
-        encoding: options.encoding
-      });
-
       // 2. Write file using SessionManager with base64 encoding
       // Base64 ensures binary files (images, PDFs, etc.) are written correctly
       // and avoids heredoc EOF collision issues
@@ -349,11 +332,6 @@ export class FileService implements FileSystemOperations {
           }
         };
       }
-
-      this.logger.info('File written successfully', {
-        path,
-        sizeBytes: content.length
-      });
 
       return {
         success: true
@@ -393,8 +371,6 @@ export class FileService implements FileSystemOperations {
           }
         };
       }
-
-      this.logger.info('Deleting file', { path });
 
       // 2. Check if file exists using session-aware check
       const existsResult = await this.exists(path, sessionId);
@@ -460,8 +436,6 @@ export class FileService implements FileSystemOperations {
         };
       }
 
-      this.logger.info('File deleted successfully', { path });
-
       return {
         success: true
       };
@@ -501,8 +475,6 @@ export class FileService implements FileSystemOperations {
           }
         };
       }
-
-      this.logger.info('Renaming file', { oldPath, newPath });
 
       // 2. Check if source file exists using session-aware check
       const existsResult = await this.exists(oldPath, sessionId);
@@ -548,8 +520,6 @@ export class FileService implements FileSystemOperations {
         };
       }
 
-      this.logger.info('File renamed successfully', { oldPath, newPath });
-
       return {
         success: true
       };
@@ -589,8 +559,6 @@ export class FileService implements FileSystemOperations {
           }
         };
       }
-
-      this.logger.info('Moving file', { sourcePath, destinationPath });
 
       // 2. Check if source exists using session-aware check
       const existsResult = await this.exists(sourcePath, sessionId);
@@ -637,8 +605,6 @@ export class FileService implements FileSystemOperations {
         };
       }
 
-      this.logger.info('File moved successfully', { sourcePath, destinationPath });
-
       return {
         success: true
       };
@@ -678,8 +644,6 @@ export class FileService implements FileSystemOperations {
         };
       }
 
-      this.logger.info('Creating directory', { path, recursive: options.recursive });
-
       // 2. Build mkdir command args (via manager)
       const args = this.manager.buildMkdirArgs(path, options);
 
@@ -710,8 +674,6 @@ export class FileService implements FileSystemOperations {
           }
         };
       }
-
-      this.logger.info('Directory created successfully', { path });
 
       return {
         success: true
@@ -947,8 +909,6 @@ export class FileService implements FileSystemOperations {
         };
       }
 
-      this.logger.info('Listing files', { path, recursive: options.recursive, includeHidden: options.includeHidden });
-
       // 2. Check if directory exists using session-aware check
       const existsResult = await this.exists(path, sessionId);
       if (!existsResult.success) {
@@ -1007,8 +967,6 @@ export class FileService implements FileSystemOperations {
 
       // Skip the base directory itself and format output
       findCommand += ` -not -path ${escapedPath} -printf '%p\\t%y\\t%s\\t%TY-%Tm-%TdT%TH:%TM:%TS\\t%m\\n'`;
-
-      this.logger.info('Executing find command', { path, command: findCommand });
 
       const execResult = await this.sessionManager.executeInSession(sessionId, findCommand);
 
@@ -1094,11 +1052,6 @@ export class FileService implements FileSystemOperations {
           permissions
         });
       }
-
-      this.logger.info('Files listed successfully', {
-        path,
-        count: files.length
-      });
 
       return {
         success: true,
@@ -1272,11 +1225,6 @@ export class FileService implements FileSystemOperations {
           };
           controller.enqueue(encoder.encode(`data: ${JSON.stringify(completeEvent)}\n\n`));
           controller.close();
-
-          this.logger.info('File streaming completed', {
-            path,
-            bytesRead: metadata.size
-          });
 
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : 'Unknown error';

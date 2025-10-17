@@ -1,11 +1,12 @@
 // Git Operations Service
 
+import type { Logger } from '@repo/shared';
 import type {
   GitErrorContext,
   ValidationFailedContext,
 } from '@repo/shared/errors';
 import { ErrorCode } from '@repo/shared/errors';
-import type { CloneOptions, Logger, ServiceResult } from '../core/types';
+import type { CloneOptions, ServiceResult } from '../core/types';
 import { GitManager } from '../managers/git-manager';
 import type { SessionManager } from './session-manager';
 
@@ -81,12 +82,6 @@ export class GitService {
         };
       }
 
-      this.logger.info('Cloning repository', {
-        repoUrl,
-        targetDirectory,
-        branch: options.branch
-      });
-
       // Build git clone command (via manager)
       const args = this.manager.buildCloneArgs(repoUrl, targetDirectory, options);
       const command = this.buildCommand(args);
@@ -135,11 +130,6 @@ export class GitService {
       if (!branchExecResult.success) {
         // If we can't get the branch, use fallback but don't fail the entire operation
         const actualBranch = options.branch || 'unknown';
-        this.logger.warn('Could not determine current branch, using fallback', {
-          targetDirectory,
-          requestedBranch: options.branch,
-          fallback: actualBranch
-        });
 
         return {
           success: true,
@@ -158,18 +148,7 @@ export class GitService {
       } else {
         // Fallback: use the requested branch or 'unknown'
         actualBranch = options.branch || 'unknown';
-        this.logger.warn('Could not determine current branch, using fallback', {
-          targetDirectory,
-          requestedBranch: options.branch,
-          fallback: actualBranch
-        });
       }
-      
-      this.logger.info('Repository cloned successfully', {
-        repoUrl,
-        targetDirectory,
-        branch: actualBranch
-      });
 
       return {
         success: true,
@@ -237,8 +216,6 @@ export class GitService {
         };
       }
 
-      this.logger.info('Checking out branch', { repoPath, branch });
-
       // Build git checkout command (via manager)
       const args = this.manager.buildCheckoutArgs(branch);
       const command = this.buildCommand(args);
@@ -275,8 +252,6 @@ export class GitService {
           },
         };
       }
-
-      this.logger.info('Branch checked out successfully', { repoPath, branch });
 
       return {
         success: true,

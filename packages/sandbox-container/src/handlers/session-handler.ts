@@ -1,7 +1,8 @@
 import { randomBytes } from "node:crypto";
-import type { SessionCreateResult } from '@repo/shared';
+import type { Logger, SessionCreateResult } from '@repo/shared';
 import { ErrorCode } from '@repo/shared/errors';
-import type { Logger, RequestContext } from '../core/types';
+
+import type { RequestContext } from '../core/types';
 import type { SessionManager } from '../services/session-manager';
 import { BaseHandler } from './base-handler';
 
@@ -38,8 +39,6 @@ export class SessionHandler extends BaseHandler<Request, Response> {
   }
 
   private async handleCreate(request: Request, context: RequestContext): Promise<Response> {
-    this.logger.info('Creating new session', { requestId: context.requestId });
-
     // Parse request body for session options
     let sessionId: string;
     let env: Record<string, string>;
@@ -64,11 +63,6 @@ export class SessionHandler extends BaseHandler<Request, Response> {
     });
 
     if (result.success) {
-      this.logger.info('Session created successfully', {
-        requestId: context.requestId,
-        sessionId: sessionId
-      });
-
       // Note: Returning the Session object directly for now
       // This matches current test expectations
       const response = {
@@ -79,27 +73,14 @@ export class SessionHandler extends BaseHandler<Request, Response> {
 
       return this.createTypedResponse(response, context);
     } else {
-      this.logger.error('Session creation failed', undefined, {
-        requestId: context.requestId,
-        errorCode: result.error.code,
-        errorMessage: result.error.message,
-      });
-
       return this.createErrorResponse(result.error, context);
     }
   }
 
   private async handleList(request: Request, context: RequestContext): Promise<Response> {
-    this.logger.info('Listing sessions', { requestId: context.requestId });
-
     const result = await this.sessionManager.listSessions();
 
     if (result.success) {
-      this.logger.info('Sessions listed successfully', {
-        requestId: context.requestId,
-        count: result.data.length
-      });
-
       const response: SessionListResult = {
         success: true,
         data: result.data,
@@ -108,12 +89,6 @@ export class SessionHandler extends BaseHandler<Request, Response> {
 
       return this.createTypedResponse(response, context);
     } else {
-      this.logger.error('Session listing failed', undefined, {
-        requestId: context.requestId,
-        errorCode: result.error.code,
-        errorMessage: result.error.message,
-      });
-
       return this.createErrorResponse(result.error, context);
     }
   }

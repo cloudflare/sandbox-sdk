@@ -1,8 +1,8 @@
 // Miscellaneous Handler for ping, commands, etc.
-import type { HealthCheckResult, ShutdownResult } from '@repo/shared';
+import type { HealthCheckResult, Logger, ShutdownResult } from '@repo/shared';
 import { ErrorCode } from '@repo/shared/errors';
 
-import type { Logger, RequestContext } from '../core/types';
+import type { RequestContext } from '../core/types';
 import { BaseHandler } from './base-handler';
 
 export class MiscHandler extends BaseHandler<Request, Response> {
@@ -36,8 +36,6 @@ export class MiscHandler extends BaseHandler<Request, Response> {
   }
 
   private async handleHealth(request: Request, context: RequestContext): Promise<Response> {
-    this.logger.info('Health check request', { requestId: context.requestId });
-
     const response: HealthCheckResult = {
       success: true,
       status: 'healthy',
@@ -48,8 +46,6 @@ export class MiscHandler extends BaseHandler<Request, Response> {
   }
 
   private async handleShutdown(request: Request, context: RequestContext): Promise<Response> {
-    this.logger.info('Shutdown request', { requestId: context.requestId });
-
     const response: ShutdownResult = {
       success: true,
       message: 'Container shutdown initiated',

@@ -32,9 +32,6 @@ export interface UnexposePortRequest {
  * Client for port management and preview URL operations
  */
 export class PortClient extends BaseHttpClient {
-  constructor(options: HttpClientOptions = {}) {
-    super(options);
-  }
 
   /**
    * Expose a port and get a preview URL

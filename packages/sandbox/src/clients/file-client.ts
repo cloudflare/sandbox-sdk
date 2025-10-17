@@ -48,9 +48,6 @@ export interface FileOperationRequest extends SessionRequest {
  * Client for file system operations
  */
 export class FileClient extends BaseHttpClient {
-  constructor(options: HttpClientOptions = {}) {
-    super(options);
-  }
 
   /**
    * Create a directory

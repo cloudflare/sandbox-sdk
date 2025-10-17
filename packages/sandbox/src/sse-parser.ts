@@ -49,11 +49,8 @@ export async function* parseSSEStream<T>(
           try {
             const event = JSON.parse(data) as T;
             yield event;
-          } catch (error) {
-            // Log parsing errors but continue processing
-            console.error('Failed to parse SSE event:', data, error);
-            // Optionally yield an error event
-            // yield { type: 'error', data: `Parse error: ${error.message}` } as T;
+          } catch {
+            // Skip invalid JSON events and continue processing
           }
         }
         // Handle other SSE fields if needed (event:, id:, retry:)
@@ -68,8 +65,8 @@ export async function* parseSSEStream<T>(
         try {
           const event = JSON.parse(data) as T;
           yield event;
-        } catch (error) {
-          console.error('Failed to parse final SSE event:', data, error);
+        } catch {
+          // Skip invalid JSON in final event
         }
       }
     }
@@ -141,7 +138,6 @@ export function asyncIterableToSSEStream<T>(
 
     cancel() {
       // Handle stream cancellation
-      console.log('SSE stream cancelled');
     }
   });
 }

@@ -38,9 +38,6 @@ export interface CreateSessionResponse extends BaseApiResponse {
  * Client for health checks and utility operations
  */
 export class UtilityClient extends BaseHttpClient {
-  constructor(options: HttpClientOptions = {}) {
-    super(options);
-  }
 
   /**
    * Ping the sandbox to check if it's responsive

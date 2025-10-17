@@ -1,4 +1,21 @@
 /**
+ * Log level for the sandbox container.
+ *
+ * Default: info
+ * Environment variable: SANDBOX_LOG_LEVEL
+ */
+const SANDBOX_LOG_LEVEL = process.env.SANDBOX_LOG_LEVEL || 'info';
+
+/**
+ * Log format for the sandbox container.
+ *
+ * Default: json
+ * Set to "pretty" to enable colored, human-readable output.
+ * Environment variable: SANDBOX_LOG_FORMAT
+ */
+const SANDBOX_LOG_FORMAT = process.env.SANDBOX_LOG_FORMAT || 'json';
+
+/**
  * How long to wait for an interpreter process to spawn and become ready.
  * If an interpreter doesn't start within this time, something is fundamentally
  * broken (missing dependencies, corrupt install, etc.)
@@ -65,6 +82,8 @@ const STREAM_CHUNK_DELAY_MS = 100;
 const DEFAULT_CWD = '/workspace';
 
 export const CONFIG = {
+	SANDBOX_LOG_LEVEL,
+	SANDBOX_LOG_FORMAT,
 	INTERPRETER_SPAWN_TIMEOUT_MS,
 	INTERPRETER_EXECUTION_TIMEOUT_MS,
 	COMMAND_TIMEOUT_MS,

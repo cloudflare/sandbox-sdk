@@ -28,8 +28,8 @@ async function* parseSSE(stream: ReadableStream<Uint8Array>): AsyncGenerator<Fil
           try {
             const event = JSON.parse(data) as FileStreamEvent;
             yield event;
-          } catch (error) {
-            console.error('Failed to parse SSE event:', error);
+          } catch {
+            // Skip invalid JSON events and continue processing
           }
         }
       }

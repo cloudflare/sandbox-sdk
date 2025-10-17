@@ -1,5 +1,6 @@
 // Port Management Service
 
+import type { Logger } from '@repo/shared';
 import type {
   InvalidPortContext,
   PortAlreadyExposedContext,
@@ -7,7 +8,7 @@ import type {
   PortNotExposedContext,
 } from '@repo/shared/errors';
 import { ErrorCode } from '@repo/shared/errors';
-import type { Logger, PortInfo, ServiceResult } from '../core/types';
+import type { PortInfo, ServiceResult } from '../core/types';
 import { PortManager } from '../managers/port-manager';
 
 export interface SecurityService {
@@ -118,8 +119,6 @@ export class PortService {
 
       await this.store.expose(port, portInfo);
 
-      this.logger.info('Port exposed successfully', { port, name });
-
       return {
         success: true,
         data: portInfo,
@@ -161,8 +160,6 @@ export class PortService {
       }
 
       await this.store.unexpose(port);
-
-      this.logger.info('Port unexposed successfully', { port });
 
       return {
         success: true,
@@ -272,13 +269,6 @@ export class PortService {
       // Parse proxy path using manager
       const { targetPath, targetUrl } = this.manager.parseProxyPath(request.url, port);
 
-      this.logger.info('Proxying request', {
-        port,
-        originalPath: new URL(request.url).pathname,
-        targetPath,
-        targetUrl
-      });
-
       // Forward the request to the local service
       const proxyRequest = new Request(targetUrl, {
         method: request.method,
@@ -287,12 +277,6 @@ export class PortService {
       });
 
       const response = await fetch(proxyRequest);
-
-      this.logger.info('Proxy request completed', { 
-        port, 
-        status: response.status,
-        targetUrl 
-      });
 
       return new Response(response.body, {
         status: response.status,
@@ -337,8 +321,6 @@ export class PortService {
 
       await this.store.expose(port, updatedInfo);
 
-      this.logger.info('Port marked as inactive', { port });
-
       return {
         success: true,
       };
@@ -364,10 +346,6 @@ export class PortService {
     try {
       const threshold = this.manager.calculateCleanupThreshold();
       const cleaned = await this.store.cleanup(threshold);
-
-      if (cleaned > 0) {
-        this.logger.info('Cleaned up inactive ports', { count: cleaned });
-      }
 
       return {
         success: true,

@@ -1,6 +1,6 @@
+import { createLogger, type LogContext, TraceContext } from "@repo/shared";
 import { getSandbox, type Sandbox } from "./sandbox";
 import {
-  logSecurityEvent,
   sanitizeSandboxId,
   validatePort
 } from "./security";
@@ -20,6 +20,14 @@ export async function proxyToSandbox<E extends SandboxEnv>(
   request: Request,
   env: E
 ): Promise<Response | null> {
+  // Create logger context for this request
+  const traceId = TraceContext.fromHeaders(request.headers) || TraceContext.generate();
+  const logger = createLogger({
+    component: 'sandbox-do',
+    traceId,
+    operation: 'proxy'
+  });
+
   try {
     const url = new URL(request.url);
     const routeInfo = extractSandboxRoute(url);
@@ -37,7 +45,7 @@ export async function proxyToSandbox<E extends SandboxEnv>(
       // Validate the token matches the port
       const isValidToken = await sandbox.validatePortToken(port, token);
       if (!isValidToken) {
-        logSecurityEvent('INVALID_TOKEN_ACCESS_BLOCKED', {
+        logger.warn('Invalid token access blocked', {
           port,
           sandboxId,
           path,
@@ -45,7 +53,7 @@ export async function proxyToSandbox<E extends SandboxEnv>(
           url: request.url,
           method: request.method,
           userAgent: request.headers.get('User-Agent') || 'unknown'
-        }, 'high');
+        });
 
         return new Response(
           JSON.stringify({
@@ -90,7 +98,7 @@ export async function proxyToSandbox<E extends SandboxEnv>(
 
     return sandbox.containerFetch(proxyRequest, port);
   } catch (error) {
-    console.error('[Sandbox] Proxy routing error:', error);
+    logger.error('Proxy routing error', error instanceof Error ? error : new Error(String(error)));
     return new Response('Proxy routing error', { status: 500 });
   }
 }
@@ -100,13 +108,6 @@ function extractSandboxRoute(url: URL): RouteInfo | null {
   const subdomainMatch = url.hostname.match(/^(\d{4,5})-([^.-][^.]*[^.-]|[^.-])-([a-zA-Z0-9_-]{12,20})\.(.+)$/);
 
   if (!subdomainMatch) {
-    // Log malformed subdomain attempts
-    if (url.hostname.includes('-') && url.hostname.includes('.')) {
-      logSecurityEvent('MALFORMED_SUBDOMAIN_ATTEMPT', {
-        hostname: url.hostname,
-        url: url.toString()
-      }, 'medium');
-    }
     return null;
   }
 
@@ -117,13 +118,6 @@ function extractSandboxRoute(url: URL): RouteInfo | null {
 
   const port = parseInt(portStr, 10);
   if (!validatePort(port)) {
-    logSecurityEvent('INVALID_PORT_IN_SUBDOMAIN', {
-      port,
-      portStr,
-      sandboxId,
-      hostname: url.hostname,
-      url: url.toString()
-    }, 'high');
     return null;
   }
 
@@ -131,35 +125,13 @@ function extractSandboxRoute(url: URL): RouteInfo | null {
   try {
     sanitizedSandboxId = sanitizeSandboxId(sandboxId);
   } catch (error) {
-    logSecurityEvent('INVALID_SANDBOX_ID_IN_SUBDOMAIN', {
-      sandboxId,
-      port,
-      hostname: url.hostname,
-      url: url.toString(),
-      error: error instanceof Error ? error.message : 'Unknown error'
-    }, 'high');
     return null;
   }
 
   // DNS subdomain length limit is 63 characters
   if (sandboxId.length > 63) {
-    logSecurityEvent('SANDBOX_ID_LENGTH_VIOLATION', {
-      sandboxId,
-      length: sandboxId.length,
-      port,
-      hostname: url.hostname
-    }, 'medium');
     return null;
   }
-
-  logSecurityEvent('SANDBOX_ROUTE_EXTRACTED', {
-    port,
-    sandboxId: sanitizedSandboxId,
-    domain,
-    path: url.pathname || "/",
-    hostname: url.hostname,
-    hasToken: !!token
-  }, 'low');
 
   return {
     port,

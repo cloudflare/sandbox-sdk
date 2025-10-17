@@ -1,12 +1,12 @@
 // Port Handler
-import type {
+import type {Logger, 
   PortCloseResult,
   PortExposeResult,
-  PortListResult,
+  PortListResult
 } from '@repo/shared';
 import { ErrorCode } from '@repo/shared/errors';
 
-import type { ExposePortRequest, Logger, RequestContext } from '../core/types';
+import type { ExposePortRequest, RequestContext } from '../core/types';
 import type { PortService } from '../services/port-service';
 import { BaseHandler } from './base-handler';
 
@@ -49,23 +49,11 @@ export class PortHandler extends BaseHandler<Request, Response> {
 
   private async handleExpose(request: Request, context: RequestContext): Promise<Response> {
     const body = await this.parseRequestBody<ExposePortRequest>(request);
-    
-    this.logger.info('Exposing port', { 
-      requestId: context.requestId,
-      port: body.port,
-      name: body.name
-    });
 
     const result = await this.portService.exposePort(body.port, body.name);
 
     if (result.success) {
       const portInfo = result.data!;
-
-      this.logger.info('Port exposed successfully', {
-        requestId: context.requestId,
-        port: portInfo.port,
-        name: portInfo.name,
-      });
 
       const response: PortExposeResult = {
         success: true,
@@ -76,31 +64,14 @@ export class PortHandler extends BaseHandler<Request, Response> {
 
       return this.createTypedResponse(response, context);
     } else {
-      this.logger.error('Port expose failed', undefined, {
-        requestId: context.requestId,
-        port: body.port,
-        name: body.name,
-        errorCode: result.error!.code,
-        errorMessage: result.error!.message,
-      });
       return this.createErrorResponse(result.error, context);
     }
   }
 
   private async handleUnexpose(request: Request, context: RequestContext, port: number): Promise<Response> {
-    this.logger.info('Unexposing port', { 
-      requestId: context.requestId,
-      port 
-    });
-
     const result = await this.portService.unexposePort(port);
 
     if (result.success) {
-      this.logger.info('Port unexposed successfully', {
-        requestId: context.requestId,
-        port,
-      });
-
       const response: PortCloseResult = {
         success: true,
         port,
@@ -109,19 +80,11 @@ export class PortHandler extends BaseHandler<Request, Response> {
 
       return this.createTypedResponse(response, context);
     } else {
-      this.logger.error('Port unexpose failed', undefined, {
-        requestId: context.requestId,
-        port,
-        errorCode: result.error!.code,
-        errorMessage: result.error!.message,
-      });
       return this.createErrorResponse(result.error, context);
     }
   }
 
   private async handleList(request: Request, context: RequestContext): Promise<Response> {
-    this.logger.info('Listing exposed ports', { requestId: context.requestId });
-
     const result = await this.portService.getExposedPorts();
 
     if (result.success) {
@@ -139,11 +102,6 @@ export class PortHandler extends BaseHandler<Request, Response> {
 
       return this.createTypedResponse(response, context);
     } else {
-      this.logger.error('Port listing failed', undefined, {
-        requestId: context.requestId,
-        errorCode: result.error!.code,
-        errorMessage: result.error!.message,
-      });
       return this.createErrorResponse(result.error, context);
     }
   }
@@ -171,22 +129,8 @@ export class PortHandler extends BaseHandler<Request, Response> {
         }, context);
       }
 
-      this.logger.info('Proxying request', { 
-        requestId: context.requestId,
-        port,
-        method: request.method,
-        originalPath: url.pathname,
-      });
-
       // Use the port service to proxy the request
       const response = await this.portService.proxyRequest(port, request);
-
-      // Log the proxy result
-      this.logger.info('Proxy request completed', {
-        requestId: context.requestId,
-        port,
-        status: response.status,
-      });
 
       return response;
     } catch (error) {

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { Logger } from "@repo/shared";
 import { type InterpreterLanguage, processPool, type RichOutput } from "./runtime/process-pool";
 
 export interface CreateContextRequest {
@@ -34,6 +35,11 @@ export class InterpreterNotReadyError extends Error {
 
 export class InterpreterService {
   private contexts: Map<string, Context> = new Map();
+  private logger: Logger;
+
+  constructor(logger: Logger) {
+    this.logger = logger;
+  }
 
   async getHealthStatus(): Promise<HealthStatus> {
     return {
@@ -56,8 +62,6 @@ export class InterpreterService {
     };
 
     this.contexts.set(id, context);
-    console.log(`[InterpreterService] Created context ${id} for ${language}`);
-
     return context;
   }
 
@@ -71,7 +75,6 @@ export class InterpreterService {
     }
 
     this.contexts.delete(contextId);
-    console.log(`[InterpreterService] Deleted context ${contextId}`);
   }
 
   async executeCode(
@@ -103,7 +106,6 @@ export class InterpreterService {
     const stream = new ReadableStream({
       async start(controller) {
         const encoder = new TextEncoder();
-        const startTime = Date.now();
 
         try {
           // Pass through user-provided timeout (undefined = unlimited)
@@ -113,9 +115,6 @@ export class InterpreterService {
             contextId,
             timeoutMs
           );
-          
-          const totalTime = Date.now() - startTime;
-          console.log(`[InterpreterService] Code execution completed in ${totalTime}ms`);
 
           if (result.stdout) {
             controller.enqueue(
@@ -186,10 +185,13 @@ export class InterpreterService {
               )
             );
           }
-          
+
           controller.close();
         } catch (error) {
-          console.error(`[InterpreterService] Code execution failed:`, error);
+          self.logger.error('Code execution failed', error as Error, {
+            contextId,
+            language: execLanguage
+          });
 
           controller.enqueue(
             encoder.encode(
@@ -231,9 +233,9 @@ export class InterpreterService {
       case "ts":
         return "typescript";
       default:
-        console.warn(
-          `[InterpreterService] Unknown language ${language}, defaulting to python`
-        );
+        this.logger.warn('Unknown language, defaulting to python', {
+          requestedLanguage: language
+        });
         return "python";
     }
   }

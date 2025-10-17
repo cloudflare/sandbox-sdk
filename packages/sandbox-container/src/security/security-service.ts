@@ -8,7 +8,8 @@
 // - Only protect port 3000 (SDK control plane) from interference
 // - Format validation only (null bytes, length limits)
 // - No content restrictions (no path blocking, no command blocking, no URL allowlists)
-import type { Logger, ValidationResult } from '../core/types';
+import type { Logger } from '@repo/shared';
+import type { ValidationResult } from '../core/types';
 
 export class SecurityService {
   // Only port 3000 is truly reserved (SDK control plane)

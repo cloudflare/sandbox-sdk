@@ -7,11 +7,8 @@ export class CorsMiddleware implements Middleware {
     context: RequestContext,
     next: NextFunction
   ): Promise<Response> {
-    console.log(`[CorsMiddleware] Processing ${request.method} request`);
-
     // Handle CORS preflight requests
     if (request.method === 'OPTIONS') {
-      console.log(`[CorsMiddleware] Handling CORS preflight`);
       return new Response(null, {
         status: 200,
         headers: context.corsHeaders,

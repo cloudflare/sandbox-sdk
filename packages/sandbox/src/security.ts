@@ -102,32 +102,3 @@ export function validateLanguage(language: string | undefined): void {
     );
   }
 }
-
-/**
- * Logs security events for monitoring
- */
-export function logSecurityEvent(
-  event: string,
-  details: Record<string, any>,
-  severity: 'low' | 'medium' | 'high' | 'critical' = 'medium'
-): void {
-  const logEntry = {
-    timestamp: new Date().toISOString(),
-    event,
-    severity,
-    ...details
-  };
-
-  switch (severity) {
-    case 'critical':
-    case 'high':
-      console.error(`[SECURITY:${severity.toUpperCase()}] ${event}:`, JSON.stringify(logEntry));
-      break;
-    case 'medium':
-      console.warn(`[SECURITY:${severity.toUpperCase()}] ${event}:`, JSON.stringify(logEntry));
-      break;
-    case 'low':
-      console.info(`[SECURITY:${severity.toUpperCase()}] ${event}:`, JSON.stringify(logEntry));
-      break;
-  }
-}

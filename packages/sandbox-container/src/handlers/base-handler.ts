@@ -1,3 +1,5 @@
+import type { Logger } from '@repo/shared';
+import { TraceContext } from '@repo/shared';
 import {
   type ErrorCode,
   type ErrorResponse,
@@ -7,7 +9,6 @@ import {
 } from "@repo/shared/errors";
 import type {
   Handler,
-  Logger,
   RequestContext,
   ServiceError,
 } from "../core/types";
@@ -102,5 +103,33 @@ export abstract class BaseHandler<TRequest, TResponse>
   protected extractQueryParam(request: Request, param: string): string | null {
     const url = new URL(request.url);
     return url.searchParams.get(param);
+  }
+
+  /**
+   * Extract traceId from request headers
+   * Returns the traceId if present, null otherwise
+   */
+  protected extractTraceId(request: Request): string | null {
+    return TraceContext.fromHeaders(request.headers);
+  }
+
+  /**
+   * Create a child logger with trace context for this request
+   * Includes traceId if available in request headers
+   */
+  protected createRequestLogger(request: Request, operation?: string): Logger {
+    const traceId = this.extractTraceId(request);
+    const context: Record<string, string> = {};
+
+    if (traceId) {
+      context.traceId = traceId;
+    }
+    if (operation) {
+      context.operation = operation;
+    }
+
+    return context.traceId || context.operation
+      ? this.logger.child(context)
+      : this.logger;
   }
 }

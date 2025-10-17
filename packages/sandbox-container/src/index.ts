@@ -1,16 +1,19 @@
-// Modular Container Server
+import { createLogger } from '@repo/shared';
 import { serve } from "bun";
 import { Container } from './core/container';
 import { Router } from './core/router';
 import { setupRoutes } from './routes/setup';
 
+// Create module-level logger for server lifecycle events
+const logger = createLogger({ component: 'container' });
+
 async function createApplication(): Promise<{ fetch: (req: Request) => Promise<Response> }> {
   // Initialize dependency injection container
   const container = new Container();
   await container.initialize();
-  
+
   // Create and configure router
-  const router = new Router();
+  const router = new Router(logger);
   
   // Add global CORS middleware
   router.use(container.get('corsMiddleware'));
@@ -26,7 +29,7 @@ async function createApplication(): Promise<{ fetch: (req: Request) => Promise<R
 // Initialize the application
 const app = await createApplication();
 
-// Start the Bun server with enhanced configuration
+// Start the Bun server
 const server = serve({
   fetch: app.fetch,
   hostname: "0.0.0.0",
@@ -39,12 +42,15 @@ const server = serve({
   },
 });
 
-console.log(`Bun Server running on http://0.0.0.0:${server.port}`);
+logger.info('Container server started', {
+  port: server.port,
+  hostname: '0.0.0.0'
+});
 
 // Graceful shutdown handling
 process.on('SIGTERM', async () => {
-  console.log('Received SIGTERM, shutting down gracefully...');
-  
+  logger.info('Received SIGTERM, shutting down gracefully');
+
   // Get services for cleanup
   const container = new Container();
   if (container.isInitialized()) {
@@ -59,16 +65,16 @@ process.on('SIGTERM', async () => {
       // Cleanup ports (synchronous)
       portService.destroy();
 
-      console.log('Services cleaned up successfully');
+      logger.info('Services cleaned up successfully');
     } catch (error) {
-      console.error('Error during cleanup:', error);
+      logger.error('Error during cleanup', error instanceof Error ? error : new Error(String(error)));
     }
   }
-  
+
   process.exit(0);
 });
 
 process.on('SIGINT', async () => {
-  console.log('\nReceived SIGINT, shutting down gracefully...');
+  logger.info('Received SIGINT, shutting down gracefully');
   process.emit('SIGTERM');
 });
