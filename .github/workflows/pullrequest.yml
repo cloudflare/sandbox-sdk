@@ -134,18 +134,8 @@ jobs:
         if: always() && github.event_name == 'pull_request'
         continue-on-error: true
         run: |
-          # Delete worker (this also removes the worker's binding to the container)
-          npx wrangler delete --name ${{ steps.env-name.outputs.worker_name }} || echo "Worker already deleted or doesn't exist"
-
-          # Get container ID for this worker and delete it
-          CONTAINER_ID=$(npx wrangler containers list --json | jq -r '.[] | select(.name=="${{ steps.env-name.outputs.worker_name }}") | .id')
-          if [ -n "$CONTAINER_ID" ]; then
-            echo "Deleting container: $CONTAINER_ID"
-            npx wrangler containers delete "$CONTAINER_ID" || echo "Failed to delete container"
-          else
-            echo "No container found for worker ${{ steps.env-name.outputs.worker_name }}"
-          fi
-        working-directory: tests/e2e/test-worker
+          cd tests/e2e/test-worker
+          ../../../scripts/cleanup-test-deployment.sh ${{ steps.env-name.outputs.worker_name }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

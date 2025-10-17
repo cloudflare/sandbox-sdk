@@ -79,17 +79,9 @@ jobs:
 
             # Cleanup if needed
             if [ "$SHOULD_CLEANUP" = true ]; then
-              echo "  Deleting worker: $WORKER_NAME"
-              npx wrangler delete --name "$WORKER_NAME" 2>/dev/null || echo "  Failed to delete worker"
-
-              # Also delete associated container
-              CONTAINER_ID=$(npx wrangler containers list --json 2>/dev/null | jq -r ".[] | select(.name==\"$WORKER_NAME\") | .id")
-              if [ -n "$CONTAINER_ID" ]; then
-                echo "  Deleting container: $CONTAINER_ID"
-                npx wrangler containers delete "$CONTAINER_ID" 2>/dev/null || echo "  Failed to delete container"
-              fi
-
-              echo "  ✅ Cleanup complete"
+              echo "  Calling cleanup script for: $WORKER_NAME"
+              # Call cleanup script (indent output for readability)
+              ../../../scripts/cleanup-test-deployment.sh "$WORKER_NAME" 2>&1 | sed 's/^/  /'
             fi
           done
 
