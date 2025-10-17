@@ -12,10 +12,9 @@ export interface WranglerDevOptions {
 /**
  * Get the test worker URL and runner for E2E tests
  *
- * Priority order:
- * 1. TEST_WORKER_URL - Deployed worker (CI mode)
- * 2. TEST_WORKER_URL_GLOBAL_SETUP - Shared wrangler dev from global setup (parallel local mode)
- * 3. Spawn new wrangler dev - Fallback for serial local mode (deprecated)
+ * Two modes:
+ * 1. CI: Uses TEST_WORKER_URL pointing to deployed worker
+ * 2. Local: Spawns a new wrangler dev instance for this test file
  *
  * NOTE: wrangler.jsonc is generated from wrangler.template.jsonc automatically
  * on first run. You don't need to run any setup commands manually.
@@ -25,12 +24,6 @@ export async function getTestWorkerUrl(): Promise<{ url: string; runner: Wrangle
   if (process.env.TEST_WORKER_URL) {
     console.log('Using deployed test worker:', process.env.TEST_WORKER_URL);
     return { url: process.env.TEST_WORKER_URL, runner: null };
-  }
-
-  // Parallel local mode: use shared wrangler dev from global setup
-  if (process.env.TEST_WORKER_URL_GLOBAL_SETUP) {
-    console.log('Using shared wrangler dev from global setup:', process.env.TEST_WORKER_URL_GLOBAL_SETUP);
-    return { url: process.env.TEST_WORKER_URL_GLOBAL_SETUP, runner: null };
   }
 
   // Local mode: ensure config exists before spawning wrangler dev
@@ -50,7 +43,7 @@ export async function getTestWorkerUrl(): Promise<{ url: string; runner: Wrangle
     }
   }
 
-  // Spawn wrangler dev
+  // Spawn wrangler dev for this test file
   console.log('Spawning local wrangler dev...');
   const runner = new WranglerDevRunner({ cwd: testWorkerDir });
   const url = await runner.getUrl();

@@ -9,14 +9,10 @@ import { defineConfig } from 'vitest/config';
  * Run with: npm run test:e2e
  *
  * Architecture:
- * - Global setup starts ONE wrangler dev before all tests
- * - All test files share this instance via TEST_WORKER_URL_GLOBAL_SETUP env var
- * - Tests can run in parallel because they share the worker but use isolated sandboxes
- * - Global setup returns teardown function that stops wrangler after all tests complete
+ * - CI: Uses TEST_WORKER_URL pointing to deployed worker
+ * - Local: Each test file spawns its own wrangler dev instance
+ * - Tests run SEQUENTIALLY to avoid container provisioning resource contention
  */
-
-// Check if running in CI environment
-const isCI = process.env.CI === 'true' || process.env.GITHUB_ACTIONS === 'true';
 
 export default defineConfig({
   test: {
@@ -25,23 +21,19 @@ export default defineConfig({
     environment: 'node',
     include: ['tests/e2e/**/*.test.ts'],
 
-    // Global setup for shared wrangler dev instance
-    // Returns teardown function to stop wrangler after all tests
-    globalSetup: ['./tests/e2e/global-setup.ts'],
-
     // Longer timeouts for E2E tests (wrangler startup, container operations)
     testTimeout: 120000, // 2 minutes per test
     hookTimeout: 60000, // 1 minute for beforeAll/afterAll
     teardownTimeout: 30000, // 30s for cleanup
 
-    // Enable parallel execution for both local and CI
-    // Safe because global setup ensures only ONE wrangler dev runs
+    // Run tests sequentially to avoid infrastructure resource contention
+    // Parallel execution causes container provisioning issues on both local and CI
     pool: 'forks',
     poolOptions: {
       forks: {
-        singleFork: false,
+        singleFork: true, // Force sequential execution
       },
     },
-    fileParallelism: true,
+    fileParallelism: false, // No parallel file execution
   },
 });
