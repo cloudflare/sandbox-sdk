@@ -29,11 +29,17 @@ import {
 } from "./security";
 import { parseSSEStream } from "./sse-parser";
 
-export function getSandbox(ns: DurableObjectNamespace<Sandbox>, id: string) {
+export function getSandbox(ns: DurableObjectNamespace<Sandbox>, id: string, options?: {
+  baseUrl: string
+}) {
   const stub = getContainer(ns, id);
 
   // Store the name on first access
   stub.setSandboxName?.(id);
+
+  if(options?.baseUrl) {
+    stub.setBaseUrl(options.baseUrl);
+  }
 
   return stub;
 }
@@ -45,6 +51,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   client: SandboxClient;
   private codeInterpreter: CodeInterpreter;
   private sandboxName: string | null = null;
+  private baseUrl: string | null = null;
   private portTokens: Map<number, string> = new Map();
   private defaultSession: string | null = null;
   envVars: Record<string, string> = {};
@@ -95,6 +102,19 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     if (!this.sandboxName) {
       this.sandboxName = name;
       await this.ctx.storage.put('sandboxName', name);
+    }
+  }
+
+  // RPC method to set the base URL
+  async setBaseUrl(baseUrl: string): Promise<void> {
+    if (!this.baseUrl) {
+      this.baseUrl = baseUrl;
+      await this.ctx.storage.put('baseUrl', baseUrl);
+      console.log(`[Sandbox] Stored base URL: ${baseUrl}`);
+    } else {
+      if(this.baseUrl !== baseUrl) {
+        throw new Error('Base URL already set and different from one previously provided');
+      }
     }
   }
 
