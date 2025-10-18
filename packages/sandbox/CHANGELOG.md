@@ -1,5 +1,11 @@
 # @cloudflare/sandbox
 
+## 0.4.3
+
+### Patch Changes
+
+- [#114](https://github.com/cloudflare/sandbox-sdk/pull/114) [`8c1f440`](https://github.com/cloudflare/sandbox-sdk/commit/8c1f440ad6fd89a5c69f9ca9d055ad9b183dd1c3) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Debloat base docker image (2.63GB → 1.03GB)
+
 ## 0.4.2
 
 ### Patch Changes
