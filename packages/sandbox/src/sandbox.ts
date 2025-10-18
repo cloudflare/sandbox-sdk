@@ -110,7 +110,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     if (!this.baseUrl) {
       this.baseUrl = baseUrl;
       await this.ctx.storage.put('baseUrl', baseUrl);
-      console.log(`[Sandbox] Stored base URL: ${baseUrl}`);
     } else {
       if(this.baseUrl !== baseUrl) {
         throw new Error('Base URL already set and different from one previously provided');

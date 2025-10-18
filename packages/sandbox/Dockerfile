@@ -56,46 +56,20 @@ COPY --from=builder /app/tooling ./tooling
 RUN npm ci --production
 
 # ============================================================================
-# Stage 4: Runtime - Ubuntu 22.04 with full development environment
+# Stage 4: Runtime - Ubuntu 22.04 with only runtime dependencies
 # ============================================================================
 FROM ubuntu:22.04 AS runtime
 
 # Prevent interactive prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install essential system packages and development tools
-RUN apt-get update && apt-get install -y \
-    # Basic utilities
+# Install essential runtime packages
+RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
-    wget \
-    git \
-    unzip \
-    zip \
-    file \
-    # Process management
-    procps \
-    htop \
-    # Build tools
-    build-essential \
-    pkg-config \
-    # Network tools
-    net-tools \
-    iputils-ping \
-    dnsutils \
-    # Text processing
-    jq \
-    vim \
-    nano \
-    # Python dependencies
-    python3.11 \
-    python3.11-dev \
-    python3-pip \
-    python3.11-venv \
-    # Other useful tools
     ca-certificates \
-    gnupg \
-    lsb-release \
-    strace \
+    python3.11 \
+    python3-pip \
+    procps \
     && rm -rf /var/lib/apt/lists/*
 
 # Set Python 3.11 as default python3
@@ -108,13 +82,6 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
 
 # Install Bun runtime from official image
 COPY --from=oven/bun:1 /usr/local/bin/bun /usr/local/bin/bun
-COPY --from=oven/bun:1 /usr/local/bin/bunx /usr/local/bin/bunx
-
-# Install development tools globally
-RUN npm install -g \
-    wrangler \
-    vite \
-    opencode-ai
 
 # Install essential Python packages for code execution
 RUN pip3 install --no-cache-dir \
@@ -122,12 +89,6 @@ RUN pip3 install --no-cache-dir \
     numpy \
     pandas \
     ipython
-
-# Verify installations
-RUN python3 --version && \
-    node --version && \
-    npm --version && \
-    bun --version
 
 # Set up runtime container server directory
 WORKDIR /container-server
@@ -143,10 +104,9 @@ COPY --from=builder /app/packages/sandbox-container/src/runtime/executors/python
 # Includes: @repo/shared, zod, esbuild (runtime dependencies)
 COPY --from=prod-deps /app/node_modules ./node_modules
 
-# Copy workspace packages so node_modules symlinks work
-# @repo/shared and @repo/typescript-config are symlinked in node_modules
-COPY --from=prod-deps /app/packages/shared ./packages/shared
-COPY --from=prod-deps /app/tooling/typescript-config ./tooling/typescript-config
+# Copy workspace packages
+COPY --from=prod-deps /app/packages/shared/dist ./packages/shared/dist
+COPY --from=prod-deps /app/packages/shared/package.json ./packages/shared/package.json
 
 # Configure process pool sizes (can be overridden at runtime)
 ENV PYTHON_POOL_MIN_SIZE=3
@@ -157,9 +117,6 @@ ENV TYPESCRIPT_POOL_MIN_SIZE=3
 ENV TYPESCRIPT_POOL_MAX_SIZE=10
 
 # Create clean workspace directory for user code
-# Architecture:
-#   /container-server/ - SDK infrastructure (server, executors, dependencies)
-#   /workspace/ - User's clean workspace for their code
 RUN mkdir -p /workspace
 
 # Expose the application port (3000 for control)
