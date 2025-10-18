@@ -66,10 +66,17 @@ ENV DEBIAN_FRONTEND=noninteractive
 # Install essential runtime packages
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    wget \
     ca-certificates \
     python3.11 \
     python3-pip \
+    python3.11-venv \
     procps \
+    git \
+    unzip \
+    zip \
+    jq \
+    file \
     && rm -rf /var/lib/apt/lists/*
 
 # Set Python 3.11 as default python3
