@@ -6,7 +6,7 @@ FROM cloudflare/sandbox-test:0.4.2
 
 # On a mac, you might need to actively pick up the
 # arm64 build of the image.
-# FROM --platform=linux/arm64 cloudflare/sandbox-test:0.1.3
+# FROM --platform=linux/arm64 cloudflare/sandbox-test:0.4.2
 
 # Expose the ports you want to expose
 EXPOSE 8080
