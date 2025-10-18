@@ -1,5 +1,11 @@
 # @cloudflare/sandbox
 
+## 0.4.2
+
+### Patch Changes
+
+- [`e53d7e7`](https://github.com/cloudflare/sandbox-sdk/commit/e53d7e7ce185f79bdd899029bb532e9651ae7ba5) Thanks [@threepointone](https://github.com/threepointone)! - fix build by inlining repo/shared
+
 ## 0.4.1
 
 ### Patch Changes
