@@ -1,0 +1,22 @@
+{
+  "name": "@cloudflare/sandbox-websocket-example",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "description": "WebSocket example for Cloudflare Sandbox SDK",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "build": "tsc --noEmit"
+  },
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@cloudflare/sandbox": "*"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250111.0",
+    "typescript": "^5.3.3",
+    "wrangler": "^4.43.0"
+  }
+}
