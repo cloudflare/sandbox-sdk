@@ -94,11 +94,11 @@ export { asyncIterableToSSEStream, parseSSEStream, responseToAsyncIterable } fro
 
 export {
   createWebSocketHandler,
-  SandboxWebSocket,
   type ErrorMessage,
   type OutputMessage,
   type ReadyMessage,
   type ResultMessage,
+  SandboxWebSocket,
   type StatusMessage,
   type WebSocketHandlerOptions,
   type WebSocketHandlerResult,
