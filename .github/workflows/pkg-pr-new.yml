@@ -1,28 +1,35 @@
-name: Publish to pkg.pr.new for testing
+name: Publish Preview to pkg.pr.new
 
 permissions:
   contents: read
   pull-requests: write # Required for pkg.pr.new to comment on PRs
 
 on:
-  pull_request: {}
+  pull_request:
+    types: [opened, synchronize, reopened]
 
 jobs:
-  publish:
+  publish-preview:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Full history for proper versioning
+          fetch-depth: 0
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: "npm"
+
       - name: Install dependencies
         run: npm ci
+
       - name: Build packages
         run: npm run build
+
       - name: Publish to pkg.pr.new
-        run: npx pkg-pr-new publish './packages/sandbox' 
+        run: npx pkg-pr-new publish './packages/sandbox'
