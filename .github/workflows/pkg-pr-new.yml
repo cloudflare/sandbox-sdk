@@ -25,4 +25,4 @@ jobs:
       - name: Build packages
         run: npm run build
       - name: Publish to pkg.pr.new
-        run: npx pkg-pr-new publish --compact --comment=update './packages/sandbox' 
+        run: npx pkg-pr-new publish './packages/sandbox' 
