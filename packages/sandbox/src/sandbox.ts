@@ -84,9 +84,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     // The CodeInterpreter extracts client.interpreter from the sandbox
     this.codeInterpreter = new CodeInterpreter(this);
 
-    // Load the sandbox name and port tokens from storage on initialization
+    // Load the sandbox name, port tokens, and default session from storage on initialization
     this.ctx.blockConcurrencyWhile(async () => {
       this.sandboxName = await this.ctx.storage.get<string>('sandboxName') || null;
+      this.defaultSession = await this.ctx.storage.get<string>('defaultSession') || null;
       const storedTokens = await this.ctx.storage.get<Record<string, string>>('portTokens') || {};
 
       // Convert stored tokens back to Map
@@ -199,20 +200,39 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   /**
    * Ensure default session exists - lazy initialization
    * This is called automatically by all public methods that need a session
+   *
+   * The session is persisted to Durable Object storage to survive hot reloads
+   * during development. If a session already exists in the container after reload,
+   * we reuse it instead of trying to create a new one.
    */
   private async ensureDefaultSession(): Promise<string> {
     if (!this.defaultSession) {
       const sessionId = `sandbox-${this.sandboxName || 'default'}`;
 
-      // Create session in container
-      await this.client.utils.createSession({
-        id: sessionId,
-        env: this.envVars || {},
-        cwd: '/workspace',
-      });
+      try {
+        // Try to create session in container
+        await this.client.utils.createSession({
+          id: sessionId,
+          env: this.envVars || {},
+          cwd: '/workspace',
+        });
 
-      this.defaultSession = sessionId;
-      this.logger.debug('Default session initialized', { sessionId });
+        this.defaultSession = sessionId;
+        // Persist to storage so it survives hot reloads
+        await this.ctx.storage.put('defaultSession', sessionId);
+        this.logger.debug('Default session initialized', { sessionId });
+      } catch (error: any) {
+        // If session already exists (e.g., after hot reload), reuse it
+        if (error?.message?.includes('already exists') || error?.message?.includes('Session')) {
+          this.logger.debug('Reusing existing session after reload', { sessionId });
+          this.defaultSession = sessionId;
+          // Persist to storage in case it wasn't saved before
+          await this.ctx.storage.put('defaultSession', sessionId);
+        } else {
+          // Re-throw other errors
+          throw error;
+        }
+      }
     }
     return this.defaultSession;
   }
