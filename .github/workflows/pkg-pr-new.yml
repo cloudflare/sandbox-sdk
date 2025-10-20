@@ -1,0 +1,28 @@
+name: Publish to pkg.pr.new for testing
+
+permissions:
+  contents: read
+  pull-requests: write # Required for pkg.pr.new to comment on PRs
+
+on:
+  pull_request: {}
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Full history for proper versioning
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: "npm"
+      - name: Install dependencies
+        run: npm ci
+      - name: Build packages
+        run: npm run build
+      - name: Publish to pkg.pr.new
+        run: npx pkg-pr-new publish --compact --comment=update './packages/sandbox' 
