@@ -8,6 +8,7 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
 
+
 jobs:
   publish-preview:
     runs-on: ubuntu-latest
@@ -25,11 +26,19 @@ jobs:
           node-version: 24
           cache: "npm"
 
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
       - name: Install dependencies
         run: npm ci
 
       - name: Build packages
         run: npm run build
+
+      - name: Resolve workspace dependencies
+        run: npx tsx .github/resolve-workspace-versions.ts
 
       - name: Publish to pkg.pr.new
         run: npx pkg-pr-new publish './packages/sandbox'
