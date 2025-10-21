@@ -6,7 +6,7 @@ vi.mock('@cloudflare/containers', () => ({
   Container: class Container {
     ctx: any;
     env: any;
-    sleepAfter: string | number = '3m';
+    sleepAfter: string | number = '10m';
     constructor(ctx: any, env: any) {
       this.ctx = ctx;
       this.env = env;
@@ -24,7 +24,7 @@ describe('getSandbox', () => {
 
     // Create a fresh mock stub for each test
     mockStub = {
-      sleepAfter: '3m',
+      sleepAfter: '10m',
       setSandboxName: vi.fn(),
       setBaseUrl: vi.fn(),
       setSleepAfter: vi.fn((value: string | number) => {
@@ -89,7 +89,7 @@ describe('getSandbox', () => {
     const sandbox = getSandbox(mockNamespace, 'test-sandbox');
 
     // Should remain default value from Container
-    expect(sandbox.sleepAfter).toBe('3m');
+    expect(sandbox.sleepAfter).toBe('10m');
   });
 
   it('should accept various time string formats for sleepAfter', () => {
