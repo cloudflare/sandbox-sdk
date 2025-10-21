@@ -1,5 +1,11 @@
 # @cloudflare/sandbox
 
+## 0.4.4
+
+### Patch Changes
+
+- [#125](https://github.com/cloudflare/sandbox-sdk/pull/125) [`fddccfd`](https://github.com/cloudflare/sandbox-sdk/commit/fddccfdce8204ce2aa7dadc0ad9fb2acbdeaec51) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - add docker image to pkg workflow
+
 ## 0.4.3
 
 ### Patch Changes
