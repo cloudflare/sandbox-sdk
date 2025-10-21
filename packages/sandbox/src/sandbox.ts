@@ -13,6 +13,7 @@ import type {
   ProcessOptions,
   ProcessStatus,
   RunCodeOptions,
+  SandboxOptions,
   SessionOptions,
   StreamOptions
 } from "@repo/shared";
@@ -29,16 +30,24 @@ import {
 } from "./security";
 import { parseSSEStream } from "./sse-parser";
 
-export function getSandbox(ns: DurableObjectNamespace<Sandbox>, id: string, options?: {
-  baseUrl: string
-}) {
+export function getSandbox(
+  ns: DurableObjectNamespace<Sandbox>,
+  id: string,
+  options?: SandboxOptions
+) {
   const stub = getContainer(ns, id);
 
   // Store the name on first access
   stub.setSandboxName?.(id);
 
-  if(options?.baseUrl) {
+  if (options?.baseUrl) {
     stub.setBaseUrl(options.baseUrl);
+  }
+
+  if (options?.sleepAfter !== undefined) {
+    // Set sleepAfter property on the stub
+    // Cast to any to work around RPC type inference issues
+    (stub as any).sleepAfter = options.sleepAfter;
   }
 
   return stub;
@@ -46,7 +55,7 @@ export function getSandbox(ns: DurableObjectNamespace<Sandbox>, id: string, opti
 
 export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   defaultPort = 3000; // Default port for the container's Bun server
-  sleepAfter = "3m"; // Sleep the sandbox if no requests are made in this timeframe
+  sleepAfter: string | number = "3m"; // Sleep the sandbox if no requests are made in this timeframe
 
   client: SandboxClient;
   private codeInterpreter: CodeInterpreter;

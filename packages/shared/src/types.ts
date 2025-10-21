@@ -232,26 +232,43 @@ export interface SessionOptions {
    * Optional session ID (auto-generated if not provided)
    */
   id?: string;
-  
+
   /**
    * Session name for identification
    */
   name?: string;
-  
+
   /**
    * Environment variables for this session
    */
   env?: Record<string, string>;
-  
+
   /**
    * Working directory
    */
   cwd?: string;
-  
+
   /**
    * Enable PID namespace isolation (requires CAP_SYS_ADMIN)
    */
   isolation?: boolean;
+}
+
+// Sandbox configuration options
+export interface SandboxOptions {
+  /**
+   * Duration after which the sandbox instance will sleep if no requests are received
+   * Can be:
+   * - A string like "30s", "3m", "5m", "1h" (seconds, minutes, or hours)
+   * - A number representing seconds (e.g., 180 for 3 minutes)
+   * Default: "3m" (3 minutes)
+   */
+  sleepAfter?: string | number;
+
+  /**
+   * Base URL for the sandbox API
+   */
+  baseUrl?: string;
 }
 
 /**
