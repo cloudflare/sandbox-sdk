@@ -5,7 +5,11 @@ permissions:
   pull-requests: write # Required for pkg.pr.new to comment on PRs
 
 on:
-  pull_request: {}
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '!**/*.md'
+      - '!.changeset/**'
 
 
 jobs:
