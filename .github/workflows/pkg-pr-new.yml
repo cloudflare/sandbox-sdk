@@ -37,8 +37,78 @@ jobs:
       - name: Build packages
         run: npm run build
 
+      - name: Set preview version
+        id: package-version
+        run: |
+          PR_NUMBER=${{ github.event.pull_request.number }}
+          GIT_HASH=$(git rev-parse --short HEAD)
+          VERSION="0.0.0-pr-${PR_NUMBER}-${GIT_HASH}"
+
+          # Update package.json with the preview version
+          node -e "
+          const fs = require('fs');
+          const path = './packages/sandbox/package.json';
+          const pkg = JSON.parse(fs.readFileSync(path, 'utf8'));
+          pkg.version = '${VERSION}';
+          fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + '\n');
+          "
+
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Docker image will be tagged as: cloudflare/sandbox:${VERSION}"
+          echo "Preview version: $VERSION"
+
       - name: Resolve workspace dependencies
         run: npx tsx .github/resolve-workspace-versions.ts
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_HUB_USERNAME }}
+          password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
+
+      - name: Build and push Docker image (preview)
+        run: npm run docker:publish --workspace=@cloudflare/sandbox
+
       - name: Publish to pkg.pr.new
         run: npx pkg-pr-new publish './packages/sandbox'
+
+      - name: Comment Docker image tag
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const version = '${{ steps.package-version.outputs.version }}';
+            const dockerTag = `cloudflare/sandbox:${version}`;
+            const body = `### 🐳 Docker Image Published\n\n\`\`\`dockerfile\nFROM ${dockerTag}\n\`\`\`\n\n**Version:** \`${version}\`\n\nYou can use this Docker image with the preview package from this PR.`;
+
+            // Find existing comment
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const botComment = comments.find(comment =>
+              comment.user.type === 'Bot' &&
+              comment.body.includes('Docker Image Published')
+            );
+
+            if (botComment) {
+              // Update existing comment
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: body
+              });
+            } else {
+              // Create new comment
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: body
+              });
+            }
