@@ -261,7 +261,7 @@ export interface SandboxOptions {
    * Can be:
    * - A string like "30s", "3m", "5m", "1h" (seconds, minutes, or hours)
    * - A number representing seconds (e.g., 180 for 3 minutes)
-   * Default: "3m" (3 minutes)
+   * Default: "10m" (10 minutes)
    */
   sleepAfter?: string | number;
 
