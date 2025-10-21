@@ -5,8 +5,7 @@ permissions:
   pull-requests: write # Required for pkg.pr.new to comment on PRs
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened]
+  pull_request: {}
 
 
 jobs:
