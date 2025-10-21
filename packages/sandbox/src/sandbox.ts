@@ -45,9 +45,7 @@ export function getSandbox(
   }
 
   if (options?.sleepAfter !== undefined) {
-    // Set sleepAfter property on the stub
-    // Cast to any to work around RPC type inference issues
-    (stub as any).sleepAfter = options.sleepAfter;
+    stub.setSleepAfter(options.sleepAfter);
   }
 
   return stub;
@@ -125,6 +123,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         throw new Error('Base URL already set and different from one previously provided');
       }
     }
+  }
+
+  // RPC method to set the sleep timeout
+  async setSleepAfter(sleepAfter: string | number): Promise<void> {
+    this.sleepAfter = sleepAfter;
   }
 
   // RPC method to set environment variables

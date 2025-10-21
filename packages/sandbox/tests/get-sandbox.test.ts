@@ -27,6 +27,9 @@ describe('getSandbox', () => {
       sleepAfter: '3m',
       setSandboxName: vi.fn(),
       setBaseUrl: vi.fn(),
+      setSleepAfter: vi.fn((value: string | number) => {
+        mockStub.sleepAfter = value;
+      }),
     };
 
     // Mock getContainer to return our stub
