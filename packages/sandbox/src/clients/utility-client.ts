@@ -22,6 +22,7 @@ export interface CommandsResponse extends BaseApiResponse {
  */
 export interface VersionResponse extends BaseApiResponse {
   version: string;
+  timestamp?: string;
 }
 
 /**
@@ -110,7 +111,7 @@ export class UtilityClient extends BaseHttpClient {
       this.logSuccess('Version retrieved', response.version);
       return response.version;
     } catch (error) {
-      // If version endpoint doesn't exist (old container), return null
+      // If version endpoint doesn't exist (old container), return 'unknown'
       // This allows for backward compatibility
       this.logger.debug('Failed to get container version (may be old container)', { error });
       return 'unknown';

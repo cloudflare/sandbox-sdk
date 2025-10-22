@@ -23,6 +23,12 @@ try {
 
   // Patterns to match version references in different contexts
   const versionPatterns = [
+    // SDK version constant
+    {
+      pattern: /export const SDK_VERSION = '[\d.]+';/g,
+      replacement: `export const SDK_VERSION = '${newVersion}';`,
+      description: "SDK version constant in version.ts",
+    },
     // Docker image versions (production and test)
     {
       pattern: /FROM docker\.io\/cloudflare\/sandbox:[\d.]+/g,
