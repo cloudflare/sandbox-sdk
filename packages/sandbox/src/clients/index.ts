@@ -59,5 +59,6 @@ export type {
 export type {
   CommandsResponse,
   PingResponse,
+  VersionResponse,
 } from './utility-client';
 export { UtilityClient } from './utility-client';

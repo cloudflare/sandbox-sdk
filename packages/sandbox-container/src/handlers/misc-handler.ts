@@ -18,6 +18,8 @@ export class MiscHandler extends BaseHandler<Request, Response> {
         return await this.handleHealth(request, context);
       case '/api/shutdown':
         return await this.handleShutdown(request, context);
+      case '/api/version':
+        return await this.handleVersion(request, context);
       default:
         return this.createErrorResponse({
           message: 'Invalid endpoint',
@@ -49,6 +51,18 @@ export class MiscHandler extends BaseHandler<Request, Response> {
     const response: ShutdownResult = {
       success: true,
       message: 'Container shutdown initiated',
+      timestamp: new Date().toISOString(),
+    };
+
+    return this.createTypedResponse(response, context);
+  }
+
+  private async handleVersion(request: Request, context: RequestContext): Promise<Response> {
+    const version = process.env.SANDBOX_VERSION || 'unknown';
+
+    const response = {
+      success: true,
+      version,
       timestamp: new Date().toISOString(),
     };
 

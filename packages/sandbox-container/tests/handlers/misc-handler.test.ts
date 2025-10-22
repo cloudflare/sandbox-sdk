@@ -150,6 +150,57 @@ describe('MiscHandler', () => {
     });
   });
 
+  describe('handleVersion - GET /api/version', () => {
+    it('should return version from environment variable', async () => {
+      // Set environment variable for test
+      process.env.SANDBOX_VERSION = '1.2.3';
+
+      const request = new Request('http://localhost:3000/api/version', {
+        method: 'GET'
+      });
+
+      const response = await miscHandler.handle(request, mockContext);
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get('Content-Type')).toBe('application/json');
+
+      const responseData = await response.json();
+      expect(responseData.success).toBe(true);
+      expect(responseData.version).toBe('1.2.3');
+      expect(responseData.timestamp).toBeDefined();
+      expect(responseData.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+    });
+
+    it('should return "unknown" when SANDBOX_VERSION is not set', async () => {
+      // Clear environment variable
+      delete process.env.SANDBOX_VERSION;
+
+      const request = new Request('http://localhost:3000/api/version', {
+        method: 'GET'
+      });
+
+      const response = await miscHandler.handle(request, mockContext);
+
+      expect(response.status).toBe(200);
+      const responseData = await response.json();
+      expect(responseData.version).toBe('unknown');
+    });
+
+    it('should include CORS headers in version response', async () => {
+      process.env.SANDBOX_VERSION = '1.0.0';
+
+      const request = new Request('http://localhost:3000/api/version', {
+        method: 'GET'
+      });
+
+      const response = await miscHandler.handle(request, mockContext);
+
+      expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
+      expect(response.headers.get('Access-Control-Allow-Methods')).toBe('GET, POST, OPTIONS');
+      expect(response.headers.get('Access-Control-Allow-Headers')).toBe('Content-Type');
+    });
+  });
+
   describe('handleShutdown - POST /api/shutdown', () => {
     it('should return shutdown response with JSON content type', async () => {
       const request = new Request('http://localhost:3000/api/shutdown', {

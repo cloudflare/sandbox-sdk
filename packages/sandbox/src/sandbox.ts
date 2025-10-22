@@ -28,6 +28,7 @@ import {
   validatePort
 } from "./security";
 import { parseSSEStream } from "./sse-parser";
+import { SDK_VERSION } from "./version";
 
 export function getSandbox(ns: DurableObjectNamespace<Sandbox>, id: string, options?: {
   baseUrl: string
@@ -149,6 +150,54 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   override onStart() {
     this.logger.debug('Sandbox started');
+
+    // Check version compatibility asynchronously (don't block startup)
+    this.checkVersionCompatibility().catch(error => {
+      this.logger.error('Version compatibility check failed', error instanceof Error ? error : new Error(String(error)));
+    });
+  }
+
+  /**
+   * Check if the container version matches the SDK version
+   * Logs a warning if there's a mismatch
+   */
+  private async checkVersionCompatibility(): Promise<void> {
+    try {
+      // Get the SDK version (imported from version.ts)
+      const sdkVersion = SDK_VERSION;
+
+      // Get container version
+      const containerVersion = await this.client.utils.getVersion();
+
+      // If container version is unknown, it's likely an old container without the endpoint
+      if (containerVersion === 'unknown') {
+        this.logger.warn(
+          'Container version check: Container version could not be determined. ' +
+          'This may indicate an outdated container image. ' +
+          'Please update your container to match SDK version ' + sdkVersion
+        );
+        return;
+      }
+
+      // Check if versions match
+      if (containerVersion !== sdkVersion) {
+        const message =
+          `Version mismatch detected! SDK version (${sdkVersion}) does not match ` +
+          `container version (${containerVersion}). This may cause compatibility issues. ` +
+          `Please update your container image to version ${sdkVersion}`;
+
+        // Log warning - we can't reliably detect dev vs prod environment in Durable Objects
+        // so we always use warning level as requested by the user
+        this.logger.warn(message);
+      } else {
+        this.logger.debug('Version check passed', { sdkVersion, containerVersion });
+      }
+    } catch (error) {
+      // Don't fail the sandbox initialization if version check fails
+      this.logger.debug('Version compatibility check encountered an error', {
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
   }
 
   override onStop() {
