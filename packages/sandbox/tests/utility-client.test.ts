@@ -26,7 +26,7 @@ const mockCommandsResponse = (commands: string[], overrides: Partial<CommandsRes
   ...overrides
 });
 
-const mockVersionResponse = (version: string = '0.4.4', overrides: Partial<VersionResponse> = {}): VersionResponse => ({
+const mockVersionResponse = (version: string = '0.4.5', overrides: Partial<VersionResponse> = {}): VersionResponse => ({
   success: true,
   version,
   timestamp: '2023-01-01T00:00:00Z',
@@ -260,13 +260,13 @@ describe('UtilityClient', () => {
   describe('version checking', () => {
     it('should get container version successfully', async () => {
       mockFetch.mockResolvedValue(new Response(
-        JSON.stringify(mockVersionResponse('0.4.4')),
+        JSON.stringify(mockVersionResponse('0.4.5')),
         { status: 200 }
       ));
 
       const result = await client.getVersion();
 
-      expect(result).toBe('0.4.4');
+      expect(result).toBe('0.4.5');
     });
 
     it('should handle different version formats', async () => {
