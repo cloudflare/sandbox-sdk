@@ -22,7 +22,6 @@ export interface CommandsResponse extends BaseApiResponse {
  */
 export interface VersionResponse extends BaseApiResponse {
   version: string;
-  timestamp?: string;
 }
 
 /**

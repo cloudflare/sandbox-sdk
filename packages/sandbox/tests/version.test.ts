@@ -1,6 +1,6 @@
-import { describe, test, expect } from 'vitest';
-import { SDK_VERSION } from '../src/version';
+import { describe, expect, test } from 'vitest';
 import packageJson from '../package.json';
+import { SDK_VERSION } from '../src/version';
 
 describe('Version Sync', () => {
   test('SDK_VERSION matches package.json version', () => {
