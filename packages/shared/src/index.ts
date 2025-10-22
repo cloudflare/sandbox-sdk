@@ -86,6 +86,8 @@ export type {
   ProcessStatus,
   ReadFileResult,
   RenameFileResult,
+  // Sandbox configuration options
+  SandboxOptions,
   // Session management result types
   SessionCreateResult,
   SessionDeleteResult,

@@ -13,6 +13,7 @@ import type {
   ProcessOptions,
   ProcessStatus,
   RunCodeOptions,
+  SandboxOptions,
   SessionOptions,
   StreamOptions
 } from "@repo/shared";
@@ -30,16 +31,22 @@ import {
 import { parseSSEStream } from "./sse-parser";
 import { SDK_VERSION } from "./version";
 
-export function getSandbox(ns: DurableObjectNamespace<Sandbox>, id: string, options?: {
-  baseUrl: string
-}) {
+export function getSandbox(
+  ns: DurableObjectNamespace<Sandbox>,
+  id: string,
+  options?: SandboxOptions
+) {
   const stub = getContainer(ns, id);
 
   // Store the name on first access
   stub.setSandboxName?.(id);
 
-  if(options?.baseUrl) {
+  if (options?.baseUrl) {
     stub.setBaseUrl(options.baseUrl);
+  }
+
+  if (options?.sleepAfter !== undefined) {
+    stub.setSleepAfter(options.sleepAfter);
   }
 
   return stub;
@@ -47,7 +54,7 @@ export function getSandbox(ns: DurableObjectNamespace<Sandbox>, id: string, opti
 
 export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   defaultPort = 3000; // Default port for the container's Bun server
-  sleepAfter = "3m"; // Sleep the sandbox if no requests are made in this timeframe
+  sleepAfter: string | number = "10m"; // Sleep the sandbox if no requests are made in this timeframe
 
   client: SandboxClient;
   private codeInterpreter: CodeInterpreter;
@@ -117,6 +124,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         throw new Error('Base URL already set and different from one previously provided');
       }
     }
+  }
+
+  // RPC method to set the sleep timeout
+  async setSleepAfter(sleepAfter: string | number): Promise<void> {
+    this.sleepAfter = sleepAfter;
   }
 
   // RPC method to set environment variables

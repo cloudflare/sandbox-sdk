@@ -1,5 +1,11 @@
 # @cloudflare/sandbox
 
+## 0.4.5
+
+### Patch Changes
+
+- [#127](https://github.com/cloudflare/sandbox-sdk/pull/127) [`e79ac80`](https://github.com/cloudflare/sandbox-sdk/commit/e79ac80bc855a3ec527d44cc14585794b23cb129) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - configurable sleepAfter
+
 ## 0.4.4
 
 ### Patch Changes
