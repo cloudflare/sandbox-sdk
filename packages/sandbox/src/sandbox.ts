@@ -63,6 +63,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private defaultSession: string | null = null;
   envVars: Record<string, string> = {};
   private logger: ReturnType<typeof createLogger>;
+  private lastActivityRenewal: number = 0;
+  private readonly ACTIVITY_RENEWAL_THROTTLE_MS = 5000; // Throttle renewals to once per 5 seconds
+  private readonly STREAM_HEALTH_CHECK_INTERVAL_MS = 5000; // Check sandbox health every 5 seconds during streaming
+  private readonly STREAM_READ_TIMEOUT_MS = 300000; // 5 minutes timeout for stream reads (detects hung streams), to reduce the overhead
 
   constructor(ctx: DurableObject['ctx'], env: Env) {
     super(ctx, env);
@@ -169,6 +173,21 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   override onError(error: unknown) {
     this.logger.error('Sandbox error', error instanceof Error ? error : new Error(String(error)));
+  }
+
+  /**
+   * Throttled activity timeout renewal, to prevent renewal on every chunk
+   * Only renews if sufficient time has passed since last renewal
+   */
+  private renewActivityTimeoutThrottled(): void {
+    const now = Date.now();
+    const timeSinceLastRenewal = now - this.lastActivityRenewal;
+
+    // Only renew if throttle period has elapsed
+    if (timeSinceLastRenewal >= this.ACTIVITY_RENEWAL_THROTTLE_MS) {
+      this.renewActivityTimeout();
+      this.lastActivityRenewal = now;
+    }
   }
 
   // Override fetch to route internal container requests to appropriate ports
@@ -331,6 +350,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           case 'stdout':
           case 'stderr':
             if (event.data) {
+              // Renew activity timeout on each output event (throttled to reduce overhead)
+              // This keeps the container alive during active command execution
+              this.renewActivityTimeoutThrottled();
+
               // Update accumulated output
               if (event.type === 'stdout') stdout += event.data;
               if (event.type === 'stderr') stderr += event.data;
@@ -542,8 +565,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
 
     const session = await this.ensureDefaultSession();
-    // Get the stream from CommandClient
-    return this.client.commands.executeStream(command, session);
+    // Get the stream from CommandClient and wrap it with activity renewal
+    const stream = await this.client.commands.executeStream(command, session);
+    return this.wrapStreamWithActivityRenewal(stream);
   }
 
   /**
@@ -555,7 +579,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       throw new Error('Operation was aborted');
     }
 
-    return this.client.commands.executeStream(command, sessionId);
+    const stream = await this.client.commands.executeStream(command, sessionId);
+    return this.wrapStreamWithActivityRenewal(stream);
   }
 
   async streamProcessLogs(processId: string, options?: { signal?: AbortSignal }): Promise<ReadableStream<Uint8Array>> {
@@ -564,7 +589,96 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       throw new Error('Operation was aborted');
     }
 
-    return this.client.processes.streamProcessLogs(processId);
+    const stream = await this.client.processes.streamProcessLogs(processId);
+    return this.wrapStreamWithActivityRenewal(stream);
+  }
+
+  /**
+   * Wraps a ReadableStream to provide three critical protections:
+   * 1. Activity renewal - prevents sleepAfter timeout during active streaming
+   * 2. Health monitoring - detects container crashes mid-stream
+   * 3. Read timeout - detects hung streams (e.g., Bun connection idle timeout)
+   *
+   * This solves both issues from GitHub #101:
+   * - Container staying alive during long operations (activity renewal)
+   * - Detecting silent stream failures (health checks + timeouts)
+   */
+  private wrapStreamWithActivityRenewal(stream: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> {
+    const self = this;
+
+    return new ReadableStream<Uint8Array>({
+      async start(controller) {
+        const reader = stream.getReader();
+
+        // Set up periodic health monitoring to detect container crashes
+        let healthCheckInterval: NodeJS.Timeout | undefined;
+        let isHealthy = true;
+
+        healthCheckInterval = setInterval(async () => {
+          try {
+            const state = await self.getState();
+            if (state.status !== 'running') {
+              isHealthy = false;
+              const error = new Error(`Container became unhealthy during streaming: ${state.status}`);
+              controller.error(error);
+              clearInterval(healthCheckInterval);
+              await reader.cancel(error.message);
+            }
+          } catch (error) {
+            // If getState() fails, container is likely dead
+            isHealthy = false;
+            const stateError = new Error(`Failed to check container health: ${error instanceof Error ? error.message : String(error)}`);
+            controller.error(stateError);
+            clearInterval(healthCheckInterval);
+            await reader.cancel(stateError.message);
+          }
+        }, self.STREAM_HEALTH_CHECK_INTERVAL_MS);
+
+        try {
+          while (true) {
+            // Race read against timeout to detect hung streams
+            // (e.g., Bun closes connection silently after idle timeout)
+            const readPromise = reader.read();
+            const timeoutPromise = new Promise<never>((_, reject) => {
+              setTimeout(() => {
+                reject(new Error(`Stream read timeout after ${self.STREAM_READ_TIMEOUT_MS}ms - connection may be hung`));
+              }, self.STREAM_READ_TIMEOUT_MS);
+            });
+
+            const { done, value } = await Promise.race([readPromise, timeoutPromise]);
+
+            // Check health status before processing chunk
+            if (!isHealthy) {
+              throw new Error('Container became unhealthy during streaming');
+            }
+
+            if (done) {
+              controller.close();
+              break;
+            }
+
+            // This keeps container alive during active streaming
+            self.renewActivityTimeoutThrottled();
+
+            controller.enqueue(value);
+          }
+        } catch (error) {
+          controller.error(error);
+          throw error;
+        } finally {
+          // Always cleanup
+          if (healthCheckInterval) {
+            clearInterval(healthCheckInterval);
+          }
+          await reader.releaseLock();
+        }
+      },
+
+      cancel(reason) {
+        // Allow cancellation to propagate to the underlying stream
+        return stream.cancel(reason);
+      }
+    });
   }
 
   async gitCheckout(
@@ -935,7 +1049,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   async runCodeStream(code: string, options?: RunCodeOptions): Promise<ReadableStream> {
-    return this.codeInterpreter.runCodeStream(code, options);
+    const stream = await this.codeInterpreter.runCodeStream(code, options);
+    return this.wrapStreamWithActivityRenewal(stream as ReadableStream<Uint8Array>);
   }
 
   async listCodeContexts(): Promise<CodeContext[]> {
