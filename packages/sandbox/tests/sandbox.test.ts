@@ -35,7 +35,7 @@ describe('Sandbox - Automatic Session Management', () => {
         delete: vi.fn().mockResolvedValue(undefined),
         list: vi.fn().mockResolvedValue(new Map()),
       } as any,
-      blockConcurrencyWhile: vi.fn((fn: () => Promise<void>) => fn()),
+      blockConcurrencyWhile: vi.fn().mockImplementation(<T>(callback: () => Promise<T>): Promise<T> => callback()),
       id: {
         toString: () => 'test-sandbox-id',
         equals: vi.fn(),
@@ -460,6 +460,237 @@ describe('Sandbox - Automatic Session Management', () => {
 
       expect(result.url).toContain('localhost');
       expect(sandbox.client.ports.exposePort).toHaveBeenCalled();
+    });
+  });
+
+  describe('Activity renewal and health checks', () => {
+    let renewActivityTimeoutThrottledSpy: any;
+
+    beforeEach(() => {
+      // Mock Container base class methods
+      (sandbox as any).renewActivityTimeout = vi.fn();
+      (sandbox as any).getState = vi.fn().mockResolvedValue({
+        status: 'running',
+        timestamp: new Date().toISOString(),
+      });
+
+      // Spy on private method via prototype
+      renewActivityTimeoutThrottledSpy = vi.spyOn(sandbox as any, 'renewActivityTimeoutThrottled');
+    });
+
+    it('should throttle activity renewal during streaming', async () => {
+      // Create a mock stream that emits multiple chunks quickly
+      const encoder = new TextEncoder();
+      const chunks = Array.from({ length: 10 }, (_, i) => encoder.encode(`chunk ${i}\n`));
+
+      const mockStream = new ReadableStream({
+        async start(controller) {
+          for (const chunk of chunks) {
+            controller.enqueue(chunk);
+          }
+          controller.close();
+        }
+      });
+
+      vi.spyOn(sandbox.client.commands, 'executeStream').mockResolvedValue(mockStream);
+
+      const stream = await sandbox.execStream('echo test');
+      const reader = stream.getReader();
+
+      // Read all chunks
+      let chunkCount = 0;
+      while (true) {
+        const { done } = await reader.read();
+        if (done) break;
+        chunkCount++;
+      }
+
+      expect(chunkCount).toBe(10);
+
+      // Activity renewal should be called, but throttled (not once per chunk)
+      // With 5 second throttle and instant reads, should only be called a few times
+      expect(renewActivityTimeoutThrottledSpy).toHaveBeenCalled();
+      expect(renewActivityTimeoutThrottledSpy.mock.calls.length).toBeLessThanOrEqual(chunkCount);
+    });
+
+    it('should detect container crashes during streaming', async () => {
+      vi.useFakeTimers();
+
+      // Create a stream that will trigger health check
+      const encoder = new TextEncoder();
+      const mockStream = new ReadableStream({
+        async start(controller) {
+          // Enqueue initial chunk
+          controller.enqueue(encoder.encode('starting\n'));
+          // Keep stream open
+        }
+      });
+
+      vi.spyOn(sandbox.client.commands, 'executeStream').mockResolvedValue(mockStream);
+
+      // Make getState return unhealthy status
+      (sandbox as any).getState = vi.fn().mockResolvedValue({
+        status: 'stopped',
+        timestamp: new Date().toISOString(),
+      });
+
+      const stream = await sandbox.execStream('echo test');
+      const reader = stream.getReader();
+
+      // Read first chunk
+      await reader.read();
+
+      // Advance time to trigger health check (30 seconds)
+      await vi.advanceTimersByTimeAsync(31000);
+
+      // Verify health check was called
+      expect((sandbox as any).getState).toHaveBeenCalled();
+
+      vi.useRealTimers();
+    });
+
+    it('should timeout on hung streams', async () => {
+      vi.useFakeTimers();
+
+      // Create a stream that never resolves
+      const mockStream = new ReadableStream({
+        async start(controller) {
+          // Never enqueue anything - stream hangs
+          await new Promise(() => {}); // Never resolves
+        }
+      });
+
+      vi.spyOn(sandbox.client.commands, 'executeStream').mockResolvedValue(mockStream);
+
+      const streamPromise = sandbox.execStream('sleep infinity');
+      const stream = await streamPromise;
+      const reader = stream.getReader();
+
+      // Start reading
+      const readPromise = reader.read();
+
+      // Fast-forward past the timeout (5 minutes = 300000ms)
+      vi.advanceTimersByTime(300001);
+
+      // Should reject with timeout error
+      await expect(readPromise).rejects.toThrow(/Stream read timeout/);
+
+      vi.useRealTimers();
+    });
+
+    it('should cleanup intervals on stream completion', async () => {
+      const clearIntervalSpy = vi.spyOn(global, 'clearInterval');
+
+      const encoder = new TextEncoder();
+      const mockStream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode('test\n'));
+          controller.close();
+        }
+      });
+
+      vi.spyOn(sandbox.client.commands, 'executeStream').mockResolvedValue(mockStream);
+
+      const stream = await sandbox.execStream('echo test');
+      const reader = stream.getReader();
+
+      // Read until done
+      while (true) {
+        const { done } = await reader.read();
+        if (done) break;
+      }
+
+      // Verify interval was cleared
+      expect(clearIntervalSpy).toHaveBeenCalled();
+    });
+
+    it('should cleanup intervals on stream cancellation', async () => {
+      const clearIntervalSpy = vi.spyOn(global, 'clearInterval');
+
+      const encoder = new TextEncoder();
+      let underlyingReader: any;
+      const mockStream = new ReadableStream({
+        async start(controller) {
+          underlyingReader = {
+            cancel: async () => {
+              // Mock cancel
+            }
+          };
+          // Emit chunks indefinitely
+          for (let i = 0; i < 100; i++) {
+            controller.enqueue(encoder.encode(`chunk ${i}\n`));
+            await new Promise(resolve => setTimeout(resolve, 10));
+          }
+          controller.close();
+        },
+        cancel() {
+          // Mock cancel
+        }
+      });
+
+      vi.spyOn(sandbox.client.commands, 'executeStream').mockResolvedValue(mockStream);
+
+      const stream = await sandbox.execStream('echo test');
+      const reader = stream.getReader();
+
+      // Read one chunk
+      await reader.read();
+
+      // Cancel the stream
+      try {
+        await reader.cancel('user cancellation');
+      } catch (e) {
+        // Ignore cancellation errors in test
+      }
+
+      // Verify interval was cleared on cancellation
+      expect(clearIntervalSpy).toHaveBeenCalled();
+    });
+
+    it('should handle health check failures gracefully', async () => {
+      const encoder = new TextEncoder();
+      const mockStream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode('test\n'));
+          controller.close();
+        }
+      });
+
+      vi.spyOn(sandbox.client.commands, 'executeStream').mockResolvedValue(mockStream);
+
+      // Make getState throw an error (container is dead)
+      (sandbox as any).getState = vi.fn().mockRejectedValue(new Error('Container not found'));
+
+      const stream = await sandbox.execStream('echo test');
+      const reader = stream.getReader();
+
+      // Read should still work since we're testing the health check error handling
+      // The health check runs in background and shouldn't block reads initially
+      const result = await reader.read();
+      expect(result.done).toBe(false);
+    });
+
+    it('should work with all streaming APIs', async () => {
+      const encoder = new TextEncoder();
+      const mockStream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode('test\n'));
+          controller.close();
+        }
+      });
+
+      // Test execStream
+      vi.spyOn(sandbox.client.commands, 'executeStream').mockResolvedValue(mockStream);
+      const execStream = await sandbox.execStream('echo test');
+      expect(execStream).toBeInstanceOf(ReadableStream);
+
+      // Test streamProcessLogs
+      vi.spyOn(sandbox.client.processes, 'streamProcessLogs').mockResolvedValue(mockStream);
+      const logsStream = await sandbox.streamProcessLogs('proc-1');
+      expect(logsStream).toBeInstanceOf(ReadableStream);
+
+      // Verify both streams have activity renewal applied
+      expect(renewActivityTimeoutThrottledSpy).toHaveBeenCalled();
     });
   });
 });

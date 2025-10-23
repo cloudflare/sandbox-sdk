@@ -444,5 +444,141 @@ describe('Streaming Operations Workflow', () => {
       const completeEvent = events.find((e) => e.type === 'complete');
       expect(completeEvent?.exitCode).toBe(0);
     }, 90000);
+
+    /**
+     * Tests for GitHub Issue #101: Container Hibernation During Long Streaming
+     *
+     * These tests verify that containers stay alive during long-running streaming
+     * operations via automatic activity renewal, and that the implementation actually
+     * works with real containers (not just mocked tests).
+     */
+
+    test('should keep container alive during 15+ second streaming command (GitHub #101)', async () => {
+      currentSandboxId = createSandboxId();
+      const headers = createTestHeaders(currentSandboxId);
+
+      console.log('[Test] Starting 15+ second streaming command to verify activity renewal...');
+
+      // Stream a command that runs for 15+ seconds with output every 2 seconds
+      // Without activity renewal, this would timeout (default container timeout is ~10s)
+      const streamResponse = await vi.waitFor(
+        async () => fetchWithStartup(`${workerUrl}/api/execStream`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            command: "bash -c 'for i in {1..8}; do echo \"Tick $i at $(date +%s)\"; sleep 2; done; echo \"SUCCESS\"'",
+          }),
+        }),
+        { timeout: 90000, interval: 2000 }
+      );
+
+      expect(streamResponse.status).toBe(200);
+
+      const startTime = Date.now();
+      const events = await collectSSEEvents(streamResponse, 50);
+      const duration = Date.now() - startTime;
+
+      console.log(`[Test] Stream completed in ${duration}ms`);
+
+      // Verify command ran for approximately 16 seconds (8 ticks * 2 seconds)
+      expect(duration).toBeGreaterThan(14000); // At least 14 seconds
+      expect(duration).toBeLessThan(25000); // But completed (not timed out)
+
+      // Should have received all ticks
+      const stdoutEvents = events.filter((e) => e.type === 'stdout');
+      const output = stdoutEvents.map((e) => e.data).join('');
+
+      for (let i = 1; i <= 8; i++) {
+        expect(output).toContain(`Tick ${i}`);
+      }
+      expect(output).toContain('SUCCESS');
+
+      // Most importantly: should complete with exit code 0 (not timeout)
+      const completeEvent = events.find((e) => e.type === 'complete');
+      expect(completeEvent).toBeDefined();
+      expect(completeEvent?.exitCode).toBe(0);
+
+      console.log('[Test] ✅ Container stayed alive for 16+ seconds - activity renewal working!');
+    }, 90000);
+
+    test('should handle high-volume streaming over extended period', async () => {
+      currentSandboxId = createSandboxId();
+      const headers = createTestHeaders(currentSandboxId);
+
+      console.log('[Test] Starting high-volume streaming test...');
+
+      // Stream command that generates many lines over 10+ seconds
+      // Tests throttling: renewActivityTimeout shouldn't be called for every chunk
+      const streamResponse = await vi.waitFor(
+        async () => fetchWithStartup(`${workerUrl}/api/execStream`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            command: "bash -c 'for i in {1..100}; do echo \"Line $i: $(date +%s.%N)\"; sleep 0.1; done'",
+          }),
+        }),
+        { timeout: 90000, interval: 2000 }
+      );
+
+      expect(streamResponse.status).toBe(200);
+
+      const events = await collectSSEEvents(streamResponse, 150);
+
+      // Should have many stdout events
+      const stdoutEvents = events.filter((e) => e.type === 'stdout');
+      expect(stdoutEvents.length).toBeGreaterThanOrEqual(50);
+
+      // Verify we got output from beginning and end
+      const output = stdoutEvents.map((e) => e.data).join('');
+      expect(output).toContain('Line 1');
+      expect(output).toContain('Line 100');
+
+      // Should complete successfully
+      const completeEvent = events.find((e) => e.type === 'complete');
+      expect(completeEvent).toBeDefined();
+      expect(completeEvent?.exitCode).toBe(0);
+
+      console.log('[Test] ✅ High-volume streaming completed successfully');
+    }, 90000);
+
+    test('should handle streaming with intermittent output gaps', async () => {
+      currentSandboxId = createSandboxId();
+      const headers = createTestHeaders(currentSandboxId);
+
+      console.log('[Test] Starting intermittent output test...');
+
+      // Command with gaps between output bursts
+      // Tests that activity renewal works even when output is periodic
+      const streamResponse = await vi.waitFor(
+        async () => fetchWithStartup(`${workerUrl}/api/execStream`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            command: "bash -c 'echo \"Burst 1\"; sleep 3; echo \"Burst 2\"; sleep 3; echo \"Burst 3\"; sleep 3; echo \"Complete\"'",
+          }),
+        }),
+        { timeout: 90000, interval: 2000 }
+      );
+
+      expect(streamResponse.status).toBe(200);
+
+      const events = await collectSSEEvents(streamResponse, 30);
+
+      const stdoutEvents = events.filter((e) => e.type === 'stdout');
+      const output = stdoutEvents.map((e) => e.data).join('');
+
+      // All bursts should be received despite gaps
+      expect(output).toContain('Burst 1');
+      expect(output).toContain('Burst 2');
+      expect(output).toContain('Burst 3');
+      expect(output).toContain('Complete');
+
+      // Should complete successfully
+      const completeEvent = events.find((e) => e.type === 'complete');
+      expect(completeEvent).toBeDefined();
+      expect(completeEvent?.exitCode).toBe(0);
+
+      console.log('[Test] ✅ Intermittent output handled correctly');
+    }, 90000);
   });
 });
