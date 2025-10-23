@@ -596,22 +596,19 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * Wraps a ReadableStream to provide three critical protections:
    * 1. Activity renewal - prevents sleepAfter timeout during active streaming
    * 2. Health monitoring - detects container crashes mid-stream
-   * 3. Read timeout - detects hung streams (e.g., Bun connection idle timeout)
-   *
-   * This solves both issues from GitHub #101:
-   * - Container staying alive during long operations (activity renewal)
-   * - Detecting silent stream failures (health checks + timeouts)
-   */
+   * 3. Read timeout - detects hung streams (e.g., Bun connection idle timeout)*/
   private wrapStreamWithActivityRenewal(stream: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> {
     const self = this;
     let healthCheckInterval: ReturnType<typeof setInterval> | undefined;
     let streamActive = true;
-    let errorReported = false; 
+    let errorReported = false;
+    let lastActivityRenewal = 0;
 
     return new ReadableStream<Uint8Array>({
       async start(controller) {
         const reader = stream.getReader();
         let isHealthy = true;
+        let currentTimeoutHandle: ReturnType<typeof setTimeout> | undefined;
 
         // Set up periodic health monitoring to detect container crashes
         healthCheckInterval = setInterval(async () => {
@@ -653,18 +650,19 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
         try {
           while (true) {
-            let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
             const readPromise = reader.read();
             const timeoutPromise = new Promise<never>((_, reject) => {
-              timeoutHandle = setTimeout(() => {
+              currentTimeoutHandle = setTimeout(() => {
                 reject(new Error(`Stream read timeout after ${self.STREAM_READ_TIMEOUT_MS}ms - connection may be hung`));
               }, self.STREAM_READ_TIMEOUT_MS);
             });
 
             const { done, value } = await Promise.race([readPromise, timeoutPromise]);
 
-            if (timeoutHandle !== undefined) {
-              clearTimeout(timeoutHandle);
+            // Clear timeout immediately after successful read
+            if (currentTimeoutHandle !== undefined) {
+              clearTimeout(currentTimeoutHandle);
+              currentTimeoutHandle = undefined;
             }
 
             // Check health status before processing chunk
@@ -676,14 +674,20 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
               controller.close();
               break;
             }
-
-            // Renew activity timeout on each chunk (throttled to reduce overhead)
-            // This keeps container alive during active streaming
-            self.renewActivityTimeoutThrottled();
+            const now = Date.now();
+            if (now - lastActivityRenewal >= self.ACTIVITY_RENEWAL_THROTTLE_MS) {
+              self.renewActivityTimeout();
+              lastActivityRenewal = now;
+            }
 
             controller.enqueue(value);
           }
         } catch (error) {
+          if (currentTimeoutHandle !== undefined) {
+            clearTimeout(currentTimeoutHandle);
+            currentTimeoutHandle = undefined;
+          }
+
           if (!errorReported) {
             errorReported = true;
             controller.error(error);
@@ -702,6 +706,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
             reader.releaseLock();
           } catch (e) {
             // Safe to ignore: lock is already released or stream is already closed
+            // This can happen if the reader was cancelled or errored before we reached finally
+            const errorMsg = e instanceof Error ? e.message : String(e);
+            self.logger.debug(`Reader lock release failed (expected if stream already closed): ${errorMsg}`);
           }
         }
       },

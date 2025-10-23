@@ -464,7 +464,7 @@ describe('Sandbox - Automatic Session Management', () => {
   });
 
   describe('Activity renewal and health checks', () => {
-    let renewActivityTimeoutThrottledSpy: any;
+    let renewActivityTimeoutSpy: any;
 
     beforeEach(() => {
       // Mock Container base class methods
@@ -474,8 +474,8 @@ describe('Sandbox - Automatic Session Management', () => {
         timestamp: new Date().toISOString(),
       });
 
-      // Spy on private method via prototype
-      renewActivityTimeoutThrottledSpy = vi.spyOn(sandbox as any, 'renewActivityTimeoutThrottled');
+      // Spy on the base renewActivityTimeout method (called by inline throttling)
+      renewActivityTimeoutSpy = vi.spyOn(sandbox as any, 'renewActivityTimeout');
     });
 
     it('should throttle activity renewal during streaming', async () => {
@@ -508,9 +508,12 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(chunkCount).toBe(10);
 
       // Activity renewal should be called, but throttled (not once per chunk)
-      // With 5 second throttle and instant reads, should only be called a few times
-      expect(renewActivityTimeoutThrottledSpy).toHaveBeenCalled();
-      expect(renewActivityTimeoutThrottledSpy.mock.calls.length).toBeLessThanOrEqual(chunkCount);
+      // With 5 second throttle and instant reads, first chunk triggers renewal,
+      // subsequent chunks are throttled since less than 5s has passed
+      expect(renewActivityTimeoutSpy).toHaveBeenCalled();
+      expect(renewActivityTimeoutSpy.mock.calls.length).toBeLessThanOrEqual(chunkCount);
+      // Should be called at least once (first chunk) but not for every chunk
+      expect(renewActivityTimeoutSpy.mock.calls.length).toBeGreaterThanOrEqual(1);
     });
 
     it('should detect container crashes during streaming', async () => {
@@ -690,7 +693,7 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(logsStream).toBeInstanceOf(ReadableStream);
 
       // Verify both streams have activity renewal applied
-      expect(renewActivityTimeoutThrottledSpy).toHaveBeenCalled();
+      expect(renewActivityTimeoutSpy).toHaveBeenCalled();
     });
   });
 });
