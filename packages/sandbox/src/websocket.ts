@@ -547,35 +547,6 @@ class TimeoutManager {
 
 /**
  * Create a WebSocket handler with automatic setup and lifecycle management
- *
- * This is the main entry point for using WebSocket helpers. It:
- * - Creates a WebSocket pair
- * - Gets or creates a sandbox instance
- * - Wraps everything in a SandboxWebSocket
- * - Sets up event handlers
- * - Returns both the Response and the wrapper for further customization
- *
- * @example
- * ```typescript
- * async function handleWebSocket(request: Request, env: Env) {
- *   const { response, websocket, sandbox } = await createWebSocketHandler(
- *     request,
- *     env.Sandbox,
- *     {
- *       onReady: (ws, sandboxId) => {
- *         ws.sendReady('Connected to sandbox', sandboxId);
- *       },
- *       onMessage: async (ws, message) => {
- *         if (message.type === 'execute') {
- *           await ws.runPythonWithStreaming(message.code);
- *         }
- *       }
- *     }
- *   );
- *
- *   return response;
- * }
- * ```
  */
 export async function createWebSocketHandler(
   request: Request,

@@ -1,18 +1,5 @@
 /**
  * WebSocket Example for Cloudflare Sandbox SDK
- *
- * This example demonstrates various WebSocket patterns:
- * 1. Basic echo server
- * 2. Real-time code execution
- * 3. Process streaming
- * 4. Interactive terminal
- *
- * IMPORTANT: This example shows Worker → DO → Container WebSocket communication.
- * For connecting to WebSocket servers INSIDE the container, use sandbox.connect()
- * instead of containerFetch. See WEBSOCKET_FIX.md for details.
- *
- * These examples include optional rate limiting and timeout management.
- * Uncomment the rate limiting sections to enable protection.
  */
 
 import { getSandbox, parseSSEStream, Sandbox, type LogEvent } from "@cloudflare/sandbox";
