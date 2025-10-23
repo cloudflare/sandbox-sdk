@@ -65,8 +65,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private logger: ReturnType<typeof createLogger>;
   private lastActivityRenewal: number = 0;
   private readonly ACTIVITY_RENEWAL_THROTTLE_MS = 5000; // Throttle renewals to once per 5 seconds
-  private readonly STREAM_HEALTH_CHECK_INTERVAL_MS = 5000; // Check sandbox health every 5 seconds during streaming
-  private readonly STREAM_READ_TIMEOUT_MS = 300000; // 5 minutes timeout for stream reads (detects hung streams), to reduce the overhead
+  private readonly STREAM_HEALTH_CHECK_INTERVAL_MS = 30000; // Check sandbox health every 30 seconds during streaming
+  private readonly STREAM_READ_TIMEOUT_MS = 300000; // 5 minutes timeout for stream reads (detects hung streams)
 
   constructor(ctx: DurableObject['ctx'], env: Env) {
     super(ctx, env);
@@ -605,23 +605,32 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    */
   private wrapStreamWithActivityRenewal(stream: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> {
     const self = this;
+    let healthCheckInterval: NodeJS.Timeout | undefined;
+    let streamActive = true;
 
     return new ReadableStream<Uint8Array>({
       async start(controller) {
         const reader = stream.getReader();
-
-        // Set up periodic health monitoring to detect container crashes
-        let healthCheckInterval: NodeJS.Timeout | undefined;
         let isHealthy = true;
 
+        // Set up periodic health monitoring to detect container crashes
         healthCheckInterval = setInterval(async () => {
+          if (!streamActive) {
+            if (healthCheckInterval) {
+              clearInterval(healthCheckInterval);
+            }
+            return;
+          }
+
           try {
             const state = await self.getState();
             if (state.status !== 'running') {
               isHealthy = false;
               const error = new Error(`Container became unhealthy during streaming: ${state.status}`);
               controller.error(error);
-              clearInterval(healthCheckInterval);
+              if (healthCheckInterval) {
+                clearInterval(healthCheckInterval);
+              }
               await reader.cancel(error.message);
             }
           } catch (error) {
@@ -629,23 +638,26 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
             isHealthy = false;
             const stateError = new Error(`Failed to check container health: ${error instanceof Error ? error.message : String(error)}`);
             controller.error(stateError);
-            clearInterval(healthCheckInterval);
+            if (healthCheckInterval) {
+              clearInterval(healthCheckInterval);
+            }
             await reader.cancel(stateError.message);
           }
         }, self.STREAM_HEALTH_CHECK_INTERVAL_MS);
 
         try {
           while (true) {
-            // Race read against timeout to detect hung streams
-            // (e.g., Bun closes connection silently after idle timeout)
+            let timeoutHandle: NodeJS.Timeout;
             const readPromise = reader.read();
             const timeoutPromise = new Promise<never>((_, reject) => {
-              setTimeout(() => {
+              timeoutHandle = setTimeout(() => {
                 reject(new Error(`Stream read timeout after ${self.STREAM_READ_TIMEOUT_MS}ms - connection may be hung`));
               }, self.STREAM_READ_TIMEOUT_MS);
             });
 
             const { done, value } = await Promise.race([readPromise, timeoutPromise]);
+
+            clearTimeout(timeoutHandle!);
 
             // Check health status before processing chunk
             if (!isHealthy) {
@@ -657,6 +669,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
               break;
             }
 
+            // Renew activity timeout on each chunk (throttled to reduce overhead)
             // This keeps container alive during active streaming
             self.renewActivityTimeoutThrottled();
 
@@ -664,17 +677,29 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           }
         } catch (error) {
           controller.error(error);
-          throw error;
         } finally {
-          // Always cleanup
+          // Mark stream as inactive to stop health checks
+          streamActive = false;
+
+          // Always cleanup interval
           if (healthCheckInterval) {
             clearInterval(healthCheckInterval);
+            healthCheckInterval = undefined;
           }
-          await reader.releaseLock();
+
+          try {
+            reader.releaseLock();
+          } catch (e) {
+          }
         }
       },
 
       cancel(reason) {
+        streamActive = false;
+        if (healthCheckInterval) {
+          clearInterval(healthCheckInterval);
+          healthCheckInterval = undefined;
+        }
         // Allow cancellation to propagate to the underlying stream
         return stream.cancel(reason);
       }
