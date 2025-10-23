@@ -606,6 +606,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     const self = this;
     let healthCheckInterval: ReturnType<typeof setInterval> | undefined;
     let streamActive = true;
+    let errorReported = false; 
 
     return new ReadableStream<Uint8Array>({
       async start(controller) {
@@ -625,28 +626,34 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
             const state = await self.getState();
             if (state.status !== 'running') {
               isHealthy = false;
-              const error = new Error(`Container became unhealthy during streaming: ${state.status}`);
-              controller.error(error);
-              if (healthCheckInterval) {
-                clearInterval(healthCheckInterval);
+              if (!errorReported) {
+                errorReported = true;
+                const error = new Error(`Container became unhealthy during streaming: ${state.status}`);
+                controller.error(error);
+                if (healthCheckInterval) {
+                  clearInterval(healthCheckInterval);
+                }
+                await reader.cancel(error.message);
               }
-              await reader.cancel(error.message);
             }
           } catch (error) {
             // If getState() fails, container is likely dead
             isHealthy = false;
-            const stateError = new Error(`Failed to check container health: ${error instanceof Error ? error.message : String(error)}`);
-            controller.error(stateError);
-            if (healthCheckInterval) {
-              clearInterval(healthCheckInterval);
+            if (!errorReported) {
+              errorReported = true;
+              const stateError = new Error(`Failed to check container health: ${error instanceof Error ? error.message : String(error)}`);
+              controller.error(stateError);
+              if (healthCheckInterval) {
+                clearInterval(healthCheckInterval);
+              }
+              await reader.cancel(stateError.message);
             }
-            await reader.cancel(stateError.message);
           }
         }, self.STREAM_HEALTH_CHECK_INTERVAL_MS);
 
         try {
           while (true) {
-            let timeoutHandle: ReturnType<typeof setTimeout>;
+            let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
             const readPromise = reader.read();
             const timeoutPromise = new Promise<never>((_, reject) => {
               timeoutHandle = setTimeout(() => {
@@ -656,7 +663,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
             const { done, value } = await Promise.race([readPromise, timeoutPromise]);
 
-            clearTimeout(timeoutHandle!);
+            if (timeoutHandle !== undefined) {
+              clearTimeout(timeoutHandle);
+            }
 
             // Check health status before processing chunk
             if (!isHealthy) {
@@ -675,7 +684,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
             controller.enqueue(value);
           }
         } catch (error) {
-          controller.error(error);
+          if (!errorReported) {
+            errorReported = true;
+            controller.error(error);
+          }
         } finally {
           // Mark stream as inactive to stop health checks
           streamActive = false;
@@ -689,6 +701,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           try {
             reader.releaseLock();
           } catch (e) {
+            // Safe to ignore: lock is already released or stream is already closed
           }
         }
       },
