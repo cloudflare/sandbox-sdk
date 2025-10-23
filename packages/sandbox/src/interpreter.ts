@@ -82,7 +82,7 @@ export class CodeInterpreter {
   async runCodeStream(
     code: string,
     options: RunCodeOptions = {}
-  ): Promise<ReadableStream> {
+  ): Promise<ReadableStream<Uint8Array>> {
     // Get or create context
     let context = options.context;
     if (!context) {

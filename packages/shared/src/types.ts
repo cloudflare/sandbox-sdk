@@ -613,7 +613,7 @@ export interface ExecutionSession {
   // Code interpreter methods
   createCodeContext(options?: CreateContextOptions): Promise<CodeContext>;
   runCode(code: string, options?: RunCodeOptions): Promise<ExecutionResult>;
-  runCodeStream(code: string, options?: RunCodeOptions): Promise<ReadableStream>;
+  runCodeStream(code: string, options?: RunCodeOptions): Promise<ReadableStream<Uint8Array>>;
   listCodeContexts(): Promise<CodeContext[]>;
   deleteCodeContext(contextId: string): Promise<void>;
 }
@@ -657,7 +657,7 @@ export interface ISandbox {
   // Code interpreter methods
   createCodeContext(options?: CreateContextOptions): Promise<CodeContext>;
   runCode(code: string, options?: RunCodeOptions): Promise<ExecutionResult>;
-  runCodeStream(code: string, options?: RunCodeOptions): Promise<ReadableStream>;
+  runCodeStream(code: string, options?: RunCodeOptions): Promise<ReadableStream<Uint8Array>>;
   listCodeContexts(): Promise<CodeContext[]>;
   deleteCodeContext(contextId: string): Promise<void>;
 }

@@ -287,8 +287,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     const startTime = Date.now();
     const timestamp = new Date().toISOString();
 
-    // Handle timeout
-    let timeoutId: NodeJS.Timeout | undefined;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
     try {
       // Handle cancellation
@@ -605,7 +604,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    */
   private wrapStreamWithActivityRenewal(stream: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> {
     const self = this;
-    let healthCheckInterval: NodeJS.Timeout | undefined;
+    let healthCheckInterval: ReturnType<typeof setInterval> | undefined;
     let streamActive = true;
 
     return new ReadableStream<Uint8Array>({
@@ -647,7 +646,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
         try {
           while (true) {
-            let timeoutHandle: NodeJS.Timeout;
+            let timeoutHandle: ReturnType<typeof setTimeout>;
             const readPromise = reader.read();
             const timeoutPromise = new Promise<never>((_, reject) => {
               timeoutHandle = setTimeout(() => {
@@ -1073,9 +1072,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     return execution.toJSON();
   }
 
-  async runCodeStream(code: string, options?: RunCodeOptions): Promise<ReadableStream> {
+  async runCodeStream(code: string, options?: RunCodeOptions): Promise<ReadableStream<Uint8Array>> {
     const stream = await this.codeInterpreter.runCodeStream(code, options);
-    return this.wrapStreamWithActivityRenewal(stream as ReadableStream<Uint8Array>);
+    return this.wrapStreamWithActivityRenewal(stream);
   }
 
   async listCodeContexts(): Promise<CodeContext[]> {
