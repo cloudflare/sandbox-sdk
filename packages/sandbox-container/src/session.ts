@@ -698,7 +698,9 @@ export class Session {
         script += `  PREV_DIR=$(pwd)\n`;
         script += `  if cd ${safeCwd}; then\n`;
         script += `    # Execute command with prefixed streaming via process substitution\n`;
-        script += `    { ${command}; } > >(while IFS= read -r line || [[ -n "$line" ]]; do printf '\\x01\\x01\\x01%s\\n' "$line"; done >> "$log") 2> >(while IFS= read -r line || [[ -n "$line" ]]; do printf '\\x02\\x02\\x02%s\\n' "$line"; done >> "$log")\n`;
+        script += `    {\n`;
+        script += `${command}\n`;
+        script += `    } > >(while IFS= read -r line || [[ -n "$line" ]]; do printf '\\x01\\x01\\x01%s\\n' "$line"; done >> "$log") 2> >(while IFS= read -r line || [[ -n "$line" ]]; do printf '\\x02\\x02\\x02%s\\n' "$line"; done >> "$log")\n`;
         script += `    EXIT_CODE=$?\n`;
         script += `    # Restore directory\n`;
         script += `    cd "$PREV_DIR"\n`;
@@ -708,7 +710,9 @@ export class Session {
         script += `  fi\n`;
       } else {
         script += `  # Execute command with prefixed streaming via process substitution\n`;
-        script += `  { ${command}; } > >(while IFS= read -r line || [[ -n "$line" ]]; do printf '\\x01\\x01\\x01%s\\n' "$line"; done >> "$log") 2> >(while IFS= read -r line || [[ -n "$line" ]]; do printf '\\x02\\x02\\x02%s\\n' "$line"; done >> "$log")\n`;
+        script += `  {\n`;
+        script += `${command}\n`;
+        script += `  } > >(while IFS= read -r line || [[ -n "$line" ]]; do printf '\\x01\\x01\\x01%s\\n' "$line"; done >> "$log") 2> >(while IFS= read -r line || [[ -n "$line" ]]; do printf '\\x02\\x02\\x02%s\\n' "$line"; done >> "$log")\n`;
         script += `  EXIT_CODE=$?\n`;
       }
 

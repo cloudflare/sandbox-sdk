@@ -7,9 +7,9 @@ permissions:
 on:
   pull_request:
     types: [opened, synchronize, reopened]
-    paths:
-      - '!**/*.md'
-      - '!.changeset/**'
+    #paths:
+    #  - '!**/*.md'
+    #  - '!.changeset/**'
 
 
 jobs:
