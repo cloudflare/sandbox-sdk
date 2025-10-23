@@ -1,5 +1,13 @@
 # @cloudflare/sandbox
 
+## 0.4.7
+
+### Patch Changes
+
+- [#141](https://github.com/cloudflare/sandbox-sdk/pull/141) [`c39674b`](https://github.com/cloudflare/sandbox-sdk/commit/c39674b8fe2e986e59a794b6bb3a5f51a87bae89) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Fix commands hanging when reading stdin by redirecting stdin to /dev/null
+
+- [#143](https://github.com/cloudflare/sandbox-sdk/pull/143) [`276efc0`](https://github.com/cloudflare/sandbox-sdk/commit/276efc0ca8776bcc8de79e7e58dd24d9f418cc5c) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Remove unnecessary existing session check
+
 ## 0.4.6
 
 ### Patch Changes

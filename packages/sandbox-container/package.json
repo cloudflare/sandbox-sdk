@@ -1,6 +1,6 @@
 {
   "name": "@repo/sandbox-container",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "private": true,
   "description": "Container runtime for Cloudflare Sandbox SDK",
   "type": "module",
