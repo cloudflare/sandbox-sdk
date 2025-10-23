@@ -6,6 +6,13 @@
  * 2. Real-time code execution
  * 3. Process streaming
  * 4. Interactive terminal
+ *
+ * IMPORTANT: This example shows Worker → DO → Container WebSocket communication.
+ * For connecting to WebSocket servers INSIDE the container, use sandbox.connect()
+ * instead of containerFetch. See WEBSOCKET_FIX.md for details.
+ *
+ * These examples include optional rate limiting and timeout management.
+ * Uncomment the rate limiting sections to enable protection.
  */
 
 import { getSandbox, parseSSEStream, Sandbox, type LogEvent } from "@cloudflare/sandbox";
@@ -41,6 +48,8 @@ export default {
         return handleProcessStreamWebSocket(request, env);
       case "/ws/terminal":
         return handleTerminalWebSocket(request, env);
+      case "/ws/protected":
+        return handleProtectedWebSocket(request, env);
       default:
         return new Response("Unknown WebSocket endpoint", { status: 404 });
     }
@@ -475,6 +484,223 @@ async function handleTerminalWebSocket(
     } catch {
       // Process might already be done
     }
+  });
+
+  return new Response(null, {
+    status: 101,
+    webSocket: client,
+  });
+}
+
+/**
+ * Example 5: Protected WebSocket with Rate Limiting & Timeouts
+ * Demonstrates production-ready WebSocket with security features
+ */
+async function handleProtectedWebSocket(
+  request: Request,
+  env: Env
+): Promise<Response> {
+  const pair = new WebSocketPair();
+  const [client, server] = Object.values(pair);
+
+  const sandboxId =
+    new URL(request.url).searchParams.get("id") || "protected-session";
+  const sandbox = getSandbox(env.Sandbox, sandboxId);
+
+  server.accept();
+
+  // Rate limiting state (in production, store this in Durable Object storage)
+  const rateLimitState = {
+    messages: [] as number[],
+    maxMessages: 100,
+    windowMs: 60000, // 1 minute
+    maxMessageSize: 1024 * 1024, // 1MB
+  };
+
+  // Timeout state
+  let idleTimeout: number;
+  let maxConnectionTimeout: number;
+  let heartbeatInterval: number;
+  let lastActivity = Date.now();
+
+  // Heartbeat mechanism
+  heartbeatInterval = setInterval(() => {
+    const timeSinceActivity = Date.now() - lastActivity;
+    if (timeSinceActivity > 300000) {
+      // 5 minutes idle
+      server.close(1000, "Idle timeout");
+      clearAllTimers();
+      return;
+    }
+    try {
+      server.send(JSON.stringify({ type: "ping", timestamp: Date.now() }));
+    } catch (error) {
+      console.error("Failed to send heartbeat:", error);
+    }
+  }, 30000); // Ping every 30 seconds
+
+  // Max connection time
+  maxConnectionTimeout = setTimeout(() => {
+    server.send(
+      JSON.stringify({ type: "info", message: "Maximum connection time reached" })
+    );
+    server.close(1000, "Maximum connection time reached");
+    clearAllTimers();
+  }, 1800000); // 30 minutes
+
+  // Idle timeout reset function
+  const resetIdleTimeout = () => {
+    lastActivity = Date.now();
+    if (idleTimeout) clearTimeout(idleTimeout);
+    idleTimeout = setTimeout(() => {
+      server.close(1000, "Idle timeout");
+      clearAllTimers();
+    }, 300000); // 5 minutes
+  };
+
+  // Initial idle timeout
+  resetIdleTimeout();
+
+  // Send welcome with limits info
+  server.send(
+    JSON.stringify({
+      type: "connected",
+      message: "Protected WebSocket connected",
+      sandboxId,
+      limits: {
+        maxMessages: rateLimitState.maxMessages,
+        windowMs: rateLimitState.windowMs,
+        maxMessageSize: rateLimitState.maxMessageSize,
+        idleTimeout: 300000,
+        maxConnectionTime: 1800000,
+      },
+    })
+  );
+
+  // Handle incoming messages
+  server.addEventListener("message", async (event) => {
+    try {
+      // Reset idle timer on activity
+      resetIdleTimeout();
+
+      // Rate limiting check
+      const now = Date.now();
+      const messageSize = new Blob([event.data as string]).size;
+
+      // Check message size
+      if (messageSize > rateLimitState.maxMessageSize) {
+        server.send(
+          JSON.stringify({
+            type: "error",
+            code: "RATE_LIMIT_EXCEEDED",
+            message: `Message size ${messageSize} exceeds limit of ${rateLimitState.maxMessageSize} bytes`,
+          })
+        );
+        return;
+      }
+
+      // Clean old timestamps
+      rateLimitState.messages = rateLimitState.messages.filter(
+        (timestamp) => now - timestamp < rateLimitState.windowMs
+      );
+
+      // Check rate limit
+      if (rateLimitState.messages.length >= rateLimitState.maxMessages) {
+        server.send(
+          JSON.stringify({
+            type: "error",
+            code: "RATE_LIMIT_EXCEEDED",
+            message: `Rate limit exceeded: ${rateLimitState.maxMessages} messages per ${rateLimitState.windowMs}ms`,
+            remaining: 0,
+          })
+        );
+        return;
+      }
+
+      // Record this message
+      rateLimitState.messages.push(now);
+
+      const message = JSON.parse(event.data as string);
+
+      // Handle pong for heartbeat
+      if (message.type === "pong") {
+        return; // Just acknowledge, don't process
+      }
+
+      // Send rate limit info with response
+      const remaining = rateLimitState.maxMessages - rateLimitState.messages.length;
+
+      switch (message.type) {
+        case "echo":
+          server.send(
+            JSON.stringify({
+              type: "echo",
+              data: message.data,
+              rateLimit: { remaining },
+              timestamp: Date.now(),
+            })
+          );
+          break;
+
+        case "execute":
+          const result = await sandbox.exec(message.command);
+          server.send(
+            JSON.stringify({
+              type: "result",
+              stdout: result.stdout,
+              stderr: result.stderr,
+              exitCode: result.exitCode,
+              rateLimit: { remaining },
+            })
+          );
+          break;
+
+        case "status":
+          server.send(
+            JSON.stringify({
+              type: "status",
+              connected: true,
+              sandboxId,
+              rateLimit: {
+                messagesInWindow: rateLimitState.messages.length,
+                maxMessages: rateLimitState.maxMessages,
+                remaining,
+              },
+              timeout: {
+                timeSinceActivity: Date.now() - lastActivity,
+                idleTimeoutRemaining: Math.max(0, 300000 - (Date.now() - lastActivity)),
+              },
+            })
+          );
+          break;
+
+        default:
+          server.send(
+            JSON.stringify({
+              type: "error",
+              message: "Unknown message type",
+            })
+          );
+      }
+    } catch (error: any) {
+      server.send(
+        JSON.stringify({
+          type: "error",
+          message: error.message,
+        })
+      );
+    }
+  });
+
+  function clearAllTimers() {
+    if (idleTimeout) clearTimeout(idleTimeout);
+    if (maxConnectionTimeout) clearTimeout(maxConnectionTimeout);
+    if (heartbeatInterval) clearInterval(heartbeatInterval);
+  }
+
+  server.addEventListener("close", () => {
+    console.log("Protected WebSocket closed");
+    clearAllTimers();
   });
 
   return new Response(null, {

@@ -889,6 +889,43 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     };
   }
 
+  /**
+   * Connect to a WebSocket endpoint running inside the container.
+   *
+   * This method bypasses containerFetch and uses the underlying container.fetch()
+   * directly
+   *
+   * @param portOrUrl - Port number (e.g., 3001) or full path (e.g., "/ws/endpoint")
+   *                    If a number, connects to `http://localhost:<port>`
+   *                    If a string starting with "/", connects to `http://localhost:3000<path>`
+   * @param options - Optional request init options (headers, etc.)
+   * @returns WebSocket upgrade response
+   */
+  async connect(portOrUrl: number | string, options?: RequestInit): Promise<Response> {
+    let url: string;
+
+    if (typeof portOrUrl === 'number') {
+      // Connect to specific port
+      url = `http://localhost:${portOrUrl}`;
+    } else if (portOrUrl.startsWith('/')) {
+      // Connect to path on default port (3000)
+      url = `http://localhost:${this.defaultPort}${portOrUrl}`;
+    } else {
+      throw new Error('Invalid portOrUrl: must be a port number or path starting with "/"');
+    }
+
+    // Create WebSocket upgrade request
+    const upgradeRequest = new Request(url, {
+      ...options,
+      headers: {
+        'Upgrade': 'websocket',
+        'Connection': 'Upgrade',
+        ...options?.headers,
+      },
+    });
+    return super.fetch(upgradeRequest);
+  }
+
   // ============================================================================
   // Code interpreter methods - delegate to CodeInterpreter wrapper
   // ============================================================================

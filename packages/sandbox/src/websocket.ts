@@ -248,6 +248,46 @@ export class SandboxWebSocket {
 }
 
 /**
+ * Rate limiting configuration
+ */
+export interface RateLimitConfig {
+  /**
+   * Maximum messages per window (default: 100)
+   */
+  maxMessages?: number;
+
+  /**
+   * Time window in milliseconds (default: 60000 = 1 minute)
+   */
+  windowMs?: number;
+
+  /**
+   * Maximum message size in bytes (default: 1MB)
+   */
+  maxMessageSize?: number;
+}
+
+/**
+ * Connection timeout configuration
+ */
+export interface TimeoutConfig {
+  /**
+   * Idle timeout - close connection if no messages received (default: 5 minutes)
+   */
+  idleTimeout?: number;
+
+  /**
+   * Maximum connection duration (default: 30 minutes)
+   */
+  maxConnectionTime?: number;
+
+  /**
+   * Heartbeat interval - send ping to keep connection alive (default: 30 seconds)
+   */
+  heartbeatInterval?: number;
+}
+
+/**
  * Options for creating a WebSocket handler
  */
 export interface WebSocketHandlerOptions {
@@ -255,6 +295,16 @@ export interface WebSocketHandlerOptions {
    * Custom sandbox ID (defaults to URL param or random UUID)
    */
   sandboxId?: string;
+
+  /**
+   * Rate limiting configuration
+   */
+  rateLimit?: RateLimitConfig;
+
+  /**
+   * Connection timeout configuration
+   */
+  timeout?: TimeoutConfig;
 
   /**
    * Callback when WebSocket is ready
@@ -275,6 +325,11 @@ export interface WebSocketHandlerOptions {
    * Callback for WebSocket errors
    */
   onError?: (ws: SandboxWebSocket, event: Event | ErrorEvent) => void | Promise<void>;
+
+  /**
+   * Callback when rate limit is exceeded
+   */
+  onRateLimitExceeded?: (ws: SandboxWebSocket) => void | Promise<void>;
 }
 
 /**
@@ -300,6 +355,194 @@ export interface WebSocketHandlerResult {
    * The sandbox ID used
    */
   sandboxId: string;
+}
+
+/**
+ * Rate limiter using sliding window algorithm
+ */
+class RateLimiter {
+  private timestamps: number[] = [];
+  private readonly maxMessages: number;
+  private readonly windowMs: number;
+  private readonly maxMessageSize: number;
+
+  constructor(config: RateLimitConfig = {}) {
+    this.maxMessages = config.maxMessages ?? 100;
+    this.windowMs = config.windowMs ?? 60000; // 1 minute
+    this.maxMessageSize = config.maxMessageSize ?? 1024 * 1024; // 1MB
+  }
+
+  /**
+   * Check if a message is allowed under rate limits
+   */
+  checkMessage(messageSize: number): { allowed: boolean; reason?: string } {
+    // Check message size
+    if (messageSize > this.maxMessageSize) {
+      return {
+        allowed: false,
+        reason: `Message size ${messageSize} exceeds limit of ${this.maxMessageSize} bytes`,
+      };
+    }
+
+    const now = Date.now();
+
+    // Remove timestamps outside the current window
+    this.timestamps = this.timestamps.filter(
+      (timestamp) => now - timestamp < this.windowMs
+    );
+
+    // Check if we're at the limit
+    if (this.timestamps.length >= this.maxMessages) {
+      return {
+        allowed: false,
+        reason: `Rate limit exceeded: ${this.maxMessages} messages per ${this.windowMs}ms`,
+      };
+    }
+
+    // Record this message
+    this.timestamps.push(now);
+    return { allowed: true };
+  }
+
+  /**
+   * Get current usage statistics
+   */
+  getStats() {
+    const now = Date.now();
+    this.timestamps = this.timestamps.filter(
+      (timestamp) => now - timestamp < this.windowMs
+    );
+
+    return {
+      messagesInWindow: this.timestamps.length,
+      maxMessages: this.maxMessages,
+      windowMs: this.windowMs,
+      remaining: Math.max(0, this.maxMessages - this.timestamps.length),
+    };
+  }
+
+  /**
+   * Reset the rate limiter
+   */
+  reset(): void {
+    this.timestamps = [];
+  }
+}
+
+/**
+ * Connection timeout manager
+ */
+class TimeoutManager {
+  private idleTimer?: number;
+  private maxConnectionTimer?: number;
+  private heartbeatTimer?: number;
+  private lastActivity: number;
+  private readonly config: Required<TimeoutConfig>;
+
+  constructor(
+    private readonly ws: SandboxWebSocket,
+    config: TimeoutConfig = {}
+  ) {
+    this.config = {
+      idleTimeout: config.idleTimeout ?? 300000, // 5 minutes
+      maxConnectionTime: config.maxConnectionTime ?? 1800000, // 30 minutes
+      heartbeatInterval: config.heartbeatInterval ?? 30000, // 30 seconds
+    };
+    this.lastActivity = Date.now();
+  }
+
+  /**
+   * Start all timeout timers
+   */
+  start(): void {
+    // Start idle timeout
+    this.resetIdleTimer();
+
+    // Start max connection timer
+    this.maxConnectionTimer = setTimeout(() => {
+      this.ws.close(1000, 'Maximum connection time reached');
+    }, this.config.maxConnectionTime) as unknown as number;
+
+    // Start heartbeat
+    if (this.config.heartbeatInterval > 0) {
+      this.startHeartbeat();
+    }
+  }
+
+  /**
+   * Reset idle timer (call this on activity)
+   */
+  resetIdleTimer(): void {
+    this.lastActivity = Date.now();
+
+    if (this.idleTimer) {
+      clearTimeout(this.idleTimer);
+    }
+
+    this.idleTimer = setTimeout(() => {
+      this.ws.close(1000, 'Idle timeout');
+    }, this.config.idleTimeout) as unknown as number;
+  }
+
+  /**
+   * Start heartbeat ping/pong mechanism
+   */
+  private startHeartbeat(): void {
+    this.heartbeatTimer = setInterval(() => {
+      // Check if we're past idle timeout
+      const timeSinceActivity = Date.now() - this.lastActivity;
+      if (timeSinceActivity > this.config.idleTimeout) {
+        this.ws.close(1000, 'Heartbeat timeout');
+        this.stop();
+        return;
+      }
+
+      // Send heartbeat
+      try {
+        this.ws.send({ type: 'ping', timestamp: Date.now() });
+      } catch (error) {
+        console.error('Failed to send heartbeat:', error);
+      }
+    }, this.config.heartbeatInterval) as unknown as number;
+  }
+
+  /**
+   * Stop all timers
+   */
+  stop(): void {
+    if (this.idleTimer) {
+      clearTimeout(this.idleTimer);
+      this.idleTimer = undefined;
+    }
+
+    if (this.maxConnectionTimer) {
+      clearTimeout(this.maxConnectionTimer);
+      this.maxConnectionTimer = undefined;
+    }
+
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = undefined;
+    }
+  }
+
+  /**
+   * Get timeout statistics
+   */
+  getStats() {
+    const now = Date.now();
+    const timeSinceActivity = now - this.lastActivity;
+
+    return {
+      lastActivity: this.lastActivity,
+      timeSinceActivity,
+      idleTimeoutRemaining: Math.max(
+        0,
+        this.config.idleTimeout - timeSinceActivity
+      ),
+      config: this.config,
+    };
+  }
 }
 
 /**
@@ -361,11 +604,58 @@ export async function createWebSocketHandler(
   // Create wrapper
   const ws = new SandboxWebSocket(server, sandbox);
 
+  // Initialize rate limiter if configured
+  const rateLimiter = options.rateLimit
+    ? new RateLimiter(options.rateLimit)
+    : null;
+
+  // Initialize timeout manager if configured
+  const timeoutManager = options.timeout
+    ? new TimeoutManager(ws, options.timeout)
+    : null;
+
+  // Start timeout tracking
+  if (timeoutManager) {
+    timeoutManager.start();
+  }
+
   // Set up event handlers
   if (options.onMessage) {
     server.addEventListener('message', async (event) => {
       try {
+        // Reset idle timer on activity
+        if (timeoutManager) {
+          timeoutManager.resetIdleTimer();
+        }
+
+        // Check rate limit
+        if (rateLimiter) {
+          const messageSize = new Blob([event.data as string]).size;
+          const rateLimitResult = rateLimiter.checkMessage(messageSize);
+
+          if (!rateLimitResult.allowed) {
+            ws.sendError(
+              `Rate limit exceeded: ${rateLimitResult.reason}`,
+              'RATE_LIMIT_EXCEEDED'
+            );
+
+            // Call rate limit callback if provided
+            if (options.onRateLimitExceeded) {
+              await options.onRateLimitExceeded(ws);
+            }
+
+            // Don't process the message
+            return;
+          }
+        }
+
         const message = JSON.parse(event.data as string);
+
+        // Handle pong messages for heartbeat
+        if (message.type === 'pong') {
+          return; // Just acknowledge, don't process
+        }
+
         await options.onMessage!(ws, message, event);
       } catch (error) {
         console.error('Error handling message:', error);
@@ -377,6 +667,11 @@ export async function createWebSocketHandler(
   if (options.onClose) {
     server.addEventListener('close', async (event) => {
       try {
+        // Stop timeout manager
+        if (timeoutManager) {
+          timeoutManager.stop();
+        }
+
         await options.onClose!(ws, event);
       } catch (error) {
         console.error('Error handling close:', error);

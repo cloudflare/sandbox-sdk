@@ -643,6 +643,7 @@ export interface ISandbox {
   runCodeStream(code: string, options?: RunCodeOptions): Promise<ReadableStream>;
   listCodeContexts(): Promise<CodeContext[]>;
   deleteCodeContext(contextId: string): Promise<void>;
+  connect(portOrUrl: number | string, options?: RequestInit): Promise<Response>;
 }
 
 // Type guards for runtime validation
