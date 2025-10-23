@@ -284,7 +284,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         this.logger.debug('Default session initialized', { sessionId });
       } catch (error: any) {
         // If session already exists (e.g., after hot reload), reuse it
-        if (error?.message?.includes('already exists') || error?.message?.includes('Session')) {
+        if (error?.message?.includes('already exists')) {
           this.logger.debug('Reusing existing session after reload', { sessionId });
           this.defaultSession = sessionId;
           // Persist to storage in case it wasn't saved before
