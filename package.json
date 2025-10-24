@@ -10,7 +10,6 @@
     "build:clean": "turbo run build --force",
     "test": "turbo run test",
     "test:e2e": "turbo run test:e2e",
-    "test:e2e:only": "vitest run --config vitest.e2e.config.ts",
     "docker:rebuild": "npm run build:clean && npm run docker:local -w @cloudflare/sandbox"
   },
   "keywords": [],
