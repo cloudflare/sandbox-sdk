@@ -1,5 +1,6 @@
 import type {
   DeleteFileResult,
+  FileExistsRequest,
   FileExistsResult,
   FileStreamEvent,
   ListFilesResult,Logger,
@@ -13,7 +14,6 @@ import { ErrorCode } from '@repo/shared/errors';
 
 import type {
   DeleteFileRequest,
-  FileExistsRequest,
   ListFilesRequest,
   MkdirRequest,
   MoveFileRequest,

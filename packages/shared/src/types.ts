@@ -655,7 +655,7 @@ export interface ISandbox {
   renameFile(oldPath: string, newPath: string): Promise<RenameFileResult>;
   moveFile(sourcePath: string, destinationPath: string): Promise<MoveFileResult>;
   listFiles(path: string, options?: ListFilesOptions): Promise<ListFilesResult>;
-  exists(path: string): Promise<FileExistsResult>;
+  exists(path: string, sessionId?: string): Promise<FileExistsResult>;
 
   // Git operations
   gitCheckout(repoUrl: string, options?: { branch?: string; targetDir?: string }): Promise<GitCheckoutResult>;
