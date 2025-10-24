@@ -1,5 +1,20 @@
 # @cloudflare/sandbox
 
+## 0.4.9
+
+### Patch Changes
+
+- [#152](https://github.com/cloudflare/sandbox-sdk/pull/152) [`8e7773e`](https://github.com/cloudflare/sandbox-sdk/commit/8e7773ec9571a5f968cbbc5f48e38e01d7d13b77) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Add exists() method to check if a file or directory exists
+
+  This adds a new `exists()` method to the SDK that checks whether a file or directory exists at a given path. The method returns a boolean indicating existence, similar to Python's `os.path.exists()` and JavaScript's `fs.existsSync()`.
+
+  The implementation is end-to-end:
+
+  - New `FileExistsResult` and `FileExistsRequest` types in shared package
+  - Handler endpoint at `/api/exists` in container layer
+  - Client method in `FileClient` and `Sandbox` classes
+  - Full test coverage (unit tests and E2E tests)
+
 ## 0.4.8
 
 ### Patch Changes
