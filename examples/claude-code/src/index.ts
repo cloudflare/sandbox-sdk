@@ -1,8 +1,13 @@
-import { getSandbox } from "@cloudflare/sandbox";
+import { getSandbox, type Sandbox } from "@cloudflare/sandbox";
 
 interface CmdOutput { success: boolean; stdout: string; stderr: string; };
 // helper to read the outputs from `.exec` results
 const getOutput = (res: CmdOutput) => res.success ? res.stdout : res.stderr;
+
+type Env = {
+	Sandbox: DurableObjectNamespace<Sandbox>;
+	ANTHROPIC_API_KEY: string;
+};
 
 const EXTRA_SYSTEM = "You are an automatic feature-implementer/bug-fixer." +
   "You apply all necessary changes to achieve the user request. You must ensure you DO NOT commit the changes, "  +
