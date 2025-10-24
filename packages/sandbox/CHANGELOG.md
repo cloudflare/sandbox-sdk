@@ -1,5 +1,11 @@
 # @cloudflare/sandbox
 
+## 0.5.0
+
+### Minor Changes
+
+- [#147](https://github.com/cloudflare/sandbox-sdk/pull/147) [`465ce06`](https://github.com/cloudflare/sandbox-sdk/commit/465ce06d3be1a13fbe860d953a303f00fb8e3720) Thanks [@AshishKumar4](https://github.com/AshishKumar4)! - Fix token extraction regex causing Invalid token errors
+
 ## 0.4.7
 
 ### Patch Changes
