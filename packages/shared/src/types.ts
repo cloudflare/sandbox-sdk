@@ -343,6 +343,13 @@ export interface MoveFileResult {
   exitCode?: number;
 }
 
+export interface FileExistsResult {
+  success: boolean;
+  path: string;
+  exists: boolean;
+  timestamp: string;
+}
+
 export interface FileInfo {
   name: string;
   absolutePath: string;
@@ -603,6 +610,7 @@ export interface ExecutionSession {
   renameFile(oldPath: string, newPath: string): Promise<RenameFileResult>;
   moveFile(sourcePath: string, destinationPath: string): Promise<MoveFileResult>;
   listFiles(path: string, options?: ListFilesOptions): Promise<ListFilesResult>;
+  exists(path: string): Promise<FileExistsResult>;
 
   // Git operations
   gitCheckout(repoUrl: string, options?: { branch?: string; targetDir?: string }): Promise<GitCheckoutResult>;
@@ -647,6 +655,7 @@ export interface ISandbox {
   renameFile(oldPath: string, newPath: string): Promise<RenameFileResult>;
   moveFile(sourcePath: string, destinationPath: string): Promise<MoveFileResult>;
   listFiles(path: string, options?: ListFilesOptions): Promise<ListFilesResult>;
+  exists(path: string): Promise<FileExistsResult>;
 
   // Git operations
   gitCheckout(repoUrl: string, options?: { branch?: string; targetDir?: string }): Promise<GitCheckoutResult>;

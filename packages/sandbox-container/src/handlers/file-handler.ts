@@ -1,7 +1,8 @@
 import type {
   DeleteFileResult,
+  FileExistsResult,
   FileStreamEvent,
-  ListFilesResult,Logger, 
+  ListFilesResult,Logger,
   MkdirResult,
   MoveFileResult,
   ReadFileResult,
@@ -12,6 +13,7 @@ import { ErrorCode } from '@repo/shared/errors';
 
 import type {
   DeleteFileRequest,
+  FileExistsRequest,
   ListFilesRequest,
   MkdirRequest,
   MoveFileRequest,
@@ -52,6 +54,8 @@ export class FileHandler extends BaseHandler<Request, Response> {
         return await this.handleMkdir(request, context);
       case '/api/list-files':
         return await this.handleListFiles(request, context);
+      case '/api/exists':
+        return await this.handleExists(request, context);
       default:
         return this.createErrorResponse({
           message: 'Invalid file endpoint',
@@ -269,6 +273,25 @@ export class FileHandler extends BaseHandler<Request, Response> {
         path: body.path,
         files: result.data,
         count: result.data.length,
+        timestamp: new Date().toISOString(),
+      };
+
+      return this.createTypedResponse(response, context);
+    } else {
+      return this.createErrorResponse(result.error, context);
+    }
+  }
+
+  private async handleExists(request: Request, context: RequestContext): Promise<Response> {
+    const body = await this.parseRequestBody<FileExistsRequest>(request);
+
+    const result = await this.fileService.exists(body.path, body.sessionId);
+
+    if (result.success) {
+      const response: FileExistsResult = {
+        success: true,
+        path: body.path,
+        exists: result.data,
         timestamp: new Date().toISOString(),
       };
 

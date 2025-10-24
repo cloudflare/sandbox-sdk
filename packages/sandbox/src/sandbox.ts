@@ -697,6 +697,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     return this.client.files.listFiles(path, session, options);
   }
 
+  async exists(path: string, sessionId?: string) {
+    const session = sessionId ?? await this.ensureDefaultSession();
+    return this.client.files.exists(path, session);
+  }
+
   async exposePort(port: number, options: { name?: string; hostname: string }) {
     // Check if hostname is workers.dev domain (doesn't support wildcard subdomains)
     if (options.hostname.endsWith('.workers.dev')) {
@@ -934,6 +939,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       renameFile: (oldPath, newPath) => this.renameFile(oldPath, newPath, sessionId),
       moveFile: (sourcePath, destPath) => this.moveFile(sourcePath, destPath, sessionId),
       listFiles: (path, options) => this.client.files.listFiles(path, sessionId, options),
+      exists: (path) => this.exists(path, sessionId),
 
       // Git operations
       gitCheckout: (repoUrl, options) => this.gitCheckout(repoUrl, { ...options, sessionId }),
