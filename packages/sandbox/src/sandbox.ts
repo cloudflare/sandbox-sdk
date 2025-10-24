@@ -67,6 +67,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private readonly ACTIVITY_RENEWAL_THROTTLE_MS = 5000; // Throttle renewals to once per 5 seconds
   private readonly STREAM_HEALTH_CHECK_INTERVAL_MS = 30000; // Check sandbox health every 30 seconds during streaming
   private readonly STREAM_READ_TIMEOUT_MS = 300000; // 5 minutes timeout for stream reads (detects hung streams)
+  private readonly PROCESS_MONITOR_INTERVAL_MS = 5000; // Check for running processes every 5 seconds
+  private processMonitorInterval: ReturnType<typeof setInterval> | null = null;
+  private lastProcessMonitorRenewal: number = 0;
 
   constructor(ctx: DurableObject['ctx'], env: Env) {
     super(ctx, env);
@@ -187,6 +190,57 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     if (timeSinceLastRenewal >= this.ACTIVITY_RENEWAL_THROTTLE_MS) {
       this.renewActivityTimeout();
       this.lastActivityRenewal = now;
+    }
+  }
+
+  /**
+   * Start the global process monitor that keeps the container alive
+   * while any processes are running, even without active streams.
+   */
+  private startProcessMonitor(): void {
+    // Don't start if already running
+    if (this.processMonitorInterval) {
+      return;
+    }
+
+    this.logger.debug('Starting global process monitor');
+
+    this.processMonitorInterval = setInterval(async () => {
+      try {
+        const processList = await this.client.processes.listProcesses();
+        const runningProcesses = processList.processes.filter(
+          p => p.status === 'running' || p.status === 'starting'
+        );
+
+        if (runningProcesses.length > 0) {
+          const now = Date.now();
+          if (now - this.lastProcessMonitorRenewal >= this.ACTIVITY_RENEWAL_THROTTLE_MS) {
+            this.renewActivityTimeout();
+            this.lastProcessMonitorRenewal = now;
+            this.logger.debug(
+              `Global process monitor renewed activity timeout due to ${runningProcesses.length} running process(es): ${runningProcesses.map(p => p.id).join(', ')}`
+            );
+          }
+        } else {
+          // No running processes, stop the monitor
+          this.logger.debug('No running processes found, stopping global process monitor');
+          this.stopProcessMonitor();
+        }
+      } catch (error) {
+        // Non-fatal: if we can't check processes, just log and continue
+        this.logger.debug(`Global process monitor failed to check running processes: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }, this.PROCESS_MONITOR_INTERVAL_MS);
+  }
+
+  /**
+   * Stop the global process monitor
+   */
+  private stopProcessMonitor(): void {
+    if (this.processMonitorInterval) {
+      clearInterval(this.processMonitorInterval);
+      this.processMonitorInterval = null;
+      this.logger.debug('Stopped global process monitor');
     }
   }
 
@@ -475,6 +529,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         exitCode: undefined
       }, session);
 
+      // Start the global process monitor to keep container alive
+      // even if no one is streaming
+      this.startProcessMonitor();
+
       // Call onStart callback if provided
       if (options?.onStart) {
         options.onStart(processObj);
@@ -611,6 +669,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         let currentTimeoutHandle: ReturnType<typeof setTimeout> | undefined;
 
         // Set up periodic health monitoring to detect container crashes
+        // AND to keep container alive while processes are running even without output
         healthCheckInterval = setInterval(async () => {
           if (!streamActive) {
             if (healthCheckInterval) {
@@ -632,6 +691,28 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
                 }
                 await reader.cancel(error.message);
               }
+            }
+
+            // Check for running processes and renew activity if any exist
+            try {
+              const processList = await self.client.processes.listProcesses();
+              const runningProcesses = processList.processes.filter(
+                p => p.status === 'running' || p.status === 'starting'
+              );
+
+              if (runningProcesses.length > 0) {
+                const now = Date.now();
+                if (now - lastActivityRenewal >= self.ACTIVITY_RENEWAL_THROTTLE_MS) {
+                  self.renewActivityTimeout();
+                  lastActivityRenewal = now;
+                  self.logger.debug(
+                    `Renewed activity timeout due to ${runningProcesses.length} running process(es): ${runningProcesses.map(p => p.id).join(', ')}`
+                  );
+                }
+              }
+            } catch (error) {
+              // Non-fatal: if we can't check processes, just log and continue
+              self.logger.debug(`Failed to check running processes: ${error instanceof Error ? error.message : String(error)}`);
             }
           } catch (error) {
             // If getState() fails, container is likely dead
