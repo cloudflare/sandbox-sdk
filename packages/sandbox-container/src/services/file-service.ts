@@ -721,17 +721,10 @@ export class FileService implements FileSystemOperations {
       const execResult = await this.sessionManager.executeInSession(sessionId, command);
 
       if (!execResult.success) {
-        // If command execution fails, propagate the error
+        // If execution fails, treat as non-existent
         return {
-          success: false,
-          error: {
-            message: `Failed to check file existence for '${path}': Command execution failed`,
-            code: ErrorCode.FILESYSTEM_ERROR,
-            details: {
-              path,
-              operation: Operation.FILE_STAT
-            } satisfies FileSystemContext
-          }
+          success: true,
+          data: false
         };
       }
 
