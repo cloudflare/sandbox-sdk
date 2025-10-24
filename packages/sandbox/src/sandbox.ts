@@ -64,6 +64,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private defaultSession: string | null = null;
   envVars: Record<string, string> = {};
   private logger: ReturnType<typeof createLogger>;
+  private lastActivityRenewal: number = 0;
+  private readonly ACTIVITY_RENEWAL_THROTTLE_MS = 5000; // Throttle renewals to once per 5 seconds
+  private readonly STREAM_HEALTH_CHECK_INTERVAL_MS = 30000; // Check sandbox health every 30 seconds during streaming
+  private readonly STREAM_READ_TIMEOUT_MS = 300000; // 5 minutes timeout for stream reads (detects hung streams)
+  private readonly PROCESS_MONITOR_INTERVAL_MS = 5000; // Check for running processes every 5 seconds
+  private processMonitorInterval: ReturnType<typeof setInterval> | null = null;
+  private lastProcessMonitorRenewal: number = 0;
 
   constructor(ctx: DurableObject['ctx'], env: Env) {
     super(ctx, env);
@@ -220,6 +227,72 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     this.logger.error('Sandbox error', error instanceof Error ? error : new Error(String(error)));
   }
 
+  /**
+   * Throttled activity timeout renewal, to prevent renewal on every chunk
+   * Only renews if sufficient time has passed since last renewal
+   */
+  private renewActivityTimeoutThrottled(): void {
+    const now = Date.now();
+    const timeSinceLastRenewal = now - this.lastActivityRenewal;
+
+    // Only renew if throttle period has elapsed
+    if (timeSinceLastRenewal >= this.ACTIVITY_RENEWAL_THROTTLE_MS) {
+      this.renewActivityTimeout();
+      this.lastActivityRenewal = now;
+    }
+  }
+
+  /**
+   * Start the global process monitor that keeps the container alive
+   * while any processes are running, even without active streams.
+   */
+  private startProcessMonitor(): void {
+    // Don't start if already running
+    if (this.processMonitorInterval) {
+      return;
+    }
+
+    this.logger.debug('Starting global process monitor');
+
+    this.processMonitorInterval = setInterval(async () => {
+      try {
+        const processList = await this.client.processes.listProcesses();
+        const runningProcesses = processList.processes.filter(
+          p => p.status === 'running' || p.status === 'starting'
+        );
+
+        if (runningProcesses.length > 0) {
+          const now = Date.now();
+          if (now - this.lastProcessMonitorRenewal >= this.ACTIVITY_RENEWAL_THROTTLE_MS) {
+            this.renewActivityTimeout();
+            this.lastProcessMonitorRenewal = now;
+            this.logger.debug(
+              `Global process monitor renewed activity timeout due to ${runningProcesses.length} running process(es): ${runningProcesses.map(p => p.id).join(', ')}`
+            );
+          }
+        } else {
+          // No running processes, stop the monitor
+          this.logger.debug('No running processes found, stopping global process monitor');
+          this.stopProcessMonitor();
+        }
+      } catch (error) {
+        // Non-fatal: if we can't check processes, just log and continue
+        this.logger.debug(`Global process monitor failed to check running processes: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }, this.PROCESS_MONITOR_INTERVAL_MS);
+  }
+
+  /**
+   * Stop the global process monitor
+   */
+  private stopProcessMonitor(): void {
+    if (this.processMonitorInterval) {
+      clearInterval(this.processMonitorInterval);
+      this.processMonitorInterval = null;
+      this.logger.debug('Stopped global process monitor');
+    }
+  }
+
   // Override fetch to route internal container requests to appropriate ports
   override async fetch(request: Request): Promise<Response> {
     // Extract or generate trace ID from request
@@ -317,8 +390,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     const startTime = Date.now();
     const timestamp = new Date().toISOString();
 
-    // Handle timeout
-    let timeoutId: NodeJS.Timeout | undefined;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
     try {
       // Handle cancellation
@@ -380,6 +452,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           case 'stdout':
           case 'stderr':
             if (event.data) {
+              // Renew activity timeout on each output event (throttled to reduce overhead)
+              // This keeps the container alive during active command execution
+              this.renewActivityTimeoutThrottled();
+
               // Update accumulated output
               if (event.type === 'stdout') stdout += event.data;
               if (event.type === 'stderr') stderr += event.data;
@@ -502,6 +578,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         exitCode: undefined
       }, session);
 
+      // Start the global process monitor to keep container alive
+      // even if no one is streaming
+      this.startProcessMonitor();
+
       // Call onStart callback if provided
       if (options?.onStart) {
         options.onStart(processObj);
@@ -591,8 +671,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
 
     const session = await this.ensureDefaultSession();
-    // Get the stream from CommandClient
-    return this.client.commands.executeStream(command, session);
+    // Get the stream from CommandClient and wrap it with activity renewal
+    const stream = await this.client.commands.executeStream(command, session);
+    return this.wrapStreamWithActivityRenewal(stream);
   }
 
   /**
@@ -604,7 +685,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       throw new Error('Operation was aborted');
     }
 
-    return this.client.commands.executeStream(command, sessionId);
+    const stream = await this.client.commands.executeStream(command, sessionId);
+    return this.wrapStreamWithActivityRenewal(stream);
   }
 
   async streamProcessLogs(processId: string, options?: { signal?: AbortSignal }): Promise<ReadableStream<Uint8Array>> {
@@ -613,7 +695,164 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       throw new Error('Operation was aborted');
     }
 
-    return this.client.processes.streamProcessLogs(processId);
+    const stream = await this.client.processes.streamProcessLogs(processId);
+    return this.wrapStreamWithActivityRenewal(stream);
+  }
+
+  /**
+   * Wraps a ReadableStream to provide three critical protections:
+   * 1. Activity renewal - prevents sleepAfter timeout during active streaming
+   * 2. Health monitoring - detects container crashes mid-stream
+   * 3. Read timeout - detects hung streams (e.g., Bun connection idle timeout)*/
+  private wrapStreamWithActivityRenewal(stream: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> {
+    const self = this;
+    let healthCheckInterval: ReturnType<typeof setInterval> | undefined;
+    let streamActive = true;
+    let errorReported = false;
+    let lastActivityRenewal = 0;
+
+    return new ReadableStream<Uint8Array>({
+      async start(controller) {
+        const reader = stream.getReader();
+        let isHealthy = true;
+        let currentTimeoutHandle: ReturnType<typeof setTimeout> | undefined;
+
+        // Set up periodic health monitoring to detect container crashes
+        // AND to keep container alive while processes are running even without output
+        healthCheckInterval = setInterval(async () => {
+          if (!streamActive) {
+            if (healthCheckInterval) {
+              clearInterval(healthCheckInterval);
+            }
+            return;
+          }
+
+          try {
+            const state = await self.getState();
+            if (state.status !== 'running') {
+              isHealthy = false;
+              if (!errorReported) {
+                errorReported = true;
+                const error = new Error(`Container became unhealthy during streaming: ${state.status}`);
+                controller.error(error);
+                if (healthCheckInterval) {
+                  clearInterval(healthCheckInterval);
+                }
+                await reader.cancel(error.message);
+              }
+            }
+
+            // Check for running processes and renew activity if any exist
+            try {
+              const processList = await self.client.processes.listProcesses();
+              const runningProcesses = processList.processes.filter(
+                p => p.status === 'running' || p.status === 'starting'
+              );
+
+              if (runningProcesses.length > 0) {
+                const now = Date.now();
+                if (now - lastActivityRenewal >= self.ACTIVITY_RENEWAL_THROTTLE_MS) {
+                  self.renewActivityTimeout();
+                  lastActivityRenewal = now;
+                  self.logger.debug(
+                    `Renewed activity timeout due to ${runningProcesses.length} running process(es): ${runningProcesses.map(p => p.id).join(', ')}`
+                  );
+                }
+              }
+            } catch (error) {
+              // Non-fatal: if we can't check processes, just log and continue
+              self.logger.debug(`Failed to check running processes: ${error instanceof Error ? error.message : String(error)}`);
+            }
+          } catch (error) {
+            // If getState() fails, container is likely dead
+            isHealthy = false;
+            if (!errorReported) {
+              errorReported = true;
+              const stateError = new Error(`Failed to check container health: ${error instanceof Error ? error.message : String(error)}`);
+              controller.error(stateError);
+              if (healthCheckInterval) {
+                clearInterval(healthCheckInterval);
+              }
+              await reader.cancel(stateError.message);
+            }
+          }
+        }, self.STREAM_HEALTH_CHECK_INTERVAL_MS);
+
+        try {
+          while (true) {
+            const readPromise = reader.read();
+            const timeoutPromise = new Promise<never>((_, reject) => {
+              currentTimeoutHandle = setTimeout(() => {
+                reject(new Error(`Stream read timeout after ${self.STREAM_READ_TIMEOUT_MS}ms - connection may be hung`));
+              }, self.STREAM_READ_TIMEOUT_MS);
+            });
+
+            const { done, value } = await Promise.race([readPromise, timeoutPromise]);
+
+            // Clear timeout immediately after successful read
+            if (currentTimeoutHandle !== undefined) {
+              clearTimeout(currentTimeoutHandle);
+              currentTimeoutHandle = undefined;
+            }
+
+            // Check health status before processing chunk
+            if (!isHealthy) {
+              throw new Error('Container became unhealthy during streaming');
+            }
+
+            if (done) {
+              controller.close();
+              break;
+            }
+            const now = Date.now();
+            if (now - lastActivityRenewal >= self.ACTIVITY_RENEWAL_THROTTLE_MS) {
+              self.renewActivityTimeout();
+              lastActivityRenewal = now;
+            }
+
+            controller.enqueue(value);
+          }
+        } catch (error) {
+          if (currentTimeoutHandle !== undefined) {
+            clearTimeout(currentTimeoutHandle);
+            currentTimeoutHandle = undefined;
+          }
+
+          if (!errorReported) {
+            errorReported = true;
+            controller.error(error);
+          }
+        } finally {
+          // Mark stream as inactive to stop health checks
+          streamActive = false;
+
+          // Always cleanup interval
+          if (healthCheckInterval) {
+            clearInterval(healthCheckInterval);
+            healthCheckInterval = undefined;
+          }
+
+          try {
+            reader.releaseLock();
+          } catch (e) {
+            // Safe to ignore: lock is already released or stream is already closed
+            // This can happen if the reader was cancelled or errored before we reached finally
+            const errorMsg = e instanceof Error ? e.message : String(e);
+            self.logger.debug(`Reader lock release failed (expected if stream already closed): ${errorMsg}`);
+          }
+        }
+      },
+
+      cancel(reason) {
+        streamActive = false;
+        if (healthCheckInterval) {
+          clearInterval(healthCheckInterval);
+          healthCheckInterval = undefined;
+        }
+        // Allow cancellation to propagate to the underlying stream
+        return stream.cancel(reason);
+      }
+    });
   }
 
   async gitCheckout(
@@ -983,8 +1222,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     return execution.toJSON();
   }
 
-  async runCodeStream(code: string, options?: RunCodeOptions): Promise<ReadableStream> {
-    return this.codeInterpreter.runCodeStream(code, options);
+  async runCodeStream(code: string, options?: RunCodeOptions): Promise<ReadableStream<Uint8Array>> {
+    const stream = await this.codeInterpreter.runCodeStream(code, options);
+    return this.wrapStreamWithActivityRenewal(stream);
   }
 
   async listCodeContexts(): Promise<CodeContext[]> {
