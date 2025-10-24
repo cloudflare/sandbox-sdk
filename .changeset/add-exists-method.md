@@ -1,5 +1,5 @@
 ---
-"@cloudflare/sandbox": minor
+"@cloudflare/sandbox": patch
 ---
 
 Add exists() method to check if a file or directory exists
