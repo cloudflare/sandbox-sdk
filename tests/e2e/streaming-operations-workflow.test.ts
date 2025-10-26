@@ -445,13 +445,6 @@ describe('Streaming Operations Workflow', () => {
       expect(completeEvent?.exitCode).toBe(0);
     }, 90000);
 
-    /**
-     * Tests for GitHub Issue #101: Container Hibernation During Long Streaming
-     *
-     * These tests verify that containers stay alive during long-running streaming
-     * operations via automatic activity renewal, and that the implementation actually
-     * works with real containers (not just mocked tests).
-     */
 
     test('should keep container alive during 15+ second streaming command (GitHub #101)', async () => {
       currentSandboxId = createSandboxId();
