@@ -86,6 +86,51 @@ export default {
         });
       }
 
+      // Command execution with callback-based streaming (for long-running commands)
+      if (url.pathname === '/api/execStreamCallback' && request.method === 'POST') {
+        console.log('[TestWorker] execStreamCallback called for command:', body.command);
+        const startTime = Date.now();
+
+        // Create a TransformStream to convert callbacks to SSE
+        const { readable, writable } = new TransformStream();
+        const writer = writable.getWriter();
+        const encoder = new TextEncoder();
+
+        // Start streaming in the background using callback-based method
+        (async () => {
+          try {
+            await executor.execStreamWithCallback(
+              body.command,
+              async (event) => {
+                // Convert event to SSE format
+                const sseData = `data: ${JSON.stringify(event)}\n\n`;
+                await writer.write(encoder.encode(sseData));
+              }
+            );
+          } catch (error: any) {
+            // Send error event
+            const errorEvent = {
+              type: 'error',
+              timestamp: new Date().toISOString(),
+              error: error.message,
+            };
+            await writer.write(encoder.encode(`data: ${JSON.stringify(errorEvent)}\n\n`));
+          } finally {
+            await writer.close();
+            console.log('[TestWorker] Stream completed in', Date.now() - startTime, 'ms');
+          }
+        })();
+
+        // Return SSE stream
+        return new Response(readable, {
+          headers: {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+          },
+        });
+      }
+
       // Git clone
       if (url.pathname === '/api/git/clone' && request.method === 'POST') {
         await executor.gitCheckout(body.repoUrl, {

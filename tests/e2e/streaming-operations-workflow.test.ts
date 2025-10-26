@@ -593,7 +593,7 @@ describe('Streaming Operations Workflow', () => {
 
       // With callback-based streaming, it should complete successfully
       const streamResponse = await vi.waitFor(
-        async () => fetchWithStartup(`${workerUrl}/api/execStream`, {
+        async () => fetchWithStartup(`${workerUrl}/api/execStreamCallback`, {
           method: 'POST',
           headers,
           body: JSON.stringify({
@@ -641,7 +641,7 @@ describe('Streaming Operations Workflow', () => {
 
       // This is the exact pattern that was failing before
       const streamResponse = await vi.waitFor(
-        async () => fetchWithStartup(`${workerUrl}/api/execStream`, {
+        async () => fetchWithStartup(`${workerUrl}/api/execStreamCallback`, {
           method: 'POST',
           headers,
           body: JSON.stringify({

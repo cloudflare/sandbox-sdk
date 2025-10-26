@@ -1227,6 +1227,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       // Command execution - delegate to internal session-aware methods
       exec: (command, options) => this.execWithSession(command, sessionId, options),
       execStream: (command, options) => this.execStreamWithSession(command, sessionId, options),
+      execStreamWithCallback: (command, onEvent, options) =>
+        this.execStreamWithCallback(command, onEvent, { ...options, sessionId }),
 
       // Process management
       startProcess: (command, options) => this.startProcess(command, options, sessionId),
@@ -1237,6 +1239,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       cleanupCompletedProcesses: () => this.cleanupCompletedProcesses(),
       getProcessLogs: (id) => this.getProcessLogs(id),
       streamProcessLogs: (processId, options) => this.streamProcessLogs(processId, options),
+      streamProcessLogsWithCallback: (processId, onEvent, options) =>
+        this.streamProcessLogsWithCallback(processId, onEvent, options),
 
       // File operations - pass sessionId via options or parameter
       writeFile: (path, content, options) => this.writeFile(path, content, { ...options, sessionId }),
