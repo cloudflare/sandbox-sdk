@@ -696,4 +696,269 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(renewActivityTimeoutSpy).toHaveBeenCalled();
     });
   });
+
+  describe('callback-based streaming (avoids RPC stream serialization)', () => {
+    it('should execute command with callback and process all events', async () => {
+      const mockEvents = [
+        { type: 'start', timestamp: new Date().toISOString(), command: 'echo test' },
+        { type: 'stdout', timestamp: new Date().toISOString(), data: 'test\n' },
+        { type: 'complete', timestamp: new Date().toISOString(), exitCode: 0 },
+      ];
+
+      // Create a mock readable stream that yields SSE events
+      const mockStream = new ReadableStream({
+        start(controller) {
+          const encoder = new TextEncoder();
+          for (const event of mockEvents) {
+            const sseData = `data: ${JSON.stringify(event)}\n\n`;
+            controller.enqueue(encoder.encode(sseData));
+          }
+          controller.close();
+        }
+      });
+
+      vi.spyOn(sandbox.client.commands, 'executeStream').mockResolvedValue(mockStream);
+
+      const receivedEvents: any[] = [];
+      await sandbox.execStreamWithCallback(
+        'echo test',
+        (event) => {
+          receivedEvents.push(event);
+        }
+      );
+
+      expect(receivedEvents).toHaveLength(3);
+      expect(receivedEvents[0].type).toBe('start');
+      expect(receivedEvents[1].type).toBe('stdout');
+      expect(receivedEvents[1].data).toBe('test\n');
+      expect(receivedEvents[2].type).toBe('complete');
+      expect(receivedEvents[2].exitCode).toBe(0);
+    });
+
+    it('should support async callbacks', async () => {
+      const mockEvents = [
+        { type: 'stdout', timestamp: new Date().toISOString(), data: 'line1\n' },
+        { type: 'stdout', timestamp: new Date().toISOString(), data: 'line2\n' },
+        { type: 'complete', timestamp: new Date().toISOString(), exitCode: 0 },
+      ];
+
+      const mockStream = new ReadableStream({
+        start(controller) {
+          const encoder = new TextEncoder();
+          for (const event of mockEvents) {
+            const sseData = `data: ${JSON.stringify(event)}\n\n`;
+            controller.enqueue(encoder.encode(sseData));
+          }
+          controller.close();
+        }
+      });
+
+      vi.spyOn(sandbox.client.commands, 'executeStream').mockResolvedValue(mockStream);
+
+      const receivedEvents: any[] = [];
+      const asyncCallback = async (event: any) => {
+        // Simulate async work
+        await new Promise(resolve => setTimeout(resolve, 10));
+        receivedEvents.push(event);
+      };
+
+      await sandbox.execStreamWithCallback('echo test', asyncCallback);
+
+      expect(receivedEvents).toHaveLength(3);
+    });
+
+    it('should stream process logs with callback', async () => {
+      const mockEvents = [
+        { type: 'stdout', timestamp: new Date().toISOString(), data: 'process output\n' },
+        { type: 'complete', timestamp: new Date().toISOString(), exitCode: 0 },
+      ];
+
+      const mockStream = new ReadableStream({
+        start(controller) {
+          const encoder = new TextEncoder();
+          for (const event of mockEvents) {
+            const sseData = `data: ${JSON.stringify(event)}\n\n`;
+            controller.enqueue(encoder.encode(sseData));
+          }
+          controller.close();
+        }
+      });
+
+      vi.spyOn(sandbox.client.processes, 'streamProcessLogs').mockResolvedValue(mockStream);
+
+      const receivedEvents: any[] = [];
+      await sandbox.streamProcessLogsWithCallback(
+        'proc-123',
+        (event) => {
+          receivedEvents.push(event);
+        }
+      );
+
+      expect(receivedEvents).toHaveLength(2);
+      expect(receivedEvents[0].type).toBe('stdout');
+      expect(receivedEvents[1].type).toBe('complete');
+    });
+
+    it('should renew activity timeout during streaming', async () => {
+      const mockEvents = [
+        { type: 'stdout', timestamp: new Date().toISOString(), data: 'chunk1\n' },
+        { type: 'stdout', timestamp: new Date().toISOString(), data: 'chunk2\n' },
+        { type: 'complete', timestamp: new Date().toISOString(), exitCode: 0 },
+      ];
+
+      const mockStream = new ReadableStream({
+        start(controller) {
+          const encoder = new TextEncoder();
+          for (const event of mockEvents) {
+            const sseData = `data: ${JSON.stringify(event)}\n\n`;
+            controller.enqueue(encoder.encode(sseData));
+          }
+          controller.close();
+        }
+      });
+
+      vi.spyOn(sandbox.client.commands, 'executeStream').mockResolvedValue(mockStream);
+
+      // Mock renewActivityTimeout before creating the spy
+      (sandbox as any).renewActivityTimeout = vi.fn();
+      const renewSpy = vi.spyOn(sandbox as any, 'renewActivityTimeout');
+
+      await sandbox.execStreamWithCallback('echo test', () => {});
+
+      expect(renewSpy).toHaveBeenCalled();
+    });
+
+    it('should handle errors in streaming', async () => {
+      const mockStream = new ReadableStream({
+        start(controller) {
+          controller.error(new Error('Stream error'));
+        }
+      });
+
+      vi.spyOn(sandbox.client.commands, 'executeStream').mockResolvedValue(mockStream);
+
+      await expect(
+        sandbox.execStreamWithCallback('echo test', () => {})
+      ).rejects.toThrow('Stream error');
+    });
+
+    it('should respect abort signal during streaming', async () => {
+      const mockEvents = [
+        { type: 'stdout', timestamp: new Date().toISOString(), data: 'chunk1\n' },
+        { type: 'stdout', timestamp: new Date().toISOString(), data: 'chunk2\n' },
+        { type: 'complete', timestamp: new Date().toISOString(), exitCode: 0 },
+      ];
+
+      const mockStream = new ReadableStream({
+        async start(controller) {
+          const encoder = new TextEncoder();
+          for (const event of mockEvents) {
+            await new Promise(resolve => setTimeout(resolve, 100));
+            const sseData = `data: ${JSON.stringify(event)}\n\n`;
+            controller.enqueue(encoder.encode(sseData));
+          }
+          controller.close();
+        }
+      });
+
+      vi.spyOn(sandbox.client.commands, 'executeStream').mockResolvedValue(mockStream);
+
+      const abortController = new AbortController();
+      const receivedEvents: any[] = [];
+
+      // Abort after receiving first event
+      const callbackWithAbort = (event: any) => {
+        receivedEvents.push(event);
+        if (receivedEvents.length === 1) {
+          abortController.abort();
+        }
+      };
+
+      await expect(
+        sandbox.execStreamWithCallback('echo test', callbackWithAbort, {
+          signal: abortController.signal
+        })
+      ).rejects.toThrow('Operation was aborted');
+    });
+
+    it('should use specified sessionId if provided', async () => {
+      const mockStream = new ReadableStream({
+        start(controller) {
+          const encoder = new TextEncoder();
+          const event = { type: 'complete', timestamp: new Date().toISOString(), exitCode: 0 };
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+          controller.close();
+        }
+      });
+
+      const executeStreamSpy = vi.spyOn(sandbox.client.commands, 'executeStream').mockResolvedValue(mockStream);
+
+      await sandbox.execStreamWithCallback('echo test', () => {}, { sessionId: 'custom-session' });
+
+      expect(executeStreamSpy).toHaveBeenCalledWith('echo test', 'custom-session');
+    });
+
+    it('should handle stderr events separately from stdout', async () => {
+      const mockEvents = [
+        { type: 'stdout', timestamp: new Date().toISOString(), data: 'stdout message\n' },
+        { type: 'stderr', timestamp: new Date().toISOString(), data: 'stderr message\n' },
+        { type: 'complete', timestamp: new Date().toISOString(), exitCode: 0 },
+      ];
+
+      const mockStream = new ReadableStream({
+        start(controller) {
+          const encoder = new TextEncoder();
+          for (const event of mockEvents) {
+            const sseData = `data: ${JSON.stringify(event)}\n\n`;
+            controller.enqueue(encoder.encode(sseData));
+          }
+          controller.close();
+        }
+      });
+
+      vi.spyOn(sandbox.client.commands, 'executeStream').mockResolvedValue(mockStream);
+
+      const stdoutData: string[] = [];
+      const stderrData: string[] = [];
+
+      await sandbox.execStreamWithCallback('test command', (event) => {
+        if (event.type === 'stdout') {
+          stdoutData.push(event.data || '');
+        } else if (event.type === 'stderr') {
+          stderrData.push(event.data || '');
+        }
+      });
+
+      expect(stdoutData).toEqual(['stdout message\n']);
+      expect(stderrData).toEqual(['stderr message\n']);
+    });
+
+    it('should handle error events from command execution', async () => {
+      const mockEvents = [
+        { type: 'error', timestamp: new Date().toISOString(), error: 'Command not found' },
+      ];
+
+      const mockStream = new ReadableStream({
+        start(controller) {
+          const encoder = new TextEncoder();
+          for (const event of mockEvents) {
+            const sseData = `data: ${JSON.stringify(event)}\n\n`;
+            controller.enqueue(encoder.encode(sseData));
+          }
+          controller.close();
+        }
+      });
+
+      vi.spyOn(sandbox.client.commands, 'executeStream').mockResolvedValue(mockStream);
+
+      const receivedEvents: any[] = [];
+      await sandbox.execStreamWithCallback('nonexistent', (event) => {
+        receivedEvents.push(event);
+      });
+
+      expect(receivedEvents).toHaveLength(1);
+      expect(receivedEvents[0].type).toBe('error');
+      expect(receivedEvents[0].error).toBe('Command not found');
+    });
+  });
 });

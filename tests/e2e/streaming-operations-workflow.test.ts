@@ -580,5 +580,99 @@ describe('Streaming Operations Workflow', () => {
 
       console.log('[Test] ✅ Intermittent output handled correctly');
     }, 90000);
+
+    /**
+     * Test for callback-based streaming 
+     * This validates that long-running commands work via callback pattern
+     */
+    test('should handle very long-running commands (60+ seconds) via callback-based streaming', async () => {
+      currentSandboxId = createSandboxId();
+      const headers = createTestHeaders(currentSandboxId);
+
+      console.log('[Test] Starting 60+ second command via callback-based streaming...');
+
+      // With callback-based streaming, it should complete successfully
+      const streamResponse = await vi.waitFor(
+        async () => fetchWithStartup(`${workerUrl}/api/execStream`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            // Command that runs for 60+ seconds with periodic output
+            command: "bash -c 'for i in {1..12}; do echo \"Minute mark $i\"; sleep 5; done; echo \"COMPLETED\"'",
+          }),
+        }),
+        { timeout: 90000, interval: 2000 }
+      );
+
+      expect(streamResponse.status).toBe(200);
+
+      const startTime = Date.now();
+      const events = await collectSSEEvents(streamResponse, 100);
+      const duration = Date.now() - startTime;
+
+      console.log(`[Test] Very long stream completed in ${duration}ms`);
+
+      // Verify command ran for approximately 60 seconds (12 ticks * 5 seconds)
+      expect(duration).toBeGreaterThan(55000); // At least 55 seconds
+      expect(duration).toBeLessThan(75000); // But not timed out (under 75s)
+
+      // Should have received all minute marks
+      const stdoutEvents = events.filter((e) => e.type === 'stdout');
+      const output = stdoutEvents.map((e) => e.data).join('');
+
+      for (let i = 1; i <= 12; i++) {
+        expect(output).toContain(`Minute mark ${i}`);
+      }
+      expect(output).toContain('COMPLETED');
+
+      // Most importantly: should complete with exit code 0 (not timeout/disconnect)
+      const completeEvent = events.find((e) => e.type === 'complete');
+      expect(completeEvent).toBeDefined();
+      expect(completeEvent?.exitCode).toBe(0);
+
+      console.log('[Test] ✅ Very long-running command completed!');
+    }, 90000);
+
+    test('should handle command that sleeps for extended period', async () => {
+      currentSandboxId = createSandboxId();
+      const headers = createTestHeaders(currentSandboxId);
+
+      console.log('[Test] Testing sleep 45 && echo "done" pattern...');
+
+      // This is the exact pattern that was failing before
+      const streamResponse = await vi.waitFor(
+        async () => fetchWithStartup(`${workerUrl}/api/execStream`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            command: 'sleep 45 && echo "done"',
+          }),
+        }),
+        { timeout: 90000, interval: 2000 }
+      );
+
+      expect(streamResponse.status).toBe(200);
+
+      const startTime = Date.now();
+      const events = await collectSSEEvents(streamResponse, 20);
+      const duration = Date.now() - startTime;
+
+      console.log(`[Test] Sleep command completed in ${duration}ms`);
+
+      // Should have taken at least 45 seconds
+      expect(duration).toBeGreaterThan(44000);
+
+      // Should have the output
+      const stdoutEvents = events.filter((e) => e.type === 'stdout');
+      const output = stdoutEvents.map((e) => e.data).join('');
+      expect(output).toContain('done');
+
+      // Should complete successfully
+      const completeEvent = events.find((e) => e.type === 'complete');
+      expect(completeEvent).toBeDefined();
+      expect(completeEvent?.exitCode).toBe(0);
+
+      console.log('[Test] ✅ Long sleep command completed without disconnect!');
+    }, 90000);
   });
 });

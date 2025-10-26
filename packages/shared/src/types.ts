@@ -634,6 +634,18 @@ export interface ISandbox {
   execStream(command: string, options?: StreamOptions): Promise<ReadableStream<Uint8Array>>;
   streamProcessLogs(processId: string, options?: { signal?: AbortSignal }): Promise<ReadableStream<Uint8Array>>;
 
+  // Callback-based streaming 
+  execStreamWithCallback(
+    command: string,
+    onEvent: (event: ExecEvent) => void | Promise<void>,
+    options?: { sessionId?: string; signal?: AbortSignal }
+  ): Promise<void>;
+  streamProcessLogsWithCallback(
+    processId: string,
+    onEvent: (event: ExecEvent) => void | Promise<void>,
+    options?: { signal?: AbortSignal }
+  ): Promise<void>;
+
   // Utility methods
   cleanupCompletedProcesses(): Promise<number>;
   getProcessLogs(id: string): Promise<{ stdout: string; stderr: string; processId: string }>;
