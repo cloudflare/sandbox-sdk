@@ -1,5 +1,6 @@
 import type {
   DeleteFileResult,
+  FileExistsResult,
   ListFilesOptions,
   ListFilesResult,
   MkdirResult,
@@ -263,6 +264,31 @@ export class FileClient extends BaseHttpClient {
       return response;
     } catch (error) {
       this.logError('listFiles', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Check if a file or directory exists
+   * @param path - Path to check
+   * @param sessionId - The session ID for this operation
+   */
+  async exists(
+    path: string,
+    sessionId: string
+  ): Promise<FileExistsResult> {
+    try {
+      const data = {
+        path,
+        sessionId,
+      };
+
+      const response = await this.post<FileExistsResult>('/api/exists', data);
+
+      this.logSuccess('Path existence checked', `${path} (exists: ${response.exists})`);
+      return response;
+    } catch (error) {
+      this.logError('exists', error);
       throw error;
     }
   }

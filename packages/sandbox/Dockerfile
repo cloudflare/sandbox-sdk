@@ -60,8 +60,14 @@ RUN npm ci --production
 # ============================================================================
 FROM ubuntu:22.04 AS runtime
 
+# Accept version as build argument (passed from npm_package_version)
+ARG SANDBOX_VERSION=unknown
+
 # Prevent interactive prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
+
+# Set the sandbox version as an environment variable for version checking
+ENV SANDBOX_VERSION=${SANDBOX_VERSION}
 
 # Install essential runtime packages
 RUN apt-get update && apt-get install -y --no-install-recommends \

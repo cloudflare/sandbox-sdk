@@ -18,6 +18,13 @@ export interface CommandsResponse extends BaseApiResponse {
 }
 
 /**
+ * Response interface for getting container version
+ */
+export interface VersionResponse extends BaseApiResponse {
+  version: string;
+}
+
+/**
  * Request interface for creating sessions
  */
 export interface CreateSessionRequest {
@@ -89,6 +96,24 @@ export class UtilityClient extends BaseHttpClient {
     } catch (error) {
       this.logError('createSession', error);
       throw error;
+    }
+  }
+
+  /**
+   * Get the container version
+   * Returns the version embedded in the Docker image during build
+   */
+  async getVersion(): Promise<string> {
+    try {
+      const response = await this.get<VersionResponse>('/api/version');
+
+      this.logSuccess('Version retrieved', response.version);
+      return response.version;
+    } catch (error) {
+      // If version endpoint doesn't exist (old container), return 'unknown'
+      // This allows for backward compatibility
+      this.logger.debug('Failed to get container version (may be old container)', { error });
+      return 'unknown';
     }
   }
 }

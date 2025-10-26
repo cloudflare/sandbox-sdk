@@ -210,6 +210,14 @@ export default {
         });
       }
 
+      // File exists
+      if (url.pathname === '/api/file/exists' && request.method === 'POST') {
+        const result = await executor.exists(body.path);
+        return new Response(JSON.stringify(result), {
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
       // Process start
       if (url.pathname === '/api/process/start' && request.method === 'POST') {
         const process = await executor.startProcess(body.command);

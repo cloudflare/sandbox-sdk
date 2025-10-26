@@ -648,7 +648,7 @@ export class Session {
         script += `      # Write exit code\n`;
         script += `      echo "$CMD_EXIT" > ${safeExitCodeFile}.tmp\n`;
         script += `      mv ${safeExitCodeFile}.tmp ${safeExitCodeFile}\n`;
-        script += `    } > "$sp" 2> "$ep" & CMD_PID=$!\n`;
+        script += `    } < /dev/null > "$sp" 2> "$ep" & CMD_PID=$!\n`;
         script += `    # Write PID for process killing\n`;
         script += `    echo "$CMD_PID" > ${safePidFile}.tmp\n`;
         script += `    mv ${safePidFile}.tmp ${safePidFile}\n`;
@@ -672,7 +672,7 @@ export class Session {
         script += `    # Write exit code\n`;
         script += `    echo "$CMD_EXIT" > ${safeExitCodeFile}.tmp\n`;
         script += `    mv ${safeExitCodeFile}.tmp ${safeExitCodeFile}\n`;
-        script += `  } > "$sp" 2> "$ep" & CMD_PID=$!\n`;
+        script += `  } < /dev/null > "$sp" 2> "$ep" & CMD_PID=$!\n`;
         script += `  # Write PID for process killing\n`;
         script += `  echo "$CMD_PID" > ${safePidFile}.tmp\n`;
         script += `  mv ${safePidFile}.tmp ${safePidFile}\n`;
@@ -698,7 +698,7 @@ export class Session {
         script += `  PREV_DIR=$(pwd)\n`;
         script += `  if cd ${safeCwd}; then\n`;
         script += `    # Execute command with prefixed streaming via process substitution\n`;
-        script += `    { ${command}; } > >(while IFS= read -r line || [[ -n "$line" ]]; do printf '\\x01\\x01\\x01%s\\n' "$line"; done >> "$log") 2> >(while IFS= read -r line || [[ -n "$line" ]]; do printf '\\x02\\x02\\x02%s\\n' "$line"; done >> "$log")\n`;
+        script += `    { ${command}; } < /dev/null > >(while IFS= read -r line || [[ -n "$line" ]]; do printf '\\x01\\x01\\x01%s\\n' "$line"; done >> "$log") 2> >(while IFS= read -r line || [[ -n "$line" ]]; do printf '\\x02\\x02\\x02%s\\n' "$line"; done >> "$log")\n`;
         script += `    EXIT_CODE=$?\n`;
         script += `    # Restore directory\n`;
         script += `    cd "$PREV_DIR"\n`;
@@ -708,7 +708,7 @@ export class Session {
         script += `  fi\n`;
       } else {
         script += `  # Execute command with prefixed streaming via process substitution\n`;
-        script += `  { ${command}; } > >(while IFS= read -r line || [[ -n "$line" ]]; do printf '\\x01\\x01\\x01%s\\n' "$line"; done >> "$log") 2> >(while IFS= read -r line || [[ -n "$line" ]]; do printf '\\x02\\x02\\x02%s\\n' "$line"; done >> "$log")\n`;
+        script += `  { ${command}; } < /dev/null > >(while IFS= read -r line || [[ -n "$line" ]]; do printf '\\x01\\x01\\x01%s\\n' "$line"; done >> "$log") 2> >(while IFS= read -r line || [[ -n "$line" ]]; do printf '\\x02\\x02\\x02%s\\n' "$line"; done >> "$log")\n`;
         script += `  EXIT_CODE=$?\n`;
       }
 

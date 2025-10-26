@@ -31,6 +31,7 @@ export type {
   DeleteFileRequest,
   ExecuteRequest,
   ExposePortRequest,
+  FileExistsRequest,
   GitCheckoutRequest,
   MkdirRequest,
   MoveFileRequest,
@@ -53,6 +54,7 @@ export type {
   ExecOptions,
   ExecResult,
   ExecutionSession,
+  FileExistsResult,
   // File streaming types
   FileChunk,
   FileInfo,

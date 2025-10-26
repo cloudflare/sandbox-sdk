@@ -29,6 +29,7 @@ import {
   validatePort
 } from "./security";
 import { parseSSEStream } from "./sse-parser";
+import { SDK_VERSION } from "./version";
 
 export function getSandbox(
   ns: DurableObjectNamespace<Sandbox>,
@@ -168,6 +169,54 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   override onStart() {
     this.logger.debug('Sandbox started');
+
+    // Check version compatibility asynchronously (don't block startup)
+    this.checkVersionCompatibility().catch(error => {
+      this.logger.error('Version compatibility check failed', error instanceof Error ? error : new Error(String(error)));
+    });
+  }
+
+  /**
+   * Check if the container version matches the SDK version
+   * Logs a warning if there's a mismatch
+   */
+  private async checkVersionCompatibility(): Promise<void> {
+    try {
+      // Get the SDK version (imported from version.ts)
+      const sdkVersion = SDK_VERSION;
+
+      // Get container version
+      const containerVersion = await this.client.utils.getVersion();
+
+      // If container version is unknown, it's likely an old container without the endpoint
+      if (containerVersion === 'unknown') {
+        this.logger.warn(
+          'Container version check: Container version could not be determined. ' +
+          'This may indicate an outdated container image. ' +
+          'Please update your container to match SDK version ' + sdkVersion
+        );
+        return;
+      }
+
+      // Check if versions match
+      if (containerVersion !== sdkVersion) {
+        const message =
+          `Version mismatch detected! SDK version (${sdkVersion}) does not match ` +
+          `container version (${containerVersion}). This may cause compatibility issues. ` +
+          `Please update your container image to version ${sdkVersion}`;
+
+        // Log warning - we can't reliably detect dev vs prod environment in Durable Objects
+        // so we always use warning level as requested by the user
+        this.logger.warn(message);
+      } else {
+        this.logger.debug('Version check passed', { sdkVersion, containerVersion });
+      }
+    } catch (error) {
+      // Don't fail the sandbox initialization if version check fails
+      this.logger.debug('Version compatibility check encountered an error', {
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
   }
 
   override onStop() {
@@ -308,7 +357,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         this.logger.debug('Default session initialized', { sessionId });
       } catch (error: any) {
         // If session already exists (e.g., after hot reload), reuse it
-        if (error?.message?.includes('already exists') || error?.message?.includes('Session')) {
+        if (error?.message?.includes('already exists')) {
           this.logger.debug('Reusing existing session after reload', { sessionId });
           this.defaultSession = sessionId;
           // Persist to storage in case it wasn't saved before
@@ -1010,6 +1059,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     return this.client.files.listFiles(path, session, options);
   }
 
+  async exists(path: string, sessionId?: string) {
+    const session = sessionId ?? await this.ensureDefaultSession();
+    return this.client.files.exists(path, session);
+  }
+
   async exposePort(port: number, options: { name?: string; hostname: string }) {
     // Check if hostname is workers.dev domain (doesn't support wildcard subdomains)
     if (options.hostname.endsWith('.workers.dev')) {
@@ -1251,6 +1305,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       renameFile: (oldPath, newPath) => this.renameFile(oldPath, newPath, sessionId),
       moveFile: (sourcePath, destPath) => this.moveFile(sourcePath, destPath, sessionId),
       listFiles: (path, options) => this.client.files.listFiles(path, sessionId, options),
+      exists: (path) => this.exists(path, sessionId),
 
       // Git operations
       gitCheckout: (repoUrl, options) => this.gitCheckout(repoUrl, { ...options, sessionId }),

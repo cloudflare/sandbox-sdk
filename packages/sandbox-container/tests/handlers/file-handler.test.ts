@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "bun:test";
 import type {
   DeleteFileResult,
+  FileExistsResult,
   MkdirResult,
   MoveFileResult,
   ReadFileResult,
@@ -483,6 +484,90 @@ describe('FileHandler', () => {
       expect(responseData.message).toBe('Permission denied');
       expect(responseData.httpStatus).toBe(403);
       expect(responseData.timestamp).toBeDefined();
+    });
+  });
+
+  describe('handleExists - POST /api/exists', () => {
+    it('should return true when file exists', async () => {
+      const existsData = {
+        path: '/tmp/test.txt',
+        sessionId: 'session-123'
+      };
+
+      (mockFileService.exists as any).mockResolvedValue({
+        success: true,
+        data: true
+      });
+
+      const request = new Request('http://localhost:3000/api/exists', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(existsData)
+      });
+
+      const response = await fileHandler.handle(request, mockContext);
+
+      expect(response.status).toBe(200);
+      const responseData = await response.json() as FileExistsResult;
+      expect(responseData.success).toBe(true);
+      expect(responseData.exists).toBe(true);
+      expect(responseData.path).toBe('/tmp/test.txt');
+      expect(responseData.timestamp).toBeDefined();
+
+      expect(mockFileService.exists).toHaveBeenCalledWith('/tmp/test.txt', 'session-123');
+    });
+
+    it('should return false when file does not exist', async () => {
+      const existsData = {
+        path: '/tmp/nonexistent.txt',
+        sessionId: 'session-123'
+      };
+
+      (mockFileService.exists as any).mockResolvedValue({
+        success: true,
+        data: false
+      });
+
+      const request = new Request('http://localhost:3000/api/exists', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(existsData)
+      });
+
+      const response = await fileHandler.handle(request, mockContext);
+
+      expect(response.status).toBe(200);
+      const responseData = await response.json() as FileExistsResult;
+      expect(responseData.success).toBe(true);
+      expect(responseData.exists).toBe(false);
+    });
+
+    it('should handle errors when checking file existence', async () => {
+      const existsData = {
+        path: '/invalid/path',
+        sessionId: 'session-123'
+      };
+
+      (mockFileService.exists as any).mockResolvedValue({
+        success: false,
+        error: {
+          message: 'Invalid path',
+          code: 'VALIDATION_FAILED',
+          httpStatus: 400
+        }
+      });
+
+      const request = new Request('http://localhost:3000/api/exists', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(existsData)
+      });
+
+      const response = await fileHandler.handle(request, mockContext);
+
+      expect(response.status).toBe(400);
+      const responseData = await response.json() as ErrorResponse;
+      expect(responseData.code).toBe('VALIDATION_FAILED');
     });
   });
 
