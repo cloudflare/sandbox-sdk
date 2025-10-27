@@ -618,20 +618,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   /**
    * Execute a command and return a ReadableStream of SSE events.
    *
-   * ⚠️ **Important**: If calling this method from outside the Sandbox Durable Object (via RPC),
-   * streams may disconnect after ~40 seconds for long-running commands. For RPC calls,
-   * use `execStreamWithCallback()` instead which processes the stream internally.
-   *
+   * **For long-running commands**
    * **Use this method when:**
    * - You're inside a Worker endpoint and need to proxy/pipe the stream to an HTTP response
    * - You're calling this directly from within the Sandbox DO
-   *
-   * **Use `execStreamWithCallback()` when:**
-   * - Calling from another Durable Object via RPC
-   * - Commands may run longer than 40 seconds
-   * - You need reliable event delivery
-   *
-   * @see execStreamWithCallback for RPC-safe streaming
    */
   async execStream(command: string, options?: StreamOptions): Promise<ReadableStream<Uint8Array>> {
     // Check for cancellation
@@ -660,21 +650,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   /**
    * Stream logs from a background process as a ReadableStream.
-   *
-   * ⚠️ **Important**: If calling this method from outside the Sandbox Durable Object (via RPC),
-   * streams may disconnect after ~40 seconds for long-running processes. For RPC calls,
-   * use `streamProcessLogsWithCallback()` instead which processes the stream internally.
+
+   * **For long-running processes**
    *
    * **Use this method when:**
    * - You're inside a Worker endpoint and need to proxy/pipe the stream to an HTTP response
    * - You're calling this directly from within the Sandbox DO
-   *
-   * **Use `streamProcessLogsWithCallback()` when:**
-   * - Calling from another Durable Object via RPC
-   * - Process may run longer than 40 seconds
-   * - You need reliable event delivery
-   *
-   * @see streamProcessLogsWithCallback for RPC-safe streaming
    */
   async streamProcessLogs(processId: string, options?: { signal?: AbortSignal }): Promise<ReadableStream<Uint8Array>> {
     // Check for cancellation
@@ -811,83 +792,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     });
   }
 
-  /**
-   * Execute a command with streaming output handled internally via callback.
-   *
-   * @param command - The command to execute
-   * @param onEvent - Callback function that receives each ExecEvent as it arrives
-   * @param options - Optional execution options including sessionId and signal
-   * @returns Promise that resolves when the command completes
-   */
-  async execStreamWithCallback(
-    command: string,
-    onEvent: (event: ExecEvent) => void | Promise<void>,
-    options?: { sessionId?: string; signal?: AbortSignal }
-  ): Promise<void> {
-    // Check for cancellation
-    if (options?.signal?.aborted) {
-      throw new Error('Operation was aborted');
-    }
 
-    const session = options?.sessionId ?? await this.ensureDefaultSession();
-
-    // Get the stream - this happens INSIDE the Sandbox DO, so it's a direct HTTP fetch
-    const stream = await this.client.commands.executeStream(command, session);
-
-    // Parse and process the stream internally
-    try {
-      for await (const event of parseSSEStream<ExecEvent>(stream)) {
-        // Check for cancellation during streaming
-        if (options?.signal?.aborted) {
-          throw new Error('Operation was aborted');
-        }
-
-        // Call the event callback
-        await onEvent(event);
-      }
-    } catch (error) {
-      this.logger.error('Error in execStreamWithCallback', error instanceof Error ? error : new Error(String(error)));
-      throw error;
-    }
-  }
-
-  /**
-   * Stream process logs with output handled internally via callback.
-   *
-   * @param processId - The ID of the process to stream logs from
-   * @param onEvent - Callback function that receives each ExecEvent as it arrives
-   * @param options - Optional signal for cancellation
-   * @returns Promise that resolves when the stream completes
-   */
-  async streamProcessLogsWithCallback(
-    processId: string,
-    onEvent: (event: ExecEvent) => void | Promise<void>,
-    options?: { signal?: AbortSignal }
-  ): Promise<void> {
-    // Check for cancellation
-    if (options?.signal?.aborted) {
-      throw new Error('Operation was aborted');
-    }
-
-    // Get the stream - this happens INSIDE the Sandbox DO, so it's a direct HTTP fetch
-    const stream = await this.client.processes.streamProcessLogs(processId);
-
-    // Parse and process the stream internally
-    try {
-      for await (const event of parseSSEStream<ExecEvent>(stream)) {
-        // Check for cancellation during streaming
-        if (options?.signal?.aborted) {
-          throw new Error('Operation was aborted');
-        }
-
-        // Call the event callback
-        await onEvent(event);
-      }
-    } catch (error) {
-      this.logger.error('Error in streamProcessLogsWithCallback', error instanceof Error ? error : new Error(String(error)));
-      throw error;
-    }
-  }
 
   async gitCheckout(
     repoUrl: string,
@@ -1192,8 +1097,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       // Command execution - delegate to internal session-aware methods
       exec: (command, options) => this.execWithSession(command, sessionId, options),
       execStream: (command, options) => this.execStreamWithSession(command, sessionId, options),
-      execStreamWithCallback: (command, onEvent, options) =>
-        this.execStreamWithCallback(command, onEvent, { ...options, sessionId }),
 
       // Process management
       startProcess: (command, options) => this.startProcess(command, options, sessionId),
@@ -1204,8 +1107,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       cleanupCompletedProcesses: () => this.cleanupCompletedProcesses(),
       getProcessLogs: (id) => this.getProcessLogs(id),
       streamProcessLogs: (processId, options) => this.streamProcessLogs(processId, options),
-      streamProcessLogsWithCallback: (processId, onEvent, options) =>
-        this.streamProcessLogsWithCallback(processId, onEvent, options),
 
       // File operations - pass sessionId via options or parameter
       writeFile: (path, content, options) => this.writeFile(path, content, { ...options, sessionId }),

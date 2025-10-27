@@ -614,13 +614,6 @@ export interface ExecutionSession {
   exec(command: string, options?: ExecOptions): Promise<ExecResult>;
   execStream(command: string, options?: StreamOptions): Promise<ReadableStream<Uint8Array>>;
 
-  // Callback-based streaming 
-  execStreamWithCallback(
-    command: string,
-    onEvent: (event: ExecEvent) => void | Promise<void>,
-    options?: { signal?: AbortSignal }
-  ): Promise<void>;
-
   // Background process management
   startProcess(command: string, options?: ProcessOptions): Promise<Process>;
   listProcesses(): Promise<Process[]>;
@@ -630,11 +623,7 @@ export interface ExecutionSession {
   cleanupCompletedProcesses(): Promise<number>;
   getProcessLogs(id: string): Promise<{ stdout: string; stderr: string; processId: string }>;
   streamProcessLogs(processId: string, options?: { signal?: AbortSignal }): Promise<ReadableStream<Uint8Array>>;
-  streamProcessLogsWithCallback(
-    processId: string,
-    onEvent: (event: ExecEvent) => void | Promise<void>,
-    options?: { signal?: AbortSignal }
-  ): Promise<void>;
+
   
   // File operations
   writeFile(path: string, content: string, options?: { encoding?: string }): Promise<WriteFileResult>;
@@ -676,18 +665,6 @@ export interface ISandbox {
   // Streaming operations
   execStream(command: string, options?: StreamOptions): Promise<ReadableStream<Uint8Array>>;
   streamProcessLogs(processId: string, options?: { signal?: AbortSignal }): Promise<ReadableStream<Uint8Array>>;
-
-  // Callback-based streaming 
-  execStreamWithCallback(
-    command: string,
-    onEvent: (event: ExecEvent) => void | Promise<void>,
-    options?: { sessionId?: string; signal?: AbortSignal }
-  ): Promise<void>;
-  streamProcessLogsWithCallback(
-    processId: string,
-    onEvent: (event: ExecEvent) => void | Promise<void>,
-    options?: { signal?: AbortSignal }
-  ): Promise<void>;
 
   // Utility methods
   cleanupCompletedProcesses(): Promise<number>;
