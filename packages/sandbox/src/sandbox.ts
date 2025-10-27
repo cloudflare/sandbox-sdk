@@ -49,6 +49,10 @@ export function getSandbox(
     stub.setSleepAfter(options.sleepAfter);
   }
 
+  if (options?.keepAlive !== undefined) {
+    stub.setKeepAlive(options.keepAlive);
+  }
+
   return stub;
 }
 
@@ -64,13 +68,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private defaultSession: string | undefined = undefined;
   envVars: Record<string, string> = {};
   private logger: ReturnType<typeof createLogger>;
-  private lastActivityRenewal: number = 0;
-  private readonly ACTIVITY_RENEWAL_THROTTLE_MS = 5000; // Throttle renewals to once per 5 seconds
   private readonly STREAM_HEALTH_CHECK_INTERVAL_MS = 30000; // Check sandbox health every 30 seconds during streaming
   private readonly STREAM_READ_TIMEOUT_MS = 300000; // 5 minutes timeout for stream reads (detects hung streams)
-  private readonly PROCESS_MONITOR_INTERVAL_MS = 5000; // Check for running processes every 5 seconds
-  private processMonitorInterval: ReturnType<typeof setInterval> | undefined = undefined;
-  private lastProcessMonitorRenewal: number = 0;
+  private keepAliveEnabled: boolean = false;
 
   constructor(ctx: DurableObject['ctx'], env: Env) {
     super(ctx, env);
@@ -136,6 +136,16 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   // RPC method to set the sleep timeout
   async setSleepAfter(sleepAfter: string | number): Promise<void> {
     this.sleepAfter = sleepAfter;
+  }
+
+  // RPC method to enable keepAlive mode
+  async setKeepAlive(keepAlive: boolean): Promise<void> {
+    this.keepAliveEnabled = keepAlive;
+    if (keepAlive) {
+      this.logger.info('KeepAlive mode enabled - container will stay alive until explicitly destroyed');
+    } else {
+      this.logger.info('KeepAlive mode disabled - container will timeout normally');
+    }
   }
 
   // RPC method to set environment variables
@@ -221,93 +231,27 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   override onStop() {
     this.logger.debug('Sandbox stopped');
-    this.stopProcessMonitor();
   }
 
   override onError(error: unknown) {
     this.logger.error('Sandbox error', error instanceof Error ? error : new Error(String(error)));
-    this.stopProcessMonitor();
   }
 
   /**
-   * Throttled activity timeout renewal, to prevent renewal on every chunk
-   * Only renews if sufficient time has passed since last renewal
+   * Override onActivityExpired to prevent automatic shutdown when keepAlive is enabled
+   * When keepAlive is disabled, calls parent implementation which stops the container
    */
-  private renewActivityTimeoutThrottled(): void {
-    const now = Date.now();
-    const timeSinceLastRenewal = now - this.lastActivityRenewal;
-
-    // Only renew if throttle period has elapsed
-    if (timeSinceLastRenewal >= this.ACTIVITY_RENEWAL_THROTTLE_MS) {
-      this.renewActivityTimeout();
-      this.lastActivityRenewal = now;
+  override async onActivityExpired(): Promise<void> {
+    if (this.keepAliveEnabled) {
+      this.logger.debug('Activity expired but keepAlive is enabled - container will stay alive');
+      // Do nothing - don't call stop(), container stays alive
+    } else {
+      // Default behavior: stop the container
+      this.logger.debug('Activity expired - stopping container');
+      await super.onActivityExpired();
     }
   }
 
-  /**
-   * Start the global process monitor that keeps the container alive
-   * while any processes are running, even without active streams.
-   */
-  private startProcessMonitor(): void {
-    // Don't start if already running
-    if (this.processMonitorInterval) {
-      return;
-    }
-
-    this.logger.debug('Starting global process monitor');
-    let consecutiveFailures = 0;
-    const MAX_CONSECUTIVE_FAILURES = 3; // Stop after 3 consecutive failures (15 seconds)
-
-    this.processMonitorInterval = setInterval(async () => {
-      try {
-        const processList = await this.client.processes.listProcesses();
-        consecutiveFailures = 0; // Reset on success
-        const runningProcesses = processList.processes.filter(
-          p => p.status === 'running' || p.status === 'starting'
-        );
-
-        if (runningProcesses.length > 0) {
-          const now = Date.now();
-          if (now - this.lastProcessMonitorRenewal >= this.ACTIVITY_RENEWAL_THROTTLE_MS) {
-            this.renewActivityTimeout();
-            this.lastProcessMonitorRenewal = now;
-            this.logger.debug(
-              `Global process monitor renewed activity timeout due to ${runningProcesses.length} running process(es): ${runningProcesses.map(p => p.id).join(', ')}`
-            );
-          }
-        } else {
-          // No running processes, stop the monitor
-          this.logger.debug('No running processes found, stopping global process monitor');
-          this.stopProcessMonitor();
-        }
-      } catch (error) {
-        consecutiveFailures++;
-        const errorMsg = error instanceof Error ? error.message : String(error);
-
-        if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
-          this.logger.error(
-            `Global process monitor failed ${consecutiveFailures} times, stopping monitor. Last error: ${errorMsg}`
-          );
-          this.stopProcessMonitor();
-        } else {
-          this.logger.debug(
-            `Global process monitor failed to check running processes (${consecutiveFailures}/${MAX_CONSECUTIVE_FAILURES}): ${errorMsg}`
-          );
-        }
-      }
-    }, this.PROCESS_MONITOR_INTERVAL_MS);
-  }
-
-  /**
-   * Stop the global process monitor
-   */
-  private stopProcessMonitor(): void {
-    if (this.processMonitorInterval) {
-      clearInterval(this.processMonitorInterval);
-      this.processMonitorInterval = undefined;
-      this.logger.debug('Stopped global process monitor');
-    }
-  }
 
   // Override fetch to route internal container requests to appropriate ports
   override async fetch(request: Request): Promise<Response> {
@@ -468,10 +412,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           case 'stdout':
           case 'stderr':
             if (event.data) {
-              // Renew activity timeout on each output event (throttled to reduce overhead)
-              // This keeps the container alive during active command execution
-              this.renewActivityTimeoutThrottled();
-
               // Update accumulated output
               if (event.type === 'stdout') stdout += event.data;
               if (event.type === 'stderr') stderr += event.data;
@@ -593,10 +533,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         endTime: undefined,
         exitCode: undefined
       }, session);
-
-      // Start the global process monitor to keep container alive
-      // even if no one is streaming
-      this.startProcessMonitor();
 
       // Call onStart callback if provided
       if (options?.onStart) {
@@ -751,14 +687,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   /**
-   * Wraps a ReadableStream 
+   * Wraps a ReadableStream with health monitoring
    */
   private wrapStreamWithActivityRenewal(stream: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> {
     const self = this;
     let healthCheckInterval: ReturnType<typeof setInterval> | undefined;
     let streamActive = true;
     let errorReported = false;
-    let lastActivityRenewal = 0;
 
     return new ReadableStream<Uint8Array>({
       async start(controller) {
@@ -829,11 +764,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
             if (done) {
               controller.close();
               break;
-            }
-            const now = Date.now();
-            if (now - lastActivityRenewal >= self.ACTIVITY_RENEWAL_THROTTLE_MS) {
-              self.renewActivityTimeout();
-              lastActivityRenewal = now;
             }
 
             controller.enqueue(value);
@@ -912,11 +842,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           throw new Error('Operation was aborted');
         }
 
-        // Renew activity timeout periodically (if available)
-        if (this.renewActivityTimeout) {
-          this.renewActivityTimeout();
-        }
-
         // Call the event callback
         await onEvent(event);
       }
@@ -953,11 +878,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         // Check for cancellation during streaming
         if (options?.signal?.aborted) {
           throw new Error('Operation was aborted');
-        }
-
-        // Renew activity timeout periodically (if available)
-        if (this.renewActivityTimeout) {
-          this.renewActivityTimeout();
         }
 
         // Call the event callback

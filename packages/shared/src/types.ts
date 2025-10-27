@@ -262,6 +262,8 @@ export interface SandboxOptions {
    * - A string like "30s", "3m", "5m", "1h" (seconds, minutes, or hours)
    * - A number representing seconds (e.g., 180 for 3 minutes)
    * Default: "10m" (10 minutes)
+   *
+   * Note: Ignored when keepAlive is true
    */
   sleepAfter?: string | number;
 
@@ -269,6 +271,27 @@ export interface SandboxOptions {
    * Base URL for the sandbox API
    */
   baseUrl?: string;
+
+  /**
+   * Keep the container alive indefinitely by preventing automatic shutdown
+   * When true, the container will never auto-timeout and must be explicitly destroyed
+   *
+   * How it works:
+   * - Overrides onActivityExpired() to prevent shutdown when activity timeout expires
+   * - No active renewal or polling needed - simply prevents the default stop behavior
+   * - Container stays alive until you explicitly call destroy()
+   *
+   * Use cases:
+   * - Long-lived IDE/notebook sessions
+   * - WebSocket servers with sporadic message activity
+   * - Long-running background processes (builds, watchers, etc.)
+   * - Any scenario where activity can't be automatically detected
+   *
+   * Important: You MUST call sandbox.destroy() when done to avoid resource leaks
+   *
+   * Default: false
+   */
+  keepAlive?: boolean;
 }
 
 /**

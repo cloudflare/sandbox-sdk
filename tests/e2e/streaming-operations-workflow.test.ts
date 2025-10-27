@@ -446,14 +446,13 @@ describe('Streaming Operations Workflow', () => {
     }, 90000);
 
 
-    test('should keep container alive during 15+ second streaming command (GitHub #101)', async () => {
+    test('should handle 15+ second streaming command', async () => {
       currentSandboxId = createSandboxId();
       const headers = createTestHeaders(currentSandboxId);
 
-      console.log('[Test] Starting 15+ second streaming command to verify activity renewal...');
+      console.log('[Test] Starting 15+ second streaming command...');
 
       // Stream a command that runs for 15+ seconds with output every 2 seconds
-      // Without activity renewal, this would timeout (default container timeout is ~10s)
       const streamResponse = await vi.waitFor(
         async () => fetchWithStartup(`${workerUrl}/api/execStream`, {
           method: 'POST',
@@ -491,7 +490,7 @@ describe('Streaming Operations Workflow', () => {
       expect(completeEvent).toBeDefined();
       expect(completeEvent?.exitCode).toBe(0);
 
-      console.log('[Test] ✅ Container stayed alive for 16+ seconds - activity renewal working!');
+      console.log('[Test] ✅ Streaming command completed successfully after 16+ seconds!');
     }, 90000);
 
     test('should handle high-volume streaming over extended period', async () => {

@@ -31,7 +31,14 @@ export default {
     // Get sandbox ID from header
     // Sandbox ID determines which container instance (Durable Object)
     const sandboxId = request.headers.get('X-Sandbox-Id') || 'default-test-sandbox';
-    const sandbox = getSandbox(env.Sandbox, sandboxId) as Sandbox<Env>;
+
+    // Check if keepAlive is requested
+    const keepAliveHeader = request.headers.get('X-Sandbox-KeepAlive');
+    const keepAlive = keepAliveHeader === 'true';
+
+    const sandbox = getSandbox(env.Sandbox, sandboxId, {
+      keepAlive,
+    }) as Sandbox<Env>;
 
     // Get session ID from header (optional)
     // If provided, retrieve the session fresh from the Sandbox DO on each request

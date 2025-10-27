@@ -463,58 +463,15 @@ describe('Sandbox - Automatic Session Management', () => {
     });
   });
 
-  describe('Activity renewal and health checks', () => {
-    let renewActivityTimeoutSpy: any;
-
+  describe('Health checks', () => {
     beforeEach(() => {
-      // Mock Container base class methods
-      (sandbox as any).renewActivityTimeout = vi.fn();
+      // Mock Container base class getState method for health checks
       (sandbox as any).getState = vi.fn().mockResolvedValue({
         status: 'running',
         timestamp: new Date().toISOString(),
       });
-
-      // Spy on the base renewActivityTimeout method (called by inline throttling)
-      renewActivityTimeoutSpy = vi.spyOn(sandbox as any, 'renewActivityTimeout');
     });
 
-    it('should throttle activity renewal during streaming', async () => {
-      // Create a mock stream that emits multiple chunks quickly
-      const encoder = new TextEncoder();
-      const chunks = Array.from({ length: 10 }, (_, i) => encoder.encode(`chunk ${i}\n`));
-
-      const mockStream = new ReadableStream({
-        async start(controller) {
-          for (const chunk of chunks) {
-            controller.enqueue(chunk);
-          }
-          controller.close();
-        }
-      });
-
-      vi.spyOn(sandbox.client.commands, 'executeStream').mockResolvedValue(mockStream);
-
-      const stream = await sandbox.execStream('echo test');
-      const reader = stream.getReader();
-
-      // Read all chunks
-      let chunkCount = 0;
-      while (true) {
-        const { done } = await reader.read();
-        if (done) break;
-        chunkCount++;
-      }
-
-      expect(chunkCount).toBe(10);
-
-      // Activity renewal should be called, but throttled (not once per chunk)
-      // With 5 second throttle and instant reads, first chunk triggers renewal,
-      // subsequent chunks are throttled since less than 5s has passed
-      expect(renewActivityTimeoutSpy).toHaveBeenCalled();
-      expect(renewActivityTimeoutSpy.mock.calls.length).toBeLessThanOrEqual(chunkCount);
-      // Should be called at least once (first chunk) but not for every chunk
-      expect(renewActivityTimeoutSpy.mock.calls.length).toBeGreaterThanOrEqual(1);
-    });
 
     it('should detect container crashes during streaming', async () => {
       vi.useFakeTimers();
@@ -691,9 +648,6 @@ describe('Sandbox - Automatic Session Management', () => {
       vi.spyOn(sandbox.client.processes, 'streamProcessLogs').mockResolvedValue(mockStream);
       const logsStream = await sandbox.streamProcessLogs('proc-1');
       expect(logsStream).toBeInstanceOf(ReadableStream);
-
-      // Verify both streams have activity renewal applied
-      expect(renewActivityTimeoutSpy).toHaveBeenCalled();
     });
   });
 
@@ -799,34 +753,6 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(receivedEvents[1].type).toBe('complete');
     });
 
-    it('should renew activity timeout during streaming', async () => {
-      const mockEvents = [
-        { type: 'stdout', timestamp: new Date().toISOString(), data: 'chunk1\n' },
-        { type: 'stdout', timestamp: new Date().toISOString(), data: 'chunk2\n' },
-        { type: 'complete', timestamp: new Date().toISOString(), exitCode: 0 },
-      ];
-
-      const mockStream = new ReadableStream({
-        start(controller) {
-          const encoder = new TextEncoder();
-          for (const event of mockEvents) {
-            const sseData = `data: ${JSON.stringify(event)}\n\n`;
-            controller.enqueue(encoder.encode(sseData));
-          }
-          controller.close();
-        }
-      });
-
-      vi.spyOn(sandbox.client.commands, 'executeStream').mockResolvedValue(mockStream);
-
-      // Mock renewActivityTimeout before creating the spy
-      (sandbox as any).renewActivityTimeout = vi.fn();
-      const renewSpy = vi.spyOn(sandbox as any, 'renewActivityTimeout');
-
-      await sandbox.execStreamWithCallback('echo test', () => {});
-
-      expect(renewSpy).toHaveBeenCalled();
-    });
 
     it('should handle errors in streaming', async () => {
       const mockStream = new ReadableStream({
