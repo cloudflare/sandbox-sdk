@@ -238,7 +238,17 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         await this.ctx.storage.put('sandboxName', name);
       }
 
-      // Determine which port to route to
+      // Detect WebSocket upgrade request
+      const upgradeHeader = request.headers.get('Upgrade');
+      const isWebSocket = upgradeHeader?.toLowerCase() === 'websocket';
+
+      if (isWebSocket) {
+        // WebSocket path: Let parent Container class handle WebSocket proxying
+        // This bypasses containerFetch() which uses JSRPC and cannot handle WebSocket upgrades
+        return await super.fetch(request);
+      }
+
+      // Non-WebSocket: Use existing port determination and HTTP routing logic
       const port = this.determinePort(url);
 
       // Route to the appropriate port

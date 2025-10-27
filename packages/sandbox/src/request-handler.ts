@@ -1,4 +1,5 @@
 import { createLogger, type LogContext, TraceContext } from "@repo/shared";
+import { switchPort } from "@cloudflare/containers";
 import { getSandbox, type Sandbox } from "./sandbox";
 import {
   sanitizeSandboxId,
@@ -70,6 +71,14 @@ export async function proxyToSandbox<E extends SandboxEnv>(
       }
     }
 
+    // Detect WebSocket upgrade request
+    const upgradeHeader = request.headers.get('Upgrade');
+    if (upgradeHeader?.toLowerCase() === 'websocket') {
+      // WebSocket path: Must use fetch() not containerFetch()
+      // This bypasses JSRPC serialization boundary which cannot handle WebSocket upgrades
+      return await sandbox.fetch(switchPort(request, port));
+    }
+
     // Build proxy request with proper headers
     let proxyUrl: string;
 
@@ -96,7 +105,7 @@ export async function proxyToSandbox<E extends SandboxEnv>(
       duplex: 'half',
     });
 
-    return sandbox.containerFetch(proxyRequest, port);
+    return await sandbox.containerFetch(proxyRequest, port);
   } catch (error) {
     logger.error('Proxy routing error', error instanceof Error ? error : new Error(String(error)));
     return new Response('Proxy routing error', { status: 500 });
