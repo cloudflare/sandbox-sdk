@@ -690,7 +690,7 @@ export interface ISandbox {
   // Code interpreter methods
   createCodeContext(options?: CreateContextOptions): Promise<CodeContext>;
   runCode(code: string, options?: RunCodeOptions): Promise<ExecutionResult>;
-  runCodeStream(code: string, options?: RunCodeOptions): Promise<ReadableStream<Uint8Array>>;
+  runCodeStream(code: string, options?: RunCodeOptions): Promise<ReadableStream>;
   listCodeContexts(): Promise<CodeContext[]>;
   deleteCodeContext(contextId: string): Promise<void>;
 }

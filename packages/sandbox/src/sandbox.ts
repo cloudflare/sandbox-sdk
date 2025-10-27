@@ -58,10 +58,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   client: SandboxClient;
   private codeInterpreter: CodeInterpreter;
-  private sandboxName: string | null = null;
-  private baseUrl: string | null = null;
+  private sandboxName: string | undefined = undefined;
+  private baseUrl: string | undefined = undefined;
   private portTokens: Map<number, string> = new Map();
-  private defaultSession: string | null = null;
+  private defaultSession: string | undefined = undefined;
   envVars: Record<string, string> = {};
   private logger: ReturnType<typeof createLogger>;
   private lastActivityRenewal: number = 0;
@@ -69,7 +69,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private readonly STREAM_HEALTH_CHECK_INTERVAL_MS = 30000; // Check sandbox health every 30 seconds during streaming
   private readonly STREAM_READ_TIMEOUT_MS = 300000; // 5 minutes timeout for stream reads (detects hung streams)
   private readonly PROCESS_MONITOR_INTERVAL_MS = 5000; // Check for running processes every 5 seconds
-  private processMonitorInterval: ReturnType<typeof setInterval> | null = null;
+  private processMonitorInterval: ReturnType<typeof setInterval> | undefined = undefined;
   private lastProcessMonitorRenewal: number = 0;
 
   constructor(ctx: DurableObject['ctx'], env: Env) {
@@ -101,8 +101,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     // Load the sandbox name, port tokens, and default session from storage on initialization
     this.ctx.blockConcurrencyWhile(async () => {
-      this.sandboxName = await this.ctx.storage.get<string>('sandboxName') || null;
-      this.defaultSession = await this.ctx.storage.get<string>('defaultSession') || null;
+      this.sandboxName = await this.ctx.storage.get<string>('sandboxName') || undefined;
+      this.defaultSession = await this.ctx.storage.get<string>('defaultSession') || undefined;
       const storedTokens = await this.ctx.storage.get<Record<string, string>>('portTokens') || {};
 
       // Convert stored tokens back to Map
@@ -221,10 +221,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   override onStop() {
     this.logger.debug('Sandbox stopped');
+    this.stopProcessMonitor();
   }
 
   override onError(error: unknown) {
     this.logger.error('Sandbox error', error instanceof Error ? error : new Error(String(error)));
+    this.stopProcessMonitor();
   }
 
   /**
@@ -253,10 +255,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
 
     this.logger.debug('Starting global process monitor');
+    let consecutiveFailures = 0;
+    const MAX_CONSECUTIVE_FAILURES = 3; // Stop after 3 consecutive failures (15 seconds)
 
     this.processMonitorInterval = setInterval(async () => {
       try {
         const processList = await this.client.processes.listProcesses();
+        consecutiveFailures = 0; // Reset on success
         const runningProcesses = processList.processes.filter(
           p => p.status === 'running' || p.status === 'starting'
         );
@@ -276,8 +281,19 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           this.stopProcessMonitor();
         }
       } catch (error) {
-        // Non-fatal: if we can't check processes, just log and continue
-        this.logger.debug(`Global process monitor failed to check running processes: ${error instanceof Error ? error.message : String(error)}`);
+        consecutiveFailures++;
+        const errorMsg = error instanceof Error ? error.message : String(error);
+
+        if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+          this.logger.error(
+            `Global process monitor failed ${consecutiveFailures} times, stopping monitor. Last error: ${errorMsg}`
+          );
+          this.stopProcessMonitor();
+        } else {
+          this.logger.debug(
+            `Global process monitor failed to check running processes (${consecutiveFailures}/${MAX_CONSECUTIVE_FAILURES}): ${errorMsg}`
+          );
+        }
       }
     }, this.PROCESS_MONITOR_INTERVAL_MS);
   }
@@ -288,7 +304,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private stopProcessMonitor(): void {
     if (this.processMonitorInterval) {
       clearInterval(this.processMonitorInterval);
-      this.processMonitorInterval = null;
+      this.processMonitorInterval = undefined;
       this.logger.debug('Stopped global process monitor');
     }
   }
@@ -735,10 +751,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   /**
-   * Wraps a ReadableStream to provide three critical protections:
-   * 1. Activity renewal - prevents sleepAfter timeout during active streaming
-   * 2. Health monitoring - detects container crashes mid-stream
-   * 3. Read timeout - detects hung streams (e.g., Bun connection idle timeout)*/
+   * Wraps a ReadableStream 
+   */
   private wrapStreamWithActivityRenewal(stream: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> {
     const self = this;
     let healthCheckInterval: ReturnType<typeof setInterval> | undefined;
@@ -753,7 +767,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         let currentTimeoutHandle: ReturnType<typeof setTimeout> | undefined;
 
         // Set up periodic health monitoring to detect container crashes
-        // AND to keep container alive while processes are running even without output
         healthCheckInterval = setInterval(async () => {
           if (!streamActive) {
             if (healthCheckInterval) {
@@ -776,30 +789,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
                 await reader.cancel(error.message);
               }
             }
-
-            // Check for running processes and renew activity if any exist
-            try {
-              const processList = await self.client.processes.listProcesses();
-              const runningProcesses = processList.processes.filter(
-                p => p.status === 'running' || p.status === 'starting'
-              );
-
-              if (runningProcesses.length > 0) {
-                const now = Date.now();
-                if (now - lastActivityRenewal >= self.ACTIVITY_RENEWAL_THROTTLE_MS) {
-                  self.renewActivityTimeout();
-                  lastActivityRenewal = now;
-                  self.logger.debug(
-                    `Renewed activity timeout due to ${runningProcesses.length} running process(es): ${runningProcesses.map(p => p.id).join(', ')}`
-                  );
-                }
-              }
-            } catch (error) {
-              // Non-fatal: if we can't check processes, just log and continue
-              self.logger.debug(`Failed to check running processes: ${error instanceof Error ? error.message : String(error)}`);
-            }
           } catch (error) {
-            // If getState() fails, container is likely dead
+            // If getState() fails, container is likely dead - this is a critical failure
             isHealthy = false;
             if (!errorReported) {
               errorReported = true;
