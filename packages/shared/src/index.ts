@@ -54,9 +54,9 @@ export type {
   ExecOptions,
   ExecResult,
   ExecutionSession,
-  FileExistsResult,
   // File streaming types
   FileChunk,
+  FileExistsResult,
   FileInfo,
   FileMetadata,
   FileStreamEvent,
