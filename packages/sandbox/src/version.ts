@@ -3,4 +3,4 @@
  * This file is auto-updated by .github/changeset-version.ts during releases
  * DO NOT EDIT MANUALLY - Changes will be overwritten on the next version bump
  */
-export const SDK_VERSION = '0.4.9';
+export const SDK_VERSION = '0.4.10';
