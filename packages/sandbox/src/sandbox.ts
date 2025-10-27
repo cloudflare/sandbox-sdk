@@ -62,14 +62,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   client: SandboxClient;
   private codeInterpreter: CodeInterpreter;
-  private sandboxName: string | undefined = undefined;
-  private baseUrl: string | undefined = undefined;
+  private sandboxName: string | null = null;
+  private baseUrl: string | null = null;
   private portTokens: Map<number, string> = new Map();
-  private defaultSession: string | undefined = undefined;
+  private defaultSession: string | null = null;
   envVars: Record<string, string> = {};
   private logger: ReturnType<typeof createLogger>;
-  private readonly STREAM_HEALTH_CHECK_INTERVAL_MS = 30000; // Check sandbox health every 30 seconds during streaming
-  private readonly STREAM_READ_TIMEOUT_MS = 300000; // 5 minutes timeout for stream reads (detects hung streams)
   private keepAliveEnabled: boolean = false;
 
   constructor(ctx: DurableObject['ctx'], env: Env) {
@@ -617,11 +615,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   /**
    * Execute a command and return a ReadableStream of SSE events.
-   *
-   * **For long-running commands**
-   * **Use this method when:**
-   * - You're inside a Worker endpoint and need to proxy/pipe the stream to an HTTP response
-   * - You're calling this directly from within the Sandbox DO
    */
   async execStream(command: string, options?: StreamOptions): Promise<ReadableStream<Uint8Array>> {
     // Check for cancellation
@@ -630,9 +623,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
 
     const session = await this.ensureDefaultSession();
-    // Get the stream from CommandClient and wrap it with activity renewal
-    const stream = await this.client.commands.executeStream(command, session);
-    return this.wrapStreamWithActivityRenewal(stream);
+    return this.client.commands.executeStream(command, session);
   }
 
   /**
@@ -644,18 +635,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       throw new Error('Operation was aborted');
     }
 
-    const stream = await this.client.commands.executeStream(command, sessionId);
-    return this.wrapStreamWithActivityRenewal(stream);
+    return this.client.commands.executeStream(command, sessionId);
   }
 
   /**
    * Stream logs from a background process as a ReadableStream.
-
-   * **For long-running processes**
-   *
-   * **Use this method when:**
-   * - You're inside a Worker endpoint and need to proxy/pipe the stream to an HTTP response
-   * - You're calling this directly from within the Sandbox DO
    */
   async streamProcessLogs(processId: string, options?: { signal?: AbortSignal }): Promise<ReadableStream<Uint8Array>> {
     // Check for cancellation
@@ -663,136 +647,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       throw new Error('Operation was aborted');
     }
 
-    const stream = await this.client.processes.streamProcessLogs(processId);
-    return this.wrapStreamWithActivityRenewal(stream);
+    return this.client.processes.streamProcessLogs(processId);
   }
-
-  /**
-   * Wraps a ReadableStream with health monitoring
-   */
-  private wrapStreamWithActivityRenewal(stream: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> {
-    const self = this;
-    let healthCheckInterval: ReturnType<typeof setInterval> | undefined;
-    let streamActive = true;
-    let errorReported = false;
-
-    return new ReadableStream<Uint8Array>({
-      async start(controller) {
-        const reader = stream.getReader();
-        let isHealthy = true;
-        let currentTimeoutHandle: ReturnType<typeof setTimeout> | undefined;
-
-        // Set up periodic health monitoring to detect container crashes
-        healthCheckInterval = setInterval(async () => {
-          if (!streamActive) {
-            if (healthCheckInterval) {
-              clearInterval(healthCheckInterval);
-            }
-            return;
-          }
-
-          try {
-            const state = await self.getState();
-            if (state.status !== 'running') {
-              isHealthy = false;
-              if (!errorReported) {
-                errorReported = true;
-                const error = new Error(`Container became unhealthy during streaming: ${state.status}`);
-                controller.error(error);
-                if (healthCheckInterval) {
-                  clearInterval(healthCheckInterval);
-                }
-                await reader.cancel(error.message);
-              }
-            }
-          } catch (error) {
-            // If getState() fails, container is likely dead - this is a critical failure
-            isHealthy = false;
-            if (!errorReported) {
-              errorReported = true;
-              const stateError = new Error(`Failed to check container health: ${error instanceof Error ? error.message : String(error)}`);
-              controller.error(stateError);
-              if (healthCheckInterval) {
-                clearInterval(healthCheckInterval);
-              }
-              await reader.cancel(stateError.message);
-            }
-          }
-        }, self.STREAM_HEALTH_CHECK_INTERVAL_MS);
-
-        try {
-          while (true) {
-            const readPromise = reader.read();
-            const timeoutPromise = new Promise<never>((_, reject) => {
-              currentTimeoutHandle = setTimeout(() => {
-                reject(new Error(`Stream read timeout after ${self.STREAM_READ_TIMEOUT_MS}ms - connection may be hung`));
-              }, self.STREAM_READ_TIMEOUT_MS);
-            });
-
-            const { done, value } = await Promise.race([readPromise, timeoutPromise]);
-
-            // Clear timeout immediately after successful read
-            if (currentTimeoutHandle !== undefined) {
-              clearTimeout(currentTimeoutHandle);
-              currentTimeoutHandle = undefined;
-            }
-
-            // Check health status before processing chunk
-            if (!isHealthy) {
-              throw new Error('Container became unhealthy during streaming');
-            }
-
-            if (done) {
-              controller.close();
-              break;
-            }
-
-            controller.enqueue(value);
-          }
-        } catch (error) {
-          if (currentTimeoutHandle !== undefined) {
-            clearTimeout(currentTimeoutHandle);
-            currentTimeoutHandle = undefined;
-          }
-
-          if (!errorReported) {
-            errorReported = true;
-            controller.error(error);
-          }
-        } finally {
-          // Mark stream as inactive to stop health checks
-          streamActive = false;
-
-          // Always cleanup interval
-          if (healthCheckInterval) {
-            clearInterval(healthCheckInterval);
-            healthCheckInterval = undefined;
-          }
-
-          try {
-            reader.releaseLock();
-          } catch (e) {
-            // Safe to ignore: lock is already released or stream is already closed
-            // This can happen if the reader was cancelled or errored before we reached finally
-            const errorMsg = e instanceof Error ? e.message : String(e);
-            self.logger.debug(`Reader lock release failed (expected if stream already closed): ${errorMsg}`);
-          }
-        }
-      },
-
-      cancel(reason) {
-        streamActive = false;
-        if (healthCheckInterval) {
-          clearInterval(healthCheckInterval);
-          healthCheckInterval = undefined;
-        }
-        // Allow cancellation to propagate to the underlying stream
-        return stream.cancel(reason);
-      }
-    });
-  }
-
-
 
   async gitCheckout(
     repoUrl: string,
@@ -1168,8 +1024,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   async runCodeStream(code: string, options?: RunCodeOptions): Promise<ReadableStream<Uint8Array>> {
-    const stream = await this.codeInterpreter.runCodeStream(code, options);
-    return this.wrapStreamWithActivityRenewal(stream);
+    return this.codeInterpreter.runCodeStream(code, options);
   }
 
   async listCodeContexts(): Promise<CodeContext[]> {

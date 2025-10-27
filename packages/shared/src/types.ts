@@ -275,16 +275,6 @@ export interface SandboxOptions {
   /**
    * Keep the container alive indefinitely by preventing automatic shutdown
    * When true, the container will never auto-timeout and must be explicitly destroyed
-   *
-   * How it works:
-   * - Overrides onActivityExpired() to prevent shutdown when activity timeout expires
-   * - No active renewal or polling needed - simply prevents the default stop behavior
-   * - Container stays alive until you explicitly call destroy()
-   *
-   * Use cases:
-   * - Long-lived IDE/notebook sessions
-   * - WebSocket servers with sporadic message activity
-   * - Long-running background processes (builds, watchers, etc.)
    * - Any scenario where activity can't be automatically detected
    *
    * Important: You MUST call sandbox.destroy() when done to avoid resource leaks
@@ -623,7 +613,6 @@ export interface ExecutionSession {
   cleanupCompletedProcesses(): Promise<number>;
   getProcessLogs(id: string): Promise<{ stdout: string; stderr: string; processId: string }>;
   streamProcessLogs(processId: string, options?: { signal?: AbortSignal }): Promise<ReadableStream<Uint8Array>>;
-
   
   // File operations
   writeFile(path: string, content: string, options?: { encoding?: string }): Promise<WriteFileResult>;
