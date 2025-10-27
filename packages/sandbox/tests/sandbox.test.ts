@@ -15,6 +15,9 @@ vi.mock('@cloudflare/containers', () => ({
       this.ctx = ctx;
       this.env = env;
     }
+    async fetch(_request: Request): Promise<Response> {
+      return new Response('Not implemented');
+    }
   },
   getContainer: vi.fn(),
 }));
