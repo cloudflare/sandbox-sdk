@@ -99,8 +99,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     // Load the sandbox name, port tokens, and default session from storage on initialization
     this.ctx.blockConcurrencyWhile(async () => {
-      this.sandboxName = await this.ctx.storage.get<string>('sandboxName') || undefined;
-      this.defaultSession = await this.ctx.storage.get<string>('defaultSession') || undefined;
+      this.sandboxName = await this.ctx.storage.get<string>('sandboxName') || null;
+      this.defaultSession = await this.ctx.storage.get<string>('defaultSession') || null;
       const storedTokens = await this.ctx.storage.get<Record<string, string>>('portTokens') || {};
 
       // Convert stored tokens back to Map
@@ -348,7 +348,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     const startTime = Date.now();
     const timestamp = new Date().toISOString();
 
-    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    let timeoutId: NodeJS.Timeout | undefined;
 
     try {
       // Handle cancellation
@@ -612,10 +612,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     };
   }
 
-
-  /**
-   * Execute a command and return a ReadableStream of SSE events.
-   */
+// Streaming methods - return ReadableStream for RPC compatibility
   async execStream(command: string, options?: StreamOptions): Promise<ReadableStream<Uint8Array>> {
     // Check for cancellation
     if (options?.signal?.aborted) {
@@ -623,6 +620,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
 
     const session = await this.ensureDefaultSession();
+    // Get the stream from CommandClient
     return this.client.commands.executeStream(command, session);
   }
 
@@ -1023,7 +1021,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     return execution.toJSON();
   }
 
-  async runCodeStream(code: string, options?: RunCodeOptions): Promise<ReadableStream<Uint8Array>> {
+  async runCodeStream(code: string, options?: RunCodeOptions): Promise<ReadableStream> {
     return this.codeInterpreter.runCodeStream(code, options);
   }
 
