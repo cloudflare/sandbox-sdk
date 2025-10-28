@@ -67,7 +67,7 @@ async function handleInitServers(request: Request, env: Env): Promise<Response> 
     const serversToStart = [];
 
     // Echo server (port 8080)
-    if (!runningServers.has('echo-server-8080')) {
+    if (!runningServers.has('ws-echo-8080')) {
       const echoScript = `
 const port = 8080;
 Bun.serve({
@@ -87,13 +87,13 @@ console.log('Echo server listening on port ' + port);
       await sandbox.writeFile('/tmp/echo-server.ts', echoScript);
       serversToStart.push(
         sandbox.startProcess('bun run /tmp/echo-server.ts', {
-          processId: 'echo-server-8080'
-        }).catch(() => {})
+          processId: 'ws-echo-8080'
+        })
       );
     }
 
     // Code server (port 8081)
-    if (!runningServers.has('code-server-8081')) {
+    if (!runningServers.has('ws-code-8081')) {
       const codeScript = `
 const port = 8081;
 Bun.serve({
@@ -153,13 +153,13 @@ console.log('Code streaming server listening on port ' + port);
       await sandbox.writeFile('/tmp/code-server.ts', codeScript);
       serversToStart.push(
         sandbox.startProcess('bun run /tmp/code-server.ts', {
-          processId: 'code-server-8081'
-        }).catch(() => {})
+          processId: 'ws-code-8081'
+        })
       );
     }
 
     // Terminal server (port 8082)
-    if (!runningServers.has('terminal-server-8082')) {
+    if (!runningServers.has('ws-terminal-8082')) {
       const terminalScript = `
 const port = 8082;
 Bun.serve({
@@ -197,20 +197,28 @@ console.log('Terminal server listening on port ' + port);
       await sandbox.writeFile('/tmp/terminal-server.ts', terminalScript);
       serversToStart.push(
         sandbox.startProcess('bun run /tmp/terminal-server.ts', {
-          processId: 'terminal-server-8082'
-        }).catch(() => {})
+          processId: 'ws-terminal-8082'
+        })
       );
     }
 
-    // Start all servers (fire and forget)
-    await Promise.all(serversToStart);
+    // Start all servers and track results
+    const results = await Promise.allSettled(serversToStart);
+    const failedCount = results.filter(r => r.status === "rejected").length;
+    const succeededCount = results.filter(r => r.status === "fulfilled").length;
 
     return new Response(JSON.stringify({
-      success: true,
-      message: 'Servers initialized',
-      serversStarted: serversToStart.length
+      success: failedCount === 0,
+      message: failedCount === 0 ? 'All servers initialized' : `${failedCount} server(s) failed to start`,
+      serversStarted: succeededCount,
+      serversFailed: failedCount,
+      errors: failedCount > 0 ? results
+        .filter(r => r.status === "rejected")
+        .map(r => (r as PromiseRejectedResult).reason?.message || String((r as PromiseRejectedResult).reason))
+        : undefined
     }), {
-      headers: { 'Content-Type': 'application/json' }
+      headers: { 'Content-Type': 'application/json' },
+      status: failedCount > 0 ? 500 : 200
     });
   } catch (error: any) {
     return new Response(JSON.stringify({

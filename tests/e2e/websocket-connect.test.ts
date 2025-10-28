@@ -56,9 +56,7 @@ describe('WebSocket connect() Pattern', () => {
 
     expect(data.success).toBe(true);
     expect(data.serversStarted).toBeGreaterThanOrEqual(0); // May be 0 if already running
-
-    // Wait for servers to be ready
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    expect(data.serversFailed).toBe(0); // No failures
 
     // Verify all three server processes exist
     const processesResponse = await fetch(`${workerUrl}/api/process/list`, {
@@ -84,13 +82,12 @@ describe('WebSocket connect() Pattern', () => {
     const headers = createTestHeaders(currentSandboxId);
 
     // Initialize servers
-    await fetch(`${workerUrl}/api/init`, {
+    const initResponse = await fetch(`${workerUrl}/api/init`, {
       method: 'POST',
       headers,
     });
-
-    // Wait for servers to be ready
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    const initData = await initResponse.json();
+    expect(initData.success).toBe(true);
 
     // Connect via WebSocket using connect() pattern (no port exposure API)
     const wsUrl = workerUrl.replace(/^http/, 'ws') + '/ws/echo';
@@ -132,12 +129,12 @@ describe('WebSocket connect() Pattern', () => {
     const headers = createTestHeaders(currentSandboxId);
 
     // Initialize servers
-    await fetch(`${workerUrl}/api/init`, {
+    const initResponse = await fetch(`${workerUrl}/api/init`, {
       method: 'POST',
       headers,
     });
-
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    const initData = await initResponse.json();
+    expect(initData.success).toBe(true);
 
     // Connect to code streaming server
     const wsUrl = workerUrl.replace(/^http/, 'ws') + '/ws/code';
@@ -218,12 +215,12 @@ print('Done!')
     currentSandboxId = createSandboxId();
     const headers = createTestHeaders(currentSandboxId);
 
-    await fetch(`${workerUrl}/api/init`, {
+    const initResponse = await fetch(`${workerUrl}/api/init`, {
       method: 'POST',
       headers,
     });
-
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    const initData = await initResponse.json();
+    expect(initData.success).toBe(true);
 
     const wsUrl = workerUrl.replace(/^http/, 'ws') + '/ws/code';
     const ws = new WebSocket(wsUrl, {
@@ -291,12 +288,12 @@ print('This should not print')
     currentSandboxId = createSandboxId();
     const headers = createTestHeaders(currentSandboxId);
 
-    await fetch(`${workerUrl}/api/init`, {
+    const initResponse = await fetch(`${workerUrl}/api/init`, {
       method: 'POST',
       headers,
     });
-
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    const initData = await initResponse.json();
+    expect(initData.success).toBe(true);
 
     const wsUrl = workerUrl.replace(/^http/, 'ws') + '/ws/terminal';
     const ws = new WebSocket(wsUrl, {
@@ -364,12 +361,12 @@ print('This should not print')
     currentSandboxId = createSandboxId();
     const headers = createTestHeaders(currentSandboxId);
 
-    await fetch(`${workerUrl}/api/init`, {
+    const initResponse = await fetch(`${workerUrl}/api/init`, {
       method: 'POST',
       headers,
     });
-
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    const initData = await initResponse.json();
+    expect(initData.success).toBe(true);
 
     const wsUrl = workerUrl.replace(/^http/, 'ws') + '/ws/terminal';
     const ws = new WebSocket(wsUrl, {
@@ -428,12 +425,12 @@ print('This should not print')
     const headers = createTestHeaders(currentSandboxId);
 
     // Initialize servers once
-    await fetch(`${workerUrl}/api/init`, {
+    const initResponse = await fetch(`${workerUrl}/api/init`, {
       method: 'POST',
       headers,
     });
-
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    const initData = await initResponse.json();
+    expect(initData.success).toBe(true);
 
     // Get initial process list
     const initialProcesses = await fetch(`${workerUrl}/api/process/list`, {
@@ -497,12 +494,12 @@ print('This should not print')
     currentSandboxId = createSandboxId();
     const headers = createTestHeaders(currentSandboxId);
 
-    await fetch(`${workerUrl}/api/init`, {
+    const initResponse = await fetch(`${workerUrl}/api/init`, {
       method: 'POST',
       headers,
     });
-
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    const initData = await initResponse.json();
+    expect(initData.success).toBe(true);
 
     // Open 3 concurrent connections to different servers
     const wsUrl1 = workerUrl.replace(/^http/, 'ws') + '/ws/echo';

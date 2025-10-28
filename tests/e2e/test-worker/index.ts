@@ -72,7 +72,7 @@ console.log('Echo server on port ' + port);
 `;
           await sandbox.writeFile('/tmp/ws-echo.ts', echoScript);
           serversToStart.push(
-            sandbox.startProcess('bun run /tmp/ws-echo.ts', { processId: 'ws-echo-8080' }).catch(() => {})
+            sandbox.startProcess('bun run /tmp/ws-echo.ts', { processId: 'ws-echo-8080' })
           );
         }
 
@@ -133,7 +133,7 @@ console.log('Code server on port ' + port);
 `;
           await sandbox.writeFile('/tmp/ws-code.ts', codeScript);
           serversToStart.push(
-            sandbox.startProcess('bun run /tmp/ws-code.ts', { processId: 'ws-code-8081' }).catch(() => {})
+            sandbox.startProcess('bun run /tmp/ws-code.ts', { processId: 'ws-code-8081' })
           );
         }
 
@@ -170,17 +170,26 @@ console.log('Terminal server on port ' + port);
 `;
           await sandbox.writeFile('/tmp/ws-terminal.ts', terminalScript);
           serversToStart.push(
-            sandbox.startProcess('bun run /tmp/ws-terminal.ts', { processId: 'ws-terminal-8082' }).catch(() => {})
+            sandbox.startProcess('bun run /tmp/ws-terminal.ts', { processId: 'ws-terminal-8082' })
           );
         }
 
-        await Promise.all(serversToStart);
+        // Start all servers and track results
+        const results = await Promise.allSettled(serversToStart);
+        const failedCount = results.filter(r => r.status === "rejected").length;
+        const succeededCount = results.filter(r => r.status === "fulfilled").length;
 
         return new Response(JSON.stringify({
-          success: true,
-          serversStarted: serversToStart.length
+          success: failedCount === 0,
+          serversStarted: succeededCount,
+          serversFailed: failedCount,
+          errors: failedCount > 0 ? results
+            .filter(r => r.status === "rejected")
+            .map(r => (r as PromiseRejectedResult).reason?.message || String((r as PromiseRejectedResult).reason))
+            : undefined
         }), {
-          headers: { 'Content-Type': 'application/json' }
+          headers: { 'Content-Type': 'application/json' },
+          status: failedCount > 0 ? 500 : 200
         });
       }
 
