@@ -1,5 +1,5 @@
-import { createLogger, type LogContext, TraceContext } from "@repo/shared";
 import { switchPort } from "@cloudflare/containers";
+import { createLogger, type LogContext, TraceContext } from "@repo/shared";
 import { getSandbox, type Sandbox } from "./sandbox";
 import {
   sanitizeSandboxId,

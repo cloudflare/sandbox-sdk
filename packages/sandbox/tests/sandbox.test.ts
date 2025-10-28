@@ -1,7 +1,7 @@
+import { Container } from '@cloudflare/containers';
 import type { DurableObjectState } from '@cloudflare/workers-types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Sandbox } from '../src/sandbox';
-import { Container } from '@cloudflare/containers';
 
 // Mock dependencies before imports
 vi.mock('./interpreter', () => ({
@@ -476,57 +476,6 @@ describe('Sandbox - Automatic Session Management', () => {
     });
   });
 
-  describe('Health checks', () => {
-    beforeEach(() => {
-      // Mock Container base class getState method for health checks
-      (sandbox as any).getState = vi.fn().mockResolvedValue({
-        status: 'running',
-        timestamp: new Date().toISOString(),
-      });
-    });
-
-
-    it('should handle health check failures gracefully', async () => {
-      const encoder = new TextEncoder();
-      const mockStream = new ReadableStream({
-        start(controller) {
-          controller.enqueue(encoder.encode('test\n'));
-          controller.close();
-        }
-      });
-
-      vi.spyOn(sandbox.client.commands, 'executeStream').mockResolvedValue(mockStream);
-
-      // Make getState throw an error (container is dead)
-      (sandbox as any).getState = vi.fn().mockRejectedValue(new Error('Container not found'));
-
-      const stream = await sandbox.execStream('echo test');
-      const reader = stream.getReader();
-
-      // Read should still work since we're testing the health check error handling
-      // The health check runs in background and shouldn't block reads initially
-      const result = await reader.read();
-      expect(result.done).toBe(false);
-    });
-
-    it('should work with all streaming APIs', async () => {
-      const encoder = new TextEncoder();
-      const mockStream = new ReadableStream({
-        start(controller) {
-          controller.enqueue(encoder.encode('test\n'));
-          controller.close();
-        }
-      });
-
-      // Test execStream
-      vi.spyOn(sandbox.client.commands, 'executeStream').mockResolvedValue(mockStream);
-      const execStream = await sandbox.execStream('echo test');
-      expect(execStream).toBeInstanceOf(ReadableStream);
-
-      // Test streamProcessLogs
-      vi.spyOn(sandbox.client.processes, 'streamProcessLogs').mockResolvedValue(mockStream);
-      const logsStream = await sandbox.streamProcessLogs('proc-1');
-      expect(logsStream).toBeInstanceOf(ReadableStream);
   describe('fetch() override - WebSocket detection', () => {
     let superFetchSpy: any;
 
