@@ -1,5 +1,6 @@
 import type {
   DeleteFileResult,
+  FileExistsResult,
   ListFilesResult,
   MkdirResult,
   MoveFileResult,
@@ -581,6 +582,81 @@ database:
 
       await expect(client.listFiles('/nonexistent', 'session-list'))
         .rejects.toThrow(FileNotFoundError);
+    });
+  });
+
+  describe('exists', () => {
+    it('should return true when file exists', async () => {
+      const mockResponse: FileExistsResult = {
+        success: true,
+        path: '/workspace/test.txt',
+        exists: true,
+        timestamp: '2023-01-01T00:00:00Z',
+      };
+
+      mockFetch.mockResolvedValue(new Response(JSON.stringify(mockResponse), { status: 200 }));
+
+      const result = await client.exists('/workspace/test.txt', 'session-exists');
+
+      expect(result.success).toBe(true);
+      expect(result.exists).toBe(true);
+      expect(result.path).toBe('/workspace/test.txt');
+    });
+
+    it('should return false when file does not exist', async () => {
+      const mockResponse: FileExistsResult = {
+        success: true,
+        path: '/workspace/nonexistent.txt',
+        exists: false,
+        timestamp: '2023-01-01T00:00:00Z',
+      };
+
+      mockFetch.mockResolvedValue(new Response(JSON.stringify(mockResponse), { status: 200 }));
+
+      const result = await client.exists('/workspace/nonexistent.txt', 'session-exists');
+
+      expect(result.success).toBe(true);
+      expect(result.exists).toBe(false);
+    });
+
+    it('should return true when directory exists', async () => {
+      const mockResponse: FileExistsResult = {
+        success: true,
+        path: '/workspace/some-dir',
+        exists: true,
+        timestamp: '2023-01-01T00:00:00Z',
+      };
+
+      mockFetch.mockResolvedValue(new Response(JSON.stringify(mockResponse), { status: 200 }));
+
+      const result = await client.exists('/workspace/some-dir', 'session-exists');
+
+      expect(result.success).toBe(true);
+      expect(result.exists).toBe(true);
+    });
+
+    it('should send correct request payload', async () => {
+      const mockResponse: FileExistsResult = {
+        success: true,
+        path: '/test/path',
+        exists: true,
+        timestamp: '2023-01-01T00:00:00Z',
+      };
+
+      mockFetch.mockResolvedValue(new Response(JSON.stringify(mockResponse), { status: 200 }));
+
+      await client.exists('/test/path', 'session-test');
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('/api/exists'),
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({
+            path: '/test/path',
+            sessionId: 'session-test',
+          })
+        })
+      );
     });
   });
 

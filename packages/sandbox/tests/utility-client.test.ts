@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   CommandsResponse,
-  PingResponse
+  PingResponse,
+  VersionResponse
 } from '../src/clients';
 import { UtilityClient } from '../src/clients/utility-client';
 import {
@@ -21,6 +22,13 @@ const mockCommandsResponse = (commands: string[], overrides: Partial<CommandsRes
   success: true,
   availableCommands: commands,
   count: commands.length,
+  timestamp: '2023-01-01T00:00:00Z',
+  ...overrides
+});
+
+const mockVersionResponse = (version: string = '0.4.5', overrides: Partial<VersionResponse> = {}): VersionResponse => ({
+  success: true,
+  version,
   timestamp: '2023-01-01T00:00:00Z',
   ...overrides
 });
@@ -246,6 +254,64 @@ describe('UtilityClient', () => {
       expect(results[1].status).toBe('rejected');
       expect(results[2].status).toBe('fulfilled');
       expect(results[3].status).toBe('rejected');
+    });
+  });
+
+  describe('version checking', () => {
+    it('should get container version successfully', async () => {
+      mockFetch.mockResolvedValue(new Response(
+        JSON.stringify(mockVersionResponse('0.4.5')),
+        { status: 200 }
+      ));
+
+      const result = await client.getVersion();
+
+      expect(result).toBe('0.4.5');
+    });
+
+    it('should handle different version formats', async () => {
+      const versions = ['1.0.0', '2.5.3-beta', '0.0.1', '10.20.30'];
+
+      for (const version of versions) {
+        mockFetch.mockResolvedValueOnce(new Response(
+          JSON.stringify(mockVersionResponse(version)),
+          { status: 200 }
+        ));
+
+        const result = await client.getVersion();
+        expect(result).toBe(version);
+      }
+    });
+
+    it('should return "unknown" when version endpoint does not exist (backward compatibility)', async () => {
+      // Simulate 404 or other error for old containers
+      mockFetch.mockResolvedValue(new Response(
+        JSON.stringify({ error: 'Not Found' }),
+        { status: 404 }
+      ));
+
+      const result = await client.getVersion();
+
+      expect(result).toBe('unknown');
+    });
+
+    it('should return "unknown" on network failure (backward compatibility)', async () => {
+      mockFetch.mockRejectedValue(new Error('Network connection failed'));
+
+      const result = await client.getVersion();
+
+      expect(result).toBe('unknown');
+    });
+
+    it('should handle version response with unknown value', async () => {
+      mockFetch.mockResolvedValue(new Response(
+        JSON.stringify(mockVersionResponse('unknown')),
+        { status: 200 }
+      ));
+
+      const result = await client.getVersion();
+
+      expect(result).toBe('unknown');
     });
   });
 

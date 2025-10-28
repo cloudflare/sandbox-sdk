@@ -1,5 +1,58 @@
 # @cloudflare/sandbox
 
+## 0.4.10
+
+### Patch Changes
+
+- [#156](https://github.com/cloudflare/sandbox-sdk/pull/156) [`b61841c`](https://github.com/cloudflare/sandbox-sdk/commit/b61841cfb3248022ee8136311e54955ed9faa1ee) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Fix WebSocket upgrade requests through exposed ports
+
+## 0.4.9
+
+### Patch Changes
+
+- [#152](https://github.com/cloudflare/sandbox-sdk/pull/152) [`8e7773e`](https://github.com/cloudflare/sandbox-sdk/commit/8e7773ec9571a5f968cbbc5f48e38e01d7d13b77) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Add exists() method to check if a file or directory exists
+
+  This adds a new `exists()` method to the SDK that checks whether a file or directory exists at a given path. The method returns a boolean indicating existence, similar to Python's `os.path.exists()` and JavaScript's `fs.existsSync()`.
+
+  The implementation is end-to-end:
+
+  - New `FileExistsResult` and `FileExistsRequest` types in shared package
+  - Handler endpoint at `/api/exists` in container layer
+  - Client method in `FileClient` and `Sandbox` classes
+  - Full test coverage (unit tests and E2E tests)
+
+## 0.4.8
+
+### Patch Changes
+
+- [#153](https://github.com/cloudflare/sandbox-sdk/pull/153) [`f6a5c3e`](https://github.com/cloudflare/sandbox-sdk/commit/f6a5c3e1607fce5fc26f816e9206ae437898d5af) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Fix token extraction regex causing Invalid token errors
+
+## 0.4.7
+
+### Patch Changes
+
+- [#141](https://github.com/cloudflare/sandbox-sdk/pull/141) [`c39674b`](https://github.com/cloudflare/sandbox-sdk/commit/c39674b8fe2e986e59a794b6bb3a5f51a87bae89) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Fix commands hanging when reading stdin by redirecting stdin to /dev/null
+
+- [#143](https://github.com/cloudflare/sandbox-sdk/pull/143) [`276efc0`](https://github.com/cloudflare/sandbox-sdk/commit/276efc0ca8776bcc8de79e7e58dd24d9f418cc5c) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Remove unnecessary existing session check
+
+## 0.4.6
+
+### Patch Changes
+
+- [#133](https://github.com/cloudflare/sandbox-sdk/pull/133) [`da2cfb8`](https://github.com/cloudflare/sandbox-sdk/commit/da2cfb876675eb3445970c90b4d70d00288a7c74) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - feat: Add version sync detection between npm package and Docker image
+
+## 0.4.5
+
+### Patch Changes
+
+- [#127](https://github.com/cloudflare/sandbox-sdk/pull/127) [`e79ac80`](https://github.com/cloudflare/sandbox-sdk/commit/e79ac80bc855a3ec527d44cc14585794b23cb129) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - configurable sleepAfter
+
+## 0.4.4
+
+### Patch Changes
+
+- [#125](https://github.com/cloudflare/sandbox-sdk/pull/125) [`fddccfd`](https://github.com/cloudflare/sandbox-sdk/commit/fddccfdce8204ce2aa7dadc0ad9fb2acbdeaec51) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - add docker image to pkg workflow
+
 ## 0.4.3
 
 ### Patch Changes

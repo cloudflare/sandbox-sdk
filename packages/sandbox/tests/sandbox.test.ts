@@ -1,26 +1,36 @@
 import type { DurableObjectState } from '@cloudflare/workers-types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Sandbox } from '../src/sandbox';
+import { Container } from '@cloudflare/containers';
 
 // Mock dependencies before imports
 vi.mock('./interpreter', () => ({
   CodeInterpreter: vi.fn().mockImplementation(() => ({})),
 }));
 
-vi.mock('@cloudflare/containers', () => ({
-  Container: class Container {
+vi.mock('@cloudflare/containers', () => {
+  const MockContainer = class Container {
     ctx: any;
     env: any;
     constructor(ctx: any, env: any) {
       this.ctx = ctx;
       this.env = env;
     }
-    async fetch(_request: Request): Promise<Response> {
-      return new Response('Not implemented');
+    async fetch(request: Request): Promise<Response> {
+      // Mock implementation - will be spied on in tests
+      return new Response('Mock Container fetch');
     }
-  },
-  getContainer: vi.fn(),
-}));
+    async containerFetch(request: Request, port: number): Promise<Response> {
+      // Mock implementation for HTTP path
+      return new Response('Mock Container HTTP fetch');
+    }
+  };
+
+  return {
+    Container: MockContainer,
+    getContainer: vi.fn(),
+  };
+});
 
 describe('Sandbox - Automatic Session Management', () => {
   let sandbox: Sandbox;
@@ -463,6 +473,82 @@ describe('Sandbox - Automatic Session Management', () => {
 
       expect(result.url).toContain('localhost');
       expect(sandbox.client.ports.exposePort).toHaveBeenCalled();
+    });
+  });
+
+  describe('fetch() override - WebSocket detection', () => {
+    let superFetchSpy: any;
+
+    beforeEach(async () => {
+      await sandbox.setSandboxName('test-sandbox');
+
+      // Spy on Container.prototype.fetch to verify WebSocket routing
+      superFetchSpy = vi.spyOn(Container.prototype, 'fetch')
+        .mockResolvedValue(new Response('WebSocket response'));
+    });
+
+    afterEach(() => {
+      superFetchSpy?.mockRestore();
+    });
+
+    it('should detect WebSocket upgrade header and route to super.fetch', async () => {
+      const request = new Request('https://example.com/ws', {
+        headers: {
+          'Upgrade': 'websocket',
+          'Connection': 'Upgrade',
+        },
+      });
+
+      const response = await sandbox.fetch(request);
+
+      // Should route through super.fetch() for WebSocket
+      expect(superFetchSpy).toHaveBeenCalledTimes(1);
+      expect(await response.text()).toBe('WebSocket response');
+    });
+
+    it('should route non-WebSocket requests through containerFetch', async () => {
+      // GET request
+      const getRequest = new Request('https://example.com/api/data');
+      await sandbox.fetch(getRequest);
+      expect(superFetchSpy).not.toHaveBeenCalled();
+
+      vi.clearAllMocks();
+
+      // POST request
+      const postRequest = new Request('https://example.com/api/data', {
+        method: 'POST',
+        body: JSON.stringify({ data: 'test' }),
+        headers: { 'Content-Type': 'application/json' },
+      });
+      await sandbox.fetch(postRequest);
+      expect(superFetchSpy).not.toHaveBeenCalled();
+
+      vi.clearAllMocks();
+
+      // SSE request (should not be detected as WebSocket)
+      const sseRequest = new Request('https://example.com/events', {
+        headers: { 'Accept': 'text/event-stream' },
+      });
+      await sandbox.fetch(sseRequest);
+      expect(superFetchSpy).not.toHaveBeenCalled();
+    });
+
+    it('should preserve WebSocket request unchanged when calling super.fetch()', async () => {
+      const request = new Request('https://example.com/ws', {
+        headers: {
+          'Upgrade': 'websocket',
+          'Sec-WebSocket-Key': 'test-key-123',
+          'Sec-WebSocket-Version': '13',
+        },
+      });
+
+      await sandbox.fetch(request);
+
+      expect(superFetchSpy).toHaveBeenCalledTimes(1);
+      const passedRequest = superFetchSpy.mock.calls[0][0] as Request;
+      expect(passedRequest.headers.get('Upgrade')).toBe('websocket');
+      expect(passedRequest.headers.get('Sec-WebSocket-Key')).toBe('test-key-123');
+      expect(passedRequest.headers.get('Sec-WebSocket-Version')).toBe('13');
     });
   });
 });

@@ -1073,4 +1073,73 @@ describe('File Operations Workflow (E2E)', () => {
     const wrongTypeData = await wrongTypeResponse.json();
     expect(wrongTypeData.error).toMatch(/not a directory/i);
   }, 90000);
+
+  test('should check file and directory existence', async () => {
+    currentSandboxId = createSandboxId();
+    const headers = createTestHeaders(currentSandboxId);
+
+    // Create a file and directory for testing
+    await vi.waitFor(
+      async () => fetchWithStartup(`${workerUrl}/api/file/mkdir`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          path: '/workspace/testdir',
+          recursive: true,
+        }),
+      }),
+      { timeout: 90000, interval: 2000 }
+    );
+
+    await fetch(`${workerUrl}/api/file/write`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        path: '/workspace/testfile.txt',
+        content: 'Test content',
+      }),
+    });
+
+    // Check that file exists
+    const fileExistsResponse = await fetch(`${workerUrl}/api/file/exists`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        path: '/workspace/testfile.txt',
+      }),
+    });
+
+    expect(fileExistsResponse.status).toBe(200);
+    const fileExistsData = await fileExistsResponse.json();
+    expect(fileExistsData.success).toBe(true);
+    expect(fileExistsData.exists).toBe(true);
+
+    // Check that directory exists
+    const dirExistsResponse = await fetch(`${workerUrl}/api/file/exists`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        path: '/workspace/testdir',
+      }),
+    });
+
+    expect(dirExistsResponse.status).toBe(200);
+    const dirExistsData = await dirExistsResponse.json();
+    expect(dirExistsData.success).toBe(true);
+    expect(dirExistsData.exists).toBe(true);
+
+    // Check that non-existent path returns false
+    const notExistsResponse = await fetch(`${workerUrl}/api/file/exists`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        path: '/workspace/nonexistent',
+      }),
+    });
+
+    expect(notExistsResponse.status).toBe(200);
+    const notExistsData = await notExistsResponse.json();
+    expect(notExistsData.success).toBe(true);
+    expect(notExistsData.exists).toBe(false);
+  }, 90000);
 });

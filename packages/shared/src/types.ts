@@ -232,26 +232,43 @@ export interface SessionOptions {
    * Optional session ID (auto-generated if not provided)
    */
   id?: string;
-  
+
   /**
    * Session name for identification
    */
   name?: string;
-  
+
   /**
    * Environment variables for this session
    */
   env?: Record<string, string>;
-  
+
   /**
    * Working directory
    */
   cwd?: string;
-  
+
   /**
    * Enable PID namespace isolation (requires CAP_SYS_ADMIN)
    */
   isolation?: boolean;
+}
+
+// Sandbox configuration options
+export interface SandboxOptions {
+  /**
+   * Duration after which the sandbox instance will sleep if no requests are received
+   * Can be:
+   * - A string like "30s", "3m", "5m", "1h" (seconds, minutes, or hours)
+   * - A number representing seconds (e.g., 180 for 3 minutes)
+   * Default: "10m" (10 minutes)
+   */
+  sleepAfter?: string | number;
+
+  /**
+   * Base URL for the sandbox API
+   */
+  baseUrl?: string;
 }
 
 /**
@@ -324,6 +341,13 @@ export interface MoveFileResult {
   newPath: string;
   timestamp: string;
   exitCode?: number;
+}
+
+export interface FileExistsResult {
+  success: boolean;
+  path: string;
+  exists: boolean;
+  timestamp: string;
 }
 
 export interface FileInfo {
@@ -586,6 +610,7 @@ export interface ExecutionSession {
   renameFile(oldPath: string, newPath: string): Promise<RenameFileResult>;
   moveFile(sourcePath: string, destinationPath: string): Promise<MoveFileResult>;
   listFiles(path: string, options?: ListFilesOptions): Promise<ListFilesResult>;
+  exists(path: string): Promise<FileExistsResult>;
 
   // Git operations
   gitCheckout(repoUrl: string, options?: { branch?: string; targetDir?: string }): Promise<GitCheckoutResult>;
@@ -630,6 +655,7 @@ export interface ISandbox {
   renameFile(oldPath: string, newPath: string): Promise<RenameFileResult>;
   moveFile(sourcePath: string, destinationPath: string): Promise<MoveFileResult>;
   listFiles(path: string, options?: ListFilesOptions): Promise<ListFilesResult>;
+  exists(path: string, sessionId?: string): Promise<FileExistsResult>;
 
   // Git operations
   gitCheckout(repoUrl: string, options?: { branch?: string; targetDir?: string }): Promise<GitCheckoutResult>;

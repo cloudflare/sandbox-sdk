@@ -13,6 +13,7 @@ import type {
   ProcessOptions,
   ProcessStatus,
   RunCodeOptions,
+  SandboxOptions,
   SessionOptions,
   StreamOptions
 } from "@repo/shared";
@@ -28,17 +29,24 @@ import {
   validatePort
 } from "./security";
 import { parseSSEStream } from "./sse-parser";
+import { SDK_VERSION } from "./version";
 
-export function getSandbox(ns: DurableObjectNamespace<Sandbox>, id: string, options?: {
-  baseUrl: string
-}) {
+export function getSandbox(
+  ns: DurableObjectNamespace<Sandbox>,
+  id: string,
+  options?: SandboxOptions
+) {
   const stub = getContainer(ns, id);
 
   // Store the name on first access
   stub.setSandboxName?.(id);
 
-  if(options?.baseUrl) {
+  if (options?.baseUrl) {
     stub.setBaseUrl(options.baseUrl);
+  }
+
+  if (options?.sleepAfter !== undefined) {
+    stub.setSleepAfter(options.sleepAfter);
   }
 
   return stub;
@@ -46,7 +54,7 @@ export function getSandbox(ns: DurableObjectNamespace<Sandbox>, id: string, opti
 
 export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   defaultPort = 3000; // Default port for the container's Bun server
-  sleepAfter = "3m"; // Sleep the sandbox if no requests are made in this timeframe
+  sleepAfter: string | number = "10m"; // Sleep the sandbox if no requests are made in this timeframe
 
   client: SandboxClient;
   private codeInterpreter: CodeInterpreter;
@@ -84,9 +92,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     // The CodeInterpreter extracts client.interpreter from the sandbox
     this.codeInterpreter = new CodeInterpreter(this);
 
-    // Load the sandbox name and port tokens from storage on initialization
+    // Load the sandbox name, port tokens, and default session from storage on initialization
     this.ctx.blockConcurrencyWhile(async () => {
       this.sandboxName = await this.ctx.storage.get<string>('sandboxName') || null;
+      this.defaultSession = await this.ctx.storage.get<string>('defaultSession') || null;
       const storedTokens = await this.ctx.storage.get<Record<string, string>>('portTokens') || {};
 
       // Convert stored tokens back to Map
@@ -115,6 +124,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         throw new Error('Base URL already set and different from one previously provided');
       }
     }
+  }
+
+  // RPC method to set the sleep timeout
+  async setSleepAfter(sleepAfter: string | number): Promise<void> {
+    this.sleepAfter = sleepAfter;
   }
 
   // RPC method to set environment variables
@@ -148,6 +162,54 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   override onStart() {
     this.logger.debug('Sandbox started');
+
+    // Check version compatibility asynchronously (don't block startup)
+    this.checkVersionCompatibility().catch(error => {
+      this.logger.error('Version compatibility check failed', error instanceof Error ? error : new Error(String(error)));
+    });
+  }
+
+  /**
+   * Check if the container version matches the SDK version
+   * Logs a warning if there's a mismatch
+   */
+  private async checkVersionCompatibility(): Promise<void> {
+    try {
+      // Get the SDK version (imported from version.ts)
+      const sdkVersion = SDK_VERSION;
+
+      // Get container version
+      const containerVersion = await this.client.utils.getVersion();
+
+      // If container version is unknown, it's likely an old container without the endpoint
+      if (containerVersion === 'unknown') {
+        this.logger.warn(
+          'Container version check: Container version could not be determined. ' +
+          'This may indicate an outdated container image. ' +
+          'Please update your container to match SDK version ' + sdkVersion
+        );
+        return;
+      }
+
+      // Check if versions match
+      if (containerVersion !== sdkVersion) {
+        const message =
+          `Version mismatch detected! SDK version (${sdkVersion}) does not match ` +
+          `container version (${containerVersion}). This may cause compatibility issues. ` +
+          `Please update your container image to version ${sdkVersion}`;
+
+        // Log warning - we can't reliably detect dev vs prod environment in Durable Objects
+        // so we always use warning level as requested by the user
+        this.logger.warn(message);
+      } else {
+        this.logger.debug('Version check passed', { sdkVersion, containerVersion });
+      }
+    } catch (error) {
+      // Don't fail the sandbox initialization if version check fails
+      this.logger.debug('Version compatibility check encountered an error', {
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
   }
 
   override onStop() {
@@ -176,7 +238,17 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         await this.ctx.storage.put('sandboxName', name);
       }
 
-      // Determine which port to route to
+      // Detect WebSocket upgrade request
+      const upgradeHeader = request.headers.get('Upgrade');
+      const isWebSocket = upgradeHeader?.toLowerCase() === 'websocket';
+
+      if (isWebSocket) {
+        // WebSocket path: Let parent Container class handle WebSocket proxying
+        // This bypasses containerFetch() which uses JSRPC and cannot handle WebSocket upgrades
+        return await super.fetch(request);
+      }
+
+      // Non-WebSocket: Use existing port determination and HTTP routing logic
       const port = this.determinePort(url);
 
       // Route to the appropriate port
@@ -199,20 +271,39 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   /**
    * Ensure default session exists - lazy initialization
    * This is called automatically by all public methods that need a session
+   *
+   * The session is persisted to Durable Object storage to survive hot reloads
+   * during development. If a session already exists in the container after reload,
+   * we reuse it instead of trying to create a new one.
    */
   private async ensureDefaultSession(): Promise<string> {
     if (!this.defaultSession) {
       const sessionId = `sandbox-${this.sandboxName || 'default'}`;
 
-      // Create session in container
-      await this.client.utils.createSession({
-        id: sessionId,
-        env: this.envVars || {},
-        cwd: '/workspace',
-      });
+      try {
+        // Try to create session in container
+        await this.client.utils.createSession({
+          id: sessionId,
+          env: this.envVars || {},
+          cwd: '/workspace',
+        });
 
-      this.defaultSession = sessionId;
-      this.logger.debug('Default session initialized', { sessionId });
+        this.defaultSession = sessionId;
+        // Persist to storage so it survives hot reloads
+        await this.ctx.storage.put('defaultSession', sessionId);
+        this.logger.debug('Default session initialized', { sessionId });
+      } catch (error: any) {
+        // If session already exists (e.g., after hot reload), reuse it
+        if (error?.message?.includes('already exists')) {
+          this.logger.debug('Reusing existing session after reload', { sessionId });
+          this.defaultSession = sessionId;
+          // Persist to storage in case it wasn't saved before
+          await this.ctx.storage.put('defaultSession', sessionId);
+        } else {
+          // Re-throw other errors
+          throw error;
+        }
+      }
     }
     return this.defaultSession;
   }
@@ -616,6 +707,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     return this.client.files.listFiles(path, session, options);
   }
 
+  async exists(path: string, sessionId?: string) {
+    const session = sessionId ?? await this.ensureDefaultSession();
+    return this.client.files.exists(path, session);
+  }
+
   async exposePort(port: number, options: { name?: string; hostname: string }) {
     // Check if hostname is workers.dev domain (doesn't support wildcard subdomains)
     if (options.hostname.endsWith('.workers.dev')) {
@@ -853,6 +949,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       renameFile: (oldPath, newPath) => this.renameFile(oldPath, newPath, sessionId),
       moveFile: (sourcePath, destPath) => this.moveFile(sourcePath, destPath, sessionId),
       listFiles: (path, options) => this.client.files.listFiles(path, sessionId, options),
+      exists: (path) => this.exists(path, sessionId),
 
       // Git operations
       gitCheckout: (repoUrl, options) => this.gitCheckout(repoUrl, { ...options, sessionId }),

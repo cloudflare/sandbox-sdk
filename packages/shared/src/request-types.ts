@@ -86,6 +86,14 @@ export interface MkdirRequest {
 }
 
 /**
+ * Request to check if a file or directory exists
+ */
+export interface FileExistsRequest {
+  path: string;
+  sessionId?: string;
+}
+
+/**
  * Request to expose a port
  */
 export interface ExposePortRequest {
