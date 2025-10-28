@@ -60,7 +60,7 @@ describe('connect() - WebSocket Routing', () => {
         delete: vi.fn().mockResolvedValue(undefined),
         list: vi.fn().mockResolvedValue(new Map()),
       } as any,
-      blockConcurrencyWhile: vi.fn((fn: () => Promise<void>) => fn()),
+      blockConcurrencyWhile: vi.fn(<T>(fn: () => Promise<T>) => fn()),
       id: {
         toString: () => 'test-sandbox-id',
         equals: vi.fn(),
@@ -81,7 +81,7 @@ describe('connect() - WebSocket Routing', () => {
 
   describe('basic functionality', () => {
     it('should route WebSocket request to specified port', async () => {
-      // Create a WebSocket upgrade request
+      // Create a WebSocket upgrade request (RFC 6455 compliant)
       const request = new Request('http://localhost/ws/echo', {
         headers: {
           'Upgrade': 'websocket',
@@ -150,7 +150,7 @@ describe('connect() - WebSocket Routing', () => {
   describe('port routing', () => {
     it('should route to port 8080 for echo server', async () => {
       const request = new Request('http://localhost/ws/echo', {
-        headers: { 'Upgrade': 'websocket' },
+        headers: { 'Upgrade': 'websocket', 'Connection': 'Upgrade' },
       });
 
       const { switchPort } = await import('@cloudflare/containers');
@@ -163,7 +163,7 @@ describe('connect() - WebSocket Routing', () => {
 
     it('should route to port 8081 for code server', async () => {
       const request = new Request('http://localhost/ws/code', {
-        headers: { 'Upgrade': 'websocket' },
+        headers: { 'Upgrade': 'websocket', 'Connection': 'Upgrade' },
       });
 
       const { switchPort } = await import('@cloudflare/containers');
@@ -176,7 +176,7 @@ describe('connect() - WebSocket Routing', () => {
 
     it('should route to port 8082 for terminal server', async () => {
       const request = new Request('http://localhost/ws/terminal', {
-        headers: { 'Upgrade': 'websocket' },
+        headers: { 'Upgrade': 'websocket', 'Connection': 'Upgrade' },
       });
 
       const { switchPort } = await import('@cloudflare/containers');
@@ -189,7 +189,7 @@ describe('connect() - WebSocket Routing', () => {
 
     it('should support custom ports', async () => {
       const request = new Request('http://localhost/ws/custom', {
-        headers: { 'Upgrade': 'websocket' },
+        headers: { 'Upgrade': 'websocket', 'Connection': 'Upgrade' },
       });
 
       const { switchPort } = await import('@cloudflare/containers');
@@ -204,7 +204,7 @@ describe('connect() - WebSocket Routing', () => {
   describe('error handling', () => {
     it('should propagate errors from sandbox.fetch', async () => {
       const request = new Request('http://localhost/ws/error', {
-        headers: { 'Upgrade': 'websocket' },
+        headers: { 'Upgrade': 'websocket', 'Connection': 'Upgrade' },
       });
 
       // Mock fetch to throw an error
@@ -215,6 +215,52 @@ describe('connect() - WebSocket Routing', () => {
       await expect(connect(sandbox, request, 8080)).rejects.toThrow(
         'Container connection failed'
       );
+    });
+
+    it('should reject invalid port numbers', async () => {
+      const request = new Request('http://localhost/ws/test', {
+        headers: { 'Upgrade': 'websocket', 'Connection': 'Upgrade' },
+      });
+
+      // Test with negative port
+      await expect(connect(sandbox, request, -1)).rejects.toThrow('Invalid or restricted port');
+
+      // Test with port 0
+      await expect(connect(sandbox, request, 0)).rejects.toThrow('Invalid or restricted port');
+
+      // Test with port > 65535
+      await expect(connect(sandbox, request, 70000)).rejects.toThrow('Invalid or restricted port');
+    });
+
+    it('should reject privileged ports (< 1024)', async () => {
+      const request = new Request('http://localhost/ws/test', {
+        headers: { 'Upgrade': 'websocket', 'Connection': 'Upgrade' },
+      });
+
+      // Test with port 80 (privileged)
+      await expect(connect(sandbox, request, 80)).rejects.toThrow('Invalid or restricted port');
+
+      // Test with port 443 (privileged)
+      await expect(connect(sandbox, request, 443)).rejects.toThrow('Invalid or restricted port');
+
+      // Test with port 22 (privileged)
+      await expect(connect(sandbox, request, 22)).rejects.toThrow('Invalid or restricted port');
+    });
+
+    it('should allow valid user ports (1024-65535)', async () => {
+      const request = new Request('http://localhost/ws/test', {
+        headers: { 'Upgrade': 'websocket', 'Connection': 'Upgrade' },
+      });
+
+      // Test boundary: port 1024 (first valid user port)
+      await expect(connect(sandbox, request, 1024)).resolves.toBeDefined();
+
+      // Test boundary: port 65535 (last valid port)
+      await expect(connect(sandbox, request, 65535)).resolves.toBeDefined();
+
+      // Test common ports
+      await expect(connect(sandbox, request, 8080)).resolves.toBeDefined();
+      await expect(connect(sandbox, request, 3001)).resolves.toBeDefined();
     });
   });
 
@@ -238,7 +284,7 @@ describe('connect() - WebSocket Routing', () => {
 
     it('should handle WebSocket with query parameters', async () => {
       const request = new Request('http://localhost/ws/test?token=abc123&room=lobby', {
-        headers: { 'Upgrade': 'websocket' },
+        headers: { 'Upgrade': 'websocket', 'Connection': 'Upgrade' },
       });
 
       const fetchSpy = vi.spyOn(sandbox, 'fetch');
@@ -255,7 +301,7 @@ describe('connect() - WebSocket Routing', () => {
 
     it('should handle WebSocket with path segments', async () => {
       const request = new Request('http://localhost/ws/rooms/123/chat', {
-        headers: { 'Upgrade': 'websocket' },
+        headers: { 'Upgrade': 'websocket', 'Connection': 'Upgrade' },
       });
 
       const fetchSpy = vi.spyOn(sandbox, 'fetch');
@@ -298,7 +344,7 @@ describe('connect() - WebSocket Routing', () => {
       const sandboxStub = getSandbox(mockNamespace, 'test-id');
 
       const request = new Request('http://localhost/ws/echo', {
-        headers: { 'Upgrade': 'websocket' },
+        headers: { 'Upgrade': 'websocket', 'Connection': 'Upgrade' },
       });
 
       const response = await connect(sandboxStub, request, 8080);

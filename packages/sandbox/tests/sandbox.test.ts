@@ -537,6 +537,7 @@ describe('Sandbox - Automatic Session Management', () => {
       const request = new Request('https://example.com/ws', {
         headers: {
           'Upgrade': 'websocket',
+          'Connection': 'Upgrade',
           'Sec-WebSocket-Key': 'test-key-123',
           'Sec-WebSocket-Version': '13',
         },
@@ -547,6 +548,7 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(superFetchSpy).toHaveBeenCalledTimes(1);
       const passedRequest = superFetchSpy.mock.calls[0][0] as Request;
       expect(passedRequest.headers.get('Upgrade')).toBe('websocket');
+      expect(passedRequest.headers.get('Connection')).toBe('Upgrade');
       expect(passedRequest.headers.get('Sec-WebSocket-Key')).toBe('test-key-123');
       expect(passedRequest.headers.get('Sec-WebSocket-Version')).toBe('13');
     });

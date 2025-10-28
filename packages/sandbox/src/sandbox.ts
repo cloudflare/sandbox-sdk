@@ -54,17 +54,25 @@ export function getSandbox(
 
 /**
  * Connect an incoming WebSocket request to a specific port inside the container.
- * 
+ *
  * @param sandbox - The sandbox instance (stub) to connect to
  * @param request - The incoming WebSocket upgrade request from the client
- * @param port - The port number to connect to inside the container
+ * @param port - The port number to connect to inside the container (1024-65535)
  * @returns Promise<Response> - The WebSocket upgrade response
+ * @throws {SecurityError} - If port is invalid or in restricted range
  */
 export async function connect(
   sandbox: Sandbox,
   request: Request,
   port: number
 ): Promise<Response> {
+  // Validate port before routing
+  if (!validatePort(port)) {
+    throw new SecurityError(
+      `Invalid or restricted port: ${port}. Ports must be in range 1024-65535 and not reserved.`
+    );
+  }
+
   const portSwitchedRequest = switchPort(request, port);
   return await sandbox.fetch(portSwitchedRequest);
 }
@@ -255,9 +263,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         await this.ctx.storage.put('sandboxName', name);
       }
 
-      // Detect WebSocket upgrade request
+      // Detect WebSocket upgrade request (RFC 6455 compliant)
       const upgradeHeader = request.headers.get('Upgrade');
-      const isWebSocket = upgradeHeader?.toLowerCase() === 'websocket';
+      const connectionHeader = request.headers.get('Connection');
+      const isWebSocket =
+        upgradeHeader?.toLowerCase() === 'websocket' &&
+        connectionHeader?.toLowerCase().includes('upgrade');
 
       if (isWebSocket) {
         // WebSocket path: Let parent Container class handle WebSocket proxying

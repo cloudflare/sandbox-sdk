@@ -395,6 +395,10 @@ Implement rate limiting in your container server:
 const rateLimits = new Map();
 
 websocket: {
+  open(ws) {
+    // Assign unique ID to track client
+    ws.data = { id: crypto.randomUUID() };
+  },
   message(ws, message) {
     const clientId = ws.data.id;
     const now = Date.now();
