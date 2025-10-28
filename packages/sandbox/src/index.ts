@@ -11,7 +11,7 @@ export {
   SandboxClient,
   UtilityClient
 } from "./clients";
-export { getSandbox, Sandbox } from "./sandbox";
+export { getSandbox, Sandbox, connect } from "./sandbox";
 
 // Legacy types are now imported from the new client architecture
 

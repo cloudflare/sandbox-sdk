@@ -11,7 +11,7 @@
   "containers": [
     {
       "class_name": "Sandbox",
-      "image": "../basic/Dockerfile",
+      "image": "./Dockerfile",
       "name": "sandbox",
       "max_instances": 10,
       "instance_type": "standard-2"

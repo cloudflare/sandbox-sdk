@@ -1,5 +1,5 @@
 import type { DurableObject } from 'cloudflare:workers';
-import { Container, getContainer } from "@cloudflare/containers";
+import { Container, getContainer, switchPort } from "@cloudflare/containers";
 import type {
   CodeContext,
   CreateContextOptions,
@@ -35,8 +35,8 @@ export function getSandbox(
   ns: DurableObjectNamespace<Sandbox>,
   id: string,
   options?: SandboxOptions
-) {
-  const stub = getContainer(ns, id);
+): Sandbox {
+  const stub = getContainer(ns, id) as any as Sandbox;
 
   // Store the name on first access
   stub.setSandboxName?.(id);
@@ -50,6 +50,23 @@ export function getSandbox(
   }
 
   return stub;
+}
+
+/**
+ * Connect an incoming WebSocket request to a specific port inside the container.
+ * 
+ * @param sandbox - The sandbox instance (stub) to connect to
+ * @param request - The incoming WebSocket upgrade request from the client
+ * @param port - The port number to connect to inside the container
+ * @returns Promise<Response> - The WebSocket upgrade response
+ */
+export async function connect(
+  sandbox: Sandbox,
+  request: Request,
+  port: number
+): Promise<Response> {
+  const portSwitchedRequest = switchPort(request, port);
+  return await sandbox.fetch(portSwitchedRequest);
 }
 
 export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
@@ -984,43 +1001,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       listCodeContexts: () => this.codeInterpreter.listCodeContexts(),
       deleteCodeContext: (contextId) => this.codeInterpreter.deleteCodeContext(contextId),
     };
-  }
-
-  /**
-   * Connect to a WebSocket endpoint running inside the container.
-   *
-   * This method bypasses containerFetch and uses the underlying container.fetch()
-   * directly
-   *
-   * @param portOrUrl - Port number (e.g., 3001) or full path (e.g., "/ws/endpoint")
-   *                    If a number, connects to `http://localhost:<port>`
-   *                    If a string starting with "/", connects to `http://localhost:3000<path>`
-   * @param options - Optional request init options (headers, etc.)
-   * @returns WebSocket upgrade response
-   */
-  async connect(portOrUrl: number | string, options?: RequestInit): Promise<Response> {
-    let url: string;
-
-    if (typeof portOrUrl === 'number') {
-      // Connect to specific port
-      url = `http://localhost:${portOrUrl}`;
-    } else if (portOrUrl.startsWith('/')) {
-      // Connect to path on default port (3000)
-      url = `http://localhost:${this.defaultPort}${portOrUrl}`;
-    } else {
-      throw new Error('Invalid portOrUrl: must be a port number or path starting with "/"');
-    }
-
-    // Create WebSocket upgrade request
-    const upgradeRequest = new Request(url, {
-      ...options,
-      headers: {
-        'Upgrade': 'websocket',
-        'Connection': 'Upgrade',
-        ...options?.headers,
-      },
-    });
-    return super.fetch(upgradeRequest);
   }
 
   // ============================================================================
