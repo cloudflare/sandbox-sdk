@@ -262,7 +262,20 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       if (isWebSocket) {
         // WebSocket path: Let parent Container class handle WebSocket proxying
         // This bypasses containerFetch() which uses JSRPC and cannot handle WebSocket upgrades
-        return await super.fetch(request);
+        try {
+          requestLogger.debug('WebSocket upgrade requested', {
+            path: url.pathname,
+            port: this.determinePort(url)
+          });
+          return await super.fetch(request);
+        } catch (error) {
+          requestLogger.error(
+            'WebSocket connection failed',
+            error instanceof Error ? error : new Error(String(error)),
+            { path: url.pathname }
+          );
+          throw error;
+        }
       }
 
       // Non-WebSocket: Use existing port determination and HTTP routing logic

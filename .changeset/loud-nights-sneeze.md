@@ -1,5 +1,5 @@
 ---
-"@cloudflare/sandbox": minor
+"@cloudflare/sandbox": patch
 ---
 
-add websockets support via connect() method
+Add WebSocket support via connect() method for routing client WebSocket connections directly to container services

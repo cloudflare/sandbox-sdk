@@ -488,7 +488,7 @@ print('This should not print')
 
     // Process ID should be the same (server wasn't restarted)
     expect(finalEchoProcess.id).toBe(echoProcess.id);
-  }, 60000);
+  }, 30000);
 
   test('should handle multiple concurrent WebSocket connections', async () => {
     currentSandboxId = createSandboxId();
@@ -571,5 +571,5 @@ print('This should not print')
     ws1.close();
     ws2.close();
     ws3.close();
-  }, 60000);
+  }, 30000);
 });
