@@ -1,6 +1,6 @@
 {
   "name": "@cloudflare/sandbox",
-  "version": "0.4.9",
+  "version": "0.4.10",
   "repository": {
     "type": "git",
     "url": "https://github.com/cloudflare/sandbox-sdk"
@@ -27,7 +27,7 @@
     "docker:local": "cd ../.. && docker build -f packages/sandbox/Dockerfile --build-arg SANDBOX_VERSION=$npm_package_version -t cloudflare/sandbox-test:$npm_package_version .",
     "docker:publish": "cd ../.. && docker buildx build --platform linux/amd64,linux/arm64 -f packages/sandbox/Dockerfile --build-arg SANDBOX_VERSION=$npm_package_version -t cloudflare/sandbox:$npm_package_version --push .",
     "docker:publish:beta": "cd ../.. && docker buildx build --platform linux/amd64,linux/arm64 -f packages/sandbox/Dockerfile --build-arg SANDBOX_VERSION=$npm_package_version -t cloudflare/sandbox:$npm_package_version-beta --push .",
-    "test": "vitest run --config vitest.config.ts",
+    "test": "vitest run --config vitest.config.ts \"$@\"",
     "test:e2e": "cd ../.. && vitest run --config vitest.e2e.config.ts \"$@\""
   },
   "exports": {

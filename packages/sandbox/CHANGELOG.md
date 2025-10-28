@@ -1,5 +1,11 @@
 # @cloudflare/sandbox
 
+## 0.4.10
+
+### Patch Changes
+
+- [#156](https://github.com/cloudflare/sandbox-sdk/pull/156) [`b61841c`](https://github.com/cloudflare/sandbox-sdk/commit/b61841cfb3248022ee8136311e54955ed9faa1ee) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Fix WebSocket upgrade requests through exposed ports
+
 ## 0.4.9
 
 ### Patch Changes
