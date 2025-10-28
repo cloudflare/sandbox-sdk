@@ -574,20 +574,26 @@ describe('Streaming Operations Workflow', () => {
     }, 90000);
 
     /**
-     * Test for callback-based streaming 
-     * This validates that long-running commands work via callback pattern
+     * Test for streaming execution
+     * This validates that long-running commands work via streaming
      */
-    test('should handle very long-running commands (60+ seconds) via callback-based streaming', async () => {
+    test('should handle very long-running commands (60+ seconds) via streaming', async () => {
       currentSandboxId = createSandboxId();
       const headers = createTestHeaders(currentSandboxId);
 
-      console.log('[Test] Starting 60+ second command via callback-based streaming...');
+      // Add keepAlive header to keep container alive during long execution
+      const keepAliveHeaders = {
+        ...headers,
+        'X-Sandbox-KeepAlive': 'true',
+      };
 
-      // With callback-based streaming, it should complete successfully
+      console.log('[Test] Starting 60+ second command via streaming...');
+
+      // With streaming, it should complete successfully
       const streamResponse = await vi.waitFor(
-        async () => fetchWithStartup(`${workerUrl}/api/execStreamCallback`, {
+        async () => fetchWithStartup(`${workerUrl}/api/execStream`, {
           method: 'POST',
-          headers,
+          headers: keepAliveHeaders,
           body: JSON.stringify({
             // Command that runs for 60+ seconds with periodic output
             command: "bash -c 'for i in {1..12}; do echo \"Minute mark $i\"; sleep 5; done; echo \"COMPLETED\"'",
@@ -629,13 +635,19 @@ describe('Streaming Operations Workflow', () => {
       currentSandboxId = createSandboxId();
       const headers = createTestHeaders(currentSandboxId);
 
+      // Add keepAlive header to keep container alive during long sleep
+      const keepAliveHeaders = {
+        ...headers,
+        'X-Sandbox-KeepAlive': 'true',
+      };
+
       console.log('[Test] Testing sleep 45 && echo "done" pattern...');
 
       // This is the exact pattern that was failing before
       const streamResponse = await vi.waitFor(
-        async () => fetchWithStartup(`${workerUrl}/api/execStreamCallback`, {
+        async () => fetchWithStartup(`${workerUrl}/api/execStream`, {
           method: 'POST',
-          headers,
+          headers: keepAliveHeaders,
           body: JSON.stringify({
             command: 'sleep 45 && echo "done"',
           }),

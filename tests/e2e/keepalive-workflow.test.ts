@@ -155,10 +155,9 @@ describe('KeepAlive Workflow', () => {
       );
 
       // Step 2: Explicitly destroy the container
-      const destroyResponse = await fetch(`${workerUrl}/api/destroy`, {
+      const destroyResponse = await fetch(`${workerUrl}/cleanup`, {
         method: 'POST',
         headers: keepAliveHeaders,
-        body: JSON.stringify({}),
       });
 
       expect(destroyResponse.status).toBe(200);
