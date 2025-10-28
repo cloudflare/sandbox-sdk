@@ -2,4 +2,4 @@
 "@cloudflare/sandbox": patch
 ---
 
-add auto timeout renewal and some health checks
+add keepAlive flag to prevent containers from shutting down
