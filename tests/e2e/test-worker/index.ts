@@ -4,7 +4,7 @@
  * Exposes SDK methods via HTTP endpoints for E2E testing.
  * Supports both default sessions (implicit) and explicit sessions via X-Session-Id header.
  */
-import { Sandbox, getSandbox, proxyToSandbox, type ExecutionSession } from '@cloudflare/sandbox';
+import { Sandbox, getSandbox, proxyToSandbox, connect } from '@cloudflare/sandbox';
 export { Sandbox };
 
 interface Env {
@@ -45,6 +45,159 @@ export default {
       : sandbox;
 
     try {
+      // WebSocket init endpoint - starts all WebSocket servers
+      if (url.pathname === '/api/init' && request.method === 'POST') {
+        const processes = await sandbox.listProcesses();
+        const runningServers = new Set(processes.filter(p => p.status === 'running').map(p => p.id));
+
+        const serversToStart = [];
+
+        // Echo server
+        if (!runningServers.has('ws-echo-8080')) {
+          const echoScript = `
+const port = 8080;
+Bun.serve({
+  port,
+  fetch(req, server) {
+    if (server.upgrade(req)) return;
+    return new Response('Expected WebSocket', { status: 400 });
+  },
+  websocket: {
+    message(ws, message) { ws.send(message); },
+    open(ws) { console.log('Echo client connected'); },
+    close(ws) { console.log('Echo client disconnected'); },
+  },
+});
+console.log('Echo server on port ' + port);
+`;
+          await sandbox.writeFile('/tmp/ws-echo.ts', echoScript);
+          serversToStart.push(
+            sandbox.startProcess('bun run /tmp/ws-echo.ts', { processId: 'ws-echo-8080' }).catch(() => {})
+          );
+        }
+
+        // Python code server
+        if (!runningServers.has('ws-code-8081')) {
+          const codeScript = `
+const port = 8081;
+Bun.serve({
+  port,
+  fetch(req, server) {
+    if (server.upgrade(req)) return;
+    return new Response('Expected WebSocket', { status: 400 });
+  },
+  websocket: {
+    async message(ws, message) {
+      try {
+        const data = JSON.parse(message.toString());
+        if (data.type === 'execute') {
+          ws.send(JSON.stringify({ type: 'executing', timestamp: Date.now() }));
+          const filename = '/tmp/code_' + Date.now() + '.py';
+          await Bun.write(filename, data.code);
+          const proc = Bun.spawn(['python3', filename], { stdout: 'pipe', stderr: 'pipe' });
+          const reader = proc.stdout.getReader();
+          const decoder = new TextDecoder();
+          (async () => {
+            try {
+              while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                const text = decoder.decode(value, { stream: true });
+                if (text) ws.send(JSON.stringify({ type: 'stdout', data: text, timestamp: Date.now() }));
+              }
+            } catch (e) {}
+          })();
+          const stderrReader = proc.stderr.getReader();
+          (async () => {
+            try {
+              while (true) {
+                const { done, value } = await stderrReader.read();
+                if (done) break;
+                const text = decoder.decode(value, { stream: true });
+                if (text) ws.send(JSON.stringify({ type: 'stderr', data: text, timestamp: Date.now() }));
+              }
+            } catch (e) {}
+          })();
+          const exitCode = await proc.exited;
+          ws.send(JSON.stringify({ type: 'completed', exitCode, timestamp: Date.now() }));
+          try { await Bun.spawn(['rm', '-f', filename]).exited; } catch (e) {}
+        }
+      } catch (error) {
+        ws.send(JSON.stringify({ type: 'error', message: error.message, timestamp: Date.now() }));
+      }
+    },
+    open(ws) { ws.send(JSON.stringify({ type: 'ready', message: 'Code server ready', timestamp: Date.now() })); },
+  },
+});
+console.log('Code server on port ' + port);
+`;
+          await sandbox.writeFile('/tmp/ws-code.ts', codeScript);
+          serversToStart.push(
+            sandbox.startProcess('bun run /tmp/ws-code.ts', { processId: 'ws-code-8081' }).catch(() => {})
+          );
+        }
+
+        // Terminal server
+        if (!runningServers.has('ws-terminal-8082')) {
+          const terminalScript = `
+const port = 8082;
+Bun.serve({
+  port,
+  fetch(req, server) {
+    if (server.upgrade(req)) return;
+    return new Response('Expected WebSocket', { status: 400 });
+  },
+  websocket: {
+    async message(ws, message) {
+      try {
+        const data = JSON.parse(message.toString());
+        if (data.type === 'command') {
+          ws.send(JSON.stringify({ type: 'executing', command: data.command, timestamp: Date.now() }));
+          const proc = Bun.spawn(['sh', '-c', data.command], { stdout: 'pipe', stderr: 'pipe' });
+          const stdout = await new Response(proc.stdout).text();
+          const stderr = await new Response(proc.stderr).text();
+          const exitCode = await proc.exited;
+          ws.send(JSON.stringify({ type: 'result', stdout, stderr, exitCode, timestamp: Date.now() }));
+        }
+      } catch (error) {
+        ws.send(JSON.stringify({ type: 'error', message: error.message, timestamp: Date.now() }));
+      }
+    },
+    open(ws) { ws.send(JSON.stringify({ type: 'ready', message: 'Terminal ready', cwd: process.cwd(), timestamp: Date.now() })); },
+  },
+});
+console.log('Terminal server on port ' + port);
+`;
+          await sandbox.writeFile('/tmp/ws-terminal.ts', terminalScript);
+          serversToStart.push(
+            sandbox.startProcess('bun run /tmp/ws-terminal.ts', { processId: 'ws-terminal-8082' }).catch(() => {})
+          );
+        }
+
+        await Promise.all(serversToStart);
+
+        return new Response(JSON.stringify({
+          success: true,
+          serversStarted: serversToStart.length
+        }), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      // WebSocket endpoints
+      const upgradeHeader = request.headers.get('Upgrade');
+      if (upgradeHeader === 'websocket') {
+        if (url.pathname === '/ws/echo') {
+          return await connect(sandbox, request, 8080);
+        }
+        if (url.pathname === '/ws/code') {
+          return await connect(sandbox, request, 8081);
+        }
+        if (url.pathname === '/ws/terminal') {
+          return await connect(sandbox, request, 8082);
+        }
+      }
+
       // Health check
       if (url.pathname === '/health') {
         return new Response(JSON.stringify({ status: 'ok' }), {
