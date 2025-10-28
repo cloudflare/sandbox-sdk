@@ -80,7 +80,7 @@ export const StartProcessRequestSchema = z.object({
 });
 
 // Port management schemas
-// Phase 0: Allow all ports 1-65535 (services will validate - only port 3000 is blocked)
+// Phase 0: Allow all ports 1-65535 (services will validate - only the control plane port is blocked, default: 3000)
 export const ExposePortRequestSchema = z.object({
   port: z.number().int().min(1).max(65535, 'Port must be between 1 and 65535'),
   name: z.string().optional(),

@@ -89,14 +89,14 @@ const DEFAULT_CWD = '/workspace';
  * Environment variable: SANDBOX_CONTROL_PLANE_PORT
  */
 const CONTROL_PLANE_PORT = (() => {
-	const port = process.env.SANDBOX_CONTROL_PLANE_PORT 
-		? parseInt(process.env.SANDBOX_CONTROL_PLANE_PORT, 10) 
+	const port = process.env.SANDBOX_CONTROL_PLANE_PORT
+		? parseInt(process.env.SANDBOX_CONTROL_PLANE_PORT, 10)
 		: 3000;
-	
+
 	if (Number.isNaN(port) || port < 1 || port > 65535) {
 		throw new Error(`Invalid SANDBOX_CONTROL_PLANE_PORT: ${process.env.SANDBOX_CONTROL_PLANE_PORT}. Port must be between 1 and 65535.`);
 	}
-	
+
 	return port;
 })();
 

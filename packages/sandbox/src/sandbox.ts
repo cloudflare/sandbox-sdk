@@ -53,9 +53,37 @@ export function getSandbox(
 }
 
 export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
+  /**
+   * Default port for general container communication (from Container base class).
+   * Currently set to 3000, but this is semantically the "control plane" port.
+   * User applications should expose their services on different ports (e.g., 8080).
+   */
   defaultPort = 3000; // Default port for the container's Bun server
+
   sleepAfter: string | number = "10m"; // Sleep the sandbox if no requests are made in this timeframe
-  private controlPlanePort: number = 3000; // Control plane port (configurable via SANDBOX_CONTROL_PLANE_PORT)
+
+  /**
+   * Control plane port for internal SDK-container API communication.
+   * This is the port where the container's Bun HTTP server listens for
+   * SDK commands (/api/execute, /api/files, etc.).
+   *
+   * Configurable via SANDBOX_CONTROL_PLANE_PORT environment variable.
+   *
+   * NOTE: For local development with wrangler dev, the Dockerfile EXPOSE
+   * directive must match this port. If you change the control plane port,
+   * update the EXPOSE line in your Dockerfile accordingly.
+   *
+   * Default: 3000
+   */
+  private controlPlanePort: number = 3000;
+
+  /**
+   * Get the configured control plane port.
+   * @returns The control plane port number
+   */
+  public getControlPlanePort(): number {
+    return this.controlPlanePort;
+  }
 
   client: SandboxClient;
   private codeInterpreter: CodeInterpreter;
@@ -81,9 +109,25 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     // Get control plane port from environment, default to 3000
     if (envObj?.SANDBOX_CONTROL_PLANE_PORT) {
       const port = parseInt(envObj.SANDBOX_CONTROL_PLANE_PORT, 10);
-      if (!Number.isNaN(port) && port >= 1 && port <= 65535) {
-        this.controlPlanePort = port;
+
+      // Validate port range - throw error instead of silent fallback
+      if (isNaN(port) || port < 1 || port > 65535) {
+        throw new Error(
+          `Invalid SANDBOX_CONTROL_PLANE_PORT: ${envObj.SANDBOX_CONTROL_PLANE_PORT}. ` +
+          `Port must be between 1 and 65535.`
+        );
       }
+
+      // Validate against reserved ports (8787 = wrangler dev port)
+      const reservedPorts = [8787];
+      if (reservedPorts.includes(port)) {
+        throw new Error(
+          `SANDBOX_CONTROL_PLANE_PORT cannot use reserved port ${port}. ` +
+          `Reserved ports: ${reservedPorts.join(', ')}`
+        );
+      }
+
+      this.controlPlanePort = port;
     }
 
     this.logger = createLogger({
@@ -722,6 +766,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   async exposePort(port: number, options: { name?: string; hostname: string }) {
+    // Validate port number
+    if (!validatePort(port, this.controlPlanePort)) {
+      throw new SecurityError(`Invalid port number: ${port}. Must be between 1024-65535 and not reserved.`);
+    }
+
     // Check if hostname is workers.dev domain (doesn't support wildcard subdomains)
     if (options.hostname.endsWith('.workers.dev')) {
       const errorResponse: ErrorResponse = {
@@ -757,7 +806,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   async unexposePort(port: number) {
-    if (!validatePort(port)) {
+    if (!validatePort(port, this.controlPlanePort)) {
       throw new SecurityError(`Invalid port number: ${port}. Must be between 1024-65535 and not reserved.`);
     }
 

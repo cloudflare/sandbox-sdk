@@ -19,8 +19,10 @@ export class SecurityError extends Error {
 /**
  * Validates port numbers for sandbox services
  * Only allows non-system ports to prevent conflicts and security issues
+ * @param port The port number to validate
+ * @param controlPlanePort The configured control plane port (dynamic)
  */
-export function validatePort(port: number): boolean {
+export function validatePort(port: number, controlPlanePort: number = 3000): boolean {
   // Must be a valid integer
   if (!Number.isInteger(port)) {
     return false;
@@ -31,10 +33,10 @@ export function validatePort(port: number): boolean {
     return false;
   }
 
-  // Exclude ports reserved by our system
+  // Exclude ports reserved by our system (dynamic based on actual control plane port)
   const reservedPorts = [
-    3000, // Control plane port
-    8787, // Common wrangler dev port
+    controlPlanePort,  // Dynamic control plane port
+    8787,              // Common wrangler dev port
   ];
 
   if (reservedPorts.includes(port)) {

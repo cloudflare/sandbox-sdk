@@ -23,6 +23,7 @@ describe('proxyToSandbox - WebSocket Support', () => {
 
     // Mock Sandbox with necessary methods
     mockSandbox = {
+      getControlPlanePort: vi.fn().mockResolvedValue(3000),
       validatePortToken: vi.fn().mockResolvedValue(true),
       fetch: vi.fn().mockResolvedValue(new Response('WebSocket response')),
       containerFetch: vi.fn().mockResolvedValue(new Response('HTTP response')),
@@ -164,17 +165,17 @@ describe('proxyToSandbox - WebSocket Support', () => {
     });
 
     it('should reject reserved port 3000', async () => {
-      // Port 3000 is reserved as control plane port and rejected by validatePort()
+      // Port 3000 is the default control plane port and should be rejected by validatePort()
       const request = new Request('https://3000-sandbox-anytoken12345678.example.com/status', {
         method: 'GET',
       });
 
       const response = await proxyToSandbox(request, mockEnv);
 
-      // Port 3000 is reserved and should be rejected (extractSandboxRoute returns null)
-      expect(response).toBeNull();
-      expect(mockSandbox.validatePortToken).not.toHaveBeenCalled();
-      expect(mockSandbox.containerFetch).not.toHaveBeenCalled();
+      // Port 3000 is reserved and should be rejected with 400 status
+      expect(response?.status).toBe(400);
+      const body = await response?.json();
+      expect(body).toHaveProperty('code', 'INVALID_PORT');
     });
   });
 

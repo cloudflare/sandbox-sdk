@@ -40,9 +40,33 @@ export async function proxyToSandbox<E extends SandboxEnv>(
     const { sandboxId, port, path, token } = routeInfo;
     const sandbox = getSandbox(env.Sandbox, sandboxId);
 
+    // Get control plane port from sandbox instance
+    const controlPlanePort = await sandbox.getControlPlanePort();
+
+    // Validate port with control plane port
+    if (!validatePort(port, controlPlanePort)) {
+      logger.warn('Invalid port access blocked', {
+        port,
+        controlPlanePort,
+        sandboxId,
+        reason: 'Reserved or invalid port'
+      });
+
+      return new Response(
+        JSON.stringify({
+          error: `Port ${port} is not accessible`,
+          code: 'INVALID_PORT'
+        }),
+        {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' }
+        }
+      );
+    }
+
     // Critical security check: Validate token (mandatory for all user ports)
-    // Skip check for control plane port 3000
-    if (port !== 3000) {
+    // Skip check for control plane port
+    if (port !== controlPlanePort) {
       // Validate the token matches the port
       const isValidToken = await sandbox.validatePortToken(port, token);
       if (!isValidToken) {
@@ -83,12 +107,12 @@ export async function proxyToSandbox<E extends SandboxEnv>(
     let proxyUrl: string;
 
     // Route based on the target port
-    if (port !== 3000) {
+    if (port !== controlPlanePort) {
       // Route directly to user's service on the specified port
       proxyUrl = `http://localhost:${port}${path}${url.search}`;
     } else {
-      // Port 3000 is our control plane - route normally
-      proxyUrl = `http://localhost:3000${path}${url.search}`;
+      // Control plane - route to configured control plane port
+      proxyUrl = `http://localhost:${controlPlanePort}${path}${url.search}`;
     }
 
     const proxyRequest = new Request(proxyUrl, {
@@ -127,7 +151,10 @@ function extractSandboxRoute(url: URL): RouteInfo | null {
   const domain = subdomainMatch[4];
 
   const port = parseInt(portStr, 10);
-  if (!validatePort(port)) {
+
+  // Basic validation only (range check)
+  // Full validation (including control plane port check) happens after getSandbox
+  if (isNaN(port) || port < 1 || port > 65535) {
     return null;
   }
 
