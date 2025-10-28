@@ -1,6 +1,19 @@
 # WebSocket Examples for Sandbox SDK
 
-This example demonstrates how to use WebSockets with the Cloudflare Sandbox SDK for real-time, bidirectional communication between clients and sandboxed containers.
+This example demonstrates how to use WebSockets with the Cloudflare Sandbox SDK by routing client connections to WebSocket servers running inside containers.
+
+## Architecture
+
+The WebSocket integration uses `connect(sandbox, request, port)` to route incoming WebSocket requests directly to WebSocket servers running inside the sandbox container:
+
+```
+Client ←WebSocket→ [Worker routes via connect()] → Container WebSocket Server
+```
+
+The pattern:
+1. Start a WebSocket server inside the container (e.g., using Bun, Node.js, Python)
+2. Use `connect(sandbox, request, port)` to route the incoming WebSocket upgrade request
+3. Client communicates directly with the container's WebSocket server
 
 ## Setup
 
@@ -26,514 +39,306 @@ npm run deploy
 
 2. Open your browser to `http://localhost:8787`
 
-
 ### WebSocket Endpoints
 
 #### `/ws/echo`
-Basic echo server with sandbox command execution.
+Simple echo server that sends back any message it receives.
 
-**Client Message Format:**
-```json
-{
-  "type": "echo",
-  "data": "Hello, sandbox!"
-}
-```
-
-```json
-{
-  "type": "execute",
-  "command": "python --version"
-}
-```
-
-**Server Response Format:**
-```json
-{
-  "type": "echo",
-  "data": "Hello, sandbox!",
-  "timestamp": 1234567890
-}
-```
-
-```json
-{
-  "type": "result",
-  "stdout": "Python 3.11.0\n",
-  "stderr": "",
-  "exitCode": 0
-}
-```
-
-#### `/ws/code`
-Real-time code execution with streaming output.
-
-**Client Message Format:**
-```json
-{
-  "type": "execute",
-  "code": "print('Hello from Python')",
-  "language": "python",
-  "sessionId": "session-123"
-}
-```
-
-**Server Response Format:**
-```json
-{
-  "type": "stdout",
-  "data": "Hello from Python\n",
-  "sessionId": "session-123"
-}
-```
-
-```json
-{
-  "type": "result",
-  "sessionId": "session-123",
-  "results": [...],
-  "error": null,
-  "logs": { "stdout": [...], "stderr": [...] }
-}
-```
-
-#### `/ws/process`
-Stream output from long-running processes.
-
-**Client Message Format:**
-```json
-{
-  "type": "start",
-  "command": "ping",
-  "args": ["-c", "5", "cloudflare.com"]
-}
-```
-
-```json
-{
-  "type": "kill"
-}
-```
-
-**Server Response Format:**
-```json
-{
-  "type": "started",
-  "pid": 12345
-}
-```
-
-```json
-{
-  "type": "stdout",
-  "data": "PING cloudflare.com...\n",
-  "pid": 12345
-}
-```
-
-```json
-{
-  "type": "completed",
-  "pid": 12345
-}
-```
-
-#### `/ws/terminal`
-Interactive terminal session.
-
-**Client Message Format:**
-```
-ls -la\n
-```
-
-```json
-{
-  "type": "resize",
-  "rows": 24,
-  "cols": 80
-}
-```
-
-**Server Response:**
-Raw terminal output or JSON status messages.
-
-## Code Examples
-
-### JavaScript Client
-
+**Client Example:**
 ```javascript
-// Connect to echo server
-const ws = new WebSocket('wss://your-worker.workers.dev/ws/echo?id=my-session');
+const ws = new WebSocket('ws://localhost:8787/ws/echo?id=my-session');
 
-ws.onopen = () => {
-  console.log('Connected');
-
-  // Send echo message
-  ws.send(JSON.stringify({
-    type: 'echo',
-    data: 'Hello!'
-  }));
-
-  // Execute command
-  ws.send(JSON.stringify({
-    type: 'execute',
-    command: 'python -c "print(2+2)"'
-  }));
+ws.onmessage = (event) => {
+  console.log('Received:', event.data);
 };
+
+ws.send('Hello!');
+// Receives: "Hello!"
+```
+
+#### `/ws/broadcast`
+Broadcasts messages to all connected clients (great for chat applications).
+
+**Client Example:**
+```javascript
+const ws = new WebSocket('ws://localhost:8787/ws/broadcast?id=shared-room');
 
 ws.onmessage = (event) => {
   const data = JSON.parse(event.data);
-  console.log('Received:', data);
-};
 
-ws.onclose = () => {
-  console.log('Disconnected');
-};
-```
-
-### Python Client
-
-```python
-import asyncio
-import websockets
-import json
-
-async def execute_code():
-    uri = "wss://your-worker.workers.dev/ws/code?id=my-session"
-
-    async with websockets.connect(uri) as websocket:
-        # Send code to execute
-        await websocket.send(json.dumps({
-            "type": "execute",
-            "code": """
-import time
-for i in range(5):
-    print(f'Count: {i}')
-    time.sleep(0.5)
-            """,
-            "sessionId": "test-1"
-        }))
-
-        # Receive streaming output
-        while True:
-            try:
-                message = await websocket.recv()
-                data = json.loads(message)
-
-                if data['type'] == 'stdout':
-                    print(data['data'], end='')
-                elif data['type'] == 'result':
-                    print('Execution complete')
-                    break
-            except websockets.exceptions.ConnectionClosed:
-                break
-
-asyncio.run(execute_code())
-```
-
-### Node.js Client
-
-```javascript
-import WebSocket from 'ws';
-
-const ws = new WebSocket('ws://localhost:8787/ws/process?id=node-client');
-
-ws.on('open', () => {
-  console.log('Connected to process streamer');
-
-  // Start a long-running process
-  ws.send(JSON.stringify({
-    type: 'start',
-    command: 'python',
-    args: ['-u', 'long_script.py']
-  }));
-});
-
-ws.on('message', (data) => {
-  const message = JSON.parse(data);
-
-  if (message.type === 'stdout' || message.type === 'stderr') {
-    process.stdout.write(message.data);
-  } else if (message.type === 'completed') {
-    console.log('Process completed');
-    ws.close();
+  if (data.type === 'join') {
+    console.log(`User ${data.id} joined, ${data.count} online`);
+  } else if (data.type === 'message') {
+    console.log(`${data.from}: ${data.text}`);
   }
+};
+
+ws.send('Hello everyone!');
+```
+
+#### `/ws/json`
+JSON RPC server that handles structured commands.
+
+**Client Example:**
+```javascript
+const ws = new WebSocket('ws://localhost:8787/ws/json?id=my-session');
+
+// Send ping
+ws.send(JSON.stringify({ type: 'ping' }));
+
+// Execute command in container
+ws.send(JSON.stringify({
+  type: 'exec',
+  id: Date.now(),
+  command: 'ls -la'
+}));
+
+// Get system info
+ws.send(JSON.stringify({
+  type: 'info',
+  id: Date.now()
+}));
+```
+
+## Implementation Pattern
+
+Here's the basic pattern for creating a WebSocket endpoint:
+
+```typescript
+import { connect, getSandbox, Sandbox } from "@cloudflare/sandbox";
+
+async function handleWebSocket(request: Request, env: Env): Promise<Response> {
+  const sandboxId = "my-sandbox";
+  const sandbox = getSandbox(env.Sandbox, sandboxId);
+  const port = 8080;
+
+  // 1. Create WebSocket server script (using Bun)
+  const serverScript = `
+const port = ${port};
+
+Bun.serve({
+  port,
+  fetch(req, server) {
+    if (server.upgrade(req)) {
+      return;
+    }
+    return new Response('Expected WebSocket', { status: 400 });
+  },
+  websocket: {
+    message(ws, message) {
+      // Handle incoming messages
+      ws.send('Echo: ' + message);
+    },
+    open(ws) {
+      console.log('Client connected');
+    },
+    close(ws) {
+      console.log('Client disconnected');
+    },
+  },
 });
 
-// Kill process after 10 seconds
-setTimeout(() => {
-  ws.send(JSON.stringify({ type: 'kill' }));
-}, 10000);
+console.log(\`WebSocket server listening on port \${port}\`);
+`;
+
+  // 2. Write server script to container
+  await sandbox.writeFile('/tmp/ws-server.ts', serverScript);
+
+  // 3. Start the server as a background process
+  try {
+    await sandbox.startProcess(\`bun run /tmp/ws-server.ts\`, {
+      processId: \`ws-server-\${port}\`
+    });
+  } catch (error: any) {
+    // Server might already be running
+    if (!error.message?.includes('already exists')) {
+      throw error;
+    }
+  }
+
+  // 4. Give server time to start
+  await new Promise(resolve => setTimeout(resolve, 1000));
+
+  // 5. Route WebSocket to container server
+  return await connect(sandbox, request, port);
+}
 ```
 
 ## Use Cases
 
-### 1. Real-Time Data Analysis
-
-Stream data processing results as they're computed:
+### 1. Real-Time Communication
+Build chat applications, collaborative tools, or live notifications:
 
 ```javascript
-const ws = new WebSocket('wss://your-worker.workers.dev/ws/code');
+// All clients sharing the same sandbox ID see each other's messages
+const ws = new WebSocket('wss://your-worker.workers.dev/ws/broadcast?id=room-123');
 
-ws.send(JSON.stringify({
-  type: 'execute',
-  code: `
-import pandas as pd
-import time
-
-for chunk in pd.read_csv('large_file.csv', chunksize=1000):
-    result = chunk.describe()
-    print(result)
-    time.sleep(0.1)
-  `,
-  sessionId: 'analysis-1'
-}));
+ws.send('Hello from client!');
+// All clients in room-123 receive this message
 ```
 
-### 2. AI Code Agent
-
-AI agent that generates and executes code with real-time feedback:
+### 2. Remote Command Execution
+Execute commands in the container with real-time output:
 
 ```javascript
-// Generate code with AI
-const code = await generateWithAI(userPrompt);
+const ws = new WebSocket('wss://your-worker.workers.dev/ws/json');
 
-// Execute and stream results
 ws.send(JSON.stringify({
-  type: 'execute',
-  code: code,
-  sessionId: 'ai-agent-1'
+  type: 'exec',
+  command: 'python train.py',
+  id: Date.now()
 }));
 
-// User sees live output as code runs
+// Receive execution results
 ws.onmessage = (event) => {
-  const data = JSON.parse(event.data);
-  if (data.type === 'stdout') {
-    updateUI(data.data);
-  }
+  const result = JSON.parse(event.data);
+  console.log('stdout:', result.stdout);
+  console.log('exit code:', result.exitCode);
 };
 ```
 
-### 3. Collaborative IDE
+### 3. Interactive Services
+Host any WebSocket-based service in the container:
 
-Multiple users share a sandbox:
+- WebSocket terminals (xterm.js)
+- Real-time data feeds
+- Game servers
+- Streaming APIs
+- Custom protocols
 
-```javascript
-// User A's connection
-const wsA = new WebSocket('wss://your-worker.workers.dev/ws/code?id=shared-123');
+## Server Technologies
 
-// User B's connection (same sandbox)
-const wsB = new WebSocket('wss://your-worker.workers.dev/ws/code?id=shared-123');
+You can run any WebSocket server inside the container:
 
-// Both see the same execution results
-wsA.send(JSON.stringify({
-  type: 'execute',
-  code: 'x = 42'
-}));
-
-wsB.send(JSON.stringify({
-  type: 'execute',
-  code: 'print(x)'  // Prints 42 from shared context
-}));
-```
-
-### 4. Live Monitoring
-
-Monitor sandbox metrics and logs:
-
-```javascript
-const ws = new WebSocket('wss://your-worker.workers.dev/ws/process');
-
-ws.send(JSON.stringify({
-  type: 'start',
-  command: 'top',
-  args: ['-b', '-d', '1']  // Update every second
-}));
-
-// Real-time system monitoring
-ws.onmessage = (event) => {
-  const data = JSON.parse(event.data);
-  if (data.type === 'stdout') {
-    updateMonitoringDashboard(data.data);
-  }
-};
-```
-
-## Best Practices
-
-### 1. Error Handling
-
-Always handle errors gracefully:
-
-```javascript
-ws.onerror = (error) => {
-  console.error('WebSocket error:', error);
-  // Attempt reconnection
-  setTimeout(() => reconnect(), 1000);
-};
-
-ws.onclose = (event) => {
-  if (event.code !== 1000) {  // Not a normal closure
-    console.log('Unexpected close, reconnecting...');
-    reconnect();
-  }
-};
-```
-
-### 2. Heartbeat/Ping-Pong
-
-Keep connections alive:
-
-```javascript
-let pingInterval;
-
-ws.onopen = () => {
-  // Send ping every 30 seconds
-  pingInterval = setInterval(() => {
-    ws.send(JSON.stringify({ type: 'ping' }));
-  }, 30000);
-};
-
-ws.onclose = () => {
-  clearInterval(pingInterval);
-};
-```
-
-### 3. Message Buffering
-
-Buffer messages when disconnected:
-
-```javascript
-const messageQueue = [];
-let isConnected = false;
-
-function sendMessage(msg) {
-  if (isConnected) {
-    ws.send(JSON.stringify(msg));
-  } else {
-    messageQueue.push(msg);
-  }
-}
-
-ws.onopen = () => {
-  isConnected = true;
-  // Flush queue
-  while (messageQueue.length > 0) {
-    ws.send(JSON.stringify(messageQueue.shift()));
-  }
-};
-```
-
-### 4. Rate Limiting
-
-Prevent overwhelming the sandbox:
-
-```javascript
-class RateLimitedWebSocket {
-  constructor(url, messagesPerSecond = 10) {
-    this.ws = new WebSocket(url);
-    this.queue = [];
-    this.limit = messagesPerSecond;
-    this.interval = 1000 / messagesPerSecond;
-
-    setInterval(() => this.processQueue(), this.interval);
-  }
-
-  send(message) {
-    this.queue.push(message);
-  }
-
-  processQueue() {
-    if (this.queue.length > 0 && this.ws.readyState === 1) {
-      this.ws.send(this.queue.shift());
+### Bun (recommended - already in container)
+```typescript
+Bun.serve({
+  port: 8080,
+  websocket: {
+    message(ws, message) {
+      ws.send(message);
     }
-  }
-}
-```
-
-## Security Considerations
-
-### Authentication
-
-Add authentication to WebSocket connections:
-
-```typescript
-// Server side
-const token = new URL(request.url).searchParams.get('token');
-if (!token || !(await verifyToken(token))) {
-  return new Response('Unauthorized', { status: 401 });
-}
-```
-
-### Input Validation
-
-Always validate and sanitize inputs:
-
-```typescript
-server.addEventListener('message', async (event) => {
-  const message = JSON.parse(event.data);
-
-  // Validate message structure
-  if (!message.type || typeof message.type !== 'string') {
-    server.send(JSON.stringify({ type: 'error', message: 'Invalid format' }));
-    return;
-  }
-
-  // Prevent command injection
-  if (message.command && /[;&|`$]/.test(message.command)) {
-    server.send(JSON.stringify({ type: 'error', message: 'Invalid characters' }));
-    return;
   }
 });
 ```
 
-### Resource Limits
+### Node.js
+```javascript
+const WebSocket = require('ws');
+const wss = new WebSocket.Server({ port: 8080 });
 
-Set limits on connections and execution time:
-
-```typescript
-const MAX_CONNECTIONS = 100;
-const MAX_EXECUTION_TIME = 60000; // 60 seconds
-
-if (activeConnections.size >= MAX_CONNECTIONS) {
-  server.close(1008, 'Connection limit reached');
-  return;
-}
-
-// Set execution timeout
-const timeout = setTimeout(() => {
-  server.close(1000, 'Execution timeout');
-}, MAX_EXECUTION_TIME);
+wss.on('connection', (ws) => {
+  ws.on('message', (message) => {
+    ws.send(message);
+  });
+});
 ```
 
-## Troubleshooting
+### Python
+```python
+import asyncio
+import websockets
 
-### Connection Refused
+async def echo(websocket):
+    async for message in websocket:
+        await websocket.send(message)
 
-Check that WebSocket upgrades are properly handled:
-- Verify `Upgrade: websocket` header is present
-- Ensure status code 101 is returned
-- Check that WebSocketPair is created correctly
+start_server = websockets.serve(echo, "0.0.0.0", 8080)
+asyncio.run(start_server)
+```
 
-### Messages Not Received
+## Advanced Patterns
 
-Ensure proper message formatting:
-- Use `JSON.stringify()` for structured data
-- Check for serialization errors
-- Verify server is calling `server.accept()`
+### Multiple Ports
+Run different WebSocket services on different ports:
 
-### Connection Drops
+```typescript
+switch (pathname) {
+  case "/ws/chat":
+    return connect(sandbox, request, 8080); // Chat server
+  case "/ws/terminal":
+    return connect(sandbox, request, 8081); // Terminal
+  case "/ws/game":
+    return connect(sandbox, request, 8082); // Game server
+}
+```
 
-Implement reconnection logic:
+### Shared vs Isolated Sandboxes
+```typescript
+// Shared sandbox - all clients connect to same server
+const sandbox = getSandbox(env.Sandbox, "shared-room");
+
+// Isolated sandbox - each user gets their own server
+const sandbox = getSandbox(env.Sandbox, userId);
+```
+
+### Connection Management
+```typescript
+// Check if server is running before connecting
+const processes = await sandbox.listProcesses();
+const serverRunning = processes.some(p => p.id === 'ws-server-8080');
+
+if (!serverRunning) {
+  // Start server
+  await sandbox.startProcess('bun run /tmp/ws-server.ts', {
+    processId: 'ws-server-8080'
+  });
+  await new Promise(resolve => setTimeout(resolve, 1000));
+}
+
+return connect(sandbox, request, 8080);
+```
+
+## Best Practices
+
+### 1. Process Management
+Use named process IDs to avoid starting duplicate servers:
+
+```typescript
+try {
+  await sandbox.startProcess('bun run /tmp/server.ts', {
+    processId: 'ws-server-8080' // Named ID prevents duplicates
+  });
+} catch (error: any) {
+  if (!error.message?.includes('already exists')) {
+    throw error;
+  }
+}
+```
+
+### 2. Startup Delays
+Give servers time to bind to ports before routing connections:
+
+```typescript
+await sandbox.startProcess('bun run /tmp/server.ts');
+await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
+return connect(sandbox, request, port);
+```
+
+### 3. Error Handling
+Handle connection failures gracefully:
+
+```typescript
+try {
+  return await connect(sandbox, request, port);
+} catch (error) {
+  console.error('Failed to connect:', error);
+  return new Response('WebSocket server unavailable', { status: 503 });
+}
+```
+
+### 4. Client Reconnection
+Implement reconnection logic in clients:
+
 ```javascript
 let reconnectAttempts = 0;
-const MAX_RECONNECT_ATTEMPTS = 5;
+const maxAttempts = 5;
 
 function connect() {
   const ws = new WebSocket(url);
 
   ws.onclose = () => {
-    if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+    if (reconnectAttempts < maxAttempts) {
       reconnectAttempts++;
       setTimeout(connect, 1000 * reconnectAttempts);
     }
@@ -545,18 +350,112 @@ function connect() {
 }
 ```
 
+### 5. Message Validation
+Always validate incoming messages in your container server:
+
+```typescript
+websocket: {
+  message(ws, message) {
+    try {
+      const data = JSON.parse(message.toString());
+
+      if (!data.type || typeof data.type !== 'string') {
+        ws.send(JSON.stringify({ error: 'Invalid message format' }));
+        return;
+      }
+
+      // Handle valid message
+    } catch (error) {
+      ws.send(JSON.stringify({ error: 'Invalid JSON' }));
+    }
+  }
+}
+```
+
+## Security Considerations
+
+### Input Validation
+Always validate commands and inputs in your container server:
+
+```typescript
+case 'exec':
+  // Don't trust user input - validate and sanitize
+  const command = data.command;
+  if (!isValidCommand(command)) {
+    return { error: 'Invalid command' };
+  }
+  // Execute safely
+  break;
+```
+
+### Rate Limiting
+Implement rate limiting in your container server:
+
+```typescript
+const rateLimits = new Map();
+
+websocket: {
+  message(ws, message) {
+    const clientId = ws.data.id;
+    const now = Date.now();
+
+    const lastMessage = rateLimits.get(clientId) || 0;
+    if (now - lastMessage < 100) { // Max 10 msg/sec
+      ws.send(JSON.stringify({ error: 'Rate limit exceeded' }));
+      return;
+    }
+
+    rateLimits.set(clientId, now);
+    // Handle message
+  }
+}
+```
+
+### Authentication
+Add authentication before routing to WebSocket:
+
+```typescript
+async function handleWebSocket(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const token = url.searchParams.get('token');
+
+  if (!await verifyToken(token)) {
+    return new Response('Unauthorized', { status: 401 });
+  }
+
+  // Route to WebSocket
+  return connect(sandbox, request, port);
+}
+```
+
+## Troubleshooting
+
+### Connection Refused
+- Ensure server is running: check with `sandbox.listProcesses()`
+- Verify port is correct
+- Wait longer after starting server (increase delay)
+
+### Messages Not Received
+- Check WebSocket upgrade header is present
+- Verify message format (text vs binary)
+- Ensure server is calling `server.upgrade(req)` in Bun
+
+### Server Not Starting
+- Check for port conflicts (use different ports for each service)
+- Verify server script has no syntax errors
+- Check container logs for error messages
+
 ## Performance Tips
 
-1. **Use Binary Frames** for large data transfers
-2. **Buffer Small Messages** to reduce syscalls
-3. **Implement Backpressure** to handle slow clients
-4. **Use Compression** for text-heavy streams
-5. **Batch Updates** when sending frequent small updates
+1. **Reuse Servers**: Use named process IDs to avoid restarting servers on each connection
+2. **Connection Pooling**: Share sandbox instances across multiple clients using the same sandbox ID
+3. **Binary Messages**: Use binary frames for large data transfers to reduce overhead
+4. **Batch Updates**: Send multiple updates in a single message when possible
 
 ## Further Reading
 
 - [Cloudflare Workers WebSocket Documentation](https://developers.cloudflare.com/workers/runtime-apis/websockets/)
-- [Sandbox SDK Documentation](https://developers.cloudflare.com/sandbox/)
+- [Bun WebSocket API](https://bun.sh/docs/api/websockets)
 - [WebSocket RFC 6455](https://datatracker.ietf.org/doc/html/rfc6455)
 
 ## License

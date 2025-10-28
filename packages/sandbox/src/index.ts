@@ -91,16 +91,3 @@ export {
 } from './request-handler';
 // Export SSE parser for converting ReadableStream to AsyncIterable
 export { asyncIterableToSSEStream, parseSSEStream, responseToAsyncIterable } from "./sse-parser";
-
-export {
-  createWebSocketHandler,
-  type ErrorMessage,
-  type OutputMessage,
-  type ReadyMessage,
-  type ResultMessage,
-  SandboxWebSocket,
-  type StatusMessage,
-  type WebSocketHandlerOptions,
-  type WebSocketHandlerResult,
-  type WebSocketMessage
-} from './websocket';

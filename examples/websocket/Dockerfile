@@ -8,7 +8,8 @@ FROM docker.io/cloudflare/sandbox:0.4.10
 # arm64 build of the image.
 # FROM --platform=linux/arm64 cloudflare/sandbox-test:0.4.10
 
-# Expose the ports you want to expose
+# Expose the ports for WebSocket examples
 EXPOSE 8080
-EXPOSE 3001
+EXPOSE 8081
+EXPOSE 8082
 

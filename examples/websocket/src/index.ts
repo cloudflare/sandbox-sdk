@@ -1,16 +1,11 @@
 /**
  * WebSocket Example for Cloudflare Sandbox SDK
+ *
+ * This example demonstrates how to use connect() to route WebSocket requests
+ * to WebSocket servers running inside sandbox containers.
  */
 
-import {
-  connect,
-  createWebSocketHandler,
-  getSandbox,
-  parseSSEStream,
-  Sandbox,
-  SandboxWebSocket,
-  type LogEvent
-} from "@cloudflare/sandbox";
+import { connect, getSandbox, Sandbox } from "@cloudflare/sandbox";
 
 interface Env {
   Sandbox: DurableObjectNamespace<Sandbox>;
@@ -20,6 +15,11 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     const pathname = url.pathname;
+
+    // Initialize servers endpoint (called on page load)
+    if (pathname === "/api/init") {
+      return handleInitServers(request, env);
+    }
 
     // Check for WebSocket upgrade
     const upgradeHeader = request.headers.get("Upgrade");
@@ -38,15 +38,9 @@ export default {
       case "/ws/echo":
         return handleEchoWebSocket(request, env);
       case "/ws/code":
-        return handleCodeExecutionWebSocket(request, env);
-      case "/ws/process":
-        return handleProcessStreamWebSocket(request, env);
+        return handleCodeStreamingWebSocket(request, env);
       case "/ws/terminal":
         return handleTerminalWebSocket(request, env);
-      case "/ws/protected":
-        return handleProtectedWebSocket(request, env);
-      case "/ws/container":
-        return handleContainerWebSocket(request, env);
       default:
         return new Response("Unknown WebSocket endpoint", { status: 404 });
     }
@@ -54,530 +48,224 @@ export default {
 };
 
 /**
+ * Initialize all WebSocket servers on page load
+ * This ensures servers are ready when users click "Connect"
+ */
+async function handleInitServers(request: Request, env: Env): Promise<Response> {
+  const sandboxId = new URL(request.url).searchParams.get("id") || "demo-sandbox";
+  const sandbox = getSandbox(env.Sandbox, sandboxId);
+
+  try {
+    // Check which servers are already running
+    const processes = await sandbox.listProcesses();
+    const runningServers = new Set(
+      processes
+        .filter(p => p.status === 'running')
+        .map(p => p.id)
+    );
+
+    const serversToStart = [];
+
+    // Echo server (port 8080)
+    if (!runningServers.has('echo-server-8080')) {
+      const echoScript = `
+const port = 8080;
+Bun.serve({
+  port,
+  fetch(req, server) {
+    if (server.upgrade(req)) return;
+    return new Response('Expected WebSocket', { status: 400 });
+  },
+  websocket: {
+    message(ws, message) { ws.send(message); },
+    open(ws) { console.log('Client connected'); },
+    close(ws) { console.log('Client disconnected'); },
+  },
+});
+console.log('Echo server listening on port ' + port);
+`;
+      await sandbox.writeFile('/tmp/echo-server.ts', echoScript);
+      serversToStart.push(
+        sandbox.startProcess('bun run /tmp/echo-server.ts', {
+          processId: 'echo-server-8080'
+        }).catch(() => {})
+      );
+    }
+
+    // Code server (port 8081)
+    if (!runningServers.has('code-server-8081')) {
+      const codeScript = `
+const port = 8081;
+Bun.serve({
+  port,
+  fetch(req, server) {
+    if (server.upgrade(req)) return;
+    return new Response('Expected WebSocket', { status: 400 });
+  },
+  websocket: {
+    async message(ws, message) {
+      try {
+        const data = JSON.parse(message.toString());
+        if (data.type === 'execute') {
+          const { code } = data;
+          ws.send(JSON.stringify({ type: 'executing', timestamp: Date.now() }));
+          const filename = '/tmp/code_' + Date.now() + '.py';
+          await Bun.write(filename, code);
+          const proc = Bun.spawn(['python3', filename], { stdout: 'pipe', stderr: 'pipe' });
+          const reader = proc.stdout.getReader();
+          const textDecoder = new TextDecoder();
+          (async () => {
+            try {
+              while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                const text = textDecoder.decode(value, { stream: true });
+                if (text) ws.send(JSON.stringify({ type: 'stdout', data: text, timestamp: Date.now() }));
+              }
+            } catch (e) {}
+          })();
+          const stderrReader = proc.stderr.getReader();
+          (async () => {
+            try {
+              while (true) {
+                const { done, value } = await stderrReader.read();
+                if (done) break;
+                const text = textDecoder.decode(value, { stream: true });
+                if (text) ws.send(JSON.stringify({ type: 'stderr', data: text, timestamp: Date.now() }));
+              }
+            } catch (e) {}
+          })();
+          const exitCode = await proc.exited;
+          ws.send(JSON.stringify({ type: 'completed', exitCode, timestamp: Date.now() }));
+          try { await Bun.spawn(['rm', '-f', filename]).exited; } catch (e) {}
+        }
+      } catch (error) {
+        ws.send(JSON.stringify({ type: 'error', message: error.message || String(error), timestamp: Date.now() }));
+      }
+    },
+    open(ws) {
+      ws.send(JSON.stringify({ type: 'ready', message: 'Python code execution server ready', timestamp: Date.now() }));
+    },
+  },
+});
+console.log('Code streaming server listening on port ' + port);
+`;
+      await sandbox.writeFile('/tmp/code-server.ts', codeScript);
+      serversToStart.push(
+        sandbox.startProcess('bun run /tmp/code-server.ts', {
+          processId: 'code-server-8081'
+        }).catch(() => {})
+      );
+    }
+
+    // Terminal server (port 8082)
+    if (!runningServers.has('terminal-server-8082')) {
+      const terminalScript = `
+const port = 8082;
+Bun.serve({
+  port,
+  fetch(req, server) {
+    if (server.upgrade(req)) return;
+    return new Response('Expected WebSocket', { status: 400 });
+  },
+  websocket: {
+    async message(ws, message) {
+      try {
+        const data = JSON.parse(message.toString());
+        if (data.type === 'command') {
+          const { command } = data;
+          ws.send(JSON.stringify({ type: 'executing', command, timestamp: Date.now() }));
+          const proc = Bun.spawn(['sh', '-c', command], { stdout: 'pipe', stderr: 'pipe' });
+          const stdout = await new Response(proc.stdout).text();
+          const stderr = await new Response(proc.stderr).text();
+          const exitCode = await proc.exited;
+          ws.send(JSON.stringify({ type: 'result', stdout, stderr, exitCode, timestamp: Date.now() }));
+        } else if (data.type === 'ping') {
+          ws.send(JSON.stringify({ type: 'pong', timestamp: Date.now() }));
+        }
+      } catch (error) {
+        ws.send(JSON.stringify({ type: 'error', message: error.message || String(error), timestamp: Date.now() }));
+      }
+    },
+    open(ws) {
+      ws.send(JSON.stringify({ type: 'ready', message: 'Terminal server ready', cwd: process.cwd(), timestamp: Date.now() }));
+    },
+  },
+});
+console.log('Terminal server listening on port ' + port);
+`;
+      await sandbox.writeFile('/tmp/terminal-server.ts', terminalScript);
+      serversToStart.push(
+        sandbox.startProcess('bun run /tmp/terminal-server.ts', {
+          processId: 'terminal-server-8082'
+        }).catch(() => {})
+      );
+    }
+
+    // Start all servers (fire and forget)
+    await Promise.all(serversToStart);
+
+    return new Response(JSON.stringify({
+      success: true,
+      message: 'Servers initialized',
+      serversStarted: serversToStart.length
+    }), {
+      headers: { 'Content-Type': 'application/json' }
+    });
+  } catch (error: any) {
+    return new Response(JSON.stringify({
+      success: false,
+      error: error.message
+    }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+}
+
+/**
  * Example 1: Basic Echo Server
- * Demonstrates basic WebSocket handling with sandbox execution using createWebSocketHandler
+ * Echoes back any message received
  */
 async function handleEchoWebSocket(
   request: Request,
   env: Env
 ): Promise<Response> {
-  // Use the createWebSocketHandler helper for automatic setup
-  const { response, websocket: ws, sandbox, sandboxId } = await createWebSocketHandler(
-    request,
-    env.Sandbox as any as DurableObjectNamespace,
-    {
-      sandboxId: new URL(request.url).searchParams.get("id") || "echo-sandbox",
-      onReady: (ws, sandboxId) => {
-        // Send welcome message when connection is ready
-        ws.send({
-          type: "connected",
-          message: "Echo server connected",
-          sandboxId,
-        });
-      },
-      onMessage: async (ws, message) => {
-        switch (message.type) {
-          case "echo":
-            // Simple echo back
-            ws.send({
-              type: "echo",
-              data: message.data,
-              timestamp: Date.now(),
-            });
-            break;
+  const sandboxId = new URL(request.url).searchParams.get("id") || "demo-sandbox";
+  const sandbox = getSandbox(env.Sandbox, sandboxId);
 
-          case "execute":
-            // Execute a command in the sandbox and echo the result
-            const result = await sandbox.exec(message.command);
-            ws.send({
-              type: "result",
-              stdout: result.stdout,
-              stderr: result.stderr,
-              exitCode: result.exitCode,
-            });
-            break;
-
-          case "ping":
-            ws.send({ type: "pong" });
-            break;
-
-          default:
-            ws.sendError("Unknown message type");
-        }
-      },
-      onClose: () => {
-        console.log("WebSocket closed");
-      },
-    }
-  );
-
-  return response;
+  // Server is pre-initialized on page load, just connect
+  return await connect(sandbox, request, 8080);
 }
 
 /**
- * Example 2: Real-Time Code Execution
- * Executes Python/JavaScript code using basic shell execution
+ * Example 2: Code Streaming Server
+ * Executes code and streams output in real-time
  */
-async function handleCodeExecutionWebSocket(
+async function handleCodeStreamingWebSocket(
   request: Request,
   env: Env
 ): Promise<Response> {
-  const { response, websocket: ws, sandbox } = await createWebSocketHandler(
-    request,
-    env.Sandbox as any as DurableObjectNamespace,
-    {
-      sandboxId: new URL(request.url).searchParams.get("id") || "code-interpreter",
-      onReady: (ws) => {
-        ws.sendReady("Code interpreter ready");
-      },
-      onMessage: async (ws, message) => {
-        if (message.type === "execute") {
-          const { code, language = "python", sessionId } = message;
+  const sandboxId = new URL(request.url).searchParams.get("id") || "demo-sandbox";
+  const sandbox = getSandbox(env.Sandbox, sandboxId);
 
-          // Send acknowledgment
-          ws.send({
-            type: "executing",
-            sessionId,
-          });
-
-          try {
-            // Write code to a temporary file and execute it
-            const filename = `/tmp/code_${Date.now()}.${language === "javascript" ? "js" : "py"}`;
-            await sandbox.writeFile(filename, code);
-
-            // Execute the code
-            const command = language === "javascript"
-              ? `node ${filename}`
-              : `python3 ${filename}`;
-
-            const result = await sandbox.exec(command);
-
-            // Send output
-            if (result.stdout) {
-              ws.sendOutput("stdout", result.stdout);
-            }
-            if (result.stderr) {
-              ws.sendOutput("stderr", result.stderr);
-            }
-
-            // Send final result
-            ws.send({
-              type: "result",
-              sessionId,
-              exitCode: result.exitCode,
-              success: result.exitCode === 0,
-            });
-
-            // Clean up
-            await sandbox.exec(`rm -f ${filename}`);
-          } catch (error: any) {
-            ws.sendError(error);
-          }
-        } else if (message.type === "reset") {
-          // Clean up any temporary files
-          await sandbox.exec("rm -f /tmp/code_*.py /tmp/code_*.js").catch(() => {});
-          ws.send({
-            type: "reset",
-            message: "Context reset",
-          });
-        }
-      },
-    }
-  );
-
-  return response;
+  // Server is pre-initialized on page load, just connect
+  return await connect(sandbox, request, 8081);
 }
 
 /**
- * Example 3: Process Output Streaming
- * Starts a long-running process and streams its output using createWebSocketHandler
- */
-async function handleProcessStreamWebSocket(
-  request: Request,
-  env: Env
-): Promise<Response> {
-  let currentProcess: any = null;
-
-  const { response, websocket: ws, sandbox } = await createWebSocketHandler(
-    request,
-    env.Sandbox as any as DurableObjectNamespace,
-    {
-      sandboxId: new URL(request.url).searchParams.get("id") || "process-stream",
-      onReady: (ws) => {
-        ws.sendReady("Process streamer ready");
-      },
-      onMessage: async (ws, message) => {
-        if (message.type === "start") {
-          const { command, args = [] } = message;
-
-          // Build full command string
-          const fullCommand = args.length > 0 ? `${command} ${args.join(' ')}` : command;
-
-          // Start the process using the built-in helper
-          currentProcess = await ws.startProcessWithStreaming(fullCommand);
-
-          ws.send({
-            type: "started",
-            pid: currentProcess.pid,
-          });
-
-          // Stream logs in the background (handled by startProcessWithStreaming)
-          // But we need to listen for completion
-          (async () => {
-            try {
-              const logStream = await sandbox.streamProcessLogs(currentProcess.id);
-
-              for await (const event of parseSSEStream<LogEvent>(logStream)) {
-                if (event.type === "stdout" || event.type === "stderr") {
-                  ws.sendOutput(event.type, event.data, currentProcess.pid);
-                }
-              }
-
-              // Process completed
-              ws.send({
-                type: "completed",
-                pid: currentProcess.pid,
-              });
-            } catch (error: any) {
-              ws.sendError(error);
-            }
-          })();
-        } else if (message.type === "kill" && currentProcess) {
-          await sandbox.killProcess(currentProcess.id);
-          ws.send({
-            type: "killed",
-            pid: currentProcess.pid,
-          });
-          currentProcess = null;
-        }
-      },
-      onClose: async () => {
-        if (currentProcess) {
-          try {
-            await sandbox.killProcess(currentProcess.id);
-          } catch {
-            // Process might already be done
-          }
-        }
-      },
-    }
-  );
-
-  return response;
-}
-
-/**
- * Example 4: Interactive Terminal
- * Provides a full interactive shell session using createWebSocketHandler
+ * Example 3: Interactive Terminal
+ * Provides terminal-like command execution
  */
 async function handleTerminalWebSocket(
   request: Request,
   env: Env
 ): Promise<Response> {
-  let shell: any = null;
-
-  const { response, websocket: ws, sandbox } = await createWebSocketHandler(
-    request,
-    env.Sandbox as any as DurableObjectNamespace,
-    {
-      sandboxId: new URL(request.url).searchParams.get("id") || "terminal-session",
-      onReady: async (ws) => {
-        // Start an interactive bash shell
-        shell = await sandbox.startProcess("/bin/bash -i", {
-          env: {
-            TERM: "xterm-256color",
-            PS1: "\\[\\033[01;32m\\]sandbox\\[\\033[00m\\]:\\[\\033[01;34m\\]\\w\\[\\033[00m\\]$ ",
-          },
-        });
-
-        ws.send({
-          type: "ready",
-          pid: shell.pid,
-          message: "Terminal connected",
-        });
-
-        // Stream shell output to client
-        (async () => {
-          try {
-            const logStream = await sandbox.streamProcessLogs(shell.id);
-
-            for await (const event of parseSSEStream<LogEvent>(logStream)) {
-              if (event.type === "stdout") {
-                // Send raw output for terminal rendering
-                ws.raw.send(event.data);
-              }
-            }
-
-            // Shell exited
-            ws.send({
-              type: "exit",
-              message: "Shell process exited",
-            });
-            ws.close(1000, "Shell exited");
-          } catch (error: any) {
-            ws.sendError(error);
-            ws.close(1011, "Error");
-          }
-        })();
-      },
-      onMessage: async (ws, message, event) => {
-        const input = event.data as string;
-
-        // Handle special commands
-        if (input.startsWith("{")) {
-          const command = JSON.parse(input);
-
-          if (command.type === "resize") {
-            // Handle terminal resize (would need TTY support)
-            // For now, just acknowledge
-            ws.send({
-              type: "resized",
-              rows: command.rows,
-              cols: command.cols,
-            });
-          }
-        } else {
-          // Regular input - send to shell stdin
-          // Note: This requires implementing sendToProcess in the sandbox
-          // await sandbox.sendToProcess(shell.pid, input);
-
-          // For now, we'll use a workaround by executing each line
-          if (input.includes('\n')) {
-            const result = await sandbox.exec(input.trim());
-            ws.raw.send(result.stdout + result.stderr);
-          }
-        }
-      },
-      onClose: async () => {
-        if (shell) {
-          try {
-            await sandbox.killProcess(shell.id);
-          } catch {
-            // Process might already be done
-          }
-        }
-      },
-    }
-  );
-
-  return response;
-}
-
-/**
- * Example 5: Protected WebSocket with Rate Limiting & Timeouts
- */
-async function handleProtectedWebSocket(
-  request: Request,
-  env: Env
-): Promise<Response> {
-  const { response, websocket: ws, sandbox, sandboxId } = await createWebSocketHandler(
-    request,
-    env.Sandbox as any as DurableObjectNamespace,
-    {
-      sandboxId: new URL(request.url).searchParams.get("id") || "protected-session",
-      // Configure rate limiting
-      rateLimit: {
-        maxMessages: 100,
-        windowMs: 60000, // 1 minute
-        maxMessageSize: 1024 * 1024, // 1MB
-      },
-      // Configure connection timeouts
-      timeout: {
-        idleTimeout: 300000, // 5 minutes
-        maxConnectionTime: 1800000, // 30 minutes
-        heartbeatInterval: 30000, // 30 seconds
-      },
-      onReady: (ws, sandboxId) => {
-        // Send welcome with limits info
-        ws.send({
-          type: "connected",
-          message: "Protected WebSocket connected",
-          sandboxId,
-          limits: {
-            maxMessages: 100,
-            windowMs: 60000,
-            maxMessageSize: 1024 * 1024,
-            idleTimeout: 300000,
-            maxConnectionTime: 1800000,
-          },
-        });
-      },
-      onMessage: async (ws, message) => {
-        switch (message.type) {
-          case "echo":
-            ws.send({
-              type: "echo",
-              data: message.data,
-              timestamp: Date.now(),
-            });
-            break;
-
-          case "execute":
-            const result = await sandbox.exec(message.command);
-            ws.send({
-              type: "result",
-              stdout: result.stdout,
-              stderr: result.stderr,
-              exitCode: result.exitCode,
-            });
-            break;
-
-          case "status":
-            ws.send({
-              type: "status",
-              connected: true,
-              sandboxId,
-            });
-            break;
-
-          default:
-            ws.sendError("Unknown message type");
-        }
-      },
-      onRateLimitExceeded: (ws) => {
-        console.log("Rate limit exceeded for protected WebSocket");
-      },
-      onClose: () => {
-        console.log("Protected WebSocket closed");
-      },
-    }
-  );
-
-  return response;
-}
-
-/**
- * Example 6: Connect to WebSocket Server Inside Container
- * Demonstrates using connect() to proxy to a WebSocket server running in the container
- *
- * This example shows how to connect to a WebSocket server that's running inside
- * the sandbox container. We use connect(sandbox, request, port) to route the incoming
- * WebSocket request to port 8080 where our Node.js WebSocket server is listening.
- */
-async function handleContainerWebSocket(
-  request: Request,
-  env: Env
-): Promise<Response> {
-  const sandboxId = new URL(request.url).searchParams.get("id") || "container-ws";
-
-  // Get sandbox instance using getSandbox helper
+  const sandboxId = new URL(request.url).searchParams.get("id") || "demo-sandbox";
   const sandbox = getSandbox(env.Sandbox, sandboxId);
 
-  // Create a simple Node.js WebSocket echo server
-  // Using Node.js because it should be available in the container
-  const serverScript = `
-const http = require('http');
-const crypto = require('crypto');
-
-const server = http.createServer((req, res) => {
-  res.writeHead(200);
-  res.end('WebSocket server running');
-});
-
-server.on('upgrade', (req, socket) => {
-  const key = req.headers['sec-websocket-key'];
-  const acceptKey = crypto
-    .createHash('sha1')
-    .update(key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11')
-    .digest('base64');
-
-  socket.write(
-    'HTTP/1.1 101 Switching Protocols\\r\\n' +
-    'Upgrade: websocket\\r\\n' +
-    'Connection: Upgrade\\r\\n' +
-    'Sec-WebSocket-Accept: ' + acceptKey + '\\r\\n\\r\\n'
-  );
-
-  socket.on('data', (data) => {
-    // Simple echo - parse WebSocket frame and echo back
-    if (data[0] === 0x81) {
-      const len = data[1] & 127;
-      const maskStart = 2;
-      const dataStart = maskStart + 4;
-      const mask = data.slice(maskStart, dataStart);
-      const payload = data.slice(dataStart, dataStart + len);
-
-      // Unmask the payload
-      const decoded = Buffer.alloc(len);
-      for (let i = 0; i < len; i++) {
-        decoded[i] = payload[i] ^ mask[i % 4];
-      }
-
-      // Echo back (server doesn't mask)
-      const response = Buffer.alloc(2 + len);
-      response[0] = 0x81; // Text frame
-      response[1] = len;
-      decoded.copy(response, 2);
-      socket.write(response);
-    }
-  });
-
-  socket.on('close', () => {
-    console.log('WebSocket closed');
-  });
-});
-
-server.listen(8080, '0.0.0.0', () => {
-  console.log('WebSocket server listening on port 8080');
-});
-`;
-
-  // Write the server script
-  await sandbox.writeFile('/tmp/ws_server.js', serverScript);
-
-  // Start the server using startProcess (better for long-running processes)
-  try {
-    await sandbox.startProcess('node /tmp/ws_server.js', {
-      processId: 'ws-server-8080'
-    });
-    console.log('WebSocket server process started');
-  } catch (error: any) {
-    // Server might already be running, that's okay
-    if (!error.message?.includes('already exists')) {
-      console.error('Failed to start WebSocket server:', error);
-      throw error;
-    }
-    console.log('WebSocket server already running');
-  }
-
-  // Give the server time to start and begin listening
-  await new Promise(resolve => setTimeout(resolve, 2000));
-
-  // Check if the process is still running
-  try {
-    const processes = await sandbox.listProcesses();
-    const serverProcess = processes.find(p => p.id === 'ws-server-8080');
-
-    if (!serverProcess || serverProcess.status !== 'running') {
-      console.error('WebSocket server process not running:', serverProcess);
-      return new Response('WebSocket server failed to start', { status: 503 });
-    }
-
-    console.log('WebSocket server process is running:', serverProcess);
-  } catch (e) {
-    console.error('Failed to check process status:', e);
-  }
-
-  // Use connect() to route the incoming WebSocket to port 8080
-  // This is a convenient helper that uses switchPort internally
-  console.log('Using connect(sandbox, request, 8080) to route WebSocket...');
-
-  try {
-    const response = await connect(sandbox, request, 8080);
-
-    console.log('connect() returned status:', response.status);
-    console.log('Response headers:', Object.fromEntries(response.headers));
-
-    return response;
-  } catch (error: any) {
-    console.error('connect() failed:', error);
-    console.error('Error type:', error.constructor.name);
-    console.error('Error message:', error.message);
-    console.error('Error stack:', error.stack);
-    return new Response(`Failed to connect to container WebSocket: ${error.message}`, {
-      status: 500
-    });
-  }
+  // Server is pre-initialized on page load, just connect
+  return await connect(sandbox, request, 8082);
 }
 
 /**
@@ -632,6 +320,7 @@ function getTestHTML(): string {
       color: #d4d4d4;
       font-family: 'Courier New', monospace;
       margin: 10px 0;
+      box-sizing: border-box;
     }
     .output {
       background: #1e1e1e;
@@ -653,149 +342,134 @@ function getTestHTML(): string {
     }
     .connected { background: #0e639c; }
     .disconnected { background: #f48771; }
-    .error { color: #f48771; }
-    .success { color: #4ec9b0; }
+    .info {
+      background: #2d2d30;
+      border: 2px solid #4ec9b0;
+      border-radius: 8px;
+      padding: 20px;
+      margin: 20px 0;
+    }
   </style>
 </head>
 <body>
   <h1>Sandbox SDK WebSocket Examples</h1>
 
-  <div style="background: #2d2d30; border: 2px solid #4ec9b0; border-radius: 8px; padding: 20px; margin: 20px 0;">
-    <h3 style="margin-top: 0; color: #4ec9b0;">Two WebSocket Communication Methods</h3>
-
-    <div style="margin: 15px 0;">
-      <p style="color: #4ec9b0; font-weight: bold; margin: 5px 0;">
-        <code>createWebSocketHandler()</code> - DO <--> Client with Sandbox Operations
-      </p>
-      <p style="color: #d4d4d4; margin: 5px 0 5px 25px; font-size: 0.9em;">
-        Use this when you want to communicate between the Durable Object and the client,
-        performing sandbox operations (run code, start processes, execute commands).
-        The DO handles messages and interacts with the sandbox.
-      </p>
-      <p style="color: #888; margin: 5px 0 5px 25px; font-size: 0.85em;">
-        <strong>Examples:</strong> Echo Server, Code Execution, Process Streaming
-      </p>
-    </div>
-
-    <div style="margin: 15px 0;">
-      <p style="color: #ce9178; font-weight: bold; margin: 5px 0;">
-        <code>connect(sandbox, request, port)</code> - Route Client -> Container Service
-      </p>
-      <p style="color: #d4d4d4; margin: 5px 0 5px 25px; font-size: 0.9em;">
-        Use this when you have a WebSocket server running inside the container
-        (e.g., a Node.js app on port 8080) and want to route incoming client
-        WebSocket connections directly to it.
-      </p>
-      <p style="color: #888; margin: 5px 0 5px 25px; font-size: 0.85em;">
-        <strong>Example:</strong> Container WebSocket (routes to Node.js WebSocket server on port 8080)
-      </p>
-    </div>
+  <div class="info">
+    <h3 style="margin-top: 0; color: #4ec9b0;">WebSocket with connect()</h3>
+    <p>
+      All examples use <code>connect(sandbox, request, port)</code> to route incoming
+      WebSocket requests to WebSocket servers running inside the container.
+    </p>
+    <p style="font-size: 0.85em; color: #888;">
+      <span id="init-status"> Initializing servers...</span>
+    </p>
   </div>
 
   <div class="example">
     <h2>1. Echo Server</h2>
-    <p style="color: #4ec9b0; font-size: 0.85em; margin: 5px 0; font-weight: bold;">
-       Method: <code>createWebSocketHandler()</code> - DO <--> Client with Sandbox Operations
+    <p style="color: #888; font-size: 0.85em;">
+      Simple echo - sends back any message you send to it
     </p>
     <div id="echo-status" class="status disconnected">Disconnected</div>
     <input type="text" id="echo-input" placeholder="Enter message to echo">
     <button onclick="echoConnect()">Connect</button>
     <button onclick="echoSend()">Send</button>
-    <button onclick="echoExecute()">Execute Command</button>
     <button onclick="echoDisconnect()">Disconnect</button>
+    <button onclick="echoClear()">Clear</button>
     <div class="output" id="echo-output"></div>
   </div>
 
   <div class="example">
-    <h2>2. Code Execution</h2>
-    <p style="color: #4ec9b0; font-size: 0.85em; margin: 5px 0; font-weight: bold;">
-      Method: <code>createWebSocketHandler()</code> - DO <--> Client with Sandbox Operations
+    <h2>2. Python Code Streaming</h2>
+    <p style="color: #888; font-size: 0.85em;">
+      Execute Python code with real-time streaming output
     </p>
     <div id="code-status" class="status disconnected">Disconnected</div>
-    <textarea id="code-input" rows="6" placeholder="Enter Python code...">import time
+    <textarea id="code-input" rows="8" placeholder="Enter Python code here...">import time
 for i in range(5):
     print(f'Count: {i}')
     time.sleep(0.5)
 print('Done!')</textarea>
     <button onclick="codeConnect()">Connect</button>
     <button onclick="codeExecute()">Execute</button>
-    <button onclick="codeReset()">Reset Context</button>
     <button onclick="codeDisconnect()">Disconnect</button>
+    <button onclick="codeClear()">Clear</button>
     <div class="output" id="code-output"></div>
   </div>
 
   <div class="example">
-    <h2>3. Process Streaming</h2>
-    <p style="color: #4ec9b0; font-size: 0.85em; margin: 5px 0; font-weight: bold;">
-      Method: <code>createWebSocketHandler()</code> - DO <--> Client with Sandbox Operations
+    <h2>3. Interactive Terminal</h2>
+    <p style="color: #888; font-size: 0.85em;">
+      Run shell commands and see results
     </p>
-    <div id="process-status" class="status disconnected">Disconnected</div>
-    <input type="text" id="process-cmd" placeholder="Command to run" value="ping -c 5 cloudflare.com">
-    <button onclick="processConnect()">Connect</button>
-    <button onclick="processStart()">Start Process</button>
-    <button onclick="processKill()">Kill Process</button>
-    <button onclick="processDisconnect()">Disconnect</button>
-    <div class="output" id="process-output"></div>
-  </div>
-
-  <div class="example">
-    <h2>4. Container WebSocket</h2>
-    <p style="color: #ce9178; font-size: 0.85em; margin: 5px 0; font-weight: bold;">
-      Method: <code>connect(sandbox, request, port)</code> - Route Client -> Container Service
-    </p>
-    <p style="color: #d4d4d4; font-size: 0.85em; margin: 5px 0;">
-      Routes WebSocket to a Node.js server running on port 8080 inside the container
-    </p>
-    <div id="container-status" class="status disconnected">Disconnected</div>
-    <input type="text" id="container-input" placeholder="Enter message to send">
-    <button onclick="containerConnect()">Connect</button>
-    <button onclick="containerSend()">Send Message</button>
-    <button onclick="containerDisconnect()">Disconnect</button>
-    <div class="output" id="container-output"></div>
+    <div id="terminal-status" class="status disconnected">Disconnected</div>
+    <input type="text" id="terminal-input" placeholder="Enter command (e.g., ls -la)">
+    <button onclick="terminalConnect()">Connect</button>
+    <button onclick="terminalExecute()">Execute</button>
+    <button onclick="terminalDisconnect()">Disconnect</button>
+    <button onclick="terminalClear()">Clear</button>
+    <div class="output" id="terminal-output"></div>
   </div>
 
   <script>
-    // WebSocket connections
     let echoWs = null;
     let codeWs = null;
-    let processWs = null;
-    let containerWs = null;
+    let terminalWs = null;
+    const sandboxId = 'demo-sandbox';
+
+    // Initialize servers on page load
+    (async () => {
+      try {
+        const response = await fetch('/api/init?id=' + sandboxId);
+        const data = await response.json();
+        const statusEl = document.getElementById('init-status');
+        if (data.success) {
+          statusEl.textContent = 'Servers ready! Click Connect to start.';
+          statusEl.style.color = '#4ec9b0';
+        } else {
+          statusEl.textContent = 'Server init failed: ' + data.error;
+          statusEl.style.color = '#f48771';
+        }
+      } catch (error) {
+        document.getElementById('init-status').textContent = 'Init error: ' + error.message;
+        document.getElementById('init-status').style.color = '#f48771';
+      }
+    })();
 
     // Echo Server
     function echoConnect() {
       const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      echoWs = new WebSocket(protocol + '//' + location.host + '/ws/echo?id=echo-' + Date.now());
+      echoWs = new WebSocket(protocol + '//' + location.host + '/ws/echo?id=' + sandboxId);
 
       echoWs.onopen = () => {
         document.getElementById('echo-status').textContent = 'Connected';
         document.getElementById('echo-status').className = 'status connected';
-        logEcho({ type: 'info', message: 'Connected to echo server' });
       };
 
       echoWs.onmessage = (event) => {
-        logEcho(JSON.parse(event.data));
+        logEcho('Received: ' + event.data);
       };
 
       echoWs.onclose = () => {
         document.getElementById('echo-status').textContent = 'Disconnected';
         document.getElementById('echo-status').className = 'status disconnected';
-        logEcho({ type: 'info', message: 'Disconnected' });
+      };
+
+      echoWs.onerror = () => {
+        logEcho('Connection error - make sure servers are initialized');
       };
     }
 
     function echoSend() {
-      if (!echoWs) return alert('Not connected');
-      const input = document.getElementById('echo-input');
-      echoWs.send(JSON.stringify({ type: 'echo', data: input.value }));
-      input.value = '';
-    }
-
-    function echoExecute() {
-      if (!echoWs) return alert('Not connected');
-      const cmd = prompt('Enter command:', 'echo "Hello from sandbox"');
-      if (cmd) {
-        echoWs.send(JSON.stringify({ type: 'execute', command: cmd }));
+      if (!echoWs || echoWs.readyState !== WebSocket.OPEN) {
+        alert('Not connected');
+        return;
       }
+      const input = document.getElementById('echo-input');
+      const message = input.value;
+      echoWs.send(message);
+      logEcho('Sent: ' + message);
+      input.value = '';
     }
 
     function echoDisconnect() {
@@ -805,16 +479,20 @@ print('Done!')</textarea>
       }
     }
 
-    function logEcho(data) {
+    function echoClear() {
+      document.getElementById('echo-output').textContent = '';
+    }
+
+    function logEcho(message) {
       const output = document.getElementById('echo-output');
-      output.textContent += JSON.stringify(data, null, 2) + '\\n\\n';
+      output.textContent += message + '\\n';
       output.scrollTop = output.scrollHeight;
     }
 
-    // Code Execution
+    // Code Streaming
     function codeConnect() {
       const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      codeWs = new WebSocket(protocol + '//' + location.host + '/ws/code?id=code-' + Date.now());
+      codeWs = new WebSocket(protocol + '//' + location.host + '/ws/code?id=' + sandboxId);
 
       codeWs.onopen = () => {
         document.getElementById('code-status').textContent = 'Connected';
@@ -822,27 +500,48 @@ print('Done!')</textarea>
       };
 
       codeWs.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        logCode(data);
+        try {
+          const data = JSON.parse(event.data);
+
+          if (data.type === 'ready') {
+            logCode('[READY] ' + data.message + '\\n');
+          } else if (data.type === 'executing') {
+            logCode('[EXECUTING...]\\n');
+          } else if (data.type === 'stdout') {
+            logCode(data.data);
+          } else if (data.type === 'stderr') {
+            logCode('[STDERR] ' + data.data);
+          } else if (data.type === 'completed') {
+            logCode('\\n[COMPLETED] Exit code: ' + data.exitCode + '\\n');
+          } else if (data.type === 'error') {
+            logCode('[ERROR] ' + data.message + '\\n');
+          }
+        } catch (e) {
+          logCode('Parse error: ' + event.data + '\\n');
+        }
       };
 
       codeWs.onclose = () => {
         document.getElementById('code-status').textContent = 'Disconnected';
         document.getElementById('code-status').className = 'status disconnected';
       };
+
+      codeWs.onerror = () => {
+        logCode('Connection error - make sure servers are initialized\\n');
+      };
     }
 
     function codeExecute() {
-      if (!codeWs) return alert('Not connected');
+      if (!codeWs || codeWs.readyState !== WebSocket.OPEN) {
+        alert('Not connected');
+        return;
+      }
       const code = document.getElementById('code-input').value;
-      const sessionId = 'session-' + Date.now();
-      codeWs.send(JSON.stringify({ type: 'execute', code, sessionId }));
-      logCode({ type: 'info', message: 'Executing...' });
-    }
 
-    function codeReset() {
-      if (!codeWs) return alert('Not connected');
-      codeWs.send(JSON.stringify({ type: 'reset' }));
+      codeWs.send(JSON.stringify({
+        type: 'execute',
+        code: code
+      }));
     }
 
     function codeDisconnect() {
@@ -852,123 +551,98 @@ print('Done!')</textarea>
       }
     }
 
-    function logCode(data) {
+    function codeClear() {
+      document.getElementById('code-output').textContent = '';
+    }
+
+    function logCode(message) {
       const output = document.getElementById('code-output');
-      if (data.type === 'stdout' || data.type === 'stderr') {
-        output.textContent += data.data;
-      } else {
-        output.textContent += JSON.stringify(data, null, 2) + '\\n';
-      }
+      output.textContent += message;
       output.scrollTop = output.scrollHeight;
     }
 
-    // Process Streaming
-    function processConnect() {
+    // Terminal
+    function terminalConnect() {
       const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      processWs = new WebSocket(protocol + '//' + location.host + '/ws/process?id=proc-' + Date.now());
+      terminalWs = new WebSocket(protocol + '//' + location.host + '/ws/terminal?id=' + sandboxId);
 
-      processWs.onopen = () => {
-        document.getElementById('process-status').textContent = 'Connected';
-        document.getElementById('process-status').className = 'status connected';
+      terminalWs.onopen = () => {
+        document.getElementById('terminal-status').textContent = 'Connected';
+        document.getElementById('terminal-status').className = 'status connected';
       };
 
-      processWs.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        logProcess(data);
+      terminalWs.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+
+          if (data.type === 'ready') {
+            logTerminal('[READY] ' + data.message);
+            logTerminal('Working directory: ' + data.cwd + '\\n');
+          } else if (data.type === 'executing') {
+            logTerminal('$ ' + data.command);
+          } else if (data.type === 'result') {
+            if (data.stdout) logTerminal(data.stdout);
+            if (data.stderr) logTerminal('[STDERR] ' + data.stderr);
+            logTerminal('[Exit code: ' + data.exitCode + ']\\n');
+          } else if (data.type === 'error') {
+            logTerminal('[ERROR] ' + data.message);
+          }
+        } catch (e) {
+          logTerminal('Parse error: ' + event.data);
+        }
       };
 
-      processWs.onclose = () => {
-        document.getElementById('process-status').textContent = 'Disconnected';
-        document.getElementById('process-status').className = 'status disconnected';
+      terminalWs.onclose = () => {
+        document.getElementById('terminal-status').textContent = 'Disconnected';
+        document.getElementById('terminal-status').className = 'status disconnected';
+      };
+
+      terminalWs.onerror = () => {
+        logTerminal('Connection error - make sure servers are initialized\\n');
       };
     }
 
-    function processStart() {
-      if (!processWs) return alert('Not connected');
-      const cmd = document.getElementById('process-cmd').value.split(' ');
-      processWs.send(JSON.stringify({
-        type: 'start',
-        command: cmd[0],
-        args: cmd.slice(1)
+    function terminalExecute() {
+      if (!terminalWs || terminalWs.readyState !== WebSocket.OPEN) {
+        alert('Not connected');
+        return;
+      }
+      const input = document.getElementById('terminal-input');
+      const command = input.value;
+
+      terminalWs.send(JSON.stringify({
+        type: 'command',
+        command: command
       }));
-    }
 
-    function processKill() {
-      if (!processWs) return alert('Not connected');
-      processWs.send(JSON.stringify({ type: 'kill' }));
-    }
-
-    function processDisconnect() {
-      if (processWs) {
-        processWs.close();
-        processWs = null;
-      }
-    }
-
-    function logProcess(data) {
-      const output = document.getElementById('process-output');
-      if (data.type === 'stdout' || data.type === 'stderr') {
-        output.textContent += data.data;
-      } else {
-        output.textContent += JSON.stringify(data, null, 2) + '\\n';
-      }
-      output.scrollTop = output.scrollHeight;
-    }
-
-    // Container WebSocket (using sandbox.connect)
-    function containerConnect() {
-      const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const url = protocol + '//' + location.host + '/ws/container?id=container-' + Date.now();
-
-      logContainer({ type: 'info', message: 'Connecting to: ' + url });
-      containerWs = new WebSocket(url);
-
-      containerWs.onopen = () => {
-        console.log('Container WebSocket opened');
-        document.getElementById('container-status').textContent = 'Connected';
-        document.getElementById('container-status').className = 'status connected';
-        logContainer({ type: 'info', message: 'Connected to container WebSocket server (via connect on port 8080)' });
-      };
-
-      containerWs.onmessage = (event) => {
-        console.log('Container WebSocket message:', event.data);
-        logContainer({ type: 'received', message: event.data });
-      };
-
-      containerWs.onclose = (event) => {
-        console.log('Container WebSocket closed:', event.code, event.reason);
-        document.getElementById('container-status').textContent = 'Disconnected';
-        document.getElementById('container-status').className = 'status disconnected';
-        logContainer({ type: 'info', message: 'Disconnected: ' + event.code + ' ' + event.reason });
-      };
-
-      containerWs.onerror = (error) => {
-        console.error('Container WebSocket error:', error);
-        logContainer({ type: 'error', message: 'WebSocket error occurred - check console' });
-      };
-    }
-
-    function containerSend() {
-      if (!containerWs) return alert('Not connected');
-      const input = document.getElementById('container-input');
-      const message = input.value;
-      containerWs.send(message);
-      logContainer({ type: 'sent', message: message });
       input.value = '';
     }
 
-    function containerDisconnect() {
-      if (containerWs) {
-        containerWs.close();
-        containerWs = null;
+    function terminalDisconnect() {
+      if (terminalWs) {
+        terminalWs.close();
+        terminalWs = null;
       }
     }
 
-    function logContainer(data) {
-      const output = document.getElementById('container-output');
-      output.textContent += JSON.stringify(data, null, 2) + '\\n\\n';
+    function terminalClear() {
+      document.getElementById('terminal-output').textContent = '';
+    }
+
+    function logTerminal(message) {
+      const output = document.getElementById('terminal-output');
+      output.textContent += message + '\\n';
       output.scrollTop = output.scrollHeight;
     }
+
+    // Allow Enter key to submit
+    document.getElementById('echo-input').addEventListener('keypress', function(e) {
+      if (e.key === 'Enter') echoSend();
+    });
+
+    document.getElementById('terminal-input').addEventListener('keypress', function(e) {
+      if (e.key === 'Enter') terminalExecute();
+    });
   </script>
 </body>
 </html>`;
