@@ -81,6 +81,25 @@ const STREAM_CHUNK_DELAY_MS = 100;
  */
 const DEFAULT_CWD = '/workspace';
 
+/**
+ * Control plane port for the container's Bun HTTP server.
+ * This port is used for internal communication between the Sandbox DO and the container.
+ *
+ * Default: 3000
+ * Environment variable: SANDBOX_CONTROL_PLANE_PORT
+ */
+const CONTROL_PLANE_PORT = (() => {
+	const port = process.env.SANDBOX_CONTROL_PLANE_PORT 
+		? parseInt(process.env.SANDBOX_CONTROL_PLANE_PORT, 10) 
+		: 3000;
+	
+	if (Number.isNaN(port) || port < 1 || port > 65535) {
+		throw new Error(`Invalid SANDBOX_CONTROL_PLANE_PORT: ${process.env.SANDBOX_CONTROL_PLANE_PORT}. Port must be between 1 and 65535.`);
+	}
+	
+	return port;
+})();
+
 export const CONFIG = {
 	SANDBOX_LOG_LEVEL,
 	SANDBOX_LOG_FORMAT,
@@ -90,4 +109,5 @@ export const CONFIG = {
 	MAX_OUTPUT_SIZE_BYTES,
 	STREAM_CHUNK_DELAY_MS,
 	DEFAULT_CWD,
+	CONTROL_PLANE_PORT,
 } as const;

@@ -55,6 +55,7 @@ export function getSandbox(
 export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   defaultPort = 3000; // Default port for the container's Bun server
   sleepAfter: string | number = "10m"; // Sleep the sandbox if no requests are made in this timeframe
+  private controlPlanePort: number = 3000; // Control plane port (configurable via SANDBOX_CONTROL_PLANE_PORT)
 
   client: SandboxClient;
   private codeInterpreter: CodeInterpreter;
@@ -70,12 +71,20 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     const envObj = env as any;
     // Set sandbox environment variables from env object
-    const sandboxEnvKeys = ['SANDBOX_LOG_LEVEL', 'SANDBOX_LOG_FORMAT'] as const;
+    const sandboxEnvKeys = ['SANDBOX_LOG_LEVEL', 'SANDBOX_LOG_FORMAT', 'SANDBOX_CONTROL_PLANE_PORT'] as const;
     sandboxEnvKeys.forEach(key => {
       if (envObj?.[key]) {
         this.envVars[key] = envObj[key];
       }
     });
+
+    // Get control plane port from environment, default to 3000
+    if (envObj?.SANDBOX_CONTROL_PLANE_PORT) {
+      const port = parseInt(envObj.SANDBOX_CONTROL_PLANE_PORT, 10);
+      if (!Number.isNaN(port) && port >= 1 && port <= 65535) {
+        this.controlPlanePort = port;
+      }
+    }
 
     this.logger = createLogger({
       component: 'sandbox-do',
@@ -84,7 +93,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     this.client = new SandboxClient({
       logger: this.logger,
-      port: 3000, // Control plane port
+      port: this.controlPlanePort,
       stub: this,
     });
 
@@ -263,9 +272,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       return parseInt(proxyMatch[1], 10);
     }
 
-    // All other requests go to control plane on port 3000
+    // All other requests go to control plane
     // This includes /api/* endpoints and any other control requests
-    return 3000;
+    return this.controlPlanePort;
   }
 
   /**

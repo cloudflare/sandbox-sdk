@@ -307,6 +307,10 @@ different users share the same sandbox instance.
 - Expose internal services via preview URLs
 - Token-based authentication for exposed ports
 - Automatic cleanup on sandbox sleep
+- **Control plane port**: The SDK uses a control plane port (default: 3000) for internal communication between the Sandbox DO and the container
+  - Configurable via `SANDBOX_CONTROL_PLANE_PORT` environment variable in both the Worker and Dockerfile
+  - If you need to use port 3000 for your application, set `SANDBOX_CONTROL_PLANE_PORT` to a different port
+  - Example: `ENV SANDBOX_CONTROL_PLANE_PORT=3001` in your Dockerfile
 - **Production requirement**: Preview URLs require custom domain with wildcard DNS (*.yourdomain.com)
   - `.workers.dev` domains do NOT support the subdomain patterns needed for preview URLs
   - See Cloudflare docs for "Deploy to Production" guide when ready to expose services

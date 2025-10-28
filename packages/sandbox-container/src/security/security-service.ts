@@ -5,18 +5,19 @@
 // Philosophy:
 // - Container isolation handles system-level security
 // - Users have full control over their sandbox (it's the value proposition!)
-// - Only protect port 3000 (SDK control plane) from interference
+// - Only protect control plane port (SDK control plane) from interference
 // - Format validation only (null bytes, length limits)
 // - No content restrictions (no path blocking, no command blocking, no URL allowlists)
 import type { Logger } from '@repo/shared';
+import { CONFIG } from '../config';
 import type { ValidationResult } from '../core/types';
 
 export class SecurityService {
-  // Only port 3000 is truly reserved (SDK control plane)
+  // Only the control plane port is truly reserved (SDK control plane)
   // This is REAL security - prevents control plane interference
-  private static readonly RESERVED_PORTS = [
-    3000, // Container control plane (API endpoints) - MUST be protected
-  ];
+  private getReservedPorts(): number[] {
+    return [CONFIG.CONTROL_PLANE_PORT];
+  }
 
   constructor(private logger: Logger) {}
 
@@ -74,7 +75,7 @@ export class SecurityService {
 
   /**
    * Validate port number
-   * - Protects port 3000 (SDK control plane) - CRITICAL!
+   * - Protects control plane port (SDK control plane) - CRITICAL!
    * - Range validation (1-65535)
    * - No arbitrary port restrictions (users control their sandbox!)
    */
@@ -91,7 +92,8 @@ export class SecurityService {
       }
 
       // CRITICAL: Protect SDK control plane
-      if (SecurityService.RESERVED_PORTS.includes(port)) {
+      const reservedPorts = this.getReservedPorts();
+      if (reservedPorts.includes(port)) {
         errors.push(`Port ${port} is reserved for the sandbox API control plane`);
       }
     }
