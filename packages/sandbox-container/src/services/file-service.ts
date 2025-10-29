@@ -170,17 +170,35 @@ export class FileService implements FileSystemOperations {
 
       // 5. Determine if file is binary based on MIME type
       // Text MIME types: text/*, application/json, application/xml, application/javascript, etc.
-      const isBinary = !mimeType.startsWith('text/') &&
-                       !mimeType.includes('json') &&
-                       !mimeType.includes('xml') &&
-                       !mimeType.includes('javascript') &&
-                       !mimeType.includes('x-empty');
+      const isBinaryByMime = !mimeType.startsWith('text/') &&
+                             !mimeType.includes('json') &&
+                             !mimeType.includes('xml') &&
+                             !mimeType.includes('javascript') &&
+                             !mimeType.includes('x-empty');
 
       // 6. Read file with appropriate encoding
+      // Respect user's encoding preference if provided, otherwise use MIME-based detection
+      const requestedEncoding = options.encoding;
       let content: string;
       let actualEncoding: 'utf-8' | 'base64';
+      let isBinary: boolean;
 
-      if (isBinary) {
+      // Determine final encoding and binary flag
+      if (requestedEncoding === 'base64') {
+        // User explicitly requested base64 - always use base64 regardless of MIME type
+        actualEncoding = 'base64';
+        isBinary = true; // Mark as binary when returning base64
+      } else if (requestedEncoding === 'utf-8' || requestedEncoding === 'utf8') {
+        // User explicitly requested UTF-8 - always use UTF-8 regardless of MIME type
+        actualEncoding = 'utf-8';
+        isBinary = false; // Mark as text when returning UTF-8
+      } else {
+        // No explicit encoding requested - use MIME-based detection (original behavior)
+        actualEncoding = isBinaryByMime ? 'base64' : 'utf-8';
+        isBinary = isBinaryByMime;
+      }
+
+      if (actualEncoding === 'base64') {
         // Binary files: read as base64, return as-is (DO NOT decode)
         const base64Command = `base64 -w 0 < ${escapedPath}`;
         const base64Result = await this.sessionManager.executeInSession(sessionId, base64Command);
@@ -302,12 +320,21 @@ export class FileService implements FileSystemOperations {
         };
       }
 
-      // 2. Write file using SessionManager with base64 encoding
-      // Base64 ensures binary files (images, PDFs, etc.) are written correctly
-      // and avoids heredoc EOF collision issues
+      // 2. Write file using SessionManager with proper encoding handling
       const escapedPath = this.escapePath(path);
-      const base64Content = Buffer.from(content, 'utf-8').toString('base64');
-      const command = `echo '${base64Content}' | base64 -d > ${escapedPath}`;
+      const encoding = options.encoding || 'utf-8';
+      
+      let command: string;
+      
+      if (encoding === 'base64') {
+        // Content is already base64 encoded, decode it directly to file
+        command = `echo '${content}' | base64 -d > ${escapedPath}`;
+      } else {
+        // Content is text, encode to base64 first to ensure safe shell handling
+        // This avoids heredoc EOF collision issues and handles special characters
+        const base64Content = Buffer.from(content, 'utf-8').toString('base64');
+        command = `echo '${base64Content}' | base64 -d > ${escapedPath}`;
+      }
 
       const execResult = await this.sessionManager.executeInSession(sessionId, command);
 
