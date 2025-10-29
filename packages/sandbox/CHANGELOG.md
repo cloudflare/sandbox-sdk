@@ -1,5 +1,17 @@
 # @cloudflare/sandbox
 
+## 0.4.12
+
+### Patch Changes
+
+- [#137](https://github.com/cloudflare/sandbox-sdk/pull/137) [`7f4442b`](https://github.com/cloudflare/sandbox-sdk/commit/7f4442b7a097587d8f8e8f9ff2f887df6943a3db) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - add keepAlive flag to prevent containers from shutting down
+
+## 0.4.11
+
+### Patch Changes
+
+- [#159](https://github.com/cloudflare/sandbox-sdk/pull/159) [`e16659a`](https://github.com/cloudflare/sandbox-sdk/commit/e16659a1815923f1cd1176f51a052725d820ee16) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Use latest containers package version
+
 ## 0.4.10
 
 ### Patch Changes

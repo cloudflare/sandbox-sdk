@@ -49,6 +49,10 @@ export function getSandbox(
     stub.setSleepAfter(options.sleepAfter);
   }
 
+  if (options?.keepAlive !== undefined) {
+    stub.setKeepAlive(options.keepAlive);
+  }
+
   return stub;
 }
 
@@ -89,6 +93,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private defaultSession: string | null = null;
   envVars: Record<string, string> = {};
   private logger: ReturnType<typeof createLogger>;
+  private keepAliveEnabled: boolean = false;
 
   constructor(ctx: DurableObject['ctx'], env: Env) {
     super(ctx, env);
@@ -154,6 +159,16 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   // RPC method to set the sleep timeout
   async setSleepAfter(sleepAfter: string | number): Promise<void> {
     this.sleepAfter = sleepAfter;
+  }
+
+  // RPC method to enable keepAlive mode
+  async setKeepAlive(keepAlive: boolean): Promise<void> {
+    this.keepAliveEnabled = keepAlive;
+    if (keepAlive) {
+      this.logger.info('KeepAlive mode enabled - container will stay alive until explicitly destroyed');
+    } else {
+      this.logger.info('KeepAlive mode disabled - container will timeout normally');
+    }
   }
 
   // RPC method to set environment variables
@@ -244,6 +259,22 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   override onError(error: unknown) {
     this.logger.error('Sandbox error', error instanceof Error ? error : new Error(String(error)));
   }
+
+  /**
+   * Override onActivityExpired to prevent automatic shutdown when keepAlive is enabled
+   * When keepAlive is disabled, calls parent implementation which stops the container
+   */
+  override async onActivityExpired(): Promise<void> {
+    if (this.keepAliveEnabled) {
+      this.logger.debug('Activity expired but keepAlive is enabled - container will stay alive');
+      // Do nothing - don't call stop(), container stays alive
+    } else {
+      // Default behavior: stop the container
+      this.logger.debug('Activity expired - stopping container');
+      await super.onActivityExpired();
+    }
+  }
+
 
   // Override fetch to route internal container requests to appropriate ports
   override async fetch(request: Request): Promise<Response> {
@@ -368,7 +399,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     const startTime = Date.now();
     const timestamp = new Date().toISOString();
 
-    // Handle timeout
     let timeoutId: NodeJS.Timeout | undefined;
 
     try {
@@ -633,8 +663,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     };
   }
 
-
-  // Streaming methods - return ReadableStream for RPC compatibility
+// Streaming methods - return ReadableStream for RPC compatibility
   async execStream(command: string, options?: StreamOptions): Promise<ReadableStream<Uint8Array>> {
     // Check for cancellation
     if (options?.signal?.aborted) {
@@ -658,6 +687,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     return this.client.commands.executeStream(command, sessionId);
   }
 
+  /**
+   * Stream logs from a background process as a ReadableStream.
+   */
   async streamProcessLogs(processId: string, options?: { signal?: AbortSignal }): Promise<ReadableStream<Uint8Array>> {
     // Check for cancellation
     if (options?.signal?.aborted) {

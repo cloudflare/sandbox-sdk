@@ -262,6 +262,8 @@ export interface SandboxOptions {
    * - A string like "30s", "3m", "5m", "1h" (seconds, minutes, or hours)
    * - A number representing seconds (e.g., 180 for 3 minutes)
    * Default: "10m" (10 minutes)
+   *
+   * Note: Ignored when keepAlive is true
    */
   sleepAfter?: string | number;
 
@@ -269,6 +271,17 @@ export interface SandboxOptions {
    * Base URL for the sandbox API
    */
   baseUrl?: string;
+
+  /**
+   * Keep the container alive indefinitely by preventing automatic shutdown
+   * When true, the container will never auto-timeout and must be explicitly destroyed
+   * - Any scenario where activity can't be automatically detected
+   *
+   * Important: You MUST call sandbox.destroy() when done to avoid resource leaks
+   *
+   * Default: false
+   */
+  keepAlive?: boolean;
 }
 
 /**
@@ -590,7 +603,7 @@ export interface ExecutionSession {
   // Command execution
   exec(command: string, options?: ExecOptions): Promise<ExecResult>;
   execStream(command: string, options?: StreamOptions): Promise<ReadableStream<Uint8Array>>;
-  
+
   // Background process management
   startProcess(command: string, options?: ProcessOptions): Promise<Process>;
   listProcesses(): Promise<Process[]>;
@@ -621,7 +634,7 @@ export interface ExecutionSession {
   // Code interpreter methods
   createCodeContext(options?: CreateContextOptions): Promise<CodeContext>;
   runCode(code: string, options?: RunCodeOptions): Promise<ExecutionResult>;
-  runCodeStream(code: string, options?: RunCodeOptions): Promise<ReadableStream>;
+  runCodeStream(code: string, options?: RunCodeOptions): Promise<ReadableStream<Uint8Array>>;
   listCodeContexts(): Promise<CodeContext[]>;
   deleteCodeContext(contextId: string): Promise<void>;
 }
