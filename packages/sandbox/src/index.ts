@@ -20,17 +20,70 @@ export type {
   BaseExecOptions,
   ExecEvent,
   ExecOptions,
-  ExecResult,FileChunk, FileMetadata, FileStreamEvent, 
+  ExecResult,
+  FileChunk,
+  FileMetadata,
+  FileStreamEvent,
   ISandbox,
   LogEvent,
   Process,
   ProcessOptions,
   ProcessStatus,
-  StreamOptions 
+  StreamOptions
 } from "@repo/shared";
-export * from '@repo/shared';
-// Export type guards for runtime validation
+
+// Export additional shared types needed by SDK consumers
+export type {
+  // Interpreter types
+  ChartData,
+  CodeContext,
+  CreateContextOptions,
+  ExecutionError,
+  ExecutionResult,
+  OutputMessage,
+  Result,
+  RunCodeOptions,
+  // Result types
+  ContextCreateResult,
+  ContextDeleteResult,
+  ContextListResult,
+  DeleteFileResult,
+  EnvSetResult,
+  FileExistsResult,
+  FileInfo,
+  HealthCheckResult,
+  InterpreterHealthResult,
+  ListFilesOptions,
+  ListFilesResult,
+  MkdirResult,
+  MoveFileResult,
+  ReadFileResult,
+  RenameFileResult,
+  SandboxOptions,
+  SessionCreateResult,
+  SessionDeleteResult,
+  SessionOptions,
+  ShutdownResult,
+  WriteFileResult,
+  // Execution session type
+  ExecutionSession,
+  PortStatusResult,
+  // Logger types
+  LogContext,
+  Logger,
+  LogLevel
+} from "@repo/shared";
+
+// Export runtime values from shared
 export {
+  Execution,
+  ResultImpl,
+  createLogger,
+  createNoOpLogger,
+  getLogger,
+  LogLevelEnum,
+  runWithLogger,
+  TraceContext,
   isExecResult,
   isProcess,
   isProcessStatus
