@@ -145,7 +145,9 @@ export abstract class BaseHttpClient {
       // Handle malformed JSON responses gracefully
       const errorResponse: NewErrorResponse = {
         code: ErrorCode.INVALID_JSON_RESPONSE,
-        message: `Invalid JSON response: ${error instanceof Error ? error.message : 'Unknown parsing error'}`,
+        message: `Invalid JSON response: ${
+          error instanceof Error ? error.message : 'Unknown parsing error'
+        }`,
         context: {},
         httpStatus: response.status,
         timestamp: new Date().toISOString()

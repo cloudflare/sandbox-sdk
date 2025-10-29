@@ -92,7 +92,9 @@ export class FileService implements FileSystemOperations {
         return {
           success: false,
           error: {
-            message: `Invalid path format for '${path}': ${validation.errors.join(', ')}`,
+            message: `Invalid path format for '${path}': ${validation.errors.join(
+              ', '
+            )}`,
             code: ErrorCode.VALIDATION_FAILED,
             details: {
               validationErrors: validation.errors.map((e) => ({
@@ -349,7 +351,9 @@ export class FileService implements FileSystemOperations {
         return {
           success: false,
           error: {
-            message: `Invalid path format for '${path}': ${validation.errors.join(', ')}`,
+            message: `Invalid path format for '${path}': ${validation.errors.join(
+              ', '
+            )}`,
             code: ErrorCode.VALIDATION_FAILED,
             details: {
               validationErrors: validation.errors.map((e) => ({
@@ -384,7 +388,9 @@ export class FileService implements FileSystemOperations {
         return {
           success: false,
           error: {
-            message: `Failed to write file '${path}': ${result.stderr || `exit code ${result.exitCode}`}`,
+            message: `Failed to write file '${path}': ${
+              result.stderr || `exit code ${result.exitCode}`
+            }`,
             code: ErrorCode.FILESYSTEM_ERROR,
             details: {
               path,
@@ -434,7 +440,9 @@ export class FileService implements FileSystemOperations {
         return {
           success: false,
           error: {
-            message: `Invalid path format for '${path}': ${validation.errors.join(', ')}`,
+            message: `Invalid path format for '${path}': ${validation.errors.join(
+              ', '
+            )}`,
             code: ErrorCode.VALIDATION_FAILED,
             details: {
               validationErrors: validation.errors.map((e) => ({
@@ -502,7 +510,9 @@ export class FileService implements FileSystemOperations {
         return {
           success: false,
           error: {
-            message: `Failed to delete file '${path}': ${result.stderr || `exit code ${result.exitCode}`}`,
+            message: `Failed to delete file '${path}': ${
+              result.stderr || `exit code ${result.exitCode}`
+            }`,
             code: ErrorCode.FILESYSTEM_ERROR,
             details: {
               path,
@@ -756,7 +766,9 @@ export class FileService implements FileSystemOperations {
         return {
           success: false,
           error: {
-            message: `Invalid path format for '${path}': ${validation.errors.join(', ')}`,
+            message: `Invalid path format for '${path}': ${validation.errors.join(
+              ', '
+            )}`,
             code: ErrorCode.VALIDATION_FAILED,
             details: {
               validationErrors: validation.errors.map((e) => ({
@@ -846,7 +858,9 @@ export class FileService implements FileSystemOperations {
         return {
           success: false,
           error: {
-            message: `Invalid path format for '${path}': ${validation.errors.join(', ')}`,
+            message: `Invalid path format for '${path}': ${validation.errors.join(
+              ', '
+            )}`,
             code: ErrorCode.VALIDATION_FAILED,
             details: {
               validationErrors: validation.errors.map((e) => ({
@@ -917,7 +931,9 @@ export class FileService implements FileSystemOperations {
         return {
           success: false,
           error: {
-            message: `Invalid path format for '${path}': ${validation.errors.join(', ')}`,
+            message: `Invalid path format for '${path}': ${validation.errors.join(
+              ', '
+            )}`,
             code: ErrorCode.VALIDATION_FAILED,
             details: {
               validationErrors: validation.errors.map((e) => ({
@@ -1101,7 +1117,9 @@ export class FileService implements FileSystemOperations {
         return {
           success: false,
           error: {
-            message: `Invalid path format for '${path}': ${validation.errors.join(', ')}`,
+            message: `Invalid path format for '${path}': ${validation.errors.join(
+              ', '
+            )}`,
             code: ErrorCode.VALIDATION_FAILED,
             details: {
               validationErrors: validation.errors.map((e) => ({
@@ -1191,7 +1209,9 @@ export class FileService implements FileSystemOperations {
         return {
           success: false,
           error: {
-            message: `Failed to list files in '${path}': ${result.stderr || `exit code ${result.exitCode}`}`,
+            message: `Failed to list files in '${path}': ${
+              result.stderr || `exit code ${result.exitCode}`
+            }`,
             code: ErrorCode.FILESYSTEM_ERROR,
             details: {
               path,

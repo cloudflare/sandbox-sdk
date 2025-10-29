@@ -20,6 +20,7 @@
   "workspaces": [
     "packages/*",
     "tooling/*",
+    "tests/integration",
     "examples/*"
   ],
   "devDependencies": {

@@ -179,7 +179,9 @@ export class CloudflareLogger implements Logger {
     const traceIdShort = traceId ? String(traceId).substring(0, 12) : '';
 
     // Start with level and component
-    let logLine = `${levelColor}${levelStr.padEnd(5)}${COLORS.reset} ${componentBadge} ${msg}`;
+    let logLine = `${levelColor}${levelStr.padEnd(5)}${
+      COLORS.reset
+    } ${componentBadge} ${msg}`;
 
     // Add trace ID if present
     if (traceIdShort) {

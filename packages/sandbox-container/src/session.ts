@@ -180,8 +180,7 @@ export class Session {
         // Reject with clear error message
         reject(
           new Error(
-            `Shell terminated unexpectedly (exit code: ${exitCode ?? 'unknown'}). ` +
-              `Session is dead and cannot execute further commands.`
+            `Shell terminated unexpectedly (exit code: ${exitCode ?? 'unknown'}). Session is dead and cannot execute further commands.`
           )
         );
       }).catch((error) => {

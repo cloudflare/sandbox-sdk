@@ -88,7 +88,9 @@ export abstract class BaseHandler<TRequest, TResponse>
       return body as T;
     } catch (error) {
       throw new Error(
-        `Failed to parse request body: ${error instanceof Error ? error.message : 'Invalid JSON'}`
+        `Failed to parse request body: ${
+          error instanceof Error ? error.message : 'Invalid JSON'
+        }`
       );
     }
   }

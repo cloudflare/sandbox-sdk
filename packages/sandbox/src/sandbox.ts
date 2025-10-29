@@ -1,5 +1,5 @@
 import type { DurableObject } from 'cloudflare:workers';
-import { Container, getContainer } from '@cloudflare/containers';
+import { Container, getContainer, switchPort } from '@cloudflare/containers';
 import type {
   CodeContext,
   CreateContextOptions,
@@ -31,8 +31,8 @@ export function getSandbox(
   ns: DurableObjectNamespace<Sandbox>,
   id: string,
   options?: SandboxOptions
-) {
-  const stub = getContainer(ns, id);
+): Sandbox {
+  const stub = getContainer(ns, id) as any as Sandbox;
 
   // Store the name on first access
   stub.setSandboxName?.(id);
@@ -50,6 +50,40 @@ export function getSandbox(
   }
 
   return stub;
+}
+
+/**
+ * Connect an incoming WebSocket request to a specific port inside the container.
+ *
+ * Note: This is a standalone function (not a Sandbox method) because WebSocket
+ * connections cannot be serialized over Durable Object RPC.
+ *
+ * @param sandbox - The Sandbox instance to route the request through
+ * @param request - The incoming WebSocket upgrade request
+ * @param port - The port number to connect to (1024-65535)
+ * @returns The WebSocket upgrade response
+ * @throws {SecurityError} - If port is invalid or in restricted range
+ *
+ * @example
+ * const sandbox = getSandbox(env.Sandbox, 'sandbox-id');
+ * if (request.headers.get('Upgrade')?.toLowerCase() === 'websocket') {
+ *   return await connect(sandbox, request, 8080);
+ * }
+ */
+export async function connect(
+  sandbox: Sandbox,
+  request: Request,
+  port: number
+): Promise<Response> {
+  // Validate port before routing
+  if (!validatePort(port)) {
+    throw new SecurityError(
+      `Invalid or restricted port: ${port}. Ports must be in range 1024-65535 and not reserved.`
+    );
+  }
+
+  const portSwitchedRequest = switchPort(request, port);
+  return await sandbox.fetch(portSwitchedRequest);
 }
 
 export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
@@ -292,14 +326,30 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         await this.ctx.storage.put('sandboxName', name);
       }
 
-      // Detect WebSocket upgrade request
+      // Detect WebSocket upgrade request (RFC 6455 compliant)
       const upgradeHeader = request.headers.get('Upgrade');
-      const isWebSocket = upgradeHeader?.toLowerCase() === 'websocket';
+      const connectionHeader = request.headers.get('Connection');
+      const isWebSocket =
+        upgradeHeader?.toLowerCase() === 'websocket' &&
+        connectionHeader?.toLowerCase().includes('upgrade');
 
       if (isWebSocket) {
         // WebSocket path: Let parent Container class handle WebSocket proxying
         // This bypasses containerFetch() which uses JSRPC and cannot handle WebSocket upgrades
-        return await super.fetch(request);
+        try {
+          requestLogger.debug('WebSocket upgrade requested', {
+            path: url.pathname,
+            port: this.determinePort(url)
+          });
+          return await super.fetch(request);
+        } catch (error) {
+          requestLogger.error(
+            'WebSocket connection failed',
+            error instanceof Error ? error : new Error(String(error)),
+            { path: url.pathname }
+          );
+          throw error;
+        }
       }
 
       // Non-WebSocket: Use existing port determination and HTTP routing logic
@@ -1008,7 +1058,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         return baseUrl.toString();
       } catch (error) {
         throw new SecurityError(
-          `Failed to construct preview URL: ${error instanceof Error ? error.message : 'Unknown error'}`
+          `Failed to construct preview URL: ${
+            error instanceof Error ? error.message : 'Unknown error'
+          }`
         );
       }
     }
@@ -1026,7 +1078,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       return baseUrl.toString();
     } catch (error) {
       throw new SecurityError(
-        `Failed to construct preview URL: ${error instanceof Error ? error.message : 'Unknown error'}`
+        `Failed to construct preview URL: ${
+          error instanceof Error ? error.message : 'Unknown error'
+        }`
       );
     }
   }

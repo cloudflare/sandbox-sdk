@@ -64,6 +64,12 @@ try {
       pattern: /cloudflare\/sandbox-test:[\d.]+/g,
       replacement: `cloudflare/sandbox-test:${newVersion}`,
       description: 'Test Docker image reference'
+    },
+    // Example package.json dependencies
+    {
+      pattern: /"@cloudflare\/sandbox":\s*"\^[\d.]+"/g,
+      replacement: `"@cloudflare/sandbox": "^${newVersion}"`,
+      description: 'Example package.json @cloudflare/sandbox dependencies'
     }
   ];
 
@@ -76,7 +82,8 @@ try {
     '**/*.js', // JavaScript files
     '**/*.json', // JSON configs (but not package.json/package-lock.json)
     '**/*.yaml', // YAML configs
-    '**/*.yml' // YML configs
+    '**/*.yml', // YML configs
+    'examples/**/package.json' // Example package.json files (exception to ignore rule below)
   ];
 
   // Ignore patterns
@@ -121,13 +128,17 @@ try {
       updatedFilesCount++;
       totalReplacementsCount += fileReplacementsCount;
       console.log(
-        `  ✅ ${file} (${fileReplacementsCount} replacement${fileReplacementsCount > 1 ? 's' : ''})`
+        `  ✅ ${file} (${fileReplacementsCount} replacement${
+          fileReplacementsCount > 1 ? 's' : ''
+        })`
       );
     }
   }
 
   console.log(
-    `\n✨ Updated ${totalReplacementsCount} version reference${totalReplacementsCount !== 1 ? 's' : ''} across ${updatedFilesCount} file${updatedFilesCount !== 1 ? 's' : ''}`
+    `\n✨ Updated ${totalReplacementsCount} version reference${
+      totalReplacementsCount !== 1 ? 's' : ''
+    } across ${updatedFilesCount} file${updatedFilesCount !== 1 ? 's' : ''}`
   );
   console.log(`   New version: ${newVersion}\n`);
 } catch (error) {

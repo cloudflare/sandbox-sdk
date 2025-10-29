@@ -47,7 +47,10 @@ export default {
         await sandbox.setEnvVars({ ANTHROPIC_API_KEY });
 
         // kick off CC with our query
-        const cmd = `cd ${name} && claude --append-system-prompt "${EXTRA_SYSTEM}" -p "${task.replaceAll('"', '\\"')}" --permission-mode acceptEdits`;
+        const cmd = `cd ${name} && claude --append-system-prompt "${EXTRA_SYSTEM}" -p "${task.replaceAll(
+          '"',
+          '\\"'
+        )}" --permission-mode acceptEdits`;
 
         const logs = getOutput(await sandbox.exec(cmd));
         const diff = getOutput(await sandbox.exec('git diff'));

@@ -3063,3 +3063,213 @@ button:focus {
     grid-template-columns: 1fr;
   }
 }
+
+/* WebSocket Tab Styles */
+.websocket-tab {
+  padding: 1.5rem;
+  background-color: #0d1117;
+}
+
+.websocket-header {
+  margin-bottom: 1.5rem;
+}
+
+.websocket-header h3 {
+  margin: 0 0 0.5rem 0;
+  color: #58a6ff;
+  font-size: 1.3rem;
+}
+
+.websocket-header p {
+  margin: 0;
+  color: #8b949e;
+  font-size: 0.95rem;
+}
+
+.websocket-header code {
+  background-color: #161b22;
+  padding: 0.2rem 0.4rem;
+  border-radius: 3px;
+  font-family: 'Fira Code', monospace;
+  font-size: 0.9rem;
+  color: #79c0ff;
+}
+
+.websocket-controls {
+  background-color: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  padding: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.websocket-controls .control-group {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.status-indicator {
+  padding: 0.4rem 0.8rem;
+  border-radius: 4px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  margin-left: auto;
+}
+
+.status-connected {
+  background-color: rgba(46, 160, 67, 0.15);
+  color: #3fb950;
+}
+
+.status-connecting {
+  background-color: rgba(201, 209, 217, 0.15);
+  color: #c9d1d9;
+}
+
+.status-disconnected {
+  background-color: rgba(248, 81, 73, 0.15);
+  color: #f85149;
+}
+
+.websocket-message-area {
+  background-color: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  padding: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.messages-container {
+  background-color: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  padding: 1rem;
+  min-height: 300px;
+  max-height: 400px;
+  overflow-y: auto;
+  margin-bottom: 1rem;
+}
+
+.no-messages {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 300px;
+  color: #8b949e;
+  font-style: italic;
+}
+
+.message {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.5rem;
+  margin-bottom: 0.5rem;
+  border-radius: 4px;
+  font-family: 'Fira Code', monospace;
+  font-size: 0.9rem;
+}
+
+.message-sent {
+  background-color: rgba(88, 166, 255, 0.1);
+  border-left: 3px solid #58a6ff;
+}
+
+.message-received {
+  background-color: rgba(63, 185, 80, 0.1);
+  border-left: 3px solid #3fb950;
+}
+
+.message-time {
+  color: #6e7681;
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.message-label {
+  color: #8b949e;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.message-text {
+  color: #c9d1d9;
+  word-break: break-word;
+}
+
+.message-input-area {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.message-input {
+  flex: 1;
+  padding: 0.6rem;
+  background-color: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  color: #c9d1d9;
+  font-family: 'Fira Code', monospace;
+  font-size: 0.95rem;
+}
+
+.message-input:focus {
+  outline: none;
+  border-color: #58a6ff;
+  box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.1);
+}
+
+.message-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-send {
+  background-color: #238636;
+  color: white;
+}
+
+.btn-send:hover:not(:disabled) {
+  background-color: #2ea043;
+}
+
+.websocket-info {
+  background-color: rgba(56, 139, 253, 0.1);
+  border: 1px solid rgba(56, 139, 253, 0.3);
+  border-radius: 6px;
+  padding: 1rem;
+}
+
+.websocket-info h4 {
+  margin: 0 0 0.75rem 0;
+  color: #58a6ff;
+  font-size: 1rem;
+}
+
+.websocket-info ol {
+  margin: 0.5rem 0;
+  padding-left: 1.5rem;
+  color: #c9d1d9;
+}
+
+.websocket-info li {
+  margin-bottom: 0.5rem;
+}
+
+.websocket-info p {
+  margin: 0.75rem 0 0 0;
+  color: #8b949e;
+  font-size: 0.9rem;
+}
+
+.websocket-info code {
+  background-color: #161b22;
+  padding: 0.2rem 0.4rem;
+  border-radius: 3px;
+  font-family: 'Fira Code', monospace;
+  font-size: 0.85rem;
+  color: #79c0ff;
+}

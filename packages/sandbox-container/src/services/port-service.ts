@@ -92,7 +92,9 @@ export class PortService {
         return {
           success: false,
           error: {
-            message: `Invalid port number ${port}: ${validation.errors.join(', ')}`,
+            message: `Invalid port number ${port}: ${validation.errors.join(
+              ', '
+            )}`,
             code: ErrorCode.INVALID_PORT_NUMBER,
             details: {
               port,
@@ -108,7 +110,9 @@ export class PortService {
         return {
           success: false,
           error: {
-            message: `Port ${port}${existing.name ? ` (${existing.name})` : ''} is already exposed`,
+            message: `Port ${port}${
+              existing.name ? ` (${existing.name})` : ''
+            } is already exposed`,
             code: ErrorCode.PORT_ALREADY_EXPOSED,
             details: {
               port,
@@ -138,7 +142,9 @@ export class PortService {
       return {
         success: false,
         error: {
-          message: `Failed to expose port ${port}${name ? ` (${name})` : ''}: ${errorMessage}`,
+          message: `Failed to expose port ${port}${
+            name ? ` (${name})` : ''
+          }: ${errorMessage}`,
           code: ErrorCode.PORT_OPERATION_ERROR,
           details: {
             port,

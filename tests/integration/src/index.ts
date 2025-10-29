@@ -1,4 +1,9 @@
-import { getSandbox, proxyToSandbox, type Sandbox } from '@cloudflare/sandbox';
+import {
+  getSandbox,
+  proxyToSandbox,
+  connect,
+  type Sandbox
+} from '@cloudflare/sandbox';
 import { codeExamples } from '../shared/examples';
 import {
   executeCommand,
@@ -23,7 +28,8 @@ import {
   setupReact,
   setupVue,
   setupStatic,
-  createTestBinaryFile
+  createTestBinaryFile,
+  initializeWebSocketServer
 } from './endpoints';
 import {
   createSession,
@@ -84,6 +90,25 @@ export default {
     const pathname = url.pathname;
 
     try {
+      // WebSocket routing - detect upgrade requests and route to container
+      const upgradeHeader = request.headers.get('Upgrade');
+      if (
+        upgradeHeader?.toLowerCase() === 'websocket' &&
+        pathname === '/ws/echo'
+      ) {
+        // For WebSocket connections, get sandbox ID from query parameter
+        // (browsers don't support custom headers in WebSocket constructor)
+        const sandboxId =
+          url.searchParams.get('sandboxId') ||
+          `sandbox-${Date.now()}-${generateSecureRandomString()}`;
+        const sandbox = getSandbox(
+          env.Sandbox,
+          sandboxId
+        ) as unknown as Sandbox<unknown>;
+        // Route WebSocket connection to echo server on port 8080
+        return await connect(sandbox, request, 8080);
+      }
+
       const sandbox = getUserSandbox(
         env,
         request
@@ -100,6 +125,11 @@ export default {
 
       if (pathname === '/api/notebook/session' && request.method === 'DELETE') {
         return await deleteSession(sandbox, request);
+      }
+
+      // WebSocket Server Initialization API
+      if (pathname === '/api/websocket/init' && request.method === 'POST') {
+        return await initializeWebSocketServer(sandbox);
       }
 
       // Command Execution API
@@ -364,6 +394,8 @@ export default {
             'POST /api/notebook/session - Create notebook session',
             'POST /api/notebook/execute - Execute notebook cell',
             'DELETE /api/notebook/session - Delete notebook session',
+            'POST /api/websocket/init - Initialize WebSocket echo server',
+            'WS /ws/echo - WebSocket echo endpoint',
             'GET /api/examples/basic-python - Basic Python example',
             'GET /api/examples/chart - Chart generation example',
             'GET /api/examples/javascript - JavaScript execution example',

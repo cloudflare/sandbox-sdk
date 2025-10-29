@@ -52,7 +52,9 @@ export class GitService {
         return {
           success: false,
           error: {
-            message: `Invalid Git URL '${repoUrl}': ${urlValidation.errors.join(', ')}`,
+            message: `Invalid Git URL '${repoUrl}': ${urlValidation.errors.join(
+              ', '
+            )}`,
             code: ErrorCode.INVALID_GIT_URL,
             details: {
               validationErrors: urlValidation.errors.map((e) => ({
@@ -75,7 +77,9 @@ export class GitService {
         return {
           success: false,
           error: {
-            message: `Invalid target directory '${targetDirectory}': ${pathValidation.errors.join(', ')}`,
+            message: `Invalid target directory '${targetDirectory}': ${pathValidation.errors.join(
+              ', '
+            )}`,
             code: ErrorCode.VALIDATION_FAILED,
             details: {
               validationErrors: pathValidation.errors.map((e) => ({
@@ -125,7 +129,9 @@ export class GitService {
         return {
           success: false,
           error: {
-            message: `Failed to clone repository '${repoUrl}': ${result.stderr || `exit code ${result.exitCode}`}`,
+            message: `Failed to clone repository '${repoUrl}': ${
+              result.stderr || `exit code ${result.exitCode}`
+            }`,
             code: errorCode,
             details: {
               repository: repoUrl,
@@ -214,7 +220,9 @@ export class GitService {
         return {
           success: false,
           error: {
-            message: `Invalid repository path '${repoPath}': ${pathValidation.errors.join(', ')}`,
+            message: `Invalid repository path '${repoPath}': ${pathValidation.errors.join(
+              ', '
+            )}`,
             code: ErrorCode.VALIDATION_FAILED,
             details: {
               validationErrors: pathValidation.errors.map((e) => ({
@@ -233,7 +241,9 @@ export class GitService {
         return {
           success: false,
           error: {
-            message: `Invalid branch name '${branch}': ${branchValidation.error || 'Invalid format'}`,
+            message: `Invalid branch name '${branch}': ${
+              branchValidation.error || 'Invalid format'
+            }`,
             code: ErrorCode.VALIDATION_FAILED,
             details: {
               validationErrors: [
@@ -282,7 +292,9 @@ export class GitService {
         return {
           success: false,
           error: {
-            message: `Failed to checkout branch '${branch}' in '${repoPath}': ${result.stderr || `exit code ${result.exitCode}`}`,
+            message: `Failed to checkout branch '${branch}' in '${repoPath}': ${
+              result.stderr || `exit code ${result.exitCode}`
+            }`,
             code: errorCode,
             details: {
               branch,
@@ -332,7 +344,9 @@ export class GitService {
         return {
           success: false,
           error: {
-            message: `Invalid repository path '${repoPath}': ${pathValidation.errors.join(', ')}`,
+            message: `Invalid repository path '${repoPath}': ${pathValidation.errors.join(
+              ', '
+            )}`,
             code: ErrorCode.VALIDATION_FAILED,
             details: {
               validationErrors: pathValidation.errors.map((e) => ({
@@ -371,7 +385,9 @@ export class GitService {
         return {
           success: false,
           error: {
-            message: `Failed to get current branch in '${repoPath}': ${result.stderr || `exit code ${result.exitCode}`}`,
+            message: `Failed to get current branch in '${repoPath}': ${
+              result.stderr || `exit code ${result.exitCode}`
+            }`,
             code: errorCode,
             details: {
               targetDir: repoPath,
@@ -422,7 +438,9 @@ export class GitService {
         return {
           success: false,
           error: {
-            message: `Invalid repository path '${repoPath}': ${pathValidation.errors.join(', ')}`,
+            message: `Invalid repository path '${repoPath}': ${pathValidation.errors.join(
+              ', '
+            )}`,
             code: ErrorCode.VALIDATION_FAILED,
             details: {
               validationErrors: pathValidation.errors.map((e) => ({
@@ -461,7 +479,9 @@ export class GitService {
         return {
           success: false,
           error: {
-            message: `Failed to list branches in '${repoPath}': ${result.stderr || `exit code ${result.exitCode}`}`,
+            message: `Failed to list branches in '${repoPath}': ${
+              result.stderr || `exit code ${result.exitCode}`
+            }`,
             code: errorCode,
             details: {
               targetDir: repoPath,

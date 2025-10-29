@@ -69,7 +69,9 @@ export class PortClient extends BaseHttpClient {
     sessionId: string
   ): Promise<PortCloseResult> {
     try {
-      const url = `/api/exposed-ports/${port}?session=${encodeURIComponent(sessionId)}`;
+      const url = `/api/exposed-ports/${port}?session=${encodeURIComponent(
+        sessionId
+      )}`;
       const response = await this.delete<PortCloseResult>(url);
 
       this.logSuccess('Port unexposed', `${port}`);

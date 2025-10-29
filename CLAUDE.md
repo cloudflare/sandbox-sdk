@@ -98,7 +98,7 @@ npm run docker:rebuild     # Rebuild container image locally (includes clean bui
 - Stable images when "Version Packages" PR is merged
 - Multi-arch builds (amd64, arm64) handled by CI
 
-**Critical:** Docker image version MUST match npm package version (`@cloudflare/sandbox@0.4.7` → `cloudflare/sandbox:0.4.12`). This is enforced via `ARG SANDBOX_VERSION` in Dockerfile.
+**Critical:** Docker image version MUST match npm package version. This is enforced via `ARG SANDBOX_VERSION` in Dockerfile.
 
 ### Development Server
 
