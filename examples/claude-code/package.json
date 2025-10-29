@@ -8,10 +8,11 @@
 		"deploy": "wrangler deploy",
 		"dev": "wrangler dev",
 		"start": "wrangler dev",
-		"types": "wrangler types"
+		"types": "wrangler types",
+		"typecheck": "tsc --noEmit"
 	},
 	"devDependencies": {
-		"@cloudflare/sandbox": "^0.4.12",
+		"@cloudflare/sandbox": "*",
 		"@types/node": "^24.9.1",
 		"typescript": "^5.8.3",
 		"wrangler": "^4.44.0"

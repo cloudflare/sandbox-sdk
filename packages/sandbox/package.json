@@ -6,6 +6,7 @@
     "url": "https://github.com/cloudflare/sandbox-sdk"
   },
   "description": "A sandboxed environment for running commands",
+  "type": "module",
   "dependencies": {
     "@cloudflare/containers": "^0.0.29"
   },
@@ -20,7 +21,7 @@
     "durable objects"
   ],
   "scripts": {
-    "build": "rm -rf dist && tsup src/*.ts --outDir dist --dts --sourcemap --format esm",
+    "build": "rm -rf dist && tsdown --config tsdown.config.ts",
     "check": "biome check && npm run typecheck",
     "fix": "biome check --fix && npm run typecheck",
     "typecheck": "tsc --noEmit",
@@ -39,6 +40,5 @@
   },
   "keywords": [],
   "author": "",
-  "license": "ISC",
-  "type": "module"
+  "license": "ISC"
 }

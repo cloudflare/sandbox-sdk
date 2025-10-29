@@ -19,7 +19,8 @@
   "workspaces": [
     "packages/*",
     "tooling/*",
-    "tests/integration"
+    "tests/integration",
+    "examples/*"
   ],
   "devDependencies": {
     "@biomejs/biome": "^2.1.2",
@@ -29,7 +30,7 @@
     "@cloudflare/vitest-pool-workers": "^0.9.12",
     "@cloudflare/workers-types": "^4.20250725.0",
     "@types/bun": "^1.2.19",
-    "@types/node": "^24.1.0",
+    "@types/node": "^24.9.1",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@types/ws": "^8.18.1",
@@ -40,13 +41,13 @@
     "pkg-pr-new": "^0.0.60",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "tsup": "^8.5.0",
+    "tsdown": "^0.15.11",
     "tsx": "^4.20.3",
     "turbo": "^2.5.8",
     "typescript": "^5.8.3",
     "vite": "^7.1.11",
     "vitest": "^3.2.4",
-    "wrangler": "^4.42.2",
+    "wrangler": "^4.44.0",
     "ws": "^8.18.3"
   },
   "private": true,
