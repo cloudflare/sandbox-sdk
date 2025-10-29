@@ -1,5 +1,15 @@
 # @cloudflare/sandbox
 
+## 0.4.13
+
+### Patch Changes
+
+- [#168](https://github.com/cloudflare/sandbox-sdk/pull/168) [`6b08f02`](https://github.com/cloudflare/sandbox-sdk/commit/6b08f02c061aef07cc98188abef2973ac92365f8) Thanks [@threepointone](https://github.com/threepointone)! - Fix type generation
+
+  We inline types from `@repo/shared` so that it includes the types we reexport. Fixes #165
+
+- [#162](https://github.com/cloudflare/sandbox-sdk/pull/162) [`c4db459`](https://github.com/cloudflare/sandbox-sdk/commit/c4db459389a7b86048a03410d67d4dd7bf4a6085) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - Add WebSocket support via connect() method for routing client WebSocket connections directly to container services
+
 ## 0.4.12
 
 ### Patch Changes
