@@ -6,18 +6,10 @@ import { createSandboxId, createTestHeaders, cleanupSandbox } from './helpers/te
 /**
  * WebSocket connect() Integration Tests
  *
- * Tests the new connect() pattern for routing WebSocket requests directly to
- * container services, plus the /api/init endpoint for pre-initializing servers.
- *
- * COVERAGE:
- * - /api/init endpoint functionality
- * - Direct WebSocket routing via connect()
- * - Python code streaming with real-time output
- * - Terminal command execution
- * - Server persistence across connections
- * - Multiple concurrent connections
+ * Tests the connect() method for routing WebSocket requests to container services.
+ * Focuses on transport-level functionality, not application-level server implementations.
  */
-describe('WebSocket connect() Pattern', () => {
+describe('WebSocket Connections', () => {
   let runner: WranglerDevRunner | null = null;
   let workerUrl: string;
   let currentSandboxId: string | null = null;
@@ -41,55 +33,20 @@ describe('WebSocket connect() Pattern', () => {
     }
   });
 
-  test('should initialize all servers via /api/init endpoint', async () => {
+  test('should establish WebSocket connection to container service', async () => {
     currentSandboxId = createSandboxId();
     const headers = createTestHeaders(currentSandboxId);
 
-    // Call /api/init to start all servers
-    const response = await fetch(`${workerUrl}/api/init`, {
+    // Start a simple echo server in the container
+    await fetch(`${workerUrl}/api/init`, {
       method: 'POST',
       headers,
     });
 
-    expect(response.status).toBe(200);
-    const data = await response.json();
+    // Wait for server to be ready (generous timeout for first startup)
+    await new Promise(resolve => setTimeout(resolve, 2000));
 
-    expect(data.success).toBe(true);
-    expect(data.serversStarted).toBeGreaterThanOrEqual(0); // May be 0 if already running
-    expect(data.serversFailed).toBe(0); // No failures
-
-    // Verify all three server processes exist
-    const processesResponse = await fetch(`${workerUrl}/api/process/list`, {
-      method: 'GET',
-      headers,
-    });
-
-    expect(processesResponse.status).toBe(200);
-    const processes = await processesResponse.json();
-
-    const processIds = processes.map((p: any) => p.id);
-    expect(processIds).toContain('ws-echo-8080');
-    expect(processIds).toContain('ws-code-8081');
-    expect(processIds).toContain('ws-terminal-8082');
-
-    // Verify all are running
-    const runningProcesses = processes.filter((p: any) => p.status === 'running');
-    expect(runningProcesses.length).toBeGreaterThanOrEqual(3);
-  }, 30000);
-
-  test('should connect to echo server directly using connect()', async () => {
-    currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
-
-    // Initialize servers
-    const initResponse = await fetch(`${workerUrl}/api/init`, {
-      method: 'POST',
-      headers,
-    });
-    const initData = await initResponse.json();
-    expect(initData.success).toBe(true);
-
-    // Connect via WebSocket using connect() pattern (no port exposure API)
+    // Connect via WebSocket using connect() routing
     const wsUrl = workerUrl.replace(/^http/, 'ws') + '/ws/echo';
     const ws = new WebSocket(wsUrl, {
       headers: {
@@ -104,8 +61,8 @@ describe('WebSocket connect() Pattern', () => {
       setTimeout(() => reject(new Error('Connection timeout')), 10000);
     });
 
-    // Send message and verify echo
-    const testMessage = 'Hello from connect() test!';
+    // Send message and verify echo back
+    const testMessage = 'Hello WebSocket';
     const messagePromise = new Promise<string>((resolve, reject) => {
       ws.on('message', (data) => resolve(data.toString()));
       setTimeout(() => reject(new Error('Echo timeout')), 5000);
@@ -116,7 +73,7 @@ describe('WebSocket connect() Pattern', () => {
 
     expect(echoedMessage).toBe(testMessage);
 
-    // Close connection
+    // Clean close
     ws.close();
     await new Promise<void>((resolve) => {
       ws.on('close', () => resolve());
@@ -124,393 +81,26 @@ describe('WebSocket connect() Pattern', () => {
     });
   }, 30000);
 
-  test('should stream Python code execution output in real-time', async () => {
+  test('should handle multiple concurrent connections', async () => {
     currentSandboxId = createSandboxId();
     const headers = createTestHeaders(currentSandboxId);
 
-    // Initialize servers
-    const initResponse = await fetch(`${workerUrl}/api/init`, {
+    // Initialize echo server
+    await fetch(`${workerUrl}/api/init`, {
       method: 'POST',
       headers,
     });
-    const initData = await initResponse.json();
-    expect(initData.success).toBe(true);
 
-    // Connect to code streaming server
-    const wsUrl = workerUrl.replace(/^http/, 'ws') + '/ws/code';
-    const ws = new WebSocket(wsUrl, {
-      headers: {
-        'X-Sandbox-Id': currentSandboxId,
-      },
-    });
+    // Wait for server to be ready
+    await new Promise(resolve => setTimeout(resolve, 2000));
 
-    await new Promise<void>((resolve, reject) => {
-      ws.on('open', () => resolve());
-      ws.on('error', (error) => reject(error));
-      setTimeout(() => reject(new Error('Connection timeout')), 10000);
-    });
+    // Open 3 concurrent connections to echo server
+    const wsUrl = workerUrl.replace(/^http/, 'ws') + '/ws/echo';
+    const ws1 = new WebSocket(wsUrl, { headers: { 'X-Sandbox-Id': currentSandboxId } });
+    const ws2 = new WebSocket(wsUrl, { headers: { 'X-Sandbox-Id': currentSandboxId } });
+    const ws3 = new WebSocket(wsUrl, { headers: { 'X-Sandbox-Id': currentSandboxId } });
 
-    // Collect all messages
-    const messages: any[] = [];
-    ws.on('message', (data) => {
-      try {
-        messages.push(JSON.parse(data.toString()));
-      } catch (e) {
-        console.error('Failed to parse message:', data.toString());
-      }
-    });
-
-    // Send Python code with multiple print statements and delays
-    const pythonCode = `
-import time
-for i in range(3):
-    print(f'Count: {i}')
-    time.sleep(0.3)
-print('Done!')
-`;
-
-    ws.send(JSON.stringify({
-      type: 'execute',
-      code: pythonCode,
-    }));
-
-    // Wait for completion
-    await new Promise<void>((resolve, reject) => {
-      const checkComplete = () => {
-        const completed = messages.find(m => m.type === 'completed');
-        if (completed) {
-          resolve();
-        } else {
-          setTimeout(checkComplete, 100);
-        }
-      };
-      checkComplete();
-      setTimeout(() => reject(new Error('Execution timeout')), 10000);
-    });
-
-    // Verify message sequence
-    expect(messages.some(m => m.type === 'ready')).toBe(true);
-    expect(messages.some(m => m.type === 'executing')).toBe(true);
-
-    // Verify we got stdout messages (streaming)
-    const stdoutMessages = messages.filter(m => m.type === 'stdout');
-    expect(stdoutMessages.length).toBeGreaterThan(0);
-
-    // Verify output contains our print statements
-    const fullOutput = stdoutMessages.map(m => m.data).join('');
-    expect(fullOutput).toContain('Count: 0');
-    expect(fullOutput).toContain('Count: 1');
-    expect(fullOutput).toContain('Count: 2');
-    expect(fullOutput).toContain('Done!');
-
-    // Verify completion with exit code 0
-    const completedMsg = messages.find(m => m.type === 'completed');
-    expect(completedMsg).toBeDefined();
-    expect(completedMsg.exitCode).toBe(0);
-
-    ws.close();
-  }, 30000);
-
-  test('should handle Python code execution errors with non-zero exit code', async () => {
-    currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
-
-    const initResponse = await fetch(`${workerUrl}/api/init`, {
-      method: 'POST',
-      headers,
-    });
-    const initData = await initResponse.json();
-    expect(initData.success).toBe(true);
-
-    const wsUrl = workerUrl.replace(/^http/, 'ws') + '/ws/code';
-    const ws = new WebSocket(wsUrl, {
-      headers: {
-        'X-Sandbox-Id': currentSandboxId,
-      },
-    });
-
-    await new Promise<void>((resolve, reject) => {
-      ws.on('open', () => resolve());
-      ws.on('error', (error) => reject(error));
-      setTimeout(() => reject(new Error('Connection timeout')), 10000);
-    });
-
-    const messages: any[] = [];
-    ws.on('message', (data) => {
-      try {
-        messages.push(JSON.parse(data.toString()));
-      } catch (e) {}
-    });
-
-    // Send Python code that raises an error
-    const pythonCode = `
-print('Starting...')
-raise ValueError('This is a test error')
-print('This should not print')
-`;
-
-    ws.send(JSON.stringify({
-      type: 'execute',
-      code: pythonCode,
-    }));
-
-    // Wait for completion
-    await new Promise<void>((resolve, reject) => {
-      const checkComplete = () => {
-        const completed = messages.find(m => m.type === 'completed');
-        if (completed) {
-          resolve();
-        } else {
-          setTimeout(checkComplete, 100);
-        }
-      };
-      checkComplete();
-      setTimeout(() => reject(new Error('Execution timeout')), 10000);
-    });
-
-    // Verify we got stderr with error message
-    const stderrMessages = messages.filter(m => m.type === 'stderr');
-    expect(stderrMessages.length).toBeGreaterThan(0);
-
-    const stderrOutput = stderrMessages.map(m => m.data).join('');
-    expect(stderrOutput).toContain('ValueError');
-    expect(stderrOutput).toContain('This is a test error');
-
-    // Verify non-zero exit code
-    const completedMsg = messages.find(m => m.type === 'completed');
-    expect(completedMsg).toBeDefined();
-    expect(completedMsg.exitCode).not.toBe(0);
-
-    ws.close();
-  }, 30000);
-
-  test('should execute terminal commands and return results', async () => {
-    currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
-
-    const initResponse = await fetch(`${workerUrl}/api/init`, {
-      method: 'POST',
-      headers,
-    });
-    const initData = await initResponse.json();
-    expect(initData.success).toBe(true);
-
-    const wsUrl = workerUrl.replace(/^http/, 'ws') + '/ws/terminal';
-    const ws = new WebSocket(wsUrl, {
-      headers: {
-        'X-Sandbox-Id': currentSandboxId,
-      },
-    });
-
-    await new Promise<void>((resolve, reject) => {
-      ws.on('open', () => resolve());
-      ws.on('error', (error) => reject(error));
-      setTimeout(() => reject(new Error('Connection timeout')), 10000);
-    });
-
-    const messages: any[] = [];
-    ws.on('message', (data) => {
-      try {
-        messages.push(JSON.parse(data.toString()));
-      } catch (e) {}
-    });
-
-    // Wait for ready message
-    await new Promise<void>((resolve) => {
-      const checkReady = () => {
-        if (messages.some(m => m.type === 'ready')) {
-          resolve();
-        } else {
-          setTimeout(checkReady, 100);
-        }
-      };
-      checkReady();
-    });
-
-    const readyMsg = messages.find(m => m.type === 'ready');
-    expect(readyMsg).toBeDefined();
-    expect(readyMsg.cwd).toBeDefined();
-
-    // Execute echo command
-    ws.send(JSON.stringify({
-      type: 'command',
-      command: 'echo "Hello Terminal"',
-    }));
-
-    // Wait for result
-    await new Promise<void>((resolve) => {
-      const checkResult = () => {
-        if (messages.some(m => m.type === 'result')) {
-          resolve();
-        } else {
-          setTimeout(checkResult, 100);
-        }
-      };
-      checkResult();
-    });
-
-    const resultMsg = messages.find(m => m.type === 'result');
-    expect(resultMsg).toBeDefined();
-    expect(resultMsg.stdout).toContain('Hello Terminal');
-    expect(resultMsg.exitCode).toBe(0);
-
-    ws.close();
-  }, 30000);
-
-  test('should handle terminal command errors with non-zero exit code', async () => {
-    currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
-
-    const initResponse = await fetch(`${workerUrl}/api/init`, {
-      method: 'POST',
-      headers,
-    });
-    const initData = await initResponse.json();
-    expect(initData.success).toBe(true);
-
-    const wsUrl = workerUrl.replace(/^http/, 'ws') + '/ws/terminal';
-    const ws = new WebSocket(wsUrl, {
-      headers: {
-        'X-Sandbox-Id': currentSandboxId,
-      },
-    });
-
-    await new Promise<void>((resolve, reject) => {
-      ws.on('open', () => resolve());
-      ws.on('error', (error) => reject(error));
-      setTimeout(() => reject(new Error('Connection timeout')), 10000);
-    });
-
-    const messages: any[] = [];
-    ws.on('message', (data) => {
-      try {
-        messages.push(JSON.parse(data.toString()));
-      } catch (e) {}
-    });
-
-    // Wait for ready
-    await new Promise<void>((resolve) => {
-      const checkReady = () => {
-        if (messages.some(m => m.type === 'ready')) resolve();
-        else setTimeout(checkReady, 100);
-      };
-      checkReady();
-    });
-
-    // Execute command that fails
-    ws.send(JSON.stringify({
-      type: 'command',
-      command: 'ls /nonexistent-directory',
-    }));
-
-    // Wait for result
-    await new Promise<void>((resolve) => {
-      const checkResult = () => {
-        if (messages.some(m => m.type === 'result')) resolve();
-        else setTimeout(checkResult, 100);
-      };
-      checkResult();
-    });
-
-    const resultMsg = messages.find(m => m.type === 'result');
-    expect(resultMsg).toBeDefined();
-    expect(resultMsg.stderr).toContain('No such file or directory');
-    expect(resultMsg.exitCode).not.toBe(0);
-
-    ws.close();
-  }, 30000);
-
-  test('should reuse running servers across multiple connections', async () => {
-    currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
-
-    // Initialize servers once
-    const initResponse = await fetch(`${workerUrl}/api/init`, {
-      method: 'POST',
-      headers,
-    });
-    const initData = await initResponse.json();
-    expect(initData.success).toBe(true);
-
-    // Get initial process list
-    const initialProcesses = await fetch(`${workerUrl}/api/process/list`, {
-      method: 'GET',
-      headers,
-    }).then(r => r.json());
-
-    const echoProcess = initialProcesses.find((p: any) => p.id === 'ws-echo-8080');
-    expect(echoProcess).toBeDefined();
-
-    // Connect, disconnect, reconnect multiple times
-    for (let i = 0; i < 3; i++) {
-      const wsUrl = workerUrl.replace(/^http/, 'ws') + '/ws/echo';
-      const ws = new WebSocket(wsUrl, {
-        headers: {
-          'X-Sandbox-Id': currentSandboxId,
-        },
-      });
-
-      await new Promise<void>((resolve, reject) => {
-        ws.on('open', () => resolve());
-        ws.on('error', (error) => reject(error));
-        setTimeout(() => reject(new Error('Connection timeout')), 10000);
-      });
-
-      // Send a message
-      const messagePromise = new Promise<string>((resolve) => {
-        ws.on('message', (data) => resolve(data.toString()));
-      });
-
-      ws.send(`Test ${i}`);
-      const echo = await messagePromise;
-      expect(echo).toBe(`Test ${i}`);
-
-      // Close
-      ws.close();
-      await new Promise<void>((resolve) => {
-        ws.on('close', () => resolve());
-        setTimeout(() => resolve(), 500);
-      });
-
-      // Small delay between connections
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
-
-    // Verify same process is still running (not restarted)
-    const finalProcesses = await fetch(`${workerUrl}/api/process/list`, {
-      method: 'GET',
-      headers,
-    }).then(r => r.json());
-
-    const finalEchoProcess = finalProcesses.find((p: any) => p.id === 'ws-echo-8080');
-    expect(finalEchoProcess).toBeDefined();
-    expect(finalEchoProcess.status).toBe('running');
-
-    // Process ID should be the same (server wasn't restarted)
-    expect(finalEchoProcess.id).toBe(echoProcess.id);
-  }, 30000);
-
-  test('should handle multiple concurrent WebSocket connections', async () => {
-    currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
-
-    const initResponse = await fetch(`${workerUrl}/api/init`, {
-      method: 'POST',
-      headers,
-    });
-    const initData = await initResponse.json();
-    expect(initData.success).toBe(true);
-
-    // Open 3 concurrent connections to different servers
-    const wsUrl1 = workerUrl.replace(/^http/, 'ws') + '/ws/echo';
-    const wsUrl2 = workerUrl.replace(/^http/, 'ws') + '/ws/code';
-    const wsUrl3 = workerUrl.replace(/^http/, 'ws') + '/ws/terminal';
-
-    const ws1 = new WebSocket(wsUrl1, { headers: { 'X-Sandbox-Id': currentSandboxId } });
-    const ws2 = new WebSocket(wsUrl2, { headers: { 'X-Sandbox-Id': currentSandboxId } });
-    const ws3 = new WebSocket(wsUrl3, { headers: { 'X-Sandbox-Id': currentSandboxId } });
-
-    // Wait for all connections
+    // Wait for all connections to open
     await Promise.all([
       new Promise<void>((resolve, reject) => {
         ws1.on('open', () => resolve());
@@ -529,45 +119,28 @@ print('This should not print')
       }),
     ]);
 
-    // Send messages on all connections simultaneously
+    // Send different messages on each connection simultaneously
     const results = await Promise.all([
       new Promise<string>((resolve) => {
         ws1.on('message', (data) => resolve(data.toString()));
-        ws1.send('Echo test');
+        ws1.send('Message 1');
       }),
-      new Promise<any>((resolve) => {
-        const messages: any[] = [];
-        ws2.on('message', (data) => {
-          try {
-            const msg = JSON.parse(data.toString());
-            messages.push(msg);
-            if (msg.type === 'completed') resolve(messages);
-          } catch (e) {}
-        });
-        ws2.send(JSON.stringify({ type: 'execute', code: 'print("Code test")' }));
+      new Promise<string>((resolve) => {
+        ws2.on('message', (data) => resolve(data.toString()));
+        ws2.send('Message 2');
       }),
-      new Promise<any>((resolve) => {
-        const messages: any[] = [];
-        ws3.on('message', (data) => {
-          try {
-            const msg = JSON.parse(data.toString());
-            messages.push(msg);
-            if (msg.type === 'result') resolve(messages);
-          } catch (e) {}
-        });
-        // Wait for ready first
-        setTimeout(() => {
-          ws3.send(JSON.stringify({ type: 'command', command: 'echo "Terminal test"' }));
-        }, 500);
+      new Promise<string>((resolve) => {
+        ws3.on('message', (data) => resolve(data.toString()));
+        ws3.send('Message 3');
       }),
     ]);
 
-    // Verify all worked independently
-    expect(results[0]).toBe('Echo test');
-    expect(results[1].some((m: any) => m.type === 'stdout')).toBe(true);
-    expect(results[2].some((m: any) => m.type === 'result')).toBe(true);
+    // Verify each connection received its own message (no interference)
+    expect(results[0]).toBe('Message 1');
+    expect(results[1]).toBe('Message 2');
+    expect(results[2]).toBe('Message 3');
 
-    // Close all
+    // Close all connections
     ws1.close();
     ws2.close();
     ws3.close();

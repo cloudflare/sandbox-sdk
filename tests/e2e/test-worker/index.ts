@@ -202,7 +202,7 @@ console.log('Terminal server on port ' + port);
 
       // WebSocket endpoints
       const upgradeHeader = request.headers.get('Upgrade');
-      if (upgradeHeader === 'websocket') {
+      if (upgradeHeader?.toLowerCase() === 'websocket') {
         if (url.pathname === '/ws/echo') {
           return await connect(sandbox, request, 8080);
         }

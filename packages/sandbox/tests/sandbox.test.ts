@@ -1,7 +1,7 @@
 import { Container } from '@cloudflare/containers';
 import type { DurableObjectState } from '@cloudflare/workers-types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { Sandbox } from '../src/sandbox';
+import { Sandbox, connect } from '../src/sandbox';
 
 // Mock dependencies before imports
 vi.mock('./interpreter', () => ({
@@ -9,6 +9,13 @@ vi.mock('./interpreter', () => ({
 }));
 
 vi.mock('@cloudflare/containers', () => {
+  const mockSwitchPort = vi.fn((request: Request, port: number) => {
+    // Create a new request with the port in the URL path
+    const url = new URL(request.url);
+    url.pathname = `/proxy/${port}${url.pathname}`;
+    return new Request(url, request);
+  });
+
   const MockContainer = class Container {
     ctx: any;
     env: any;
@@ -18,6 +25,17 @@ vi.mock('@cloudflare/containers', () => {
     }
     async fetch(request: Request): Promise<Response> {
       // Mock implementation - will be spied on in tests
+      const upgradeHeader = request.headers.get('Upgrade');
+      if (upgradeHeader?.toLowerCase() === 'websocket') {
+        return new Response('WebSocket Upgraded', {
+          status: 200,
+          headers: {
+            'X-WebSocket-Upgraded': 'true',
+            'Upgrade': 'websocket',
+            'Connection': 'Upgrade',
+          },
+        });
+      }
       return new Response('Mock Container fetch');
     }
     async containerFetch(request: Request, port: number): Promise<Response> {
@@ -29,6 +47,7 @@ vi.mock('@cloudflare/containers', () => {
   return {
     Container: MockContainer,
     getContainer: vi.fn(),
+    switchPort: mockSwitchPort,
   };
 });
 
@@ -551,6 +570,72 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(passedRequest.headers.get('Connection')).toBe('Upgrade');
       expect(passedRequest.headers.get('Sec-WebSocket-Key')).toBe('test-key-123');
       expect(passedRequest.headers.get('Sec-WebSocket-Version')).toBe('13');
+    });
+  });
+
+  describe('connect() function', () => {
+    it('should route WebSocket request through switchPort to sandbox.fetch', async () => {
+      const { switchPort } = await import('@cloudflare/containers');
+      const switchPortMock = vi.mocked(switchPort);
+
+      const request = new Request('http://localhost/ws/echo', {
+        headers: {
+          'Upgrade': 'websocket',
+          'Connection': 'Upgrade',
+        },
+      });
+
+      const fetchSpy = vi.spyOn(sandbox, 'fetch');
+      const response = await connect(sandbox, request, 8080);
+
+      // Verify switchPort was called with correct port
+      expect(switchPortMock).toHaveBeenCalledWith(request, 8080);
+
+      // Verify fetch was called with the switched request
+      expect(fetchSpy).toHaveBeenCalledOnce();
+
+      // Verify response indicates WebSocket upgrade
+      expect(response.status).toBe(200);
+      expect(response.headers.get('X-WebSocket-Upgraded')).toBe('true');
+    });
+
+    it('should reject invalid ports with SecurityError', async () => {
+      const request = new Request('http://localhost/ws/test', {
+        headers: { 'Upgrade': 'websocket', 'Connection': 'Upgrade' },
+      });
+
+      // Invalid port values
+      await expect(connect(sandbox, request, -1)).rejects.toThrow('Invalid or restricted port');
+      await expect(connect(sandbox, request, 0)).rejects.toThrow('Invalid or restricted port');
+      await expect(connect(sandbox, request, 70000)).rejects.toThrow('Invalid or restricted port');
+
+      // Privileged ports
+      await expect(connect(sandbox, request, 80)).rejects.toThrow('Invalid or restricted port');
+      await expect(connect(sandbox, request, 443)).rejects.toThrow('Invalid or restricted port');
+    });
+
+    it('should preserve request properties through routing', async () => {
+      const request = new Request('http://localhost/ws/test?token=abc&room=lobby', {
+        headers: {
+          'Upgrade': 'websocket',
+          'Connection': 'Upgrade',
+          'X-Custom-Header': 'custom-value',
+        },
+      });
+
+      const fetchSpy = vi.spyOn(sandbox, 'fetch');
+      await connect(sandbox, request, 8080);
+
+      const calledRequest = fetchSpy.mock.calls[0][0];
+
+      // Verify headers are preserved
+      expect(calledRequest.headers.get('Upgrade')).toBe('websocket');
+      expect(calledRequest.headers.get('X-Custom-Header')).toBe('custom-value');
+
+      // Verify query parameters are preserved
+      const url = new URL(calledRequest.url);
+      expect(url.searchParams.get('token')).toBe('abc');
+      expect(url.searchParams.get('room')).toBe('lobby');
     });
   });
 });

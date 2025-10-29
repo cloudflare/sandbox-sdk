@@ -628,7 +628,8 @@ type TabType =
   | "streaming"
   | "files"
   | "notebook"
-  | "examples";
+  | "examples"
+  | "websocket";
 
 interface ProcessInfo {
   id: string;
@@ -3618,6 +3619,218 @@ function ExamplesTab({
   );
 }
 
+function WebSocketTab() {
+  const [serverInitialized, setServerInitialized] = useState(false);
+  const [isInitializing, setIsInitializing] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState<"disconnected" | "connecting" | "connected">("disconnected");
+  const [messages, setMessages] = useState<Array<{ type: "sent" | "received"; text: string; timestamp: Date }>>([]);
+  const [messageInput, setMessageInput] = useState("");
+  const wsRef = useRef<WebSocket | null>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
+
+  const initializeServer = async () => {
+    setIsInitializing(true);
+    try {
+      const response = await fetch("/api/websocket/init", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Sandbox-Client-Id": getClientSandboxId(),
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to initialize server: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      setServerInitialized(true);
+      addMessage("received", `Server initialized: ${data.message}`);
+    } catch (error: any) {
+      addMessage("received", `Error initializing server: ${error.message}`);
+    } finally {
+      setIsInitializing(false);
+    }
+  };
+
+  const addMessage = (type: "sent" | "received", text: string) => {
+    setMessages((prev) => [...prev, { type, text, timestamp: new Date() }]);
+  };
+
+  const connectWebSocket = () => {
+    if (wsRef.current) return;
+
+    setConnectionStatus("connecting");
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const sandboxId = getClientSandboxId();
+    const ws = new WebSocket(`${protocol}//${window.location.host}/ws/echo?sandboxId=${sandboxId}`);
+
+    ws.onopen = () => {
+      setConnectionStatus("connected");
+      addMessage("received", "WebSocket connected");
+    };
+
+    ws.onmessage = (event) => {
+      addMessage("received", event.data);
+    };
+
+    ws.onerror = (error) => {
+      addMessage("received", "WebSocket error occurred");
+    };
+
+    ws.onclose = () => {
+      setConnectionStatus("disconnected");
+      addMessage("received", "WebSocket disconnected");
+      wsRef.current = null;
+    };
+
+    wsRef.current = ws;
+  };
+
+  const disconnectWebSocket = () => {
+    if (wsRef.current) {
+      wsRef.current.close();
+      wsRef.current = null;
+    }
+  };
+
+  const sendMessage = () => {
+    if (!messageInput.trim() || !wsRef.current || connectionStatus !== "connected") return;
+
+    wsRef.current.send(messageInput);
+    addMessage("sent", messageInput);
+    setMessageInput("");
+  };
+
+  const handleKeyPress = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
+  };
+
+  const clearMessages = () => {
+    setMessages([]);
+  };
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      disconnectWebSocket();
+    };
+  }, []);
+
+  return (
+    <div className="websocket-tab">
+      <div className="websocket-header">
+        <h3>WebSocket Echo Server</h3>
+        <p>
+          Test the <code>connect()</code> method by sending messages to a WebSocket echo server running in the sandbox.
+        </p>
+      </div>
+
+      <div className="websocket-controls">
+        <div className="control-group">
+          <button
+            onClick={initializeServer}
+            disabled={serverInitialized || isInitializing}
+            className="btn btn-primary"
+          >
+            {isInitializing ? "Initializing..." : serverInitialized ? "Server Running" : "Initialize Server"}
+          </button>
+
+          <button
+            onClick={connectWebSocket}
+            disabled={!serverInitialized || connectionStatus !== "disconnected"}
+            className="btn btn-success"
+          >
+            Connect
+          </button>
+
+          <button
+            onClick={disconnectWebSocket}
+            disabled={connectionStatus !== "connected"}
+            className="btn btn-warning"
+          >
+            Disconnect
+          </button>
+
+          <span className={`status-indicator status-${connectionStatus}`}>
+            {connectionStatus === "connected" ? "🟢 Connected" : connectionStatus === "connecting" ? "🟡 Connecting..." : "🔴 Disconnected"}
+          </span>
+        </div>
+      </div>
+
+      <div className="websocket-message-area">
+        <div className="messages-container">
+          {messages.length === 0 ? (
+            <div className="no-messages">
+              <p>No messages yet. Initialize the server and connect to start sending messages.</p>
+            </div>
+          ) : (
+            <>
+              {messages.map((msg, idx) => (
+                <div key={idx} className={`message message-${msg.type}`}>
+                  <span className="message-time">
+                    {msg.timestamp.toLocaleTimeString()}
+                  </span>
+                  <span className="message-label">
+                    {msg.type === "sent" ? "→ Sent:" : "← Received:"}
+                  </span>
+                  <span className="message-text">{msg.text}</span>
+                </div>
+              ))}
+              <div ref={messagesEndRef} />
+            </>
+          )}
+        </div>
+
+        <div className="message-input-area">
+          <input
+            type="text"
+            value={messageInput}
+            onChange={(e) => setMessageInput(e.target.value)}
+            onKeyPress={handleKeyPress}
+            placeholder="Type a message to echo..."
+            disabled={connectionStatus !== "connected"}
+            className="message-input"
+          />
+          <button
+            onClick={sendMessage}
+            disabled={!messageInput.trim() || connectionStatus !== "connected"}
+            className="btn btn-send"
+          >
+            Send
+          </button>
+          <button onClick={clearMessages} className="btn" disabled={messages.length === 0}>
+            Clear
+          </button>
+        </div>
+      </div>
+
+      <div className="websocket-info">
+        <h4>How it works:</h4>
+        <ol>
+          <li><strong>Initialize:</strong> Starts a Bun WebSocket echo server on port 8080 in the sandbox</li>
+          <li><strong>Connect:</strong> Uses <code>connect(sandbox, request, 8080)</code> to route WebSocket to the server</li>
+          <li><strong>Echo:</strong> Any message you send will be echoed back by the server</li>
+        </ol>
+        <p>
+          This demonstrates the <code>connect()</code> method, which is syntactic sugar for <code>fetch(switchPort())</code> to make WebSocket routing clear and simple.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 function SandboxTester() {
   const [activeTab, setActiveTab] = useState<TabType>("commands");
   const [client, setClient] = useState<SandboxApiClient | null>(null);
@@ -4047,6 +4260,12 @@ function SandboxTester() {
         >
           🧪 Examples
         </button>
+        <button
+          className={`tab-button ${activeTab === "websocket" ? "active" : ""}`}
+          onClick={() => setActiveTab("websocket")}
+        >
+          🔌 WebSocket
+        </button>
       </div>
 
       <div className="tab-content-area">
@@ -4243,6 +4462,8 @@ function SandboxTester() {
         {activeTab === "examples" && (
           <ExamplesTab client={client} connectionStatus={connectionStatus} />
         )}
+
+        {activeTab === "websocket" && <WebSocketTab />}
       </div>
     </div>
   );

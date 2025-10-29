@@ -61,6 +61,12 @@ try {
       replacement: `cloudflare/sandbox-test:${newVersion}`,
       description: "Test Docker image reference",
     },
+    // Example package.json dependencies
+    {
+      pattern: /"@cloudflare\/sandbox":\s*"\^[\d.]+"/g,
+      replacement: `"@cloudflare/sandbox": "^${newVersion}"`,
+      description: "Example package.json @cloudflare/sandbox dependencies",
+    },
   ];
 
   // Files to search and update
@@ -73,6 +79,7 @@ try {
     "**/*.json",        // JSON configs (but not package.json/package-lock.json)
     "**/*.yaml",        // YAML configs
     "**/*.yml",         // YML configs
+    "examples/**/package.json", // Example package.json files (exception to ignore rule below)
   ];
 
   // Ignore patterns

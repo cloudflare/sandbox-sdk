@@ -59,11 +59,20 @@ export function getSandbox(
 /**
  * Connect an incoming WebSocket request to a specific port inside the container.
  *
- * @param sandbox - The sandbox instance (stub) to connect to
- * @param request - The incoming WebSocket upgrade request from the client
- * @param port - The port number to connect to inside the container (1024-65535)
- * @returns Promise<Response> - The WebSocket upgrade response
+ * Note: This is a standalone function (not a Sandbox method) because WebSocket
+ * connections cannot be serialized over Durable Object RPC.
+ *
+ * @param sandbox - The Sandbox instance to route the request through
+ * @param request - The incoming WebSocket upgrade request
+ * @param port - The port number to connect to (1024-65535)
+ * @returns The WebSocket upgrade response
  * @throws {SecurityError} - If port is invalid or in restricted range
+ *
+ * @example
+ * const sandbox = getSandbox(env.Sandbox, 'sandbox-id');
+ * if (request.headers.get('Upgrade')?.toLowerCase() === 'websocket') {
+ *   return await connect(sandbox, request, 8080);
+ * }
  */
 export async function connect(
   sandbox: Sandbox,
@@ -889,6 +898,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     // Constant-time comparison to prevent timing attacks
     return storedToken === token;
   }
+
 
   private generatePortToken(): string {
     // Generate cryptographically secure 16-character token using Web Crypto API

@@ -11,7 +11,7 @@
 		"types": "wrangler types"
 	},
 	"devDependencies": {
-		"@cloudflare/sandbox": "^0.4.3",
+		"@cloudflare/sandbox": "^0.4.12",
 		"@types/node": "^24.9.1",
 		"typescript": "^5.8.3",
 		"wrangler": "^4.44.0"

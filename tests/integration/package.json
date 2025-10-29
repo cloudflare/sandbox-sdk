@@ -1,9 +1,9 @@
 {
-  "name": "@cloudflare/sandbox-example",
+  "name": "@repo/integration",
   "version": "1.0.0",
   "type": "module",
   "private": true,
-  "description": "An example of using the sandbox package",
+  "description": "Integration testing app for the Sandbox SDK",
   "scripts": {
     "start": "vite dev",
     "deploy": "vite build && wrangler deploy"
