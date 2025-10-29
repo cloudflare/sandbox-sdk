@@ -13,12 +13,12 @@
   },
   "dependencies": {
     "@repo/shared": "*",
-    "esbuild": "^0.25.10",
+    "esbuild": "^0.25.11",
     "zod": "^3.22.3"
   },
   "devDependencies": {
     "@repo/typescript-config": "*",
-    "@types/bun": "^1.2.19",
-    "typescript": "^5.8.3"
+    "@types/bun": "^1.3.1",
+    "typescript": "^5.9.3"
   }
 }

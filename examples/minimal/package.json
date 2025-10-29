@@ -13,9 +13,9 @@
 	},
 	"devDependencies": {
 		"@cloudflare/sandbox": "*",
-		"@types/node": "^24.9.1",
-		"typescript": "^5.8.3",
-		"wrangler": "^4.44.0"
+		"@types/node": "^24.9.2",
+		"typescript": "^5.9.3",
+		"wrangler": "^4.45.2"
 	},
 	"author": "",
 	"license": "MIT"
