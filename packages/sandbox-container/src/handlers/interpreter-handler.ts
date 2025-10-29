@@ -3,7 +3,8 @@ import type {
   ContextCreateResult,
   ContextDeleteResult,
   ContextListResult,
-  InterpreterHealthResult,Logger 
+  InterpreterHealthResult,
+  Logger
 } from '@repo/shared';
 import { ErrorCode } from '@repo/shared/errors';
 
@@ -47,20 +48,26 @@ export class InterpreterHandler extends BaseHandler<Request, Response> {
       return await this.handleExecuteCode(request, context);
     }
 
-    return this.createErrorResponse({
-      message: 'Invalid interpreter endpoint',
-      code: ErrorCode.UNKNOWN_ERROR,
-    }, context);
+    return this.createErrorResponse(
+      {
+        message: 'Invalid interpreter endpoint',
+        code: ErrorCode.UNKNOWN_ERROR
+      },
+      context
+    );
   }
 
-  private async handleHealth(request: Request, context: RequestContext): Promise<Response> {
+  private async handleHealth(
+    request: Request,
+    context: RequestContext
+  ): Promise<Response> {
     const result = await this.interpreterService.getHealthStatus();
 
     if (result.success) {
       const response: InterpreterHealthResult = {
         success: true,
         status: result.data.ready ? 'healthy' : 'unhealthy',
-        timestamp: new Date().toISOString(),
+        timestamp: new Date().toISOString()
       };
 
       return this.createTypedResponse(response, context);
@@ -69,7 +76,10 @@ export class InterpreterHandler extends BaseHandler<Request, Response> {
     }
   }
 
-  private async handleCreateContext(request: Request, context: RequestContext): Promise<Response> {
+  private async handleCreateContext(
+    request: Request,
+    context: RequestContext
+  ): Promise<Response> {
     const body = await this.parseRequestBody<CreateContextRequest>(request);
 
     const result = await this.interpreterService.createContext(body);
@@ -82,7 +92,7 @@ export class InterpreterHandler extends BaseHandler<Request, Response> {
         contextId: contextData.id,
         language: contextData.language,
         cwd: contextData.cwd,
-        timestamp: new Date().toISOString(),
+        timestamp: new Date().toISOString()
       };
 
       return this.createTypedResponse(response, context);
@@ -93,15 +103,15 @@ export class InterpreterHandler extends BaseHandler<Request, Response> {
           JSON.stringify({
             success: false,
             error: result.error,
-            timestamp: new Date().toISOString(),
+            timestamp: new Date().toISOString()
           }),
           {
             status: 503,
             headers: {
               'Content-Type': 'application/json',
               'Retry-After': String(result.error.details?.retryAfter || 5),
-              ...context.corsHeaders,
-            },
+              ...context.corsHeaders
+            }
           }
         );
       }
@@ -110,18 +120,21 @@ export class InterpreterHandler extends BaseHandler<Request, Response> {
     }
   }
 
-  private async handleListContexts(request: Request, context: RequestContext): Promise<Response> {
+  private async handleListContexts(
+    request: Request,
+    context: RequestContext
+  ): Promise<Response> {
     const result = await this.interpreterService.listContexts();
 
     if (result.success) {
       const response: ContextListResult = {
         success: true,
-        contexts: result.data.map(ctx => ({
+        contexts: result.data.map((ctx) => ({
           id: ctx.id,
           language: ctx.language,
-          cwd: ctx.cwd,
+          cwd: ctx.cwd
         })),
-        timestamp: new Date().toISOString(),
+        timestamp: new Date().toISOString()
       };
 
       return this.createTypedResponse(response, context);
@@ -130,14 +143,18 @@ export class InterpreterHandler extends BaseHandler<Request, Response> {
     }
   }
 
-  private async handleDeleteContext(request: Request, context: RequestContext, contextId: string): Promise<Response> {
+  private async handleDeleteContext(
+    request: Request,
+    context: RequestContext,
+    contextId: string
+  ): Promise<Response> {
     const result = await this.interpreterService.deleteContext(contextId);
 
     if (result.success) {
       const response: ContextDeleteResult = {
         success: true,
         contextId: contextId,
-        timestamp: new Date().toISOString(),
+        timestamp: new Date().toISOString()
       };
 
       return this.createTypedResponse(response, context);
@@ -146,7 +163,10 @@ export class InterpreterHandler extends BaseHandler<Request, Response> {
     }
   }
 
-  private async handleExecuteCode(request: Request, context: RequestContext): Promise<Response> {
+  private async handleExecuteCode(
+    request: Request,
+    context: RequestContext
+  ): Promise<Response> {
     const body = await this.parseRequestBody<{
       context_id: string;
       code: string;

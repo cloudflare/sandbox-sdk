@@ -67,7 +67,7 @@ export function createNoOpLogger(): Logger {
     info: () => {},
     warn: () => {},
     error: () => {},
-    child: () => createNoOpLogger(),
+    child: () => createNoOpLogger()
   };
 }
 
@@ -136,7 +136,10 @@ export function getLogger(): Logger {
  * }
  * ```
  */
-export function runWithLogger<T>(logger: Logger, fn: () => T | Promise<T>): T | Promise<T> {
+export function runWithLogger<T>(
+  logger: Logger,
+  fn: () => T | Promise<T>
+): T | Promise<T> {
   return loggerStorage.run(logger, fn);
 }
 
@@ -173,7 +176,7 @@ export function createLogger(
   const baseContext: LogContext = {
     ...context,
     traceId: context.traceId || TraceContext.generate(),
-    component: context.component,
+    component: context.component
   };
 
   return new CloudflareLogger(baseContext, minLevel, pretty);
@@ -233,7 +236,9 @@ function getEnvVar(name: string): string | undefined {
 
   // Try Bun.env (Bun runtime)
   if (typeof Bun !== 'undefined') {
-    const bunEnv = (Bun as any).env as Record<string, string | undefined> | undefined;
+    const bunEnv = (Bun as any).env as
+      | Record<string, string | undefined>
+      | undefined;
     if (bunEnv) {
       return bunEnv[name];
     }

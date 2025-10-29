@@ -24,8 +24,8 @@ const SANDBOX_LOG_FORMAT = process.env.SANDBOX_LOG_FORMAT || 'json';
  * Environment variable: INTERPRETER_SPAWN_TIMEOUT_MS
  */
 const INTERPRETER_SPAWN_TIMEOUT_MS = parseInt(
-	process.env.INTERPRETER_SPAWN_TIMEOUT_MS || '60000',
-	10,
+  process.env.INTERPRETER_SPAWN_TIMEOUT_MS || '60000',
+  10
 );
 
 /**
@@ -37,8 +37,8 @@ const INTERPRETER_SPAWN_TIMEOUT_MS = parseInt(
  * Environment variable: INTERPRETER_EXECUTION_TIMEOUT_MS
  */
 const INTERPRETER_EXECUTION_TIMEOUT_MS = (() => {
-	const val = parseInt(process.env.INTERPRETER_EXECUTION_TIMEOUT_MS || '0', 10);
-	return val === 0 ? undefined : val;
+  const val = parseInt(process.env.INTERPRETER_EXECUTION_TIMEOUT_MS || '0', 10);
+  return val === 0 ? undefined : val;
 })();
 
 /**
@@ -50,8 +50,8 @@ const INTERPRETER_EXECUTION_TIMEOUT_MS = (() => {
  * Environment variable: COMMAND_TIMEOUT_MS
  */
 const COMMAND_TIMEOUT_MS = (() => {
-	const val = parseInt(process.env.COMMAND_TIMEOUT_MS || '0', 10);
-	return val === 0 ? undefined : val;
+  const val = parseInt(process.env.COMMAND_TIMEOUT_MS || '0', 10);
+  return val === 0 ? undefined : val;
 })();
 
 /**
@@ -62,8 +62,8 @@ const COMMAND_TIMEOUT_MS = (() => {
  * Environment variable: MAX_OUTPUT_SIZE_BYTES
  */
 const MAX_OUTPUT_SIZE_BYTES = parseInt(
-	process.env.MAX_OUTPUT_SIZE_BYTES || String(10 * 1024 * 1024),
-	10,
+  process.env.MAX_OUTPUT_SIZE_BYTES || String(10 * 1024 * 1024),
+  10
 );
 
 /**
@@ -82,12 +82,12 @@ const STREAM_CHUNK_DELAY_MS = 100;
 const DEFAULT_CWD = '/workspace';
 
 export const CONFIG = {
-	SANDBOX_LOG_LEVEL,
-	SANDBOX_LOG_FORMAT,
-	INTERPRETER_SPAWN_TIMEOUT_MS,
-	INTERPRETER_EXECUTION_TIMEOUT_MS,
-	COMMAND_TIMEOUT_MS,
-	MAX_OUTPUT_SIZE_BYTES,
-	STREAM_CHUNK_DELAY_MS,
-	DEFAULT_CWD,
+  SANDBOX_LOG_LEVEL,
+  SANDBOX_LOG_FORMAT,
+  INTERPRETER_SPAWN_TIMEOUT_MS,
+  INTERPRETER_EXECUTION_TIMEOUT_MS,
+  COMMAND_TIMEOUT_MS,
+  MAX_OUTPUT_SIZE_BYTES,
+  STREAM_CHUNK_DELAY_MS,
+  DEFAULT_CWD
 } as const;

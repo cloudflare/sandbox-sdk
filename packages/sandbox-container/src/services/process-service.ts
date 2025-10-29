@@ -2,7 +2,7 @@ import type { Logger } from '@repo/shared';
 import type {
   CommandErrorContext,
   ProcessErrorContext,
-  ProcessNotFoundContext,
+  ProcessNotFoundContext
 } from '@repo/shared/errors';
 import { ErrorCode } from '@repo/shared/errors';
 import type {
@@ -43,7 +43,7 @@ export class InMemoryProcessStore implements ProcessStore {
     if (!existing) {
       throw new Error(`Process ${id} not found`);
     }
-    
+
     const updated = { ...existing, ...data };
     this.processes.set(id, updated);
   }
@@ -60,7 +60,7 @@ export class InMemoryProcessStore implements ProcessStore {
     // Processes are sandbox-scoped, not session-scoped
     // Filter by status only (like filtering 'ps' output by state)
     if (filters?.status) {
-      processes = processes.filter(p => p.status === filters.status);
+      processes = processes.filter((p) => p.status === filters.status);
     }
 
     return processes;
@@ -83,11 +83,17 @@ export class ProcessService {
    * Semantically identical to executeCommandStream() - both use SessionManager
    * The difference is conceptual: startProcess() runs in background for long-lived processes
    */
-  async startProcess(command: string, options: ProcessOptions = {}): Promise<ServiceResult<ProcessRecord>> {
+  async startProcess(
+    command: string,
+    options: ProcessOptions = {}
+  ): Promise<ServiceResult<ProcessRecord>> {
     return this.executeCommandStream(command, options);
   }
 
-  async executeCommand(command: string, options: ProcessOptions = {}): Promise<ServiceResult<CommandResult>> {
+  async executeCommand(
+    command: string,
+    options: ProcessOptions = {}
+  ): Promise<ServiceResult<CommandResult>> {
     try {
       // Always use SessionManager for execution (unified model)
       const sessionId = options.sessionId || 'default';
@@ -107,16 +113,21 @@ export class ProcessService {
         success: result.data.exitCode === 0,
         exitCode: result.data.exitCode,
         stdout: result.data.stdout,
-        stderr: result.data.stderr,
+        stderr: result.data.stderr
       };
 
       return {
         success: true,
-        data: commandResult,
+        data: commandResult
       };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Failed to execute command', error instanceof Error ? error : undefined, { command, options });
+      const errorMessage =
+        error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error(
+        'Failed to execute command',
+        error instanceof Error ? error : undefined,
+        { command, options }
+      );
 
       return {
         success: false,
@@ -125,9 +136,9 @@ export class ProcessService {
           code: ErrorCode.COMMAND_EXECUTION_ERROR,
           details: {
             command,
-            stderr: errorMessage,
-          } satisfies CommandErrorContext,
-        },
+            stderr: errorMessage
+          } satisfies CommandErrorContext
+        }
       };
     }
   }
@@ -136,7 +147,10 @@ export class ProcessService {
    * Execute a command with streaming output via SessionManager
    * Used by both execStream() and startProcess()
    */
-  async executeCommandStream(command: string, options: ProcessOptions = {}): Promise<ServiceResult<ProcessRecord>> {
+  async executeCommandStream(
+    command: string,
+    options: ProcessOptions = {}
+  ): Promise<ServiceResult<ProcessRecord>> {
     try {
       // 1. Validate command (business logic via manager)
       const validation = this.manager.validateCommand(command);
@@ -145,13 +159,17 @@ export class ProcessService {
           success: false,
           error: {
             message: validation.error || 'Invalid command',
-            code: validation.code || 'INVALID_COMMAND',
-          },
+            code: validation.code || 'INVALID_COMMAND'
+          }
         };
       }
 
       // 2. Create process record (without subprocess)
-      const processRecordData = this.manager.createProcessRecord(command, undefined, options);
+      const processRecordData = this.manager.createProcessRecord(
+        command,
+        undefined,
+        options
+      );
 
       // 3. Build full process record with commandHandle instead of subprocess
       const sessionId = options.sessionId || 'default';
@@ -159,8 +177,8 @@ export class ProcessService {
         ...processRecordData,
         commandHandle: {
           sessionId,
-          commandId: processRecordData.id,  // Use process ID as command ID
-        },
+          commandId: processRecordData.id // Use process ID as command ID
+        }
       };
 
       // 4. Store record (data layer)
@@ -176,12 +194,12 @@ export class ProcessService {
           // Route events to process record listeners
           if (event.type === 'stdout' && event.data) {
             processRecord.stdout += event.data;
-            processRecord.outputListeners.forEach(listener => {
+            processRecord.outputListeners.forEach((listener) => {
               listener('stdout', event.data!);
             });
           } else if (event.type === 'stderr' && event.data) {
             processRecord.stderr += event.data;
-            processRecord.outputListeners.forEach(listener => {
+            processRecord.outputListeners.forEach((listener) => {
               listener('stderr', event.data!);
             });
           } else if (event.type === 'complete') {
@@ -193,29 +211,37 @@ export class ProcessService {
             processRecord.endTime = endTime;
             processRecord.exitCode = exitCode;
 
-            processRecord.statusListeners.forEach(listener => {
+            processRecord.statusListeners.forEach((listener) => {
               listener(status);
             });
 
-            this.store.update(processRecord.id, {
-              status,
-              endTime,
-              exitCode,
-            }).catch(error => {
-              this.logger.error('Failed to update process status', error, { processId: processRecord.id });
-            });
+            this.store
+              .update(processRecord.id, {
+                status,
+                endTime,
+                exitCode
+              })
+              .catch((error) => {
+                this.logger.error('Failed to update process status', error, {
+                  processId: processRecord.id
+                });
+              });
           } else if (event.type === 'error') {
             processRecord.status = 'error';
             processRecord.endTime = new Date();
-            processRecord.statusListeners.forEach(listener => {
+            processRecord.statusListeners.forEach((listener) => {
               listener('error');
             });
 
-            this.logger.error('Streaming command error', new Error(event.error), { processId: processRecord.id });
+            this.logger.error(
+              'Streaming command error',
+              new Error(event.error),
+              { processId: processRecord.id }
+            );
           }
         },
         options.cwd,
-        processRecordData.id  // Pass process ID as commandId for tracking and killing
+        processRecordData.id // Pass process ID as commandId for tracking and killing
       );
 
       if (!streamResult.success) {
@@ -224,7 +250,7 @@ export class ProcessService {
 
       // Command is now tracked and first event processed - safe to return process record
       // Continue streaming in background without blocking
-      streamResult.data.continueStreaming.catch(error => {
+      streamResult.data.continueStreaming.catch((error) => {
         this.logger.error('Failed to execute streaming command', error, {
           processId: processRecord.id,
           command
@@ -233,11 +259,16 @@ export class ProcessService {
 
       return {
         success: true,
-        data: processRecord,
+        data: processRecord
       };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Failed to start streaming command', error instanceof Error ? error : undefined, { command, options });
+      const errorMessage =
+        error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error(
+        'Failed to start streaming command',
+        error instanceof Error ? error : undefined,
+        { command, options }
+      );
 
       return {
         success: false,
@@ -246,9 +277,9 @@ export class ProcessService {
           code: ErrorCode.STREAM_START_ERROR,
           details: {
             command,
-            stderr: errorMessage,
-          } satisfies CommandErrorContext,
-        },
+            stderr: errorMessage
+          } satisfies CommandErrorContext
+        }
       };
     }
   }
@@ -264,19 +295,24 @@ export class ProcessService {
             message: `Process ${id} not found`,
             code: ErrorCode.PROCESS_NOT_FOUND,
             details: {
-              processId: id,
-            } satisfies ProcessNotFoundContext,
-          },
+              processId: id
+            } satisfies ProcessNotFoundContext
+          }
         };
       }
 
       return {
         success: true,
-        data: process,
+        data: process
       };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Failed to get process', error instanceof Error ? error : undefined, { processId: id });
+      const errorMessage =
+        error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error(
+        'Failed to get process',
+        error instanceof Error ? error : undefined,
+        { processId: id }
+      );
 
       return {
         success: false,
@@ -285,9 +321,9 @@ export class ProcessService {
           code: ErrorCode.PROCESS_ERROR,
           details: {
             processId: id,
-            stderr: errorMessage,
-          } satisfies ProcessErrorContext,
-        },
+            stderr: errorMessage
+          } satisfies ProcessErrorContext
+        }
       };
     }
   }
@@ -303,9 +339,9 @@ export class ProcessService {
             message: `Process ${id} not found`,
             code: ErrorCode.PROCESS_NOT_FOUND,
             details: {
-              processId: id,
-            } satisfies ProcessNotFoundContext,
-          },
+              processId: id
+            } satisfies ProcessNotFoundContext
+          }
         };
       }
 
@@ -313,7 +349,7 @@ export class ProcessService {
       if (!process.commandHandle) {
         // Process has no commandHandle - likely already completed or malformed
         return {
-          success: true,
+          success: true
         };
       }
 
@@ -331,8 +367,13 @@ export class ProcessService {
 
       return result;
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Failed to kill process', error instanceof Error ? error : undefined, { processId: id });
+      const errorMessage =
+        error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error(
+        'Failed to kill process',
+        error instanceof Error ? error : undefined,
+        { processId: id }
+      );
 
       return {
         success: false,
@@ -341,24 +382,31 @@ export class ProcessService {
           code: ErrorCode.PROCESS_ERROR,
           details: {
             processId: id,
-            stderr: errorMessage,
-          } satisfies ProcessErrorContext,
-        },
+            stderr: errorMessage
+          } satisfies ProcessErrorContext
+        }
       };
     }
   }
 
-  async listProcesses(filters?: ProcessFilters): Promise<ServiceResult<ProcessRecord[]>> {
+  async listProcesses(
+    filters?: ProcessFilters
+  ): Promise<ServiceResult<ProcessRecord[]>> {
     try {
       const processes = await this.store.list(filters);
-      
+
       return {
         success: true,
-        data: processes,
+        data: processes
       };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Failed to list processes', error instanceof Error ? error : undefined, { filters });
+      const errorMessage =
+        error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error(
+        'Failed to list processes',
+        error instanceof Error ? error : undefined,
+        { filters }
+      );
 
       return {
         success: false,
@@ -366,10 +414,10 @@ export class ProcessService {
           message: `Failed to list processes: ${errorMessage}`,
           code: ErrorCode.PROCESS_ERROR,
           details: {
-            processId: 'list',  // Meta operation
-            stderr: errorMessage,
-          } satisfies ProcessErrorContext,
-        },
+            processId: 'list', // Meta operation
+            stderr: errorMessage
+          } satisfies ProcessErrorContext
+        }
       };
     }
   }
@@ -378,7 +426,7 @@ export class ProcessService {
     try {
       const processes = await this.store.list({ status: 'running' });
       let killed = 0;
-      
+
       for (const process of processes) {
         const result = await this.killProcess(process.id);
         if (result.success) {
@@ -388,11 +436,15 @@ export class ProcessService {
 
       return {
         success: true,
-        data: killed,
+        data: killed
       };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Failed to kill all processes', error instanceof Error ? error : undefined);
+      const errorMessage =
+        error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error(
+        'Failed to kill all processes',
+        error instanceof Error ? error : undefined
+      );
 
       return {
         success: false,
@@ -400,10 +452,10 @@ export class ProcessService {
           message: `Failed to kill all processes: ${errorMessage}`,
           code: ErrorCode.PROCESS_ERROR,
           details: {
-            processId: 'killAll',  // Meta operation
-            stderr: errorMessage,
-          } satisfies ProcessErrorContext,
-        },
+            processId: 'killAll', // Meta operation
+            stderr: errorMessage
+          } satisfies ProcessErrorContext
+        }
       };
     }
   }
@@ -419,9 +471,9 @@ export class ProcessService {
             message: `Process ${id} not found`,
             code: ErrorCode.PROCESS_NOT_FOUND,
             details: {
-              processId: id,
-            } satisfies ProcessNotFoundContext,
-          },
+              processId: id
+            } satisfies ProcessNotFoundContext
+          }
         };
       }
 
@@ -439,7 +491,10 @@ export class ProcessService {
           }
 
           // Set up listener for future output
-          const outputListener = (stream: 'stdout' | 'stderr', data: string) => {
+          const outputListener = (
+            stream: 'stdout' | 'stderr',
+            data: string
+          ) => {
             controller.enqueue(encoder.encode(data));
           };
 
@@ -453,19 +508,26 @@ export class ProcessService {
           process.statusListeners.add(statusListener);
 
           // If already completed, close immediately
-          if (['completed', 'failed', 'killed', 'error'].includes(process.status)) {
+          if (
+            ['completed', 'failed', 'killed', 'error'].includes(process.status)
+          ) {
             controller.close();
           }
-        },
+        }
       });
 
       return {
         success: true,
-        data: stream,
+        data: stream
       };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Failed to stream process logs', error instanceof Error ? error : undefined, { processId: id });
+      const errorMessage =
+        error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error(
+        'Failed to stream process logs',
+        error instanceof Error ? error : undefined,
+        { processId: id }
+      );
 
       return {
         success: false,
@@ -474,9 +536,9 @@ export class ProcessService {
           code: ErrorCode.PROCESS_ERROR,
           details: {
             processId: id,
-            stderr: errorMessage,
-          } satisfies ProcessErrorContext,
-        },
+            stderr: errorMessage
+          } satisfies ProcessErrorContext
+        }
       };
     }
   }

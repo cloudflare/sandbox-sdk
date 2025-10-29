@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { asyncIterableToSSEStream, parseSSEStream, responseToAsyncIterable } from '../src/sse-parser';
+import {
+  asyncIterableToSSEStream,
+  parseSSEStream,
+  responseToAsyncIterable
+} from '../src/sse-parser';
 
 function createMockSSEStream(events: string[]): ReadableStream<Uint8Array> {
   return new ReadableStream({
@@ -25,7 +29,6 @@ describe('SSE Parser', () => {
   });
 
   describe('parseSSEStream', () => {
-
     it('should parse valid SSE events', async () => {
       const stream = createMockSSEStream([
         'data: {"type":"start","command":"echo test"}\n\n',
@@ -134,9 +137,7 @@ describe('SSE Parser', () => {
     });
 
     it('should handle remaining buffer data after stream ends', async () => {
-      const stream = createMockSSEStream([
-        'data: {"type":"complete"}'
-      ]);
+      const stream = createMockSSEStream(['data: {"type":"complete"}']);
 
       const events: any[] = [];
       for await (const event of parseSSEStream(stream)) {
@@ -153,7 +154,8 @@ describe('SSE Parser', () => {
       controller.abort();
 
       await expect(async () => {
-        for await (const event of parseSSEStream(stream, controller.signal)) {}
+        for await (const event of parseSSEStream(stream, controller.signal)) {
+        }
       }).rejects.toThrow('Operation was aborted');
     });
 
@@ -236,10 +238,10 @@ describe('SSE Parser', () => {
       const stream = asyncIterableToSSEStream(mockEvents());
       const reader = stream.getReader();
       const decoder = new TextDecoder();
-      
+
       const chunks: string[] = [];
       let done = false;
-      
+
       while (!done) {
         const { value, done: readerDone } = await reader.read();
         done = readerDone;
@@ -251,9 +253,9 @@ describe('SSE Parser', () => {
       const fullOutput = chunks.join('');
       expect(fullOutput).toBe(
         'data: {"type":"start","command":"test"}\n\n' +
-        'data: {"type":"stdout","data":"output"}\n\n' +
-        'data: {"type":"complete","exitCode":0}\n\n' +
-        'data: [DONE]\n\n'
+          'data: {"type":"stdout","data":"output"}\n\n' +
+          'data: {"type":"complete","exitCode":0}\n\n' +
+          'data: [DONE]\n\n'
       );
     });
 
@@ -262,10 +264,9 @@ describe('SSE Parser', () => {
         yield { name: 'test', value: 123 };
       }
 
-      const stream = asyncIterableToSSEStream(
-        mockEvents(),
-        { serialize: (event) => `custom:${event.name}=${event.value}` }
-      );
+      const stream = asyncIterableToSSEStream(mockEvents(), {
+        serialize: (event) => `custom:${event.name}=${event.value}`
+      });
 
       const reader = stream.getReader();
       const decoder = new TextDecoder();

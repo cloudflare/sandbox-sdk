@@ -3,14 +3,13 @@
  * Used by both client SDK and container runtime
  */
 
-
 // Export all interpreter types
 export type {
   ChartData,
   CodeContext,
   CreateContextOptions,
   ExecutionError,
-  ExecutionResult, 
+  ExecutionResult,
   OutputMessage,
   Result,
   RunCodeOptions
@@ -98,8 +97,4 @@ export type {
   StreamOptions,
   WriteFileResult
 } from './types.js';
-export {
-  isExecResult,
-  isProcess,
-  isProcessStatus
-} from './types.js';
+export { isExecResult, isProcess, isProcessStatus } from './types.js';

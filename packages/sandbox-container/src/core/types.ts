@@ -11,15 +11,17 @@ export interface RequestContext {
   timestamp: Date;
 }
 
-export type ValidationResult<T = unknown> = {
-  isValid: true;
-  data: T;
-  errors: ValidationError[];
-} | {
-  isValid: false;
-  data?: undefined;
-  errors: ValidationError[];
-}
+export type ValidationResult<T = unknown> =
+  | {
+      isValid: true;
+      data: T;
+      errors: ValidationError[];
+    }
+  | {
+      isValid: false;
+      data?: undefined;
+      errors: ValidationError[];
+    };
 
 export interface ValidationError {
   field: string;
@@ -28,21 +30,25 @@ export interface ValidationError {
 }
 
 export type ServiceResult<T, M = Record<string, unknown>> = T extends void
-  ? {
-      success: true;
-      metadata?: M;
-    } | {
-      success: false;
-      error: ServiceError;
-    }
-  : {
-      success: true;
-      data: T;
-      metadata?: M;
-    } | {
-      success: false;
-      error: ServiceError;
-    }
+  ?
+      | {
+          success: true;
+          metadata?: M;
+        }
+      | {
+          success: false;
+          error: ServiceError;
+        }
+  :
+      | {
+          success: true;
+          data: T;
+          metadata?: M;
+        }
+      | {
+          success: false;
+          error: ServiceError;
+        };
 
 export interface ServiceError {
   message: string;
@@ -215,7 +221,7 @@ export interface SessionData {
 // Process types (enhanced from existing)
 export type ProcessStatus =
   | 'starting'
-  | 'running' 
+  | 'running'
   | 'completed'
   | 'failed'
   | 'killed'
@@ -287,7 +293,7 @@ export interface MkdirOptions {
   mode?: string;
 }
 
-// Port management types  
+// Port management types
 export interface PortInfo {
   port: number;
   name?: string;
@@ -363,7 +369,7 @@ export type { MoveFileRequest } from '../validation/schemas';
 
 export interface MoveFileResponse {
   success: boolean;
-  exitCode: number;  
+  exitCode: number;
   path: string;
   newPath: string;
   timestamp: string;
@@ -398,4 +404,8 @@ export interface MkdirResponse {
 export type { StartProcessRequest } from '@repo/shared';
 
 // Import union types from Zod schemas
-export type { ExposePortRequest, FileOperation, FileRequest } from '../validation/schemas';
+export type {
+  ExposePortRequest,
+  FileOperation,
+  FileRequest
+} from '../validation/schemas';

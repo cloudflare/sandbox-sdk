@@ -16,7 +16,7 @@ import {
   FileRequestSchemas,
   type GitCheckoutRequest,
   GitCheckoutRequestSchema,
-  StartProcessRequestSchema,
+  StartProcessRequestSchema
 } from './schemas';
 
 export class RequestValidator {
@@ -30,11 +30,11 @@ export class RequestValidator {
     if (!parseResult.success) {
       return {
         isValid: false,
-        errors: parseResult.error.issues.map(issue => ({
+        errors: parseResult.error.issues.map((issue) => ({
           field: issue.path.join('.') || 'request',
           message: issue.message,
-          code: issue.code,
-        })),
+          code: issue.code
+        }))
       };
     }
 
@@ -42,11 +42,14 @@ export class RequestValidator {
     return {
       isValid: true,
       data: parseResult.data,
-      errors: [],
+      errors: []
     };
   }
 
-  validateFileRequest<T extends FileRequest>(request: unknown, operation: FileOperation): ValidationResult<T> {
+  validateFileRequest<T extends FileRequest>(
+    request: unknown,
+    operation: FileOperation
+  ): ValidationResult<T> {
     // Get the appropriate schema for the operation
     const schema = FileRequestSchemas[operation];
     const parseResult = schema.safeParse(request);
@@ -54,11 +57,11 @@ export class RequestValidator {
     if (!parseResult.success) {
       return {
         isValid: false,
-        errors: parseResult.error.issues.map(issue => ({
+        errors: parseResult.error.issues.map((issue) => ({
           field: issue.path.join('.') || 'request',
           message: issue.message,
-          code: issue.code,
-        })),
+          code: issue.code
+        }))
       };
     }
 
@@ -66,21 +69,23 @@ export class RequestValidator {
     return {
       isValid: true,
       data: parseResult.data as T,
-      errors: [],
+      errors: []
     };
   }
 
-  validateProcessRequest(request: unknown): ValidationResult<StartProcessRequest> {
+  validateProcessRequest(
+    request: unknown
+  ): ValidationResult<StartProcessRequest> {
     const parseResult = StartProcessRequestSchema.safeParse(request);
 
     if (!parseResult.success) {
       return {
         isValid: false,
-        errors: parseResult.error.issues.map(issue => ({
+        errors: parseResult.error.issues.map((issue) => ({
           field: issue.path.join('.') || 'request',
           message: issue.message,
-          code: issue.code,
-        })),
+          code: issue.code
+        }))
       };
     }
 
@@ -88,7 +93,7 @@ export class RequestValidator {
     return {
       isValid: true,
       data: parseResult.data,
-      errors: [],
+      errors: []
     };
   }
 
@@ -98,11 +103,11 @@ export class RequestValidator {
     if (!parseResult.success) {
       return {
         isValid: false,
-        errors: parseResult.error.issues.map(issue => ({
+        errors: parseResult.error.issues.map((issue) => ({
           field: issue.path.join('.') || 'request',
           message: issue.message,
-          code: issue.code,
-        })),
+          code: issue.code
+        }))
       };
     }
 
@@ -110,7 +115,7 @@ export class RequestValidator {
     return {
       isValid: true,
       data: parseResult.data,
-      errors: [],
+      errors: []
     };
   }
 
@@ -120,11 +125,11 @@ export class RequestValidator {
     if (!parseResult.success) {
       return {
         isValid: false,
-        errors: parseResult.error.issues.map(issue => ({
+        errors: parseResult.error.issues.map((issue) => ({
           field: issue.path.join('.') || 'request',
           message: issue.message,
-          code: issue.code,
-        })),
+          code: issue.code
+        }))
       };
     }
 
@@ -132,7 +137,7 @@ export class RequestValidator {
     return {
       isValid: true,
       data: parseResult.data,
-      errors: [],
+      errors: []
     };
   }
 }

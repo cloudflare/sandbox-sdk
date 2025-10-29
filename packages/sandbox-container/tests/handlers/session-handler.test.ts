@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "bun:test";
+import { beforeEach, describe, expect, it, vi } from 'bun:test';
 import type { ErrorResponse } from '@repo/shared/errors';
 import type { Logger, RequestContext } from '@sandbox-container/core/types';
 import { SessionHandler } from '@sandbox-container/handlers/session-handler';
@@ -25,14 +25,14 @@ const mockSessionManager = {
   getSession: vi.fn(),
   deleteSession: vi.fn(),
   listSessions: vi.fn(),
-  destroy: vi.fn(),
+  destroy: vi.fn()
 } as unknown as SessionManager;
 
 const mockLogger: Logger = {
   info: vi.fn(),
   error: vi.fn(),
   warn: vi.fn(),
-  debug: vi.fn(),
+  debug: vi.fn()
 };
 
 // Mock request context
@@ -42,9 +42,9 @@ const mockContext: RequestContext = {
   corsHeaders: {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Headers': 'Content-Type'
   },
-  sessionId: 'session-456',
+  sessionId: 'session-456'
 };
 
 describe('SessionHandler', () => {
@@ -74,11 +74,14 @@ describe('SessionHandler', () => {
       const response = await sessionHandler.handle(request, mockContext);
 
       expect(response.status).toBe(200);
-      const responseBody = await response.json() as SessionCreateResultGeneric;
+      const responseBody =
+        (await response.json()) as SessionCreateResultGeneric;
       expect(responseBody.success).toBe(true);
       expect(responseBody.data).toEqual(mockSession);
       expect(responseBody.timestamp).toBeDefined();
-      expect(responseBody.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+      expect(responseBody.timestamp).toMatch(
+        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
+      );
 
       // Verify service was called correctly
       expect(mockSessionManager.createSession).toHaveBeenCalled();
@@ -102,10 +105,12 @@ describe('SessionHandler', () => {
       const response = await sessionHandler.handle(request, mockContext);
 
       expect(response.status).toBe(500);
-      const responseData = await response.json() as ErrorResponse;
+      const responseData = (await response.json()) as ErrorResponse;
       expect(responseData.code).toBe('SESSION_CREATE_ERROR');
       expect(responseData.message).toBe('Failed to create session');
-      expect(responseData.context).toEqual({ originalError: 'Store connection failed' });
+      expect(responseData.context).toEqual({
+        originalError: 'Store connection failed'
+      });
       expect(responseData.httpStatus).toBe(500);
       expect(responseData.timestamp).toBeDefined();
     });
@@ -128,8 +133,10 @@ describe('SessionHandler', () => {
       const response1 = await sessionHandler.handle(request1, mockContext);
       const response2 = await sessionHandler.handle(request2, mockContext);
 
-      const responseBody1 = await response1.json() as SessionCreateResultGeneric;
-      const responseBody2 = await response2.json() as SessionCreateResultGeneric;
+      const responseBody1 =
+        (await response1.json()) as SessionCreateResultGeneric;
+      const responseBody2 =
+        (await response2.json()) as SessionCreateResultGeneric;
 
       // Verify both responses are successful and contain session data
       expect(responseBody1.success).toBe(true);
@@ -160,12 +167,14 @@ describe('SessionHandler', () => {
       const response = await sessionHandler.handle(request, mockContext);
 
       expect(response.status).toBe(200);
-      const responseBody = await response.json() as SessionListResult;
+      const responseBody = (await response.json()) as SessionListResult;
       expect(responseBody.success).toBe(true);
       expect(responseBody.data).toEqual(mockSessionIds);
       expect(responseBody.data).toHaveLength(3);
       expect(responseBody.timestamp).toBeDefined();
-      expect(responseBody.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+      expect(responseBody.timestamp).toMatch(
+        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
+      );
 
       // Verify service was called correctly
       expect(mockSessionManager.listSessions).toHaveBeenCalled();
@@ -184,7 +193,7 @@ describe('SessionHandler', () => {
       const response = await sessionHandler.handle(request, mockContext);
 
       expect(response.status).toBe(200);
-      const responseBody = await response.json() as SessionListResult;
+      const responseBody = (await response.json()) as SessionListResult;
       expect(responseBody.success).toBe(true);
       expect(responseBody.data).toHaveLength(0);
       expect(responseBody.data).toEqual([]);
@@ -206,11 +215,15 @@ describe('SessionHandler', () => {
 
       const response = await sessionHandler.handle(request, mockContext);
 
-      const responseBody = await response.json() as SessionListResult;
+      const responseBody = (await response.json()) as SessionListResult;
 
       // Handler returns array of session IDs
       expect(responseBody.success).toBe(true);
-      expect(responseBody.data).toEqual(['session-1', 'session-2', 'session-3']);
+      expect(responseBody.data).toEqual([
+        'session-1',
+        'session-2',
+        'session-3'
+      ]);
       expect(responseBody.timestamp).toBeDefined();
     });
 
@@ -231,10 +244,12 @@ describe('SessionHandler', () => {
       const response = await sessionHandler.handle(request, mockContext);
 
       expect(response.status).toBe(500);
-      const responseData = await response.json() as ErrorResponse;
+      const responseData = (await response.json()) as ErrorResponse;
       expect(responseData.code).toBe('SESSION_LIST_ERROR');
       expect(responseData.message).toBe('Failed to list sessions');
-      expect(responseData.context).toEqual({ originalError: 'Database connection lost' });
+      expect(responseData.context).toEqual({
+        originalError: 'Database connection lost'
+      });
       expect(responseData.httpStatus).toBe(500);
       expect(responseData.timestamp).toBeDefined();
     });
@@ -254,7 +269,7 @@ describe('SessionHandler', () => {
 
       const response = await sessionHandler.handle(request, mockContext);
 
-      const responseBody = await response.json() as SessionListResult;
+      const responseBody = (await response.json()) as SessionListResult;
       // Handler returns array of session IDs
       expect(responseBody.success).toBe(true);
       expect(responseBody.data).toEqual(['session-1']);
@@ -264,14 +279,17 @@ describe('SessionHandler', () => {
 
   describe('route handling', () => {
     it('should return 500 for invalid session endpoints', async () => {
-      const request = new Request('http://localhost:3000/api/session/invalid-operation', {
-        method: 'POST'
-      });
+      const request = new Request(
+        'http://localhost:3000/api/session/invalid-operation',
+        {
+          method: 'POST'
+        }
+      );
 
       const response = await sessionHandler.handle(request, mockContext);
 
       expect(response.status).toBe(500);
-      const responseData = await response.json() as ErrorResponse;
+      const responseData = (await response.json()) as ErrorResponse;
       expect(responseData.message).toBe('Invalid session endpoint');
       expect(responseData.code).toBe('UNKNOWN_ERROR');
       expect(responseData.httpStatus).toBe(500);
@@ -290,7 +308,7 @@ describe('SessionHandler', () => {
       const response = await sessionHandler.handle(request, mockContext);
 
       expect(response.status).toBe(500);
-      const responseData = await response.json() as ErrorResponse;
+      const responseData = (await response.json()) as ErrorResponse;
       expect(responseData.message).toBe('Invalid session endpoint');
       expect(responseData.code).toBe('UNKNOWN_ERROR');
       expect(responseData.httpStatus).toBe(500);
@@ -305,7 +323,7 @@ describe('SessionHandler', () => {
       const response = await sessionHandler.handle(request, mockContext);
 
       expect(response.status).toBe(500);
-      const responseData = await response.json() as ErrorResponse;
+      const responseData = (await response.json()) as ErrorResponse;
       expect(responseData.message).toBe('Invalid session endpoint');
       expect(responseData.code).toBe('UNKNOWN_ERROR');
       expect(responseData.httpStatus).toBe(500);
@@ -330,8 +348,12 @@ describe('SessionHandler', () => {
 
       expect(response.status).toBe(200);
       expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
-      expect(response.headers.get('Access-Control-Allow-Methods')).toBe('GET, POST, OPTIONS');
-      expect(response.headers.get('Access-Control-Allow-Headers')).toBe('Content-Type');
+      expect(response.headers.get('Access-Control-Allow-Methods')).toBe(
+        'GET, POST, OPTIONS'
+      );
+      expect(response.headers.get('Access-Control-Allow-Headers')).toBe(
+        'Content-Type'
+      );
     });
 
     it('should include CORS headers in successful list responses', async () => {
@@ -372,12 +394,20 @@ describe('SessionHandler', () => {
         data: mockSession
       });
 
-      const createRequest = new Request('http://localhost:3000/api/session/create', {
-        method: 'POST'
-      });
+      const createRequest = new Request(
+        'http://localhost:3000/api/session/create',
+        {
+          method: 'POST'
+        }
+      );
 
-      const createResponse = await sessionHandler.handle(createRequest, mockContext);
-      expect(createResponse.headers.get('Content-Type')).toBe('application/json');
+      const createResponse = await sessionHandler.handle(
+        createRequest,
+        mockContext
+      );
+      expect(createResponse.headers.get('Content-Type')).toBe(
+        'application/json'
+      );
 
       // Test list endpoint
       (mockSessionManager.listSessions as any).mockResolvedValue({
@@ -385,11 +415,17 @@ describe('SessionHandler', () => {
         data: []
       });
 
-      const listRequest = new Request('http://localhost:3000/api/session/list', {
-        method: 'GET'
-      });
+      const listRequest = new Request(
+        'http://localhost:3000/api/session/list',
+        {
+          method: 'GET'
+        }
+      );
 
-      const listResponse = await sessionHandler.handle(listRequest, mockContext);
+      const listResponse = await sessionHandler.handle(
+        listRequest,
+        mockContext
+      );
       expect(listResponse.headers.get('Content-Type')).toBe('application/json');
     });
 
@@ -406,12 +442,15 @@ describe('SessionHandler', () => {
       });
 
       const response = await sessionHandler.handle(request, mockContext);
-      const responseBody = await response.json() as SessionCreateResultGeneric;
+      const responseBody =
+        (await response.json()) as SessionCreateResultGeneric;
 
       // Verify timestamp is valid ISO string
       expect(responseBody.timestamp).toBeDefined();
       expect(new Date(responseBody.timestamp)).toBeInstanceOf(Date);
-      expect(responseBody.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+      expect(responseBody.timestamp).toMatch(
+        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
+      );
     });
 
     it('should return session IDs as data in list response', async () => {
@@ -428,7 +467,7 @@ describe('SessionHandler', () => {
       });
 
       const response = await sessionHandler.handle(request, mockContext);
-      const responseBody = await response.json() as SessionListResult;
+      const responseBody = (await response.json()) as SessionListResult;
 
       // Handler returns array of session IDs in data field
       expect(responseBody.success).toBe(true);
@@ -452,7 +491,7 @@ describe('SessionHandler', () => {
       });
 
       const response = await sessionHandler.handle(request, mockContext);
-      const responseBody = await response.json() as SessionListResult;
+      const responseBody = (await response.json()) as SessionListResult;
 
       // Handler returns array of session IDs
       expect(responseBody.success).toBe(true);
@@ -460,7 +499,9 @@ describe('SessionHandler', () => {
       expect(responseBody.data[0]).toBe('session-external-id');
 
       // Verify response structure
-      expect(Object.keys(responseBody).sort()).toEqual(['data', 'success', 'timestamp'].sort());
+      expect(Object.keys(responseBody).sort()).toEqual(
+        ['data', 'success', 'timestamp'].sort()
+      );
     });
   });
 });

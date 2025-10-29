@@ -49,12 +49,18 @@ describe('FileManager', () => {
     it('should throw error for invalid format - too few parts', () => {
       const output = 'regular file:1024';
 
-      expect(() => manager.parseStatOutput(output)).toThrow('Invalid stat output format');
-      expect(() => manager.parseStatOutput(output)).toThrow('expected 4 parts, got 2');
+      expect(() => manager.parseStatOutput(output)).toThrow(
+        'Invalid stat output format'
+      );
+      expect(() => manager.parseStatOutput(output)).toThrow(
+        'expected 4 parts, got 2'
+      );
     });
 
     it('should throw error for empty output', () => {
-      expect(() => manager.parseStatOutput('')).toThrow('Invalid stat output format');
+      expect(() => manager.parseStatOutput('')).toThrow(
+        'Invalid stat output format'
+      );
     });
 
     it('should parse BSD stat format (macOS) correctly', () => {
@@ -85,7 +91,9 @@ describe('FileManager', () => {
     });
 
     it('should include -p flag for recursive option', () => {
-      const args = manager.buildMkdirArgs('/tmp/nested/testdir', { recursive: true });
+      const args = manager.buildMkdirArgs('/tmp/nested/testdir', {
+        recursive: true
+      });
 
       expect(args).toEqual(['mkdir', '-p', '/tmp/nested/testdir']);
     });
@@ -115,44 +123,93 @@ describe('FileManager', () => {
 
   describe('determineErrorCode', () => {
     it('should return FILE_NOT_FOUND for not found errors', () => {
-      expect(manager.determineErrorCode('read', new Error('File not found'))).toBe('FILE_NOT_FOUND');
-      expect(manager.determineErrorCode('read', new Error('ENOENT: no such file'))).toBe('FILE_NOT_FOUND');
-      expect(manager.determineErrorCode('read', 'not found')).toBe('FILE_NOT_FOUND');
+      expect(
+        manager.determineErrorCode('read', new Error('File not found'))
+      ).toBe('FILE_NOT_FOUND');
+      expect(
+        manager.determineErrorCode('read', new Error('ENOENT: no such file'))
+      ).toBe('FILE_NOT_FOUND');
+      expect(manager.determineErrorCode('read', 'not found')).toBe(
+        'FILE_NOT_FOUND'
+      );
     });
 
     it('should return PERMISSION_DENIED for permission errors', () => {
-      expect(manager.determineErrorCode('read', new Error('Permission denied'))).toBe('PERMISSION_DENIED');
-      expect(manager.determineErrorCode('write', new Error('EACCES: permission denied'))).toBe('PERMISSION_DENIED');
+      expect(
+        manager.determineErrorCode('read', new Error('Permission denied'))
+      ).toBe('PERMISSION_DENIED');
+      expect(
+        manager.determineErrorCode(
+          'write',
+          new Error('EACCES: permission denied')
+        )
+      ).toBe('PERMISSION_DENIED');
     });
 
     it('should return FILE_EXISTS for file exists errors', () => {
-      expect(manager.determineErrorCode('write', new Error('File exists'))).toBe('FILE_EXISTS');
-      expect(manager.determineErrorCode('mkdir', new Error('EEXIST: file already exists'))).toBe('FILE_EXISTS');
+      expect(
+        manager.determineErrorCode('write', new Error('File exists'))
+      ).toBe('FILE_EXISTS');
+      expect(
+        manager.determineErrorCode(
+          'mkdir',
+          new Error('EEXIST: file already exists')
+        )
+      ).toBe('FILE_EXISTS');
     });
 
     it('should return DISK_FULL for disk space errors', () => {
-      expect(manager.determineErrorCode('write', new Error('Disk full'))).toBe('DISK_FULL');
-      expect(manager.determineErrorCode('write', new Error('ENOSPC: no space left'))).toBe('DISK_FULL');
+      expect(manager.determineErrorCode('write', new Error('Disk full'))).toBe(
+        'DISK_FULL'
+      );
+      expect(
+        manager.determineErrorCode('write', new Error('ENOSPC: no space left'))
+      ).toBe('DISK_FULL');
     });
 
     it('should return DIR_NOT_EMPTY for directory not empty errors', () => {
-      expect(manager.determineErrorCode('delete', new Error('Directory not empty'))).toBe('DIR_NOT_EMPTY');
-      expect(manager.determineErrorCode('delete', new Error('ENOTEMPTY: directory not empty'))).toBe('DIR_NOT_EMPTY');
+      expect(
+        manager.determineErrorCode('delete', new Error('Directory not empty'))
+      ).toBe('DIR_NOT_EMPTY');
+      expect(
+        manager.determineErrorCode(
+          'delete',
+          new Error('ENOTEMPTY: directory not empty')
+        )
+      ).toBe('DIR_NOT_EMPTY');
     });
 
     it('should return operation-specific error codes as fallback', () => {
-      expect(manager.determineErrorCode('read', new Error('Unknown error'))).toBe('FILE_READ_ERROR');
-      expect(manager.determineErrorCode('write', new Error('Unknown error'))).toBe('FILE_WRITE_ERROR');
-      expect(manager.determineErrorCode('delete', new Error('Unknown error'))).toBe('FILE_DELETE_ERROR');
-      expect(manager.determineErrorCode('rename', new Error('Unknown error'))).toBe('RENAME_ERROR');
-      expect(manager.determineErrorCode('move', new Error('Unknown error'))).toBe('MOVE_ERROR');
-      expect(manager.determineErrorCode('mkdir', new Error('Unknown error'))).toBe('MKDIR_ERROR');
-      expect(manager.determineErrorCode('stat', new Error('Unknown error'))).toBe('STAT_ERROR');
-      expect(manager.determineErrorCode('exists', new Error('Unknown error'))).toBe('EXISTS_ERROR');
+      expect(
+        manager.determineErrorCode('read', new Error('Unknown error'))
+      ).toBe('FILE_READ_ERROR');
+      expect(
+        manager.determineErrorCode('write', new Error('Unknown error'))
+      ).toBe('FILE_WRITE_ERROR');
+      expect(
+        manager.determineErrorCode('delete', new Error('Unknown error'))
+      ).toBe('FILE_DELETE_ERROR');
+      expect(
+        manager.determineErrorCode('rename', new Error('Unknown error'))
+      ).toBe('RENAME_ERROR');
+      expect(
+        manager.determineErrorCode('move', new Error('Unknown error'))
+      ).toBe('MOVE_ERROR');
+      expect(
+        manager.determineErrorCode('mkdir', new Error('Unknown error'))
+      ).toBe('MKDIR_ERROR');
+      expect(
+        manager.determineErrorCode('stat', new Error('Unknown error'))
+      ).toBe('STAT_ERROR');
+      expect(
+        manager.determineErrorCode('exists', new Error('Unknown error'))
+      ).toBe('EXISTS_ERROR');
     });
 
     it('should return generic code for unknown operations', () => {
-      expect(manager.determineErrorCode('unknown', new Error('Error'))).toBe('FILE_OPERATION_ERROR');
+      expect(manager.determineErrorCode('unknown', new Error('Error'))).toBe(
+        'FILE_OPERATION_ERROR'
+      );
     });
   });
 
@@ -163,7 +220,7 @@ describe('FileManager', () => {
         isDirectory: false,
         size: 1024,
         modified: new Date('2024-01-01T00:00:00Z'),
-        created: new Date('2024-01-01T00:00:00Z'),
+        created: new Date('2024-01-01T00:00:00Z')
       };
 
       const result = manager.validateStats(stats);
@@ -178,7 +235,7 @@ describe('FileManager', () => {
         isDirectory: false,
         size: -1,
         modified: new Date('2024-01-01'),
-        created: new Date('2024-01-01'),
+        created: new Date('2024-01-01')
       };
 
       const result = manager.validateStats(stats);
@@ -193,7 +250,7 @@ describe('FileManager', () => {
         isDirectory: false,
         size: Number.MAX_SAFE_INTEGER + 1,
         modified: new Date('2024-01-01'),
-        created: new Date('2024-01-01'),
+        created: new Date('2024-01-01')
       };
 
       const result = manager.validateStats(stats);
@@ -208,13 +265,15 @@ describe('FileManager', () => {
         isDirectory: false,
         size: 1024,
         modified: new Date('1969-01-01'),
-        created: new Date('2024-01-01'),
+        created: new Date('2024-01-01')
       };
 
       const result = manager.validateStats(stats);
 
       expect(result.valid).toBe(false);
-      expect(result.errors).toContain('Modified date cannot be before Unix epoch');
+      expect(result.errors).toContain(
+        'Modified date cannot be before Unix epoch'
+      );
     });
 
     it('should handle zero-size files', () => {
@@ -223,7 +282,7 @@ describe('FileManager', () => {
         isDirectory: false,
         size: 0,
         modified: new Date('2024-01-01'),
-        created: new Date('2024-01-01'),
+        created: new Date('2024-01-01')
       };
 
       const result = manager.validateStats(stats);
@@ -257,24 +316,32 @@ describe('FileManager', () => {
       expect(plan.requiresCheck).toBe(true);
       expect(plan.command).toEqual({
         executable: 'rm',
-        args: ['/tmp/test.txt'],
+        args: ['/tmp/test.txt']
       });
     });
 
     it('should plan rename operation with command', () => {
-      const plan = manager.planOperation('rename', '/tmp/old.txt', '/tmp/new.txt');
+      const plan = manager.planOperation(
+        'rename',
+        '/tmp/old.txt',
+        '/tmp/new.txt'
+      );
 
       expect(plan.operation).toBe('rename');
       expect(plan.paths).toEqual(['/tmp/old.txt', '/tmp/new.txt']);
       expect(plan.requiresCheck).toBe(true);
       expect(plan.command).toEqual({
         executable: 'mv',
-        args: ['/tmp/old.txt', '/tmp/new.txt'],
+        args: ['/tmp/old.txt', '/tmp/new.txt']
       });
     });
 
     it('should plan move operation', () => {
-      const plan = manager.planOperation('move', '/tmp/src.txt', '/tmp/dst.txt');
+      const plan = manager.planOperation(
+        'move',
+        '/tmp/src.txt',
+        '/tmp/dst.txt'
+      );
 
       expect(plan.operation).toBe('move');
       expect(plan.paths).toEqual(['/tmp/src.txt', '/tmp/dst.txt']);
@@ -298,25 +365,47 @@ describe('FileManager', () => {
     });
 
     it('should throw error for unknown operation', () => {
-      expect(() => manager.planOperation('invalid', '/tmp/test.txt')).toThrow('Unknown operation: invalid');
+      expect(() => manager.planOperation('invalid', '/tmp/test.txt')).toThrow(
+        'Unknown operation: invalid'
+      );
     });
   });
 
   describe('shouldUseMoveCommand', () => {
     it('should return true for paths in same filesystem', () => {
-      expect(manager.shouldUseMoveCommand('/tmp/source.txt', '/tmp/dest.txt')).toBe(true);
-      expect(manager.shouldUseMoveCommand('/home/user/a.txt', '/home/user/b.txt')).toBe(true);
-      expect(manager.shouldUseMoveCommand('/workspace/a', '/workspace/b')).toBe(true);
+      expect(
+        manager.shouldUseMoveCommand('/tmp/source.txt', '/tmp/dest.txt')
+      ).toBe(true);
+      expect(
+        manager.shouldUseMoveCommand('/home/user/a.txt', '/home/user/b.txt')
+      ).toBe(true);
+      expect(manager.shouldUseMoveCommand('/workspace/a', '/workspace/b')).toBe(
+        true
+      );
     });
 
     it('should return false for paths across different filesystems', () => {
-      expect(manager.shouldUseMoveCommand('/tmp/source.txt', '/home/dest.txt')).toBe(false);
-      expect(manager.shouldUseMoveCommand('/home/a.txt', '/workspace/b.txt')).toBe(false);
+      expect(
+        manager.shouldUseMoveCommand('/tmp/source.txt', '/home/dest.txt')
+      ).toBe(false);
+      expect(
+        manager.shouldUseMoveCommand('/home/a.txt', '/workspace/b.txt')
+      ).toBe(false);
     });
 
     it('should handle nested paths correctly', () => {
-      expect(manager.shouldUseMoveCommand('/tmp/nested/dir/file.txt', '/tmp/other/file.txt')).toBe(true);
-      expect(manager.shouldUseMoveCommand('/home/user/deep/nested/a.txt', '/workspace/b.txt')).toBe(false);
+      expect(
+        manager.shouldUseMoveCommand(
+          '/tmp/nested/dir/file.txt',
+          '/tmp/other/file.txt'
+        )
+      ).toBe(true);
+      expect(
+        manager.shouldUseMoveCommand(
+          '/home/user/deep/nested/a.txt',
+          '/workspace/b.txt'
+        )
+      ).toBe(false);
     });
   });
 
@@ -357,43 +446,73 @@ describe('FileManager', () => {
 
   describe('createErrorMessage', () => {
     it('should create error message for read operation', () => {
-      const msg = manager.createErrorMessage('read', '/tmp/test.txt', 'File not found');
+      const msg = manager.createErrorMessage(
+        'read',
+        '/tmp/test.txt',
+        'File not found'
+      );
 
       expect(msg).toBe('Failed to read /tmp/test.txt: File not found');
     });
 
     it('should create error message for write operation', () => {
-      const msg = manager.createErrorMessage('write', '/tmp/test.txt', 'Permission denied');
+      const msg = manager.createErrorMessage(
+        'write',
+        '/tmp/test.txt',
+        'Permission denied'
+      );
 
       expect(msg).toBe('Failed to write /tmp/test.txt: Permission denied');
     });
 
     it('should create error message for delete operation', () => {
-      const msg = manager.createErrorMessage('delete', '/tmp/test.txt', 'File is locked');
+      const msg = manager.createErrorMessage(
+        'delete',
+        '/tmp/test.txt',
+        'File is locked'
+      );
 
       expect(msg).toBe('Failed to delete /tmp/test.txt: File is locked');
     });
 
     it('should create error message for mkdir operation', () => {
-      const msg = manager.createErrorMessage('mkdir', '/tmp/newdir', 'Parent directory not found');
+      const msg = manager.createErrorMessage(
+        'mkdir',
+        '/tmp/newdir',
+        'Parent directory not found'
+      );
 
-      expect(msg).toBe('Failed to create directory /tmp/newdir: Parent directory not found');
+      expect(msg).toBe(
+        'Failed to create directory /tmp/newdir: Parent directory not found'
+      );
     });
 
     it('should create error message for rename operation', () => {
-      const msg = manager.createErrorMessage('rename', '/tmp/old.txt', 'Target exists');
+      const msg = manager.createErrorMessage(
+        'rename',
+        '/tmp/old.txt',
+        'Target exists'
+      );
 
       expect(msg).toBe('Failed to rename /tmp/old.txt: Target exists');
     });
 
     it('should create error message for stat operation', () => {
-      const msg = manager.createErrorMessage('stat', '/tmp/test.txt', 'Invalid file');
+      const msg = manager.createErrorMessage(
+        'stat',
+        '/tmp/test.txt',
+        'Invalid file'
+      );
 
       expect(msg).toBe('Failed to get stats for /tmp/test.txt: Invalid file');
     });
 
     it('should handle unknown operations with generic verb', () => {
-      const msg = manager.createErrorMessage('unknown', '/tmp/test.txt', 'Error');
+      const msg = manager.createErrorMessage(
+        'unknown',
+        '/tmp/test.txt',
+        'Error'
+      );
 
       expect(msg).toBe('Failed to operate on /tmp/test.txt: Error');
     });

@@ -5,7 +5,7 @@ import type {
   CodeExecutionContext,
   ContextNotFoundContext,
   InternalErrorContext,
-  InterpreterNotReadyContext,
+  InterpreterNotReadyContext
 } from '@repo/shared/errors';
 import { ErrorCode } from '@repo/shared/errors';
 import type { ServiceResult } from '../core/types';
@@ -37,11 +37,15 @@ export class InterpreterService {
 
       return {
         success: true,
-        data: status,
+        data: status
       };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Failed to get health status', error instanceof Error ? error : undefined);
+      const errorMessage =
+        error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error(
+        'Failed to get health status',
+        error instanceof Error ? error : undefined
+      );
 
       return {
         success: false,
@@ -50,8 +54,8 @@ export class InterpreterService {
           code: ErrorCode.INTERNAL_ERROR,
           details: {
             originalError: errorMessage
-          } satisfies InternalErrorContext,
-        },
+          } satisfies InternalErrorContext
+        }
       };
     }
   }
@@ -59,17 +63,24 @@ export class InterpreterService {
   /**
    * Create a new code execution context
    */
-  async createContext(request: CreateContextRequest): Promise<ServiceResult<Context>> {
+  async createContext(
+    request: CreateContextRequest
+  ): Promise<ServiceResult<Context>> {
     try {
       const context = await this.coreService.createContext(request);
 
       return {
         success: true,
-        data: context,
+        data: context
       };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Failed to create context', error instanceof Error ? error : undefined, { request });
+      const errorMessage =
+        error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error(
+        'Failed to create context',
+        error instanceof Error ? error : undefined,
+        { request }
+      );
 
       if (error instanceof InterpreterNotReadyError) {
         return {
@@ -80,8 +91,8 @@ export class InterpreterService {
             details: {
               progress: error.progress,
               retryAfter: error.retryAfter
-            } satisfies InterpreterNotReadyContext,
-          },
+            } satisfies InterpreterNotReadyContext
+          }
         };
       }
 
@@ -92,8 +103,8 @@ export class InterpreterService {
           code: ErrorCode.INTERNAL_ERROR,
           details: {
             originalError: errorMessage
-          } satisfies InternalErrorContext,
-        },
+          } satisfies InternalErrorContext
+        }
       };
     }
   }
@@ -107,11 +118,15 @@ export class InterpreterService {
 
       return {
         success: true,
-        data: contexts,
+        data: contexts
       };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Failed to list contexts', error instanceof Error ? error : undefined);
+      const errorMessage =
+        error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error(
+        'Failed to list contexts',
+        error instanceof Error ? error : undefined
+      );
 
       return {
         success: false,
@@ -120,8 +135,8 @@ export class InterpreterService {
           code: ErrorCode.INTERNAL_ERROR,
           details: {
             originalError: errorMessage
-          } satisfies InternalErrorContext,
-        },
+          } satisfies InternalErrorContext
+        }
       };
     }
   }
@@ -134,11 +149,16 @@ export class InterpreterService {
       await this.coreService.deleteContext(contextId);
 
       return {
-        success: true,
+        success: true
       };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Failed to delete context', error instanceof Error ? error : undefined, { contextId });
+      const errorMessage =
+        error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error(
+        'Failed to delete context',
+        error instanceof Error ? error : undefined,
+        { contextId }
+      );
 
       // Check if it's a "not found" error
       if (errorMessage.includes('not found')) {
@@ -149,8 +169,8 @@ export class InterpreterService {
             code: ErrorCode.CONTEXT_NOT_FOUND,
             details: {
               contextId
-            } satisfies ContextNotFoundContext,
-          },
+            } satisfies ContextNotFoundContext
+          }
         };
       }
 
@@ -162,8 +182,8 @@ export class InterpreterService {
           details: {
             contextId,
             originalError: errorMessage
-          } satisfies InternalErrorContext,
-        },
+          } satisfies InternalErrorContext
+        }
       };
     }
   }
@@ -183,12 +203,21 @@ export class InterpreterService {
   ): Promise<Response> {
     try {
       // The core service returns a Response directly for streaming
-      const response = await this.coreService.executeCode(contextId, code, language);
+      const response = await this.coreService.executeCode(
+        contextId,
+        code,
+        language
+      );
 
       return response;
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Failed to execute code', error instanceof Error ? error : undefined, { contextId });
+      const errorMessage =
+        error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error(
+        'Failed to execute code',
+        error instanceof Error ? error : undefined,
+        { contextId }
+      );
 
       // Return error as JSON response
       return new Response(
@@ -199,12 +228,12 @@ export class InterpreterService {
             details: {
               contextId,
               evalue: errorMessage
-            } satisfies CodeExecutionContext,
-          },
+            } satisfies CodeExecutionContext
+          }
         }),
         {
           status: 500,
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json' }
         }
       );
     }

@@ -28,7 +28,7 @@ export class ProcessManager {
       return {
         valid: false,
         error: 'Invalid command: empty command provided',
-        code: 'INVALID_COMMAND',
+        code: 'INVALID_COMMAND'
       };
     }
 
@@ -53,7 +53,7 @@ export class ProcessManager {
       stdout: '',
       stderr: '',
       outputListeners: new Set(),
-      statusListeners: new Set(),
+      statusListeners: new Set()
     };
   }
 

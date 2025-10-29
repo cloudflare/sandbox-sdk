@@ -75,7 +75,7 @@ export interface PortErrorContext {
  * Git error contexts
  */
 export interface GitRepositoryNotFoundContext {
-  repository: string;  // Full URL
+  repository: string; // Full URL
 }
 
 export interface GitAuthFailedContext {
@@ -99,8 +99,8 @@ export interface GitErrorContext {
  * Code interpreter error contexts
  */
 export interface InterpreterNotReadyContext {
-  retryAfter?: number;  // Seconds
-  progress?: number;    // 0-100
+  retryAfter?: number; // Seconds
+  progress?: number; // 0-100
 }
 
 export interface ContextNotFoundContext {
@@ -109,8 +109,8 @@ export interface ContextNotFoundContext {
 
 export interface CodeExecutionContext {
   contextId?: string;
-  ename?: string;       // Error name
-  evalue?: string;      // Error value
+  ename?: string; // Error name
+  evalue?: string; // Error value
   traceback?: string[]; // Stack trace
 }
 
@@ -131,5 +131,5 @@ export interface ValidationFailedContext {
 export interface InternalErrorContext {
   originalError?: string;
   stack?: string;
-  [key: string]: unknown;  // Allow extension
+  [key: string]: unknown; // Allow extension
 }

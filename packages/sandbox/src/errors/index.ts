@@ -39,11 +39,13 @@
  */
 
 // Re-export context types for advanced usage
-export type { 
+export type {
   CodeExecutionContext,
   CommandErrorContext,
   CommandNotFoundContext,
-  ContextNotFoundContext,ErrorCodeType, ErrorResponse, 
+  ContextNotFoundContext,
+  ErrorCodeType,
+  ErrorResponse,
   FileExistsContext,
   FileNotFoundContext,
   FileSystemContext,
@@ -53,13 +55,15 @@ export type {
   GitRepositoryNotFoundContext,
   InternalErrorContext,
   InterpreterNotReadyContext,
-  InvalidPortContext,OperationType, 
+  InvalidPortContext,
+  OperationType,
   PortAlreadyExposedContext,
   PortErrorContext,
   PortNotExposedContext,
   ProcessErrorContext,
   ProcessNotFoundContext,
-  ValidationFailedContext,} from '@repo/shared/errors';
+  ValidationFailedContext
+} from '@repo/shared/errors';
 // Re-export shared types and constants
 export { ErrorCode, Operation } from '@repo/shared/errors';
 
@@ -101,5 +105,5 @@ export {
   SandboxError,
   ServiceNotRespondingError,
   // Validation Errors
-  ValidationFailedError,
+  ValidationFailedError
 } from './classes';

@@ -6,7 +6,6 @@ import type { RequestContext } from '../core/types';
 import { BaseHandler } from './base-handler';
 
 export class MiscHandler extends BaseHandler<Request, Response> {
-
   async handle(request: Request, context: RequestContext): Promise<Response> {
     const url = new URL(request.url);
     const pathname = url.pathname;
@@ -21,49 +20,64 @@ export class MiscHandler extends BaseHandler<Request, Response> {
       case '/api/version':
         return await this.handleVersion(request, context);
       default:
-        return this.createErrorResponse({
-          message: 'Invalid endpoint',
-          code: ErrorCode.UNKNOWN_ERROR,
-        }, context);
+        return this.createErrorResponse(
+          {
+            message: 'Invalid endpoint',
+            code: ErrorCode.UNKNOWN_ERROR
+          },
+          context
+        );
     }
   }
 
-  private async handleRoot(request: Request, context: RequestContext): Promise<Response> {
+  private async handleRoot(
+    request: Request,
+    context: RequestContext
+  ): Promise<Response> {
     return new Response('Hello from Bun server! 🚀', {
       headers: {
         'Content-Type': 'text/plain; charset=utf-8',
-        ...context.corsHeaders,
-      },
+        ...context.corsHeaders
+      }
     });
   }
 
-  private async handleHealth(request: Request, context: RequestContext): Promise<Response> {
+  private async handleHealth(
+    request: Request,
+    context: RequestContext
+  ): Promise<Response> {
     const response: HealthCheckResult = {
       success: true,
       status: 'healthy',
-      timestamp: new Date().toISOString(),
+      timestamp: new Date().toISOString()
     };
 
     return this.createTypedResponse(response, context);
   }
 
-  private async handleShutdown(request: Request, context: RequestContext): Promise<Response> {
+  private async handleShutdown(
+    request: Request,
+    context: RequestContext
+  ): Promise<Response> {
     const response: ShutdownResult = {
       success: true,
       message: 'Container shutdown initiated',
-      timestamp: new Date().toISOString(),
+      timestamp: new Date().toISOString()
     };
 
     return this.createTypedResponse(response, context);
   }
 
-  private async handleVersion(request: Request, context: RequestContext): Promise<Response> {
+  private async handleVersion(
+    request: Request,
+    context: RequestContext
+  ): Promise<Response> {
     const version = process.env.SANDBOX_VERSION || 'unknown';
 
     const response = {
       success: true,
       version,
-      timestamp: new Date().toISOString(),
+      timestamp: new Date().toISOString()
     };
 
     return this.createTypedResponse(response, context);

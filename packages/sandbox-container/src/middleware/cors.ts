@@ -11,7 +11,7 @@ export class CorsMiddleware implements Middleware {
     if (request.method === 'OPTIONS') {
       return new Response(null, {
         status: 200,
-        headers: context.corsHeaders,
+        headers: context.corsHeaders
       });
     }
 
@@ -24,8 +24,8 @@ export class CorsMiddleware implements Middleware {
       statusText: response.statusText,
       headers: {
         ...Object.fromEntries(response.headers.entries()),
-        ...context.corsHeaders,
-      },
+        ...context.corsHeaders
+      }
     });
 
     return corsResponse;

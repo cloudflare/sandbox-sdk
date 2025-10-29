@@ -1,5 +1,5 @@
-import type { Sandbox } from "@cloudflare/sandbox";
-import { errorResponse, jsonResponse } from "../http";
+import type { Sandbox } from '@cloudflare/sandbox';
+import { errorResponse, jsonResponse } from '../http';
 
 export async function createTestBinaryFile(sandbox: Sandbox<unknown>) {
   try {
@@ -37,25 +37,27 @@ print("Chart saved to /workspace/demo-chart.png")
 `;
 
     // Create a code context and execute the Python code
-    const context = await sandbox.createCodeContext({ language: "python" });
+    const context = await sandbox.createCodeContext({ language: 'python' });
     const execution = await sandbox.runCode(pythonCode, { context });
 
     // Check for errors
     if (execution.error) {
-      console.error("Error creating chart:", execution.error);
-      return errorResponse(`Failed to create chart: ${execution.error.message}`);
+      console.error('Error creating chart:', execution.error);
+      return errorResponse(
+        `Failed to create chart: ${execution.error.message}`
+      );
     }
 
     // Return success with file path
     return jsonResponse({
       success: true,
-      path: "/workspace/demo-chart.png",
-      type: "image/png",
-      message: "Test PNG chart created successfully",
+      path: '/workspace/demo-chart.png',
+      type: 'image/png',
+      message: 'Test PNG chart created successfully',
       stdout: execution.logs.stdout.join('\n')
     });
   } catch (error: any) {
-    console.error("Error creating test binary file:", error);
+    console.error('Error creating test binary file:', error);
     return errorResponse(`Failed to create test binary file: ${error.message}`);
   }
 }

@@ -1,6 +1,19 @@
-import { describe, test, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
+import {
+  describe,
+  test,
+  expect,
+  beforeAll,
+  afterAll,
+  afterEach,
+  vi
+} from 'vitest';
 import { getTestWorkerUrl, WranglerDevRunner } from './helpers/wrangler-runner';
-import { createSandboxId, createTestHeaders, fetchWithStartup, cleanupSandbox } from './helpers/test-fixtures';
+import {
+  createSandboxId,
+  createTestHeaders,
+  fetchWithStartup,
+  cleanupSandbox
+} from './helpers/test-fixtures';
 
 /**
  * Git Clone Workflow Integration Tests
@@ -54,15 +67,16 @@ describe('Git Clone Workflow', () => {
       // Using octocat/Hello-World - a minimal test repository
       // Use vi.waitFor to handle container startup time
       const cloneResponse = await vi.waitFor(
-        async () => fetchWithStartup(`${workerUrl}/api/git/clone`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            repoUrl: 'https://github.com/octocat/Hello-World',
-            branch: 'master',
-            targetDir: '/workspace/test-repo',
+        async () =>
+          fetchWithStartup(`${workerUrl}/api/git/clone`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              repoUrl: 'https://github.com/octocat/Hello-World',
+              branch: 'master',
+              targetDir: '/workspace/test-repo'
+            })
           }),
-        }),
         { timeout: 90000, interval: 3000 } // Git clone can take longer, wait up to 90s
       );
 
@@ -75,8 +89,8 @@ describe('Git Clone Workflow', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          path: '/workspace/test-repo/README',
-        }),
+          path: '/workspace/test-repo/README'
+        })
       });
 
       expect(fileCheckResponse.status).toBe(200);
@@ -91,16 +105,16 @@ describe('Git Clone Workflow', () => {
 
       // Clone a repository with a specific branch (using master for Hello-World)
       const cloneResponse = await vi.waitFor(
-        async () => fetchWithStartup(`${workerUrl}/api/git/clone`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            repoUrl: 'https://github.com/octocat/Hello-World',
-            branch: 'master', // Explicitly specify master branch
-            targetDir: '/workspace/branch-test',
-
+        async () =>
+          fetchWithStartup(`${workerUrl}/api/git/clone`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              repoUrl: 'https://github.com/octocat/Hello-World',
+              branch: 'master', // Explicitly specify master branch
+              targetDir: '/workspace/branch-test'
+            })
           }),
-        }),
         { timeout: 90000, interval: 3000 }
       );
 
@@ -113,9 +127,8 @@ describe('Git Clone Workflow', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: 'cd /workspace/branch-test && git branch --show-current',
-
-        }),
+          command: 'cd /workspace/branch-test && git branch --show-current'
+        })
       });
 
       expect(branchCheckResponse.status).toBe(200);
@@ -129,15 +142,15 @@ describe('Git Clone Workflow', () => {
 
       // Step 1: Clone the Hello-World repository
       const cloneResponse = await vi.waitFor(
-        async () => fetchWithStartup(`${workerUrl}/api/git/clone`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            repoUrl: 'https://github.com/octocat/Hello-World',
-            targetDir: '/workspace/project',
-
+        async () =>
+          fetchWithStartup(`${workerUrl}/api/git/clone`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              repoUrl: 'https://github.com/octocat/Hello-World',
+              targetDir: '/workspace/project'
+            })
           }),
-        }),
         { timeout: 90000, interval: 3000 }
       );
 
@@ -148,9 +161,8 @@ describe('Git Clone Workflow', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: 'ls -la /workspace/project',
-
-        }),
+          command: 'ls -la /workspace/project'
+        })
       });
 
       expect(listResponse.status).toBe(200);
@@ -164,9 +176,8 @@ describe('Git Clone Workflow', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          path: '/workspace/project/README',
-
-        }),
+          path: '/workspace/project/README'
+        })
       });
 
       expect(readmeResponse.status).toBe(200);
@@ -178,9 +189,8 @@ describe('Git Clone Workflow', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: 'cd /workspace/project && git log --oneline -1',
-
-        }),
+          command: 'cd /workspace/project && git log --oneline -1'
+        })
       });
 
       expect(gitLogResponse.status).toBe(200);
@@ -195,14 +205,14 @@ describe('Git Clone Workflow', () => {
 
       // Clone without specifying targetDir (should use repo name "Hello-World")
       const cloneResponse = await vi.waitFor(
-        async () => fetchWithStartup(`${workerUrl}/api/git/clone`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            repoUrl: 'https://github.com/octocat/Hello-World',
-
+        async () =>
+          fetchWithStartup(`${workerUrl}/api/git/clone`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              repoUrl: 'https://github.com/octocat/Hello-World'
+            })
           }),
-        }),
         { timeout: 90000, interval: 3000 }
       );
 
@@ -216,9 +226,8 @@ describe('Git Clone Workflow', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: 'ls -la /workspace',
-
-        }),
+          command: 'ls -la /workspace'
+        })
       });
 
       expect(dirCheckResponse.status).toBe(200);
@@ -232,14 +241,19 @@ describe('Git Clone Workflow', () => {
 
       // Try to clone a non-existent repository
       const cloneResponse = await vi.waitFor(
-        async () => fetchWithStartup(`${workerUrl}/api/git/clone`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            repoUrl: 'https://github.com/nonexistent/repository-that-does-not-exist-12345',
-
-          }),
-        }, { expectSuccess: false }), // Don't throw on error - we expect this to fail
+        async () =>
+          fetchWithStartup(
+            `${workerUrl}/api/git/clone`,
+            {
+              method: 'POST',
+              headers,
+              body: JSON.stringify({
+                repoUrl:
+                  'https://github.com/nonexistent/repository-that-does-not-exist-12345'
+              })
+            },
+            { expectSuccess: false }
+          ), // Don't throw on error - we expect this to fail
         { timeout: 90000, interval: 2000 }
       );
 
@@ -248,7 +262,9 @@ describe('Git Clone Workflow', () => {
       const errorData = await cloneResponse.json();
       expect(errorData.error).toBeTruthy();
       // Should mention repository not found or doesn't exist
-      expect(errorData.error).toMatch(/not found|does not exist|repository|fatal/i);
+      expect(errorData.error).toMatch(
+        /not found|does not exist|repository|fatal/i
+      );
     });
 
     test('should handle git clone errors for private repository without auth', async () => {
@@ -258,14 +274,19 @@ describe('Git Clone Workflow', () => {
       // Try to clone a private repository without providing credentials
       // Using a known private repo pattern (will fail with auth error)
       const cloneResponse = await vi.waitFor(
-        async () => fetchWithStartup(`${workerUrl}/api/git/clone`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            repoUrl: 'https://github.com/cloudflare/private-test-repo-that-requires-auth',
-
-          }),
-        }, { expectSuccess: false }), // Don't throw on error - we expect this to fail
+        async () =>
+          fetchWithStartup(
+            `${workerUrl}/api/git/clone`,
+            {
+              method: 'POST',
+              headers,
+              body: JSON.stringify({
+                repoUrl:
+                  'https://github.com/cloudflare/private-test-repo-that-requires-auth'
+              })
+            },
+            { expectSuccess: false }
+          ), // Don't throw on error - we expect this to fail
         { timeout: 90000, interval: 2000 }
       );
 
@@ -274,7 +295,9 @@ describe('Git Clone Workflow', () => {
       const errorData = await cloneResponse.json();
       expect(errorData.error).toBeTruthy();
       // Should mention authentication, permission, or access denied
-      expect(errorData.error).toMatch(/authentication|permission|access|denied|fatal|not found/i);
+      expect(errorData.error).toMatch(
+        /authentication|permission|access|denied|fatal|not found/i
+      );
     });
 
     test('should maintain session state across git clone and subsequent commands', async () => {
@@ -283,15 +306,15 @@ describe('Git Clone Workflow', () => {
 
       // Step 1: Clone a repository
       const cloneResponse = await vi.waitFor(
-        async () => fetchWithStartup(`${workerUrl}/api/git/clone`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            repoUrl: 'https://github.com/octocat/Hello-World',
-            targetDir: '/workspace/state-test',
-
+        async () =>
+          fetchWithStartup(`${workerUrl}/api/git/clone`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              repoUrl: 'https://github.com/octocat/Hello-World',
+              targetDir: '/workspace/state-test'
+            })
           }),
-        }),
         { timeout: 90000, interval: 3000 }
       );
 
@@ -303,9 +326,8 @@ describe('Git Clone Workflow', () => {
         headers,
         body: JSON.stringify({
           path: '/workspace/state-test/test-marker.txt',
-          content: 'Session state test',
-
-        }),
+          content: 'Session state test'
+        })
       });
 
       expect(writeResponse.status).toBe(200);
@@ -315,9 +337,8 @@ describe('Git Clone Workflow', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: 'ls /workspace/state-test',
-
-        }),
+          command: 'ls /workspace/state-test'
+        })
       });
 
       expect(listResponse.status).toBe(200);

@@ -1,15 +1,15 @@
-import type { Sandbox } from "@cloudflare/sandbox";
+import type { Sandbox } from '@cloudflare/sandbox';
 import {
   InterpreterNotReadyError,
   isInterpreterNotReadyError,
-  isRetryableError,
-} from "@cloudflare/sandbox";
+  isRetryableError
+} from '@cloudflare/sandbox';
 import {
   corsHeaders,
   errorResponse,
   jsonResponse,
-  parseJsonBody,
-} from "../http";
+  parseJsonBody
+} from '../http';
 
 // Active sessions (in production, use Durable Objects or KV)
 const sessions = new Map<string, { contextId: string; language: string }>();
@@ -21,7 +21,7 @@ export async function createSession(
 ): Promise<Response> {
   try {
     const body = await parseJsonBody(request);
-    const { language = "python" } = body;
+    const { language = 'python' } = body;
 
     // Create a code context for this session
     const context = await sandbox.createCodeContext({ language });
@@ -29,7 +29,7 @@ export async function createSession(
 
     sessions.set(sessionId, {
       contextId: context.id,
-      language,
+      language
     });
 
     return jsonResponse({ sessionId, language });
@@ -37,34 +37,34 @@ export async function createSession(
     // Handle interpreter initialization timeout (request waited but interpreter wasn't ready in time)
     if (isInterpreterNotReadyError(error)) {
       console.log(
-        "[Notebook] Request timed out waiting for interpreter initialization"
+        '[Notebook] Request timed out waiting for interpreter initialization'
       );
       return new Response(
         JSON.stringify({
           error: error.message,
           retryAfter: error.retryAfter,
-          progress: error.progress,
+          progress: error.progress
         }),
         {
           status: 503,
           headers: {
-            "Content-Type": "application/json",
-            "Retry-After": String(error.retryAfter),
-            ...corsHeaders(),
-          },
+            'Content-Type': 'application/json',
+            'Retry-After': String(error.retryAfter),
+            ...corsHeaders()
+          }
         }
       );
     }
 
     // Check if error is retryable
     if (isRetryableError(error)) {
-      console.log("[Notebook] Retryable error:", error.message);
+      console.log('[Notebook] Retryable error:', error.message);
       return errorResponse(error.message, 503);
     }
 
     // Log actual errors
-    console.error("Create session error:", error);
-    return errorResponse(error.message || "Failed to create session", 500);
+    console.error('Create session error:', error);
+    return errorResponse(error.message || 'Failed to create session', 500);
   }
 }
 
@@ -75,10 +75,10 @@ export async function executeCell(
 ): Promise<Response> {
   try {
     const body = await parseJsonBody(request);
-    const { code, sessionId, language = "python" } = body;
+    const { code, sessionId, language = 'python' } = body;
 
     if (!code) {
-      return errorResponse("Code is required", 400);
+      return errorResponse('Code is required', 400);
     }
 
     // Get or create session
@@ -93,7 +93,7 @@ export async function executeCell(
     // Execute code with streaming
     const stream = await sandbox.runCodeStream(code, {
       context: { id: session.contextId } as any,
-      language: session.language as "python" | "javascript",
+      language: session.language as 'python' | 'javascript'
     });
 
     // Transform the stream to SSE format
@@ -109,7 +109,7 @@ export async function executeCell(
 
             // Parse the JSON from the stream
             const text = new TextDecoder().decode(value);
-            const lines = text.split("\n").filter((line) => line.trim());
+            const lines = text.split('\n').filter((line) => line.trim());
 
             for (const line of lines) {
               try {
@@ -124,54 +124,54 @@ export async function executeCell(
             }
           }
 
-          controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+          controller.enqueue(encoder.encode('data: [DONE]\n\n'));
           controller.close();
         } catch (error) {
           controller.error(error);
         }
-      },
+      }
     });
 
     return new Response(transformedStream, {
       headers: {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        Connection: "keep-alive",
-        ...corsHeaders(),
-      },
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        ...corsHeaders()
+      }
     });
   } catch (error: any) {
     // Handle interpreter initialization timeout (request waited but interpreter wasn't ready in time)
     if (isInterpreterNotReadyError(error)) {
       console.log(
-        "[Notebook] Request timed out waiting for interpreter initialization"
+        '[Notebook] Request timed out waiting for interpreter initialization'
       );
       return new Response(
         JSON.stringify({
           error: error.message,
           retryAfter: error.retryAfter,
-          progress: error.progress,
+          progress: error.progress
         }),
         {
           status: 503,
           headers: {
-            "Content-Type": "application/json",
-            "Retry-After": String(error.retryAfter),
-            ...corsHeaders(),
-          },
+            'Content-Type': 'application/json',
+            'Retry-After': String(error.retryAfter),
+            ...corsHeaders()
+          }
         }
       );
     }
 
     // Check if error is retryable
     if (isRetryableError(error)) {
-      console.log("[Notebook] Retryable error:", error.message);
+      console.log('[Notebook] Retryable error:', error.message);
       return errorResponse(error.message, 503);
     }
 
     // Log actual errors
-    console.error("Execute cell error:", error);
-    return errorResponse(error.message || "Failed to execute code", 500);
+    console.error('Execute cell error:', error);
+    return errorResponse(error.message || 'Failed to execute code', 500);
   }
 }
 
@@ -195,33 +195,33 @@ export async function deleteSession(
     // Handle interpreter initialization timeout (request waited but interpreter wasn't ready in time)
     if (isInterpreterNotReadyError(error)) {
       console.log(
-        "[Notebook] Request timed out waiting for interpreter initialization"
+        '[Notebook] Request timed out waiting for interpreter initialization'
       );
       return new Response(
         JSON.stringify({
           error: error.message,
           retryAfter: error.retryAfter,
-          progress: error.progress,
+          progress: error.progress
         }),
         {
           status: 503,
           headers: {
-            "Content-Type": "application/json",
-            "Retry-After": String(error.retryAfter),
-            ...corsHeaders(),
-          },
+            'Content-Type': 'application/json',
+            'Retry-After': String(error.retryAfter),
+            ...corsHeaders()
+          }
         }
       );
     }
 
     // Check if error is retryable
     if (isRetryableError(error)) {
-      console.log("[Notebook] Retryable error:", error.message);
+      console.log('[Notebook] Retryable error:', error.message);
       return errorResponse(error.message, 503);
     }
 
     // Log actual errors
-    console.error("Delete session error:", error);
-    return errorResponse(error.message || "Failed to delete session", 500);
+    console.error('Delete session error:', error);
+    return errorResponse(error.message || 'Failed to delete session', 500);
   }
 }

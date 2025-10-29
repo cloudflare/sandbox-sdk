@@ -1,5 +1,5 @@
-import type { Sandbox } from "@cloudflare/sandbox";
-import { errorResponse, jsonResponse, parseJsonBody } from "../http";
+import type { Sandbox } from '@cloudflare/sandbox';
+import { errorResponse, jsonResponse, parseJsonBody } from '../http';
 
 export async function gitCheckout(sandbox: Sandbox<unknown>, request: Request) {
   try {
@@ -7,22 +7,22 @@ export async function gitCheckout(sandbox: Sandbox<unknown>, request: Request) {
     const { repoUrl, branch, targetDir } = body;
 
     if (!repoUrl) {
-      return errorResponse("repoUrl is required");
+      return errorResponse('repoUrl is required');
     }
 
-    const actualBranch = branch || "main";
+    const actualBranch = branch || 'main';
     await sandbox.gitCheckout(repoUrl, { branch: actualBranch, targetDir });
-    
-    return jsonResponse({ 
+
+    return jsonResponse({
       success: true,
-      message: "Repository checked out",
+      message: 'Repository checked out',
       repoUrl,
       branch: actualBranch,
       targetDir,
       timestamp: new Date().toISOString()
     });
   } catch (error: any) {
-    console.error("Error checking out repository:", error);
+    console.error('Error checking out repository:', error);
     return errorResponse(`Failed to checkout repository: ${error.message}`);
   }
 }

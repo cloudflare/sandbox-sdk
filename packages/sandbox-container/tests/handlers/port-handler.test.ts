@@ -1,11 +1,15 @@
-import { beforeEach, describe, expect, it, vi } from "bun:test";
+import { beforeEach, describe, expect, it, vi } from 'bun:test';
 import type {
   PortCloseResult,
   PortExposeResult,
-  PortListResult,
+  PortListResult
 } from '@repo/shared';
 import type { ErrorResponse } from '@repo/shared/errors';
-import type { Logger, PortInfo, RequestContext } from '@sandbox-container/core/types';
+import type {
+  Logger,
+  PortInfo,
+  RequestContext
+} from '@sandbox-container/core/types';
 import { PortHandler } from '@sandbox-container/handlers/port-handler';
 import type { PortService } from '@sandbox-container/services/port-service';
 
@@ -18,14 +22,14 @@ const mockPortService = {
   proxyRequest: vi.fn(),
   markPortInactive: vi.fn(),
   cleanupInactivePorts: vi.fn(),
-  destroy: vi.fn(),
+  destroy: vi.fn()
 } as unknown as PortService;
 
 const mockLogger: Logger = {
   info: vi.fn(),
   error: vi.fn(),
   warn: vi.fn(),
-  debug: vi.fn(),
+  debug: vi.fn()
 };
 
 // Mock request context
@@ -35,9 +39,9 @@ const mockContext: RequestContext = {
   corsHeaders: {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Headers': 'Content-Type'
   },
-  sessionId: 'session-456',
+  sessionId: 'session-456'
 };
 
 describe('PortHandler', () => {
@@ -61,7 +65,7 @@ describe('PortHandler', () => {
         port: 8080,
         name: 'web-server',
         status: 'active',
-        exposedAt: new Date('2023-01-01T00:00:00Z'),
+        exposedAt: new Date('2023-01-01T00:00:00Z')
       };
 
       (mockPortService.exposePort as any).mockResolvedValue({
@@ -78,14 +82,17 @@ describe('PortHandler', () => {
       const response = await portHandler.handle(request, mockContext);
 
       expect(response.status).toBe(200);
-      const responseData = await response.json() as PortExposeResult;
+      const responseData = (await response.json()) as PortExposeResult;
       expect(responseData.success).toBe(true);
       expect(responseData.port).toBe(8080);
       expect(responseData.url).toBe('http://localhost:8080');
       expect(responseData.timestamp).toBeDefined();
 
       // Verify service was called correctly
-      expect(mockPortService.exposePort).toHaveBeenCalledWith(8080, 'web-server');
+      expect(mockPortService.exposePort).toHaveBeenCalledWith(
+        8080,
+        'web-server'
+      );
     });
 
     it('should expose port without name', async () => {
@@ -97,7 +104,7 @@ describe('PortHandler', () => {
       const mockPortInfo: PortInfo = {
         port: 3000,
         status: 'active',
-        exposedAt: new Date('2023-01-01T00:00:00Z'),
+        exposedAt: new Date('2023-01-01T00:00:00Z')
       };
 
       (mockPortService.exposePort as any).mockResolvedValue({
@@ -114,7 +121,7 @@ describe('PortHandler', () => {
       const response = await portHandler.handle(request, mockContext);
 
       expect(response.status).toBe(200);
-      const responseData = await response.json() as PortExposeResult;
+      const responseData = (await response.json()) as PortExposeResult;
       expect(responseData.port).toBe(3000);
       expect(responseData.url).toBe('http://localhost:3000');
       expect(responseData.timestamp).toBeDefined();
@@ -143,7 +150,7 @@ describe('PortHandler', () => {
       const response = await portHandler.handle(request, mockContext);
 
       expect(response.status).toBe(400);
-      const responseData = await response.json() as ErrorResponse;
+      const responseData = (await response.json()) as ErrorResponse;
       expect(responseData.code).toBe('INVALID_PORT');
       expect(responseData.message).toBe('Port 80 is reserved');
       expect(responseData.httpStatus).toBe(400);
@@ -170,7 +177,7 @@ describe('PortHandler', () => {
       const response = await portHandler.handle(request, mockContext);
 
       expect(response.status).toBe(409);
-      const responseData = await response.json() as ErrorResponse;
+      const responseData = (await response.json()) as ErrorResponse;
       expect(responseData.code).toBe('PORT_ALREADY_EXPOSED');
       expect(responseData.message).toBe('Port 8080 is already exposed');
       expect(responseData.httpStatus).toBe(409);
@@ -184,14 +191,17 @@ describe('PortHandler', () => {
         success: true
       });
 
-      const request = new Request('http://localhost:3000/api/exposed-ports/8080', {
-        method: 'DELETE'
-      });
+      const request = new Request(
+        'http://localhost:3000/api/exposed-ports/8080',
+        {
+          method: 'DELETE'
+        }
+      );
 
       const response = await portHandler.handle(request, mockContext);
 
       expect(response.status).toBe(200);
-      const responseData = await response.json() as PortCloseResult;
+      const responseData = (await response.json()) as PortCloseResult;
       expect(responseData.success).toBe(true);
       expect(responseData.port).toBe(8080);
       expect(responseData.timestamp).toBeDefined();
@@ -208,14 +218,17 @@ describe('PortHandler', () => {
         }
       });
 
-      const request = new Request('http://localhost:3000/api/exposed-ports/8080', {
-        method: 'DELETE'
-      });
+      const request = new Request(
+        'http://localhost:3000/api/exposed-ports/8080',
+        {
+          method: 'DELETE'
+        }
+      );
 
       const response = await portHandler.handle(request, mockContext);
 
       expect(response.status).toBe(404);
-      const responseData = await response.json() as ErrorResponse;
+      const responseData = (await response.json()) as ErrorResponse;
       expect(responseData.code).toBe('PORT_NOT_EXPOSED');
       expect(responseData.message).toBe('Port 8080 is not exposed');
       expect(responseData.httpStatus).toBe(404);
@@ -223,14 +236,17 @@ describe('PortHandler', () => {
     });
 
     it('should handle invalid port numbers in URL', async () => {
-      const request = new Request('http://localhost:3000/api/exposed-ports/invalid', {
-        method: 'DELETE'
-      });
+      const request = new Request(
+        'http://localhost:3000/api/exposed-ports/invalid',
+        {
+          method: 'DELETE'
+        }
+      );
 
       const response = await portHandler.handle(request, mockContext);
 
       expect(response.status).toBe(500);
-      const responseData = await response.json() as ErrorResponse;
+      const responseData = (await response.json()) as ErrorResponse;
       expect(responseData.code).toBe('UNKNOWN_ERROR');
       expect(responseData.message).toBe('Invalid port endpoint');
       expect(responseData.httpStatus).toBe(500);
@@ -241,14 +257,17 @@ describe('PortHandler', () => {
     });
 
     it('should handle unsupported methods on exposed-ports endpoint', async () => {
-      const request = new Request('http://localhost:3000/api/exposed-ports/8080', {
-        method: 'GET' // Not supported for individual ports
-      });
+      const request = new Request(
+        'http://localhost:3000/api/exposed-ports/8080',
+        {
+          method: 'GET' // Not supported for individual ports
+        }
+      );
 
       const response = await portHandler.handle(request, mockContext);
 
       expect(response.status).toBe(500);
-      const responseData = await response.json() as ErrorResponse;
+      const responseData = (await response.json()) as ErrorResponse;
       expect(responseData.code).toBe('UNKNOWN_ERROR');
       expect(responseData.message).toBe('Invalid port endpoint');
       expect(responseData.httpStatus).toBe(500);
@@ -263,13 +282,13 @@ describe('PortHandler', () => {
           port: 8080,
           name: 'web-server',
           status: 'active',
-          exposedAt: new Date('2023-01-01T00:00:00Z'),
+          exposedAt: new Date('2023-01-01T00:00:00Z')
         },
         {
           port: 3000,
           name: 'api-server',
           status: 'active',
-          exposedAt: new Date('2023-01-01T00:01:00Z'),
+          exposedAt: new Date('2023-01-01T00:01:00Z')
         }
       ];
 
@@ -285,7 +304,7 @@ describe('PortHandler', () => {
       const response = await portHandler.handle(request, mockContext);
 
       expect(response.status).toBe(200);
-      const responseData = await response.json() as PortListResult;
+      const responseData = (await response.json()) as PortListResult;
       expect(responseData.success).toBe(true);
       expect(responseData.ports).toHaveLength(2);
       expect(responseData.ports[0].port).toBe(8080);
@@ -311,7 +330,7 @@ describe('PortHandler', () => {
       const response = await portHandler.handle(request, mockContext);
 
       expect(response.status).toBe(200);
-      const responseData = await response.json() as PortListResult;
+      const responseData = (await response.json()) as PortListResult;
       expect(responseData.success).toBe(true);
       expect(responseData.ports).toHaveLength(0);
       expect(responseData.timestamp).toBeDefined();
@@ -333,7 +352,7 @@ describe('PortHandler', () => {
       const response = await portHandler.handle(request, mockContext);
 
       expect(response.status).toBe(500);
-      const responseData = await response.json() as ErrorResponse;
+      const responseData = (await response.json()) as ErrorResponse;
       expect(responseData.code).toBe('PORT_LIST_ERROR');
       expect(responseData.message).toBe('Database error');
       expect(responseData.httpStatus).toBe(500);
@@ -348,11 +367,13 @@ describe('PortHandler', () => {
         headers: { 'Content-Type': 'text/html' }
       });
 
-      (mockPortService.proxyRequest as any).mockResolvedValue(mockProxyResponse);
+      (mockPortService.proxyRequest as any).mockResolvedValue(
+        mockProxyResponse
+      );
 
       const request = new Request('http://localhost:3000/proxy/8080/api/data', {
         method: 'GET',
-        headers: { 'Authorization': 'Bearer token' }
+        headers: { Authorization: 'Bearer token' }
       });
 
       const response = await portHandler.handle(request, mockContext);
@@ -371,14 +392,19 @@ describe('PortHandler', () => {
         headers: { 'Content-Type': 'application/json' }
       });
 
-      (mockPortService.proxyRequest as any).mockResolvedValue(mockProxyResponse);
+      (mockPortService.proxyRequest as any).mockResolvedValue(
+        mockProxyResponse
+      );
 
       const requestBody = JSON.stringify({ data: 'test' });
-      const request = new Request('http://localhost:3000/proxy/3000/api/create', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: requestBody
-      });
+      const request = new Request(
+        'http://localhost:3000/proxy/3000/api/create',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: requestBody
+        }
+      );
 
       const response = await portHandler.handle(request, mockContext);
 
@@ -395,7 +421,9 @@ describe('PortHandler', () => {
         headers: { 'Content-Type': 'application/json' }
       });
 
-      (mockPortService.proxyRequest as any).mockResolvedValue(mockErrorResponse);
+      (mockPortService.proxyRequest as any).mockResolvedValue(
+        mockErrorResponse
+      );
 
       const request = new Request('http://localhost:3000/proxy/9999/api/data', {
         method: 'GET'
@@ -416,7 +444,7 @@ describe('PortHandler', () => {
       const response = await portHandler.handle(request, mockContext);
 
       expect(response.status).toBe(500);
-      const responseData = await response.json() as ErrorResponse;
+      const responseData = (await response.json()) as ErrorResponse;
       expect(responseData.code).toBe('UNKNOWN_ERROR');
       expect(responseData.message).toBe('Invalid port number in proxy URL');
       expect(responseData.httpStatus).toBe(500);
@@ -427,14 +455,17 @@ describe('PortHandler', () => {
     });
 
     it('should handle invalid port number in proxy URL', async () => {
-      const request = new Request('http://localhost:3000/proxy/invalid-port/api/data', {
-        method: 'GET'
-      });
+      const request = new Request(
+        'http://localhost:3000/proxy/invalid-port/api/data',
+        {
+          method: 'GET'
+        }
+      );
 
       const response = await portHandler.handle(request, mockContext);
 
       expect(response.status).toBe(500);
-      const responseData = await response.json() as ErrorResponse;
+      const responseData = (await response.json()) as ErrorResponse;
       expect(responseData.code).toBe('UNKNOWN_ERROR');
       expect(responseData.message).toBe('Invalid port number in proxy URL');
       expect(responseData.httpStatus).toBe(500);
@@ -454,7 +485,7 @@ describe('PortHandler', () => {
       const response = await portHandler.handle(request, mockContext);
 
       expect(response.status).toBe(500);
-      const responseData = await response.json() as ErrorResponse;
+      const responseData = (await response.json()) as ErrorResponse;
       expect(responseData.code).toBe('UNKNOWN_ERROR');
       expect(responseData.message).toBe('Connection refused');
       expect(responseData.httpStatus).toBe(500);
@@ -471,7 +502,7 @@ describe('PortHandler', () => {
       const response = await portHandler.handle(request, mockContext);
 
       expect(response.status).toBe(500);
-      const responseData = await response.json() as ErrorResponse;
+      const responseData = (await response.json()) as ErrorResponse;
       expect(responseData.code).toBe('UNKNOWN_ERROR');
       expect(responseData.message).toBe('Proxy request failed');
       expect(responseData.httpStatus).toBe(500);
@@ -481,14 +512,17 @@ describe('PortHandler', () => {
 
   describe('route handling', () => {
     it('should return 500 for invalid endpoints', async () => {
-      const request = new Request('http://localhost:3000/api/invalid-endpoint', {
-        method: 'GET'
-      });
+      const request = new Request(
+        'http://localhost:3000/api/invalid-endpoint',
+        {
+          method: 'GET'
+        }
+      );
 
       const response = await portHandler.handle(request, mockContext);
 
       expect(response.status).toBe(500);
-      const responseData = await response.json() as ErrorResponse;
+      const responseData = (await response.json()) as ErrorResponse;
       expect(responseData.code).toBe('UNKNOWN_ERROR');
       expect(responseData.message).toBe('Invalid port endpoint');
       expect(responseData.httpStatus).toBe(500);
@@ -503,7 +537,7 @@ describe('PortHandler', () => {
       const response = await portHandler.handle(request, mockContext);
 
       expect(response.status).toBe(500);
-      const responseData = await response.json() as ErrorResponse;
+      const responseData = (await response.json()) as ErrorResponse;
       expect(responseData.code).toBe('UNKNOWN_ERROR');
       expect(responseData.message).toBe('Invalid port endpoint');
       expect(responseData.httpStatus).toBe(500);
@@ -512,7 +546,9 @@ describe('PortHandler', () => {
 
     it('should handle root proxy path', async () => {
       const mockProxyResponse = new Response('Root page');
-      (mockPortService.proxyRequest as any).mockResolvedValue(mockProxyResponse);
+      (mockPortService.proxyRequest as any).mockResolvedValue(
+        mockProxyResponse
+      );
 
       const request = new Request('http://localhost:3000/proxy/8080/', {
         method: 'GET'
@@ -540,8 +576,12 @@ describe('PortHandler', () => {
       const response = await portHandler.handle(request, mockContext);
 
       expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
-      expect(response.headers.get('Access-Control-Allow-Methods')).toBe('GET, POST, DELETE, OPTIONS');
-      expect(response.headers.get('Access-Control-Allow-Headers')).toBe('Content-Type');
+      expect(response.headers.get('Access-Control-Allow-Methods')).toBe(
+        'GET, POST, DELETE, OPTIONS'
+      );
+      expect(response.headers.get('Access-Control-Allow-Headers')).toBe(
+        'Content-Type'
+      );
     });
 
     it('should include CORS headers in error responses', async () => {
@@ -552,7 +592,7 @@ describe('PortHandler', () => {
       const response = await portHandler.handle(request, mockContext);
 
       expect(response.status).toBe(500);
-      const responseData = await response.json() as ErrorResponse;
+      const responseData = (await response.json()) as ErrorResponse;
       expect(responseData.code).toBe('UNKNOWN_ERROR');
       expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
     });
@@ -560,11 +600,16 @@ describe('PortHandler', () => {
 
   describe('URL parsing edge cases', () => {
     it('should handle ports with leading zeros', async () => {
-      const request = new Request('http://localhost:3000/api/exposed-ports/008080', {
-        method: 'DELETE'
-      });
+      const request = new Request(
+        'http://localhost:3000/api/exposed-ports/008080',
+        {
+          method: 'DELETE'
+        }
+      );
 
-      (mockPortService.unexposePort as any).mockResolvedValue({ success: true });
+      (mockPortService.unexposePort as any).mockResolvedValue({
+        success: true
+      });
 
       const response = await portHandler.handle(request, mockContext);
 
@@ -574,9 +619,12 @@ describe('PortHandler', () => {
     });
 
     it('should handle very large port numbers', async () => {
-      const request = new Request('http://localhost:3000/api/exposed-ports/999999', {
-        method: 'DELETE'
-      });
+      const request = new Request(
+        'http://localhost:3000/api/exposed-ports/999999',
+        {
+          method: 'DELETE'
+        }
+      );
 
       (mockPortService.unexposePort as any).mockResolvedValue({
         success: false,
@@ -586,7 +634,7 @@ describe('PortHandler', () => {
       const response = await portHandler.handle(request, mockContext);
 
       expect(response.status).toBe(400);
-      const responseData = await response.json() as ErrorResponse;
+      const responseData = (await response.json()) as ErrorResponse;
       expect(responseData.code).toBe('INVALID_PORT');
       expect(responseData.message).toBe('Invalid port range');
       expect(responseData.httpStatus).toBe(400);
@@ -596,11 +644,16 @@ describe('PortHandler', () => {
 
     it('should handle complex proxy paths with query parameters', async () => {
       const mockProxyResponse = new Response('Query result');
-      (mockPortService.proxyRequest as any).mockResolvedValue(mockProxyResponse);
+      (mockPortService.proxyRequest as any).mockResolvedValue(
+        mockProxyResponse
+      );
 
-      const request = new Request('http://localhost:3000/proxy/8080/api/search?q=test&page=1', {
-        method: 'GET'
-      });
+      const request = new Request(
+        'http://localhost:3000/proxy/8080/api/search?q=test&page=1',
+        {
+          method: 'GET'
+        }
+      );
 
       const response = await portHandler.handle(request, mockContext);
 

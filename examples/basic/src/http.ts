@@ -10,9 +10,9 @@ export async function parseJsonBody(request: Request): Promise<any> {
 // Helper for CORS headers
 export function corsHeaders() {
   return {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type'
   };
 }
 
@@ -20,7 +20,7 @@ export function corsHeaders() {
 export function errorResponse(message: string, status: number = 400) {
   return new Response(JSON.stringify({ error: message }), {
     status,
-    headers: { "Content-Type": "application/json", ...corsHeaders() },
+    headers: { 'Content-Type': 'application/json', ...corsHeaders() }
   });
 }
 
@@ -28,6 +28,6 @@ export function errorResponse(message: string, status: number = 400) {
 export function jsonResponse(data: any, status: number = 200) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { "Content-Type": "application/json", ...corsHeaders() },
+    headers: { 'Content-Type': 'application/json', ...corsHeaders() }
   });
 }

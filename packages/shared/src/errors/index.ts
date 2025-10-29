@@ -52,7 +52,7 @@ export type {
   PortNotExposedContext,
   ProcessErrorContext,
   ProcessNotFoundContext,
-  ValidationFailedContext,
+  ValidationFailedContext
 } from './contexts';
 // Export utility functions
 export { ERROR_STATUS_MAP, getHttpStatus } from './status-map';
@@ -63,5 +63,5 @@ export {
   Operation,
   type OperationType,
   type ServiceError,
-  type ServiceResult,
+  type ServiceResult
 } from './types';

@@ -1,10 +1,10 @@
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&family=Fira+Code&display=swap");
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&family=Fira+Code&display=swap');
 
 /* Reset and Body Styles */
 body {
   background-color: #0d1117;
   color: #c9d1d9;
-  font-family: "Inter", sans-serif;
+  font-family: 'Inter', sans-serif;
   margin: 0;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -27,7 +27,7 @@ body {
   cursor: pointer;
 }
 
-.list-options input[type="checkbox"] {
+.list-options input[type='checkbox'] {
   cursor: pointer;
 }
 
@@ -69,7 +69,7 @@ body {
 }
 
 .file-item::before {
-  content: "";
+  content: '';
   position: absolute;
   left: 0;
   top: 0;
@@ -80,7 +80,7 @@ body {
 
 .tree-prefix {
   color: #30363d;
-  font-family: "Fira Code", monospace;
+  font-family: 'Fira Code', monospace;
   margin-right: 0.25rem;
 }
 
@@ -90,7 +90,7 @@ body {
 }
 
 .file-mode {
-  font-family: "Fira Code", monospace;
+  font-family: 'Fira Code', monospace;
   font-size: 0.85rem;
   color: #7ee83f;
   margin-right: 0.75rem;
@@ -98,7 +98,7 @@ body {
 
 .file-name {
   flex: 1;
-  font-family: "Fira Code", monospace;
+  font-family: 'Fira Code', monospace;
   font-size: 0.9rem;
 }
 
@@ -158,7 +158,7 @@ body {
 }
 
 .connection-status::before {
-  content: "";
+  content: '';
   width: 8px;
   height: 8px;
   border-radius: 50%;
@@ -292,7 +292,7 @@ body {
 }
 
 .feature-preview li::before {
-  content: "⚡";
+  content: '⚡';
   position: absolute;
   left: 0;
   color: #58a6ff;
@@ -378,7 +378,7 @@ body {
   border: 1px solid #30363d;
   border-radius: 6px;
   color: #c9d1d9;
-  font-family: "Fira Code", monospace;
+  font-family: 'Fira Code', monospace;
   font-size: 0.9rem;
 }
 
@@ -486,7 +486,7 @@ body {
   border: 1px solid #30363d;
   border-radius: 6px;
   align-items: center;
-  font-family: "Fira Code", monospace;
+  font-family: 'Fira Code', monospace;
   font-size: 0.8rem;
   transition: all 0.2s ease;
 }
@@ -588,7 +588,7 @@ body {
   margin: 0;
   white-space: pre-wrap;
   word-wrap: break-word;
-  font-family: "Fira Code", monospace;
+  font-family: 'Fira Code', monospace;
   font-size: 0.8rem;
   max-height: 300px;
   overflow-y: auto;
@@ -606,12 +606,24 @@ body {
 }
 
 /* Status color classes */
-.text-yellow-500 { color: #ffc107; }
-.text-blue-500 { color: #58a6ff; }
-.text-green-500 { color: #3fb950; }
-.text-red-500 { color: #f85149; }
-.text-orange-500 { color: #ff8c00; }
-.text-gray-500 { color: #8b949e; }
+.text-yellow-500 {
+  color: #ffc107;
+}
+.text-blue-500 {
+  color: #58a6ff;
+}
+.text-green-500 {
+  color: #3fb950;
+}
+.text-red-500 {
+  color: #f85149;
+}
+.text-orange-500 {
+  color: #ff8c00;
+}
+.text-gray-500 {
+  color: #8b949e;
+}
 
 /* Port Management Tab */
 .port-management-tab {
@@ -662,7 +674,7 @@ body {
   border: 1px solid #30363d;
   border-radius: 6px;
   color: #c9d1d9;
-  font-family: "Fira Code", monospace;
+  font-family: 'Fira Code', monospace;
   font-size: 0.9rem;
 }
 
@@ -774,7 +786,7 @@ body {
 .port-exposed-at {
   color: #8b949e;
   font-size: 0.75rem;
-  font-family: "Fira Code", monospace;
+  font-family: 'Fira Code', monospace;
 }
 
 .port-url {
@@ -784,7 +796,7 @@ body {
 .preview-link {
   color: #58a6ff;
   text-decoration: none;
-  font-family: "Fira Code", monospace;
+  font-family: 'Fira Code', monospace;
   font-size: 0.85rem;
   display: block;
   padding: 0.5rem;
@@ -860,7 +872,7 @@ body {
 }
 
 .integration-info li::before {
-  content: "💡";
+  content: '💡';
   position: absolute;
   left: 0;
 }
@@ -891,7 +903,8 @@ body {
 }
 
 /* Command and Log Streaming Sections */
-.command-streaming, .log-streaming {
+.command-streaming,
+.log-streaming {
   background-color: #161b22;
   border: 1px solid #30363d;
   border-radius: 8px;
@@ -899,7 +912,8 @@ body {
   margin-bottom: 2rem;
 }
 
-.command-streaming h3, .log-streaming h3 {
+.command-streaming h3,
+.log-streaming h3 {
   color: #58a6ff;
   font-size: 1.2rem;
   margin-bottom: 0.5rem;
@@ -917,7 +931,7 @@ body {
   background-color: rgba(88, 166, 255, 0.1);
   padding: 0.2rem 0.4rem;
   border-radius: 4px;
-  font-family: "Fira Code", monospace;
+  font-family: 'Fira Code', monospace;
   color: #58a6ff;
   font-size: 0.85rem;
 }
@@ -936,7 +950,7 @@ body {
   border: 1px solid #30363d;
   border-radius: 6px;
   color: #c9d1d9;
-  font-family: "Fira Code", monospace;
+  font-family: 'Fira Code', monospace;
   font-size: 0.9rem;
   flex: 1;
 }
@@ -1081,10 +1095,11 @@ body {
   font-size: 0.85rem;
 }
 
-.stream-time, .event-count {
+.stream-time,
+.event-count {
   color: #8b949e;
   font-size: 0.8rem;
-  font-family: "Fira Code", monospace;
+  font-family: 'Fira Code', monospace;
 }
 
 .stream-controls {
@@ -1154,7 +1169,7 @@ body {
 }
 
 .event-type {
-  font-family: "Fira Code", monospace;
+  font-family: 'Fira Code', monospace;
   font-size: 0.75rem;
   font-weight: 700;
   padding: 0.2rem 0.5rem;
@@ -1165,7 +1180,7 @@ body {
 .event-timestamp {
   color: #8b949e;
   font-size: 0.7rem;
-  font-family: "Fira Code", monospace;
+  font-family: 'Fira Code', monospace;
 }
 
 .event-data {
@@ -1178,7 +1193,7 @@ body {
   border-radius: 4px;
   padding: 0.5rem;
   margin: 0;
-  font-family: "Fira Code", monospace;
+  font-family: 'Fira Code', monospace;
   font-size: 0.8rem;
   white-space: pre-wrap;
   word-wrap: break-word;
@@ -1239,7 +1254,7 @@ body {
 }
 
 .streaming-info li::before {
-  content: "⚡";
+  content: '⚡';
   position: absolute;
   left: 0;
   color: #58a6ff;
@@ -1259,7 +1274,9 @@ body {
   border-radius: 8px;
   border: 1px solid #30363d;
   margin-bottom: 1.5rem;
-  transition: border-color 0.2s, box-shadow 0.2s;
+  transition:
+    border-color 0.2s,
+    box-shadow 0.2s;
 }
 
 .command-bar:focus-within {
@@ -1287,8 +1304,10 @@ body {
   padding: 0.5rem 0.75rem;
   color: #c9d1d9;
   font-size: 0.875rem;
-  font-family: "Inter", sans-serif;
-  transition: border-color 0.2s, box-shadow 0.2s;
+  font-family: 'Inter', sans-serif;
+  transition:
+    border-color 0.2s,
+    box-shadow 0.2s;
 }
 
 .option-input:focus {
@@ -1317,7 +1336,7 @@ body {
 
 .command-prompt {
   color: #3fb950;
-  font-family: "Fira Code", monospace;
+  font-family: 'Fira Code', monospace;
   font-weight: 700;
 }
 
@@ -1328,7 +1347,7 @@ body {
   outline: none;
   color: #c9d1d9;
   font-size: 1rem;
-  font-family: "Fira Code", monospace;
+  font-family: 'Fira Code', monospace;
 }
 
 .command-input::placeholder {
@@ -1349,7 +1368,9 @@ body {
   color: #c9d1d9;
   font-weight: 500;
   cursor: pointer;
-  transition: background-color 0.2s, border-color 0.2s;
+  transition:
+    background-color 0.2s,
+    border-color 0.2s;
 }
 
 .btn:hover:not(:disabled) {
@@ -1391,7 +1412,7 @@ body {
   max-height: 60vh;
   overflow-y: auto;
   padding: 1rem;
-  font-family: "Fira Code", monospace;
+  font-family: 'Fira Code', monospace;
 }
 
 .command-result {
@@ -1493,7 +1514,7 @@ pre {
 
 .help-command {
   color: #58a6ff;
-  font-family: "Fira Code", monospace;
+  font-family: 'Fira Code', monospace;
   font-weight: 600;
   background-color: rgba(88, 166, 255, 0.1);
   padding: 0.2rem 0.4rem;
@@ -1518,7 +1539,7 @@ pre {
   background-color: rgba(88, 166, 255, 0.1);
   padding: 0.2rem 0.4rem;
   border-radius: 4px;
-  font-family: "Fira Code", monospace;
+  font-family: 'Fira Code', monospace;
   font-size: 0.85rem;
 }
 
@@ -1553,7 +1574,7 @@ pre {
 }
 
 .command-input:focus::after {
-  content: "";
+  content: '';
   position: absolute;
   right: 8px;
   top: 50%;
@@ -1651,7 +1672,7 @@ pre {
 .typing-indicator::before,
 .typing-indicator::after,
 .typing-indicator span {
-  content: "";
+  content: '';
   position: absolute;
   width: 4px;
   height: 4px;
@@ -1695,7 +1716,7 @@ pre {
 }
 
 .help-command {
-  font-family: "Courier New", monospace;
+  font-family: 'Courier New', monospace;
   color: #10b981;
   background: rgba(16, 185, 129, 0.1);
   padding: 2px 6px;
@@ -1738,7 +1759,7 @@ button:focus {
 }
 
 .btn-loading::after {
-  content: "";
+  content: '';
   position: absolute;
   top: 50%;
   left: 50%;
@@ -1780,12 +1801,12 @@ button:focus {
 .timestamp {
   font-size: 0.75rem;
   color: #6b7280;
-  font-family: "Courier New", monospace;
+  font-family: 'Courier New', monospace;
 }
 
 /* Exit code styling */
 .exit-code {
-  font-family: "Courier New", monospace;
+  font-family: 'Courier New', monospace;
   color: #9ca3af;
   background: rgba(156, 163, 175, 0.1);
   padding: 2px 6px;
@@ -1876,7 +1897,7 @@ button:focus {
   border-radius: 6px;
   color: #c9d1d9;
   font-size: 0.9rem;
-  font-family: "Fira Code", monospace;
+  font-family: 'Fira Code', monospace;
   resize: vertical;
   transition: all 0.2s ease-in-out;
 }
@@ -1943,7 +1964,7 @@ button:focus {
   border-radius: 6px;
   padding: 1rem;
   color: #c9d1d9;
-  font-family: "Fira Code", monospace;
+  font-family: 'Fira Code', monospace;
   font-size: 0.85rem;
   line-height: 1.5;
   overflow-x: auto;
@@ -2029,7 +2050,7 @@ button:focus {
 .result-item .timestamp {
   color: #6e7681;
   font-size: 0.8rem;
-  font-family: "Fira Code", monospace;
+  font-family: 'Fira Code', monospace;
   min-width: 80px;
 }
 
@@ -2107,7 +2128,12 @@ button:focus {
   left: -100%;
   width: 100%;
   height: 100%;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.1), transparent);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.1),
+    transparent
+  );
   transition: left 0.5s;
 }
 
@@ -2137,7 +2163,11 @@ button:focus {
 
 .quick-setup-button.react {
   border-color: #61dafb;
-  background: linear-gradient(135deg, rgba(97, 218, 251, 0.1) 0%, rgba(97, 218, 251, 0.05) 100%);
+  background: linear-gradient(
+    135deg,
+    rgba(97, 218, 251, 0.1) 0%,
+    rgba(97, 218, 251, 0.05) 100%
+  );
 }
 
 .quick-setup-button.react:hover:not(:disabled) {
@@ -2147,7 +2177,11 @@ button:focus {
 
 .quick-setup-button.vue {
   border-color: #4fc08d;
-  background: linear-gradient(135deg, rgba(79, 192, 141, 0.1) 0%, rgba(79, 192, 141, 0.05) 100%);
+  background: linear-gradient(
+    135deg,
+    rgba(79, 192, 141, 0.1) 0%,
+    rgba(79, 192, 141, 0.05) 100%
+  );
 }
 
 .quick-setup-button.vue:hover:not(:disabled) {
@@ -2157,7 +2191,11 @@ button:focus {
 
 .quick-setup-button.static {
   border-color: #f39c12;
-  background: linear-gradient(135deg, rgba(243, 156, 18, 0.1) 0%, rgba(243, 156, 18, 0.05) 100%);
+  background: linear-gradient(
+    135deg,
+    rgba(243, 156, 18, 0.1) 0%,
+    rgba(243, 156, 18, 0.05) 100%
+  );
 }
 
 .quick-setup-button.static:hover:not(:disabled) {
@@ -2195,27 +2233,27 @@ button:focus {
   .input-group {
     flex-direction: column;
   }
-  
+
   .file-input {
     min-width: unset;
   }
-  
+
   .template-buttons {
     flex-direction: column;
   }
-  
+
   .template-button {
     width: 100%;
   }
-  
+
   .quick-setup-buttons {
     grid-template-columns: 1fr;
   }
-  
+
   .quick-setup-button {
     padding: 1rem;
   }
-  
+
   .setup-icon {
     font-size: 2rem;
     min-width: 50px;
@@ -2685,7 +2723,7 @@ button:focus {
 
 .output-content.latex-output {
   background: #1c2128;
-  border-left: 3px solid #4CAF50;
+  border-left: 3px solid #4caf50;
   font-family: 'Inter', sans-serif;
 }
 
@@ -2897,7 +2935,7 @@ button:focus {
   color: #c9d1d9;
   font-size: 0.95rem;
   font-weight: 500;
-  font-family: "Fira Code", monospace;
+  font-family: 'Fira Code', monospace;
 }
 
 .metadata-value.metadata-encoding {
@@ -2967,7 +3005,7 @@ button:focus {
   border-radius: 4px;
   padding: 0.75rem;
   color: #8b949e;
-  font-family: "Fira Code", monospace;
+  font-family: 'Fira Code', monospace;
   font-size: 0.75rem;
   overflow-x: auto;
   white-space: pre-wrap;
@@ -3009,7 +3047,7 @@ button:focus {
   color: #c9d1d9;
   font-size: 0.95rem;
   font-weight: 500;
-  font-family: "Fira Code", monospace;
+  font-family: 'Fira Code', monospace;
 }
 
 .streaming-toggle .help-text {

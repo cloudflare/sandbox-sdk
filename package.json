@@ -4,6 +4,7 @@
   "description": "an api for computers",
   "scripts": {
     "typecheck": "turbo run typecheck",
+    "format": "prettier --write .",
     "check": "sherif && biome check && turbo run typecheck",
     "fix": "biome check --fix && turbo run typecheck",
     "build": "turbo run build",

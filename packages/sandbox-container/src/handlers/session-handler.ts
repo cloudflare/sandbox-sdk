@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes } from 'node:crypto';
 import type { Logger, SessionCreateResult } from '@repo/shared';
 import { ErrorCode } from '@repo/shared/errors';
 
@@ -31,21 +31,27 @@ export class SessionHandler extends BaseHandler<Request, Response> {
       case '/api/session/list':
         return await this.handleList(request, context);
       default:
-        return this.createErrorResponse({
-          message: 'Invalid session endpoint',
-          code: ErrorCode.UNKNOWN_ERROR,
-        }, context);
+        return this.createErrorResponse(
+          {
+            message: 'Invalid session endpoint',
+            code: ErrorCode.UNKNOWN_ERROR
+          },
+          context
+        );
     }
   }
 
-  private async handleCreate(request: Request, context: RequestContext): Promise<Response> {
+  private async handleCreate(
+    request: Request,
+    context: RequestContext
+  ): Promise<Response> {
     // Parse request body for session options
     let sessionId: string;
     let env: Record<string, string>;
     let cwd: string;
 
     try {
-      const body = await request.json() as any;
+      const body = (await request.json()) as any;
       sessionId = body.id || this.generateSessionId();
       env = body.env || {};
       cwd = body.cwd || '/workspace';
@@ -59,7 +65,7 @@ export class SessionHandler extends BaseHandler<Request, Response> {
     const result = await this.sessionManager.createSession({
       id: sessionId,
       env,
-      cwd,
+      cwd
     });
 
     if (result.success) {
@@ -68,7 +74,7 @@ export class SessionHandler extends BaseHandler<Request, Response> {
       const response = {
         success: true,
         data: result.data,
-        timestamp: new Date().toISOString(),
+        timestamp: new Date().toISOString()
       };
 
       return this.createTypedResponse(response, context);
@@ -77,14 +83,17 @@ export class SessionHandler extends BaseHandler<Request, Response> {
     }
   }
 
-  private async handleList(request: Request, context: RequestContext): Promise<Response> {
+  private async handleList(
+    request: Request,
+    context: RequestContext
+  ): Promise<Response> {
     const result = await this.sessionManager.listSessions();
 
     if (result.success) {
       const response: SessionListResult = {
         success: true,
         data: result.data,
-        timestamp: new Date().toISOString(),
+        timestamp: new Date().toISOString()
       };
 
       return this.createTypedResponse(response, context);

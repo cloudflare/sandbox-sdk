@@ -30,19 +30,12 @@
     "typecheck": {
       "dependsOn": ["^build"],
       "outputs": [],
-      "inputs": [
-        "src/**/*.ts",
-        "tsconfig.json",
-        "tsconfig.*.json"
-      ]
+      "inputs": ["src/**/*.ts", "tsconfig.json", "tsconfig.*.json"]
     },
     "check": {
       "dependsOn": ["typecheck"],
       "outputs": [],
-      "inputs": [
-        "src/**/*.ts",
-        "biome.json"
-      ]
+      "inputs": ["src/**/*.ts", "biome.json"]
     },
     "docker:local": {
       "dependsOn": ["^build"],
@@ -94,8 +87,5 @@
       ]
     }
   },
-  "globalDependencies": [
-    "tooling/typescript-config/*.json",
-    "biome.json"
-  ]
+  "globalDependencies": ["tooling/typescript-config/*.json", "biome.json"]
 }

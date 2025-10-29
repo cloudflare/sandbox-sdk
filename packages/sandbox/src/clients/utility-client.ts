@@ -45,14 +45,13 @@ export interface CreateSessionResponse extends BaseApiResponse {
  * Client for health checks and utility operations
  */
 export class UtilityClient extends BaseHttpClient {
-
   /**
    * Ping the sandbox to check if it's responsive
    */
   async ping(): Promise<string> {
     try {
       const response = await this.get<PingResponse>('/api/ping');
-      
+
       this.logSuccess('Ping successful', response.message);
       return response.message;
     } catch (error) {
@@ -67,7 +66,7 @@ export class UtilityClient extends BaseHttpClient {
   async getCommands(): Promise<string[]> {
     try {
       const response = await this.get<CommandsResponse>('/api/commands');
-      
+
       this.logSuccess(
         'Commands retrieved',
         `${response.count} commands available`
@@ -84,7 +83,9 @@ export class UtilityClient extends BaseHttpClient {
    * Create a new execution session
    * @param options - Session configuration (id, env, cwd)
    */
-  async createSession(options: CreateSessionRequest): Promise<CreateSessionResponse> {
+  async createSession(
+    options: CreateSessionRequest
+  ): Promise<CreateSessionResponse> {
     try {
       const response = await this.post<CreateSessionResponse>(
         '/api/session/create',
@@ -112,7 +113,10 @@ export class UtilityClient extends BaseHttpClient {
     } catch (error) {
       // If version endpoint doesn't exist (old container), return 'unknown'
       // This allows for backward compatibility
-      this.logger.debug('Failed to get container version (may be old container)', { error });
+      this.logger.debug(
+        'Failed to get container version (may be old container)',
+        { error }
+      );
       return 'unknown';
     }
   }

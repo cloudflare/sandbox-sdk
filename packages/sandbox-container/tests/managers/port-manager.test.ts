@@ -22,7 +22,10 @@ describe('PortManager', () => {
 
   describe('parseProxyPath', () => {
     it('should parse basic proxy URL correctly', () => {
-      const result = manager.parseProxyPath('http://example.com/proxy/8080/api/test', 8080);
+      const result = manager.parseProxyPath(
+        'http://example.com/proxy/8080/api/test',
+        8080
+      );
 
       expect(result.targetPath).toBe('api/test');
       expect(result.targetUrl).toBe('http://localhost:8080/api/test');
@@ -35,11 +38,16 @@ describe('PortManager', () => {
       );
 
       expect(result.targetPath).toBe('api/test');
-      expect(result.targetUrl).toBe('http://localhost:8080/api/test?param=value&foo=bar');
+      expect(result.targetUrl).toBe(
+        'http://localhost:8080/api/test?param=value&foo=bar'
+      );
     });
 
     it('should parse root path proxy correctly', () => {
-      const result = manager.parseProxyPath('http://example.com/proxy/8080/', 8080);
+      const result = manager.parseProxyPath(
+        'http://example.com/proxy/8080/',
+        8080
+      );
 
       expect(result.targetPath).toBe('');
       expect(result.targetUrl).toBe('http://localhost:8080/');
@@ -62,7 +70,9 @@ describe('PortManager', () => {
       );
 
       expect(result.targetPath).toBe('path%20with%20spaces');
-      expect(result.targetUrl).toBe('http://localhost:8080/path%20with%20spaces');
+      expect(result.targetUrl).toBe(
+        'http://localhost:8080/path%20with%20spaces'
+      );
     });
   });
 
@@ -91,7 +101,7 @@ describe('PortManager', () => {
         port: 8080,
         name: 'web-server',
         exposedAt: new Date('2024-01-01'),
-        status: 'active',
+        status: 'active'
       };
 
       const inactiveInfo = manager.createInactivePortInfo(existingInfo);
@@ -105,61 +115,73 @@ describe('PortManager', () => {
 
   describe('determineErrorCode', () => {
     it('should return PORT_NOT_FOUND for not found errors', () => {
-      expect(manager.determineErrorCode('get', new Error('Port not found'))).toBe('PORT_NOT_FOUND');
-      expect(manager.determineErrorCode('get', new Error('ENOENT'))).toBe('PORT_NOT_FOUND');
+      expect(
+        manager.determineErrorCode('get', new Error('Port not found'))
+      ).toBe('PORT_NOT_FOUND');
+      expect(manager.determineErrorCode('get', new Error('ENOENT'))).toBe(
+        'PORT_NOT_FOUND'
+      );
     });
 
     it('should return PORT_ALREADY_EXPOSED for already exposed errors', () => {
-      expect(manager.determineErrorCode('expose', new Error('Port already exposed'))).toBe(
-        'PORT_ALREADY_EXPOSED'
-      );
-      expect(manager.determineErrorCode('expose', new Error('Conflict detected'))).toBe(
-        'PORT_ALREADY_EXPOSED'
-      );
+      expect(
+        manager.determineErrorCode('expose', new Error('Port already exposed'))
+      ).toBe('PORT_ALREADY_EXPOSED');
+      expect(
+        manager.determineErrorCode('expose', new Error('Conflict detected'))
+      ).toBe('PORT_ALREADY_EXPOSED');
     });
 
     it('should return CONNECTION_REFUSED for connection errors', () => {
-      expect(manager.determineErrorCode('proxy', new Error('Connection refused'))).toBe(
-        'CONNECTION_REFUSED'
-      );
-      expect(manager.determineErrorCode('proxy', new Error('ECONNREFUSED'))).toBe(
-        'CONNECTION_REFUSED'
-      );
+      expect(
+        manager.determineErrorCode('proxy', new Error('Connection refused'))
+      ).toBe('CONNECTION_REFUSED');
+      expect(
+        manager.determineErrorCode('proxy', new Error('ECONNREFUSED'))
+      ).toBe('CONNECTION_REFUSED');
     });
 
     it('should return CONNECTION_TIMEOUT for timeout errors', () => {
-      expect(manager.determineErrorCode('proxy', new Error('Request timeout'))).toBe(
-        'CONNECTION_TIMEOUT'
-      );
+      expect(
+        manager.determineErrorCode('proxy', new Error('Request timeout'))
+      ).toBe('CONNECTION_TIMEOUT');
       expect(manager.determineErrorCode('proxy', new Error('ETIMEDOUT'))).toBe(
         'CONNECTION_TIMEOUT'
       );
     });
 
     it('should return operation-specific error codes as fallback', () => {
-      expect(manager.determineErrorCode('expose', new Error('Unknown error'))).toBe(
-        'PORT_EXPOSE_ERROR'
-      );
-      expect(manager.determineErrorCode('unexpose', new Error('Unknown error'))).toBe(
-        'PORT_UNEXPOSE_ERROR'
-      );
-      expect(manager.determineErrorCode('list', new Error('Unknown error'))).toBe(
-        'PORT_LIST_ERROR'
-      );
-      expect(manager.determineErrorCode('get', new Error('Unknown error'))).toBe('PORT_GET_ERROR');
-      expect(manager.determineErrorCode('proxy', new Error('Unknown error'))).toBe('PROXY_ERROR');
-      expect(manager.determineErrorCode('update', new Error('Unknown error'))).toBe(
-        'PORT_UPDATE_ERROR'
-      );
-      expect(manager.determineErrorCode('cleanup', new Error('Unknown error'))).toBe(
-        'PORT_CLEANUP_ERROR'
-      );
+      expect(
+        manager.determineErrorCode('expose', new Error('Unknown error'))
+      ).toBe('PORT_EXPOSE_ERROR');
+      expect(
+        manager.determineErrorCode('unexpose', new Error('Unknown error'))
+      ).toBe('PORT_UNEXPOSE_ERROR');
+      expect(
+        manager.determineErrorCode('list', new Error('Unknown error'))
+      ).toBe('PORT_LIST_ERROR');
+      expect(
+        manager.determineErrorCode('get', new Error('Unknown error'))
+      ).toBe('PORT_GET_ERROR');
+      expect(
+        manager.determineErrorCode('proxy', new Error('Unknown error'))
+      ).toBe('PROXY_ERROR');
+      expect(
+        manager.determineErrorCode('update', new Error('Unknown error'))
+      ).toBe('PORT_UPDATE_ERROR');
+      expect(
+        manager.determineErrorCode('cleanup', new Error('Unknown error'))
+      ).toBe('PORT_CLEANUP_ERROR');
     });
   });
 
   describe('createErrorMessage', () => {
     it('should create error message for expose operation', () => {
-      const message = manager.createErrorMessage('expose', 8080, 'Port already in use');
+      const message = manager.createErrorMessage(
+        'expose',
+        8080,
+        'Port already in use'
+      );
 
       expect(message).toBe('Failed to expose port 8080: Port already in use');
     });
@@ -171,9 +193,15 @@ describe('PortManager', () => {
     });
 
     it('should create error message for proxy operation', () => {
-      const message = manager.createErrorMessage('proxy', 8080, 'Connection refused');
+      const message = manager.createErrorMessage(
+        'proxy',
+        8080,
+        'Connection refused'
+      );
 
-      expect(message).toBe('Failed to proxy request to port 8080: Connection refused');
+      expect(message).toBe(
+        'Failed to proxy request to port 8080: Connection refused'
+      );
     });
   });
 
@@ -201,9 +229,9 @@ describe('PortManager', () => {
             port: 8080,
             name: 'web-server',
             exposedAt: new Date(),
-            status: 'active' as const,
-          },
-        },
+            status: 'active' as const
+          }
+        }
       ];
 
       const formatted = manager.formatPortList(ports);
@@ -219,8 +247,8 @@ describe('PortManager', () => {
             port: 8080,
             name: 'web-server',
             exposedAt: new Date(),
-            status: 'active' as const,
-          },
+            status: 'active' as const
+          }
         },
         {
           port: 3000,
@@ -228,14 +256,16 @@ describe('PortManager', () => {
             port: 3000,
             name: 'api-server',
             exposedAt: new Date(),
-            status: 'inactive' as const,
-          },
-        },
+            status: 'inactive' as const
+          }
+        }
       ];
 
       const formatted = manager.formatPortList(ports);
 
-      expect(formatted).toBe('8080 (web-server, active), 3000 (api-server, inactive)');
+      expect(formatted).toBe(
+        '8080 (web-server, active), 3000 (api-server, inactive)'
+      );
     });
 
     it('should handle unnamed ports', () => {
@@ -245,9 +275,9 @@ describe('PortManager', () => {
           info: {
             port: 8080,
             exposedAt: new Date(),
-            status: 'active' as const,
-          },
-        },
+            status: 'active' as const
+          }
+        }
       ];
 
       const formatted = manager.formatPortList(ports);
@@ -270,7 +300,7 @@ describe('PortManager', () => {
       const portInfo: PortInfo = {
         port: 8080,
         exposedAt: oldDate,
-        status: 'inactive',
+        status: 'inactive'
       };
 
       expect(manager.shouldCleanupPort(portInfo, threshold)).toBe(true);
@@ -283,7 +313,7 @@ describe('PortManager', () => {
       const portInfo: PortInfo = {
         port: 8080,
         exposedAt: oldDate,
-        status: 'active',
+        status: 'active'
       };
 
       expect(manager.shouldCleanupPort(portInfo, threshold)).toBe(false);
@@ -296,7 +326,7 @@ describe('PortManager', () => {
       const portInfo: PortInfo = {
         port: 8080,
         exposedAt: recentDate,
-        status: 'inactive',
+        status: 'inactive'
       };
 
       expect(manager.shouldCleanupPort(portInfo, threshold)).toBe(false);

@@ -18,14 +18,14 @@ export default defineWorkersConfig({
     poolOptions: {
       workers: {
         wrangler: {
-          configPath: './tests/wrangler.jsonc',
+          configPath: './tests/wrangler.jsonc'
         },
         singleWorker: true,
-        isolatedStorage: false,
-      },
-    },
+        isolatedStorage: false
+      }
+    }
   },
   esbuild: {
-    target: 'esnext',
-  },
+    target: 'esnext'
+  }
 });

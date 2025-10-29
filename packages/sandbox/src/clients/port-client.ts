@@ -1,17 +1,13 @@
 import type {
   PortCloseResult,
   PortExposeResult,
-  PortListResult,
+  PortListResult
 } from '@repo/shared';
 import { BaseHttpClient } from './base-client';
 import type { HttpClientOptions } from './types';
 
 // Re-export for convenience
-export type {
-  PortExposeResult,
-  PortCloseResult,
-  PortListResult,
-};
+export type { PortExposeResult, PortCloseResult, PortListResult };
 
 /**
  * Request interface for exposing ports
@@ -32,7 +28,6 @@ export interface UnexposePortRequest {
  * Client for port management and preview URL operations
  */
 export class PortClient extends BaseHttpClient {
-
   /**
    * Expose a port and get a preview URL
    * @param port - Port number to expose
@@ -69,7 +64,10 @@ export class PortClient extends BaseHttpClient {
    * @param port - Port number to unexpose
    * @param sessionId - The session ID for this operation
    */
-  async unexposePort(port: number, sessionId: string): Promise<PortCloseResult> {
+  async unexposePort(
+    port: number,
+    sessionId: string
+  ): Promise<PortCloseResult> {
     try {
       const url = `/api/exposed-ports/${port}?session=${encodeURIComponent(sessionId)}`;
       const response = await this.delete<PortCloseResult>(url);

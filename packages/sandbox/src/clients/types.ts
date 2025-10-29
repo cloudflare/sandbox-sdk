@@ -4,7 +4,11 @@ import type { Logger } from '@repo/shared';
  * Minimal interface for container fetch functionality
  */
 export interface ContainerStub {
-  containerFetch(url: string, options: RequestInit, port?: number): Promise<Response>;
+  containerFetch(
+    url: string,
+    options: RequestInit,
+    port?: number
+  ): Promise<Response>;
 }
 
 /**

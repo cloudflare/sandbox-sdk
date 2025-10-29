@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "bun:test";
+import { beforeEach, describe, expect, it, vi } from 'bun:test';
 import type { HealthCheckResult, ShutdownResult } from '@repo/shared';
 import type { ErrorResponse } from '@repo/shared/errors';
 import type { Logger, RequestContext } from '@sandbox-container/core/types';
@@ -9,7 +9,7 @@ const mockLogger: Logger = {
   info: vi.fn(),
   error: vi.fn(),
   warn: vi.fn(),
-  debug: vi.fn(),
+  debug: vi.fn()
 };
 
 // Mock request context
@@ -19,9 +19,9 @@ const mockContext: RequestContext = {
   corsHeaders: {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Headers': 'Content-Type'
   },
-  sessionId: 'session-456',
+  sessionId: 'session-456'
 };
 
 describe('MiscHandler', () => {
@@ -44,7 +44,9 @@ describe('MiscHandler', () => {
 
       expect(response.status).toBe(200);
       expect(await response.text()).toBe('Hello from Bun server! 🚀');
-      expect(response.headers.get('Content-Type')).toBe('text/plain; charset=utf-8');
+      expect(response.headers.get('Content-Type')).toBe(
+        'text/plain; charset=utf-8'
+      );
     });
 
     it('should include CORS headers in root response', async () => {
@@ -55,8 +57,12 @@ describe('MiscHandler', () => {
       const response = await miscHandler.handle(request, mockContext);
 
       expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
-      expect(response.headers.get('Access-Control-Allow-Methods')).toBe('GET, POST, OPTIONS');
-      expect(response.headers.get('Access-Control-Allow-Headers')).toBe('Content-Type');
+      expect(response.headers.get('Access-Control-Allow-Methods')).toBe(
+        'GET, POST, OPTIONS'
+      );
+      expect(response.headers.get('Access-Control-Allow-Headers')).toBe(
+        'Content-Type'
+      );
     });
 
     it('should handle different HTTP methods on root', async () => {
@@ -86,13 +92,15 @@ describe('MiscHandler', () => {
       expect(response.status).toBe(200);
       expect(response.headers.get('Content-Type')).toBe('application/json');
 
-      const responseData = await response.json() as HealthCheckResult;
+      const responseData = (await response.json()) as HealthCheckResult;
       expect(responseData.success).toBe(true);
       expect(responseData.status).toBe('healthy');
       expect(responseData.timestamp).toBeDefined();
 
       // Verify timestamp format
-      expect(responseData.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+      expect(responseData.timestamp).toMatch(
+        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
+      );
       expect(new Date(responseData.timestamp)).toBeInstanceOf(Date);
     });
 
@@ -104,8 +112,12 @@ describe('MiscHandler', () => {
       const response = await miscHandler.handle(request, mockContext);
 
       expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
-      expect(response.headers.get('Access-Control-Allow-Methods')).toBe('GET, POST, OPTIONS');
-      expect(response.headers.get('Access-Control-Allow-Headers')).toBe('Content-Type');
+      expect(response.headers.get('Access-Control-Allow-Methods')).toBe(
+        'GET, POST, OPTIONS'
+      );
+      expect(response.headers.get('Access-Control-Allow-Headers')).toBe(
+        'Content-Type'
+      );
     });
 
     it('should handle health requests with different HTTP methods', async () => {
@@ -121,7 +133,7 @@ describe('MiscHandler', () => {
         const response = await miscHandler.handle(request, mockContext);
 
         expect(response.status).toBe(200);
-        const responseData = await response.json() as HealthCheckResult;
+        const responseData = (await response.json()) as HealthCheckResult;
         expect(responseData.success).toBe(true);
         expect(responseData.status).toBe('healthy');
       }
@@ -137,11 +149,11 @@ describe('MiscHandler', () => {
 
       const response1 = await miscHandler.handle(request1, mockContext);
       // Small delay to ensure different timestamps
-      await new Promise(resolve => setTimeout(resolve, 5));
+      await new Promise((resolve) => setTimeout(resolve, 5));
       const response2 = await miscHandler.handle(request2, mockContext);
 
-      const responseData1 = await response1.json() as HealthCheckResult;
-      const responseData2 = await response2.json() as HealthCheckResult;
+      const responseData1 = (await response1.json()) as HealthCheckResult;
+      const responseData2 = (await response2.json()) as HealthCheckResult;
 
       expect(responseData1.timestamp).not.toBe(responseData2.timestamp);
       expect(new Date(responseData1.timestamp).getTime()).toBeLessThan(
@@ -168,7 +180,9 @@ describe('MiscHandler', () => {
       expect(responseData.success).toBe(true);
       expect(responseData.version).toBe('1.2.3');
       expect(responseData.timestamp).toBeDefined();
-      expect(responseData.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+      expect(responseData.timestamp).toMatch(
+        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
+      );
     });
 
     it('should return "unknown" when SANDBOX_VERSION is not set', async () => {
@@ -196,8 +210,12 @@ describe('MiscHandler', () => {
       const response = await miscHandler.handle(request, mockContext);
 
       expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
-      expect(response.headers.get('Access-Control-Allow-Methods')).toBe('GET, POST, OPTIONS');
-      expect(response.headers.get('Access-Control-Allow-Headers')).toBe('Content-Type');
+      expect(response.headers.get('Access-Control-Allow-Methods')).toBe(
+        'GET, POST, OPTIONS'
+      );
+      expect(response.headers.get('Access-Control-Allow-Headers')).toBe(
+        'Content-Type'
+      );
     });
   });
 
@@ -212,13 +230,15 @@ describe('MiscHandler', () => {
       expect(response.status).toBe(200);
       expect(response.headers.get('Content-Type')).toBe('application/json');
 
-      const responseData = await response.json() as ShutdownResult;
+      const responseData = (await response.json()) as ShutdownResult;
       expect(responseData.success).toBe(true);
       expect(responseData.message).toBe('Container shutdown initiated');
       expect(responseData.timestamp).toBeDefined();
 
       // Verify timestamp format
-      expect(responseData.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+      expect(responseData.timestamp).toMatch(
+        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
+      );
       expect(new Date(responseData.timestamp)).toBeInstanceOf(Date);
     });
 
@@ -230,8 +250,12 @@ describe('MiscHandler', () => {
       const response = await miscHandler.handle(request, mockContext);
 
       expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
-      expect(response.headers.get('Access-Control-Allow-Methods')).toBe('GET, POST, OPTIONS');
-      expect(response.headers.get('Access-Control-Allow-Headers')).toBe('Content-Type');
+      expect(response.headers.get('Access-Control-Allow-Methods')).toBe(
+        'GET, POST, OPTIONS'
+      );
+      expect(response.headers.get('Access-Control-Allow-Headers')).toBe(
+        'Content-Type'
+      );
     });
 
     it('should handle shutdown requests with GET method', async () => {
@@ -242,7 +266,7 @@ describe('MiscHandler', () => {
       const response = await miscHandler.handle(request, mockContext);
 
       expect(response.status).toBe(200);
-      const responseData = await response.json() as ShutdownResult;
+      const responseData = (await response.json()) as ShutdownResult;
       expect(responseData.success).toBe(true);
       expect(responseData.message).toBe('Container shutdown initiated');
     });
@@ -257,11 +281,11 @@ describe('MiscHandler', () => {
 
       const response1 = await miscHandler.handle(request1, mockContext);
       // Small delay to ensure different timestamps
-      await new Promise(resolve => setTimeout(resolve, 5));
+      await new Promise((resolve) => setTimeout(resolve, 5));
       const response2 = await miscHandler.handle(request2, mockContext);
 
-      const responseData1 = await response1.json() as ShutdownResult;
-      const responseData2 = await response2.json() as ShutdownResult;
+      const responseData1 = (await response1.json()) as ShutdownResult;
+      const responseData2 = (await response2.json()) as ShutdownResult;
 
       expect(responseData1.timestamp).not.toBe(responseData2.timestamp);
       expect(new Date(responseData1.timestamp).getTime()).toBeLessThan(
@@ -279,7 +303,7 @@ describe('MiscHandler', () => {
       const response = await miscHandler.handle(request, mockContext);
 
       expect(response.status).toBe(500);
-      const responseData = await response.json() as ErrorResponse;
+      const responseData = (await response.json()) as ErrorResponse;
       expect(responseData.message).toBe('Invalid endpoint');
       expect(responseData.code).toBeDefined();
       expect(responseData.httpStatus).toBe(500);
@@ -295,7 +319,7 @@ describe('MiscHandler', () => {
       const response = await miscHandler.handle(request, mockContext);
 
       expect(response.status).toBe(500);
-      const responseData = await response.json() as ErrorResponse;
+      const responseData = (await response.json()) as ErrorResponse;
       expect(responseData.message).toBe('Invalid endpoint');
       expect(responseData.code).toBeDefined();
       expect(responseData.httpStatus).toBe(500);
@@ -318,8 +342,14 @@ describe('MiscHandler', () => {
   describe('response format consistency', () => {
     it('should have consistent JSON response structure for API endpoints', async () => {
       const apiEndpoints = [
-        { path: '/api/health', expectedFields: ['success', 'status', 'timestamp'] },
-        { path: '/api/shutdown', expectedFields: ['success', 'message', 'timestamp'] }
+        {
+          path: '/api/health',
+          expectedFields: ['success', 'status', 'timestamp']
+        },
+        {
+          path: '/api/shutdown',
+          expectedFields: ['success', 'message', 'timestamp']
+        }
       ];
 
       for (const endpoint of apiEndpoints) {
@@ -328,12 +358,16 @@ describe('MiscHandler', () => {
         });
 
         const response = await miscHandler.handle(request, mockContext);
-        const responseData = await response.json() as HealthCheckResult | ShutdownResult;
+        const responseData = (await response.json()) as
+          | HealthCheckResult
+          | ShutdownResult;
 
         // Verify all expected fields are present
         expect(responseData.success).toBe(true);
         expect(responseData.timestamp).toBeDefined();
-        expect(responseData.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+        expect(responseData.timestamp).toMatch(
+          /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
+        );
 
         // Verify all expected fields are present
         for (const field of endpoint.expectedFields) {
@@ -355,7 +389,9 @@ describe('MiscHandler', () => {
         });
 
         const response = await miscHandler.handle(request, mockContext);
-        expect(response.headers.get('Content-Type')).toBe(endpoint.expectedContentType);
+        expect(response.headers.get('Content-Type')).toBe(
+          endpoint.expectedContentType
+        );
       }
     });
 
@@ -366,9 +402,9 @@ describe('MiscHandler', () => {
         corsHeaders: {
           'Access-Control-Allow-Origin': 'https://example.com',
           'Access-Control-Allow-Methods': 'GET, POST',
-          'Access-Control-Allow-Headers': 'Authorization',
+          'Access-Control-Allow-Headers': 'Authorization'
         },
-        sessionId: 'session-alternative',
+        sessionId: 'session-alternative'
       };
 
       const request = new Request('http://localhost:3000/api/health', {
@@ -376,13 +412,19 @@ describe('MiscHandler', () => {
       });
 
       const response = await miscHandler.handle(request, alternativeContext);
-      const responseData = await response.json() as HealthCheckResult;
+      const responseData = (await response.json()) as HealthCheckResult;
 
       expect(responseData.success).toBe(true);
       expect(responseData.status).toBe('healthy');
-      expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://example.com');
-      expect(response.headers.get('Access-Control-Allow-Methods')).toBe('GET, POST');
-      expect(response.headers.get('Access-Control-Allow-Headers')).toBe('Authorization');
+      expect(response.headers.get('Access-Control-Allow-Origin')).toBe(
+        'https://example.com'
+      );
+      expect(response.headers.get('Access-Control-Allow-Methods')).toBe(
+        'GET, POST'
+      );
+      expect(response.headers.get('Access-Control-Allow-Headers')).toBe(
+        'Authorization'
+      );
     });
   });
 
@@ -393,7 +435,7 @@ describe('MiscHandler', () => {
         info: vi.fn(),
         error: vi.fn(),
         warn: vi.fn(),
-        debug: vi.fn(),
+        debug: vi.fn()
       };
 
       const independentHandler = new MiscHandler(simpleLogger);
@@ -405,7 +447,7 @@ describe('MiscHandler', () => {
       const response = await independentHandler.handle(request, mockContext);
 
       expect(response.status).toBe(200);
-      const responseData = await response.json() as HealthCheckResult;
+      const responseData = (await response.json()) as HealthCheckResult;
       expect(responseData.success).toBe(true);
       expect(responseData.status).toBe('healthy');
     });

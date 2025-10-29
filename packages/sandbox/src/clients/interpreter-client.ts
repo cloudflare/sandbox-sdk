@@ -6,16 +6,20 @@ import {
   type ExecutionError,
   type OutputMessage,
   type Result,
-  ResultImpl,
+  ResultImpl
 } from '@repo/shared';
 import type { ErrorResponse } from '../errors';
-import { createErrorFromResponse, ErrorCode, InterpreterNotReadyError } from '../errors';
+import {
+  createErrorFromResponse,
+  ErrorCode,
+  InterpreterNotReadyError
+} from '../errors';
 import { BaseHttpClient } from './base-client.js';
 import type { HttpClientOptions } from './types.js';
 
 // Streaming execution data from the server
 interface StreamingExecutionData {
-  type: "result" | "stdout" | "stderr" | "error" | "execution_complete";
+  type: 'result' | 'stdout' | 'stderr' | 'error' | 'execution_complete';
   text?: string;
   html?: string;
   png?: string; // base64
@@ -27,13 +31,13 @@ interface StreamingExecutionData {
   json?: unknown;
   chart?: {
     type:
-      | "line"
-      | "bar"
-      | "scatter"
-      | "pie"
-      | "histogram"
-      | "heatmap"
-      | "unknown";
+      | 'line'
+      | 'bar'
+      | 'scatter'
+      | 'pie'
+      | 'histogram'
+      | 'heatmap'
+      | 'unknown';
     data: unknown;
     options?: unknown;
   };
@@ -62,14 +66,14 @@ export class InterpreterClient extends BaseHttpClient {
     options: CreateContextOptions = {}
   ): Promise<CodeContext> {
     return this.executeWithRetry(async () => {
-      const response = await this.doFetch("/api/contexts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+      const response = await this.doFetch('/api/contexts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          language: options.language || "python",
-          cwd: options.cwd || "/workspace",
-          env_vars: options.envVars,
-        }),
+          language: options.language || 'python',
+          cwd: options.cwd || '/workspace',
+          env_vars: options.envVars
+        })
       });
 
       if (!response.ok) {
@@ -87,7 +91,7 @@ export class InterpreterClient extends BaseHttpClient {
         language: data.language,
         cwd: data.cwd || '/workspace',
         createdAt: new Date(data.timestamp),
-        lastUsed: new Date(data.timestamp),
+        lastUsed: new Date(data.timestamp)
       };
     });
   }
@@ -100,18 +104,18 @@ export class InterpreterClient extends BaseHttpClient {
     timeoutMs?: number
   ): Promise<void> {
     return this.executeWithRetry(async () => {
-      const response = await this.doFetch("/api/execute/code", {
-        method: "POST",
+      const response = await this.doFetch('/api/execute/code', {
+        method: 'POST',
         headers: {
-          "Content-Type": "application/json",
-          Accept: "text/event-stream",
+          'Content-Type': 'application/json',
+          Accept: 'text/event-stream'
         },
         body: JSON.stringify({
           context_id: contextId,
           code,
           language,
           ...(timeoutMs !== undefined && { timeout_ms: timeoutMs })
-        }),
+        })
       });
 
       if (!response.ok) {
@@ -120,7 +124,7 @@ export class InterpreterClient extends BaseHttpClient {
       }
 
       if (!response.body) {
-        throw new Error("No response body for streaming execution");
+        throw new Error('No response body for streaming execution');
       }
 
       // Process streaming response
@@ -132,9 +136,9 @@ export class InterpreterClient extends BaseHttpClient {
 
   async listCodeContexts(): Promise<CodeContext[]> {
     return this.executeWithRetry(async () => {
-      const response = await this.doFetch("/api/contexts", {
-        method: "GET",
-        headers: { "Content-Type": "application/json" },
+      const response = await this.doFetch('/api/contexts', {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' }
       });
 
       if (!response.ok) {
@@ -152,7 +156,7 @@ export class InterpreterClient extends BaseHttpClient {
         language: ctx.language,
         cwd: ctx.cwd || '/workspace',
         createdAt: new Date(data.timestamp),
-        lastUsed: new Date(data.timestamp),
+        lastUsed: new Date(data.timestamp)
       }));
     });
   }
@@ -160,8 +164,8 @@ export class InterpreterClient extends BaseHttpClient {
   async deleteCodeContext(contextId: string): Promise<void> {
     return this.executeWithRetry(async () => {
       const response = await this.doFetch(`/api/contexts/${contextId}`, {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' }
       });
 
       if (!response.ok) {
@@ -201,7 +205,7 @@ export class InterpreterClient extends BaseHttpClient {
       }
     }
 
-    throw lastError || new Error("Execution failed after retries");
+    throw lastError || new Error('Execution failed after retries');
   }
 
   private isRetryableError(error: unknown): boolean {
@@ -211,8 +215,8 @@ export class InterpreterClient extends BaseHttpClient {
 
     if (error instanceof Error) {
       return (
-        error.message.includes("not ready") ||
-        error.message.includes("initializing")
+        error.message.includes('not ready') ||
+        error.message.includes('initializing')
       );
     }
 
@@ -221,7 +225,7 @@ export class InterpreterClient extends BaseHttpClient {
 
   private async parseErrorResponse(response: Response): Promise<Error> {
     try {
-      const errorData = await response.json() as ErrorResponse;
+      const errorData = (await response.json()) as ErrorResponse;
       return createErrorFromResponse(errorData);
     } catch {
       // Fallback if response isn't JSON
@@ -240,7 +244,7 @@ export class InterpreterClient extends BaseHttpClient {
     stream: ReadableStream<Uint8Array>
   ): AsyncGenerator<string> {
     const reader = stream.getReader();
-    let buffer = "";
+    let buffer = '';
 
     try {
       while (true) {
@@ -250,11 +254,11 @@ export class InterpreterClient extends BaseHttpClient {
         }
         if (done) break;
 
-        let newlineIdx = buffer.indexOf("\n");
+        let newlineIdx = buffer.indexOf('\n');
         while (newlineIdx !== -1) {
           yield buffer.slice(0, newlineIdx);
           buffer = buffer.slice(newlineIdx + 1);
-          newlineIdx = buffer.indexOf("\n");
+          newlineIdx = buffer.indexOf('\n');
         }
       }
 
@@ -282,25 +286,25 @@ export class InterpreterClient extends BaseHttpClient {
       const data = JSON.parse(jsonData) as StreamingExecutionData;
 
       switch (data.type) {
-        case "stdout":
+        case 'stdout':
           if (callbacks.onStdout && data.text) {
             await callbacks.onStdout({
               text: data.text,
-              timestamp: data.timestamp || Date.now(),
+              timestamp: data.timestamp || Date.now()
             });
           }
           break;
 
-        case "stderr":
+        case 'stderr':
           if (callbacks.onStderr && data.text) {
             await callbacks.onStderr({
               text: data.text,
-              timestamp: data.timestamp || Date.now(),
+              timestamp: data.timestamp || Date.now()
             });
           }
           break;
 
-        case "result":
+        case 'result':
           if (callbacks.onResult) {
             // Create a ResultImpl instance from the raw data
             const result = new ResultImpl(data);
@@ -308,17 +312,17 @@ export class InterpreterClient extends BaseHttpClient {
           }
           break;
 
-        case "error":
+        case 'error':
           if (callbacks.onError) {
             await callbacks.onError({
-              name: data.ename || "Error",
-              message: data.evalue || "Unknown error",
-              traceback: data.traceback || [],
+              name: data.ename || 'Error',
+              message: data.evalue || 'Unknown error',
+              traceback: data.traceback || []
             });
           }
           break;
 
-        case "execution_complete":
+        case 'execution_complete':
           // Signal completion - callbacks can handle cleanup if needed
           break;
       }

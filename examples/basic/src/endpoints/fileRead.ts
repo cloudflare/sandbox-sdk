@@ -1,5 +1,5 @@
-import type { Sandbox } from "@cloudflare/sandbox";
-import { errorResponse, jsonResponse, parseJsonBody } from "../http";
+import type { Sandbox } from '@cloudflare/sandbox';
+import { errorResponse, jsonResponse, parseJsonBody } from '../http';
 
 export async function readFile(sandbox: Sandbox<unknown>, request: Request) {
   try {
@@ -7,7 +7,7 @@ export async function readFile(sandbox: Sandbox<unknown>, request: Request) {
     const { path, encoding } = body;
 
     if (!path) {
-      return errorResponse("Path is required");
+      return errorResponse('Path is required');
     }
 
     const result = await sandbox.readFile(path, { encoding });
@@ -22,7 +22,7 @@ export async function readFile(sandbox: Sandbox<unknown>, request: Request) {
       timestamp: new Date().toISOString()
     });
   } catch (error: any) {
-    console.error("Error reading file:", error);
+    console.error('Error reading file:', error);
     return errorResponse(`Failed to read file: ${error.message}`);
   }
 }

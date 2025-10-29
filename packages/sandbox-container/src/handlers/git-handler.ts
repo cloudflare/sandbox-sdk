@@ -22,21 +22,27 @@ export class GitHandler extends BaseHandler<Request, Response> {
       case '/api/git/checkout':
         return await this.handleCheckout(request, context);
       default:
-        return this.createErrorResponse({
-          message: 'Invalid git endpoint',
-          code: ErrorCode.UNKNOWN_ERROR,
-        }, context);
+        return this.createErrorResponse(
+          {
+            message: 'Invalid git endpoint',
+            code: ErrorCode.UNKNOWN_ERROR
+          },
+          context
+        );
     }
   }
 
-  private async handleCheckout(request: Request, context: RequestContext): Promise<Response> {
+  private async handleCheckout(
+    request: Request,
+    context: RequestContext
+  ): Promise<Response> {
     const body = await this.parseRequestBody<GitCheckoutRequest>(request);
     const sessionId = body.sessionId || context.sessionId;
 
     const result = await this.gitService.cloneRepository(body.repoUrl, {
       branch: body.branch,
       targetDir: body.targetDir,
-      sessionId,
+      sessionId
     });
 
     if (result.success) {
@@ -45,7 +51,7 @@ export class GitHandler extends BaseHandler<Request, Response> {
         repoUrl: body.repoUrl,
         branch: result.data.branch,
         targetDir: result.data.path,
-        timestamp: new Date().toISOString(),
+        timestamp: new Date().toISOString()
       };
 
       return this.createTypedResponse(response, context);
@@ -54,7 +60,7 @@ export class GitHandler extends BaseHandler<Request, Response> {
         requestId: context.requestId,
         repoUrl: body.repoUrl,
         errorCode: result.error.code,
-        errorMessage: result.error.message,
+        errorMessage: result.error.message
       });
 
       return this.createErrorResponse(result.error, context);

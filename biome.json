@@ -1,64 +1,64 @@
 {
-	"$schema": "https://biomejs.dev/schemas/2.3.2/schema.json",
-	"assist": {
-		"actions": {
-			"source": {
-				"useSortedKeys": "off"
-			}
-		},
-		"enabled": true
-	},
-	"files": {
-		"ignoreUnknown": false,
-		"includes": [
-			"packages/**",
-			"!node_modules",
-			"!**/node_modules",
-			"!package.json",
-			"!**/package.json",
-			"!dist",
-			"!**/dist",
-			"!.wrangler",
-			"!**/.wrangler",
-			"!wrangler.jsonc",
-			"!**/wrangler.jsonc",
-			"!./tsconfig.json",
-			"!**/tsconfig.json",
-			"!**/normalize.css",
-			"!coverage",
-			"!**/coverage"
-		]
-	},
-	"formatter": {
-		"enabled": false,
-		"indentStyle": "tab"
-	},
-	"linter": {
-		"enabled": true,
-		"rules": {
-			"a11y": {
-				"useKeyWithClickEvents": "off"
-			},
-			"complexity": {
-				"noBannedTypes": "off"
-			},
-			"correctness": {
-				"noUnusedFunctionParameters": "off",
-				"noUnusedImports": "off",
-				"noUnusedVariables": "off"
-			},
-			"recommended": true,
-			"style": {
-				"noNonNullAssertion": "off"
-			},
-			"suspicious": {
-				"noExplicitAny": "off"
-			}
-		}
-	},
-	"vcs": {
-		"clientKind": "git",
-		"enabled": false,
-		"useIgnoreFile": false
-	}
+  "$schema": "https://biomejs.dev/schemas/2.3.2/schema.json",
+  "assist": {
+    "actions": {
+      "source": {
+        "useSortedKeys": "off"
+      }
+    },
+    "enabled": true
+  },
+  "files": {
+    "ignoreUnknown": false,
+    "includes": [
+      "packages/**",
+      "!node_modules",
+      "!**/node_modules",
+      "!package.json",
+      "!**/package.json",
+      "!dist",
+      "!**/dist",
+      "!.wrangler",
+      "!**/.wrangler",
+      "!wrangler.jsonc",
+      "!**/wrangler.jsonc",
+      "!./tsconfig.json",
+      "!**/tsconfig.json",
+      "!**/normalize.css",
+      "!coverage",
+      "!**/coverage"
+    ]
+  },
+  "formatter": {
+    "enabled": false,
+    "indentStyle": "tab"
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "a11y": {
+        "useKeyWithClickEvents": "off"
+      },
+      "complexity": {
+        "noBannedTypes": "off"
+      },
+      "correctness": {
+        "noUnusedFunctionParameters": "off",
+        "noUnusedImports": "off",
+        "noUnusedVariables": "off"
+      },
+      "recommended": true,
+      "style": {
+        "noNonNullAssertion": "off"
+      },
+      "suspicious": {
+        "noExplicitAny": "off"
+      }
+    }
+  },
+  "vcs": {
+    "clientKind": "git",
+    "enabled": false,
+    "useIgnoreFile": false
+  }
 }

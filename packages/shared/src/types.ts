@@ -1,4 +1,9 @@
-import type { CodeContext, CreateContextOptions, ExecutionResult, RunCodeOptions } from './interpreter-types';
+import type {
+  CodeContext,
+  CreateContextOptions,
+  ExecutionResult,
+  RunCodeOptions
+} from './interpreter-types';
 
 // Base execution options shared across command types
 export interface BaseExecOptions {
@@ -128,12 +133,12 @@ export interface ProcessOptions extends BaseExecOptions {
 }
 
 export type ProcessStatus =
-  | 'starting'    // Process is being initialized
-  | 'running'     // Process is actively running
-  | 'completed'   // Process exited successfully (code 0)
-  | 'failed'      // Process exited with non-zero code
-  | 'killed'      // Process was terminated by signal
-  | 'error';      // Process failed to start or encountered error
+  | 'starting' // Process is being initialized
+  | 'running' // Process is actively running
+  | 'completed' // Process exited successfully (code 0)
+  | 'failed' // Process exited with non-zero code
+  | 'killed' // Process was terminated by signal
+  | 'error'; // Process failed to start or encountered error
 
 export interface Process {
   /**
@@ -224,7 +229,6 @@ export interface StreamOptions extends BaseExecOptions {
    */
   signal?: AbortSignal;
 }
-
 
 // Session management types
 export interface SessionOptions {
@@ -599,10 +603,13 @@ export interface ShutdownResult {
 export interface ExecutionSession {
   /** Unique session identifier */
   readonly id: string;
-  
+
   // Command execution
   exec(command: string, options?: ExecOptions): Promise<ExecResult>;
-  execStream(command: string, options?: StreamOptions): Promise<ReadableStream<Uint8Array>>;
+  execStream(
+    command: string,
+    options?: StreamOptions
+  ): Promise<ReadableStream<Uint8Array>>;
 
   // Background process management
   startProcess(command: string, options?: ProcessOptions): Promise<Process>;
@@ -611,30 +618,51 @@ export interface ExecutionSession {
   killProcess(id: string, signal?: string): Promise<void>;
   killAllProcesses(): Promise<number>;
   cleanupCompletedProcesses(): Promise<number>;
-  getProcessLogs(id: string): Promise<{ stdout: string; stderr: string; processId: string }>;
-  streamProcessLogs(processId: string, options?: { signal?: AbortSignal }): Promise<ReadableStream<Uint8Array>>;
-  
+  getProcessLogs(
+    id: string
+  ): Promise<{ stdout: string; stderr: string; processId: string }>;
+  streamProcessLogs(
+    processId: string,
+    options?: { signal?: AbortSignal }
+  ): Promise<ReadableStream<Uint8Array>>;
+
   // File operations
-  writeFile(path: string, content: string, options?: { encoding?: string }): Promise<WriteFileResult>;
-  readFile(path: string, options?: { encoding?: string }): Promise<ReadFileResult>;
+  writeFile(
+    path: string,
+    content: string,
+    options?: { encoding?: string }
+  ): Promise<WriteFileResult>;
+  readFile(
+    path: string,
+    options?: { encoding?: string }
+  ): Promise<ReadFileResult>;
   readFileStream(path: string): Promise<ReadableStream<Uint8Array>>;
   mkdir(path: string, options?: { recursive?: boolean }): Promise<MkdirResult>;
   deleteFile(path: string): Promise<DeleteFileResult>;
   renameFile(oldPath: string, newPath: string): Promise<RenameFileResult>;
-  moveFile(sourcePath: string, destinationPath: string): Promise<MoveFileResult>;
+  moveFile(
+    sourcePath: string,
+    destinationPath: string
+  ): Promise<MoveFileResult>;
   listFiles(path: string, options?: ListFilesOptions): Promise<ListFilesResult>;
   exists(path: string): Promise<FileExistsResult>;
 
   // Git operations
-  gitCheckout(repoUrl: string, options?: { branch?: string; targetDir?: string }): Promise<GitCheckoutResult>;
-  
+  gitCheckout(
+    repoUrl: string,
+    options?: { branch?: string; targetDir?: string }
+  ): Promise<GitCheckoutResult>;
+
   // Environment management
   setEnvVars(envVars: Record<string, string>): Promise<void>;
 
   // Code interpreter methods
   createCodeContext(options?: CreateContextOptions): Promise<CodeContext>;
   runCode(code: string, options?: RunCodeOptions): Promise<ExecutionResult>;
-  runCodeStream(code: string, options?: RunCodeOptions): Promise<ReadableStream<Uint8Array>>;
+  runCodeStream(
+    code: string,
+    options?: RunCodeOptions
+  ): Promise<ReadableStream<Uint8Array>>;
   listCodeContexts(): Promise<CodeContext[]>;
   deleteCodeContext(contextId: string): Promise<void>;
 }
@@ -652,26 +680,47 @@ export interface ISandbox {
   killAllProcesses(): Promise<number>;
 
   // Streaming operations
-  execStream(command: string, options?: StreamOptions): Promise<ReadableStream<Uint8Array>>;
-  streamProcessLogs(processId: string, options?: { signal?: AbortSignal }): Promise<ReadableStream<Uint8Array>>;
+  execStream(
+    command: string,
+    options?: StreamOptions
+  ): Promise<ReadableStream<Uint8Array>>;
+  streamProcessLogs(
+    processId: string,
+    options?: { signal?: AbortSignal }
+  ): Promise<ReadableStream<Uint8Array>>;
 
   // Utility methods
   cleanupCompletedProcesses(): Promise<number>;
-  getProcessLogs(id: string): Promise<{ stdout: string; stderr: string; processId: string }>;
+  getProcessLogs(
+    id: string
+  ): Promise<{ stdout: string; stderr: string; processId: string }>;
 
   // File operations
-  writeFile(path: string, content: string, options?: { encoding?: string }): Promise<WriteFileResult>;
-  readFile(path: string, options?: { encoding?: string }): Promise<ReadFileResult>;
+  writeFile(
+    path: string,
+    content: string,
+    options?: { encoding?: string }
+  ): Promise<WriteFileResult>;
+  readFile(
+    path: string,
+    options?: { encoding?: string }
+  ): Promise<ReadFileResult>;
   readFileStream(path: string): Promise<ReadableStream<Uint8Array>>;
   mkdir(path: string, options?: { recursive?: boolean }): Promise<MkdirResult>;
   deleteFile(path: string): Promise<DeleteFileResult>;
   renameFile(oldPath: string, newPath: string): Promise<RenameFileResult>;
-  moveFile(sourcePath: string, destinationPath: string): Promise<MoveFileResult>;
+  moveFile(
+    sourcePath: string,
+    destinationPath: string
+  ): Promise<MoveFileResult>;
   listFiles(path: string, options?: ListFilesOptions): Promise<ListFilesResult>;
   exists(path: string, sessionId?: string): Promise<FileExistsResult>;
 
   // Git operations
-  gitCheckout(repoUrl: string, options?: { branch?: string; targetDir?: string }): Promise<GitCheckoutResult>;
+  gitCheckout(
+    repoUrl: string,
+    options?: { branch?: string; targetDir?: string }
+  ): Promise<GitCheckoutResult>;
 
   // Session management
   createSession(options?: SessionOptions): Promise<ExecutionSession>;
@@ -679,29 +728,43 @@ export interface ISandbox {
   // Code interpreter methods
   createCodeContext(options?: CreateContextOptions): Promise<CodeContext>;
   runCode(code: string, options?: RunCodeOptions): Promise<ExecutionResult>;
-  runCodeStream(code: string, options?: RunCodeOptions): Promise<ReadableStream>;
+  runCodeStream(
+    code: string,
+    options?: RunCodeOptions
+  ): Promise<ReadableStream>;
   listCodeContexts(): Promise<CodeContext[]>;
   deleteCodeContext(contextId: string): Promise<void>;
 }
 
 // Type guards for runtime validation
 export function isExecResult(value: any): value is ExecResult {
-  return value &&
+  return (
+    value &&
     typeof value.success === 'boolean' &&
     typeof value.exitCode === 'number' &&
     typeof value.stdout === 'string' &&
-    typeof value.stderr === 'string';
+    typeof value.stderr === 'string'
+  );
 }
 
 export function isProcess(value: any): value is Process {
-  return value &&
+  return (
+    value &&
     typeof value.id === 'string' &&
     typeof value.command === 'string' &&
-    typeof value.status === 'string';
+    typeof value.status === 'string'
+  );
 }
 
 export function isProcessStatus(value: string): value is ProcessStatus {
-  return ['starting', 'running', 'completed', 'failed', 'killed', 'error'].includes(value);
+  return [
+    'starting',
+    'running',
+    'completed',
+    'failed',
+    'killed',
+    'error'
+  ].includes(value);
 }
 
 export type {
@@ -716,4 +779,3 @@ export type {
 } from './interpreter-types';
 // Re-export interpreter types for convenience
 export { Execution, ResultImpl } from './interpreter-types';
-

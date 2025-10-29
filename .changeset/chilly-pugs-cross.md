@@ -1,5 +1,5 @@
 ---
-"@cloudflare/sandbox": patch
+'@cloudflare/sandbox': patch
 ---
 
 Update dependencies

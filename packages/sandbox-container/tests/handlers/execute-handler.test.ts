@@ -1,8 +1,13 @@
-import { beforeEach, describe, expect, it, vi } from "bun:test";
+import { beforeEach, describe, expect, it, vi } from 'bun:test';
 import type { ExecResult, ProcessStartResult } from '@repo/shared';
 import type { ErrorResponse } from '@repo/shared/errors';
-import type { ExecuteRequest, Logger, RequestContext, ServiceResult } from '@sandbox-container/core/types.ts';
-import { ExecuteHandler } from "@sandbox-container/handlers/execute-handler.js";
+import type {
+  ExecuteRequest,
+  Logger,
+  RequestContext,
+  ServiceResult
+} from '@sandbox-container/core/types.ts';
+import { ExecuteHandler } from '@sandbox-container/handlers/execute-handler.js';
 import type { ProcessService } from '@sandbox-container/services/process-service.ts';
 import { mocked } from '../test-utils';
 
@@ -13,14 +18,14 @@ const mockProcessService = {
   getProcess: vi.fn(),
   killProcess: vi.fn(),
   listProcesses: vi.fn(),
-  streamProcessLogs: vi.fn(),
+  streamProcessLogs: vi.fn()
 } as unknown as ProcessService;
 
 const mockLogger: Logger = {
   info: vi.fn(),
   error: vi.fn(),
   warn: vi.fn(),
-  debug: vi.fn(),
+  debug: vi.fn()
 };
 
 // Mock request context
@@ -30,9 +35,9 @@ const mockContext: RequestContext = {
   corsHeaders: {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Headers': 'Content-Type'
   },
-  sessionId: 'session-456',
+  sessionId: 'session-456'
 };
 
 describe('ExecuteHandler', () => {
@@ -42,10 +47,7 @@ describe('ExecuteHandler', () => {
     // Reset all mocks before each test
     vi.clearAllMocks();
 
-    executeHandler = new ExecuteHandler(
-      mockProcessService,
-      mockLogger
-    );
+    executeHandler = new ExecuteHandler(mockProcessService, mockLogger);
   });
 
   describe('handle - Regular Execution', () => {
@@ -60,21 +62,32 @@ describe('ExecuteHandler', () => {
           stderr: '',
           duration: 100
         }
-      } as ServiceResult<{ success: boolean; exitCode: number; stdout: string; stderr: string; duration: number; }>;
+      } as ServiceResult<{
+        success: boolean;
+        exitCode: number;
+        stdout: string;
+        stderr: string;
+        duration: number;
+      }>;
 
-      mocked(mockProcessService.executeCommand).mockResolvedValue(mockCommandResult);
+      mocked(mockProcessService.executeCommand).mockResolvedValue(
+        mockCommandResult
+      );
 
       const request = new Request('http://localhost:3000/api/execute', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ command: 'echo "hello"', sessionId: 'session-456' })
+        body: JSON.stringify({
+          command: 'echo "hello"',
+          sessionId: 'session-456'
+        })
       });
 
       const response = await executeHandler.handle(request, mockContext);
 
       // Verify response
       expect(response.status).toBe(200);
-      const responseData = await response.json() as ExecResult;
+      const responseData = (await response.json()) as ExecResult;
       expect(responseData.success).toBe(true);
       expect(responseData.exitCode).toBe(0);
       expect(responseData.stdout).toBe('hello\\n');
@@ -102,9 +115,17 @@ describe('ExecuteHandler', () => {
           stderr: 'command not found: nonexistent-command',
           duration: 50
         }
-      } as ServiceResult<{ success: boolean; exitCode: number; stdout: string; stderr: string; duration: number; }>;
+      } as ServiceResult<{
+        success: boolean;
+        exitCode: number;
+        stdout: string;
+        stderr: string;
+        duration: number;
+      }>;
 
-      mocked(mockProcessService.executeCommand).mockResolvedValue(mockCommandResult);
+      mocked(mockProcessService.executeCommand).mockResolvedValue(
+        mockCommandResult
+      );
 
       const request = new Request('http://localhost:3000/api/execute', {
         method: 'POST',
@@ -116,7 +137,7 @@ describe('ExecuteHandler', () => {
 
       // Verify response - service succeeded, command failed
       expect(response.status).toBe(200);
-      const responseData = await response.json() as ExecResult;
+      const responseData = (await response.json()) as ExecResult;
       expect(responseData.success).toBe(false); // Command failed
       expect(responseData.exitCode).toBe(1);
       expect(responseData.stderr).toContain('command not found');
@@ -134,7 +155,9 @@ describe('ExecuteHandler', () => {
         }
       } as ServiceResult<never>;
 
-      mocked(mockProcessService.executeCommand).mockResolvedValue(mockServiceError);
+      mocked(mockProcessService.executeCommand).mockResolvedValue(
+        mockServiceError
+      );
 
       const request = new Request('http://localhost:3000/api/execute', {
         method: 'POST',
@@ -146,7 +169,7 @@ describe('ExecuteHandler', () => {
 
       // Verify error response for service failure - NEW format: {code, message, context, httpStatus}
       expect(response.status).toBe(500);
-      const responseData = await response.json() as ErrorResponse;
+      const responseData = (await response.json()) as ErrorResponse;
       expect(responseData.code).toBe('PROCESS_ERROR');
       expect(responseData.message).toContain('Failed to spawn process');
       expect(responseData.httpStatus).toBe(500);
@@ -170,23 +193,31 @@ describe('ExecuteHandler', () => {
           pid: 12345,
           stdout: '',
           stderr: '',
-          outputListeners: new Set<(stream: 'stdout' | 'stderr', data: string) => void>(),
+          outputListeners: new Set<
+            (stream: 'stdout' | 'stderr', data: string) => void
+          >(),
           statusListeners: new Set<(status: string) => void>()
         }
       };
 
-      mocked(mockProcessService.startProcess).mockResolvedValue(mockProcessResult);
+      mocked(mockProcessService.startProcess).mockResolvedValue(
+        mockProcessResult
+      );
 
       const request = new Request('http://localhost:3000/api/execute', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ command: 'sleep 10', background: true, sessionId: 'session-456' })
+        body: JSON.stringify({
+          command: 'sleep 10',
+          background: true,
+          sessionId: 'session-456'
+        })
       });
 
       const response = await executeHandler.handle(request, mockContext);
 
       expect(response.status).toBe(200);
-      const responseData = await response.json() as ProcessStartResult;
+      const responseData = (await response.json()) as ProcessStartResult;
       expect(responseData.success).toBe(true);
       expect(responseData.processId).toBe('proc-123');
       expect(responseData.pid).toBe(12345);
@@ -208,9 +239,15 @@ describe('ExecuteHandler', () => {
       new ReadableStream({
         start(controller) {
           // Simulate SSE events
-          controller.enqueue('data: {"type":"start","timestamp":"2023-01-01T00:00:00Z"}\\n\\n');
-          controller.enqueue('data: {"type":"stdout","data":"streaming test\\n","timestamp":"2023-01-01T00:00:01Z"}\\n\\n');
-          controller.enqueue('data: {"type":"complete","exitCode":0,"timestamp":"2023-01-01T00:00:02Z"}\\n\\n');
+          controller.enqueue(
+            'data: {"type":"start","timestamp":"2023-01-01T00:00:00Z"}\\n\\n'
+          );
+          controller.enqueue(
+            'data: {"type":"stdout","data":"streaming test\\n","timestamp":"2023-01-01T00:00:01Z"}\\n\\n'
+          );
+          controller.enqueue(
+            'data: {"type":"complete","exitCode":0,"timestamp":"2023-01-01T00:00:02Z"}\\n\\n'
+          );
           controller.close();
         }
       });
@@ -226,12 +263,16 @@ describe('ExecuteHandler', () => {
           pid: 12345,
           stdout: '',
           stderr: '',
-          outputListeners: new Set<(stream: 'stdout' | 'stderr', data: string) => void>(),
+          outputListeners: new Set<
+            (stream: 'stdout' | 'stderr', data: string) => void
+          >(),
           statusListeners: new Set<(status: string) => void>()
         }
       };
 
-      mocked(mockProcessService.startProcess).mockResolvedValue(mockStreamProcessResult);
+      mocked(mockProcessService.startProcess).mockResolvedValue(
+        mockStreamProcessResult
+      );
 
       const request = new Request('http://localhost:3000/api/execute/stream', {
         method: 'POST',

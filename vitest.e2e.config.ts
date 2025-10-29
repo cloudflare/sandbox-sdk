@@ -31,9 +31,9 @@ export default defineConfig({
     pool: 'forks',
     poolOptions: {
       forks: {
-        singleFork: true, // Force sequential execution
-      },
+        singleFork: true // Force sequential execution
+      }
     },
-    fileParallelism: false, // No parallel file execution
-  },
+    fileParallelism: false // No parallel file execution
+  }
 });

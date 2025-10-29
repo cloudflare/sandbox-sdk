@@ -19,7 +19,10 @@ export interface WranglerDevOptions {
  * NOTE: wrangler.jsonc is generated from wrangler.template.jsonc automatically
  * on first run. You don't need to run any setup commands manually.
  */
-export async function getTestWorkerUrl(): Promise<{ url: string; runner: WranglerDevRunner | null }> {
+export async function getTestWorkerUrl(): Promise<{
+  url: string;
+  runner: WranglerDevRunner | null;
+}> {
   // CI mode: use deployed worker URL
   if (process.env.TEST_WORKER_URL) {
     console.log('Using deployed test worker:', process.env.TEST_WORKER_URL);
@@ -82,13 +85,17 @@ export class WranglerDevRunner {
     this.process = spawn('npx', ['wrangler', 'dev'], {
       cwd: this.options.cwd,
       env: this.options.env || process.env,
-      stdio: 'pipe',
+      stdio: 'pipe'
     });
 
     // Capture stdout/stderr and extract URL
     this.urlPromise = new Promise((resolve, reject) => {
       const timeoutId = setTimeout(() => {
-        reject(new Error(`Timeout after ${this.timeout}ms waiting for wrangler dev to be ready`));
+        reject(
+          new Error(
+            `Timeout after ${this.timeout}ms waiting for wrangler dev to be ready`
+          )
+        );
       }, this.timeout);
 
       this.process.stdout.on('data', (data: Buffer) => {
@@ -118,11 +125,19 @@ export class WranglerDevRunner {
       this.process.on('exit', (code, signal) => {
         if (code !== 0 && code !== null) {
           clearTimeout(timeoutId);
-          reject(new Error(`Wrangler dev exited with code ${code} before becoming ready`));
+          reject(
+            new Error(
+              `Wrangler dev exited with code ${code} before becoming ready`
+            )
+          );
         }
         if (signal) {
           clearTimeout(timeoutId);
-          reject(new Error(`Wrangler dev killed by signal ${signal} before becoming ready`));
+          reject(
+            new Error(
+              `Wrangler dev killed by signal ${signal} before becoming ready`
+            )
+          );
         }
       });
     });
@@ -172,17 +187,19 @@ export class WranglerDevRunner {
     this.process.kill('SIGTERM');
 
     // Wait for process to exit (with timeout)
-    const exitPromise = new Promise<void>(resolve => {
+    const exitPromise = new Promise<void>((resolve) => {
       this.process.on('close', () => {
         console.log('Wrangler process stopped gracefully');
         resolve();
       });
     });
 
-    const timeoutPromise = new Promise<void>(resolve => {
+    const timeoutPromise = new Promise<void>((resolve) => {
       setTimeout(() => {
         if (!this.process.killed) {
-          console.warn('Wrangler process did not stop gracefully, sending SIGKILL');
+          console.warn(
+            'Wrangler process did not stop gracefully, sending SIGKILL'
+          );
           this.process.kill('SIGKILL');
         }
         resolve();

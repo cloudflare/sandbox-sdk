@@ -57,7 +57,7 @@ describe('Logger Module', () => {
         msg: 'Debug message',
         component: 'durable-object',
         traceId: 'tr_test123',
-        operation: 'test',
+        operation: 'test'
       });
     });
 
@@ -108,7 +108,7 @@ describe('Logger Module', () => {
       expect(logOutput.msg).toBe('Error occurred');
       expect(logOutput.error).toMatchObject({
         message: 'Test error',
-        stack: expect.stringContaining('Error: Test error'),
+        stack: expect.stringContaining('Error: Test error')
       });
     });
 
@@ -122,7 +122,9 @@ describe('Logger Module', () => {
       logger.info('Test message');
 
       const logOutput = JSON.parse(consoleLogSpy.mock.calls[0][0]);
-      expect(logOutput.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+      expect(logOutput.timestamp).toMatch(
+        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
+      );
     });
   });
 
@@ -187,12 +189,19 @@ describe('Logger Module', () => {
   describe('CloudflareLogger - Context Inheritance', () => {
     it('should create child logger with merged context', () => {
       const parentLogger = new CloudflareLogger(
-        { component: 'durable-object', traceId: 'tr_parent', sandboxId: 'sandbox-1' } as LogContext,
+        {
+          component: 'durable-object',
+          traceId: 'tr_parent',
+          sandboxId: 'sandbox-1'
+        } as LogContext,
         LogLevelEnum.INFO,
         false
       );
 
-      const childLogger = parentLogger.child({ operation: 'exec', commandId: 'cmd-123' });
+      const childLogger = parentLogger.child({
+        operation: 'exec',
+        commandId: 'cmd-123'
+      });
       childLogger.info('Child log');
 
       expect(consoleLogSpy).toHaveBeenCalledOnce();
@@ -202,7 +211,7 @@ describe('Logger Module', () => {
         traceId: 'tr_parent',
         sandboxId: 'sandbox-1',
         operation: 'exec',
-        commandId: 'cmd-123',
+        commandId: 'cmd-123'
       });
     });
 
@@ -225,7 +234,7 @@ describe('Logger Module', () => {
         traceId: 'tr_nest',
         sessionId: 'session-1',
         operation: 'exec',
-        commandId: 'cmd-456',
+        commandId: 'cmd-456'
       });
     });
 
@@ -249,7 +258,11 @@ describe('Logger Module', () => {
   describe('CloudflareLogger - Pretty Printing', () => {
     it('should use pretty printing when enabled', () => {
       const logger = new CloudflareLogger(
-        { component: 'durable-object', traceId: 'tr_pretty123456789', sandboxId: 'sandbox-1' } as LogContext,
+        {
+          component: 'durable-object',
+          traceId: 'tr_pretty123456789',
+          sandboxId: 'sandbox-1'
+        } as LogContext,
         LogLevelEnum.INFO,
         true // Enable pretty printing
       );
@@ -284,7 +297,7 @@ describe('Logger Module', () => {
       expect(JSON.parse(output)).toMatchObject({
         level: 'info',
         msg: 'JSON message',
-        component: 'container',
+        component: 'container'
       });
     });
 
@@ -381,7 +394,7 @@ describe('Logger Module', () => {
       const logger = createLogger({
         component: 'durable-object',
         traceId: 'tr_factory',
-        sandboxId: 'sandbox-1',
+        sandboxId: 'sandbox-1'
       });
 
       logger.info('Factory test');
@@ -391,13 +404,13 @@ describe('Logger Module', () => {
       expect(output).toMatchObject({
         component: 'durable-object',
         traceId: 'tr_factory',
-        sandboxId: 'sandbox-1',
+        sandboxId: 'sandbox-1'
       });
     });
 
     it('should auto-generate trace ID if not provided', () => {
       const logger = createLogger({
-        component: 'container',
+        component: 'container'
       });
 
       logger.info('Auto trace');
@@ -421,7 +434,7 @@ describe('Logger Module', () => {
     it('should store and retrieve logger from context', async () => {
       const logger = createLogger({
         component: 'durable-object',
-        traceId: 'tr_async',
+        traceId: 'tr_async'
       });
 
       await runWithLogger(logger, () => {
@@ -435,13 +448,15 @@ describe('Logger Module', () => {
     });
 
     it('should throw error when accessing logger outside context', () => {
-      expect(() => getLogger()).toThrow('Logger not initialized in async context');
+      expect(() => getLogger()).toThrow(
+        'Logger not initialized in async context'
+      );
     });
 
     it('should support nested runWithLogger calls', async () => {
       const parentLogger = createLogger({
         component: 'durable-object',
-        traceId: 'tr_parent',
+        traceId: 'tr_parent'
       });
 
       await runWithLogger(parentLogger, async () => {
@@ -456,7 +471,7 @@ describe('Logger Module', () => {
       const output = JSON.parse(consoleLogSpy.mock.calls[0][0]);
       expect(output).toMatchObject({
         traceId: 'tr_parent',
-        operation: 'exec',
+        operation: 'exec'
       });
     });
 
@@ -476,7 +491,9 @@ describe('Logger Module', () => {
       await Promise.all([promise1, promise2]);
 
       expect(consoleLogSpy).toHaveBeenCalledTimes(2);
-      const outputs = consoleLogSpy.mock.calls.map((call) => JSON.parse(call[0]));
+      const outputs = consoleLogSpy.mock.calls.map((call) =>
+        JSON.parse(call[0])
+      );
       const traceIds = outputs.map((o) => o.traceId);
 
       expect(traceIds).toContain('tr_1');
@@ -533,7 +550,8 @@ describe('Logger Module', () => {
         false
       );
 
-      const specialMessage = 'Message with "quotes", \\backslashes\\, and \n newlines';
+      const specialMessage =
+        'Message with "quotes", \\backslashes\\, and \n newlines';
       logger.info(specialMessage);
 
       expect(consoleLogSpy).toHaveBeenCalledOnce();

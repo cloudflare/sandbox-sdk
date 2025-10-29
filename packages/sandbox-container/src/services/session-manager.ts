@@ -4,7 +4,7 @@ import type { ExecEvent, Logger } from '@repo/shared';
 import type {
   CommandErrorContext,
   CommandNotFoundContext,
-  InternalErrorContext,
+  InternalErrorContext
 } from '@repo/shared/errors';
 import { ErrorCode } from '@repo/shared/errors';
 import type { ServiceResult } from '../core/types';
@@ -17,13 +17,14 @@ import { type RawExecResult, Session, type SessionOptions } from '../session';
 export class SessionManager {
   private sessions = new Map<string, Session>();
 
-  constructor(private logger: Logger) {
-  }
+  constructor(private logger: Logger) {}
 
   /**
    * Create a new persistent session
    */
-  async createSession(options: SessionOptions): Promise<ServiceResult<Session>> {
+  async createSession(
+    options: SessionOptions
+  ): Promise<ServiceResult<Session>> {
     try {
       // Check if session already exists
       if (this.sessions.has(options.id)) {
@@ -35,8 +36,8 @@ export class SessionManager {
             details: {
               sessionId: options.id,
               originalError: 'Session already exists'
-            } satisfies InternalErrorContext,
-          },
+            } satisfies InternalErrorContext
+          }
         };
       }
 
@@ -51,16 +52,21 @@ export class SessionManager {
 
       return {
         success: true,
-        data: session,
+        data: session
       };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      const errorMessage =
+        error instanceof Error ? error.message : 'Unknown error';
       const errorStack = error instanceof Error ? error.stack : undefined;
 
-      this.logger.error('Failed to create session', error instanceof Error ? error : undefined, {
-        sessionId: options.id,
-        originalError: errorMessage,
-      });
+      this.logger.error(
+        'Failed to create session',
+        error instanceof Error ? error : undefined,
+        {
+          sessionId: options.id,
+          originalError: errorMessage
+        }
+      );
 
       return {
         success: false,
@@ -71,8 +77,8 @@ export class SessionManager {
             sessionId: options.id,
             originalError: errorMessage,
             stack: errorStack
-          } satisfies InternalErrorContext,
-        },
+          } satisfies InternalErrorContext
+        }
       };
     }
   }
@@ -92,14 +98,14 @@ export class SessionManager {
           details: {
             sessionId,
             originalError: 'Session not found'
-          } satisfies InternalErrorContext,
-        },
+          } satisfies InternalErrorContext
+        }
       };
     }
 
     return {
       success: true,
-      data: session,
+      data: session
     };
   }
 
@@ -117,11 +123,15 @@ export class SessionManager {
       let sessionResult = await this.getSession(sessionId);
 
       // If session doesn't exist, create it automatically
-      if (!sessionResult.success && (sessionResult.error!.details as InternalErrorContext)?.originalError === 'Session not found') {
+      if (
+        !sessionResult.success &&
+        (sessionResult.error!.details as InternalErrorContext)
+          ?.originalError === 'Session not found'
+      ) {
         sessionResult = await this.createSession({
           id: sessionId,
           cwd: cwd || '/workspace',
-          commandTimeoutMs: timeoutMs, // Pass timeout to session
+          commandTimeoutMs: timeoutMs // Pass timeout to session
         });
       }
 
@@ -135,14 +145,19 @@ export class SessionManager {
 
       return {
         success: true,
-        data: result,
+        data: result
       };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Failed to execute command', error instanceof Error ? error : undefined, {
-        sessionId,
-        command,
-      });
+      const errorMessage =
+        error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error(
+        'Failed to execute command',
+        error instanceof Error ? error : undefined,
+        {
+          sessionId,
+          command
+        }
+      );
 
       return {
         success: false,
@@ -152,8 +167,8 @@ export class SessionManager {
           details: {
             command,
             stderr: errorMessage
-          } satisfies CommandErrorContext,
-        },
+          } satisfies CommandErrorContext
+        }
       };
     }
   }
@@ -180,15 +195,21 @@ export class SessionManager {
       let sessionResult = await this.getSession(sessionId);
 
       // If session doesn't exist, create it automatically
-      if (!sessionResult.success && (sessionResult.error!.details as InternalErrorContext)?.originalError === 'Session not found') {
+      if (
+        !sessionResult.success &&
+        (sessionResult.error!.details as InternalErrorContext)
+          ?.originalError === 'Session not found'
+      ) {
         sessionResult = await this.createSession({
           id: sessionId,
-          cwd: cwd || '/workspace',
+          cwd: cwd || '/workspace'
         });
       }
 
       if (!sessionResult.success) {
-        return sessionResult as ServiceResult<{ continueStreaming: Promise<void> }>;
+        return sessionResult as ServiceResult<{
+          continueStreaming: Promise<void>;
+        }>;
       }
 
       const session = sessionResult.data;
@@ -211,26 +232,36 @@ export class SessionManager {
             onEvent(event);
           }
         } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-          this.logger.error('Error during streaming', error instanceof Error ? error : undefined, {
-            sessionId,
-            commandId,
-            originalError: errorMessage
-          });
+          const errorMessage =
+            error instanceof Error ? error.message : 'Unknown error';
+          this.logger.error(
+            'Error during streaming',
+            error instanceof Error ? error : undefined,
+            {
+              sessionId,
+              commandId,
+              originalError: errorMessage
+            }
+          );
           throw error;
         }
       })();
 
       return {
         success: true,
-        data: { continueStreaming },
+        data: { continueStreaming }
       };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Failed to execute streaming command', error instanceof Error ? error : undefined, {
-        sessionId,
-        command,
-      });
+      const errorMessage =
+        error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error(
+        'Failed to execute streaming command',
+        error instanceof Error ? error : undefined,
+        {
+          sessionId,
+          command
+        }
+      );
 
       return {
         success: false,
@@ -240,8 +271,8 @@ export class SessionManager {
           details: {
             command,
             stderr: errorMessage
-          } satisfies CommandErrorContext,
-        },
+          } satisfies CommandErrorContext
+        }
       };
     }
   }
@@ -249,7 +280,10 @@ export class SessionManager {
   /**
    * Kill a running command in a session
    */
-  async killCommand(sessionId: string, commandId: string): Promise<ServiceResult<void>> {
+  async killCommand(
+    sessionId: string,
+    commandId: string
+  ): Promise<ServiceResult<void>> {
     try {
       const sessionResult = await this.getSession(sessionId);
 
@@ -269,20 +303,25 @@ export class SessionManager {
             code: ErrorCode.COMMAND_NOT_FOUND,
             details: {
               command: commandId
-            } satisfies CommandNotFoundContext,
-          },
+            } satisfies CommandNotFoundContext
+          }
         };
       }
 
       return {
-        success: true,
+        success: true
       };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Failed to kill command', error instanceof Error ? error : undefined, {
-        sessionId,
-        commandId,
-      });
+      const errorMessage =
+        error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error(
+        'Failed to kill command',
+        error instanceof Error ? error : undefined,
+        {
+          sessionId,
+          commandId
+        }
+      );
 
       return {
         success: false,
@@ -292,8 +331,8 @@ export class SessionManager {
           details: {
             processId: commandId,
             stderr: errorMessage
-          },
-        },
+          }
+        }
       };
     }
   }
@@ -301,16 +340,23 @@ export class SessionManager {
   /**
    * Set environment variables on a session
    */
-  async setEnvVars(sessionId: string, envVars: Record<string, string>): Promise<ServiceResult<void>> {
+  async setEnvVars(
+    sessionId: string,
+    envVars: Record<string, string>
+  ): Promise<ServiceResult<void>> {
     try {
       // Get or create session on demand
       let sessionResult = await this.getSession(sessionId);
 
       // If session doesn't exist, create it automatically
-      if (!sessionResult.success && (sessionResult.error!.details as InternalErrorContext)?.originalError === 'Session not found') {
+      if (
+        !sessionResult.success &&
+        (sessionResult.error!.details as InternalErrorContext)
+          ?.originalError === 'Session not found'
+      ) {
         sessionResult = await this.createSession({
           id: sessionId,
-          cwd: '/workspace',
+          cwd: '/workspace'
         });
       }
 
@@ -338,18 +384,23 @@ export class SessionManager {
                 command: `export ${key}='...'`,
                 exitCode: result.exitCode,
                 stderr: result.stderr
-              } satisfies CommandErrorContext,
-            },
+              } satisfies CommandErrorContext
+            }
           };
         }
       }
 
       return {
-        success: true,
+        success: true
       };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Failed to set environment variables', error instanceof Error ? error : undefined, { sessionId });
+      const errorMessage =
+        error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error(
+        'Failed to set environment variables',
+        error instanceof Error ? error : undefined,
+        { sessionId }
+      );
 
       return {
         success: false,
@@ -359,8 +410,8 @@ export class SessionManager {
           details: {
             command: 'export',
             stderr: errorMessage
-          } satisfies CommandErrorContext,
-        },
+          } satisfies CommandErrorContext
+        }
       };
     }
   }
@@ -381,8 +432,8 @@ export class SessionManager {
             details: {
               sessionId,
               originalError: 'Session not found'
-            } satisfies InternalErrorContext,
-          },
+            } satisfies InternalErrorContext
+          }
         };
       }
 
@@ -390,13 +441,18 @@ export class SessionManager {
       this.sessions.delete(sessionId);
 
       return {
-        success: true,
+        success: true
       };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Failed to delete session', error instanceof Error ? error : undefined, {
-        sessionId,
-      });
+      const errorMessage =
+        error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error(
+        'Failed to delete session',
+        error instanceof Error ? error : undefined,
+        {
+          sessionId
+        }
+      );
 
       return {
         success: false,
@@ -406,8 +462,8 @@ export class SessionManager {
           details: {
             sessionId,
             originalError: errorMessage
-          } satisfies InternalErrorContext,
-        },
+          } satisfies InternalErrorContext
+        }
       };
     }
   }
@@ -421,11 +477,15 @@ export class SessionManager {
 
       return {
         success: true,
-        data: sessionIds,
+        data: sessionIds
       };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Failed to list sessions', error instanceof Error ? error : undefined);
+      const errorMessage =
+        error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error(
+        'Failed to list sessions',
+        error instanceof Error ? error : undefined
+      );
 
       return {
         success: false,
@@ -434,8 +494,8 @@ export class SessionManager {
           code: ErrorCode.INTERNAL_ERROR,
           details: {
             originalError: errorMessage
-          } satisfies InternalErrorContext,
-        },
+          } satisfies InternalErrorContext
+        }
       };
     }
   }
@@ -448,9 +508,13 @@ export class SessionManager {
       try {
         await session.destroy();
       } catch (error) {
-        this.logger.error('Failed to destroy session', error instanceof Error ? error : undefined, {
-          sessionId,
-        });
+        this.logger.error(
+          'Failed to destroy session',
+          error instanceof Error ? error : undefined,
+          {
+            sessionId
+          }
+        );
       }
     }
 

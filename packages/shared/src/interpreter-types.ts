@@ -4,7 +4,7 @@ export interface CreateContextOptions {
    * Programming language for the context
    * @default 'python'
    */
-  language?: "python" | "javascript" | "typescript";
+  language?: 'python' | 'javascript' | 'typescript';
 
   /**
    * Working directory for the context
@@ -62,7 +62,7 @@ export interface RunCodeOptions {
    * Language to use if context is not provided
    * @default 'python'
    */
-  language?: "python" | "javascript" | "typescript";
+  language?: 'python' | 'javascript' | 'typescript';
 
   /**
    * Environment variables for this execution
@@ -183,13 +183,13 @@ export interface ChartData {
    * Type of chart
    */
   type:
-    | "line"
-    | "bar"
-    | "scatter"
-    | "pie"
-    | "histogram"
-    | "heatmap"
-    | "unknown";
+    | 'line'
+    | 'bar'
+    | 'scatter'
+    | 'pie'
+    | 'histogram'
+    | 'heatmap'
+    | 'unknown';
 
   /**
    * Chart title
@@ -214,7 +214,7 @@ export interface ChartData {
   /**
    * Library that generated the chart
    */
-  library?: "matplotlib" | "plotly" | "altair" | "seaborn" | "unknown";
+  library?: 'matplotlib' | 'plotly' | 'altair' | 'seaborn' | 'unknown';
 
   /**
    * Base64 encoded image if available
@@ -281,7 +281,7 @@ export class Execution {
    */
   public logs = {
     stdout: [] as string[],
-    stderr: [] as string[],
+    stderr: [] as string[]
   };
 
   /**
@@ -319,8 +319,8 @@ export class Execution {
         javascript: result.javascript,
         json: result.json,
         chart: result.chart,
-        data: result.data,
-      })),
+        data: result.data
+      }))
     };
   }
 }
@@ -330,39 +330,39 @@ export class ResultImpl implements Result {
   constructor(private raw: any) {}
 
   get text(): string | undefined {
-    return this.raw.text || this.raw.data?.["text/plain"];
+    return this.raw.text || this.raw.data?.['text/plain'];
   }
 
   get html(): string | undefined {
-    return this.raw.html || this.raw.data?.["text/html"];
+    return this.raw.html || this.raw.data?.['text/html'];
   }
 
   get png(): string | undefined {
-    return this.raw.png || this.raw.data?.["image/png"];
+    return this.raw.png || this.raw.data?.['image/png'];
   }
 
   get jpeg(): string | undefined {
-    return this.raw.jpeg || this.raw.data?.["image/jpeg"];
+    return this.raw.jpeg || this.raw.data?.['image/jpeg'];
   }
 
   get svg(): string | undefined {
-    return this.raw.svg || this.raw.data?.["image/svg+xml"];
+    return this.raw.svg || this.raw.data?.['image/svg+xml'];
   }
 
   get latex(): string | undefined {
-    return this.raw.latex || this.raw.data?.["text/latex"];
+    return this.raw.latex || this.raw.data?.['text/latex'];
   }
 
   get markdown(): string | undefined {
-    return this.raw.markdown || this.raw.data?.["text/markdown"];
+    return this.raw.markdown || this.raw.data?.['text/markdown'];
   }
 
   get javascript(): string | undefined {
-    return this.raw.javascript || this.raw.data?.["application/javascript"];
+    return this.raw.javascript || this.raw.data?.['application/javascript'];
   }
 
   get json(): any {
-    return this.raw.json || this.raw.data?.["application/json"];
+    return this.raw.json || this.raw.data?.['application/json'];
   }
 
   get chart(): ChartData | undefined {
@@ -375,16 +375,16 @@ export class ResultImpl implements Result {
 
   formats(): string[] {
     const formats: string[] = [];
-    if (this.text) formats.push("text");
-    if (this.html) formats.push("html");
-    if (this.png) formats.push("png");
-    if (this.jpeg) formats.push("jpeg");
-    if (this.svg) formats.push("svg");
-    if (this.latex) formats.push("latex");
-    if (this.markdown) formats.push("markdown");
-    if (this.javascript) formats.push("javascript");
-    if (this.json) formats.push("json");
-    if (this.chart) formats.push("chart");
+    if (this.text) formats.push('text');
+    if (this.html) formats.push('html');
+    if (this.png) formats.push('png');
+    if (this.jpeg) formats.push('jpeg');
+    if (this.svg) formats.push('svg');
+    if (this.latex) formats.push('latex');
+    if (this.markdown) formats.push('markdown');
+    if (this.javascript) formats.push('javascript');
+    if (this.json) formats.push('json');
+    if (this.chart) formats.push('chart');
     return formats;
   }
 }

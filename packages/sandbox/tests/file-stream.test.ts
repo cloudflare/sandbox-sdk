@@ -23,7 +23,7 @@ describe('File Streaming Utilities', () => {
         'data: {"type":"metadata","mimeType":"text/plain","size":11,"isBinary":false,"encoding":"utf-8"}\n\n',
         'data: {"type":"chunk","data":"Hello"}\n\n',
         'data: {"type":"chunk","data":" World"}\n\n',
-        'data: {"type":"complete","bytesRead":11}\n\n',
+        'data: {"type":"complete","bytesRead":11}\n\n'
       ]);
 
       const chunks: string[] = [];
@@ -44,7 +44,7 @@ describe('File Streaming Utilities', () => {
         mimeType: 'text/plain',
         size: 11,
         isBinary: false,
-        encoding: 'utf-8',
+        encoding: 'utf-8'
       });
     });
 
@@ -53,7 +53,7 @@ describe('File Streaming Utilities', () => {
       const stream = createMockSSEStream([
         'data: {"type":"metadata","mimeType":"image/png","size":4,"isBinary":true,"encoding":"base64"}\n\n',
         'data: {"type":"chunk","data":"dGVzdA=="}\n\n',
-        'data: {"type":"complete","bytesRead":4}\n\n',
+        'data: {"type":"complete","bytesRead":4}\n\n'
       ]);
 
       const chunks: (string | Uint8Array)[] = [];
@@ -101,7 +101,7 @@ describe('File Streaming Utilities', () => {
     it('should handle empty files', async () => {
       const stream = createMockSSEStream([
         'data: {"type":"metadata","mimeType":"text/plain","size":0,"isBinary":false,"encoding":"utf-8"}\n\n',
-        'data: {"type":"complete","bytesRead":0}\n\n',
+        'data: {"type":"complete","bytesRead":0}\n\n'
       ]);
 
       const chunks: string[] = [];
@@ -123,7 +123,7 @@ describe('File Streaming Utilities', () => {
       const stream = createMockSSEStream([
         'data: {"type":"metadata","mimeType":"text/plain","size":100,"isBinary":false,"encoding":"utf-8"}\n\n',
         'data: {"type":"chunk","data":"Hello"}\n\n',
-        'data: {"type":"error","error":"Read error: Permission denied"}\n\n',
+        'data: {"type":"error","error":"Read error: Permission denied"}\n\n'
       ]);
 
       const generator = streamFile(stream);
@@ -136,7 +136,9 @@ describe('File Streaming Utilities', () => {
         // Should have thrown
         expect(true).toBe(false);
       } catch (error) {
-        expect((error as Error).message).toContain('Read error: Permission denied');
+        expect((error as Error).message).toContain(
+          'Read error: Permission denied'
+        );
       }
     });
   });
@@ -147,7 +149,7 @@ describe('File Streaming Utilities', () => {
         'data: {"type":"metadata","mimeType":"text/plain","size":11,"isBinary":false,"encoding":"utf-8"}\n\n',
         'data: {"type":"chunk","data":"Hello"}\n\n',
         'data: {"type":"chunk","data":" World"}\n\n',
-        'data: {"type":"complete","bytesRead":11}\n\n',
+        'data: {"type":"complete","bytesRead":11}\n\n'
       ]);
 
       const result = await collectFile(stream);
@@ -157,7 +159,7 @@ describe('File Streaming Utilities', () => {
         mimeType: 'text/plain',
         size: 11,
         isBinary: false,
-        encoding: 'utf-8',
+        encoding: 'utf-8'
       });
     });
 
@@ -166,7 +168,7 @@ describe('File Streaming Utilities', () => {
       const stream = createMockSSEStream([
         'data: {"type":"metadata","mimeType":"image/png","size":4,"isBinary":true,"encoding":"base64"}\n\n',
         'data: {"type":"chunk","data":"dGVzdA=="}\n\n',
-        'data: {"type":"complete","bytesRead":4}\n\n',
+        'data: {"type":"complete","bytesRead":4}\n\n'
       ]);
 
       const result = await collectFile(stream);
@@ -182,7 +184,7 @@ describe('File Streaming Utilities', () => {
     it('should handle empty files', async () => {
       const stream = createMockSSEStream([
         'data: {"type":"metadata","mimeType":"text/plain","size":0,"isBinary":false,"encoding":"utf-8"}\n\n',
-        'data: {"type":"complete","bytesRead":0}\n\n',
+        'data: {"type":"complete","bytesRead":0}\n\n'
       ]);
 
       const result = await collectFile(stream);
@@ -195,7 +197,7 @@ describe('File Streaming Utilities', () => {
       const stream = createMockSSEStream([
         'data: {"type":"metadata","mimeType":"text/plain","size":100,"isBinary":false,"encoding":"utf-8"}\n\n',
         'data: {"type":"chunk","data":"Hello"}\n\n',
-        'data: {"type":"error","error":"File not found"}\n\n',
+        'data: {"type":"error","error":"File not found"}\n\n'
       ]);
 
       await expect(collectFile(stream)).rejects.toThrow('File not found');
@@ -205,7 +207,7 @@ describe('File Streaming Utilities', () => {
       // Create a stream with many chunks
       const chunkCount = 100;
       const events = [
-        'data: {"type":"metadata","mimeType":"text/plain","size":500,"isBinary":false,"encoding":"utf-8"}\n\n',
+        'data: {"type":"metadata","mimeType":"text/plain","size":500,"isBinary":false,"encoding":"utf-8"}\n\n'
       ];
 
       for (let i = 0; i < chunkCount; i++) {
@@ -227,7 +229,7 @@ describe('File Streaming Utilities', () => {
       // Create a stream with many base64 chunks
       const chunkCount = 100;
       const events = [
-        'data: {"type":"metadata","mimeType":"application/octet-stream","size":400,"isBinary":true,"encoding":"base64"}\n\n',
+        'data: {"type":"metadata","mimeType":"application/octet-stream","size":400,"isBinary":true,"encoding":"base64"}\n\n'
       ];
 
       for (let i = 0; i < chunkCount; i++) {
@@ -250,7 +252,7 @@ describe('File Streaming Utilities', () => {
     it('should handle streams with no metadata event', async () => {
       const stream = createMockSSEStream([
         'data: {"type":"chunk","data":"Hello"}\n\n',
-        'data: {"type":"complete","bytesRead":5}\n\n',
+        'data: {"type":"complete","bytesRead":5}\n\n'
       ]);
 
       // Without metadata, we don't know if it's binary or text
@@ -265,7 +267,9 @@ describe('File Streaming Utilities', () => {
         // Should have thrown
         expect(true).toBe(false);
       } catch (error) {
-        expect((error as Error).message).toContain('Received chunk before metadata');
+        expect((error as Error).message).toContain(
+          'Received chunk before metadata'
+        );
       }
     });
 
@@ -273,7 +277,7 @@ describe('File Streaming Utilities', () => {
       const stream = createMockSSEStream([
         'data: {"type":"metadata","mimeType":"text/plain","size":5,"isBinary":false,"encoding":"utf-8"}\n\n',
         'data: {invalid json\n\n',
-        'data: {"type":"complete","bytesRead":5}\n\n',
+        'data: {"type":"complete","bytesRead":5}\n\n'
       ]);
 
       // Malformed JSON is logged but doesn't break the stream
@@ -285,16 +289,16 @@ describe('File Streaming Utilities', () => {
     it('should handle base64 padding correctly', async () => {
       // Test various base64 strings with different padding
       const testCases = [
-        { input: 'YQ==', expected: 'a' },      // 1 byte, 2 padding
-        { input: 'YWI=', expected: 'ab' },    // 2 bytes, 1 padding
-        { input: 'YWJj', expected: 'abc' },   // 3 bytes, no padding
+        { input: 'YQ==', expected: 'a' }, // 1 byte, 2 padding
+        { input: 'YWI=', expected: 'ab' }, // 2 bytes, 1 padding
+        { input: 'YWJj', expected: 'abc' } // 3 bytes, no padding
       ];
 
       for (const testCase of testCases) {
         const stream = createMockSSEStream([
           `data: {"type":"metadata","mimeType":"application/octet-stream","size":${testCase.expected.length},"isBinary":true,"encoding":"base64"}\n\n`,
           `data: {"type":"chunk","data":"${testCase.input}"}\n\n`,
-          `data: {"type":"complete","bytesRead":${testCase.expected.length}}\n\n`,
+          `data: {"type":"complete","bytesRead":${testCase.expected.length}}\n\n`
         ]);
 
         const result = await collectFile(stream);

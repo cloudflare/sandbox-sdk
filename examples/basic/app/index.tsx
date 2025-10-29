@@ -1,11 +1,11 @@
-import type React from "react";
-import { useEffect, useRef, useState } from "react";
-import { createRoot } from "react-dom/client";
-import "katex/dist/katex.min.css";
-import "./style.css";
-import { codeExamples } from "../shared/examples";
-import { LaTeXRenderer } from "./components/LaTeXRenderer";
-import { MarkdownRenderer } from "./components/MarkdownRenderer";
+import type React from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { createRoot } from 'react-dom/client';
+import 'katex/dist/katex.min.css';
+import './style.css';
+import { codeExamples } from '../shared/examples';
+import { LaTeXRenderer } from './components/LaTeXRenderer';
+import { MarkdownRenderer } from './components/MarkdownRenderer';
 
 // Type definitions
 interface FileInfo {
@@ -90,11 +90,11 @@ class SandboxApiClient {
   private async doFetch(url: string, options: RequestInit): Promise<any> {
     const response = await fetch(`${this.baseUrl}${url}`, {
       headers: {
-        "Content-Type": "application/json",
-        "X-Sandbox-Client-Id": this.sandboxId,
-        ...options.headers,
+        'Content-Type': 'application/json',
+        'X-Sandbox-Client-Id': this.sandboxId,
+        ...options.headers
       },
-      ...options,
+      ...options
     });
 
     if (!response.ok) {
@@ -110,12 +110,12 @@ class SandboxApiClient {
     }
 
     try {
-      const result = await this.doFetch("/api/execute", {
-        method: "POST",
+      const result = await this.doFetch('/api/execute', {
+        method: 'POST',
         body: JSON.stringify({
-          command: `${command} ${args.join(" ")}`,
-          ...options,
-        }),
+          command: `${command} ${args.join(' ')}`,
+          ...options
+        })
       });
 
       if (this.onCommandComplete) {
@@ -138,78 +138,81 @@ class SandboxApiClient {
   }
 
   async listProcesses() {
-    return this.doFetch("/api/process/list", {
-      method: "GET",
+    return this.doFetch('/api/process/list', {
+      method: 'GET'
     });
   }
 
   async startProcess(command: string, args: string[], options: any = {}) {
-    return this.doFetch("/api/process/start", {
-      method: "POST",
+    return this.doFetch('/api/process/start', {
+      method: 'POST',
       body: JSON.stringify({
         command,
         args,
-        ...options,
-      }),
+        ...options
+      })
     });
   }
 
   async killProcess(processId: string) {
     return this.doFetch(`/api/process/${processId}`, {
-      method: "DELETE",
+      method: 'DELETE'
     });
   }
 
   async killAllProcesses() {
-    return this.doFetch("/api/process/kill-all", {
-      method: "DELETE",
+    return this.doFetch('/api/process/kill-all', {
+      method: 'DELETE'
     });
   }
 
   async getProcess(processId: string) {
     return this.doFetch(`/api/process/${processId}`, {
-      method: "GET",
+      method: 'GET'
     });
   }
 
   async getProcessLogs(processId: string) {
     return this.doFetch(`/api/process/${processId}/logs`, {
-      method: "GET",
+      method: 'GET'
     });
   }
 
   async exposePort(port: number, options: any = {}) {
-    return this.doFetch("/api/expose-port", {
-      method: "POST",
+    return this.doFetch('/api/expose-port', {
+      method: 'POST',
       body: JSON.stringify({
         port,
-        ...options,
-      }),
+        ...options
+      })
     });
   }
 
   async unexposePort(port: number) {
-    return this.doFetch("/api/unexpose-port", {
-      method: "POST",
-      body: JSON.stringify({ port }),
+    return this.doFetch('/api/unexpose-port', {
+      method: 'POST',
+      body: JSON.stringify({ port })
     });
   }
 
   async getExposedPorts() {
-    return this.doFetch("/api/exposed-ports", {
-      method: "GET",
+    return this.doFetch('/api/exposed-ports', {
+      method: 'GET'
     });
   }
 
-  async *streamProcessLogs(processId: string, options?: { signal?: AbortSignal }): AsyncGenerator<any> {
+  async *streamProcessLogs(
+    processId: string,
+    options?: { signal?: AbortSignal }
+  ): AsyncGenerator<any> {
     const response = await fetch(
       `${this.baseUrl}/api/process/${processId}/stream`,
       {
         headers: {
-          Accept: "text/event-stream",
-          "X-Sandbox-Client-Id": this.sandboxId,
+          Accept: 'text/event-stream',
+          'X-Sandbox-Client-Id': this.sandboxId
         },
-        signal: options?.signal,  // Pass the abort signal to fetch
+        signal: options?.signal // Pass the abort signal to fetch
       }
     );
 
@@ -219,7 +222,7 @@ class SandboxApiClient {
 
     const reader = response.body!.getReader();
     const decoder = new TextDecoder();
-    let buffer = ""; // Buffer for incomplete lines
+    let buffer = ''; // Buffer for incomplete lines
 
     try {
       while (true) {
@@ -231,21 +234,21 @@ class SandboxApiClient {
 
         // Process complete SSE events
         while (true) {
-          const eventEnd = buffer.indexOf("\n\n");
+          const eventEnd = buffer.indexOf('\n\n');
           if (eventEnd === -1) break; // No complete event yet
 
           const eventData = buffer.substring(0, eventEnd);
           buffer = buffer.substring(eventEnd + 2);
 
           // Parse the SSE event
-          const lines = eventData.split("\n");
+          const lines = eventData.split('\n');
           for (const line of lines) {
-            if (line.startsWith("data: ")) {
+            if (line.startsWith('data: ')) {
               try {
                 const event = JSON.parse(line.substring(6));
                 yield event;
               } catch (e) {
-                console.warn("Failed to parse SSE event:", line, e);
+                console.warn('Failed to parse SSE event:', line, e);
               }
             }
           }
@@ -257,23 +260,23 @@ class SandboxApiClient {
   }
 
   async writeFile(path: string, content: string, options: any = {}) {
-    return this.doFetch("/api/write", {
-      method: "POST",
+    return this.doFetch('/api/write', {
+      method: 'POST',
       body: JSON.stringify({
         path,
         content,
-        ...options,
-      }),
+        ...options
+      })
     });
   }
 
   async readFile(path: string, options: any = {}) {
-    return this.doFetch("/api/read", {
-      method: "POST",
+    return this.doFetch('/api/read', {
+      method: 'POST',
       body: JSON.stringify({
         path,
-        ...options,
-      }),
+        ...options
+      })
     });
   }
 
@@ -286,12 +289,12 @@ class SandboxApiClient {
     content: string;
   }> {
     const response = await fetch(`${this.baseUrl}/api/read/stream`, {
-      method: "POST",
+      method: 'POST',
       headers: {
-        "Content-Type": "application/json",
-        "X-Sandbox-Client-Id": this.sandboxId,
+        'Content-Type': 'application/json',
+        'X-Sandbox-Client-Id': this.sandboxId
       },
-      body: JSON.stringify({ path }),
+      body: JSON.stringify({ path })
     });
 
     if (!response.ok) {
@@ -301,13 +304,13 @@ class SandboxApiClient {
     // Parse SSE stream with proper buffering to handle chunk splitting
     const reader = response.body?.getReader();
     if (!reader) {
-      throw new Error("No response body");
+      throw new Error('No response body');
     }
 
     const decoder = new TextDecoder();
     let metadata: any = null;
-    let content = "";
-    let buffer = ""; // Buffer for incomplete lines
+    let content = '';
+    let buffer = ''; // Buffer for incomplete lines
 
     try {
       while (true) {
@@ -321,53 +324,57 @@ class SandboxApiClient {
         if (done) break;
 
         // Process complete lines from buffer
-        let newlineIndex = buffer.indexOf("\n");
+        let newlineIndex = buffer.indexOf('\n');
         while (newlineIndex !== -1) {
           const line = buffer.slice(0, newlineIndex).trim();
           buffer = buffer.slice(newlineIndex + 1);
 
-          if (line.startsWith("data: ")) {
+          if (line.startsWith('data: ')) {
             try {
               const data = JSON.parse(line.slice(6));
 
-              if (data.type === "metadata") {
+              if (data.type === 'metadata') {
                 metadata = data;
-              } else if (data.type === "chunk") {
+              } else if (data.type === 'chunk') {
                 content += data.data;
-              } else if (data.type === "complete") {
+              } else if (data.type === 'complete') {
                 return {
                   path,
-                  mimeType: metadata?.mimeType || "unknown",
+                  mimeType: metadata?.mimeType || 'unknown',
                   size: metadata?.size || 0,
                   isBinary: metadata?.isBinary || false,
-                  encoding: metadata?.encoding || "utf-8",
-                  content,
+                  encoding: metadata?.encoding || 'utf-8',
+                  content
                 };
-              } else if (data.type === "error") {
+              } else if (data.type === 'error') {
                 throw new Error(data.error);
               }
             } catch (parseError) {
-              console.error("Failed to parse SSE line:", line.substring(0, 100), parseError);
+              console.error(
+                'Failed to parse SSE line:',
+                line.substring(0, 100),
+                parseError
+              );
               // Skip malformed lines
             }
           }
 
-          newlineIndex = buffer.indexOf("\n");
+          newlineIndex = buffer.indexOf('\n');
         }
       }
 
       // Process any remaining data in buffer
-      if (buffer.trim().startsWith("data: ")) {
+      if (buffer.trim().startsWith('data: ')) {
         try {
           const data = JSON.parse(buffer.trim().slice(6));
-          if (data.type === "complete") {
+          if (data.type === 'complete') {
             return {
               path,
-              mimeType: metadata?.mimeType || "unknown",
+              mimeType: metadata?.mimeType || 'unknown',
               size: metadata?.size || 0,
               isBinary: metadata?.isBinary || false,
-              encoding: metadata?.encoding || "utf-8",
-              content,
+              encoding: metadata?.encoding || 'utf-8',
+              content
             };
           }
         } catch (e) {
@@ -378,85 +385,88 @@ class SandboxApiClient {
       reader.releaseLock();
     }
 
-    throw new Error("Stream ended unexpectedly");
+    throw new Error('Stream ended unexpectedly');
   }
 
   async deleteFile(path: string) {
-    return this.doFetch("/api/delete", {
-      method: "POST",
-      body: JSON.stringify({ path }),
+    return this.doFetch('/api/delete', {
+      method: 'POST',
+      body: JSON.stringify({ path })
     });
   }
 
   async renameFile(oldPath: string, newPath: string) {
-    return this.doFetch("/api/rename", {
-      method: "POST",
-      body: JSON.stringify({ oldPath, newPath }),
+    return this.doFetch('/api/rename', {
+      method: 'POST',
+      body: JSON.stringify({ oldPath, newPath })
     });
   }
 
   async moveFile(sourcePath: string, destinationPath: string) {
-    return this.doFetch("/api/move", {
-      method: "POST",
-      body: JSON.stringify({ sourcePath, destinationPath }),
+    return this.doFetch('/api/move', {
+      method: 'POST',
+      body: JSON.stringify({ sourcePath, destinationPath })
     });
   }
 
-  async listFiles(path: string, options: ListFilesOptions = {}): Promise<ListFilesResponse> {
-    return this.doFetch("/api/list-files", {
-      method: "POST",
-      body: JSON.stringify({ path, options }),
+  async listFiles(
+    path: string,
+    options: ListFilesOptions = {}
+  ): Promise<ListFilesResponse> {
+    return this.doFetch('/api/list-files', {
+      method: 'POST',
+      body: JSON.stringify({ path, options })
     });
   }
 
   async mkdir(path: string, options: any = {}) {
-    return this.doFetch("/api/mkdir", {
-      method: "POST",
+    return this.doFetch('/api/mkdir', {
+      method: 'POST',
       body: JSON.stringify({
         path,
-        ...options,
-      }),
+        ...options
+      })
     });
   }
 
   async gitCheckout(repoUrl: string, branch?: string, targetDir?: string) {
-    return this.doFetch("/api/git/checkout", {
-      method: "POST",
-      body: JSON.stringify({ repoUrl, branch, targetDir }),
+    return this.doFetch('/api/git/checkout', {
+      method: 'POST',
+      body: JSON.stringify({ repoUrl, branch, targetDir })
     });
   }
 
   async createTestBinaryFile() {
-    return this.doFetch("/api/create-test-binary", {
-      method: "POST",
+    return this.doFetch('/api/create-test-binary', {
+      method: 'POST'
     });
   }
 
   async setupNextjs(projectName?: string) {
-    return this.doFetch("/api/templates/nextjs", {
-      method: "POST",
-      body: JSON.stringify({ projectName }),
+    return this.doFetch('/api/templates/nextjs', {
+      method: 'POST',
+      body: JSON.stringify({ projectName })
     });
   }
 
   async setupReact(projectName?: string) {
-    return this.doFetch("/api/templates/react", {
-      method: "POST",
-      body: JSON.stringify({ projectName }),
+    return this.doFetch('/api/templates/react', {
+      method: 'POST',
+      body: JSON.stringify({ projectName })
     });
   }
 
   async setupVue(projectName?: string) {
-    return this.doFetch("/api/templates/vue", {
-      method: "POST",
-      body: JSON.stringify({ projectName }),
+    return this.doFetch('/api/templates/vue', {
+      method: 'POST',
+      body: JSON.stringify({ projectName })
     });
   }
 
   async setupStatic(projectName?: string) {
-    return this.doFetch("/api/templates/static", {
-      method: "POST",
-      body: JSON.stringify({ projectName }),
+    return this.doFetch('/api/templates/static', {
+      method: 'POST',
+      body: JSON.stringify({ projectName })
     });
   }
 
@@ -466,16 +476,16 @@ class SandboxApiClient {
     options: any = {}
   ): AsyncGenerator<any> {
     const response = await fetch(`${this.baseUrl}/api/execute/stream`, {
-      method: "POST",
+      method: 'POST',
       headers: {
-        "Content-Type": "application/json",
-        Accept: "text/event-stream",
-        "X-Sandbox-Client-Id": this.sandboxId,
+        'Content-Type': 'application/json',
+        Accept: 'text/event-stream',
+        'X-Sandbox-Client-Id': this.sandboxId
       },
       body: JSON.stringify({
-        command: `${command} ${args.join(" ")}`,
-        ...options,
-      }),
+        command: `${command} ${args.join(' ')}`,
+        ...options
+      })
     });
 
     if (!response.ok) {
@@ -484,7 +494,7 @@ class SandboxApiClient {
 
     const reader = response.body!.getReader();
     const decoder = new TextDecoder();
-    let buffer = ""; // Buffer for incomplete lines
+    let buffer = ''; // Buffer for incomplete lines
 
     try {
       while (true) {
@@ -496,21 +506,21 @@ class SandboxApiClient {
 
         // Process complete SSE events
         while (true) {
-          const eventEnd = buffer.indexOf("\n\n");
+          const eventEnd = buffer.indexOf('\n\n');
           if (eventEnd === -1) break; // No complete event yet
 
           const eventData = buffer.substring(0, eventEnd);
           buffer = buffer.substring(eventEnd + 2);
 
           // Parse the SSE event
-          const lines = eventData.split("\n");
+          const lines = eventData.split('\n');
           for (const line of lines) {
-            if (line.startsWith("data: ")) {
+            if (line.startsWith('data: ')) {
               try {
                 const event = JSON.parse(line.substring(6));
                 yield event;
               } catch (e) {
-                console.warn("Failed to parse SSE event:", line, e);
+                console.warn('Failed to parse SSE event:', line, e);
               }
             }
           }
@@ -526,45 +536,45 @@ class SandboxApiClient {
   }
 
   async ping() {
-    return this.doFetch("/api/ping", {
-      method: "GET",
+    return this.doFetch('/api/ping', {
+      method: 'GET'
     });
   }
 
   async createSession(sessionId?: string) {
-    return this.doFetch("/api/session/create", {
-      method: "POST",
-      body: JSON.stringify({ sessionId }),
+    return this.doFetch('/api/session/create', {
+      method: 'POST',
+      body: JSON.stringify({ sessionId })
     });
   }
 
   async clearSession(sessionId: string) {
     return this.doFetch(`/api/session/clear/${sessionId}`, {
-      method: "POST",
+      method: 'POST'
     });
   }
 
   // Notebook API methods
-  async createNotebookSession(language: string = "python") {
-    return this.doFetch("/api/notebook/session", {
-      method: "POST",
-      body: JSON.stringify({ language }),
+  async createNotebookSession(language: string = 'python') {
+    return this.doFetch('/api/notebook/session', {
+      method: 'POST',
+      body: JSON.stringify({ language })
     });
   }
 
   async *executeNotebookCell(
     code: string,
     sessionId: string,
-    language: string = "python"
+    language: string = 'python'
   ): AsyncGenerator<any> {
     const response = await fetch(`${this.baseUrl}/api/notebook/execute`, {
-      method: "POST",
+      method: 'POST',
       headers: {
-        "Content-Type": "application/json",
-        Accept: "text/event-stream",
-        "X-Sandbox-Client-Id": this.sandboxId,
+        'Content-Type': 'application/json',
+        Accept: 'text/event-stream',
+        'X-Sandbox-Client-Id': this.sandboxId
       },
-      body: JSON.stringify({ code, sessionId, language }),
+      body: JSON.stringify({ code, sessionId, language })
     });
 
     if (!response.ok) {
@@ -573,7 +583,7 @@ class SandboxApiClient {
 
     const reader = response.body!.getReader();
     const decoder = new TextDecoder();
-    let buffer = "";
+    let buffer = '';
 
     try {
       while (true) {
@@ -581,19 +591,19 @@ class SandboxApiClient {
         if (done) break;
 
         buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
 
         for (const line of lines) {
-          if (line.startsWith("data: ")) {
+          if (line.startsWith('data: ')) {
             const data = line.slice(6);
-            if (data === "[DONE]") continue;
+            if (data === '[DONE]') continue;
 
             try {
               const event = JSON.parse(data);
               yield event;
             } catch (e) {
-              console.warn("Failed to parse SSE event:", line, e);
+              console.warn('Failed to parse SSE event:', line, e);
             }
           }
         }
@@ -604,9 +614,9 @@ class SandboxApiClient {
   }
 
   async deleteNotebookSession(sessionId: string) {
-    return this.doFetch("/api/notebook/session", {
-      method: "DELETE",
-      body: JSON.stringify({ sessionId }),
+    return this.doFetch('/api/notebook/session', {
+      method: 'DELETE',
+      body: JSON.stringify({ sessionId })
     });
   }
 }
@@ -614,7 +624,7 @@ class SandboxApiClient {
 interface CommandResult {
   id: string;
   command: string;
-  status: "running" | "completed" | "error";
+  status: 'running' | 'completed' | 'error';
   stdout: string;
   stderr: string;
   exitCode?: number;
@@ -622,19 +632,19 @@ interface CommandResult {
 }
 
 type TabType =
-  | "commands"
-  | "processes"
-  | "ports"
-  | "streaming"
-  | "files"
-  | "notebook"
-  | "examples";
+  | 'commands'
+  | 'processes'
+  | 'ports'
+  | 'streaming'
+  | 'files'
+  | 'notebook'
+  | 'examples';
 
 interface ProcessInfo {
   id: string;
   pid?: number;
   command: string;
-  status: "starting" | "running" | "completed" | "failed" | "killed" | "error";
+  status: 'starting' | 'running' | 'completed' | 'failed' | 'killed' | 'error';
   startTime: string;
   endTime?: string;
   exitCode?: number;
@@ -649,20 +659,20 @@ interface ProcessLogs {
 function ProcessManagementTab({
   client,
   connectionStatus,
-  sessionId,
+  sessionId
 }: {
   client: SandboxApiClient | null;
-  connectionStatus: "disconnected" | "connecting" | "connected";
+  connectionStatus: 'disconnected' | 'connecting' | 'connected';
   sessionId: string | null;
 }) {
   const [processes, setProcesses] = useState<ProcessInfo[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [processCommand, setProcessCommand] = useState("");
+  const [processCommand, setProcessCommand] = useState('');
   const [processOptions, setProcessOptions] = useState({
-    env: "",
-    cwd: "",
-    timeout: "",
-    processId: "",
+    env: '',
+    cwd: '',
+    timeout: '',
+    processId: ''
   });
   const [selectedProcess, setSelectedProcess] = useState<string | null>(null);
   const [processLogs, setProcessLogs] = useState<ProcessLogs | null>(null);
@@ -670,14 +680,14 @@ function ProcessManagementTab({
 
   // Refresh processes list
   const refreshProcesses = async () => {
-    if (!client || connectionStatus !== "connected") return;
+    if (!client || connectionStatus !== 'connected') return;
 
     try {
       setIsLoading(true);
       const response = await client.listProcesses();
       setProcesses(response.processes);
     } catch (error) {
-      console.error("Failed to refresh processes:", error);
+      console.error('Failed to refresh processes:', error);
     } finally {
       setIsLoading(false);
     }
@@ -685,7 +695,7 @@ function ProcessManagementTab({
 
   // Auto-refresh processes every 2 seconds
   useEffect(() => {
-    if (connectionStatus === "connected") {
+    if (connectionStatus === 'connected') {
       refreshProcesses();
       const interval = setInterval(refreshProcesses, 2000);
       return () => clearInterval(interval);
@@ -694,7 +704,7 @@ function ProcessManagementTab({
 
   // Start a background process
   const startProcess = async () => {
-    if (!client || connectionStatus !== "connected" || !processCommand.trim())
+    if (!client || connectionStatus !== 'connected' || !processCommand.trim())
       return;
 
     try {
@@ -711,8 +721,8 @@ function ProcessManagementTab({
       // Parse environment variables
       if (processOptions.env.trim()) {
         const env: Record<string, string> = {};
-        processOptions.env.split(",").forEach((pair) => {
-          const [key, value] = pair.split("=");
+        processOptions.env.split(',').forEach((pair) => {
+          const [key, value] = pair.split('=');
           if (key && value) env[key.trim()] = value.trim();
         });
         options.env = env;
@@ -722,16 +732,16 @@ function ProcessManagementTab({
         processCommand.trim(),
         options
       );
-      console.log("Process started:", response);
+      console.log('Process started:', response);
 
       // Clear form
-      setProcessCommand("");
-      setProcessOptions({ env: "", cwd: "", timeout: "", processId: "" });
+      setProcessCommand('');
+      setProcessOptions({ env: '', cwd: '', timeout: '', processId: '' });
 
       // Refresh processes list
       await refreshProcesses();
     } catch (error: any) {
-      console.error("Failed to start process:", error);
+      console.error('Failed to start process:', error);
       alert(`Failed to start process: ${error.message || error}`);
     } finally {
       setIsStartingProcess(false);
@@ -740,81 +750,81 @@ function ProcessManagementTab({
 
   // Kill a process
   const killProcess = async (processId: string) => {
-    if (!client || connectionStatus !== "connected") return;
+    if (!client || connectionStatus !== 'connected') return;
 
     try {
       await client.killProcess(processId);
-      console.log("Process killed:", processId);
+      console.log('Process killed:', processId);
       await refreshProcesses();
     } catch (error: any) {
-      console.error("Failed to kill process:", error);
+      console.error('Failed to kill process:', error);
       alert(`Failed to kill process: ${error.message || error}`);
     }
   };
 
   // Kill all processes
   const killAllProcesses = async () => {
-    if (!client || connectionStatus !== "connected") return;
+    if (!client || connectionStatus !== 'connected') return;
 
-    if (!confirm("Are you sure you want to kill all processes?")) return;
+    if (!confirm('Are you sure you want to kill all processes?')) return;
 
     try {
       const response = await client.killAllProcesses();
-      console.log("Killed processes:", response.killedCount);
+      console.log('Killed processes:', response.killedCount);
       await refreshProcesses();
     } catch (error: any) {
-      console.error("Failed to kill all processes:", error);
+      console.error('Failed to kill all processes:', error);
       alert(`Failed to kill all processes: ${error.message || error}`);
     }
   };
 
   // Get process logs
   const getProcessLogs = async (processId: string) => {
-    if (!client || connectionStatus !== "connected") return;
+    if (!client || connectionStatus !== 'connected') return;
 
     try {
       const response = await client.getProcessLogs(processId);
       setProcessLogs(response);
       setSelectedProcess(processId);
     } catch (error: any) {
-      console.error("Failed to get process logs:", error);
+      console.error('Failed to get process logs:', error);
       alert(`Failed to get process logs: ${error.message || error}`);
     }
   };
 
-  const getStatusColor = (status: ProcessInfo["status"]) => {
+  const getStatusColor = (status: ProcessInfo['status']) => {
     switch (status) {
-      case "starting":
-        return "text-yellow-500";
-      case "running":
-        return "text-blue-500";
-      case "completed":
-        return "text-green-500";
-      case "failed":
-      case "error":
-        return "text-red-500";
-      case "killed":
-        return "text-orange-500";
+      case 'starting':
+        return 'text-yellow-500';
+      case 'running':
+        return 'text-blue-500';
+      case 'completed':
+        return 'text-green-500';
+      case 'failed':
+      case 'error':
+        return 'text-red-500';
+      case 'killed':
+        return 'text-orange-500';
       default:
-        return "text-gray-500";
+        return 'text-gray-500';
     }
   };
 
-  const getStatusIcon = (status: ProcessInfo["status"]) => {
+  const getStatusIcon = (status: ProcessInfo['status']) => {
     switch (status) {
-      case "starting":
-        return "⏳";
-      case "running":
-        return "🟢";
-      case "completed":
-        return "✅";
-      case "failed":
-      case "error":
-        return "❌";
-      case "killed":
-        return "🔶";
+      case 'starting':
+        return '⏳';
+      case 'running':
+        return '🟢';
+      case 'completed':
+        return '✅';
+      case 'failed':
+      case 'error':
+        return '❌';
+      case 'killed':
+        return '🔶';
       default:
-        return "⏳";
+        return '⏳';
     }
   };
 
@@ -828,7 +838,7 @@ function ProcessManagementTab({
             disabled={isLoading}
             className="btn btn-refresh"
           >
-            {isLoading ? "Refreshing..." : "Refresh"}
+            {isLoading ? 'Refreshing...' : 'Refresh'}
           </button>
           <button
             onClick={killAllProcesses}
@@ -862,7 +872,7 @@ function ProcessManagementTab({
               onChange={(e) =>
                 setProcessOptions((prev) => ({
                   ...prev,
-                  processId: e.target.value,
+                  processId: e.target.value
                 }))
               }
               className="process-input"
@@ -886,7 +896,7 @@ function ProcessManagementTab({
               onChange={(e) =>
                 setProcessOptions((prev) => ({
                   ...prev,
-                  timeout: e.target.value,
+                  timeout: e.target.value
                 }))
               }
               className="process-input"
@@ -907,11 +917,11 @@ function ProcessManagementTab({
             disabled={
               !processCommand.trim() ||
               isStartingProcess ||
-              connectionStatus !== "connected"
+              connectionStatus !== 'connected'
             }
             className="btn btn-start-process"
           >
-            {isStartingProcess ? "Starting..." : "Start Process"}
+            {isStartingProcess ? 'Starting...' : 'Start Process'}
           </button>
         </div>
 
@@ -921,10 +931,10 @@ function ProcessManagementTab({
           <div className="template-buttons">
             <button
               onClick={() => {
-                setProcessCommand("bun run server.js");
+                setProcessCommand('bun run server.js');
                 setProcessOptions((prev) => ({
                   ...prev,
-                  processId: "bun-server",
+                  processId: 'bun-server'
                 }));
               }}
               className="btn btn-template"
@@ -934,11 +944,11 @@ function ProcessManagementTab({
             <button
               onClick={() => {
                 setProcessCommand(
-                  "node -e \"setInterval(() => console.log('Heartbeat:', new Date().toISOString()), 2000)\""
+                  'node -e "setInterval(() => console.log(\'Heartbeat:\', new Date().toISOString()), 2000)"'
                 );
                 setProcessOptions((prev) => ({
                   ...prev,
-                  processId: "heartbeat",
+                  processId: 'heartbeat'
                 }));
               }}
               className="btn btn-template"
@@ -947,10 +957,10 @@ function ProcessManagementTab({
             </button>
             <button
               onClick={() => {
-                setProcessCommand("tail -f /var/log/messages");
+                setProcessCommand('tail -f /var/log/messages');
                 setProcessOptions((prev) => ({
                   ...prev,
-                  processId: "log-watcher",
+                  processId: 'log-watcher'
                 }));
               }}
               className="btn btn-template"
@@ -990,7 +1000,7 @@ function ProcessManagementTab({
                 </div>
                 <div className="process-id">{process.id}</div>
                 <div className="process-command">{process.command}</div>
-                <div className="process-pid">{process.pid || "N/A"}</div>
+                <div className="process-pid">{process.pid || 'N/A'}</div>
                 <div className="process-started">
                   {new Date(process.startTime).toLocaleString()}
                 </div>
@@ -1001,7 +1011,7 @@ function ProcessManagementTab({
                   >
                     Logs
                   </button>
-                  {process.status === "running" && (
+                  {process.status === 'running' && (
                     <button
                       onClick={() => killProcess(process.id)}
                       className="btn btn-small btn-kill"
@@ -1063,28 +1073,28 @@ interface ExposedPort {
 function PortManagementTab({
   client,
   connectionStatus,
-  sessionId,
+  sessionId
 }: {
   client: SandboxApiClient | null;
-  connectionStatus: "disconnected" | "connecting" | "connected";
+  connectionStatus: 'disconnected' | 'connecting' | 'connected';
   sessionId: string | null;
 }) {
   const [exposedPorts, setExposedPorts] = useState<ExposedPort[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [portNumber, setPortNumber] = useState("");
-  const [portName, setPortName] = useState("");
+  const [portNumber, setPortNumber] = useState('');
+  const [portName, setPortName] = useState('');
   const [isExposing, setIsExposing] = useState(false);
 
   // Refresh exposed ports
   const refreshPorts = async () => {
-    if (!client || connectionStatus !== "connected") return;
+    if (!client || connectionStatus !== 'connected') return;
 
     try {
       setIsLoading(true);
       const response = await client.getExposedPorts();
       setExposedPorts(response.ports);
     } catch (error) {
-      console.error("Failed to refresh ports:", error);
+      console.error('Failed to refresh ports:', error);
     } finally {
       setIsLoading(false);
     }
@@ -1092,7 +1102,7 @@ function PortManagementTab({
 
   // Auto-refresh ports every 3 seconds
   useEffect(() => {
-    if (connectionStatus === "connected") {
+    if (connectionStatus === 'connected') {
       refreshPorts();
       const interval = setInterval(refreshPorts, 3000);
       return () => clearInterval(interval);
@@ -1101,7 +1111,7 @@ function PortManagementTab({
 
   // Expose a port
   const exposePort = async () => {
-    if (!client || connectionStatus !== "connected" || !portNumber.trim())
+    if (!client || connectionStatus !== 'connected' || !portNumber.trim())
       return;
 
     try {
@@ -1110,16 +1120,16 @@ function PortManagementTab({
       const options = portName.trim() ? { name: portName.trim() } : undefined;
 
       const response = await client.exposePort(port, options?.name);
-      console.log("Port exposed:", response);
+      console.log('Port exposed:', response);
 
       // Clear form
-      setPortNumber("");
-      setPortName("");
+      setPortNumber('');
+      setPortName('');
 
       // Refresh ports list
       await refreshPorts();
     } catch (error: any) {
-      console.error("Failed to expose port:", error);
+      console.error('Failed to expose port:', error);
       alert(`Failed to expose port: ${error.message || error}`);
     } finally {
       setIsExposing(false);
@@ -1128,21 +1138,21 @@ function PortManagementTab({
 
   // Unexpose a port
   const unexposePort = async (port: number) => {
-    if (!client || connectionStatus !== "connected") return;
+    if (!client || connectionStatus !== 'connected') return;
 
     try {
       await client.unexposePort(port);
-      console.log("Port unexposed:", port);
+      console.log('Port unexposed:', port);
       await refreshPorts();
     } catch (error: any) {
-      console.error("Failed to unexpose port:", error);
+      console.error('Failed to unexpose port:', error);
       alert(`Failed to unexpose port: ${error.message || error}`);
     }
   };
 
   // Server templates
   const deployBunServer = async () => {
-    if (!client || connectionStatus !== "connected") return;
+    if (!client || connectionStatus !== 'connected') return;
 
     try {
       setIsExposing(true);
@@ -1178,23 +1188,23 @@ Bun.serve({
 console.log("Bun server running on port 8080");
       `.trim();
 
-      await client.writeFile("server.js", serverCode);
+      await client.writeFile('server.js', serverCode);
 
       // Start the server as a background process
-      await client.startProcess("bun", ["run", "server.js"], {
-        processId: "bun-server",
-        sessionId,
+      await client.startProcess('bun', ['run', 'server.js'], {
+        processId: 'bun-server',
+        sessionId
       });
 
       // Wait a moment for server to start
       await new Promise((resolve) => setTimeout(resolve, 2000));
 
       // Expose the port
-      await client.exposePort(8080, "bun-server");
+      await client.exposePort(8080, 'bun-server');
 
       await refreshPorts();
     } catch (error: any) {
-      console.error("Failed to deploy Bun server:", error);
+      console.error('Failed to deploy Bun server:', error);
       alert(`Failed to deploy Bun server: ${error.message || error}`);
     } finally {
       setIsExposing(false);
@@ -1202,7 +1212,7 @@ console.log("Bun server running on port 8080");
   };
 
   const deployNodeServer = async () => {
-    if (!client || connectionStatus !== "connected") return;
+    if (!client || connectionStatus !== 'connected') return;
 
     try {
       setIsExposing(true);
@@ -1246,23 +1256,23 @@ server.listen(3001, () => {
 });
       `.trim();
 
-      await client.writeFile("node-server.js", serverCode);
+      await client.writeFile('node-server.js', serverCode);
 
       // Start the server as a background process
-      await client.startProcess("node", ["node-server.js"], {
-        processId: "node-server",
-        sessionId,
+      await client.startProcess('node', ['node-server.js'], {
+        processId: 'node-server',
+        sessionId
       });
 
       // Wait a moment for server to start
       await new Promise((resolve) => setTimeout(resolve, 2000));
 
       // Expose the port
-      await client.exposePort(3001, "node-server");
+      await client.exposePort(3001, 'node-server');
 
       await refreshPorts();
     } catch (error: any) {
-      console.error("Failed to deploy Node server:", error);
+      console.error('Failed to deploy Node server:', error);
       alert(`Failed to deploy Node server: ${error.message || error}`);
     } finally {
       setIsExposing(false);
@@ -1270,7 +1280,7 @@ server.listen(3001, () => {
   };
 
   const deployPythonServer = async () => {
-    if (!client || connectionStatus !== "connected") return;
+    if (!client || connectionStatus !== 'connected') return;
 
     try {
       setIsExposing(true);
@@ -1319,23 +1329,23 @@ with socketserver.TCPServer(("", PORT), MyHandler) as httpd:
     httpd.serve_forever()
       `.trim();
 
-      await client.writeFile("python-server.py", serverCode);
+      await client.writeFile('python-server.py', serverCode);
 
       // Start the server as a background process
-      await client.startProcess("python3", ["python-server.py"], {
-        processId: "python-server",
-        sessionId,
+      await client.startProcess('python3', ['python-server.py'], {
+        processId: 'python-server',
+        sessionId
       });
 
       // Wait a moment for server to start
       await new Promise((resolve) => setTimeout(resolve, 2000));
 
       // Expose the port
-      await client.exposePort(8000, "python-server");
+      await client.exposePort(8000, 'python-server');
 
       await refreshPorts();
     } catch (error: any) {
-      console.error("Failed to deploy Python server:", error);
+      console.error('Failed to deploy Python server:', error);
       alert(`Failed to deploy Python server: ${error.message || error}`);
     } finally {
       setIsExposing(false);
@@ -1352,7 +1362,7 @@ with socketserver.TCPServer(("", PORT), MyHandler) as httpd:
             disabled={isLoading}
             className="btn btn-refresh"
           >
-            {isLoading ? "Refreshing..." : "Refresh"}
+            {isLoading ? 'Refreshing...' : 'Refresh'}
           </button>
         </div>
       </div>
@@ -1385,11 +1395,11 @@ with socketserver.TCPServer(("", PORT), MyHandler) as httpd:
             disabled={
               !portNumber.trim() ||
               isExposing ||
-              connectionStatus !== "connected"
+              connectionStatus !== 'connected'
             }
             className="btn btn-expose-port"
           >
-            {isExposing ? "Exposing..." : "Expose Port"}
+            {isExposing ? 'Exposing...' : 'Expose Port'}
           </button>
         </div>
 
@@ -1399,21 +1409,21 @@ with socketserver.TCPServer(("", PORT), MyHandler) as httpd:
           <div className="template-buttons">
             <button
               onClick={deployBunServer}
-              disabled={isExposing || connectionStatus !== "connected"}
+              disabled={isExposing || connectionStatus !== 'connected'}
               className="btn btn-template"
             >
               🟨 Bun Server (8080)
             </button>
             <button
               onClick={deployNodeServer}
-              disabled={isExposing || connectionStatus !== "connected"}
+              disabled={isExposing || connectionStatus !== 'connected'}
               className="btn btn-template"
             >
               🟢 Node.js Server (3001)
             </button>
             <button
               onClick={deployPythonServer}
-              disabled={isExposing || connectionStatus !== "connected"}
+              disabled={isExposing || connectionStatus !== 'connected'}
               className="btn btn-template"
             >
               🐍 Python Server (8000)
@@ -1460,7 +1470,7 @@ with socketserver.TCPServer(("", PORT), MyHandler) as httpd:
 
                 <div className="port-actions">
                   <button
-                    onClick={() => window.open(port.url, "_blank")}
+                    onClick={() => window.open(port.url, '_blank')}
                     className="btn btn-small btn-visit"
                   >
                     Visit
@@ -1506,7 +1516,7 @@ with socketserver.TCPServer(("", PORT), MyHandler) as httpd:
 
 interface StreamEvent {
   id: string;
-  type: "start" | "stdout" | "stderr" | "complete" | "error";
+  type: 'start' | 'stdout' | 'stderr' | 'complete' | 'error';
   timestamp: string;
   data?: string;
   command?: string;
@@ -1516,7 +1526,7 @@ interface StreamEvent {
 
 interface LogStreamEvent {
   id: string;
-  type: "stdout" | "stderr" | "status" | "error";
+  type: 'stdout' | 'stderr' | 'status' | 'error';
   timestamp: string;
   data: string;
   processId: string;
@@ -1525,7 +1535,7 @@ interface LogStreamEvent {
 
 interface ActiveStream {
   id: string;
-  type: "command" | "process-logs";
+  type: 'command' | 'process-logs';
   title: string;
   command?: string;
   processId?: string;
@@ -1536,40 +1546,42 @@ interface ActiveStream {
 
 function FilesTab({
   client,
-  connectionStatus,
+  connectionStatus
 }: {
   client: SandboxApiClient | null;
-  connectionStatus: "disconnected" | "connecting" | "connected";
+  connectionStatus: 'disconnected' | 'connecting' | 'connected';
 }) {
-  const [currentPath, setCurrentPath] = useState("/");
+  const [currentPath, setCurrentPath] = useState('/');
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
-  const [fileContent, setFileContent] = useState<string>("");
+  const [fileContent, setFileContent] = useState<string>('');
   const [isReading, setIsReading] = useState(false);
   const [results, setResults] = useState<
-    Array<{ type: "success" | "error"; message: string; timestamp: Date }>
+    Array<{ type: 'success' | 'error'; message: string; timestamp: Date }>
   >([]);
 
   // File Operations
-  const [newFileName, setNewFileName] = useState("");
-  const [newFileContent, setNewFileContent] = useState("");
-  const [newDirName, setNewDirName] = useState("");
-  const [renameOldPath, setRenameOldPath] = useState("");
-  const [renameNewPath, setRenameNewPath] = useState("");
-  const [moveSourcePath, setMoveSourcePath] = useState("");
-  const [moveDestPath, setMoveDestPath] = useState("");
-  const [deleteFilePath, setDeleteFilePath] = useState("");
-  const [listPath, setListPath] = useState("/workspace");
+  const [newFileName, setNewFileName] = useState('');
+  const [newFileContent, setNewFileContent] = useState('');
+  const [newDirName, setNewDirName] = useState('');
+  const [renameOldPath, setRenameOldPath] = useState('');
+  const [renameNewPath, setRenameNewPath] = useState('');
+  const [moveSourcePath, setMoveSourcePath] = useState('');
+  const [moveDestPath, setMoveDestPath] = useState('');
+  const [deleteFilePath, setDeleteFilePath] = useState('');
+  const [listPath, setListPath] = useState('/workspace');
   const [listRecursive, setListRecursive] = useState(false);
   const [listHidden, setListHidden] = useState(false);
   const [listedFiles, setListedFiles] = useState<FileInfo[]>([]);
 
   // Git Operations
-  const [gitRepoUrl, setGitRepoUrl] = useState("");
-  const [gitBranch, setGitBranch] = useState("main");
-  const [gitTargetDir, setGitTargetDir] = useState("");
+  const [gitRepoUrl, setGitRepoUrl] = useState('');
+  const [gitBranch, setGitBranch] = useState('main');
+  const [gitTargetDir, setGitTargetDir] = useState('');
 
   // Binary File Support
-  const [binaryFilePath, setBinaryFilePath] = useState("/workspace/demo-chart.png");
+  const [binaryFilePath, setBinaryFilePath] = useState(
+    '/workspace/demo-chart.png'
+  );
   const [binaryFileMetadata, setBinaryFileMetadata] = useState<{
     path: string;
     mimeType: string;
@@ -1582,7 +1594,7 @@ function FilesTab({
   const [isReadingBinary, setIsReadingBinary] = useState(false);
   const [useStreaming, setUseStreaming] = useState(false);
 
-  const addResult = (type: "success" | "error", message: string) => {
+  const addResult = (type: 'success' | 'error', message: string) => {
     setResults((prev) => [...prev, { type, message, timestamp: new Date() }]);
   };
 
@@ -1591,11 +1603,11 @@ function FilesTab({
     setIsReading(true);
     try {
       const result = await client.readFile(selectedFile);
-      setFileContent(result.content || "");
-      addResult("success", `Read file: ${selectedFile}`);
+      setFileContent(result.content || '');
+      addResult('success', `Read file: ${selectedFile}`);
     } catch (error: any) {
-      addResult("error", `Failed to read ${selectedFile}: ${error.message}`);
-      setFileContent("");
+      addResult('error', `Failed to read ${selectedFile}: ${error.message}`);
+      setFileContent('');
     } finally {
       setIsReading(false);
     }
@@ -1605,11 +1617,11 @@ function FilesTab({
     if (!client || !newFileName.trim()) return;
     try {
       await client.writeFile(newFileName, newFileContent);
-      addResult("success", `Created file: ${newFileName}`);
-      setNewFileName("");
-      setNewFileContent("");
+      addResult('success', `Created file: ${newFileName}`);
+      setNewFileName('');
+      setNewFileContent('');
     } catch (error: any) {
-      addResult("error", `Failed to create file: ${error.message}`);
+      addResult('error', `Failed to create file: ${error.message}`);
     }
   };
 
@@ -1617,10 +1629,10 @@ function FilesTab({
     if (!client || !newDirName.trim()) return;
     try {
       await client.mkdir(newDirName, { recursive: true });
-      addResult("success", `Created directory: ${newDirName}`);
-      setNewDirName("");
+      addResult('success', `Created directory: ${newDirName}`);
+      setNewDirName('');
     } catch (error: any) {
-      addResult("error", `Failed to create directory: ${error.message}`);
+      addResult('error', `Failed to create directory: ${error.message}`);
     }
   };
 
@@ -1628,11 +1640,11 @@ function FilesTab({
     if (!client || !renameOldPath.trim() || !renameNewPath.trim()) return;
     try {
       await client.renameFile(renameOldPath, renameNewPath);
-      addResult("success", `Renamed: ${renameOldPath} → ${renameNewPath}`);
-      setRenameOldPath("");
-      setRenameNewPath("");
+      addResult('success', `Renamed: ${renameOldPath} → ${renameNewPath}`);
+      setRenameOldPath('');
+      setRenameNewPath('');
     } catch (error: any) {
-      addResult("error", `Failed to rename: ${error.message}`);
+      addResult('error', `Failed to rename: ${error.message}`);
     }
   };
 
@@ -1640,11 +1652,11 @@ function FilesTab({
     if (!client || !moveSourcePath.trim() || !moveDestPath.trim()) return;
     try {
       await client.moveFile(moveSourcePath, moveDestPath);
-      addResult("success", `Moved: ${moveSourcePath} → ${moveDestPath}`);
-      setMoveSourcePath("");
-      setMoveDestPath("");
+      addResult('success', `Moved: ${moveSourcePath} → ${moveDestPath}`);
+      setMoveSourcePath('');
+      setMoveDestPath('');
     } catch (error: any) {
-      addResult("error", `Failed to move: ${error.message}`);
+      addResult('error', `Failed to move: ${error.message}`);
     }
   };
 
@@ -1652,10 +1664,10 @@ function FilesTab({
     if (!client || !deleteFilePath.trim()) return;
     try {
       await client.deleteFile(deleteFilePath);
-      addResult("success", `Deleted: ${deleteFilePath}`);
-      setDeleteFilePath("");
+      addResult('success', `Deleted: ${deleteFilePath}`);
+      setDeleteFilePath('');
     } catch (error: any) {
-      addResult("error", `Failed to delete: ${error.message}`);
+      addResult('error', `Failed to delete: ${error.message}`);
     }
   };
 
@@ -1664,23 +1676,23 @@ function FilesTab({
     try {
       const result = await client.listFiles(listPath, {
         recursive: listRecursive,
-        includeHidden: listHidden,
+        includeHidden: listHidden
       });
-      
+
       // Sort files for proper tree display using relativePath
       const sortedFiles = (result.files || []).sort((a, b) => {
         // Use relativePath for cleaner sorting
-        const aSegments = a.relativePath.split('/').filter(s => s);
-        const bSegments = b.relativePath.split('/').filter(s => s);
-        
+        const aSegments = a.relativePath.split('/').filter((s) => s);
+        const bSegments = b.relativePath.split('/').filter((s) => s);
+
         // Compare segment by segment
         const minLength = Math.min(aSegments.length, bSegments.length);
-        
+
         for (let i = 0; i < minLength; i++) {
           // If we're at the last segment for either path
           const aIsLast = i === aSegments.length - 1;
           const bIsLast = i === bSegments.length - 1;
-          
+
           // If one is a parent of the other
           if (aIsLast && !bIsLast) {
             // a is a parent directory of b (if a is a directory)
@@ -1690,28 +1702,28 @@ function FilesTab({
             // b is a parent directory of a (if b is a directory)
             return b.type === 'directory' ? 1 : -1;
           }
-          
+
           // If both are at the same level (both last or both not last)
           if (aIsLast && bIsLast) {
             // Same directory level - directories first, then alphabetical
             if (a.type === 'directory' && b.type !== 'directory') return -1;
             if (a.type !== 'directory' && b.type === 'directory') return 1;
           }
-          
+
           // Compare the segments alphabetically
           const segmentCompare = aSegments[i].localeCompare(bSegments[i]);
           if (segmentCompare !== 0) return segmentCompare;
         }
-        
+
         // If we get here, one path is a prefix of the other
         // The shorter path (parent) should come first
         return aSegments.length - bSegments.length;
       });
-      
+
       setListedFiles(sortedFiles);
-      addResult("success", `Listed ${result.count || 0} files in: ${listPath}`);
+      addResult('success', `Listed ${result.count || 0} files in: ${listPath}`);
     } catch (error: any) {
-      addResult("error", `Failed to list files: ${error.message}`);
+      addResult('error', `Failed to list files: ${error.message}`);
       setListedFiles([]);
     }
   };
@@ -1721,17 +1733,17 @@ function FilesTab({
     try {
       await client.gitCheckout(
         gitRepoUrl,
-        gitBranch || "main",
+        gitBranch || 'main',
         gitTargetDir || undefined
       );
       addResult(
-        "success",
+        'success',
         `Cloned: ${gitRepoUrl} (${gitBranch}) → ${
-          gitTargetDir || "current directory"
+          gitTargetDir || 'current directory'
         }`
       );
     } catch (error: any) {
-      addResult("error", `Failed to clone repository: ${error.message}`);
+      addResult('error', `Failed to clone repository: ${error.message}`);
     }
   };
 
@@ -1740,12 +1752,12 @@ function FilesTab({
     setIsCreatingBinary(true);
     try {
       const result = await client.createTestBinaryFile();
-      addResult("success", `Created test PNG: ${result.path}`);
+      addResult('success', `Created test PNG: ${result.path}`);
       setBinaryFilePath(result.path);
       // Clear any existing metadata to show fresh state
       setBinaryFileMetadata(null);
     } catch (error: any) {
-      addResult("error", `Failed to create test binary: ${error.message}`);
+      addResult('error', `Failed to create test binary: ${error.message}`);
     } finally {
       setIsCreatingBinary(false);
     }
@@ -1761,15 +1773,18 @@ function FilesTab({
 
       setBinaryFileMetadata({
         path: result.path,
-        mimeType: result.mimeType || "unknown",
+        mimeType: result.mimeType || 'unknown',
         size: result.size || 0,
         isBinary: result.isBinary || false,
-        encoding: result.encoding || "utf-8",
-        content: result.content,
+        encoding: result.encoding || 'utf-8',
+        content: result.content
       });
-      addResult("success", `Read binary file with metadata${useStreaming ? ' (streamed)' : ''}: ${binaryFilePath}`);
+      addResult(
+        'success',
+        `Read binary file with metadata${useStreaming ? ' (streamed)' : ''}: ${binaryFilePath}`
+      );
     } catch (error: any) {
-      addResult("error", `Failed to read binary file: ${error.message}`);
+      addResult('error', `Failed to read binary file: ${error.message}`);
       setBinaryFileMetadata(null);
     } finally {
       setIsReadingBinary(false);
@@ -1788,18 +1803,18 @@ function FilesTab({
             <input
               type="text"
               placeholder="File path (e.g., /workspace/package.json)"
-              value={selectedFile || ""}
+              value={selectedFile || ''}
               onChange={(e) => setSelectedFile(e.target.value)}
               className="file-input"
             />
             <button
               onClick={handleReadFile}
               disabled={
-                !selectedFile || isReading || connectionStatus !== "connected"
+                !selectedFile || isReading || connectionStatus !== 'connected'
               }
               className="action-button"
             >
-              {isReading ? "Reading..." : "Read"}
+              {isReading ? 'Reading...' : 'Read'}
             </button>
           </div>
           {fileContent && (
@@ -1833,7 +1848,7 @@ function FilesTab({
           </div>
           <button
             onClick={handleWriteFile}
-            disabled={!newFileName.trim() || connectionStatus !== "connected"}
+            disabled={!newFileName.trim() || connectionStatus !== 'connected'}
             className="action-button"
           >
             Create File
@@ -1853,7 +1868,7 @@ function FilesTab({
             />
             <button
               onClick={handleCreateDir}
-              disabled={!newDirName.trim() || connectionStatus !== "connected"}
+              disabled={!newDirName.trim() || connectionStatus !== 'connected'}
               className="action-button"
             >
               Create Directory
@@ -1884,7 +1899,7 @@ function FilesTab({
               disabled={
                 !renameOldPath.trim() ||
                 !renameNewPath.trim() ||
-                connectionStatus !== "connected"
+                connectionStatus !== 'connected'
               }
               className="action-button"
             >
@@ -1916,7 +1931,7 @@ function FilesTab({
               disabled={
                 !moveSourcePath.trim() ||
                 !moveDestPath.trim() ||
-                connectionStatus !== "connected"
+                connectionStatus !== 'connected'
               }
               className="action-button"
             >
@@ -1939,7 +1954,7 @@ function FilesTab({
             <button
               onClick={handleDeleteFile}
               disabled={
-                !deleteFilePath.trim() || connectionStatus !== "connected"
+                !deleteFilePath.trim() || connectionStatus !== 'connected'
               }
               className="action-button delete-button"
             >
@@ -1961,7 +1976,7 @@ function FilesTab({
             />
             <button
               onClick={handleListFiles}
-              disabled={!listPath.trim() || connectionStatus !== "connected"}
+              disabled={!listPath.trim() || connectionStatus !== 'connected'}
               className="action-button"
             >
               List Files
@@ -1991,27 +2006,35 @@ function FilesTab({
               <div className="file-list">
                 {listedFiles.map((file, index) => {
                   // Calculate indentation level using the relativePath field
-                  const depth = listRecursive ? (file.relativePath.split('/').filter(s => s).length - 1) : 0;
-                  
+                  const depth = listRecursive
+                    ? file.relativePath.split('/').filter((s) => s).length - 1
+                    : 0;
+
                   // For directories, add a trailing slash for clarity
-                  const displayName = file.type === 'directory' ? `${file.name}/` : file.name;
-                  
+                  const displayName =
+                    file.type === 'directory' ? `${file.name}/` : file.name;
+
                   // Add tree-like prefix for better hierarchy visualization
                   const treePrefix = depth > 0 ? '├── ' : '';
-                  
+
                   return (
-                    <div 
-                      key={index} 
+                    <div
+                      key={index}
                       className="file-item"
-                      style={{ 
+                      style={{
                         paddingLeft: `${depth * 16 + 8}px`,
                         fontWeight: file.type === 'directory' ? '500' : 'normal'
                       }}
                     >
-                      {depth > 0 && <span className="tree-prefix">{treePrefix}</span>}
+                      {depth > 0 && (
+                        <span className="tree-prefix">{treePrefix}</span>
+                      )}
                       <span className="file-icon">
-                        {file.type === 'directory' ? '📁' : 
-                         file.permissions.executable ? '⚙️' : '📄'}
+                        {file.type === 'directory'
+                          ? '📁'
+                          : file.permissions.executable
+                            ? '⚙️'
+                            : '📄'}
                       </span>
                       <span className="file-mode">{file.mode}</span>
                       <span className="file-name" title={file.absolutePath}>
@@ -2019,7 +2042,9 @@ function FilesTab({
                       </span>
                       <span className="file-details">
                         {file.type === 'file' && (
-                          <span className="file-size">{file.size.toLocaleString()} bytes</span>
+                          <span className="file-size">
+                            {file.size.toLocaleString()} bytes
+                          </span>
                         )}
                         <span className="file-date">
                           {new Date(file.modifiedAt).toLocaleDateString()}
@@ -2065,7 +2090,7 @@ function FilesTab({
           </div>
           <button
             onClick={handleGitCheckout}
-            disabled={!gitRepoUrl.trim() || connectionStatus !== "connected"}
+            disabled={!gitRepoUrl.trim() || connectionStatus !== 'connected'}
             className="action-button"
           >
             Clone Repository
@@ -2078,9 +2103,9 @@ function FilesTab({
           <div className="template-buttons">
             <button
               onClick={() => {
-                setGitRepoUrl("https://github.com/vercel/next.js.git");
-                setGitBranch("canary");
-                setGitTargetDir("nextjs-example");
+                setGitRepoUrl('https://github.com/vercel/next.js.git');
+                setGitBranch('canary');
+                setGitTargetDir('nextjs-example');
               }}
               className="template-button"
             >
@@ -2089,10 +2114,10 @@ function FilesTab({
             <button
               onClick={() => {
                 setGitRepoUrl(
-                  "https://github.com/facebook/create-react-app.git"
+                  'https://github.com/facebook/create-react-app.git'
                 );
-                setGitBranch("main");
-                setGitTargetDir("react-example");
+                setGitBranch('main');
+                setGitTargetDir('react-example');
               }}
               className="template-button"
             >
@@ -2100,9 +2125,9 @@ function FilesTab({
             </button>
             <button
               onClick={() => {
-                setGitRepoUrl("https://github.com/vuejs/create-vue.git");
-                setGitBranch("main");
-                setGitTargetDir("vue-example");
+                setGitRepoUrl('https://github.com/vuejs/create-vue.git');
+                setGitBranch('main');
+                setGitTargetDir('vue-example');
               }}
               className="template-button"
             >
@@ -2120,19 +2145,19 @@ function FilesTab({
         <div className="quick-setup-buttons">
           <button
             onClick={async () => {
-              if (!client || connectionStatus !== "connected") return;
+              if (!client || connectionStatus !== 'connected') return;
               try {
-                addResult("success", "Starting Next.js project setup...");
+                addResult('success', 'Starting Next.js project setup...');
                 const result = await client.setupNextjs();
                 addResult(
-                  "success",
+                  'success',
                   `${result.message} Preview: ${result.previewUrl}`
                 );
               } catch (error: any) {
-                addResult("error", `Failed to setup Next.js: ${error.message}`);
+                addResult('error', `Failed to setup Next.js: ${error.message}`);
               }
             }}
-            disabled={connectionStatus !== "connected"}
+            disabled={connectionStatus !== 'connected'}
             className="quick-setup-button nextjs"
           >
             <div className="setup-icon">⚡</div>
@@ -2145,19 +2170,19 @@ function FilesTab({
           </button>
           <button
             onClick={async () => {
-              if (!client || connectionStatus !== "connected") return;
+              if (!client || connectionStatus !== 'connected') return;
               try {
-                addResult("success", "Starting React project setup...");
+                addResult('success', 'Starting React project setup...');
                 const result = await client.setupReact();
                 addResult(
-                  "success",
+                  'success',
                   `${result.message} Preview: ${result.previewUrl}`
                 );
               } catch (error: any) {
-                addResult("error", `Failed to setup React: ${error.message}`);
+                addResult('error', `Failed to setup React: ${error.message}`);
               }
             }}
-            disabled={connectionStatus !== "connected"}
+            disabled={connectionStatus !== 'connected'}
             className="quick-setup-button react"
           >
             <div className="setup-icon">⚛️</div>
@@ -2170,19 +2195,19 @@ function FilesTab({
           </button>
           <button
             onClick={async () => {
-              if (!client || connectionStatus !== "connected") return;
+              if (!client || connectionStatus !== 'connected') return;
               try {
-                addResult("success", "Starting Vue project setup...");
+                addResult('success', 'Starting Vue project setup...');
                 const result = await client.setupVue();
                 addResult(
-                  "success",
+                  'success',
                   `${result.message} Preview: ${result.previewUrl}`
                 );
               } catch (error: any) {
-                addResult("error", `Failed to setup Vue: ${error.message}`);
+                addResult('error', `Failed to setup Vue: ${error.message}`);
               }
             }}
-            disabled={connectionStatus !== "connected"}
+            disabled={connectionStatus !== 'connected'}
             className="quick-setup-button vue"
           >
             <div className="setup-icon">💚</div>
@@ -2193,22 +2218,22 @@ function FilesTab({
           </button>
           <button
             onClick={async () => {
-              if (!client || connectionStatus !== "connected") return;
+              if (!client || connectionStatus !== 'connected') return;
               try {
-                addResult("success", "Starting static site setup...");
+                addResult('success', 'Starting static site setup...');
                 const result = await client.setupStatic();
                 addResult(
-                  "success",
+                  'success',
                   `${result.message} Preview: ${result.previewUrl}`
                 );
               } catch (error: any) {
                 addResult(
-                  "error",
+                  'error',
                   `Failed to setup static site: ${error.message}`
                 );
               }
             }}
-            disabled={connectionStatus !== "connected"}
+            disabled={connectionStatus !== 'connected'}
             className="quick-setup-button static"
           >
             <div className="setup-icon">📄</div>
@@ -2224,18 +2249,21 @@ function FilesTab({
       <div className="binary-showcase-section">
         <h2>🎨 Binary File Support Demo</h2>
         <p className="section-description">
-          Test the new binary file reading capabilities with automatic format detection and metadata extraction.
+          Test the new binary file reading capabilities with automatic format
+          detection and metadata extraction.
         </p>
 
         <div className="operation-group">
           <h3>Step 1: Create Test Binary File</h3>
-          <p className="help-text">Generate a PNG chart using matplotlib in the sandbox</p>
+          <p className="help-text">
+            Generate a PNG chart using matplotlib in the sandbox
+          </p>
           <button
             onClick={handleCreateTestBinary}
-            disabled={isCreatingBinary || connectionStatus !== "connected"}
+            disabled={isCreatingBinary || connectionStatus !== 'connected'}
             className="action-button create-binary"
           >
-            {isCreatingBinary ? "Creating..." : "🎨 Create Test PNG Chart"}
+            {isCreatingBinary ? 'Creating...' : '🎨 Create Test PNG Chart'}
           </button>
         </div>
 
@@ -2255,8 +2283,8 @@ function FilesTab({
             </label>
             <p className="help-text">
               {useStreaming
-                ? "📡 Streams file in chunks via SSE - better for large files"
-                : "📄 Reads entire file at once - simpler but loads all into memory"}
+                ? '📡 Streams file in chunks via SSE - better for large files'
+                : '📄 Reads entire file at once - simpler but loads all into memory'}
             </p>
           </div>
           <div className="input-group">
@@ -2269,10 +2297,14 @@ function FilesTab({
             />
             <button
               onClick={handleReadBinaryFile}
-              disabled={!binaryFilePath.trim() || isReadingBinary || connectionStatus !== "connected"}
+              disabled={
+                !binaryFilePath.trim() ||
+                isReadingBinary ||
+                connectionStatus !== 'connected'
+              }
               className="action-button"
             >
-              {isReadingBinary ? "Reading..." : "📖 Read & Display"}
+              {isReadingBinary ? 'Reading...' : '📖 Read & Display'}
             </button>
           </div>
         </div>
@@ -2285,7 +2317,8 @@ function FilesTab({
               <div className="metadata-item">
                 <span className="metadata-label">File Type:</span>
                 <span className="metadata-value">
-                  {binaryFileMetadata.isBinary ? "🖼️" : "📄"} {binaryFileMetadata.mimeType}
+                  {binaryFileMetadata.isBinary ? '🖼️' : '📄'}{' '}
+                  {binaryFileMetadata.mimeType}
                 </span>
               </div>
               <div className="metadata-item">
@@ -2302,8 +2335,10 @@ function FilesTab({
               </div>
               <div className="metadata-item">
                 <span className="metadata-label">Binary:</span>
-                <span className={`metadata-value ${binaryFileMetadata.isBinary ? "binary-yes" : "binary-no"}`}>
-                  {binaryFileMetadata.isBinary ? "✓ Yes" : "✗ No"}
+                <span
+                  className={`metadata-value ${binaryFileMetadata.isBinary ? 'binary-yes' : 'binary-no'}`}
+                >
+                  {binaryFileMetadata.isBinary ? '✓ Yes' : '✗ No'}
                 </span>
               </div>
             </div>
@@ -2311,7 +2346,8 @@ function FilesTab({
             {/* File Preview */}
             <div className="file-preview">
               <h4>🔍 Preview</h4>
-              {binaryFileMetadata.isBinary && binaryFileMetadata.mimeType.startsWith("image/") ? (
+              {binaryFileMetadata.isBinary &&
+              binaryFileMetadata.mimeType.startsWith('image/') ? (
                 <div className="image-preview">
                   <img
                     src={`data:${binaryFileMetadata.mimeType};base64,${binaryFileMetadata.content}`}
@@ -2336,9 +2372,7 @@ function FilesTab({
                 </div>
               ) : (
                 <div className="text-preview">
-                  <pre className="code-block">
-                    {binaryFileMetadata.content}
-                  </pre>
+                  <pre className="code-block">{binaryFileMetadata.content}</pre>
                   <p className="preview-caption">Text file content</p>
                 </div>
               )}
@@ -2357,7 +2391,7 @@ function FilesTab({
                 {result.timestamp.toLocaleTimeString()}
               </span>
               <span className={`status ${result.type}`}>
-                {result.type === "success" ? "✓" : "✗"}
+                {result.type === 'success' ? '✓' : '✗'}
               </span>
               <span className="message">{result.message}</span>
             </div>
@@ -2371,31 +2405,31 @@ function FilesTab({
 function StreamingTab({
   client,
   connectionStatus,
-  sessionId,
+  sessionId
 }: {
   client: SandboxApiClient | null;
-  connectionStatus: "disconnected" | "connecting" | "connected";
+  connectionStatus: 'disconnected' | 'connecting' | 'connected';
   sessionId: string | null;
 }) {
   const [activeStreams, setActiveStreams] = useState<ActiveStream[]>([]);
-  const [commandInput, setCommandInput] = useState("");
+  const [commandInput, setCommandInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [processes, setProcesses] = useState<ProcessInfo[]>([]);
 
   // Refresh processes for log streaming
   useEffect(() => {
     const refreshProcesses = async () => {
-      if (!client || connectionStatus !== "connected") return;
+      if (!client || connectionStatus !== 'connected') return;
 
       try {
         const response = await client.listProcesses();
         setProcesses(response.processes);
       } catch (error) {
-        console.error("Failed to refresh processes:", error);
+        console.error('Failed to refresh processes:', error);
       }
     };
 
-    if (connectionStatus === "connected") {
+    if (connectionStatus === 'connected') {
       refreshProcesses();
       const interval = setInterval(refreshProcesses, 3000);
       return () => clearInterval(interval);
@@ -2406,7 +2440,7 @@ function StreamingTab({
   const startCommandStream = async () => {
     if (
       !client ||
-      connectionStatus !== "connected" ||
+      connectionStatus !== 'connected' ||
       !commandInput.trim() ||
       isStreaming
     )
@@ -2416,45 +2450,45 @@ function StreamingTab({
     const command = commandInput.trim();
 
     setIsStreaming(true);
-    setCommandInput("");
+    setCommandInput('');
 
     // Add stream to active streams
     const newStream: ActiveStream = {
       id: streamId,
-      type: "command",
+      type: 'command',
       title: `Command: ${command}`,
       command: command,
       isActive: true,
       events: [],
-      startTime: new Date(),
+      startTime: new Date()
     };
 
     setActiveStreams((prev) => [...prev, newStream]);
 
     try {
       // Use the new execStream AsyncIterable method
-      const commandParts = command.split(" ");
+      const commandParts = command.split(' ');
       const cmd = commandParts[0];
       const args = commandParts.slice(1);
       const streamIterable = client.execStream(cmd, args, {
         sessionId: sessionId || undefined,
-        signal: new AbortController().signal,
+        signal: new AbortController().signal
       });
 
       for await (const event of streamIterable) {
         const streamEvent: StreamEvent = {
           id: `${streamId}_${Date.now()}_${Math.random()}`,
           type: event.type as
-            | "start"
-            | "stdout"
-            | "stderr"
-            | "complete"
-            | "error",
+            | 'start'
+            | 'stdout'
+            | 'stderr'
+            | 'complete'
+            | 'error',
           timestamp: event.timestamp,
           data: event.data,
           command: event.command,
           exitCode: event.exitCode,
-          error: event.error,
+          error: event.error
         };
 
         setActiveStreams((prev) =>
@@ -2463,25 +2497,25 @@ function StreamingTab({
               ? {
                   ...stream,
                   events: [...stream.events, streamEvent],
-                  isActive: event.type !== "complete" && event.type !== "error",
+                  isActive: event.type !== 'complete' && event.type !== 'error'
                 }
               : stream
           )
         );
 
         // Break on completion or error
-        if (event.type === "complete" || event.type === "error") {
+        if (event.type === 'complete' || event.type === 'error') {
           break;
         }
       }
     } catch (error) {
-      console.error("Streaming error:", error);
+      console.error('Streaming error:', error);
 
       const errorEvent: StreamEvent = {
         id: `${streamId}_error_${Date.now()}`,
-        type: "error",
+        type: 'error',
         timestamp: new Date().toISOString(),
-        error: error instanceof Error ? error : new Error(String(error)),
+        error: error instanceof Error ? error : new Error(String(error))
       };
 
       setActiveStreams((prev) =>
@@ -2490,7 +2524,7 @@ function StreamingTab({
             ? {
                 ...stream,
                 events: [...stream.events, errorEvent],
-                isActive: false,
+                isActive: false
               }
             : stream
         )
@@ -2504,28 +2538,28 @@ function StreamingTab({
   const startProcessLogStream = async (selectedProcessId: string) => {
     if (
       !client ||
-      connectionStatus !== "connected" ||
+      connectionStatus !== 'connected' ||
       !selectedProcessId.trim()
     )
       return;
 
     const streamId = `logs_${selectedProcessId}_${Date.now()}`;
-    
+
     // Create an AbortController for this stream
     const abortController = new AbortController();
-    
+
     // Store the abort controller so it can be aborted when user clicks stop
     streamAbortControllers.current.set(streamId, abortController);
 
     // Add stream to active streams
     const newStream: ActiveStream = {
       id: streamId,
-      type: "process-logs",
+      type: 'process-logs',
       title: `Process Logs: ${selectedProcessId}`,
       processId: selectedProcessId,
       isActive: true,
       events: [],
-      startTime: new Date(),
+      startTime: new Date()
     };
 
     setActiveStreams((prev) => [...prev, newStream]);
@@ -2539,11 +2573,11 @@ function StreamingTab({
       for await (const logEvent of logStreamIterable) {
         const streamEvent: LogStreamEvent = {
           id: `${streamId}_${Date.now()}_${Math.random()}`,
-          type: logEvent.type as "stdout" | "stderr" | "status" | "error",
+          type: logEvent.type as 'stdout' | 'stderr' | 'status' | 'error',
           timestamp: logEvent.timestamp,
           data: logEvent.data,
           processId: logEvent.processId,
-          sessionId: logEvent.sessionId,
+          sessionId: logEvent.sessionId
         };
 
         setActiveStreams((prev) =>
@@ -2554,37 +2588,35 @@ function StreamingTab({
           )
         );
       }
-      
+
       // Clean up abort controller when stream completes naturally
       streamAbortControllers.current.delete(streamId);
     } catch (error) {
       // Clean up abort controller on error
       streamAbortControllers.current.delete(streamId);
-      
+
       // Don't log abort errors or add error events for user cancellation
       if (error instanceof Error && error.name === 'AbortError') {
-        console.log("Log streaming aborted by user");
+        console.log('Log streaming aborted by user');
         // Just mark the stream as inactive without adding error event
         setActiveStreams((prev) =>
           prev.map((stream) =>
-            stream.id === streamId
-              ? { ...stream, isActive: false }
-              : stream
+            stream.id === streamId ? { ...stream, isActive: false } : stream
           )
         );
         return;
       }
-      
-      console.error("Log streaming error:", error);
+
+      console.error('Log streaming error:', error);
 
       const errorEvent: LogStreamEvent = {
         id: `${streamId}_error_${Date.now()}`,
-        type: "error",
+        type: 'error',
         timestamp: new Date().toISOString(),
         data: `Error: ${
           error instanceof Error ? error.message : String(error)
         }`,
-        processId: selectedProcessId,
+        processId: selectedProcessId
       };
 
       setActiveStreams((prev) =>
@@ -2593,7 +2625,7 @@ function StreamingTab({
             ? {
                 ...stream,
                 events: [...stream.events, errorEvent],
-                isActive: false,
+                isActive: false
               }
             : stream
         )
@@ -2602,8 +2634,10 @@ function StreamingTab({
   };
 
   // Map to store abort controllers for active streams
-  const streamAbortControllers = useRef<Map<string, AbortController>>(new Map());
-  
+  const streamAbortControllers = useRef<Map<string, AbortController>>(
+    new Map()
+  );
+
   // Stop a stream
   const stopStream = (streamId: string) => {
     setActiveStreams((prev) =>
@@ -2611,7 +2645,7 @@ function StreamingTab({
         stream.id === streamId ? { ...stream, isActive: false } : stream
       )
     );
-    
+
     // Abort the fetch if an abort controller exists
     const controller = streamAbortControllers.current.get(streamId);
     if (controller) {
@@ -2633,20 +2667,20 @@ function StreamingTab({
   // Get event color
   const getEventColor = (type: string) => {
     switch (type) {
-      case "start":
-        return "text-blue-500";
-      case "stdout":
-        return "text-green-500";
-      case "stderr":
-        return "text-red-500";
-      case "complete":
-        return "text-green-500";
-      case "error":
-        return "text-red-500";
-      case "status":
-        return "text-yellow-500";
+      case 'start':
+        return 'text-blue-500';
+      case 'stdout':
+        return 'text-green-500';
+      case 'stderr':
+        return 'text-red-500';
+      case 'complete':
+        return 'text-green-500';
+      case 'error':
+        return 'text-red-500';
+      case 'status':
+        return 'text-yellow-500';
       default:
-        return "text-gray-500";
+        return 'text-gray-500';
     }
   };
 
@@ -2682,7 +2716,7 @@ function StreamingTab({
               onChange={(e) => setCommandInput(e.target.value)}
               className="stream-input"
               onKeyPress={(e) => {
-                if (e.key === "Enter") {
+                if (e.key === 'Enter') {
                   startCommandStream();
                 }
               }}
@@ -2692,11 +2726,11 @@ function StreamingTab({
               disabled={
                 !commandInput.trim() ||
                 isStreaming ||
-                connectionStatus !== "connected"
+                connectionStatus !== 'connected'
               }
               className="btn btn-stream-start"
             >
-              {isStreaming ? "Starting..." : "Start Stream"}
+              {isStreaming ? 'Starting...' : 'Start Stream'}
             </button>
           </div>
         </div>
@@ -2706,7 +2740,7 @@ function StreamingTab({
           <h4>Quick Stream Commands:</h4>
           <div className="template-buttons">
             <button
-              onClick={() => setCommandInput("ping -c 10 google.com")}
+              onClick={() => setCommandInput('ping -c 10 google.com')}
               className="btn btn-template"
             >
               📡 Ping Test
@@ -2720,7 +2754,7 @@ function StreamingTab({
               🔍 File Search
             </button>
             <button
-              onClick={() => setCommandInput("ps aux")}
+              onClick={() => setCommandInput('ps aux')}
               className="btn btn-template"
             >
               📊 Process List
@@ -2747,7 +2781,7 @@ function StreamingTab({
             <h4>Select Process to Stream:</h4>
             <div className="process-buttons">
               {processes
-                .filter((p) => p.status === "running")
+                .filter((p) => p.status === 'running')
                 .map((process) => (
                   <button
                     key={process.id}
@@ -2759,7 +2793,7 @@ function StreamingTab({
                   >
                     📋 {process.id} ({process.command})
                     {activeStreams.some((s) => s.processId === process.id) &&
-                      " ✅"}
+                      ' ✅'}
                   </button>
                 ))}
             </div>
@@ -2885,29 +2919,29 @@ interface NotebookCell {
   id: string;
   code: string;
   output: any[];
-  status: "idle" | "running" | "completed" | "error";
+  status: 'idle' | 'running' | 'completed' | 'error';
   executionCount: number;
 }
 
 function NotebookTab({
   client,
-  connectionStatus,
+  connectionStatus
 }: {
   client: SandboxApiClient | null;
-  connectionStatus: "disconnected" | "connecting" | "connected";
+  connectionStatus: 'disconnected' | 'connecting' | 'connected';
 }) {
   const [cells, setCells] = useState<NotebookCell[]>([]);
   const [notebookSessionId, setNotebookSessionId] = useState<string | null>(
     null
   );
-  const [language, setLanguage] = useState<"python" | "javascript">("python");
+  const [language, setLanguage] = useState<'python' | 'javascript'>('python');
   const [activeCell, setActiveCell] = useState<string | null>(null);
   const cellRefs = useRef<{ [key: string]: HTMLTextAreaElement | null }>({});
 
   // Initialize notebook session
   useEffect(() => {
     const initSession = async () => {
-      if (!client || connectionStatus !== "connected") return;
+      if (!client || connectionStatus !== 'connected') return;
 
       try {
         const session = await client.createNotebookSession(language);
@@ -2915,11 +2949,11 @@ function NotebookTab({
         // Add first cell automatically
         addCell();
       } catch (error) {
-        console.error("Failed to create notebook session:", error);
+        console.error('Failed to create notebook session:', error);
       }
     };
 
-    if (connectionStatus === "connected") {
+    if (connectionStatus === 'connected') {
       initSession();
     }
 
@@ -2933,10 +2967,10 @@ function NotebookTab({
   const addCell = () => {
     const newCell: NotebookCell = {
       id: `cell-${Date.now()}`,
-      code: "",
+      code: '',
       output: [],
-      status: "idle",
-      executionCount: 0,
+      status: 'idle',
+      executionCount: 0
     };
     setCells((prev) => [...prev, newCell]);
 
@@ -2960,7 +2994,7 @@ function NotebookTab({
   };
 
   const runCell = async (cellId: string, runAndAddNew: boolean = false) => {
-    if (!client || !notebookSessionId || connectionStatus !== "connected")
+    if (!client || !notebookSessionId || connectionStatus !== 'connected')
       return;
 
     const cell = cells.find((c) => c.id === cellId);
@@ -2972,9 +3006,9 @@ function NotebookTab({
         c.id === cellId
           ? {
               ...c,
-              status: "running",
+              status: 'running',
               output: [],
-              executionCount: c.executionCount + 1,
+              executionCount: c.executionCount + 1
             }
           : c
       )
@@ -2990,28 +3024,28 @@ function NotebookTab({
         language
       )) {
         switch (event.type) {
-          case "stdout":
-            outputs.push({ type: "stdout", text: event.text });
+          case 'stdout':
+            outputs.push({ type: 'stdout', text: event.text });
             break;
-          case "stderr":
-            outputs.push({ type: "stderr", text: event.text });
+          case 'stderr':
+            outputs.push({ type: 'stderr', text: event.text });
             break;
-          case "result":
+          case 'result':
             outputs.push({
-              type: "result",
+              type: 'result',
               data: event,
               png: event.png,
               html: event.html,
               text: event.text,
-              json: event.json,
+              json: event.json
             });
             break;
-          case "error":
+          case 'error':
             outputs.push({
-              type: "error",
+              type: 'error',
               ename: event.ename,
               evalue: event.evalue,
-              traceback: event.traceback,
+              traceback: event.traceback
             });
             break;
         }
@@ -3026,27 +3060,27 @@ function NotebookTab({
 
       // Mark as completed
       setCells((prev) =>
-        prev.map((c) => (c.id === cellId ? { ...c, status: "completed" } : c))
+        prev.map((c) => (c.id === cellId ? { ...c, status: 'completed' } : c))
       );
 
       if (runAndAddNew) {
         addCell();
       }
     } catch (error) {
-      console.error("Cell execution error:", error);
+      console.error('Cell execution error:', error);
       setCells((prev) =>
         prev.map((c) =>
           c.id === cellId
             ? {
                 ...c,
-                status: "error",
+                status: 'error',
                 output: [
                   ...c.output,
                   {
-                    type: "error",
-                    text: `Execution error: ${error}`,
-                  },
-                ],
+                    type: 'error',
+                    text: `Execution error: ${error}`
+                  }
+                ]
               }
             : c
         )
@@ -3055,10 +3089,10 @@ function NotebookTab({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent, cellId: string) => {
-    if (e.ctrlKey && e.key === "Enter") {
+    if (e.ctrlKey && e.key === 'Enter') {
       e.preventDefault();
       runCell(cellId);
-    } else if (e.shiftKey && e.key === "Enter") {
+    } else if (e.shiftKey && e.key === 'Enter') {
       e.preventDefault();
       runCell(cellId, true);
     }
@@ -3066,13 +3100,13 @@ function NotebookTab({
 
   const renderOutput = (output: any) => {
     switch (output.type) {
-      case "stdout":
+      case 'stdout':
         return <pre className="notebook-stdout">{output.text}</pre>;
 
-      case "stderr":
+      case 'stderr':
         return <pre className="notebook-stderr">{output.text}</pre>;
 
-      case "error":
+      case 'error':
         return (
           <div className="notebook-error">
             <div className="error-name">
@@ -3080,13 +3114,13 @@ function NotebookTab({
             </div>
             {output.traceback && (
               <pre className="error-traceback">
-                {output.traceback.join("\n")}
+                {output.traceback.join('\n')}
               </pre>
             )}
           </div>
         );
 
-      case "result":
+      case 'result':
         if (output.png) {
           return (
             <img
@@ -3121,10 +3155,10 @@ function NotebookTab({
     }
   };
 
-  const loadExample = (type: "plot" | "data" | "js") => {
+  const loadExample = (type: 'plot' | 'data' | 'js') => {
     const examples = {
       plot: {
-        lang: "python" as const,
+        lang: 'python' as const,
         code: `# Create a beautiful visualization
 import matplotlib.pyplot as plt
 import numpy as np
@@ -3145,10 +3179,10 @@ plt.xlabel('x', fontsize=12)
 plt.ylabel('y', fontsize=12)
 plt.legend(loc='upper right')
 plt.grid(True, alpha=0.3)
-plt.show()`,
+plt.show()`
       },
       data: {
-        lang: "python" as const,
+        lang: 'python' as const,
         code: `# Data analysis with pandas
 import pandas as pd
 import numpy as np
@@ -3187,10 +3221,10 @@ plt.tight_layout()
 plt.show()
 
 # Show data table
-df.head()`,
+df.head()`
       },
       js: {
-        lang: "javascript" as const,
+        lang: 'javascript' as const,
         code: `// JavaScript example with console output
 console.log("Hello from JavaScript!");
 
@@ -3221,8 +3255,8 @@ console.log("\\nDemo Info:");
 console.log(JSON.stringify(data, null, 2));
 
 // Return a result
-{ fibonacci: fib, info: data }`,
-      },
+{ fibonacci: fib, info: data }`
+      }
     };
 
     const example = examples[type];
@@ -3237,8 +3271,8 @@ console.log(JSON.stringify(data, null, 2));
       id: `cell-${Date.now()}`,
       code: example.code,
       output: [],
-      status: "idle",
-      executionCount: 0,
+      status: 'idle',
+      executionCount: 0
     };
     setCells((prev) => [...prev, newCell]);
   };
@@ -3251,7 +3285,7 @@ console.log(JSON.stringify(data, null, 2));
           <select
             value={language}
             onChange={(e) =>
-              setLanguage(e.target.value as "python" | "javascript")
+              setLanguage(e.target.value as 'python' | 'javascript')
             }
             className="language-selector"
           >
@@ -3265,13 +3299,13 @@ console.log(JSON.stringify(data, null, 2));
       </div>
 
       <div className="example-buttons">
-        <button onClick={() => loadExample("plot")} className="btn btn-example">
+        <button onClick={() => loadExample('plot')} className="btn btn-example">
           📊 Plot Example
         </button>
-        <button onClick={() => loadExample("data")} className="btn btn-example">
+        <button onClick={() => loadExample('data')} className="btn btn-example">
           📈 Data Analysis
         </button>
-        <button onClick={() => loadExample("js")} className="btn btn-example">
+        <button onClick={() => loadExample('js')} className="btn btn-example">
           🟨 JavaScript
         </button>
       </div>
@@ -3299,7 +3333,7 @@ console.log(JSON.stringify(data, null, 2));
             <div
               key={cell.id}
               className={`notebook-cell ${cell.status} ${
-                activeCell === cell.id ? "active" : ""
+                activeCell === cell.id ? 'active' : ''
               }`}
             >
               <div className="cell-header">
@@ -3307,10 +3341,10 @@ console.log(JSON.stringify(data, null, 2));
                 <div className="cell-actions">
                   <button
                     onClick={() => runCell(cell.id)}
-                    disabled={!cell.code.trim() || cell.status === "running"}
+                    disabled={!cell.code.trim() || cell.status === 'running'}
                     className="btn btn-run"
                   >
-                    {cell.status === "running" ? "⏳" : "▶"} Run
+                    {cell.status === 'running' ? '⏳' : '▶'} Run
                   </button>
                   <button
                     onClick={() => deleteCell(cell.id)}
@@ -3363,10 +3397,10 @@ console.log(JSON.stringify(data, null, 2));
 
 function ExamplesTab({
   client,
-  connectionStatus,
+  connectionStatus
 }: {
   client: SandboxApiClient | null;
-  connectionStatus: "disconnected" | "connecting" | "connected";
+  connectionStatus: 'disconnected' | 'connecting' | 'connected';
 }) {
   const [results, setResults] = useState<{ [key: string]: any }>({});
   const [loading, setLoading] = useState<{ [key: string]: boolean }>({});
@@ -3375,21 +3409,21 @@ function ExamplesTab({
   useEffect(() => {
     // Create a session for the examples
     const initSession = async () => {
-      if (client && connectionStatus === "connected") {
+      if (client && connectionStatus === 'connected') {
         try {
-          const response = await fetch("/api/notebook/session", {
-            method: "POST",
+          const response = await fetch('/api/notebook/session', {
+            method: 'POST',
             headers: {
-              "Content-Type": "application/json",
-              "X-Sandbox-Client-Id": getClientSandboxId(),
+              'Content-Type': 'application/json',
+              'X-Sandbox-Client-Id': getClientSandboxId()
             },
-            body: JSON.stringify({ language: "python" }),
+            body: JSON.stringify({ language: 'python' })
           });
           const data: { sessionId: string; language: string } =
             await response.json();
           setSessionId(data.sessionId);
         } catch (error) {
-          console.error("Failed to create session:", error);
+          console.error('Failed to create session:', error);
         }
       }
     };
@@ -3397,24 +3431,24 @@ function ExamplesTab({
   }, [client, connectionStatus]);
 
   const runExample = async (exampleName: string, endpoint: string) => {
-    if (!client || connectionStatus !== "connected") return;
+    if (!client || connectionStatus !== 'connected') return;
 
     setLoading((prev) => ({ ...prev, [exampleName]: true }));
 
     try {
       const response = await fetch(endpoint, {
-        method: "GET",
+        method: 'GET',
         headers: {
-          "Content-Type": "application/json",
-          "X-Sandbox-Client-Id": getClientSandboxId(),
-        },
+          'Content-Type': 'application/json',
+          'X-Sandbox-Client-Id': getClientSandboxId()
+        }
       });
       const data = await response.json();
       setResults((prev) => ({ ...prev, [exampleName]: data }));
     } catch (error: any) {
       setResults((prev) => ({
         ...prev,
-        [exampleName]: { error: error.message },
+        [exampleName]: { error: error.message }
       }));
     } finally {
       setLoading((prev) => ({ ...prev, [exampleName]: false }));
@@ -3448,10 +3482,10 @@ function ExamplesTab({
               className="btn btn-primary"
               onClick={() => runExample(example.name, example.endpoint)}
               disabled={
-                loading[example.name] || connectionStatus !== "connected"
+                loading[example.name] || connectionStatus !== 'connected'
               }
             >
-              {loading[example.name] ? "Running..." : "Run Example"}
+              {loading[example.name] ? 'Running...' : 'Run Example'}
             </button>
 
             {results[example.name] && (
@@ -3460,7 +3494,7 @@ function ExamplesTab({
 
                 {results[example.name].error ? (
                   <div className="error-output">
-                    {typeof results[example.name].error === "string" ? (
+                    {typeof results[example.name].error === 'string' ? (
                       <>
                         <strong>Error:</strong> {results[example.name].error}
                       </>
@@ -3472,13 +3506,13 @@ function ExamplesTab({
                         <p>{results[example.name].error.message}</p>
                         {results[example.name].error.traceback && (
                           <pre className="traceback">
-                            {results[example.name].error.traceback.join("\n")}
+                            {results[example.name].error.traceback.join('\n')}
                           </pre>
                         )}
                       </>
                     ) : (
                       <>
-                        <strong>Error:</strong>{" "}
+                        <strong>Error:</strong>{' '}
                         {JSON.stringify(results[example.name].error)}
                       </>
                     )}
@@ -3488,26 +3522,44 @@ function ExamplesTab({
                     {/* Standard output */}
                     {results[example.name].stdout && (
                       <div className="output-section">
-                        <strong className="output-label">Output (stdout):</strong>
-                        <pre className="output-content">{results[example.name].stdout}</pre>
+                        <strong className="output-label">
+                          Output (stdout):
+                        </strong>
+                        <pre className="output-content">
+                          {results[example.name].stdout}
+                        </pre>
                       </div>
                     )}
 
                     {/* Standard error */}
-                    {results[example.name].stderr && results[example.name].stderr.trim() && (
-                      <div className="output-section">
-                        <strong className="output-label" style={{ color: "#d73a49" }}>Error Output (stderr):</strong>
-                        <pre className="output-content" style={{ color: "#d73a49" }}>{results[example.name].stderr}</pre>
-                      </div>
-                    )}
+                    {results[example.name].stderr &&
+                      results[example.name].stderr.trim() && (
+                        <div className="output-section">
+                          <strong
+                            className="output-label"
+                            style={{ color: '#d73a49' }}
+                          >
+                            Error Output (stderr):
+                          </strong>
+                          <pre
+                            className="output-content"
+                            style={{ color: '#d73a49' }}
+                          >
+                            {results[example.name].stderr}
+                          </pre>
+                        </div>
+                      )}
 
                     {/* For backwards compatibility with .output field */}
-                    {results[example.name].output && !results[example.name].stdout && (
-                      <div className="output-section">
-                        <strong className="output-label">Output:</strong>
-                        <pre className="output-content">{results[example.name].output}</pre>
-                      </div>
-                    )}
+                    {results[example.name].output &&
+                      !results[example.name].stdout && (
+                        <div className="output-section">
+                          <strong className="output-label">Output:</strong>
+                          <pre className="output-content">
+                            {results[example.name].output}
+                          </pre>
+                        </div>
+                      )}
 
                     {/* HTML content (tables, etc.) */}
                     {results[example.name].html && (
@@ -3515,10 +3567,12 @@ function ExamplesTab({
                         <strong className="output-label">HTML Output:</strong>
                         <div
                           className="output-content"
-                          dangerouslySetInnerHTML={{ __html: results[example.name].html }}
-                          style={{ 
-                            overflowX: "auto",
-                            maxWidth: "100%"
+                          dangerouslySetInnerHTML={{
+                            __html: results[example.name].html
+                          }}
+                          style={{
+                            overflowX: 'auto',
+                            maxWidth: '100%'
                           }}
                         />
                       </div>
@@ -3532,7 +3586,11 @@ function ExamplesTab({
                           <img
                             src={results[example.name].chart}
                             alt="Generated chart"
-                            style={{ maxWidth: "100%", height: "auto", display: "block" }}
+                            style={{
+                              maxWidth: '100%',
+                              height: 'auto',
+                              display: 'block'
+                            }}
                           />
                         </div>
                       </div>
@@ -3544,8 +3602,10 @@ function ExamplesTab({
                         <strong className="output-label">SVG Graphics:</strong>
                         <div
                           className="output-content"
-                          dangerouslySetInnerHTML={{ __html: results[example.name].svg }}
-                          style={{ maxWidth: "100%" }}
+                          dangerouslySetInnerHTML={{
+                            __html: results[example.name].svg
+                          }}
+                          style={{ maxWidth: '100%' }}
                         />
                       </div>
                     )}
@@ -3555,11 +3615,7 @@ function ExamplesTab({
                       <div className="output-section">
                         <strong className="output-label">JSON Data:</strong>
                         <pre className="output-content json-output">
-                          {JSON.stringify(
-                            results[example.name].json,
-                            null,
-                            2
-                          )}
+                          {JSON.stringify(results[example.name].json, null, 2)}
                         </pre>
                       </div>
                     )}
@@ -3569,7 +3625,9 @@ function ExamplesTab({
                       <div className="output-section">
                         <strong className="output-label">LaTeX Formula:</strong>
                         <div className="output-content latex-output">
-                          <LaTeXRenderer content={results[example.name].latex} />
+                          <LaTeXRenderer
+                            content={results[example.name].latex}
+                          />
                         </div>
                       </div>
                     )}
@@ -3577,9 +3635,13 @@ function ExamplesTab({
                     {/* Markdown formatted text */}
                     {results[example.name].markdown && (
                       <div className="output-section">
-                        <strong className="output-label">Markdown Output:</strong>
+                        <strong className="output-label">
+                          Markdown Output:
+                        </strong>
                         <div className="output-content markdown-output">
-                          <MarkdownRenderer content={results[example.name].markdown} />
+                          <MarkdownRenderer
+                            content={results[example.name].markdown}
+                          />
                         </div>
                       </div>
                     )}
@@ -3588,7 +3650,9 @@ function ExamplesTab({
                     {results[example.name].text && (
                       <div className="output-section">
                         <strong className="output-label">Text Result:</strong>
-                        <pre className="output-content">{results[example.name].text}</pre>
+                        <pre className="output-content">
+                          {results[example.name].text}
+                        </pre>
                       </div>
                     )}
                   </>
@@ -3619,16 +3683,16 @@ function ExamplesTab({
 }
 
 function SandboxTester() {
-  const [activeTab, setActiveTab] = useState<TabType>("commands");
+  const [activeTab, setActiveTab] = useState<TabType>('commands');
   const [client, setClient] = useState<SandboxApiClient | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<
-    "disconnected" | "connecting" | "connected"
-  >("disconnected");
+    'disconnected' | 'connecting' | 'connected'
+  >('disconnected');
   const [sessionId, setSessionId] = useState<string | null>(null);
-  const [commandInput, setCommandInput] = useState("");
+  const [commandInput, setCommandInput] = useState('');
   const [commandOptions, setCommandOptions] = useState({
-    cwd: "",
-    env: "",
+    cwd: '',
+    env: ''
   });
   const [results, setResults] = useState<CommandResult[]>([]);
   const [isExecuting, setIsExecuting] = useState(false);
@@ -3637,8 +3701,8 @@ function SandboxTester() {
 
   // Auto-scroll to bottom when new results are added
   useEffect(() => {
-    if (activeTab === "commands") {
-      resultsEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (activeTab === 'commands') {
+      resultsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
   }, [results, activeTab]);
 
@@ -3657,7 +3721,7 @@ function SandboxTester() {
           const updated = [...prev];
           const lastResult = updated[updated.length - 1];
           if (lastResult && lastResult.command === command) {
-            lastResult.status = success ? "completed" : "error";
+            lastResult.status = success ? 'completed' : 'error';
             lastResult.exitCode = exitCode;
             lastResult.stdout = stdout;
             lastResult.stderr = stderr;
@@ -3667,23 +3731,23 @@ function SandboxTester() {
         setIsExecuting(false);
       },
       onCommandStart: (command: string) => {
-        console.log("Command started:", command);
+        console.log('Command started:', command);
         // Don't create a new result here - executeCommand already does this
         setIsExecuting(true);
       },
       onError: (error: string, command?: string) => {
-        console.error("Command error:", error);
+        console.error('Command error:', error);
         setResults((prev) => {
           const updated = [...prev];
           const lastResult = updated[updated.length - 1];
           if (lastResult && lastResult.command === command) {
-            lastResult.status = "error";
+            lastResult.status = 'error';
             lastResult.stderr += `\nError: ${error}`;
           }
           return updated;
         });
         setIsExecuting(false);
-      },
+      }
     });
 
     setClient(httpClient);
@@ -3691,7 +3755,7 @@ function SandboxTester() {
     // Initialize connection by creating a session
     const initializeConnection = async () => {
       try {
-        setConnectionStatus("connecting");
+        setConnectionStatus('connecting');
 
         // Test connection with ping that actually initializes the sandbox
         let sandboxReady = false;
@@ -3701,35 +3765,35 @@ function SandboxTester() {
         while (!sandboxReady && attempts < maxAttempts) {
           try {
             const pingResponse = await httpClient.ping();
-            console.log("Ping response:", pingResponse);
+            console.log('Ping response:', pingResponse);
 
-            if (pingResponse.sandboxStatus === "ready") {
+            if (pingResponse.sandboxStatus === 'ready') {
               sandboxReady = true;
-              console.log("Sandbox is ready");
+              console.log('Sandbox is ready');
             } else {
-              console.log("Sandbox still initializing, waiting...");
+              console.log('Sandbox still initializing, waiting...');
               await new Promise((resolve) => setTimeout(resolve, 1000)); // Wait 1 second
               attempts++;
             }
           } catch (error) {
-            console.log("Ping failed, retrying...", error);
+            console.log('Ping failed, retrying...', error);
             await new Promise((resolve) => setTimeout(resolve, 1000)); // Wait 1 second
             attempts++;
           }
         }
 
         if (!sandboxReady) {
-          throw new Error("Sandbox failed to initialize within timeout");
+          throw new Error('Sandbox failed to initialize within timeout');
         }
 
         // Create a session
         const session = await httpClient.createSession();
         setSessionId(session);
-        setConnectionStatus("connected");
-        console.log("Connected with session:", session);
+        setConnectionStatus('connected');
+        console.log('Connected with session:', session);
       } catch (error: any) {
-        console.error("Failed to connect:", error);
-        setConnectionStatus("disconnected");
+        console.error('Failed to connect:', error);
+        setConnectionStatus('disconnected');
       }
     };
 
@@ -3746,7 +3810,7 @@ function SandboxTester() {
   const executeCommand = async () => {
     if (
       !client ||
-      connectionStatus !== "connected" ||
+      connectionStatus !== 'connected' ||
       !commandInput.trim() ||
       isExecuting
     ) {
@@ -3762,10 +3826,10 @@ function SandboxTester() {
       const newResult: CommandResult = {
         command: trimmedCommand,
         id: `${Date.now()}_${Math.random()}`,
-        status: "running",
-        stderr: "",
-        stdout: "",
-        timestamp: new Date(),
+        status: 'running',
+        stderr: '',
+        stdout: '',
+        timestamp: new Date()
       };
       setResults((prev) => [...prev, newResult]);
 
@@ -3775,7 +3839,7 @@ function SandboxTester() {
         cwd?: string;
         env?: Record<string, string>;
       } = {
-        sessionId: sessionId || undefined,
+        sessionId: sessionId || undefined
       };
 
       if (commandOptions.cwd.trim()) {
@@ -3784,8 +3848,8 @@ function SandboxTester() {
 
       if (commandOptions.env.trim()) {
         const env: Record<string, string> = {};
-        commandOptions.env.split(",").forEach((pair) => {
-          const [key, value] = pair.split("=");
+        commandOptions.env.split(',').forEach((pair) => {
+          const [key, value] = pair.split('=');
           if (key && value) env[key.trim()] = value.trim();
         });
         options.env = env;
@@ -3793,20 +3857,20 @@ function SandboxTester() {
 
       // Execute the command
       console.log(
-        "Executing command:",
+        'Executing command:',
         trimmedCommand,
-        "with options:",
+        'with options:',
         options
       );
       const result = await client.execute(trimmedCommand, [], options);
-      console.log("Result:", result);
+      console.log('Result:', result);
 
       // Update the result with the response
       setResults((prev) => {
         const updated = [...prev];
         const lastResult = updated[updated.length - 1];
         if (lastResult && lastResult.command === trimmedCommand) {
-          lastResult.status = result.success ? "completed" : "error";
+          lastResult.status = result.success ? 'completed' : 'error';
           lastResult.exitCode = result.exitCode;
           lastResult.stdout = result.stdout;
           lastResult.stderr = result.stderr;
@@ -3814,19 +3878,19 @@ function SandboxTester() {
         return updated;
       });
 
-      setCommandInput("");
+      setCommandInput('');
 
       // Refocus the input for better UX
       setTimeout(() => {
         commandInputRef.current?.focus();
       }, 0);
     } catch (error: any) {
-      console.error("Failed to execute command:", error);
+      console.error('Failed to execute command:', error);
       setResults((prev) => {
         const updated = [...prev];
         const lastResult = updated[updated.length - 1];
         if (lastResult && lastResult.command === trimmedCommand) {
-          lastResult.status = "error";
+          lastResult.status = 'error';
           lastResult.stderr += `\nError: ${error.message || error}`;
         }
         return updated;
@@ -3844,7 +3908,7 @@ function SandboxTester() {
   const executeStreamingCommand = async () => {
     if (
       !client ||
-      connectionStatus !== "connected" ||
+      connectionStatus !== 'connected' ||
       !commandInput.trim() ||
       isExecuting
     ) {
@@ -3860,10 +3924,10 @@ function SandboxTester() {
       const newResult: CommandResult = {
         command: trimmedCommand,
         id: `${Date.now()}_${Math.random()}`,
-        status: "running",
-        stderr: "",
-        stdout: "",
-        timestamp: new Date(),
+        status: 'running',
+        stderr: '',
+        stdout: '',
+        timestamp: new Date()
       };
       setResults((prev) => [...prev, newResult]);
 
@@ -3873,7 +3937,7 @@ function SandboxTester() {
         cwd?: string;
         env?: Record<string, string>;
       } = {
-        sessionId: sessionId || undefined,
+        sessionId: sessionId || undefined
       };
 
       if (commandOptions.cwd.trim()) {
@@ -3882,8 +3946,8 @@ function SandboxTester() {
 
       if (commandOptions.env.trim()) {
         const env: Record<string, string> = {};
-        commandOptions.env.split(",").forEach((pair) => {
-          const [key, value] = pair.split("=");
+        commandOptions.env.split(',').forEach((pair) => {
+          const [key, value] = pair.split('=');
           if (key && value) env[key.trim()] = value.trim();
         });
         options.env = env;
@@ -3891,55 +3955,55 @@ function SandboxTester() {
 
       // Execute the command with streaming
       console.log(
-        "Executing streaming command:",
+        'Executing streaming command:',
         trimmedCommand,
-        "with options:",
+        'with options:',
         options
       );
       await client.executeStream(trimmedCommand, [], options);
-      const commandParts = trimmedCommand.split(" ");
+      const commandParts = trimmedCommand.split(' ');
       const cmd = commandParts[0];
       const args = commandParts.slice(1);
       // Get the async generator
       const streamGenerator = client.execStream(cmd, args, options);
       // Iterate through the stream events
       for await (const event of streamGenerator) {
-        console.log("Stream event:", event);
+        console.log('Stream event:', event);
         // Update the result with streaming data
         setResults((prev) => {
           const updated = [...prev];
           const lastResult = updated[updated.length - 1];
           if (lastResult && lastResult.command === trimmedCommand) {
-            if (event.type === "stdout") {
-              lastResult.stdout += event.data || "";
-            } else if (event.type === "stderr") {
-              lastResult.stderr += event.data || "";
-            } else if (event.type === "complete") {
-              lastResult.status = event.exitCode === 0 ? "completed" : "error";
+            if (event.type === 'stdout') {
+              lastResult.stdout += event.data || '';
+            } else if (event.type === 'stderr') {
+              lastResult.stderr += event.data || '';
+            } else if (event.type === 'complete') {
+              lastResult.status = event.exitCode === 0 ? 'completed' : 'error';
               lastResult.exitCode = event.exitCode;
-            } else if (event.type === "error") {
-              lastResult.status = "error";
-              lastResult.stderr += `\nError: ${event.data || "Unknown error"}`;
+            } else if (event.type === 'error') {
+              lastResult.status = 'error';
+              lastResult.stderr += `\nError: ${event.data || 'Unknown error'}`;
             }
           }
           return updated;
         });
       }
-      console.log("Streaming command completed");
+      console.log('Streaming command completed');
 
-      setCommandInput("");
+      setCommandInput('');
 
       // Refocus the input for better UX
       setTimeout(() => {
         commandInputRef.current?.focus();
       }, 0);
     } catch (error: any) {
-      console.error("Failed to execute streaming command:", error);
+      console.error('Failed to execute streaming command:', error);
       setResults((prev) => {
         const updated = [...prev];
         const lastResult = updated[updated.length - 1];
         if (lastResult && lastResult.command === trimmedCommand) {
-          lastResult.status = "error";
+          lastResult.status = 'error';
           lastResult.stderr += `\nError: ${error.message || error}`;
         }
         return updated;
@@ -3955,7 +4019,7 @@ function SandboxTester() {
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
+    if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       executeCommand();
     }
@@ -3965,29 +4029,29 @@ function SandboxTester() {
     setResults([]);
   };
 
-  const getStatusColor = (status: CommandResult["status"]) => {
+  const getStatusColor = (status: CommandResult['status']) => {
     switch (status) {
-      case "running":
-        return "text-blue-500";
-      case "completed":
-        return "text-green-500";
-      case "error":
-        return "text-red-500";
+      case 'running':
+        return 'text-blue-500';
+      case 'completed':
+        return 'text-green-500';
+      case 'error':
+        return 'text-red-500';
       default:
-        return "text-gray-500";
+        return 'text-gray-500';
     }
   };
 
-  const getStatusIcon = (status: CommandResult["status"]) => {
+  const getStatusIcon = (status: CommandResult['status']) => {
     switch (status) {
-      case "running":
-        return "⏳";
-      case "completed":
-        return "✅";
-      case "error":
-        return "❌";
+      case 'running':
+        return '⏳';
+      case 'completed':
+        return '✅';
+      case 'error':
+        return '❌';
       default:
-        return "⏳";
+        return '⏳';
     }
   };
 
@@ -3996,61 +4060,61 @@ function SandboxTester() {
       <div className="header">
         <h1>Cloudflare SDK Tester</h1>
         <div className={`connection-status ${connectionStatus}`}>
-          {connectionStatus === "connected"
+          {connectionStatus === 'connected'
             ? `Ready`
-            : connectionStatus === "connecting"
-            ? "Initializing..."
-            : "Disconnected"}
+            : connectionStatus === 'connecting'
+              ? 'Initializing...'
+              : 'Disconnected'}
         </div>
       </div>
 
       <div className="tab-navigation">
         <button
-          className={`tab-button ${activeTab === "commands" ? "active" : ""}`}
-          onClick={() => setActiveTab("commands")}
+          className={`tab-button ${activeTab === 'commands' ? 'active' : ''}`}
+          onClick={() => setActiveTab('commands')}
         >
           📟 Commands
         </button>
         <button
-          className={`tab-button ${activeTab === "processes" ? "active" : ""}`}
-          onClick={() => setActiveTab("processes")}
+          className={`tab-button ${activeTab === 'processes' ? 'active' : ''}`}
+          onClick={() => setActiveTab('processes')}
         >
           ⚙️ Processes
         </button>
         <button
-          className={`tab-button ${activeTab === "ports" ? "active" : ""}`}
-          onClick={() => setActiveTab("ports")}
+          className={`tab-button ${activeTab === 'ports' ? 'active' : ''}`}
+          onClick={() => setActiveTab('ports')}
         >
           🌐 Ports
         </button>
         <button
-          className={`tab-button ${activeTab === "streaming" ? "active" : ""}`}
-          onClick={() => setActiveTab("streaming")}
+          className={`tab-button ${activeTab === 'streaming' ? 'active' : ''}`}
+          onClick={() => setActiveTab('streaming')}
         >
           📡 Streaming
         </button>
         <button
-          className={`tab-button ${activeTab === "files" ? "active" : ""}`}
-          onClick={() => setActiveTab("files")}
+          className={`tab-button ${activeTab === 'files' ? 'active' : ''}`}
+          onClick={() => setActiveTab('files')}
         >
           📁 Files
         </button>
         <button
-          className={`tab-button ${activeTab === "notebook" ? "active" : ""}`}
-          onClick={() => setActiveTab("notebook")}
+          className={`tab-button ${activeTab === 'notebook' ? 'active' : ''}`}
+          onClick={() => setActiveTab('notebook')}
         >
           📓 Notebook
         </button>
         <button
-          className={`tab-button ${activeTab === "examples" ? "active" : ""}`}
-          onClick={() => setActiveTab("examples")}
+          className={`tab-button ${activeTab === 'examples' ? 'active' : ''}`}
+          onClick={() => setActiveTab('examples')}
         >
           🧪 Examples
         </button>
       </div>
 
       <div className="tab-content-area">
-        {activeTab === "commands" && (
+        {activeTab === 'commands' && (
           <div className="commands-tab">
             <div className="command-bar">
               <span className="command-prompt">$</span>
@@ -4071,20 +4135,20 @@ function SandboxTester() {
                   disabled={!commandInput.trim() || isExecuting}
                   className="btn btn-execute"
                 >
-                  {isExecuting ? "Executing..." : "Execute"}
+                  {isExecuting ? 'Executing...' : 'Execute'}
                 </button>
                 <button
                   type="button"
                   onClick={executeStreamingCommand}
                   disabled={
-                    connectionStatus !== "connected" ||
+                    connectionStatus !== 'connected' ||
                     !commandInput.trim() ||
                     isExecuting
                   }
                   className="btn btn-stream"
                   title="Execute with real-time streaming output"
                 >
-                  {isExecuting ? "Streaming..." : "Stream"}
+                  {isExecuting ? 'Streaming...' : 'Stream'}
                 </button>
                 <button type="button" onClick={clearResults} className="btn">
                   Clear
@@ -4102,7 +4166,7 @@ function SandboxTester() {
                   onChange={(e) =>
                     setCommandOptions((prev) => ({
                       ...prev,
-                      cwd: e.target.value,
+                      cwd: e.target.value
                     }))
                   }
                   className="option-input"
@@ -4115,7 +4179,7 @@ function SandboxTester() {
                   onChange={(e) =>
                     setCommandOptions((prev) => ({
                       ...prev,
-                      env: e.target.value,
+                      env: e.target.value
                     }))
                   }
                   className="option-input"
@@ -4128,9 +4192,9 @@ function SandboxTester() {
               {results.length === 0 ? (
                 <div
                   style={{
-                    color: "#8b949e",
-                    padding: "2rem",
-                    textAlign: "center",
+                    color: '#8b949e',
+                    padding: '2rem',
+                    textAlign: 'center'
                   }}
                 >
                   No commands executed yet. Try running a command above.
@@ -4146,7 +4210,7 @@ function SandboxTester() {
                         <div className="command-line">
                           $ <span>{result.command}</span>
                         </div>
-                        {result.status !== "running" &&
+                        {result.status !== 'running' &&
                           result.exitCode !== undefined && (
                             <span className="exit-code">
                               (exit: {result.exitCode})
@@ -4202,14 +4266,14 @@ function SandboxTester() {
               </div>
               <div className="help-note">
                 <strong>Note:</strong> Use the "Stream" button for commands that
-                produce real-time output (like <code>top</code> or{" "}
+                produce real-time output (like <code>top</code> or{' '}
                 <code>tail -f</code>).
               </div>
             </div>
           </div>
         )}
 
-        {activeTab === "processes" && (
+        {activeTab === 'processes' && (
           <ProcessManagementTab
             client={client}
             connectionStatus={connectionStatus}
@@ -4217,7 +4281,7 @@ function SandboxTester() {
           />
         )}
 
-        {activeTab === "ports" && (
+        {activeTab === 'ports' && (
           <PortManagementTab
             client={client}
             connectionStatus={connectionStatus}
@@ -4225,7 +4289,7 @@ function SandboxTester() {
           />
         )}
 
-        {activeTab === "streaming" && (
+        {activeTab === 'streaming' && (
           <StreamingTab
             client={client}
             connectionStatus={connectionStatus}
@@ -4233,14 +4297,14 @@ function SandboxTester() {
           />
         )}
 
-        {activeTab === "files" && (
+        {activeTab === 'files' && (
           <FilesTab client={client} connectionStatus={connectionStatus} />
         )}
 
-        {activeTab === "notebook" && (
+        {activeTab === 'notebook' && (
           <NotebookTab client={client} connectionStatus={connectionStatus} />
         )}
-        {activeTab === "examples" && (
+        {activeTab === 'examples' && (
           <ExamplesTab client={client} connectionStatus={connectionStatus} />
         )}
       </div>
@@ -4248,5 +4312,5 @@ function SandboxTester() {
   );
 }
 
-const root = createRoot(document.getElementById("root")!);
+const root = createRoot(document.getElementById('root')!);
 root.render(<SandboxTester />);

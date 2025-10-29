@@ -1,21 +1,31 @@
-import { beforeEach, describe, expect, it, vi } from "bun:test";
-import type { CloneOptions, Logger, ServiceResult } from '@sandbox-container/core/types';
-import { GitService, type SecurityService } from '@sandbox-container/services/git-service';
-import type { RawExecResult, SessionManager } from '@sandbox-container/services/session-manager';
+import { beforeEach, describe, expect, it, vi } from 'bun:test';
+import type {
+  CloneOptions,
+  Logger,
+  ServiceResult
+} from '@sandbox-container/core/types';
+import {
+  GitService,
+  type SecurityService
+} from '@sandbox-container/services/git-service';
+import type {
+  RawExecResult,
+  SessionManager
+} from '@sandbox-container/services/session-manager';
 import { mocked } from '../test-utils';
 
 // Properly typed mock dependencies
 const mockSecurityService: SecurityService = {
   validateGitUrl: vi.fn(),
   validatePath: vi.fn(),
-  sanitizePath: vi.fn(),
+  sanitizePath: vi.fn()
 };
 
 const mockLogger: Logger = {
   info: vi.fn(),
   error: vi.fn(),
   warn: vi.fn(),
-  debug: vi.fn(),
+  debug: vi.fn()
 };
 
 // Properly typed mock SessionManager
@@ -25,7 +35,7 @@ const mockSessionManager: Partial<SessionManager> = {
   killCommand: vi.fn(),
   setEnvVars: vi.fn(),
   getSession: vi.fn(),
-  createSession: vi.fn(),
+  createSession: vi.fn()
 };
 
 describe('GitService', () => {
@@ -61,19 +71,21 @@ describe('GitService', () => {
           data: {
             exitCode: 0,
             stdout: 'Cloning into target-dir...',
-            stderr: '',
-          },
+            stderr: ''
+          }
         } as ServiceResult<RawExecResult>)
         .mockResolvedValueOnce({
           success: true,
           data: {
             exitCode: 0,
             stdout: 'main\n',
-            stderr: '',
-          },
+            stderr: ''
+          }
         } as ServiceResult<RawExecResult>);
 
-      const result = await gitService.cloneRepository('https://github.com/user/repo.git');
+      const result = await gitService.cloneRepository(
+        'https://github.com/user/repo.git'
+      );
 
       expect(result.success).toBe(true);
       if (result.success) {
@@ -82,8 +94,12 @@ describe('GitService', () => {
       }
 
       // Verify security validations were called
-      expect(mockSecurityService.validateGitUrl).toHaveBeenCalledWith('https://github.com/user/repo.git');
-      expect(mockSecurityService.validatePath).toHaveBeenCalledWith('/workspace/repo');
+      expect(mockSecurityService.validateGitUrl).toHaveBeenCalledWith(
+        'https://github.com/user/repo.git'
+      );
+      expect(mockSecurityService.validatePath).toHaveBeenCalledWith(
+        '/workspace/repo'
+      );
 
       // Verify SessionManager was called for git clone (cwd is undefined)
       expect(mockSessionManager.executeInSession).toHaveBeenNthCalledWith(
@@ -108,25 +124,28 @@ describe('GitService', () => {
           data: {
             exitCode: 0,
             stdout: 'Cloning...',
-            stderr: '',
-          },
+            stderr: ''
+          }
         } as ServiceResult<RawExecResult>)
         .mockResolvedValueOnce({
           success: true,
           data: {
             exitCode: 0,
             stdout: 'develop\n',
-            stderr: '',
-          },
+            stderr: ''
+          }
         } as ServiceResult<RawExecResult>);
 
       const options: CloneOptions = {
         branch: 'develop',
         targetDir: '/tmp/custom-target',
-        sessionId: 'session-123',
+        sessionId: 'session-123'
       };
 
-      const result = await gitService.cloneRepository('https://github.com/user/repo.git', options);
+      const result = await gitService.cloneRepository(
+        'https://github.com/user/repo.git',
+        options
+      );
 
       expect(result.success).toBe(true);
       if (result.success) {
@@ -148,14 +167,18 @@ describe('GitService', () => {
         errors: ['Invalid URL scheme', 'URL not in allowlist']
       });
 
-      const result = await gitService.cloneRepository('ftp://malicious.com/repo.git');
+      const result = await gitService.cloneRepository(
+        'ftp://malicious.com/repo.git'
+      );
 
       expect(result.success).toBe(false);
       if (!result.success) {
         expect(result.error.code).toBe('INVALID_GIT_URL');
         expect(result.error.message).toContain('Invalid URL scheme');
         expect(result.error.details?.validationErrors).toBeDefined();
-        expect(result.error.details?.validationErrors?.[0]?.message).toContain('Invalid URL scheme');
+        expect(result.error.details?.validationErrors?.[0]?.message).toContain(
+          'Invalid URL scheme'
+        );
       }
 
       // Should not attempt git clone
@@ -177,7 +200,9 @@ describe('GitService', () => {
       if (!result.success) {
         expect(result.error.code).toBe('VALIDATION_FAILED');
         expect(result.error.details?.validationErrors).toBeDefined();
-        expect(result.error.details?.validationErrors?.[0]?.message).toContain('Path outside sandbox');
+        expect(result.error.details?.validationErrors?.[0]?.message).toContain(
+          'Path outside sandbox'
+        );
       }
 
       // Should not attempt git clone
@@ -190,11 +215,13 @@ describe('GitService', () => {
         data: {
           exitCode: 128,
           stdout: '',
-          stderr: 'fatal: repository not found',
-        },
+          stderr: 'fatal: repository not found'
+        }
       } as ServiceResult<RawExecResult>);
 
-      const result = await gitService.cloneRepository('https://github.com/user/nonexistent.git');
+      const result = await gitService.cloneRepository(
+        'https://github.com/user/nonexistent.git'
+      );
 
       expect(result.success).toBe(false);
       if (!result.success) {
@@ -209,11 +236,13 @@ describe('GitService', () => {
         success: false,
         error: {
           message: 'Session execution failed',
-          code: 'SESSION_ERROR',
-        },
+          code: 'SESSION_ERROR'
+        }
       } as ServiceResult<RawExecResult>);
 
-      const result = await gitService.cloneRepository('https://github.com/user/repo.git');
+      const result = await gitService.cloneRepository(
+        'https://github.com/user/repo.git'
+      );
 
       expect(result.success).toBe(false);
       if (!result.success) {
@@ -229,11 +258,15 @@ describe('GitService', () => {
         data: {
           exitCode: 0,
           stdout: 'Switched to branch develop',
-          stderr: '',
-        },
+          stderr: ''
+        }
       } as ServiceResult<RawExecResult>);
 
-      const result = await gitService.checkoutBranch('/tmp/repo', 'develop', 'session-123');
+      const result = await gitService.checkoutBranch(
+        '/tmp/repo',
+        'develop',
+        'session-123'
+      );
 
       expect(result.success).toBe(true);
 
@@ -263,11 +296,14 @@ describe('GitService', () => {
         data: {
           exitCode: 1,
           stdout: '',
-          stderr: "error: pathspec 'nonexistent' did not match",
-        },
+          stderr: "error: pathspec 'nonexistent' did not match"
+        }
       } as ServiceResult<RawExecResult>);
 
-      const result = await gitService.checkoutBranch('/tmp/repo', 'nonexistent');
+      const result = await gitService.checkoutBranch(
+        '/tmp/repo',
+        'nonexistent'
+      );
 
       expect(result.success).toBe(false);
       if (!result.success) {
@@ -284,11 +320,14 @@ describe('GitService', () => {
         data: {
           exitCode: 0,
           stdout: 'main\n',
-          stderr: '',
-        },
+          stderr: ''
+        }
       } as ServiceResult<RawExecResult>);
 
-      const result = await gitService.getCurrentBranch('/tmp/repo', 'session-123');
+      const result = await gitService.getCurrentBranch(
+        '/tmp/repo',
+        'session-123'
+      );
 
       expect(result.success).toBe(true);
       if (result.success) {
@@ -318,8 +357,8 @@ describe('GitService', () => {
         data: {
           exitCode: 0,
           stdout: branchOutput,
-          stderr: '',
-        },
+          stderr: ''
+        }
       } as ServiceResult<RawExecResult>);
 
       const result = await gitService.listBranches('/tmp/repo', 'session-123');
@@ -335,7 +374,7 @@ describe('GitService', () => {
 
         // Should not include duplicates or HEAD references
         expect(result.data).not.toContain('HEAD');
-        expect(result.data.filter(b => b === 'main')).toHaveLength(1);
+        expect(result.data.filter((b) => b === 'main')).toHaveLength(1);
       }
 
       expect(mockSessionManager.executeInSession).toHaveBeenCalledWith(
@@ -351,8 +390,8 @@ describe('GitService', () => {
         data: {
           exitCode: 128,
           stdout: '',
-          stderr: 'fatal: not a git repository',
-        },
+          stderr: 'fatal: not a git repository'
+        }
       } as ServiceResult<RawExecResult>);
 
       const result = await gitService.listBranches('/tmp/not-a-repo');

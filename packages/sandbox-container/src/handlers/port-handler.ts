@@ -1,5 +1,6 @@
 // Port Handler
-import type {Logger, 
+import type {
+  Logger,
   PortCloseResult,
   PortExposeResult,
   PortListResult
@@ -41,13 +42,19 @@ export class PortHandler extends BaseHandler<Request, Response> {
       return await this.handleProxy(request, context);
     }
 
-    return this.createErrorResponse({
-      message: 'Invalid port endpoint',
-      code: ErrorCode.UNKNOWN_ERROR,
-    }, context);
+    return this.createErrorResponse(
+      {
+        message: 'Invalid port endpoint',
+        code: ErrorCode.UNKNOWN_ERROR
+      },
+      context
+    );
   }
 
-  private async handleExpose(request: Request, context: RequestContext): Promise<Response> {
+  private async handleExpose(
+    request: Request,
+    context: RequestContext
+  ): Promise<Response> {
     const body = await this.parseRequestBody<ExposePortRequest>(request);
 
     const result = await this.portService.exposePort(body.port, body.name);
@@ -59,7 +66,7 @@ export class PortHandler extends BaseHandler<Request, Response> {
         success: true,
         port: portInfo.port,
         url: `http://localhost:${portInfo.port}`, // Generate URL from port
-        timestamp: new Date().toISOString(),
+        timestamp: new Date().toISOString()
       };
 
       return this.createTypedResponse(response, context);
@@ -68,14 +75,18 @@ export class PortHandler extends BaseHandler<Request, Response> {
     }
   }
 
-  private async handleUnexpose(request: Request, context: RequestContext, port: number): Promise<Response> {
+  private async handleUnexpose(
+    request: Request,
+    context: RequestContext,
+    port: number
+  ): Promise<Response> {
     const result = await this.portService.unexposePort(port);
 
     if (result.success) {
       const response: PortCloseResult = {
         success: true,
         port,
-        timestamp: new Date().toISOString(),
+        timestamp: new Date().toISOString()
       };
 
       return this.createTypedResponse(response, context);
@@ -84,20 +95,23 @@ export class PortHandler extends BaseHandler<Request, Response> {
     }
   }
 
-  private async handleList(request: Request, context: RequestContext): Promise<Response> {
+  private async handleList(
+    request: Request,
+    context: RequestContext
+  ): Promise<Response> {
     const result = await this.portService.getExposedPorts();
 
     if (result.success) {
-      const ports = result.data!.map(portInfo => ({
+      const ports = result.data!.map((portInfo) => ({
         port: portInfo.port,
         url: `http://localhost:${portInfo.port}`,
-        status: portInfo.status,
+        status: portInfo.status
       }));
 
       const response: PortListResult = {
         success: true,
         ports,
-        timestamp: new Date().toISOString(),
+        timestamp: new Date().toISOString()
       };
 
       return this.createTypedResponse(response, context);
@@ -106,27 +120,36 @@ export class PortHandler extends BaseHandler<Request, Response> {
     }
   }
 
-  private async handleProxy(request: Request, context: RequestContext): Promise<Response> {
+  private async handleProxy(
+    request: Request,
+    context: RequestContext
+  ): Promise<Response> {
     try {
       // Extract port from URL path: /proxy/{port}/...
       const url = new URL(request.url);
       const pathSegments = url.pathname.split('/');
-      
+
       if (pathSegments.length < 3) {
-        return this.createErrorResponse({
-          message: 'Invalid proxy URL format',
-          code: ErrorCode.UNKNOWN_ERROR,
-        }, context);
+        return this.createErrorResponse(
+          {
+            message: 'Invalid proxy URL format',
+            code: ErrorCode.UNKNOWN_ERROR
+          },
+          context
+        );
       }
 
       const portStr = pathSegments[2];
       const port = parseInt(portStr, 10);
 
       if (Number.isNaN(port)) {
-        return this.createErrorResponse({
-          message: 'Invalid port number in proxy URL',
-          code: ErrorCode.UNKNOWN_ERROR,
-        }, context);
+        return this.createErrorResponse(
+          {
+            message: 'Invalid port number in proxy URL',
+            code: ErrorCode.UNKNOWN_ERROR
+          },
+          context
+        );
       }
 
       // Use the port service to proxy the request
@@ -134,14 +157,22 @@ export class PortHandler extends BaseHandler<Request, Response> {
 
       return response;
     } catch (error) {
-      this.logger.error('Proxy request failed', error instanceof Error ? error : undefined, {
-        requestId: context.requestId,
-      });
+      this.logger.error(
+        'Proxy request failed',
+        error instanceof Error ? error : undefined,
+        {
+          requestId: context.requestId
+        }
+      );
 
-      return this.createErrorResponse({
-        message: error instanceof Error ? error.message : 'Proxy request failed',
-        code: ErrorCode.UNKNOWN_ERROR,
-      }, context);
+      return this.createErrorResponse(
+        {
+          message:
+            error instanceof Error ? error.message : 'Proxy request failed',
+          code: ErrorCode.UNKNOWN_ERROR
+        },
+        context
+      );
     }
   }
 }

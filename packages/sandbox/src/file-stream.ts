@@ -3,7 +3,9 @@ import type { FileChunk, FileMetadata, FileStreamEvent } from '@repo/shared';
 /**
  * Parse SSE (Server-Sent Events) lines from a stream
  */
-async function* parseSSE(stream: ReadableStream<Uint8Array>): AsyncGenerator<FileStreamEvent> {
+async function* parseSSE(
+  stream: ReadableStream<Uint8Array>
+): AsyncGenerator<FileStreamEvent> {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
@@ -59,7 +61,9 @@ async function* parseSSE(stream: ReadableStream<Uint8Array>): AsyncGenerator<Fil
  * }
  * ```
  */
-export async function* streamFile(stream: ReadableStream<Uint8Array>): AsyncGenerator<FileChunk, FileMetadata> {
+export async function* streamFile(
+  stream: ReadableStream<Uint8Array>
+): AsyncGenerator<FileChunk, FileMetadata> {
   let metadata: FileMetadata | null = null;
 
   for await (const event of parseSSE(stream)) {
@@ -69,7 +73,7 @@ export async function* streamFile(stream: ReadableStream<Uint8Array>): AsyncGene
           mimeType: event.mimeType,
           size: event.size,
           isBinary: event.isBinary,
-          encoding: event.encoding,
+          encoding: event.encoding
         };
         break;
 
@@ -144,8 +148,9 @@ export async function collectFile(stream: ReadableStream<Uint8Array>): Promise<{
   // Combine chunks based on type
   if (metadata.isBinary) {
     // Binary file - combine Uint8Arrays
-    const totalLength = chunks.reduce((sum, chunk) =>
-      sum + (chunk instanceof Uint8Array ? chunk.length : 0), 0
+    const totalLength = chunks.reduce(
+      (sum, chunk) => sum + (chunk instanceof Uint8Array ? chunk.length : 0),
+      0
     );
     const combined = new Uint8Array(totalLength);
     let offset = 0;
@@ -158,7 +163,7 @@ export async function collectFile(stream: ReadableStream<Uint8Array>): Promise<{
     return { content: combined, metadata };
   } else {
     // Text file - combine strings
-    const combined = chunks.filter(c => typeof c === 'string').join('');
+    const combined = chunks.filter((c) => typeof c === 'string').join('');
     return { content: combined, metadata };
   }
 }

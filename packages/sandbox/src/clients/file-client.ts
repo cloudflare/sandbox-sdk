@@ -49,7 +49,6 @@ export interface FileOperationRequest extends SessionRequest {
  * Client for file system operations
  */
 export class FileClient extends BaseHttpClient {
-
   /**
    * Create a directory
    * @param path - Directory path to create
@@ -65,12 +64,15 @@ export class FileClient extends BaseHttpClient {
       const data = {
         path,
         sessionId,
-        recursive: options?.recursive ?? false,
+        recursive: options?.recursive ?? false
       };
 
       const response = await this.post<MkdirResult>('/api/mkdir', data);
-      
-      this.logSuccess('Directory created', `${path} (recursive: ${data.recursive})`);
+
+      this.logSuccess(
+        'Directory created',
+        `${path} (recursive: ${data.recursive})`
+      );
       return response;
     } catch (error) {
       this.logError('mkdir', error);
@@ -96,11 +98,11 @@ export class FileClient extends BaseHttpClient {
         path,
         content,
         sessionId,
-        encoding: options?.encoding ?? 'utf8',
+        encoding: options?.encoding ?? 'utf8'
       };
 
       const response = await this.post<WriteFileResult>('/api/write', data);
-      
+
       this.logSuccess('File written', `${path} (${content.length} chars)`);
       return response;
     } catch (error) {
@@ -124,12 +126,15 @@ export class FileClient extends BaseHttpClient {
       const data = {
         path,
         sessionId,
-        encoding: options?.encoding ?? 'utf8',
+        encoding: options?.encoding ?? 'utf8'
       };
 
       const response = await this.post<ReadFileResult>('/api/read', data);
 
-      this.logSuccess('File read', `${path} (${response.content.length} chars)`);
+      this.logSuccess(
+        'File read',
+        `${path} (${response.content.length} chars)`
+      );
       return response;
     } catch (error) {
       this.logError('readFile', error);
@@ -150,15 +155,15 @@ export class FileClient extends BaseHttpClient {
     try {
       const data = {
         path,
-        sessionId,
+        sessionId
       };
 
       const response = await this.doFetch('/api/read/stream', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
+          'Content-Type': 'application/json'
         },
-        body: JSON.stringify(data),
+        body: JSON.stringify(data)
       });
 
       const stream = await this.handleStreamResponse(response);
@@ -175,15 +180,12 @@ export class FileClient extends BaseHttpClient {
    * @param path - File path to delete
    * @param sessionId - The session ID for this operation
    */
-  async deleteFile(
-    path: string,
-    sessionId: string
-  ): Promise<DeleteFileResult> {
+  async deleteFile(path: string, sessionId: string): Promise<DeleteFileResult> {
     try {
       const data = { path, sessionId };
 
       const response = await this.post<DeleteFileResult>('/api/delete', data);
-      
+
       this.logSuccess('File deleted', path);
       return response;
     } catch (error) {
@@ -207,7 +209,7 @@ export class FileClient extends BaseHttpClient {
       const data = { oldPath: path, newPath, sessionId };
 
       const response = await this.post<RenameFileResult>('/api/rename', data);
-      
+
       this.logSuccess('File renamed', `${path} -> ${newPath}`);
       return response;
     } catch (error) {
@@ -255,10 +257,13 @@ export class FileClient extends BaseHttpClient {
       const data = {
         path,
         sessionId,
-        options: options || {},
+        options: options || {}
       };
 
-      const response = await this.post<ListFilesResult>('/api/list-files', data);
+      const response = await this.post<ListFilesResult>(
+        '/api/list-files',
+        data
+      );
 
       this.logSuccess('Files listed', `${path} (${response.count} files)`);
       return response;
@@ -273,19 +278,19 @@ export class FileClient extends BaseHttpClient {
    * @param path - Path to check
    * @param sessionId - The session ID for this operation
    */
-  async exists(
-    path: string,
-    sessionId: string
-  ): Promise<FileExistsResult> {
+  async exists(path: string, sessionId: string): Promise<FileExistsResult> {
     try {
       const data = {
         path,
-        sessionId,
+        sessionId
       };
 
       const response = await this.post<FileExistsResult>('/api/exists', data);
 
-      this.logSuccess('Path existence checked', `${path} (exists: ${response.exists})`);
+      this.logSuccess(
+        'Path existence checked',
+        `${path} (exists: ${response.exists})`
+      );
       return response;
     } catch (error) {
       this.logError('exists', error);

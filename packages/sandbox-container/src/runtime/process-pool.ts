@@ -1,10 +1,10 @@
-import { type ChildProcess, spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
-import type { Logger } from "@repo/shared";
-import { createLogger } from "@repo/shared";
-import { CONFIG } from "../config";
+import { type ChildProcess, spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
+import type { Logger } from '@repo/shared';
+import { createLogger } from '@repo/shared';
+import { CONFIG } from '../config';
 
-export type InterpreterLanguage = "python" | "javascript" | "typescript";
+export type InterpreterLanguage = 'python' | 'javascript' | 'typescript';
 
 export interface InterpreterProcess {
   id: string;
@@ -29,7 +29,17 @@ export interface ExecutionResult {
 }
 
 export interface RichOutput {
-  type: "text" | "image" | "jpeg" | "svg" | "html" | "json" | "latex" | "markdown" | "javascript" | "error";
+  type:
+    | 'text'
+    | 'image'
+    | 'jpeg'
+    | 'svg'
+    | 'html'
+    | 'json'
+    | 'latex'
+    | 'markdown'
+    | 'javascript'
+    | 'error';
   data: string;
   metadata?: Record<string, unknown>;
 }
@@ -44,24 +54,27 @@ export interface ExecutorPoolConfig extends PoolConfig {
   executor: InterpreterLanguage;
 }
 
-const DEFAULT_EXECUTOR_CONFIGS: Record<InterpreterLanguage, ExecutorPoolConfig> = {
+const DEFAULT_EXECUTOR_CONFIGS: Record<
+  InterpreterLanguage,
+  ExecutorPoolConfig
+> = {
   python: {
-    executor: "python",
+    executor: 'python',
     minSize: 3,
     maxProcesses: 15,
-    idleTimeout: 5 * 60 * 1000, // 5 minutes
+    idleTimeout: 5 * 60 * 1000 // 5 minutes
   },
   javascript: {
-    executor: "javascript",
+    executor: 'javascript',
     minSize: 3,
     maxProcesses: 10,
-    idleTimeout: 5 * 60 * 1000,
+    idleTimeout: 5 * 60 * 1000
   },
   typescript: {
-    executor: "typescript",
+    executor: 'typescript',
     minSize: 3,
     maxProcesses: 10,
-    idleTimeout: 5 * 60 * 1000,
+    idleTimeout: 5 * 60 * 1000
   }
 };
 
@@ -71,9 +84,17 @@ export class ProcessPoolManager {
   private cleanupInterval?: NodeJS.Timeout;
   private logger: Logger;
 
-  constructor(customConfigs: Partial<Record<InterpreterLanguage, Partial<ExecutorPoolConfig>>> = {}, logger?: Logger) {
+  constructor(
+    customConfigs: Partial<
+      Record<InterpreterLanguage, Partial<ExecutorPoolConfig>>
+    > = {},
+    logger?: Logger
+  ) {
     this.logger = logger ?? createLogger({ component: 'executor' });
-    const executorEntries = Object.entries(DEFAULT_EXECUTOR_CONFIGS) as [InterpreterLanguage, ExecutorPoolConfig][];
+    const executorEntries = Object.entries(DEFAULT_EXECUTOR_CONFIGS) as [
+      InterpreterLanguage,
+      ExecutorPoolConfig
+    ][];
 
     for (const [executor, defaultConfig] of executorEntries) {
       const userConfig = customConfigs[executor] || {};
@@ -84,15 +105,19 @@ export class ProcessPoolManager {
         ...defaultConfig,
         ...userConfig,
         // Environment variables override user config override defaults
-        minSize: envMinSize ? parseInt(envMinSize, 10) : (userConfig.minSize || defaultConfig.minSize),
-        maxProcesses: envMaxSize ? parseInt(envMaxSize, 10) : (userConfig.maxProcesses || defaultConfig.maxProcesses)
+        minSize: envMinSize
+          ? parseInt(envMinSize, 10)
+          : userConfig.minSize || defaultConfig.minSize,
+        maxProcesses: envMaxSize
+          ? parseInt(envMaxSize, 10)
+          : userConfig.maxProcesses || defaultConfig.maxProcesses
       };
 
       this.poolConfigs.set(executor, config);
       this.pools.set(executor, []);
     }
 
-    const pythonConfig = this.poolConfigs.get("python");
+    const pythonConfig = this.poolConfigs.get('python');
     if (pythonConfig) {
       this.cleanupInterval = setInterval(() => {
         this.cleanupIdleProcesses();
@@ -101,7 +126,9 @@ export class ProcessPoolManager {
 
     // Start pre-warming in background - don't block constructor
     this.startPreWarming().catch((error) => {
-      this.logger.debug('Pre-warming failed', { error: error instanceof Error ? error.message : String(error) });
+      this.logger.debug('Pre-warming failed', {
+        error: error instanceof Error ? error.message : String(error)
+      });
     });
   }
 
@@ -120,8 +147,14 @@ export class ProcessPoolManager {
     try {
       const execStartTime = Date.now();
       // Use provided timeout, or fall back to config (which may be undefined = unlimited)
-      const effectiveTimeout = timeout ?? CONFIG.INTERPRETER_EXECUTION_TIMEOUT_MS;
-      const result = await this.executeCode(process, code, executionId, effectiveTimeout);
+      const effectiveTimeout =
+        timeout ?? CONFIG.INTERPRETER_EXECUTION_TIMEOUT_MS;
+      const result = await this.executeCode(
+        process,
+        code,
+        executionId,
+        effectiveTimeout
+      );
       const execTime = Date.now() - execStartTime;
       const totalTime = Date.now() - totalStartTime;
 
@@ -195,17 +228,24 @@ export class ProcessPoolManager {
     let args: string[];
 
     switch (language) {
-      case "python":
-        command = "python3";
-        args = ["-u", "/container-server/dist/runtime/executors/python/ipython_executor.py"];
+      case 'python':
+        command = 'python3';
+        args = [
+          '-u',
+          '/container-server/dist/runtime/executors/python/ipython_executor.py'
+        ];
         break;
-      case "javascript":
-        command = "node";
-        args = ["/container-server/dist/runtime/executors/javascript/node_executor.js"];
+      case 'javascript':
+        command = 'node';
+        args = [
+          '/container-server/dist/runtime/executors/javascript/node_executor.js'
+        ];
         break;
-      case "typescript":
-        command = "node";
-        args = ["/container-server/dist/runtime/executors/typescript/ts_executor.js"];
+      case 'typescript':
+        command = 'node';
+        args = [
+          '/container-server/dist/runtime/executors/typescript/ts_executor.js'
+        ];
         break;
     }
 
@@ -216,13 +256,13 @@ export class ProcessPoolManager {
     });
 
     const childProcess = spawn(command, args, {
-      stdio: ["pipe", "pipe", "pipe"],
+      stdio: ['pipe', 'pipe', 'pipe'],
       env: {
         ...process.env,
-        PYTHONUNBUFFERED: "1",
-        NODE_NO_WARNINGS: "1",
+        PYTHONUNBUFFERED: '1',
+        NODE_NO_WARNINGS: '1'
       },
-      cwd: "/workspace",
+      cwd: '/workspace'
     });
 
     const interpreterProcess: InterpreterProcess = {
@@ -231,12 +271,12 @@ export class ProcessPoolManager {
       process: childProcess,
       sessionId,
       lastUsed: new Date(),
-      isAvailable: false,
+      isAvailable: false
     };
 
     return new Promise((resolve, reject) => {
-      let readyBuffer = "";
-      let errorBuffer = "";
+      let readyBuffer = '';
+      let errorBuffer = '';
 
       const timeout = setTimeout(() => {
         childProcess.kill();
@@ -246,7 +286,11 @@ export class ProcessPoolManager {
           stdout: readyBuffer,
           stderr: errorBuffer
         });
-        reject(new Error(`${language} executor failed to start within ${CONFIG.INTERPRETER_SPAWN_TIMEOUT_MS}ms`));
+        reject(
+          new Error(
+            `${language} executor failed to start within ${CONFIG.INTERPRETER_SPAWN_TIMEOUT_MS}ms`
+          )
+        );
       }, CONFIG.INTERPRETER_SPAWN_TIMEOUT_MS);
 
       const readyHandler = (data: Buffer) => {
@@ -258,8 +302,8 @@ export class ProcessPoolManager {
 
         if (readyBuffer.includes('"ready"')) {
           clearTimeout(timeout);
-          childProcess.stdout?.removeListener("data", readyHandler);
-          childProcess.stderr?.removeListener("data", errorHandler);
+          childProcess.stdout?.removeListener('data', readyHandler);
+          childProcess.stderr?.removeListener('data', errorHandler);
           const readyTime = Date.now() - startTime;
           this.logger.debug('Interpreter process ready', {
             language,
@@ -278,10 +322,10 @@ export class ProcessPoolManager {
         });
       };
 
-      childProcess.stdout?.on("data", readyHandler);
-      childProcess.stderr?.on("data", errorHandler);
+      childProcess.stdout?.on('data', readyHandler);
+      childProcess.stderr?.on('data', errorHandler);
 
-      childProcess.once("error", (err) => {
+      childProcess.once('error', (err) => {
         clearTimeout(timeout);
         this.logger.debug('Interpreter spawn error', {
           language,
@@ -290,7 +334,7 @@ export class ProcessPoolManager {
         reject(err);
       });
 
-      childProcess.once("exit", (code) => {
+      childProcess.once('exit', (code) => {
         if (code !== 0) {
           clearTimeout(timeout);
           this.logger.debug('Interpreter exited during spawn', {
@@ -313,12 +357,12 @@ export class ProcessPoolManager {
 
     return new Promise((resolve, reject) => {
       let timer: NodeJS.Timeout | undefined;
-      let responseBuffer = "";
+      let responseBuffer = '';
 
       // Cleanup function to ensure listener is always removed
       const cleanup = () => {
         if (timer) clearTimeout(timer);
-        process.process.stdout?.removeListener("data", responseHandler);
+        process.process.stdout?.removeListener('data', responseHandler);
       };
 
       // Set up timeout ONLY if specified (undefined = unlimited)
@@ -328,7 +372,7 @@ export class ProcessPoolManager {
           // NOTE: We don't kill the child process here because it's a pooled interpreter
           // that may be reused. The timeout is enforced, but the interpreter continues.
           // The executor itself also has its own timeout mechanism for VM execution.
-          reject(new Error("Execution timeout"));
+          reject(new Error('Execution timeout'));
         }, timeout);
       }
 
@@ -340,19 +384,19 @@ export class ProcessPoolManager {
           cleanup();
 
           resolve({
-            stdout: response.stdout || "",
-            stderr: response.stderr || "",
+            stdout: response.stdout || '',
+            stderr: response.stderr || '',
             success: response.success !== false,
             executionId,
             outputs: response.outputs || [],
-            error: response.error || null,
+            error: response.error || null
           });
         } catch (e) {
           // Incomplete JSON, keep buffering
         }
       };
 
-      process.process.stdout?.on("data", responseHandler);
+      process.process.stdout?.on('data', responseHandler);
       process.process.stdin?.write(`${request}\n`);
     });
   }
@@ -384,7 +428,9 @@ export class ProcessPoolManager {
     try {
       await Promise.all(warmupPromises);
       const totalTime = Date.now() - startTime;
-      this.logger.debug('Pre-warming complete for all executors', { totalTime });
+      this.logger.debug('Pre-warming complete for all executors', {
+        totalTime
+      });
     } catch (error) {
       this.logger.debug('Pre-warming failed', {
         error: error instanceof Error ? error.message : String(error)
@@ -392,7 +438,10 @@ export class ProcessPoolManager {
     }
   }
 
-  private async preWarmExecutor(executor: InterpreterLanguage, config: ExecutorPoolConfig): Promise<void> {
+  private async preWarmExecutor(
+    executor: InterpreterLanguage,
+    config: ExecutorPoolConfig
+  ): Promise<void> {
     const startTime = Date.now();
     this.logger.debug('Pre-warming executor', {
       executor,
@@ -423,7 +472,7 @@ export class ProcessPoolManager {
     }
 
     const warmupTime = Date.now() - startTime;
-    const actualCount = pool.filter(p => p.isAvailable).length;
+    const actualCount = pool.filter((p) => p.isAvailable).length;
     this.logger.debug('Pre-warming executor complete', {
       executor,
       actualCount,
@@ -449,9 +498,11 @@ export class ProcessPoolManager {
         const idleTime = now.getTime() - process.lastUsed.getTime();
 
         // Only clean up excess processes beyond minimum pool size
-        if (process.isAvailable &&
-            idleTime > config.idleTimeout &&
-            pool.filter(p => p.isAvailable).length > config.minSize) {
+        if (
+          process.isAvailable &&
+          idleTime > config.idleTimeout &&
+          pool.filter((p) => p.isAvailable).length > config.minSize
+        ) {
           process.process.kill();
           pool.splice(i, 1);
           this.logger.debug('Cleaned up idle process', {

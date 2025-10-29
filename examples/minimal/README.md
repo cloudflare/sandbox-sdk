@@ -24,6 +24,7 @@ GET http://localhost:8787/run
 ```
 
 Runs `python -c "print(2 + 2)"` and returns:
+
 ```json
 {
   "output": "4\n",
@@ -38,6 +39,7 @@ GET http://localhost:8787/file
 ```
 
 Creates `/workspace/hello.txt`, reads it back, and returns:
+
 ```json
 {
   "content": "Hello, Sandbox!"
@@ -47,12 +49,14 @@ Creates `/workspace/hello.txt`, reads it back, and returns:
 ## Setup
 
 1. From the project root, run:
+
 ```bash
 npm install
 npm run build
 ```
 
 2. Run locally:
+
 ```bash
 cd examples/minimal # if you're not already here
 npm run dev

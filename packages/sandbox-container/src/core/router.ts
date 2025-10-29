@@ -36,7 +36,13 @@ export class Router {
   }
 
   private validateHttpMethod(method: string): HttpMethod {
-    const validMethods: HttpMethod[] = ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'];
+    const validMethods: HttpMethod[] = [
+      'GET',
+      'POST',
+      'PUT',
+      'DELETE',
+      'OPTIONS'
+    ];
     if (validMethods.includes(method as HttpMethod)) {
       return method as HttpMethod;
     }
@@ -63,13 +69,16 @@ export class Router {
       sessionId: this.extractSessionId(request),
       corsHeaders: this.getCorsHeaders(),
       requestId: this.generateRequestId(),
-      timestamp: new Date(),
+      timestamp: new Date()
     };
 
     try {
       // Build middleware chain (global + route-specific)
-      const middlewareChain = [...this.globalMiddleware, ...(route.middleware || [])];
-      
+      const middlewareChain = [
+        ...this.globalMiddleware,
+        ...(route.middleware || [])
+      ];
+
       // Execute middleware chain
       return await this.executeMiddlewareChain(
         middlewareChain,
@@ -83,7 +92,9 @@ export class Router {
         pathname,
         requestId: context.requestId
       });
-      return this.createErrorResponse(error instanceof Error ? error : new Error('Unknown error'));
+      return this.createErrorResponse(
+        error instanceof Error ? error : new Error('Unknown error')
+      );
     }
   }
 
@@ -174,7 +185,8 @@ export class Router {
     // Try query params ?session= or ?sessionId=
     try {
       const url = new URL(request.url);
-      const qp = url.searchParams.get('session') || url.searchParams.get('sessionId');
+      const qp =
+        url.searchParams.get('session') || url.searchParams.get('sessionId');
       if (qp) {
         return qp;
       }
@@ -191,9 +203,10 @@ export class Router {
    */
   private getCorsHeaders(): Record<string, string> {
     return {
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Session-Id',
+      'Access-Control-Allow-Headers':
+        'Content-Type, Authorization, X-Session-Id',
       'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Origin': '*'
     };
   }
 
@@ -213,19 +226,16 @@ export class Router {
       message: 'The requested endpoint was not found',
       context: {},
       httpStatus: 404,
-      timestamp: new Date().toISOString(),
+      timestamp: new Date().toISOString()
     };
 
-    return new Response(
-      JSON.stringify(errorResponse),
-      {
-        status: 404,
-        headers: {
-          'Content-Type': 'application/json',
-          ...this.getCorsHeaders(),
-        },
+    return new Response(JSON.stringify(errorResponse), {
+      status: 404,
+      headers: {
+        'Content-Type': 'application/json',
+        ...this.getCorsHeaders()
       }
-    );
+    });
   }
 
   /**
@@ -236,21 +246,18 @@ export class Router {
       code: ErrorCode.INTERNAL_ERROR,
       message: error.message,
       context: {
-        stack: error.stack,
+        stack: error.stack
       },
       httpStatus: 500,
-      timestamp: new Date().toISOString(),
+      timestamp: new Date().toISOString()
     };
 
-    return new Response(
-      JSON.stringify(errorResponse),
-      {
-        status: 500,
-        headers: {
-          'Content-Type': 'application/json',
-          ...this.getCorsHeaders(),
-        },
+    return new Response(JSON.stringify(errorResponse), {
+      status: 500,
+      headers: {
+        'Content-Type': 'application/json',
+        ...this.getCorsHeaders()
       }
-    );
+    });
   }
 }

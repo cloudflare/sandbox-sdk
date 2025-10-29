@@ -1,5 +1,5 @@
-import type { Sandbox } from "@cloudflare/sandbox";
-import { errorResponse, jsonResponse, parseJsonBody } from "../http";
+import type { Sandbox } from '@cloudflare/sandbox';
+import { errorResponse, jsonResponse, parseJsonBody } from '../http';
 
 export async function deleteFile(sandbox: Sandbox<unknown>, request: Request) {
   try {
@@ -7,18 +7,18 @@ export async function deleteFile(sandbox: Sandbox<unknown>, request: Request) {
     const { path } = body;
 
     if (!path) {
-      return errorResponse("Path is required");
+      return errorResponse('Path is required');
     }
 
     await sandbox.deleteFile(path);
-    return jsonResponse({ 
+    return jsonResponse({
       success: true,
-      message: "File deleted",
+      message: 'File deleted',
       path,
       timestamp: new Date().toISOString()
     });
   } catch (error: any) {
-    console.error("Error deleting file:", error);
+    console.error('Error deleting file:', error);
     return errorResponse(`Failed to delete file: ${error.message}`);
   }
 }

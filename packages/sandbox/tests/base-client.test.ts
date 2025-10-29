@@ -31,11 +31,14 @@ class TestHttpClient extends BaseHttpClient {
     super({
       baseUrl: 'http://test.com',
       port: 3000,
-      ...options,
+      ...options
     });
   }
 
-  public async testRequest<T = BaseApiResponse>(endpoint: string, data?: Record<string, unknown>): Promise<T> {
+  public async testRequest<T = BaseApiResponse>(
+    endpoint: string,
+    data?: Record<string, unknown>
+  ): Promise<T> {
     if (data) {
       return this.post<T>(endpoint, data);
     }
@@ -48,10 +51,9 @@ class TestHttpClient extends BaseHttpClient {
   }
 
   public async testErrorHandling(errorResponse: ErrorResponse) {
-    const response = new Response(
-      JSON.stringify(errorResponse),
-      { status: errorResponse.httpStatus || 400 }
-    );
+    const response = new Response(JSON.stringify(errorResponse), {
+      status: errorResponse.httpStatus || 400
+    });
     return this.handleErrorResponse(response);
   }
 }
@@ -63,15 +65,15 @@ describe('BaseHttpClient', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    
+
     mockFetch = vi.fn();
     global.fetch = mockFetch as unknown as typeof fetch;
     onError = vi.fn();
-    
+
     client = new TestHttpClient({
       baseUrl: 'http://test.com',
       port: 3000,
-      onError,
+      onError
     });
   });
 
@@ -81,10 +83,12 @@ describe('BaseHttpClient', () => {
 
   describe('core request functionality', () => {
     it('should handle successful API requests', async () => {
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify({ success: true, data: 'operation completed' }),
-        { status: 200 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response(
+          JSON.stringify({ success: true, data: 'operation completed' }),
+          { status: 200 }
+        )
+      );
 
       const result = await client.testRequest<TestDataResponse>('/api/test');
 
@@ -94,12 +98,16 @@ describe('BaseHttpClient', () => {
 
     it('should handle POST requests with data', async () => {
       const requestData = { action: 'create', name: 'test-resource' };
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify({ success: true, id: 'resource-123' }),
-        { status: 201 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify({ success: true, id: 'resource-123' }), {
+          status: 201
+        })
+      );
 
-      const result = await client.testRequest<TestResourceResponse>('/api/create', requestData);
+      const result = await client.testRequest<TestResourceResponse>(
+        '/api/create',
+        requestData
+      );
 
       expect(result.success).toBe(true);
       expect(result.id).toBe('resource-123');
@@ -123,7 +131,7 @@ describe('BaseHttpClient', () => {
             httpStatus: 404,
             timestamp: new Date().toISOString()
           },
-          expectedError: FileNotFoundError,
+          expectedError: FileNotFoundError
         },
         {
           containerError: {
@@ -133,7 +141,7 @@ describe('BaseHttpClient', () => {
             httpStatus: 403,
             timestamp: new Date().toISOString()
           },
-          expectedError: PermissionDeniedError,
+          expectedError: PermissionDeniedError
         },
         {
           containerError: {
@@ -143,7 +151,7 @@ describe('BaseHttpClient', () => {
             httpStatus: 400,
             timestamp: new Date().toISOString()
           },
-          expectedError: CommandError,
+          expectedError: CommandError
         },
         {
           containerError: {
@@ -153,7 +161,7 @@ describe('BaseHttpClient', () => {
             httpStatus: 500,
             timestamp: new Date().toISOString()
           },
-          expectedError: FileSystemError,
+          expectedError: FileSystemError
         },
         {
           containerError: {
@@ -163,48 +171,55 @@ describe('BaseHttpClient', () => {
             httpStatus: 500,
             timestamp: new Date().toISOString()
           },
-          expectedError: SandboxError,
+          expectedError: SandboxError
         }
       ];
 
       for (const test of errorMappingTests) {
-        await expect(client.testErrorHandling(test.containerError as ErrorResponse))
-          .rejects.toThrow(test.expectedError);
+        await expect(
+          client.testErrorHandling(test.containerError as ErrorResponse)
+        ).rejects.toThrow(test.expectedError);
 
-        expect(onError).toHaveBeenCalledWith(test.containerError.message, undefined);
+        expect(onError).toHaveBeenCalledWith(
+          test.containerError.message,
+          undefined
+        );
       }
     });
 
     it('should handle malformed error responses', async () => {
-      mockFetch.mockResolvedValue(new Response(
-        'invalid json {',
-        { status: 500 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response('invalid json {', { status: 500 })
+      );
 
-      await expect(client.testRequest('/api/test'))
-        .rejects.toThrow(SandboxError);
+      await expect(client.testRequest('/api/test')).rejects.toThrow(
+        SandboxError
+      );
     });
 
     it('should handle network failures', async () => {
       mockFetch.mockRejectedValue(new Error('Network connection timeout'));
 
-      await expect(client.testRequest('/api/test'))
-        .rejects.toThrow('Network connection timeout');
+      await expect(client.testRequest('/api/test')).rejects.toThrow(
+        'Network connection timeout'
+      );
     });
 
     it('should handle server unavailable scenarios', async () => {
-      mockFetch.mockResolvedValue(new Response(
-        'Service Unavailable',
-        { status: 503 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response('Service Unavailable', { status: 503 })
+      );
 
-      await expect(client.testRequest('/api/test'))
-        .rejects.toThrow(SandboxError);
+      await expect(client.testRequest('/api/test')).rejects.toThrow(
+        SandboxError
+      );
 
-      expect(onError).toHaveBeenCalledWith('HTTP error! status: 503', undefined);
+      expect(onError).toHaveBeenCalledWith(
+        'HTTP error! status: 503',
+        undefined
+      );
     });
   });
-
 
   describe('streaming functionality', () => {
     it('should handle streaming responses', async () => {
@@ -216,10 +231,12 @@ describe('BaseHttpClient', () => {
         }
       });
 
-      mockFetch.mockResolvedValue(new Response(mockStream, {
-        status: 200,
-        headers: { 'Content-Type': 'text/event-stream' }
-      }));
+      mockFetch.mockResolvedValue(
+        new Response(mockStream, {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' }
+        })
+      );
 
       const stream = await client.testStreamRequest('/api/stream');
 
@@ -236,41 +253,52 @@ describe('BaseHttpClient', () => {
     });
 
     it('should handle streaming errors', async () => {
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify({ error: 'Stream initialization failed', code: 'STREAM_ERROR' }),
-        { status: 400 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            error: 'Stream initialization failed',
+            code: 'STREAM_ERROR'
+          }),
+          { status: 400 }
+        )
+      );
 
-      await expect(client.testStreamRequest('/api/bad-stream'))
-        .rejects.toThrow(SandboxError);
+      await expect(client.testStreamRequest('/api/bad-stream')).rejects.toThrow(
+        SandboxError
+      );
     });
 
     it('should handle missing stream body', async () => {
-      mockFetch.mockResolvedValue(new Response(null, {
-        status: 200,
-        headers: { 'Content-Type': 'text/event-stream' }
-      }));
+      mockFetch.mockResolvedValue(
+        new Response(null, {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' }
+        })
+      );
 
-      await expect(client.testStreamRequest('/api/empty-stream'))
-        .rejects.toThrow('No response body for streaming');
+      await expect(
+        client.testStreamRequest('/api/empty-stream')
+      ).rejects.toThrow('No response body for streaming');
     });
   });
 
   describe('stub integration', () => {
     it('should use stub when provided instead of fetch', async () => {
-      const stubFetch = vi.fn().mockResolvedValue(new Response(
-        JSON.stringify({ success: true, source: 'stub' }),
-        { status: 200 }
-      ));
+      const stubFetch = vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ success: true, source: 'stub' }), {
+          status: 200
+        })
+      );
 
       const stub = { containerFetch: stubFetch };
       const stubClient = new TestHttpClient({
         baseUrl: 'http://test.com',
         port: 3000,
-        stub,
+        stub
       });
 
-      const result = await stubClient.testRequest<TestSourceResponse>('/api/stub-test');
+      const result =
+        await stubClient.testRequest<TestSourceResponse>('/api/stub-test');
 
       expect(result.success).toBe(true);
       expect(result.source).toBe('stub');
@@ -283,16 +311,19 @@ describe('BaseHttpClient', () => {
     });
 
     it('should handle stub errors', async () => {
-      const stubFetch = vi.fn().mockRejectedValue(new Error('Stub connection failed'));
+      const stubFetch = vi
+        .fn()
+        .mockRejectedValue(new Error('Stub connection failed'));
       const stub = { containerFetch: stubFetch };
       const stubClient = new TestHttpClient({
         baseUrl: 'http://test.com',
         port: 3000,
-        stub,
+        stub
       });
 
-      await expect(stubClient.testRequest('/api/stub-error'))
-        .rejects.toThrow('Stub connection failed');
+      await expect(stubClient.testRequest('/api/stub-error')).rejects.toThrow(
+        'Stub connection failed'
+      );
     });
   });
 
@@ -303,24 +334,29 @@ describe('BaseHttpClient', () => {
         { status: 202, shouldSucceed: true },
         { status: 409, shouldSucceed: false },
         { status: 422, shouldSucceed: false },
-        { status: 429, shouldSucceed: false },
+        { status: 429, shouldSucceed: false }
       ];
 
       for (const test of unusualStatusTests) {
-        mockFetch.mockResolvedValueOnce(new Response(
-          test.shouldSucceed
-            ? JSON.stringify({ success: true, status: test.status })
-            : JSON.stringify({ error: `Status ${test.status}` }),
-          { status: test.status }
-        ));
+        mockFetch.mockResolvedValueOnce(
+          new Response(
+            test.shouldSucceed
+              ? JSON.stringify({ success: true, status: test.status })
+              : JSON.stringify({ error: `Status ${test.status}` }),
+            { status: test.status }
+          )
+        );
 
         if (test.shouldSucceed) {
-          const result = await client.testRequest<TestStatusResponse>('/api/unusual-status');
+          const result = await client.testRequest<TestStatusResponse>(
+            '/api/unusual-status'
+          );
           expect(result.success).toBe(true);
           expect(result.status).toBe(test.status);
         } else {
-          await expect(client.testRequest('/api/unusual-status'))
-            .rejects.toThrow();
+          await expect(
+            client.testRequest('/api/unusual-status')
+          ).rejects.toThrow();
         }
       }
     });

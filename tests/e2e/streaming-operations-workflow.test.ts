@@ -1,6 +1,19 @@
-import { describe, test, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
+import {
+  describe,
+  test,
+  expect,
+  beforeAll,
+  afterAll,
+  afterEach,
+  vi
+} from 'vitest';
 import { getTestWorkerUrl, WranglerDevRunner } from './helpers/wrangler-runner';
-import { createSandboxId, createTestHeaders, fetchWithStartup, cleanupSandbox } from './helpers/test-fixtures';
+import {
+  createSandboxId,
+  createTestHeaders,
+  fetchWithStartup,
+  cleanupSandbox
+} from './helpers/test-fixtures';
 import { parseSSEStream } from '../../packages/sandbox/src/sse-parser';
 import type { ExecEvent } from '@repo/shared';
 
@@ -47,7 +60,10 @@ describe('Streaming Operations Workflow', () => {
     /**
      * Helper to collect events from streaming response using SDK's parseSSEStream utility
      */
-    async function collectSSEEvents(response: Response, maxEvents: number = 50): Promise<ExecEvent[]> {
+    async function collectSSEEvents(
+      response: Response,
+      maxEvents: number = 50
+    ): Promise<ExecEvent[]> {
       if (!response.body) {
         throw new Error('No readable stream in response');
       }
@@ -57,7 +73,10 @@ describe('Streaming Operations Workflow', () => {
       const abortController = new AbortController();
 
       try {
-        for await (const event of parseSSEStream<ExecEvent>(response.body, abortController.signal)) {
+        for await (const event of parseSSEStream<ExecEvent>(
+          response.body,
+          abortController.signal
+        )) {
           console.log('[Test] Received event:', event.type);
           events.push(event);
 
@@ -75,7 +94,10 @@ describe('Streaming Operations Workflow', () => {
         }
       } catch (error) {
         // Ignore abort errors (expected when we stop early)
-        if (error instanceof Error && error.message !== 'Operation was aborted') {
+        if (
+          error instanceof Error &&
+          error.message !== 'Operation was aborted'
+        ) {
           throw error;
         }
       }
@@ -90,18 +112,21 @@ describe('Streaming Operations Workflow', () => {
 
       // Stream a command that outputs multiple lines
       const streamResponse = await vi.waitFor(
-        async () => fetchWithStartup(`${workerUrl}/api/execStream`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            command: 'echo "Line 1"; echo "Line 2"; echo "Line 3"',
+        async () =>
+          fetchWithStartup(`${workerUrl}/api/execStream`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              command: 'echo "Line 1"; echo "Line 2"; echo "Line 3"'
+            })
           }),
-        }),
         { timeout: 90000, interval: 2000 }
       );
 
       expect(streamResponse.status).toBe(200);
-      expect(streamResponse.headers.get('content-type')).toBe('text/event-stream');
+      expect(streamResponse.headers.get('content-type')).toBe(
+        'text/event-stream'
+      );
 
       // Collect events from stream
       const events = await collectSSEEvents(streamResponse);
@@ -136,13 +161,14 @@ describe('Streaming Operations Workflow', () => {
 
       // Stream a command that outputs to both stdout and stderr (wrap in bash -c for >&2)
       const streamResponse = await vi.waitFor(
-        async () => fetchWithStartup(`${workerUrl}/api/execStream`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            command: "bash -c 'echo stdout message; echo stderr message >&2'",
+        async () =>
+          fetchWithStartup(`${workerUrl}/api/execStream`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              command: "bash -c 'echo stdout message; echo stderr message >&2'"
+            })
           }),
-        }),
         { timeout: 90000, interval: 2000 }
       );
 
@@ -174,13 +200,14 @@ describe('Streaming Operations Workflow', () => {
       const headers = createTestHeaders(currentSandboxId);
 
       const streamResponse = await vi.waitFor(
-        async () => fetchWithStartup(`${workerUrl}/api/execStream`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            command: 'echo "Hello Streaming"',
+        async () =>
+          fetchWithStartup(`${workerUrl}/api/execStream`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              command: 'echo "Hello Streaming"'
+            })
           }),
-        }),
         { timeout: 90000, interval: 2000 }
       );
 
@@ -210,13 +237,14 @@ describe('Streaming Operations Workflow', () => {
 
       // Stream a command that fails
       const streamResponse = await vi.waitFor(
-        async () => fetchWithStartup(`${workerUrl}/api/execStream`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            command: 'false', // Always fails with exit code 1
+        async () =>
+          fetchWithStartup(`${workerUrl}/api/execStream`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              command: 'false' // Always fails with exit code 1
+            })
           }),
-        }),
         { timeout: 90000, interval: 2000 }
       );
 
@@ -234,13 +262,14 @@ describe('Streaming Operations Workflow', () => {
 
       // Initialize sandbox first
       await vi.waitFor(
-        async () => fetchWithStartup(`${workerUrl}/api/execute`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            command: 'echo "init"',
+        async () =>
+          fetchWithStartup(`${workerUrl}/api/execute`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              command: 'echo "init"'
+            })
           }),
-        }),
         { timeout: 90000, interval: 2000 }
       );
 
@@ -249,13 +278,15 @@ describe('Streaming Operations Workflow', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: 'nonexistentcommand123',
-        }),
+          command: 'nonexistentcommand123'
+        })
       });
 
       // Should return 200 (streaming started successfully)
       expect(streamResponse.status).toBe(200);
-      expect(streamResponse.headers.get('content-type')).toBe('text/event-stream');
+      expect(streamResponse.headers.get('content-type')).toBe(
+        'text/event-stream'
+      );
 
       // Collect events from stream
       const events = await collectSSEEvents(streamResponse);
@@ -280,13 +311,14 @@ describe('Streaming Operations Workflow', () => {
 
       // Stream a command that sets and uses a variable within the same bash invocation
       const streamResponse1 = await vi.waitFor(
-        async () => fetchWithStartup(`${workerUrl}/api/execStream`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            command: "bash -c 'STREAM_VAR=streaming-value; echo $STREAM_VAR'",
+        async () =>
+          fetchWithStartup(`${workerUrl}/api/execStream`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              command: "bash -c 'STREAM_VAR=streaming-value; echo $STREAM_VAR'"
+            })
           }),
-        }),
         { timeout: 90000, interval: 2000 }
       );
 
@@ -306,13 +338,15 @@ describe('Streaming Operations Workflow', () => {
 
       // Stream a command that outputs over time (wrap in bash -c for loop)
       const streamResponse = await vi.waitFor(
-        async () => fetchWithStartup(`${workerUrl}/api/execStream`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            command: "bash -c 'for i in 1 2 3 4 5; do echo \"Count: $i\"; sleep 0.2; done'",
+        async () =>
+          fetchWithStartup(`${workerUrl}/api/execStream`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              command:
+                'bash -c \'for i in 1 2 3 4 5; do echo "Count: $i"; sleep 0.2; done\''
+            })
           }),
-        }),
         { timeout: 90000, interval: 2000 }
       );
 
@@ -340,13 +374,14 @@ describe('Streaming Operations Workflow', () => {
 
       // Initialize with first request
       await vi.waitFor(
-        async () => fetchWithStartup(`${workerUrl}/api/execute`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            command: 'echo "init"',
+        async () =>
+          fetchWithStartup(`${workerUrl}/api/execute`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              command: 'echo "init"'
+            })
           }),
-        }),
         { timeout: 90000, interval: 2000 }
       );
 
@@ -355,20 +390,23 @@ describe('Streaming Operations Workflow', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: 'echo "Stream 1"; sleep 1; echo "Stream 1 done"',
-        }),
+          command: 'echo "Stream 1"; sleep 1; echo "Stream 1 done"'
+        })
       });
 
       const stream2Promise = fetch(`${workerUrl}/api/execStream`, {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: 'echo "Stream 2"; sleep 1; echo "Stream 2 done"',
-        }),
+          command: 'echo "Stream 2"; sleep 1; echo "Stream 2 done"'
+        })
       });
 
       // Wait for both streams to start
-      const [stream1Response, stream2Response] = await Promise.all([stream1Promise, stream2Promise]);
+      const [stream1Response, stream2Response] = await Promise.all([
+        stream1Promise,
+        stream2Promise
+      ]);
 
       expect(stream1Response.status).toBe(200);
       expect(stream2Response.status).toBe(200);
@@ -376,7 +414,7 @@ describe('Streaming Operations Workflow', () => {
       // Collect events from both streams
       const [events1, events2] = await Promise.all([
         collectSSEEvents(stream1Response),
-        collectSSEEvents(stream2Response),
+        collectSSEEvents(stream2Response)
       ]);
 
       // Verify both completed successfully
@@ -389,8 +427,14 @@ describe('Streaming Operations Workflow', () => {
       expect(complete2?.exitCode).toBe(0);
 
       // Verify outputs didn't mix
-      const output1 = events1.filter((e) => e.type === 'stdout').map((e) => e.data).join('');
-      const output2 = events2.filter((e) => e.type === 'stdout').map((e) => e.data).join('');
+      const output1 = events1
+        .filter((e) => e.type === 'stdout')
+        .map((e) => e.data)
+        .join('');
+      const output2 = events2
+        .filter((e) => e.type === 'stdout')
+        .map((e) => e.data)
+        .join('');
 
       expect(output1).toContain('Stream 1');
       expect(output1).not.toContain('Stream 2');
@@ -403,16 +447,17 @@ describe('Streaming Operations Workflow', () => {
 
       // Create a session with environment variables
       const sessionResponse = await vi.waitFor(
-        async () => fetchWithStartup(`${workerUrl}/api/session/create`, {
-          method: 'POST',
-          headers: createTestHeaders(currentSandboxId ?? ''),
-          body: JSON.stringify({
-            env: {
-              SESSION_ID: 'test-session-streaming',
-              NODE_ENV: 'test',
-            },
+        async () =>
+          fetchWithStartup(`${workerUrl}/api/session/create`, {
+            method: 'POST',
+            headers: createTestHeaders(currentSandboxId ?? ''),
+            body: JSON.stringify({
+              env: {
+                SESSION_ID: 'test-session-streaming',
+                NODE_ENV: 'test'
+              }
+            })
           }),
-        }),
         { timeout: 90000, interval: 2000 }
       );
 
@@ -427,8 +472,8 @@ describe('Streaming Operations Workflow', () => {
         method: 'POST',
         headers: createTestHeaders(currentSandboxId, sessionId),
         body: JSON.stringify({
-          command: 'echo "Session: $SESSION_ID, Env: $NODE_ENV"',
-        }),
+          command: 'echo "Session: $SESSION_ID, Env: $NODE_ENV"'
+        })
       });
 
       const events = await collectSSEEvents(streamResponse);
@@ -445,7 +490,6 @@ describe('Streaming Operations Workflow', () => {
       expect(completeEvent?.exitCode).toBe(0);
     }, 90000);
 
-
     test('should handle 15+ second streaming command', async () => {
       currentSandboxId = createSandboxId();
       const headers = createTestHeaders(currentSandboxId);
@@ -454,13 +498,15 @@ describe('Streaming Operations Workflow', () => {
 
       // Stream a command that runs for 15+ seconds with output every 2 seconds
       const streamResponse = await vi.waitFor(
-        async () => fetchWithStartup(`${workerUrl}/api/execStream`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            command: "bash -c 'for i in {1..8}; do echo \"Tick $i at $(date +%s)\"; sleep 2; done; echo \"SUCCESS\"'",
+        async () =>
+          fetchWithStartup(`${workerUrl}/api/execStream`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              command:
+                'bash -c \'for i in {1..8}; do echo "Tick $i at $(date +%s)"; sleep 2; done; echo "SUCCESS"\''
+            })
           }),
-        }),
         { timeout: 90000, interval: 2000 }
       );
 
@@ -490,7 +536,9 @@ describe('Streaming Operations Workflow', () => {
       expect(completeEvent).toBeDefined();
       expect(completeEvent?.exitCode).toBe(0);
 
-      console.log('[Test] ✅ Streaming command completed successfully after 16+ seconds!');
+      console.log(
+        '[Test] ✅ Streaming command completed successfully after 16+ seconds!'
+      );
     }, 90000);
 
     test('should handle high-volume streaming over extended period', async () => {
@@ -502,13 +550,15 @@ describe('Streaming Operations Workflow', () => {
       // Stream command that generates many lines over 10+ seconds
       // Tests throttling: renewActivityTimeout shouldn't be called for every chunk
       const streamResponse = await vi.waitFor(
-        async () => fetchWithStartup(`${workerUrl}/api/execStream`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            command: "bash -c 'for i in {1..100}; do echo \"Line $i: $(date +%s.%N)\"; sleep 0.1; done'",
+        async () =>
+          fetchWithStartup(`${workerUrl}/api/execStream`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              command:
+                'bash -c \'for i in {1..100}; do echo "Line $i: $(date +%s.%N)"; sleep 0.1; done\''
+            })
           }),
-        }),
         { timeout: 90000, interval: 2000 }
       );
 
@@ -542,13 +592,15 @@ describe('Streaming Operations Workflow', () => {
       // Command with gaps between output bursts
       // Tests that activity renewal works even when output is periodic
       const streamResponse = await vi.waitFor(
-        async () => fetchWithStartup(`${workerUrl}/api/execStream`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            command: "bash -c 'echo \"Burst 1\"; sleep 3; echo \"Burst 2\"; sleep 3; echo \"Burst 3\"; sleep 3; echo \"Complete\"'",
+        async () =>
+          fetchWithStartup(`${workerUrl}/api/execStream`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              command:
+                'bash -c \'echo "Burst 1"; sleep 3; echo "Burst 2"; sleep 3; echo "Burst 3"; sleep 3; echo "Complete"\''
+            })
           }),
-        }),
         { timeout: 90000, interval: 2000 }
       );
 
@@ -584,21 +636,23 @@ describe('Streaming Operations Workflow', () => {
       // Add keepAlive header to keep container alive during long execution
       const keepAliveHeaders = {
         ...headers,
-        'X-Sandbox-KeepAlive': 'true',
+        'X-Sandbox-KeepAlive': 'true'
       };
 
       console.log('[Test] Starting 60+ second command via streaming...');
 
       // With streaming, it should complete successfully
       const streamResponse = await vi.waitFor(
-        async () => fetchWithStartup(`${workerUrl}/api/execStream`, {
-          method: 'POST',
-          headers: keepAliveHeaders,
-          body: JSON.stringify({
-            // Command that runs for 60+ seconds with periodic output
-            command: "bash -c 'for i in {1..12}; do echo \"Minute mark $i\"; sleep 5; done; echo \"COMPLETED\"'",
+        async () =>
+          fetchWithStartup(`${workerUrl}/api/execStream`, {
+            method: 'POST',
+            headers: keepAliveHeaders,
+            body: JSON.stringify({
+              // Command that runs for 60+ seconds with periodic output
+              command:
+                'bash -c \'for i in {1..12}; do echo "Minute mark $i"; sleep 5; done; echo "COMPLETED"\''
+            })
           }),
-        }),
         { timeout: 90000, interval: 2000 }
       );
 
@@ -638,20 +692,21 @@ describe('Streaming Operations Workflow', () => {
       // Add keepAlive header to keep container alive during long sleep
       const keepAliveHeaders = {
         ...headers,
-        'X-Sandbox-KeepAlive': 'true',
+        'X-Sandbox-KeepAlive': 'true'
       };
 
       console.log('[Test] Testing sleep 45 && echo "done" pattern...');
 
       // This is the exact pattern that was failing before
       const streamResponse = await vi.waitFor(
-        async () => fetchWithStartup(`${workerUrl}/api/execStream`, {
-          method: 'POST',
-          headers: keepAliveHeaders,
-          body: JSON.stringify({
-            command: 'sleep 45 && echo "done"',
+        async () =>
+          fetchWithStartup(`${workerUrl}/api/execStream`, {
+            method: 'POST',
+            headers: keepAliveHeaders,
+            body: JSON.stringify({
+              command: 'sleep 45 && echo "done"'
+            })
           }),
-        }),
         { timeout: 90000, interval: 2000 }
       );
 

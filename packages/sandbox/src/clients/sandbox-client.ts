@@ -24,7 +24,7 @@ export class SandboxClient {
     // Ensure baseUrl is provided for all clients
     const clientOptions: HttpClientOptions = {
       baseUrl: 'http://localhost:3000',
-      ...options,
+      ...options
     };
 
     // Initialize all domain clients with shared options
@@ -36,6 +36,4 @@ export class SandboxClient {
     this.interpreter = new InterpreterClient(clientOptions);
     this.utils = new UtilityClient(clientOptions);
   }
-
-
 }

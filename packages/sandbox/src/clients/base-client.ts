@@ -1,17 +1,14 @@
-import type { Logger } from "@repo/shared";
-import { createNoOpLogger } from "@repo/shared";
+import type { Logger } from '@repo/shared';
+import { createNoOpLogger } from '@repo/shared';
 import { getHttpStatus } from '@repo/shared/errors';
 import type { ErrorResponse as NewErrorResponse } from '../errors';
 import { createErrorFromResponse, ErrorCode } from '../errors';
 import type { SandboxError } from '../errors/classes';
-import type {
-  HttpClientOptions,
-  ResponseHandler
-} from './types';
+import type { HttpClientOptions, ResponseHandler } from './types';
 
 // Container provisioning retry configuration
-const TIMEOUT_MS = 60_000;  // 60 seconds total timeout budget
-const MIN_TIME_FOR_RETRY_MS = 10_000;  // Need at least 10s remaining to retry (8s Container + 2s delay)
+const TIMEOUT_MS = 60_000; // 60 seconds total timeout budget
+const MIN_TIME_FOR_RETRY_MS = 10_000; // Need at least 10s remaining to retry (8s Container + 2s delay)
 
 /**
  * Abstract base class providing common HTTP functionality for all domain clients
@@ -42,7 +39,8 @@ export abstract class BaseHttpClient {
 
       // Only retry container provisioning 503s, not user app 503s
       if (response.status === 503) {
-        const isContainerProvisioning = await this.isContainerProvisioningError(response);
+        const isContainerProvisioning =
+          await this.isContainerProvisioningError(response);
 
         if (isContainerProvisioning) {
           const elapsed = Date.now() - startTime;
@@ -60,13 +58,16 @@ export abstract class BaseHttpClient {
               remainingSec: Math.floor(remaining / 1000)
             });
 
-            await new Promise(resolve => setTimeout(resolve, delay));
+            await new Promise((resolve) => setTimeout(resolve, delay));
             attempt++;
             continue;
           } else {
             // Exhausted retries - log error and return response
             // Let existing error handling convert to proper error
-            this.logger.error('Container failed to provision after multiple attempts', new Error(`Failed after ${attempt + 1} attempts over 60s`));
+            this.logger.error(
+              'Container failed to provision after multiple attempts',
+              new Error(`Failed after ${attempt + 1} attempts over 60s`)
+            );
             return response;
           }
         }
@@ -87,9 +88,9 @@ export abstract class BaseHttpClient {
     const response = await this.doFetch(endpoint, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
+        'Content-Type': 'application/json'
       },
-      body: JSON.stringify(data),
+      body: JSON.stringify(data)
     });
 
     return this.handleResponse(response, responseHandler);
@@ -103,7 +104,7 @@ export abstract class BaseHttpClient {
     responseHandler?: ResponseHandler<T>
   ): Promise<T> {
     const response = await this.doFetch(endpoint, {
-      method: 'GET',
+      method: 'GET'
     });
 
     return this.handleResponse(response, responseHandler);
@@ -117,12 +118,11 @@ export abstract class BaseHttpClient {
     responseHandler?: ResponseHandler<T>
   ): Promise<T> {
     const response = await this.doFetch(endpoint, {
-      method: 'DELETE',
+      method: 'DELETE'
     });
 
     return this.handleResponse(response, responseHandler);
   }
-
 
   /**
    * Handle HTTP response with error checking and parsing
@@ -182,8 +182,6 @@ export abstract class BaseHttpClient {
     throw error;
   }
 
-
-
   /**
    * Create a streaming response handler for Server-Sent Events
    */
@@ -205,7 +203,10 @@ export abstract class BaseHttpClient {
    * Utility method to log successful operations
    */
   protected logSuccess(operation: string, details?: string): void {
-    this.logger.info(`${operation} completed successfully`, details ? { details } : undefined);
+    this.logger.info(
+      `${operation} completed successfully`,
+      details ? { details } : undefined
+    );
   }
 
   /**
@@ -242,7 +243,9 @@ export abstract class BaseHttpClient {
    * Check if 503 response is from container provisioning (retryable)
    * vs user application (not retryable)
    */
-  private async isContainerProvisioningError(response: Response): Promise<boolean> {
+  private async isContainerProvisioningError(
+    response: Response
+  ): Promise<boolean> {
     try {
       // Clone response so we don't consume the original body
       const cloned = response.clone();
@@ -251,13 +254,19 @@ export abstract class BaseHttpClient {
       // Container package returns specific message for provisioning errors
       return text.includes('There is no Container instance available');
     } catch (error) {
-      this.logger.error('Error checking response body', error instanceof Error ? error : new Error(String(error)));
+      this.logger.error(
+        'Error checking response body',
+        error instanceof Error ? error : new Error(String(error))
+      );
       // If we can't read the body, don't retry to be safe
       return false;
     }
   }
 
-  private async executeFetch(path: string, options?: RequestInit): Promise<Response> {
+  private async executeFetch(
+    path: string,
+    options?: RequestInit
+  ): Promise<Response> {
     const url = this.options.stub
       ? `http://localhost:${this.options.port}${path}`
       : `${this.baseUrl}${path}`;
@@ -273,7 +282,11 @@ export abstract class BaseHttpClient {
         return await fetch(url, options);
       }
     } catch (error) {
-      this.logger.error('HTTP request error', error instanceof Error ? error : new Error(String(error)), { method: options?.method || 'GET', url });
+      this.logger.error(
+        'HTTP request error',
+        error instanceof Error ? error : new Error(String(error)),
+        { method: options?.method || 'GET', url }
+      );
       throw error;
     }
   }

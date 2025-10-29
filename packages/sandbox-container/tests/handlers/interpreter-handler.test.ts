@@ -1,14 +1,21 @@
-import { beforeEach, describe, expect, it, vi } from "bun:test";
+import { beforeEach, describe, expect, it, vi } from 'bun:test';
 import type {
   ContextCreateResult,
   ContextDeleteResult,
   ContextListResult,
-  InterpreterHealthResult,
+  InterpreterHealthResult
 } from '@repo/shared';
 import type { ErrorResponse } from '@repo/shared/errors';
-import type { Logger, RequestContext, ServiceResult } from '@sandbox-container/core/types.ts';
-import { InterpreterHandler } from "@sandbox-container/handlers/interpreter-handler.js";
-import type { CreateContextRequest, InterpreterService } from '@sandbox-container/services/interpreter-service.ts';
+import type {
+  Logger,
+  RequestContext,
+  ServiceResult
+} from '@sandbox-container/core/types.ts';
+import { InterpreterHandler } from '@sandbox-container/handlers/interpreter-handler.js';
+import type {
+  CreateContextRequest,
+  InterpreterService
+} from '@sandbox-container/services/interpreter-service.ts';
 import { mocked } from '../test-utils';
 
 // Mock the service dependencies
@@ -17,14 +24,14 @@ const mockInterpreterService = {
   createContext: vi.fn(),
   listContexts: vi.fn(),
   deleteContext: vi.fn(),
-  executeCode: vi.fn(),
+  executeCode: vi.fn()
 } as unknown as InterpreterService;
 
 const mockLogger: Logger = {
   info: vi.fn(),
   error: vi.fn(),
   warn: vi.fn(),
-  debug: vi.fn(),
+  debug: vi.fn()
 };
 
 // Mock request context
@@ -34,9 +41,9 @@ const mockContext: RequestContext = {
   corsHeaders: {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Headers': 'Content-Type'
   },
-  sessionId: 'session-456',
+  sessionId: 'session-456'
 };
 
 describe('InterpreterHandler', () => {
@@ -62,19 +69,24 @@ describe('InterpreterHandler', () => {
           ready: true,
           version: '1.0.0'
         }
-      } as ServiceResult<{ status: string; ready: boolean; version: string; }>;
+      } as ServiceResult<{ status: string; ready: boolean; version: string }>;
 
-      mocked(mockInterpreterService.getHealthStatus).mockResolvedValue(mockHealthResult);
+      mocked(mockInterpreterService.getHealthStatus).mockResolvedValue(
+        mockHealthResult
+      );
 
-      const request = new Request('http://localhost:3000/api/interpreter/health', {
-        method: 'GET',
-      });
+      const request = new Request(
+        'http://localhost:3000/api/interpreter/health',
+        {
+          method: 'GET'
+        }
+      );
 
       const response = await interpreterHandler.handle(request, mockContext);
 
       // Verify success response: {success: true, status, timestamp}
       expect(response.status).toBe(200);
-      const responseData = await response.json() as InterpreterHealthResult;
+      const responseData = (await response.json()) as InterpreterHealthResult;
       expect(responseData.success).toBe(true);
       expect(responseData.status).toBe('healthy');
       expect(responseData.timestamp).toBeDefined();
@@ -94,17 +106,22 @@ describe('InterpreterHandler', () => {
         }
       } as ServiceResult<never>;
 
-      mocked(mockInterpreterService.getHealthStatus).mockResolvedValue(mockHealthError);
+      mocked(mockInterpreterService.getHealthStatus).mockResolvedValue(
+        mockHealthError
+      );
 
-      const request = new Request('http://localhost:3000/api/interpreter/health', {
-        method: 'GET',
-      });
+      const request = new Request(
+        'http://localhost:3000/api/interpreter/health',
+        {
+          method: 'GET'
+        }
+      );
 
       const response = await interpreterHandler.handle(request, mockContext);
 
       // Verify error response: {code, message, context, httpStatus, timestamp}
       expect(response.status).toBeGreaterThanOrEqual(400);
-      const responseData = await response.json() as ErrorResponse;
+      const responseData = (await response.json()) as ErrorResponse;
       expect(responseData.code).toBe('INTERPRETER_NOT_READY');
       expect(responseData.message).toBe('Interpreter not initialized');
       expect(responseData.context).toBeDefined();
@@ -124,9 +141,16 @@ describe('InterpreterHandler', () => {
           cwd: '/workspace',
           createdAt: new Date()
         }
-      } as ServiceResult<{ id: string; language: string; cwd: string; createdAt: Date; }>;
+      } as ServiceResult<{
+        id: string;
+        language: string;
+        cwd: string;
+        createdAt: Date;
+      }>;
 
-      mocked(mockInterpreterService.createContext).mockResolvedValue(mockContextResult);
+      mocked(mockInterpreterService.createContext).mockResolvedValue(
+        mockContextResult
+      );
 
       const contextRequest: CreateContextRequest = {
         language: 'python',
@@ -143,7 +167,7 @@ describe('InterpreterHandler', () => {
 
       // Verify success response: {success: true, contextId, language, cwd, timestamp}
       expect(response.status).toBe(200);
-      const responseData = await response.json() as ContextCreateResult;
+      const responseData = (await response.json()) as ContextCreateResult;
       expect(responseData.success).toBe(true);
       expect(responseData.contextId).toBe('ctx-123');
       expect(responseData.language).toBe('python');
@@ -151,7 +175,9 @@ describe('InterpreterHandler', () => {
       expect(responseData.timestamp).toBeDefined();
 
       // Verify service was called correctly
-      expect(mockInterpreterService.createContext).toHaveBeenCalledWith(contextRequest);
+      expect(mockInterpreterService.createContext).toHaveBeenCalledWith(
+        contextRequest
+      );
     });
 
     it('should handle context creation errors', async () => {
@@ -165,7 +191,9 @@ describe('InterpreterHandler', () => {
         }
       } as ServiceResult<never>;
 
-      mocked(mockInterpreterService.createContext).mockResolvedValue(mockContextError);
+      mocked(mockInterpreterService.createContext).mockResolvedValue(
+        mockContextError
+      );
 
       const contextRequest: CreateContextRequest = {
         language: 'invalid-lang',
@@ -182,7 +210,7 @@ describe('InterpreterHandler', () => {
 
       // Verify error response: {code, message, context, httpStatus, timestamp}
       expect(response.status).toBeGreaterThanOrEqual(400);
-      const responseData = await response.json() as ErrorResponse;
+      const responseData = (await response.json()) as ErrorResponse;
       expect(responseData.code).toBe('VALIDATION_ERROR');
       expect(responseData.message).toBe('Invalid language specified');
       expect(responseData.context).toMatchObject({ language: 'invalid-lang' });
@@ -201,7 +229,9 @@ describe('InterpreterHandler', () => {
         }
       } as ServiceResult<never>;
 
-      mocked(mockInterpreterService.createContext).mockResolvedValue(mockNotReadyError);
+      mocked(mockInterpreterService.createContext).mockResolvedValue(
+        mockNotReadyError
+      );
 
       const contextRequest: CreateContextRequest = {
         language: 'python',
@@ -236,19 +266,21 @@ describe('InterpreterHandler', () => {
           { id: 'ctx-1', language: 'python', cwd: '/workspace1' },
           { id: 'ctx-2', language: 'javascript', cwd: '/workspace2' }
         ]
-      } as ServiceResult<Array<{ id: string; language: string; cwd: string; }>>;
+      } as ServiceResult<Array<{ id: string; language: string; cwd: string }>>;
 
-      mocked(mockInterpreterService.listContexts).mockResolvedValue(mockContexts);
+      mocked(mockInterpreterService.listContexts).mockResolvedValue(
+        mockContexts
+      );
 
       const request = new Request('http://localhost:3000/api/contexts', {
-        method: 'GET',
+        method: 'GET'
       });
 
       const response = await interpreterHandler.handle(request, mockContext);
 
       // Verify success response: {success: true, contexts, timestamp}
       expect(response.status).toBe(200);
-      const responseData = await response.json() as ContextListResult;
+      const responseData = (await response.json()) as ContextListResult;
       expect(responseData.success).toBe(true);
       expect(responseData.contexts).toHaveLength(2);
       expect(responseData.contexts[0].id).toBe('ctx-1');
@@ -271,17 +303,19 @@ describe('InterpreterHandler', () => {
         }
       } as ServiceResult<never>;
 
-      mocked(mockInterpreterService.listContexts).mockResolvedValue(mockListError);
+      mocked(mockInterpreterService.listContexts).mockResolvedValue(
+        mockListError
+      );
 
       const request = new Request('http://localhost:3000/api/contexts', {
-        method: 'GET',
+        method: 'GET'
       });
 
       const response = await interpreterHandler.handle(request, mockContext);
 
       // Verify error response: {code, message, context, httpStatus, timestamp}
       expect(response.status).toBeGreaterThanOrEqual(400);
-      const responseData = await response.json() as ErrorResponse;
+      const responseData = (await response.json()) as ErrorResponse;
       expect(responseData.code).toBe('UNKNOWN_ERROR');
       expect(responseData.message).toBe('Failed to list contexts');
       expect(responseData.httpStatus).toBeDefined();
@@ -297,23 +331,30 @@ describe('InterpreterHandler', () => {
         data: undefined
       } as ServiceResult<void>;
 
-      mocked(mockInterpreterService.deleteContext).mockResolvedValue(mockDeleteResult);
+      mocked(mockInterpreterService.deleteContext).mockResolvedValue(
+        mockDeleteResult
+      );
 
-      const request = new Request('http://localhost:3000/api/contexts/ctx-123', {
-        method: 'DELETE',
-      });
+      const request = new Request(
+        'http://localhost:3000/api/contexts/ctx-123',
+        {
+          method: 'DELETE'
+        }
+      );
 
       const response = await interpreterHandler.handle(request, mockContext);
 
       // Verify success response: {success: true, contextId, timestamp}
       expect(response.status).toBe(200);
-      const responseData = await response.json() as ContextDeleteResult;
+      const responseData = (await response.json()) as ContextDeleteResult;
       expect(responseData.success).toBe(true);
       expect(responseData.contextId).toBe('ctx-123');
       expect(responseData.timestamp).toBeDefined();
 
       // Verify service was called with correct context ID
-      expect(mockInterpreterService.deleteContext).toHaveBeenCalledWith('ctx-123');
+      expect(mockInterpreterService.deleteContext).toHaveBeenCalledWith(
+        'ctx-123'
+      );
     });
 
     it('should handle delete context errors', async () => {
@@ -327,17 +368,22 @@ describe('InterpreterHandler', () => {
         }
       } as ServiceResult<never>;
 
-      mocked(mockInterpreterService.deleteContext).mockResolvedValue(mockDeleteError);
+      mocked(mockInterpreterService.deleteContext).mockResolvedValue(
+        mockDeleteError
+      );
 
-      const request = new Request('http://localhost:3000/api/contexts/ctx-999', {
-        method: 'DELETE',
-      });
+      const request = new Request(
+        'http://localhost:3000/api/contexts/ctx-999',
+        {
+          method: 'DELETE'
+        }
+      );
 
       const response = await interpreterHandler.handle(request, mockContext);
 
       // Verify error response: {code, message, context, httpStatus, timestamp}
       expect(response.status).toBeGreaterThanOrEqual(400);
-      const responseData = await response.json() as ErrorResponse;
+      const responseData = (await response.json()) as ErrorResponse;
       expect(responseData.code).toBe('RESOURCE_NOT_FOUND');
       expect(responseData.message).toBe('Context not found');
       expect(responseData.context).toMatchObject({ contextId: 'ctx-999' });
@@ -351,9 +397,15 @@ describe('InterpreterHandler', () => {
       // Mock streaming response from service
       const mockStream = new ReadableStream({
         start(controller) {
-          controller.enqueue('data: {"type":"start","timestamp":"2023-01-01T00:00:00Z"}\n\n');
-          controller.enqueue('data: {"type":"stdout","data":"Hello World\\n","timestamp":"2023-01-01T00:00:01Z"}\n\n');
-          controller.enqueue('data: {"type":"complete","exitCode":0,"timestamp":"2023-01-01T00:00:02Z"}\n\n');
+          controller.enqueue(
+            'data: {"type":"start","timestamp":"2023-01-01T00:00:00Z"}\n\n'
+          );
+          controller.enqueue(
+            'data: {"type":"stdout","data":"Hello World\\n","timestamp":"2023-01-01T00:00:01Z"}\n\n'
+          );
+          controller.enqueue(
+            'data: {"type":"complete","exitCode":0,"timestamp":"2023-01-01T00:00:02Z"}\n\n'
+          );
           controller.close();
         }
       });
@@ -362,11 +414,13 @@ describe('InterpreterHandler', () => {
         status: 200,
         headers: {
           'Content-Type': 'text/event-stream',
-          'Cache-Control': 'no-cache',
+          'Cache-Control': 'no-cache'
         }
       });
 
-      mocked(mockInterpreterService.executeCode).mockResolvedValue(mockStreamResponse);
+      mocked(mockInterpreterService.executeCode).mockResolvedValue(
+        mockStreamResponse
+      );
 
       const executeRequest = {
         context_id: 'ctx-123',
@@ -412,7 +466,9 @@ describe('InterpreterHandler', () => {
         }
       );
 
-      mocked(mockInterpreterService.executeCode).mockResolvedValue(mockErrorResponse);
+      mocked(mockInterpreterService.executeCode).mockResolvedValue(
+        mockErrorResponse
+      );
 
       const executeRequest = {
         context_id: 'ctx-invalid',
@@ -430,7 +486,7 @@ describe('InterpreterHandler', () => {
 
       // Verify error response: {code, message, context, httpStatus, timestamp}
       expect(response.status).toBe(404);
-      const responseData = await response.json() as ErrorResponse;
+      const responseData = (await response.json()) as ErrorResponse;
       expect(responseData.code).toBe('RESOURCE_NOT_FOUND');
       expect(responseData.message).toBe('Context not found');
       expect(responseData.context).toMatchObject({ contextId: 'ctx-invalid' });
@@ -441,15 +497,18 @@ describe('InterpreterHandler', () => {
 
   describe('handle - Invalid Endpoints', () => {
     it('should return error for invalid interpreter endpoint', async () => {
-      const request = new Request('http://localhost:3000/api/interpreter/invalid', {
-        method: 'GET',
-      });
+      const request = new Request(
+        'http://localhost:3000/api/interpreter/invalid',
+        {
+          method: 'GET'
+        }
+      );
 
       const response = await interpreterHandler.handle(request, mockContext);
 
       // Verify error response: {code, message, context, httpStatus, timestamp}
       expect(response.status).toBeGreaterThanOrEqual(400);
-      const responseData = await response.json() as ErrorResponse;
+      const responseData = (await response.json()) as ErrorResponse;
       expect(responseData.code).toBe('UNKNOWN_ERROR');
       expect(responseData.message).toBe('Invalid interpreter endpoint');
       expect(responseData.httpStatus).toBeDefined();
@@ -458,14 +517,14 @@ describe('InterpreterHandler', () => {
 
     it('should return error for invalid HTTP method', async () => {
       const request = new Request('http://localhost:3000/api/contexts', {
-        method: 'PUT', // Invalid method
+        method: 'PUT' // Invalid method
       });
 
       const response = await interpreterHandler.handle(request, mockContext);
 
       // Verify error response for invalid endpoint/method combination
       expect(response.status).toBeGreaterThanOrEqual(400);
-      const responseData = await response.json() as ErrorResponse;
+      const responseData = (await response.json()) as ErrorResponse;
       expect(responseData.code).toBe('UNKNOWN_ERROR');
       expect(responseData.message).toBe('Invalid interpreter endpoint');
     });

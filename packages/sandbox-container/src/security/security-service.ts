@@ -15,7 +15,7 @@ export class SecurityService {
   // Only port 3000 is truly reserved (SDK control plane)
   // This is REAL security - prevents control plane interference
   private static readonly RESERVED_PORTS = [
-    3000, // Container control plane (API endpoints) - MUST be protected
+    3000 // Container control plane (API endpoints) - MUST be protected
   ];
 
   constructor(private logger: Logger) {}
@@ -32,7 +32,14 @@ export class SecurityService {
     // Basic validation
     if (!path || typeof path !== 'string') {
       errors.push('Path must be a non-empty string');
-      return { isValid: false, errors: errors.map(e => ({ field: 'path', message: e, code: 'INVALID_PATH' })) };
+      return {
+        isValid: false,
+        errors: errors.map((e) => ({
+          field: 'path',
+          message: e,
+          code: 'INVALID_PATH'
+        }))
+      };
     }
 
     // Only validate format, not content
@@ -45,7 +52,7 @@ export class SecurityService {
     }
 
     const isValid = errors.length === 0;
-    const validationErrors = errors.map(e => ({
+    const validationErrors = errors.map((e) => ({
       field: 'path',
       message: e,
       code: 'INVALID_PATH'
@@ -92,12 +99,14 @@ export class SecurityService {
 
       // CRITICAL: Protect SDK control plane
       if (SecurityService.RESERVED_PORTS.includes(port)) {
-        errors.push(`Port ${port} is reserved for the sandbox API control plane`);
+        errors.push(
+          `Port ${port} is reserved for the sandbox API control plane`
+        );
       }
     }
 
     const isValid = errors.length === 0;
-    const validationErrors = errors.map(e => ({
+    const validationErrors = errors.map((e) => ({
       field: 'port',
       message: e,
       code: 'INVALID_PORT'
@@ -133,7 +142,14 @@ export class SecurityService {
     // Basic validation
     if (!command || typeof command !== 'string') {
       errors.push('Command must be a non-empty string');
-      return { isValid: false, errors: errors.map(e => ({ field: 'command', message: e, code: 'INVALID_COMMAND' })) };
+      return {
+        isValid: false,
+        errors: errors.map((e) => ({
+          field: 'command',
+          message: e,
+          code: 'INVALID_COMMAND'
+        }))
+      };
     }
 
     const trimmedCommand = command.trim();
@@ -151,7 +167,7 @@ export class SecurityService {
     }
 
     const isValid = errors.length === 0;
-    const validationErrors = errors.map(e => ({
+    const validationErrors = errors.map((e) => ({
       field: 'command',
       message: e,
       code: 'INVALID_COMMAND'
@@ -190,7 +206,14 @@ export class SecurityService {
     // Basic validation
     if (!url || typeof url !== 'string') {
       errors.push('Git URL must be a non-empty string');
-      return { isValid: false, errors: errors.map(e => ({ field: 'gitUrl', message: e, code: 'INVALID_GIT_URL' })) };
+      return {
+        isValid: false,
+        errors: errors.map((e) => ({
+          field: 'gitUrl',
+          message: e,
+          code: 'INVALID_GIT_URL'
+        }))
+      };
     }
 
     const trimmedUrl = url.trim();
@@ -208,7 +231,7 @@ export class SecurityService {
     }
 
     const isValid = errors.length === 0;
-    const validationErrors = errors.map(e => ({
+    const validationErrors = errors.map((e) => ({
       field: 'gitUrl',
       message: e,
       code: 'INVALID_GIT_URL'
@@ -243,7 +266,7 @@ export class SecurityService {
     const randomBytes = new Uint8Array(16);
     crypto.getRandomValues(randomBytes);
     const randomHex = Array.from(randomBytes)
-      .map(b => b.toString(16).padStart(2, '0'))
+      .map((b) => b.toString(16).padStart(2, '0'))
       .join('');
 
     return `session_${timestamp}_${randomHex}`;
@@ -254,7 +277,7 @@ export class SecurityService {
     this.logger.warn(`SECURITY_EVENT: ${event}`, {
       timestamp: new Date().toISOString(),
       event,
-      ...details,
+      ...details
     });
   }
 }

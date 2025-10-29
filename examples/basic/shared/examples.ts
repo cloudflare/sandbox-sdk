@@ -1,12 +1,12 @@
 // Shared example definitions used by both frontend and backend
 // Each example showcases a specific output type or capability
 export const codeExamples = {
-  "stdout-stderr": {
-    name: "stdout-stderr",
-    title: "Text Output (stdout/stderr)",
-    description: "Basic print statements and error output",
-    endpoint: "/api/examples/stdout-stderr",
-    language: "python" as const,
+  'stdout-stderr': {
+    name: 'stdout-stderr',
+    title: 'Text Output (stdout/stderr)',
+    description: 'Basic print statements and error output',
+    endpoint: '/api/examples/stdout-stderr',
+    language: 'python' as const,
     code: `print("This is standard output (stdout)")
 print("You'll see this in the regular output")
 print("=" * 40)
@@ -19,12 +19,12 @@ print("stderr is typically shown in red/different color", file=sys.stderr)
 "This is the return value (last expression)"`
   },
 
-  "html-table": {
-    name: "html-table",
-    title: "HTML Table (Pandas)",
-    description: "Rich HTML tables with pandas DataFrames",
-    endpoint: "/api/examples/html-table",
-    language: "python" as const,
+  'html-table': {
+    name: 'html-table',
+    title: 'HTML Table (Pandas)',
+    description: 'Rich HTML tables with pandas DataFrames',
+    endpoint: '/api/examples/html-table',
+    language: 'python' as const,
     code: `import pandas as pd
 import numpy as np
 
@@ -47,12 +47,12 @@ print("City Statistics Table:")
 df`
   },
 
-  "chart-png": {
-    name: "chart-png",
-    title: "PNG Chart (Matplotlib)",
-    description: "Generate PNG images with matplotlib",
-    endpoint: "/api/examples/chart-png",
-    language: "python" as const,
+  'chart-png': {
+    name: 'chart-png',
+    title: 'PNG Chart (Matplotlib)',
+    description: 'Generate PNG images with matplotlib',
+    endpoint: '/api/examples/chart-png',
+    language: 'python' as const,
     code: `import matplotlib.pyplot as plt
 import numpy as np
 
@@ -92,12 +92,12 @@ plt.show()
 print("Generated a dual-panel PNG chart")`
   },
 
-  "json-data": {
-    name: "json-data",
-    title: "JSON Structured Data",
-    description: "Return structured JSON data",
-    endpoint: "/api/examples/json-data",
-    language: "python" as const,
+  'json-data': {
+    name: 'json-data',
+    title: 'JSON Structured Data',
+    description: 'Return structured JSON data',
+    endpoint: '/api/examples/json-data',
+    language: 'python' as const,
     code: `from datetime import datetime
 import json
 
@@ -131,12 +131,12 @@ analysis_result = {
 analysis_result`
   },
 
-  "latex-math": {
-    name: "latex-math",
-    title: "LaTeX Mathematical Formulas",
-    description: "Display mathematical equations using LaTeX",
-    endpoint: "/api/examples/latex-math",
-    language: "python" as const,
+  'latex-math': {
+    name: 'latex-math',
+    title: 'LaTeX Mathematical Formulas',
+    description: 'Display mathematical equations using LaTeX',
+    endpoint: '/api/examples/latex-math',
+    language: 'python' as const,
     code: `from IPython.display import Latex, display
 
 print("Mathematical Formulas in LaTeX:\\n")
@@ -173,12 +173,12 @@ $$\\begin{bmatrix}
 """))`
   },
 
-  "markdown-rich": {
-    name: "markdown-rich",
-    title: "Markdown Formatted Text",
-    description: "Rich text formatting with Markdown",
-    endpoint: "/api/examples/markdown-rich",
-    language: "python" as const,
+  'markdown-rich': {
+    name: 'markdown-rich',
+    title: 'Markdown Formatted Text',
+    description: 'Rich text formatting with Markdown',
+    endpoint: '/api/examples/markdown-rich',
+    language: 'python' as const,
     code: `from IPython.display import Markdown, display
 
 markdown_doc = """
@@ -228,12 +228,12 @@ def analyze_performance(data):
 display(Markdown(markdown_doc))`
   },
 
-  "multiple-outputs": {
-    name: "multiple-outputs",
-    title: "Multiple Output Types",
-    description: "Combine text, data, and visualization in one execution",
-    endpoint: "/api/examples/multiple-outputs",
-    language: "python" as const,
+  'multiple-outputs': {
+    name: 'multiple-outputs',
+    title: 'Multiple Output Types',
+    description: 'Combine text, data, and visualization in one execution',
+    endpoint: '/api/examples/multiple-outputs',
+    language: 'python' as const,
     code: `import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
@@ -291,12 +291,12 @@ summary = {
 summary`
   },
 
-  "javascript-example": {
-    name: "javascript-example",
-    title: "JavaScript Execution",
-    description: "Execute JavaScript/Node.js code",
-    endpoint: "/api/examples/javascript-example",
-    language: "javascript" as const,
+  'javascript-example': {
+    name: 'javascript-example',
+    title: 'JavaScript Execution',
+    description: 'Execute JavaScript/Node.js code',
+    endpoint: '/api/examples/javascript-example',
+    language: 'javascript' as const,
     code: `console.log("Hello from JavaScript!");
 console.log("Node version:", process.version);
 
@@ -321,12 +321,12 @@ console.log(JSON.stringify(analysis, null, 2));
 analysis`
   },
 
-  "typescript-example": {
-    name: "typescript-example",
-    title: "TypeScript Execution",
-    description: "Execute TypeScript code with type annotations",
-    endpoint: "/api/examples/typescript-example",
-    language: "typescript" as const,
+  'typescript-example': {
+    name: 'typescript-example',
+    title: 'TypeScript Execution',
+    description: 'Execute TypeScript code with type annotations',
+    endpoint: '/api/examples/typescript-example',
+    language: 'typescript' as const,
     code: `// TypeScript with full type support
 interface User {
   id: number;
@@ -434,12 +434,12 @@ console.log(JSON.stringify(apiResponse, null, 2));
 apiResponse`
   },
 
-  "error-handling": {
-    name: "error-handling",
-    title: "Error Handling Demo",
-    description: "Show how errors and tracebacks are captured",
-    endpoint: "/api/examples/error-handling",
-    language: "python" as const,
+  'error-handling': {
+    name: 'error-handling',
+    title: 'Error Handling Demo',
+    description: 'Show how errors and tracebacks are captured',
+    endpoint: '/api/examples/error-handling',
+    language: 'python' as const,
     code: `def divide_numbers(a, b):
     """Function that might raise an error"""
     if b == 0:
@@ -466,4 +466,4 @@ process_data([10, 20, 0, 5])  # Zero will cause division error`
 };
 
 export type ExampleName = keyof typeof codeExamples;
-export type CodeExample = typeof codeExamples[ExampleName];
+export type CodeExample = (typeof codeExamples)[ExampleName];

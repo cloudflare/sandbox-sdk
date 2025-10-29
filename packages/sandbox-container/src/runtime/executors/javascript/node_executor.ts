@@ -37,7 +37,7 @@ const sandbox = {
 
 const context = vm.createContext(sandbox);
 
-console.log(JSON.stringify({ status: "ready" }));
+console.log(JSON.stringify({ status: 'ready' }));
 
 rl.on('line', async (line: string) => {
   try {
@@ -50,13 +50,21 @@ rl.on('line', async (line: string) => {
     let stdout = '';
     let stderr = '';
 
-    (process.stdout.write as any) = (chunk: string | Buffer, encoding?: BufferEncoding, callback?: () => void) => {
+    (process.stdout.write as any) = (
+      chunk: string | Buffer,
+      encoding?: BufferEncoding,
+      callback?: () => void
+    ) => {
       stdout += chunk.toString();
       if (callback) callback();
       return true;
     };
 
-    (process.stderr.write as any) = (chunk: string | Buffer, encoding?: BufferEncoding, callback?: () => void) => {
+    (process.stderr.write as any) = (
+      chunk: string | Buffer,
+      encoding?: BufferEncoding,
+      callback?: () => void
+    ) => {
       stderr += chunk.toString();
       if (callback) callback();
       return true;
@@ -67,7 +75,7 @@ rl.on('line', async (line: string) => {
 
     try {
       const options: vm.RunningScriptOptions = {
-        filename: `<execution-${executionId}>`,
+        filename: `<execution-${executionId}>`
       };
 
       // Only add timeout if specified (undefined = unlimited)
@@ -76,7 +84,6 @@ rl.on('line', async (line: string) => {
       }
 
       result = vm.runInContext(code, context, options);
-
     } catch (error: unknown) {
       const err = error as Error;
       stderr += err.stack || err.toString();
@@ -98,7 +105,11 @@ rl.on('line', async (line: string) => {
       } else {
         outputs.push({
           type: 'text',
-          data: util.inspect(result, { showHidden: false, depth: null, colors: false }),
+          data: util.inspect(result, {
+            showHidden: false,
+            depth: null,
+            colors: false
+          }),
           metadata: {}
         });
       }
@@ -113,16 +124,17 @@ rl.on('line', async (line: string) => {
     };
 
     console.log(JSON.stringify(response));
-
   } catch (error: unknown) {
     const err = error as Error;
-    console.log(JSON.stringify({
-      stdout: '',
-      stderr: `Error processing request: ${err.message}`,
-      success: false,
-      executionId: 'unknown',
-      outputs: []
-    }));
+    console.log(
+      JSON.stringify({
+        stdout: '',
+        stderr: `Error processing request: ${err.message}`,
+        success: false,
+        executionId: 'unknown',
+        outputs: []
+      })
+    );
   }
 });
 

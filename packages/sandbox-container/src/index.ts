@@ -1,5 +1,5 @@
 import { createLogger } from '@repo/shared';
-import { serve } from "bun";
+import { serve } from 'bun';
 import { Container } from './core/container';
 import { Router } from './core/router';
 import { setupRoutes } from './routes/setup';
@@ -7,17 +7,19 @@ import { setupRoutes } from './routes/setup';
 // Create module-level logger for server lifecycle events
 const logger = createLogger({ component: 'container' });
 
-async function createApplication(): Promise<{ fetch: (req: Request) => Promise<Response> }> {
+async function createApplication(): Promise<{
+  fetch: (req: Request) => Promise<Response>;
+}> {
   // Initialize dependency injection container
   const container = new Container();
   await container.initialize();
 
   // Create and configure router
   const router = new Router(logger);
-  
+
   // Add global CORS middleware
   router.use(container.get('corsMiddleware'));
-  
+
   // Setup all application routes
   setupRoutes(router, container);
 
@@ -33,14 +35,14 @@ const app = await createApplication();
 const server = serve({
   idleTimeout: 255,
   fetch: app.fetch,
-  hostname: "0.0.0.0",
+  hostname: '0.0.0.0',
   port: 3000,
   // Enhanced WebSocket placeholder for future streaming features
-  websocket: { 
-    async message() { 
+  websocket: {
+    async message() {
       // WebSocket functionality can be added here in the future
-    } 
-  },
+    }
+  }
 });
 
 logger.info('Container server started', {
@@ -68,7 +70,10 @@ process.on('SIGTERM', async () => {
 
       logger.info('Services cleaned up successfully');
     } catch (error) {
-      logger.error('Error during cleanup', error instanceof Error ? error : new Error(String(error)));
+      logger.error(
+        'Error during cleanup',
+        error instanceof Error ? error : new Error(String(error))
+      );
     }
   }
 
