@@ -1,5 +1,21 @@
 # @cloudflare/sandbox
 
+## 0.4.14
+
+### Patch Changes
+
+- [#172](https://github.com/cloudflare/sandbox-sdk/pull/172) [`1bf3576`](https://github.com/cloudflare/sandbox-sdk/commit/1bf35768b02532c77df6f30a2f2eb08cb2b12115) Thanks [@threepointone](https://github.com/threepointone)! - Update dependencies
+
+- [#176](https://github.com/cloudflare/sandbox-sdk/pull/176) [`7edbfa9`](https://github.com/cloudflare/sandbox-sdk/commit/7edbfa906668d75f540527f50b52483dc787192c) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Add cache mounts to Dockerfile for faster builds
+
+  Adds cache mounts for npm, apt, and pip package managers in the Dockerfile. This speeds up Docker image builds when dependencies change, particularly beneficial for users building from source.
+
+- [#172](https://github.com/cloudflare/sandbox-sdk/pull/172) [`1bf3576`](https://github.com/cloudflare/sandbox-sdk/commit/1bf35768b02532c77df6f30a2f2eb08cb2b12115) Thanks [@threepointone](https://github.com/threepointone)! - Fix type generation
+
+  We inline types from `@repo/shared` so that it includes the types we reexport. Fixes #165
+
+- [#175](https://github.com/cloudflare/sandbox-sdk/pull/175) [`77cb937`](https://github.com/cloudflare/sandbox-sdk/commit/77cb93762a619523758f769a10509e665ca819fe) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Move .connect to .wsConnect within DO stub
+
 ## 0.4.13
 
 ### Patch Changes
@@ -37,7 +53,6 @@
   This adds a new `exists()` method to the SDK that checks whether a file or directory exists at a given path. The method returns a boolean indicating existence, similar to Python's `os.path.exists()` and JavaScript's `fs.existsSync()`.
 
   The implementation is end-to-end:
-
   - New `FileExistsResult` and `FileExistsRequest` types in shared package
   - Handler endpoint at `/api/exists` in container layer
   - Client method in `FileClient` and `Sandbox` classes
@@ -136,50 +151,47 @@
   Implements PID namespace isolation to protect control plane processes (Jupyter, Bun) from sandboxed code. Commands executed via `exec()` now run in isolated namespaces that cannot see or interact with system processes.
 
   **Key security improvements:**
-
   - Control plane processes are hidden from sandboxed commands
   - Platform secrets in `/proc/1/environ` are inaccessible
   - Ports 8888 (Jupyter) and 3000 (Bun) are protected from hijacking
 
   **Breaking changes:**
-
   1. **Removed `sessionId` parameter**: The `sessionId` parameter has been removed from all methods (`exec()`, `execStream()`, `startProcess()`, etc.). Each sandbox now maintains its own persistent session automatically.
 
      ```javascript
      // Before: manual session management
-     await sandbox.exec("cd /app", { sessionId: "my-session" });
+     await sandbox.exec('cd /app', { sessionId: 'my-session' });
 
      // After: automatic session per sandbox
-     await sandbox.exec("cd /app");
+     await sandbox.exec('cd /app');
      ```
 
   2. **Commands now maintain state**: Commands within the same sandbox now share state (working directory, environment variables, background processes). Previously each command was stateless.
 
      ```javascript
      // Before: each exec was independent
-     await sandbox.exec("cd /app");
-     await sandbox.exec("pwd"); // Output: /workspace
+     await sandbox.exec('cd /app');
+     await sandbox.exec('pwd'); // Output: /workspace
 
      // After: state persists in session
-     await sandbox.exec("cd /app");
-     await sandbox.exec("pwd"); // Output: /app
+     await sandbox.exec('cd /app');
+     await sandbox.exec('pwd'); // Output: /app
      ```
 
   **Migration guide:**
-
   - Remove `sessionId` from all method calls - each sandbox maintains its own session
   - If you need isolated execution contexts within the same sandbox, use `sandbox.createSession()`:
     ```javascript
     // Create independent sessions with different environments
     const buildSession = await sandbox.createSession({
-      name: "build",
-      env: { NODE_ENV: "production" },
-      cwd: "/build",
+      name: 'build',
+      env: { NODE_ENV: 'production' },
+      cwd: '/build'
     });
     const testSession = await sandbox.createSession({
-      name: "test",
-      env: { NODE_ENV: "test" },
-      cwd: "/test",
+      name: 'test',
+      env: { NODE_ENV: 'test' },
+      cwd: '/test'
     });
     ```
   - Environment variables set in one command persist to the next
