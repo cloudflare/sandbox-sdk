@@ -73,7 +73,20 @@ jobs:
           password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
 
       - name: Build and push Docker image (preview)
-        run: npm run docker:publish --workspace=@cloudflare/sandbox
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: packages/sandbox/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: cloudflare/sandbox:${{ steps.package-version.outputs.version }}
+          cache-from: |
+            type=gha,scope=preview-pr-${{ github.event.pull_request.number }}
+            type=gha,scope=pr-${{ github.event.pull_request.number }}
+            type=gha,scope=release
+          cache-to: type=gha,mode=max,scope=preview-pr-${{ github.event.pull_request.number }}
+          build-args: |
+            SANDBOX_VERSION=${{ steps.package-version.outputs.version }}
 
       - name: Publish to pkg.pr.new
         run: npx pkg-pr-new publish './packages/sandbox'
