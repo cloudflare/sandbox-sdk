@@ -15,6 +15,8 @@ jobs:
   unit-tests:
     timeout-minutes: 10
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.get-version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
 
@@ -32,6 +34,12 @@ jobs:
 
       - name: Build packages
         run: npm run build
+
+      - name: Get package version
+        id: get-version
+        run: |
+          VERSION=$(node -p "require('./packages/sandbox/package.json').version")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Run sandbox unit tests
         run: |
@@ -64,6 +72,7 @@ jobs:
 
   # E2E tests against deployed worker
   e2e-tests:
+    needs: unit-tests  # Add this line
     timeout-minutes: 30
     runs-on: ubuntu-latest
     steps:
@@ -102,9 +111,23 @@ jobs:
           cd tests/e2e/test-worker
           ./generate-config.sh ${{ steps.env-name.outputs.worker_name }}
 
-      # Build Docker image for test worker (needed before deployment)
+      # Build Docker image for test worker with caching
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Build test worker Docker image
-        run: npm run docker:local -w @cloudflare/sandbox
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: packages/sandbox/Dockerfile
+          load: true  # Load into Docker daemon for local testing
+          tags: cloudflare/sandbox-test:${{ needs.unit-tests.outputs.version || '0.0.0' }}
+          cache-from: |
+            type=gha,scope=pr-${{ github.event.pull_request.number }}
+            type=gha,scope=release
+          cache-to: type=gha,mode=max,scope=pr-${{ github.event.pull_request.number }}
+          build-args: |
+            SANDBOX_VERSION=${{ needs.unit-tests.outputs.version || '0.0.0' }}
 
       # Deploy test worker using official Cloudflare action
       - name: Deploy test worker
