@@ -82,7 +82,8 @@ jobs:
           tags: cloudflare/sandbox:${{ steps.package-version.outputs.version }}
           cache-from: |
             type=gha,scope=preview-pr-${{ github.event.pull_request.number }}
-            type=gha,scope=pr-${{ github.event.pull_request.number }}
+            type=gha,scope=pr-${{ github.event.pull_request.number }}-amd64
+            type=gha,scope=release-amd64
             type=gha,scope=release
           cache-to: type=gha,mode=max,scope=preview-pr-${{ github.event.pull_request.number }}
           build-args: |
