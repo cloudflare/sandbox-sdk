@@ -1,8 +1,7 @@
-import { Container, switchPort } from '@cloudflare/containers';
+import { Container } from '@cloudflare/containers';
 import type { DurableObjectState } from '@cloudflare/workers-types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { Sandbox } from '../src/sandbox';
-import { SecurityError, validatePort } from '../src/security';
+import { connect, Sandbox } from '../src/sandbox';
 
 // Mock dependencies before imports
 vi.mock('./interpreter', () => ({
@@ -54,7 +53,7 @@ vi.mock('@cloudflare/containers', () => {
 
 describe('Sandbox - Automatic Session Management', () => {
   let sandbox: Sandbox;
-  let mockCtx: Partial<DurableObjectState>;
+  let mockCtx: Partial<DurableObjectState<{}>>;
   let mockEnv: any;
 
   beforeEach(async () => {
@@ -83,26 +82,16 @@ describe('Sandbox - Automatic Session Management', () => {
     mockEnv = {};
 
     // Create Sandbox instance - SandboxClient is created internally
-    sandbox = new Sandbox(mockCtx as DurableObjectState, mockEnv);
+    const stub = new Sandbox(mockCtx, mockEnv);
 
     // Wait for blockConcurrencyWhile to complete
     await vi.waitFor(() => {
       expect(mockCtx.blockConcurrencyWhile).toHaveBeenCalled();
     });
 
-    // Add wsConnect method to sandbox (simulating what getSandbox() does)
-    (sandbox as any).wsConnect = async (
-      request: Request,
-      port: number
-    ): Promise<Response> => {
-      if (!validatePort(port)) {
-        throw new SecurityError(
-          `Invalid or restricted port: ${port}. Ports must be in range 1024-65535 and not reserved.`
-        );
-      }
-      const portSwitchedRequest = switchPort(request, port);
-      return await sandbox.fetch(portSwitchedRequest);
-    };
+    sandbox = Object.assign(stub, {
+      wsConnect: connect(stub)
+    });
 
     // Now spy on the client methods that we need for testing
     vi.spyOn(sandbox.client.utils, 'createSession').mockResolvedValue({

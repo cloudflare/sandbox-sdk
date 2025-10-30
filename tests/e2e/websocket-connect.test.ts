@@ -8,9 +8,9 @@ import {
 } from './helpers/test-fixtures';
 
 /**
- * WebSocket connect() Integration Tests
+ * WebSocket wsConnect() Integration Tests
  *
- * Tests the connect() method for routing WebSocket requests to container services.
+ * Tests the wsConnect() method for routing WebSocket requests to container services.
  * Focuses on transport-level functionality, not application-level server implementations.
  */
 describe('WebSocket Connections', () => {
@@ -50,7 +50,7 @@ describe('WebSocket Connections', () => {
     // Wait for server to be ready (generous timeout for first startup)
     await new Promise((resolve) => setTimeout(resolve, 2000));
 
-    // Connect via WebSocket using connect() routing
+    // Connect via WebSocket using wsConnect() routing
     const wsUrl = workerUrl.replace(/^http/, 'ws') + '/ws/echo';
     const ws = new WebSocket(wsUrl, {
       headers: {

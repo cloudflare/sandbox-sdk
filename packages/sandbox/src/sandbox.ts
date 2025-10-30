@@ -1,6 +1,5 @@
 import type { DurableObject } from 'cloudflare:workers';
 import { Container, getContainer, switchPort } from '@cloudflare/containers';
-import type { DurableObjectStub } from '@cloudflare/workers-types';
 import type {
   CodeContext,
   CreateContextOptions,
@@ -9,6 +8,7 @@ import type {
   ExecResult,
   ExecutionResult,
   ExecutionSession,
+  ISandbox,
   Process,
   ProcessOptions,
   ProcessStatus,
@@ -27,24 +27,12 @@ import { SecurityError, sanitizeSandboxId, validatePort } from './security';
 import { parseSSEStream } from './sse-parser';
 import { SDK_VERSION } from './version';
 
-export type ISandbox = DurableObjectStub<Sandbox> & {
-  /**
-   * Connect an incoming WebSocket request to a specific port inside the container.
-   *
-   * @param request - The incoming WebSocket upgrade request
-   * @param port - The port number to connect to (1024-65535)
-   * @returns The WebSocket upgrade response
-   * @throws {SecurityError} - If port is invalid or in restricted range
-   */
-  wsConnect(request: Request, port: number): Promise<Response>;
-};
-
 export function getSandbox(
   ns: DurableObjectNamespace<Sandbox>,
   id: string,
   options?: SandboxOptions
-): ISandbox {
-  const stub = getContainer(ns, id);
+): Sandbox {
+  const stub = getContainer(ns, id) as unknown as Sandbox;
 
   // Store the name on first access
   stub.setSandboxName?.(id);
@@ -61,11 +49,16 @@ export function getSandbox(
     stub.setKeepAlive(options.keepAlive);
   }
 
-  // Implemented here to avoid websocket serialization error across RPC at runtime
-  (stub as any).wsConnect = async (
-    request: Request,
-    port: number
-  ): Promise<Response> => {
+  return Object.assign(stub, {
+    wsConnect: connect(stub)
+  });
+}
+
+export function connect(
+  stub: { fetch: (request: Request) => Promise<Response> }
+) {
+  return async (request: Request, port: number) => {
+    // Validate port before routing
     if (!validatePort(port)) {
       throw new SecurityError(
         `Invalid or restricted port: ${port}. Ports must be in range 1024-65535 and not reserved.`
@@ -74,11 +67,9 @@ export function getSandbox(
     const portSwitchedRequest = switchPort(request, port);
     return await stub.fetch(portSwitchedRequest);
   };
-
-  return stub as unknown as ISandbox;
 }
 
-export class Sandbox<Env = unknown> extends Container<Env> {
+export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   defaultPort = 3000; // Default port for the container's Bun server
   sleepAfter: string | number = '10m'; // Sleep the sandbox if no requests are made in this timeframe
 
@@ -92,7 +83,7 @@ export class Sandbox<Env = unknown> extends Container<Env> {
   private logger: ReturnType<typeof createLogger>;
   private keepAliveEnabled: boolean = false;
 
-  constructor(ctx: DurableObject['ctx'], env: Env) {
+  constructor(ctx: DurableObjectState<{}>, env: Env) {
     super(ctx, env);
 
     const envObj = env as any;
@@ -350,6 +341,11 @@ export class Sandbox<Env = unknown> extends Container<Env> {
       // Route to the appropriate port
       return await this.containerFetch(request, port);
     });
+  }
+
+  wsConnect(request: Request, port: number): Promise<Response> {
+    // Dummy implementation that will be overridden by the stub
+    throw new Error('Not implemented here to avoid RPC serialization issues');
   }
 
   private determinePort(url: URL): number {
