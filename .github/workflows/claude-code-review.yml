@@ -1,8 +1,8 @@
 name: Claude Code Review
 
 on:
-  pull_request:
-    types: [opened, synchronize, labeled]
+  pull_request_target:
+    types: [opened, synchronize]
     # Optional: Only run on specific file changes
     # paths:
     #   - "src/**/*.ts"
@@ -13,14 +13,12 @@ on:
 jobs:
   claude-review:
     # Skip review for automated "Version Packages" PRs created by changesets
-    # For external PRs: requires 'ci' label
-    # For internal PRs: runs automatically
-    if: |
-      github.event.pull_request.title != 'Version Packages' &&
-      (github.event.pull_request.head.repo.full_name == github.repository ||
-       contains(github.event.pull_request.labels.*.name, 'ci'))
+    # For external PRs: requires manual approval via 'external-pr' environment
+    # For internal PRs: runs automatically without approval
+    if: github.event.pull_request.title != 'Version Packages'
 
     runs-on: ubuntu-latest
+    environment: ${{ github.event.pull_request.head.repo.full_name != github.repository && 'external-pr' || null }}
     permissions:
       contents: read
       pull-requests: read
@@ -31,6 +29,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 1
 
       - name: Run Claude Code Review

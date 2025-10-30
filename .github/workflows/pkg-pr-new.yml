@@ -5,8 +5,8 @@ permissions:
   pull-requests: write # Required for pkg.pr.new to comment on PRs
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened, labeled]
+  pull_request_target:
+    types: [opened, synchronize, reopened]
     paths:
       - '**'
       - '!**/*.md'
@@ -14,18 +14,17 @@ on:
 
 jobs:
   publish-preview:
-    # For external PRs: requires 'ci' label
-    # For internal PRs: runs automatically
-    if: |
-      github.event.pull_request.head.repo.full_name == github.repository ||
-      contains(github.event.pull_request.labels.*.name, 'ci')
+    # For external PRs: requires manual approval via 'external-pr' environment
+    # For internal PRs: runs automatically without approval
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    environment: ${{ github.event.pull_request.head.repo.full_name != github.repository && 'external-pr' || null }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
 
       - name: Setup Node.js
