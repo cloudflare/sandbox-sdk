@@ -22,7 +22,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: "npm"
+          cache: 'npm'
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -78,7 +78,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: "npm"
+          cache: 'npm'
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -131,7 +131,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: "npm"
+          cache: 'npm'
 
       - uses: oven-sh/setup-bun@v2
         with:

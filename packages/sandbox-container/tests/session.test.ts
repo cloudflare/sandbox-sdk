@@ -39,7 +39,7 @@ describe('Session', () => {
     it('should initialize session successfully', async () => {
       session = new Session({
         id: 'test-session-1',
-        cwd: testDir,
+        cwd: testDir
       });
 
       await session.initialize();
@@ -52,8 +52,8 @@ describe('Session', () => {
         id: 'test-session-2',
         cwd: testDir,
         env: {
-          TEST_VAR: 'test-value',
-        },
+          TEST_VAR: 'test-value'
+        }
       });
 
       await session.initialize();
@@ -67,7 +67,7 @@ describe('Session', () => {
     it('should create session directory', async () => {
       session = new Session({
         id: 'test-session-3',
-        cwd: testDir,
+        cwd: testDir
       });
 
       await session.initialize();
@@ -81,7 +81,7 @@ describe('Session', () => {
     beforeEach(async () => {
       session = new Session({
         id: 'test-exec',
-        cwd: testDir,
+        cwd: testDir
       });
       await session.initialize();
     });
@@ -156,7 +156,9 @@ describe('Session', () => {
       await session.exec('mkdir -p tempdir');
 
       // Execute command in subdirectory
-      const result = await session.exec('pwd', { cwd: join(testDir, 'tempdir') });
+      const result = await session.exec('pwd', {
+        cwd: join(testDir, 'tempdir')
+      });
 
       expect(result.exitCode).toBe(0);
       expect(result.stdout.trim()).toContain('tempdir');
@@ -171,7 +173,9 @@ describe('Session', () => {
     });
 
     it('should handle multiline output', async () => {
-      const result = await session.exec('echo "line 1"; echo "line 2"; echo "line 3"');
+      const result = await session.exec(
+        'echo "line 1"; echo "line 2"; echo "line 3"'
+      );
 
       expect(result.exitCode).toBe(0);
       expect(result.stdout.trim()).toBe('line 1\nline 2\nline 3');
@@ -182,15 +186,21 @@ describe('Session', () => {
       const result = await session.exec('yes "test line" | head -n 100');
 
       expect(result.exitCode).toBe(0);
-      expect(result.stdout.split('\n').filter((l) => l === 'test line')).toHaveLength(100);
+      expect(
+        result.stdout.split('\n').filter((l) => l === 'test line')
+      ).toHaveLength(100);
     });
 
     it('should handle output within size limit', async () => {
       // Generate ~5KB of output (well below the 10MB default)
-      const result = await session.exec('yes "test line with some text" | head -n 500');
+      const result = await session.exec(
+        'yes "test line with some text" | head -n 500'
+      );
 
       expect(result.exitCode).toBe(0);
-      const lines = result.stdout.split('\n').filter((l) => l === 'test line with some text');
+      const lines = result.stdout
+        .split('\n')
+        .filter((l) => l === 'test line with some text');
       expect(lines.length).toBe(500);
     });
 
@@ -199,13 +209,15 @@ describe('Session', () => {
       const smallSession = new Session({
         id: 'small-output-session',
         cwd: testDir,
-        maxOutputSizeBytes: 1024, // 1KB
+        maxOutputSizeBytes: 1024 // 1KB
       });
       await smallSession.initialize();
 
       try {
         // Try to generate >1KB of output (~12KB)
-        await smallSession.exec('yes "test line with text here" | head -n 1000');
+        await smallSession.exec(
+          'yes "test line with text here" | head -n 1000'
+        );
         expect.unreachable('Should have thrown an error for oversized output');
       } catch (error) {
         expect(error).toBeInstanceOf(Error);
@@ -233,7 +245,9 @@ describe('Session', () => {
 
     it('should handle shell functions', async () => {
       // Define a function
-      const result1 = await session.exec('my_func() { echo "function works"; }');
+      const result1 = await session.exec(
+        'my_func() { echo "function works"; }'
+      );
       expect(result1.exitCode).toBe(0);
 
       // Call the function
@@ -247,7 +261,7 @@ describe('Session', () => {
     beforeEach(async () => {
       session = new Session({
         id: 'test-stream',
-        cwd: testDir,
+        cwd: testDir
       });
       await session.initialize();
     });
@@ -255,7 +269,9 @@ describe('Session', () => {
     it('should stream command output', async () => {
       const events: any[] = [];
 
-      for await (const event of session.execStream('echo "Hello"; echo "World"')) {
+      for await (const event of session.execStream(
+        'echo "Hello"; echo "World"'
+      )) {
         events.push(event);
       }
 
@@ -279,7 +295,9 @@ describe('Session', () => {
     it('should stream stderr separately', async () => {
       const events: any[] = [];
 
-      for await (const event of session.execStream('echo "out"; echo "err" >&2')) {
+      for await (const event of session.execStream(
+        'echo "out"; echo "err" >&2'
+      )) {
         events.push(event);
       }
 
@@ -338,7 +356,7 @@ describe('Session', () => {
     it('should cleanup session resources', async () => {
       session = new Session({
         id: 'test-destroy',
-        cwd: testDir,
+        cwd: testDir
       });
 
       await session.initialize();
@@ -352,7 +370,7 @@ describe('Session', () => {
     it('should be safe to call destroy multiple times', async () => {
       session = new Session({
         id: 'test-destroy-multiple',
-        cwd: testDir,
+        cwd: testDir
       });
 
       await session.initialize();
@@ -367,7 +385,7 @@ describe('Session', () => {
     it('should throw error when executing in destroyed session', async () => {
       session = new Session({
         id: 'test-error-1',
-        cwd: testDir,
+        cwd: testDir
       });
 
       await session.initialize();
@@ -385,7 +403,7 @@ describe('Session', () => {
     it('should throw error when executing before initialization', async () => {
       session = new Session({
         id: 'test-error-2',
-        cwd: testDir,
+        cwd: testDir
       });
 
       try {
@@ -400,12 +418,14 @@ describe('Session', () => {
     it('should handle invalid cwd gracefully', async () => {
       session = new Session({
         id: 'test-error-3',
-        cwd: testDir,
+        cwd: testDir
       });
 
       await session.initialize();
 
-      const result = await session.exec('echo test', { cwd: '/nonexistent/path/that/does/not/exist' });
+      const result = await session.exec('echo test', {
+        cwd: '/nonexistent/path/that/does/not/exist'
+      });
 
       // Should fail to change directory
       expect(result.exitCode).toBe(1);
@@ -417,7 +437,7 @@ describe('Session', () => {
     it('should cleanup FIFO pipes after command execution', async () => {
       session = new Session({
         id: 'test-fifo-cleanup',
-        cwd: testDir,
+        cwd: testDir
       });
 
       await session.initialize();
@@ -440,7 +460,7 @@ describe('Session', () => {
     it('should correctly parse output with newlines', async () => {
       session = new Session({
         id: 'test-binary-prefix',
-        cwd: testDir,
+        cwd: testDir
       });
 
       await session.initialize();
@@ -454,7 +474,7 @@ describe('Session', () => {
     it('should handle empty output', async () => {
       session = new Session({
         id: 'test-empty-output',
-        cwd: testDir,
+        cwd: testDir
       });
 
       await session.initialize();
@@ -473,7 +493,7 @@ describe('Session', () => {
       session = new Session({
         id: 'test-timeout',
         cwd: testDir,
-        commandTimeoutMs: 1000, // 1 second
+        commandTimeoutMs: 1000 // 1 second
       });
 
       await session.initialize();
@@ -494,7 +514,7 @@ describe('Session', () => {
       session = new Session({
         id: 'test-timeout-fast',
         cwd: testDir,
-        commandTimeoutMs: 1000, // 1 second
+        commandTimeoutMs: 1000 // 1 second
       });
 
       await session.initialize();

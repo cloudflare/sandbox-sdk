@@ -1,11 +1,7 @@
 // Main client exports
 
-
 // Command client types
-export type {
-  ExecuteRequest,
-  ExecuteResponse,
-} from './command-client';
+export type { ExecuteRequest, ExecuteResponse } from './command-client';
 
 // Domain-specific clients
 export { CommandClient } from './command-client';
@@ -14,23 +10,23 @@ export type {
   FileOperationRequest,
   MkdirRequest,
   ReadFileRequest,
-  WriteFileRequest,
+  WriteFileRequest
 } from './file-client';
 export { FileClient } from './file-client';
 // Git client types
-export type {
-  GitCheckoutRequest,
-  GitCheckoutResult,
-} from './git-client';
+export type { GitCheckoutRequest, GitCheckoutResult } from './git-client';
 export { GitClient } from './git-client';
-export { type ExecutionCallbacks, InterpreterClient } from './interpreter-client';
+export {
+  type ExecutionCallbacks,
+  InterpreterClient
+} from './interpreter-client';
 // Port client types
 export type {
   ExposePortRequest,
   PortCloseResult,
   PortExposeResult,
   PortListResult,
-  UnexposePortRequest,
+  UnexposePortRequest
 } from './port-client';
 export { PortClient } from './port-client';
 // Process client types
@@ -41,7 +37,7 @@ export type {
   ProcessListResult,
   ProcessLogsResult,
   ProcessStartResult,
-  StartProcessRequest,
+  StartProcessRequest
 } from './process-client';
 export { ProcessClient } from './process-client';
 export { SandboxClient } from './sandbox-client';
@@ -53,12 +49,12 @@ export type {
   HttpClientOptions,
   RequestConfig,
   ResponseHandler,
-  SessionRequest,
+  SessionRequest
 } from './types';
 // Utility client types
 export type {
   CommandsResponse,
   PingResponse,
-  VersionResponse,
+  VersionResponse
 } from './utility-client';
 export { UtilityClient } from './utility-client';

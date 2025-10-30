@@ -63,7 +63,11 @@ export class GitManager {
    * Build git clone command arguments
    * Returns array of args to pass to spawn (e.g., ['git', 'clone', '--branch', 'main', 'url', 'path'])
    */
-  buildCloneArgs(repoUrl: string, targetDir: string, options: CloneOptions = {}): string[] {
+  buildCloneArgs(
+    repoUrl: string,
+    targetDir: string,
+    options: CloneOptions = {}
+  ): string[] {
     const args = ['git', 'clone'];
 
     if (options.branch) {
@@ -107,12 +111,12 @@ export class GitManager {
   parseBranchList(stdout: string): string[] {
     const branches = stdout
       .split('\n')
-      .map(line => line.trim())
-      .filter(line => line.length > 0)
-      .map(line => line.replace(/^\*\s*/, '')) // Remove current branch marker
-      .map(line => line.replace(/^remotes\/origin\//, '')) // Simplify remote branch names
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+      .map((line) => line.replace(/^\*\s*/, '')) // Remove current branch marker
+      .map((line) => line.replace(/^remotes\/origin\//, '')) // Simplify remote branch names
       .filter((branch, index, array) => array.indexOf(branch) === index) // Remove duplicates
-      .filter(branch => branch !== 'HEAD'); // Remove HEAD reference
+      .filter((branch) => branch !== 'HEAD'); // Remove HEAD reference
 
     return branches;
   }
@@ -124,7 +128,7 @@ export class GitManager {
     if (!branch || branch.trim().length === 0) {
       return {
         isValid: false,
-        error: 'Branch name cannot be empty',
+        error: 'Branch name cannot be empty'
       };
     }
 
@@ -137,7 +141,11 @@ export class GitManager {
   /**
    * Determine appropriate error code based on operation and error
    */
-  determineErrorCode(operation: string, error: Error | string, exitCode?: number): string {
+  determineErrorCode(
+    operation: string,
+    error: Error | string,
+    exitCode?: number
+  ): string {
     const errorMessage = typeof error === 'string' ? error : error.message;
     const lowerMessage = errorMessage.toLowerCase();
 
@@ -153,11 +161,17 @@ export class GitManager {
     }
 
     // Common error patterns
-    if (lowerMessage.includes('permission denied') || lowerMessage.includes('access denied')) {
+    if (
+      lowerMessage.includes('permission denied') ||
+      lowerMessage.includes('access denied')
+    ) {
       return 'GIT_PERMISSION_DENIED';
     }
 
-    if (lowerMessage.includes('not found') || lowerMessage.includes('does not exist')) {
+    if (
+      lowerMessage.includes('not found') ||
+      lowerMessage.includes('does not exist')
+    ) {
       return 'GIT_NOT_FOUND';
     }
 
@@ -165,11 +179,17 @@ export class GitManager {
       return 'GIT_ALREADY_EXISTS';
     }
 
-    if (lowerMessage.includes('did not match') || lowerMessage.includes('pathspec')) {
+    if (
+      lowerMessage.includes('did not match') ||
+      lowerMessage.includes('pathspec')
+    ) {
       return 'GIT_INVALID_REF';
     }
 
-    if (lowerMessage.includes('authentication') || lowerMessage.includes('credentials')) {
+    if (
+      lowerMessage.includes('authentication') ||
+      lowerMessage.includes('credentials')
+    ) {
       return 'GIT_AUTH_FAILED';
     }
 
@@ -191,12 +211,16 @@ export class GitManager {
   /**
    * Create standardized error message for git operations
    */
-  createErrorMessage(operation: string, context: Record<string, any>, error: string): string {
+  createErrorMessage(
+    operation: string,
+    context: Record<string, any>,
+    error: string
+  ): string {
     const operationVerbs: Record<string, string> = {
       clone: 'clone repository',
       checkout: 'checkout branch',
       getCurrentBranch: 'get current branch',
-      listBranches: 'list branches',
+      listBranches: 'list branches'
     };
 
     const verb = operationVerbs[operation] || 'perform git operation';
@@ -211,7 +235,9 @@ export class GitManager {
    * Check if git URL appears to be SSH format
    */
   isSshUrl(url: string): boolean {
-    return url.startsWith('git@') || url.includes(':') && !url.startsWith('http');
+    return (
+      url.startsWith('git@') || (url.includes(':') && !url.startsWith('http'))
+    );
   }
 
   /**

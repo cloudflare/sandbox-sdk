@@ -14,9 +14,22 @@
  * and ensure the code interpreter works end-to-end in a real container environment.
  */
 
-import { afterAll, afterEach, beforeAll, describe, expect, test, vi } from 'vitest';
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  test,
+  vi
+} from 'vitest';
 import { getTestWorkerUrl, WranglerDevRunner } from './helpers/wrangler-runner';
-import { createSandboxId, createTestHeaders, fetchWithStartup, cleanupSandbox } from './helpers/test-fixtures';
+import {
+  createSandboxId,
+  createTestHeaders,
+  fetchWithStartup,
+  cleanupSandbox
+} from './helpers/test-fixtures';
 
 describe('Code Interpreter Workflow (E2E)', () => {
   let runner: WranglerDevRunner | null;
@@ -52,11 +65,12 @@ describe('Code Interpreter Workflow (E2E)', () => {
 
     // Create Python context
     const pythonCtxResponse = await vi.waitFor(
-      async () => fetchWithStartup(`${workerUrl}/api/code/context/create`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ language: 'python' }),
-      }),
+      async () =>
+        fetchWithStartup(`${workerUrl}/api/code/context/create`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ language: 'python' })
+        }),
       { timeout: 90000, interval: 2000 }
     );
 
@@ -69,7 +83,7 @@ describe('Code Interpreter Workflow (E2E)', () => {
     const jsCtxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ language: 'javascript' }),
+      body: JSON.stringify({ language: 'javascript' })
     });
 
     expect(jsCtxResponse.status).toBe(200);
@@ -81,7 +95,7 @@ describe('Code Interpreter Workflow (E2E)', () => {
     // List all contexts
     const listResponse = await fetch(`${workerUrl}/api/code/context/list`, {
       method: 'GET',
-      headers,
+      headers
     });
 
     expect(listResponse.status).toBe(200);
@@ -100,11 +114,12 @@ describe('Code Interpreter Workflow (E2E)', () => {
 
     // Create context
     const createResponse = await vi.waitFor(
-      async () => fetchWithStartup(`${workerUrl}/api/code/context/create`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ language: 'python' }),
-      }),
+      async () =>
+        fetchWithStartup(`${workerUrl}/api/code/context/create`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ language: 'python' })
+        }),
       { timeout: 90000, interval: 2000 }
     );
 
@@ -112,10 +127,13 @@ describe('Code Interpreter Workflow (E2E)', () => {
     const contextId = context.id;
 
     // Delete context
-    const deleteResponse = await fetch(`${workerUrl}/api/code/context/${contextId}`, {
-      method: 'DELETE',
-      headers,
-    });
+    const deleteResponse = await fetch(
+      `${workerUrl}/api/code/context/${contextId}`,
+      {
+        method: 'DELETE',
+        headers
+      }
+    );
 
     expect(deleteResponse.status).toBe(200);
     const deleteData = await deleteResponse.json();
@@ -125,7 +143,7 @@ describe('Code Interpreter Workflow (E2E)', () => {
     // Verify context is removed from list
     const listResponse = await fetch(`${workerUrl}/api/code/context/list`, {
       method: 'GET',
-      headers,
+      headers
     });
 
     const contexts = await listResponse.json();
@@ -143,11 +161,12 @@ describe('Code Interpreter Workflow (E2E)', () => {
 
     // Create Python context
     const ctxResponse = await vi.waitFor(
-      async () => fetchWithStartup(`${workerUrl}/api/code/context/create`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ language: 'python' }),
-      }),
+      async () =>
+        fetchWithStartup(`${workerUrl}/api/code/context/create`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ language: 'python' })
+        }),
       { timeout: 90000, interval: 2000 }
     );
 
@@ -159,8 +178,8 @@ describe('Code Interpreter Workflow (E2E)', () => {
       headers,
       body: JSON.stringify({
         code: 'print("Hello from Python!")',
-        options: { context },
-      }),
+        options: { context }
+      })
     });
 
     expect(execResponse.status).toBe(200);
@@ -177,11 +196,12 @@ describe('Code Interpreter Workflow (E2E)', () => {
 
     // Create context
     const ctxResponse = await vi.waitFor(
-      async () => fetchWithStartup(`${workerUrl}/api/code/context/create`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ language: 'python' }),
-      }),
+      async () =>
+        fetchWithStartup(`${workerUrl}/api/code/context/create`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ language: 'python' })
+        }),
       { timeout: 90000, interval: 2000 }
     );
 
@@ -193,8 +213,8 @@ describe('Code Interpreter Workflow (E2E)', () => {
       headers,
       body: JSON.stringify({
         code: 'x = 42\ny = 10',
-        options: { context },
-      }),
+        options: { context }
+      })
     });
 
     expect(exec1Response.status).toBe(200);
@@ -207,8 +227,8 @@ describe('Code Interpreter Workflow (E2E)', () => {
       headers,
       body: JSON.stringify({
         code: 'result = x + y\nprint(result)',
-        options: { context },
-      }),
+        options: { context }
+      })
     });
 
     expect(exec2Response.status).toBe(200);
@@ -223,11 +243,12 @@ describe('Code Interpreter Workflow (E2E)', () => {
 
     // Create context
     const ctxResponse = await vi.waitFor(
-      async () => fetchWithStartup(`${workerUrl}/api/code/context/create`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ language: 'python' }),
-      }),
+      async () =>
+        fetchWithStartup(`${workerUrl}/api/code/context/create`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ language: 'python' })
+        }),
       { timeout: 90000, interval: 2000 }
     );
 
@@ -239,8 +260,8 @@ describe('Code Interpreter Workflow (E2E)', () => {
       headers,
       body: JSON.stringify({
         code: 'x = 1 / 0',
-        options: { context },
-      }),
+        options: { context }
+      })
     });
 
     expect(execResponse.status).toBe(200);
@@ -248,7 +269,9 @@ describe('Code Interpreter Workflow (E2E)', () => {
 
     expect(execution.error).toBeDefined();
     expect(execution.error.name).toContain('Error');
-    expect(execution.error.message || execution.error.traceback).toContain('division');
+    expect(execution.error.message || execution.error.traceback).toContain(
+      'division'
+    );
   }, 120000);
 
   // ============================================================================
@@ -261,11 +284,12 @@ describe('Code Interpreter Workflow (E2E)', () => {
 
     // Create JavaScript context
     const ctxResponse = await vi.waitFor(
-      async () => fetchWithStartup(`${workerUrl}/api/code/context/create`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ language: 'javascript' }),
-      }),
+      async () =>
+        fetchWithStartup(`${workerUrl}/api/code/context/create`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ language: 'javascript' })
+        }),
       { timeout: 90000, interval: 2000 }
     );
 
@@ -277,8 +301,8 @@ describe('Code Interpreter Workflow (E2E)', () => {
       headers,
       body: JSON.stringify({
         code: 'console.log("Hello from JavaScript!");',
-        options: { context },
-      }),
+        options: { context }
+      })
     });
 
     expect(execResponse.status).toBe(200);
@@ -294,11 +318,12 @@ describe('Code Interpreter Workflow (E2E)', () => {
 
     // Create context
     const ctxResponse = await vi.waitFor(
-      async () => fetchWithStartup(`${workerUrl}/api/code/context/create`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ language: 'javascript' }),
-      }),
+      async () =>
+        fetchWithStartup(`${workerUrl}/api/code/context/create`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ language: 'javascript' })
+        }),
       { timeout: 90000, interval: 2000 }
     );
 
@@ -310,8 +335,8 @@ describe('Code Interpreter Workflow (E2E)', () => {
       headers,
       body: JSON.stringify({
         code: 'global.counter = 0;',
-        options: { context },
-      }),
+        options: { context }
+      })
     });
 
     expect(exec1Response.status).toBe(200);
@@ -322,8 +347,8 @@ describe('Code Interpreter Workflow (E2E)', () => {
       headers,
       body: JSON.stringify({
         code: 'console.log(++global.counter);',
-        options: { context },
-      }),
+        options: { context }
+      })
     });
 
     expect(exec2Response.status).toBe(200);
@@ -337,11 +362,12 @@ describe('Code Interpreter Workflow (E2E)', () => {
 
     // Create context
     const ctxResponse = await vi.waitFor(
-      async () => fetchWithStartup(`${workerUrl}/api/code/context/create`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ language: 'javascript' }),
-      }),
+      async () =>
+        fetchWithStartup(`${workerUrl}/api/code/context/create`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ language: 'javascript' })
+        }),
       { timeout: 90000, interval: 2000 }
     );
 
@@ -353,15 +379,17 @@ describe('Code Interpreter Workflow (E2E)', () => {
       headers,
       body: JSON.stringify({
         code: 'console.log(undefinedVariable);',
-        options: { context },
-      }),
+        options: { context }
+      })
     });
 
     expect(execResponse.status).toBe(200);
     const execution = await execResponse.json();
 
     expect(execution.error).toBeDefined();
-    expect(execution.error.name || execution.error.message).toMatch(/Error|undefined/i);
+    expect(execution.error.name || execution.error.message).toMatch(
+      /Error|undefined/i
+    );
   }, 120000);
 
   // ============================================================================
@@ -374,11 +402,12 @@ describe('Code Interpreter Workflow (E2E)', () => {
 
     // Create context
     const ctxResponse = await vi.waitFor(
-      async () => fetchWithStartup(`${workerUrl}/api/code/context/create`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ language: 'python' }),
-      }),
+      async () =>
+        fetchWithStartup(`${workerUrl}/api/code/context/create`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ language: 'python' })
+        }),
       { timeout: 90000, interval: 2000 }
     );
 
@@ -395,12 +424,14 @@ for i in range(3):
     print(f"Step {i}")
     time.sleep(0.1)
 `.trim(),
-        options: { context },
-      }),
+        options: { context }
+      })
     });
 
     expect(streamResponse.status).toBe(200);
-    expect(streamResponse.headers.get('content-type')).toBe('text/event-stream');
+    expect(streamResponse.headers.get('content-type')).toBe(
+      'text/event-stream'
+    );
 
     // Collect streaming events
     const reader = streamResponse.body?.getReader();
@@ -457,11 +488,12 @@ for i in range(3):
 
     // Create Python context
     const pythonCtxResponse = await vi.waitFor(
-      async () => fetchWithStartup(`${workerUrl}/api/code/context/create`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ language: 'python' }),
-      }),
+      async () =>
+        fetchWithStartup(`${workerUrl}/api/code/context/create`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ language: 'python' })
+        }),
       { timeout: 90000, interval: 2000 }
     );
 
@@ -479,8 +511,8 @@ with open('/tmp/shared_data.json', 'w') as f:
     json.dump(data, f)
 print("Data saved")
 `.trim(),
-        options: { context: pythonCtx },
-      }),
+        options: { context: pythonCtx }
+      })
     });
 
     expect(pythonExecResponse.status).toBe(200);
@@ -492,7 +524,7 @@ print("Data saved")
     const jsCtxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ language: 'javascript' }),
+      body: JSON.stringify({ language: 'javascript' })
     });
 
     const jsCtx = await jsCtxResponse.json();
@@ -508,8 +540,8 @@ const data = JSON.parse(fs.readFileSync('/tmp/shared_data.json', 'utf8'));
 const sum = data.values.reduce((a, b) => a + b, 0);
 console.log('Sum:', sum);
 `.trim(),
-        options: { context: jsCtx },
-      }),
+        options: { context: jsCtx }
+      })
     });
 
     expect(jsExecResponse.status).toBe(200);
@@ -528,11 +560,12 @@ console.log('Sum:', sum);
 
     // Create two Python contexts
     const ctx1Response = await vi.waitFor(
-      async () => fetchWithStartup(`${workerUrl}/api/code/context/create`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ language: 'python' }),
-      }),
+      async () =>
+        fetchWithStartup(`${workerUrl}/api/code/context/create`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ language: 'python' })
+        }),
       { timeout: 90000, interval: 2000 }
     );
 
@@ -541,7 +574,7 @@ console.log('Sum:', sum);
     const ctx2Response = await fetch(`${workerUrl}/api/code/context/create`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ language: 'python' }),
+      body: JSON.stringify({ language: 'python' })
     });
 
     const context2 = await ctx2Response.json();
@@ -552,8 +585,8 @@ console.log('Sum:', sum);
       headers,
       body: JSON.stringify({
         code: 'secret = "context1"',
-        options: { context: context1 },
-      }),
+        options: { context: context1 }
+      })
     });
 
     expect(exec1Response.status).toBe(200);
@@ -564,8 +597,8 @@ console.log('Sum:', sum);
       headers,
       body: JSON.stringify({
         code: 'print(secret)',
-        options: { context: context2 },
-      }),
+        options: { context: context2 }
+      })
     });
 
     expect(exec2Response.status).toBe(200);
@@ -573,7 +606,9 @@ console.log('Sum:', sum);
 
     // Should have error about undefined variable
     expect(execution2.error).toBeDefined();
-    expect(execution2.error.name || execution2.error.message).toMatch(/NameError|not defined/i);
+    expect(execution2.error.name || execution2.error.message).toMatch(
+      /NameError|not defined/i
+    );
   }, 120000);
 
   // ============================================================================
@@ -586,11 +621,16 @@ console.log('Sum:', sum);
 
     // Try to create context with invalid language
     const ctxResponse = await vi.waitFor(
-      async () => fetchWithStartup(`${workerUrl}/api/code/context/create`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ language: 'invalid-lang' }),
-      }, { expectSuccess: false }),
+      async () =>
+        fetchWithStartup(
+          `${workerUrl}/api/code/context/create`,
+          {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({ language: 'invalid-lang' })
+          },
+          { expectSuccess: false }
+        ),
       { timeout: 90000, interval: 2000 }
     );
 
@@ -606,14 +646,21 @@ console.log('Sum:', sum);
 
     // Try to execute with fake context
     const execResponse = await vi.waitFor(
-      async () => fetchWithStartup(`${workerUrl}/api/code/execute`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          code: 'print("test")',
-          options: { context: { id: 'fake-context-id-12345', language: 'python' } },
-        }),
-      }, { expectSuccess: false }),
+      async () =>
+        fetchWithStartup(
+          `${workerUrl}/api/code/execute`,
+          {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              code: 'print("test")',
+              options: {
+                context: { id: 'fake-context-id-12345', language: 'python' }
+              }
+            })
+          },
+          { expectSuccess: false }
+        ),
       { timeout: 90000, interval: 2000 }
     );
 
@@ -629,19 +676,23 @@ console.log('Sum:', sum);
 
     // Initialize sandbox
     await vi.waitFor(
-      async () => fetchWithStartup(`${workerUrl}/api/execute`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ command: 'echo "init"' }),
-      }),
+      async () =>
+        fetchWithStartup(`${workerUrl}/api/execute`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ command: 'echo "init"' })
+        }),
       { timeout: 90000, interval: 2000 }
     );
 
     // Try to delete non-existent context
-    const deleteResponse = await fetch(`${workerUrl}/api/code/context/fake-id-99999`, {
-      method: 'DELETE',
-      headers,
-    });
+    const deleteResponse = await fetch(
+      `${workerUrl}/api/code/context/fake-id-99999`,
+      {
+        method: 'DELETE',
+        headers
+      }
+    );
 
     // Should return error
     expect(deleteResponse.status).toBeGreaterThanOrEqual(400);

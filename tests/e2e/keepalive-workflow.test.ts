@@ -1,6 +1,19 @@
-import { describe, test, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
+import {
+  describe,
+  test,
+  expect,
+  beforeAll,
+  afterAll,
+  afterEach,
+  vi
+} from 'vitest';
 import { getTestWorkerUrl, WranglerDevRunner } from './helpers/wrangler-runner';
-import { createSandboxId, createTestHeaders, fetchWithStartup, cleanupSandbox } from './helpers/test-fixtures';
+import {
+  createSandboxId,
+  createTestHeaders,
+  fetchWithStartup,
+  cleanupSandbox
+} from './helpers/test-fixtures';
 
 /**
  * KeepAlive Workflow Integration Tests
@@ -50,18 +63,19 @@ describe('KeepAlive Workflow', () => {
       // Add keepAlive header to enable keepAlive mode
       const keepAliveHeaders = {
         ...headers,
-        'X-Sandbox-KeepAlive': 'true',
+        'X-Sandbox-KeepAlive': 'true'
       };
 
       // Step 1: Initialize sandbox with keepAlive
       const initResponse = await vi.waitFor(
-        async () => fetchWithStartup(`${workerUrl}/api/execute`, {
-          method: 'POST',
-          headers: keepAliveHeaders,
-          body: JSON.stringify({
-            command: 'echo "Container initialized with keepAlive"',
+        async () =>
+          fetchWithStartup(`${workerUrl}/api/execute`, {
+            method: 'POST',
+            headers: keepAliveHeaders,
+            body: JSON.stringify({
+              command: 'echo "Container initialized with keepAlive"'
+            })
           }),
-        }),
         { timeout: 90000, interval: 2000 }
       );
 
@@ -78,8 +92,8 @@ describe('KeepAlive Workflow', () => {
         method: 'POST',
         headers: keepAliveHeaders,
         body: JSON.stringify({
-          command: 'echo "Still alive after timeout period"',
-        }),
+          command: 'echo "Still alive after timeout period"'
+        })
       });
 
       expect(verifyResponse.status).toBe(200);
@@ -93,18 +107,19 @@ describe('KeepAlive Workflow', () => {
 
       const keepAliveHeaders = {
         ...headers,
-        'X-Sandbox-KeepAlive': 'true',
+        'X-Sandbox-KeepAlive': 'true'
       };
 
       // Start a long sleep process (30 seconds)
       const startResponse = await vi.waitFor(
-        async () => fetchWithStartup(`${workerUrl}/api/process/start`, {
-          method: 'POST',
-          headers: keepAliveHeaders,
-          body: JSON.stringify({
-            command: 'sleep 30',
+        async () =>
+          fetchWithStartup(`${workerUrl}/api/process/start`, {
+            method: 'POST',
+            headers: keepAliveHeaders,
+            body: JSON.stringify({
+              command: 'sleep 30'
+            })
           }),
-        }),
         { timeout: 90000, interval: 2000 }
       );
 
@@ -117,10 +132,13 @@ describe('KeepAlive Workflow', () => {
       await new Promise((resolve) => setTimeout(resolve, 20000));
 
       // Verify process is still running
-      const statusResponse = await fetch(`${workerUrl}/api/process/${processId}`, {
-        method: 'GET',
-        headers: keepAliveHeaders,
-      });
+      const statusResponse = await fetch(
+        `${workerUrl}/api/process/${processId}`,
+        {
+          method: 'GET',
+          headers: keepAliveHeaders
+        }
+      );
 
       expect(statusResponse.status).toBe(200);
       const statusData = await statusResponse.json();
@@ -129,7 +147,7 @@ describe('KeepAlive Workflow', () => {
       // Cleanup - kill the process
       await fetch(`${workerUrl}/api/process/${processId}`, {
         method: 'DELETE',
-        headers: keepAliveHeaders,
+        headers: keepAliveHeaders
       });
     }, 120000);
 
@@ -139,25 +157,26 @@ describe('KeepAlive Workflow', () => {
 
       const keepAliveHeaders = {
         ...headers,
-        'X-Sandbox-KeepAlive': 'true',
+        'X-Sandbox-KeepAlive': 'true'
       };
 
       // Step 1: Initialize sandbox with keepAlive
       await vi.waitFor(
-        async () => fetchWithStartup(`${workerUrl}/api/execute`, {
-          method: 'POST',
-          headers: keepAliveHeaders,
-          body: JSON.stringify({
-            command: 'echo "Testing destroy"',
+        async () =>
+          fetchWithStartup(`${workerUrl}/api/execute`, {
+            method: 'POST',
+            headers: keepAliveHeaders,
+            body: JSON.stringify({
+              command: 'echo "Testing destroy"'
+            })
           }),
-        }),
         { timeout: 90000, interval: 2000 }
       );
 
       // Step 2: Explicitly destroy the container
       const destroyResponse = await fetch(`${workerUrl}/cleanup`, {
         method: 'POST',
-        headers: keepAliveHeaders,
+        headers: keepAliveHeaders
       });
 
       expect(destroyResponse.status).toBe(200);
@@ -170,8 +189,8 @@ describe('KeepAlive Workflow', () => {
         method: 'POST',
         headers: keepAliveHeaders,
         body: JSON.stringify({
-          command: 'echo "After destroy"',
-        }),
+          command: 'echo "After destroy"'
+        })
       });
 
       // Container should be restarted (new container), not the same one
@@ -188,18 +207,19 @@ describe('KeepAlive Workflow', () => {
 
       const keepAliveHeaders = {
         ...headers,
-        'X-Sandbox-KeepAlive': 'true',
+        'X-Sandbox-KeepAlive': 'true'
       };
 
       // Initialize
       await vi.waitFor(
-        async () => fetchWithStartup(`${workerUrl}/api/execute`, {
-          method: 'POST',
-          headers: keepAliveHeaders,
-          body: JSON.stringify({
-            command: 'echo "Command 1"',
+        async () =>
+          fetchWithStartup(`${workerUrl}/api/execute`, {
+            method: 'POST',
+            headers: keepAliveHeaders,
+            body: JSON.stringify({
+              command: 'echo "Command 1"'
+            })
           }),
-        }),
         { timeout: 90000, interval: 2000 }
       );
 
@@ -212,8 +232,8 @@ describe('KeepAlive Workflow', () => {
           method: 'POST',
           headers: keepAliveHeaders,
           body: JSON.stringify({
-            command: `echo "Command ${i}"`,
-          }),
+            command: `echo "Command ${i}"`
+          })
         });
 
         expect(response.status).toBe(200);
@@ -228,19 +248,20 @@ describe('KeepAlive Workflow', () => {
 
       const keepAliveHeaders = {
         ...headers,
-        'X-Sandbox-KeepAlive': 'true',
+        'X-Sandbox-KeepAlive': 'true'
       };
 
       // Initialize
       await vi.waitFor(
-        async () => fetchWithStartup(`${workerUrl}/api/file/write`, {
-          method: 'POST',
-          headers: keepAliveHeaders,
-          body: JSON.stringify({
-            path: '/workspace/test.txt',
-            content: 'Initial content',
+        async () =>
+          fetchWithStartup(`${workerUrl}/api/file/write`, {
+            method: 'POST',
+            headers: keepAliveHeaders,
+            body: JSON.stringify({
+              path: '/workspace/test.txt',
+              content: 'Initial content'
+            })
           }),
-        }),
         { timeout: 90000, interval: 2000 }
       );
 
@@ -253,8 +274,8 @@ describe('KeepAlive Workflow', () => {
         headers: keepAliveHeaders,
         body: JSON.stringify({
           path: '/workspace/test.txt',
-          content: 'Updated content after keepAlive',
-        }),
+          content: 'Updated content after keepAlive'
+        })
       });
 
       expect(writeResponse.status).toBe(200);
@@ -264,8 +285,8 @@ describe('KeepAlive Workflow', () => {
         method: 'POST',
         headers: keepAliveHeaders,
         body: JSON.stringify({
-          path: '/workspace/test.txt',
-        }),
+          path: '/workspace/test.txt'
+        })
       });
 
       expect(readResponse.status).toBe(200);

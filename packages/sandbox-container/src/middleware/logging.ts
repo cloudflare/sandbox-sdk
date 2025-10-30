@@ -19,7 +19,7 @@ export class LoggingMiddleware implements Middleware {
       method,
       pathname,
       sessionId: context.sessionId,
-      timestamp: context.timestamp.toISOString(),
+      timestamp: context.timestamp.toISOString()
     });
 
     try {
@@ -31,19 +31,23 @@ export class LoggingMiddleware implements Middleware {
         method,
         pathname,
         status: response.status,
-        duration,
+        duration
       });
 
       return response;
     } catch (error) {
       const duration = Date.now() - startTime;
 
-      this.logger.error('Request failed', error instanceof Error ? error : new Error('Unknown error'), {
-        requestId: context.requestId,
-        method,
-        pathname,
-        duration,
-      });
+      this.logger.error(
+        'Request failed',
+        error instanceof Error ? error : new Error('Unknown error'),
+        {
+          requestId: context.requestId,
+          method,
+          pathname,
+          duration
+        }
+      );
 
       throw error;
     }

@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ExecuteResponse } from '../src/clients';
 import { CommandClient } from '../src/clients/command-client';
-import { CommandError, CommandNotFoundError, SandboxError } from '../src/errors';
+import {
+  CommandError,
+  CommandNotFoundError,
+  SandboxError
+} from '../src/errors';
 
 describe('CommandClient', () => {
   let client: CommandClient;
@@ -11,18 +15,18 @@ describe('CommandClient', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    
+
     mockFetch = vi.fn();
     global.fetch = mockFetch as unknown as typeof fetch;
-    
+
     onCommandComplete = vi.fn();
     onError = vi.fn();
-    
+
     client = new CommandClient({
       baseUrl: 'http://test.com',
       port: 3000,
       onCommandComplete,
-      onError,
+      onError
     });
   });
 
@@ -38,13 +42,12 @@ describe('CommandClient', () => {
         stderr: '',
         exitCode: 0,
         command: 'echo "Hello World"',
-        timestamp: '2023-01-01T00:00:00Z',
+        timestamp: '2023-01-01T00:00:00Z'
       };
 
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify(mockResponse),
-        { status: 200 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(mockResponse), { status: 200 })
+      );
 
       const result = await client.execute('echo "Hello World"', 'session-exec');
 
@@ -54,7 +57,11 @@ describe('CommandClient', () => {
       expect(result.exitCode).toBe(0);
       expect(result.command).toBe('echo "Hello World"');
       expect(onCommandComplete).toHaveBeenCalledWith(
-        true, 0, 'Hello World\n', '', 'echo "Hello World"'
+        true,
+        0,
+        'Hello World\n',
+        '',
+        'echo "Hello World"'
       );
     });
 
@@ -65,13 +72,12 @@ describe('CommandClient', () => {
         stderr: 'command not found: nonexistent-cmd\n',
         exitCode: 127,
         command: 'nonexistent-cmd',
-        timestamp: '2023-01-01T00:00:00Z',
+        timestamp: '2023-01-01T00:00:00Z'
       };
 
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify(mockResponse),
-        { status: 200 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(mockResponse), { status: 200 })
+      );
 
       const result = await client.execute('nonexistent-cmd', 'session-exec');
 
@@ -80,7 +86,11 @@ describe('CommandClient', () => {
       expect(result.stderr).toContain('command not found');
       expect(result.stdout).toBe('');
       expect(onCommandComplete).toHaveBeenCalledWith(
-        false, 127, '', 'command not found: nonexistent-cmd\n', 'nonexistent-cmd'
+        false,
+        127,
+        '',
+        'command not found: nonexistent-cmd\n',
+        'nonexistent-cmd'
       );
     });
 
@@ -93,13 +103,13 @@ describe('CommandClient', () => {
         timestamp: new Date().toISOString()
       };
 
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify(errorResponse),
-        { status: 404 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(errorResponse), { status: 404 })
+      );
 
-      await expect(client.execute('invalidcmd', 'session-err'))
-        .rejects.toThrow(CommandNotFoundError);
+      await expect(client.execute('invalidcmd', 'session-err')).rejects.toThrow(
+        CommandNotFoundError
+      );
       expect(onError).toHaveBeenCalledWith(
         expect.stringContaining('Command not found'),
         'invalidcmd'
@@ -109,30 +119,34 @@ describe('CommandClient', () => {
     it('should handle network failures gracefully', async () => {
       mockFetch.mockRejectedValue(new Error('Network connection failed'));
 
-      await expect(client.execute('ls', 'session-err'))
-        .rejects.toThrow('Network connection failed');
+      await expect(client.execute('ls', 'session-err')).rejects.toThrow(
+        'Network connection failed'
+      );
       expect(onError).toHaveBeenCalledWith('Network connection failed', 'ls');
     });
 
     it('should handle server errors with proper status codes', async () => {
       const scenarios = [
         { status: 400, code: 'COMMAND_EXECUTION_ERROR', error: CommandError },
-        { status: 500, code: 'EXECUTION_ERROR', error: SandboxError },
+        { status: 500, code: 'EXECUTION_ERROR', error: SandboxError }
       ];
 
       for (const scenario of scenarios) {
-        mockFetch.mockResolvedValueOnce(new Response(
-          JSON.stringify({
-            code: scenario.code,
-            message: 'Test error',
-            context: {},
-            httpStatus: scenario.status,
-            timestamp: new Date().toISOString()
-          }),
-          { status: scenario.status }
-        ));
-        await expect(client.execute('test-command', 'session-err'))
-          .rejects.toThrow(scenario.error);
+        mockFetch.mockResolvedValueOnce(
+          new Response(
+            JSON.stringify({
+              code: scenario.code,
+              message: 'Test error',
+              context: {},
+              httpStatus: scenario.status,
+              timestamp: new Date().toISOString()
+            }),
+            { status: scenario.status }
+          )
+        );
+        await expect(
+          client.execute('test-command', 'session-err')
+        ).rejects.toThrow(scenario.error);
       }
     });
 
@@ -144,13 +158,12 @@ describe('CommandClient', () => {
         stderr: '',
         exitCode: 0,
         command: 'find / -type f',
-        timestamp: '2023-01-01T00:00:00Z',
+        timestamp: '2023-01-01T00:00:00Z'
       };
 
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify(mockResponse),
-        { status: 200 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(mockResponse), { status: 200 })
+      );
 
       const result = await client.execute('find / -type f', 'session-exec');
 
@@ -164,22 +177,24 @@ describe('CommandClient', () => {
       mockFetch.mockImplementation((url: string, options: RequestInit) => {
         const body = JSON.parse(options.body as string);
         const command = body.command;
-        return Promise.resolve(new Response(
-          JSON.stringify({
-            success: true,
-            stdout: `output for ${command}\n`,
-            stderr: '',
-            exitCode: 0,
-            command: command,
-            timestamp: '2023-01-01T00:00:00Z',
-          }),
-          { status: 200 }
-        ));
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              success: true,
+              stdout: `output for ${command}\n`,
+              stderr: '',
+              exitCode: 0,
+              command: command,
+              timestamp: '2023-01-01T00:00:00Z'
+            }),
+            { status: 200 }
+          )
+        );
       });
 
       const commands = ['echo 1', 'echo 2', 'echo 3', 'pwd', 'ls'];
       const results = await Promise.all(
-        commands.map(cmd => client.execute(cmd, 'session-concurrent'))
+        commands.map((cmd) => client.execute(cmd, 'session-concurrent'))
       );
 
       expect(results).toHaveLength(5);
@@ -192,13 +207,16 @@ describe('CommandClient', () => {
     });
 
     it('should handle malformed server responses', async () => {
-      mockFetch.mockResolvedValue(new Response(
-        'invalid json {',
-        { status: 200, headers: { 'Content-Type': 'application/json' } }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response('invalid json {', {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        })
+      );
 
-      await expect(client.execute('ls', 'session-err'))
-        .rejects.toThrow(SandboxError);
+      await expect(client.execute('ls', 'session-err')).rejects.toThrow(
+        SandboxError
+      );
       expect(onError).toHaveBeenCalled();
     });
 
@@ -211,13 +229,13 @@ describe('CommandClient', () => {
         timestamp: new Date().toISOString()
       };
 
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify(errorResponse),
-        { status: 400 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(errorResponse), { status: 400 })
+      );
 
-      await expect(client.execute('', 'session-err'))
-        .rejects.toThrow(CommandError);
+      await expect(client.execute('', 'session-err')).rejects.toThrow(
+        CommandError
+      );
     });
 
     it('should handle streaming command execution', async () => {
@@ -235,12 +253,17 @@ describe('CommandClient', () => {
         }
       });
 
-      mockFetch.mockResolvedValue(new Response(mockStream, {
-        status: 200,
-        headers: { 'Content-Type': 'text/event-stream' }
-      }));
+      mockFetch.mockResolvedValue(
+        new Response(mockStream, {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' }
+        })
+      );
 
-      const stream = await client.executeStream('tail -f app.log', 'session-stream');
+      const stream = await client.executeStream(
+        'tail -f app.log',
+        'session-stream'
+      );
       expect(stream).toBeInstanceOf(ReadableStream);
 
       const reader = stream.getReader();
@@ -263,7 +286,6 @@ describe('CommandClient', () => {
       expect(content).toContain('"type":"complete"');
     });
 
-
     it('should handle streaming errors gracefully', async () => {
       const errorResponse = {
         code: 'STREAM_START_ERROR',
@@ -273,13 +295,13 @@ describe('CommandClient', () => {
         timestamp: new Date().toISOString()
       };
 
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify(errorResponse),
-        { status: 400 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(errorResponse), { status: 400 })
+      );
 
-      await expect(client.executeStream('invalid-stream-command', 'session-err'))
-        .rejects.toThrow(CommandError);
+      await expect(
+        client.executeStream('invalid-stream-command', 'session-err')
+      ).rejects.toThrow(CommandError);
       expect(onError).toHaveBeenCalledWith(
         expect.stringContaining('Command failed to start streaming'),
         'invalid-stream-command'
@@ -287,20 +309,26 @@ describe('CommandClient', () => {
     });
 
     it('should handle streaming without response body', async () => {
-      mockFetch.mockResolvedValue(new Response(null, {
-        status: 200,
-        headers: { 'Content-Type': 'text/event-stream' }
-      }));
+      mockFetch.mockResolvedValue(
+        new Response(null, {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' }
+        })
+      );
 
-      await expect(client.executeStream('test-command', 'session-err'))
-        .rejects.toThrow('No response body for streaming');
+      await expect(
+        client.executeStream('test-command', 'session-err')
+      ).rejects.toThrow('No response body for streaming');
     });
 
     it('should handle network failures during streaming setup', async () => {
-      mockFetch.mockRejectedValue(new Error('Connection lost during streaming'));
+      mockFetch.mockRejectedValue(
+        new Error('Connection lost during streaming')
+      );
 
-      await expect(client.executeStream('stream-command', 'session-err'))
-        .rejects.toThrow('Connection lost during streaming');
+      await expect(
+        client.executeStream('stream-command', 'session-err')
+      ).rejects.toThrow('Connection lost during streaming');
       expect(onError).toHaveBeenCalledWith(
         'Connection lost during streaming',
         'stream-command'
@@ -312,7 +340,7 @@ describe('CommandClient', () => {
     it('should work without any callbacks', async () => {
       const clientWithoutCallbacks = new CommandClient({
         baseUrl: 'http://test.com',
-        port: 3000,
+        port: 3000
       });
 
       const mockResponse: ExecuteResponse = {
@@ -321,15 +349,17 @@ describe('CommandClient', () => {
         stderr: '',
         exitCode: 0,
         command: 'echo test',
-        timestamp: '2023-01-01T00:00:00Z',
+        timestamp: '2023-01-01T00:00:00Z'
       };
 
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify(mockResponse),
-        { status: 200 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(mockResponse), { status: 200 })
+      );
 
-      const result = await clientWithoutCallbacks.execute('echo test', 'session-nocb');
+      const result = await clientWithoutCallbacks.execute(
+        'echo test',
+        'session-nocb'
+      );
 
       expect(result.success).toBe(true);
       expect(result.stdout).toBe('test output\n');
@@ -338,13 +368,14 @@ describe('CommandClient', () => {
     it('should handle errors gracefully without callbacks', async () => {
       const clientWithoutCallbacks = new CommandClient({
         baseUrl: 'http://test.com',
-        port: 3000,
+        port: 3000
       });
 
       mockFetch.mockRejectedValue(new Error('Network failed'));
 
-      await expect(clientWithoutCallbacks.execute('test', 'session-nocb'))
-        .rejects.toThrow('Network failed');
+      await expect(
+        clientWithoutCallbacks.execute('test', 'session-nocb')
+      ).rejects.toThrow('Network failed');
     });
 
     it('should call onCommandComplete for both success and failure', async () => {
@@ -354,17 +385,20 @@ describe('CommandClient', () => {
         stderr: '',
         exitCode: 0,
         command: 'echo success',
-        timestamp: '2023-01-01T00:00:00Z',
+        timestamp: '2023-01-01T00:00:00Z'
       };
 
-      mockFetch.mockResolvedValueOnce(new Response(
-        JSON.stringify(successResponse),
-        { status: 200 }
-      ));
+      mockFetch.mockResolvedValueOnce(
+        new Response(JSON.stringify(successResponse), { status: 200 })
+      );
 
       await client.execute('echo success', 'session-cb');
       expect(onCommandComplete).toHaveBeenLastCalledWith(
-        true, 0, 'success\n', '', 'echo success'
+        true,
+        0,
+        'success\n',
+        '',
+        'echo success'
       );
 
       const failureResponse: ExecuteResponse = {
@@ -373,17 +407,20 @@ describe('CommandClient', () => {
         stderr: 'error\n',
         exitCode: 1,
         command: 'false',
-        timestamp: '2023-01-01T00:00:00Z',
+        timestamp: '2023-01-01T00:00:00Z'
       };
 
-      mockFetch.mockResolvedValueOnce(new Response(
-        JSON.stringify(failureResponse),
-        { status: 200 }
-      ));
+      mockFetch.mockResolvedValueOnce(
+        new Response(JSON.stringify(failureResponse), { status: 200 })
+      );
 
       await client.execute('false', 'session-cb');
       expect(onCommandComplete).toHaveBeenLastCalledWith(
-        false, 1, '', 'error\n', 'false'
+        false,
+        1,
+        '',
+        'error\n',
+        'false'
       );
     });
   });
@@ -399,7 +436,7 @@ describe('CommandClient', () => {
         baseUrl: 'http://custom.com',
         port: 8080,
         onCommandComplete: vi.fn(),
-        onError: vi.fn(),
+        onError: vi.fn()
       });
       expect(fullOptionsClient).toBeDefined();
     });

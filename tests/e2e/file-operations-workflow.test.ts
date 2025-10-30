@@ -11,9 +11,22 @@
  * and file manipulation across directory structures.
  */
 
-import { afterAll, afterEach, beforeAll, describe, expect, test, vi } from 'vitest';
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  test,
+  vi
+} from 'vitest';
 import { getTestWorkerUrl, WranglerDevRunner } from './helpers/wrangler-runner';
-import { createSandboxId, createTestHeaders, fetchWithStartup, cleanupSandbox } from './helpers/test-fixtures';
+import {
+  createSandboxId,
+  createTestHeaders,
+  fetchWithStartup,
+  cleanupSandbox
+} from './helpers/test-fixtures';
 
 describe('File Operations Workflow (E2E)', () => {
   let runner: WranglerDevRunner | null;
@@ -43,19 +56,20 @@ describe('File Operations Workflow (E2E)', () => {
 
   test('should create nested directories', async () => {
     currentSandboxId = createSandboxId();
-      const headers = createTestHeaders(currentSandboxId);
+    const headers = createTestHeaders(currentSandboxId);
 
     // Create nested directory structure
     const mkdirResponse = await vi.waitFor(
-      async () => fetchWithStartup(`${workerUrl}/api/file/mkdir`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          path: '/workspace/project/src/components',
+      async () =>
+        fetchWithStartup(`${workerUrl}/api/file/mkdir`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            path: '/workspace/project/src/components',
 
-          recursive: true,
+            recursive: true
+          })
         }),
-      }),
       { timeout: 90000, interval: 2000 }
     );
 
@@ -67,9 +81,8 @@ describe('File Operations Workflow (E2E)', () => {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        command: 'ls -la /workspace/project/src/components',
-
-      }),
+        command: 'ls -la /workspace/project/src/components'
+      })
     });
 
     const lsData = await lsResponse.json();
@@ -80,19 +93,20 @@ describe('File Operations Workflow (E2E)', () => {
 
   test('should write files in subdirectories and read them back', async () => {
     currentSandboxId = createSandboxId();
-      const headers = createTestHeaders(currentSandboxId);
+    const headers = createTestHeaders(currentSandboxId);
 
     // Create directory structure
     await vi.waitFor(
-      async () => fetchWithStartup(`${workerUrl}/api/file/mkdir`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          path: '/workspace/app/config',
+      async () =>
+        fetchWithStartup(`${workerUrl}/api/file/mkdir`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            path: '/workspace/app/config',
 
-          recursive: true,
+            recursive: true
+          })
         }),
-      }),
       { timeout: 90000, interval: 2000 }
     );
 
@@ -102,9 +116,8 @@ describe('File Operations Workflow (E2E)', () => {
       headers,
       body: JSON.stringify({
         path: '/workspace/app/config/settings.json',
-        content: JSON.stringify({ debug: true, port: 3000 }),
-
-      }),
+        content: JSON.stringify({ debug: true, port: 3000 })
+      })
     });
 
     expect(writeResponse.status).toBe(200);
@@ -114,9 +127,8 @@ describe('File Operations Workflow (E2E)', () => {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        path: '/workspace/app/config/settings.json',
-
-      }),
+        path: '/workspace/app/config/settings.json'
+      })
     });
 
     const readData = await readResponse.json();
@@ -127,19 +139,20 @@ describe('File Operations Workflow (E2E)', () => {
 
   test('should rename files', async () => {
     currentSandboxId = createSandboxId();
-      const headers = createTestHeaders(currentSandboxId);
+    const headers = createTestHeaders(currentSandboxId);
 
     // Create directory and write file
     await vi.waitFor(
-      async () => fetchWithStartup(`${workerUrl}/api/file/mkdir`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          path: '/workspace/docs',
+      async () =>
+        fetchWithStartup(`${workerUrl}/api/file/mkdir`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            path: '/workspace/docs',
 
-          recursive: true,
+            recursive: true
+          })
         }),
-      }),
       { timeout: 90000, interval: 2000 }
     );
 
@@ -148,9 +161,8 @@ describe('File Operations Workflow (E2E)', () => {
       headers,
       body: JSON.stringify({
         path: '/workspace/docs/README.txt',
-        content: '# Project Documentation',
-
-      }),
+        content: '# Project Documentation'
+      })
     });
 
     // Rename file from .txt to .md
@@ -159,9 +171,8 @@ describe('File Operations Workflow (E2E)', () => {
       headers,
       body: JSON.stringify({
         oldPath: '/workspace/docs/README.txt',
-        newPath: '/workspace/docs/README.md',
-
-      }),
+        newPath: '/workspace/docs/README.md'
+      })
     });
 
     expect(renameResponse.status).toBe(200);
@@ -171,9 +182,8 @@ describe('File Operations Workflow (E2E)', () => {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        path: '/workspace/docs/README.md',
-
-      }),
+        path: '/workspace/docs/README.md'
+      })
     });
 
     const readNewData = await readNewResponse.json();
@@ -185,9 +195,8 @@ describe('File Operations Workflow (E2E)', () => {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        path: '/workspace/docs/README.txt',
-
-      }),
+        path: '/workspace/docs/README.txt'
+      })
     });
 
     expect(readOldResponse.status).toBe(500); // Should fail - file doesn't exist
@@ -195,7 +204,7 @@ describe('File Operations Workflow (E2E)', () => {
 
   test('should move files between directories', async () => {
     currentSandboxId = createSandboxId();
-      const headers = createTestHeaders(currentSandboxId);
+    const headers = createTestHeaders(currentSandboxId);
 
     // Create two directories
     await vi.waitFor(
@@ -206,8 +215,8 @@ describe('File Operations Workflow (E2E)', () => {
           body: JSON.stringify({
             path: '/workspace/source',
 
-            recursive: true,
-          }),
+            recursive: true
+          })
         });
 
         return fetch(`${workerUrl}/api/file/mkdir`, {
@@ -216,8 +225,8 @@ describe('File Operations Workflow (E2E)', () => {
           body: JSON.stringify({
             path: '/workspace/destination',
 
-            recursive: true,
-          }),
+            recursive: true
+          })
         });
       },
       { timeout: 90000, interval: 2000 }
@@ -229,9 +238,8 @@ describe('File Operations Workflow (E2E)', () => {
       headers,
       body: JSON.stringify({
         path: '/workspace/source/data.json',
-        content: JSON.stringify({ id: 1, name: 'test' }),
-
-      }),
+        content: JSON.stringify({ id: 1, name: 'test' })
+      })
     });
 
     // Move file to destination
@@ -240,9 +248,8 @@ describe('File Operations Workflow (E2E)', () => {
       headers,
       body: JSON.stringify({
         sourcePath: '/workspace/source/data.json',
-        destinationPath: '/workspace/destination/data.json',
-
-      }),
+        destinationPath: '/workspace/destination/data.json'
+      })
     });
 
     expect(moveResponse.status).toBe(200);
@@ -252,9 +259,8 @@ describe('File Operations Workflow (E2E)', () => {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        path: '/workspace/destination/data.json',
-
-      }),
+        path: '/workspace/destination/data.json'
+      })
     });
 
     const readDestData = await readDestResponse.json();
@@ -266,9 +272,8 @@ describe('File Operations Workflow (E2E)', () => {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        path: '/workspace/source/data.json',
-
-      }),
+        path: '/workspace/source/data.json'
+      })
     });
 
     expect(readSourceResponse.status).toBe(500); // Should fail - file moved
@@ -276,19 +281,20 @@ describe('File Operations Workflow (E2E)', () => {
 
   test('should delete files', async () => {
     currentSandboxId = createSandboxId();
-      const headers = createTestHeaders(currentSandboxId);
+    const headers = createTestHeaders(currentSandboxId);
 
     // Create directory and file
     await vi.waitFor(
-      async () => fetchWithStartup(`${workerUrl}/api/file/mkdir`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          path: '/workspace/temp',
+      async () =>
+        fetchWithStartup(`${workerUrl}/api/file/mkdir`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            path: '/workspace/temp',
 
-          recursive: true,
+            recursive: true
+          })
         }),
-      }),
       { timeout: 90000, interval: 2000 }
     );
 
@@ -297,9 +303,8 @@ describe('File Operations Workflow (E2E)', () => {
       headers,
       body: JSON.stringify({
         path: '/workspace/temp/delete-me.txt',
-        content: 'This file will be deleted',
-
-      }),
+        content: 'This file will be deleted'
+      })
     });
 
     // Verify file exists
@@ -307,9 +312,8 @@ describe('File Operations Workflow (E2E)', () => {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        path: '/workspace/temp/delete-me.txt',
-
-      }),
+        path: '/workspace/temp/delete-me.txt'
+      })
     });
 
     expect(readBeforeResponse.status).toBe(200);
@@ -319,9 +323,8 @@ describe('File Operations Workflow (E2E)', () => {
       method: 'DELETE',
       headers,
       body: JSON.stringify({
-        path: '/workspace/temp/delete-me.txt',
-
-      }),
+        path: '/workspace/temp/delete-me.txt'
+      })
     });
 
     expect(deleteResponse.status).toBe(200);
@@ -331,9 +334,8 @@ describe('File Operations Workflow (E2E)', () => {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        path: '/workspace/temp/delete-me.txt',
-
-      }),
+        path: '/workspace/temp/delete-me.txt'
+      })
     });
 
     expect(readAfterResponse.status).toBe(500); // Should fail - file deleted
@@ -341,19 +343,20 @@ describe('File Operations Workflow (E2E)', () => {
 
   test('should reject deleting directories with deleteFile', async () => {
     currentSandboxId = createSandboxId();
-      const headers = createTestHeaders(currentSandboxId);
+    const headers = createTestHeaders(currentSandboxId);
 
     // Create a directory
     await vi.waitFor(
-      async () => fetchWithStartup(`${workerUrl}/api/file/mkdir`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          path: '/workspace/test-dir',
+      async () =>
+        fetchWithStartup(`${workerUrl}/api/file/mkdir`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            path: '/workspace/test-dir',
 
-          recursive: true,
+            recursive: true
+          })
         }),
-      }),
       { timeout: 90000, interval: 2000 }
     );
 
@@ -362,9 +365,8 @@ describe('File Operations Workflow (E2E)', () => {
       method: 'DELETE',
       headers,
       body: JSON.stringify({
-        path: '/workspace/test-dir',
-
-      }),
+        path: '/workspace/test-dir'
+      })
     });
 
     // Should return error
@@ -379,9 +381,8 @@ describe('File Operations Workflow (E2E)', () => {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        command: 'ls -d /workspace/test-dir',
-
-      }),
+        command: 'ls -d /workspace/test-dir'
+      })
     });
 
     const lsData = await lsResponse.json();
@@ -393,27 +394,27 @@ describe('File Operations Workflow (E2E)', () => {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        command: 'rm -rf /workspace/test-dir',
-
-      }),
+        command: 'rm -rf /workspace/test-dir'
+      })
     });
   }, 90000);
 
   test('should delete directories recursively using exec', async () => {
     currentSandboxId = createSandboxId();
-      const headers = createTestHeaders(currentSandboxId);
+    const headers = createTestHeaders(currentSandboxId);
 
     // Create nested directory structure with files
     await vi.waitFor(
-      async () => fetchWithStartup(`${workerUrl}/api/file/mkdir`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          path: '/workspace/cleanup/nested/deep',
+      async () =>
+        fetchWithStartup(`${workerUrl}/api/file/mkdir`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            path: '/workspace/cleanup/nested/deep',
 
-          recursive: true,
+            recursive: true
+          })
         }),
-      }),
       { timeout: 90000, interval: 2000 }
     );
 
@@ -423,9 +424,8 @@ describe('File Operations Workflow (E2E)', () => {
       headers,
       body: JSON.stringify({
         path: '/workspace/cleanup/file1.txt',
-        content: 'Level 1',
-
-      }),
+        content: 'Level 1'
+      })
     });
 
     await fetch(`${workerUrl}/api/file/write`, {
@@ -433,9 +433,8 @@ describe('File Operations Workflow (E2E)', () => {
       headers,
       body: JSON.stringify({
         path: '/workspace/cleanup/nested/file2.txt',
-        content: 'Level 2',
-
-      }),
+        content: 'Level 2'
+      })
     });
 
     // Delete entire directory tree (use exec since deleteFile only works on files)
@@ -443,9 +442,8 @@ describe('File Operations Workflow (E2E)', () => {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        command: 'rm -rf /workspace/cleanup',
-
-      }),
+        command: 'rm -rf /workspace/cleanup'
+      })
     });
 
     const deleteData = await deleteResponse.json();
@@ -457,9 +455,8 @@ describe('File Operations Workflow (E2E)', () => {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        command: 'ls /workspace/cleanup',
-
-      }),
+        command: 'ls /workspace/cleanup'
+      })
     });
 
     const lsData = await lsResponse.json();
@@ -469,7 +466,7 @@ describe('File Operations Workflow (E2E)', () => {
 
   test('should handle complete project scaffolding workflow', async () => {
     currentSandboxId = createSandboxId();
-      const headers = createTestHeaders(currentSandboxId);
+    const headers = createTestHeaders(currentSandboxId);
 
     // Step 1: Create project directory structure
     await vi.waitFor(
@@ -481,8 +478,8 @@ describe('File Operations Workflow (E2E)', () => {
           body: JSON.stringify({
             path: '/workspace/myapp/src',
 
-            recursive: true,
-          }),
+            recursive: true
+          })
         });
 
         await fetch(`${workerUrl}/api/file/mkdir`, {
@@ -491,8 +488,8 @@ describe('File Operations Workflow (E2E)', () => {
           body: JSON.stringify({
             path: '/workspace/myapp/tests',
 
-            recursive: true,
-          }),
+            recursive: true
+          })
         });
 
         return fetch(`${workerUrl}/api/file/mkdir`, {
@@ -501,8 +498,8 @@ describe('File Operations Workflow (E2E)', () => {
           body: JSON.stringify({
             path: '/workspace/myapp/config',
 
-            recursive: true,
-          }),
+            recursive: true
+          })
         });
       },
       { timeout: 90000, interval: 2000 }
@@ -514,9 +511,8 @@ describe('File Operations Workflow (E2E)', () => {
       headers,
       body: JSON.stringify({
         path: '/workspace/myapp/package.json',
-        content: JSON.stringify({ name: 'myapp', version: '1.0.0' }),
-
-      }),
+        content: JSON.stringify({ name: 'myapp', version: '1.0.0' })
+      })
     });
 
     await fetch(`${workerUrl}/api/file/write`, {
@@ -524,9 +520,8 @@ describe('File Operations Workflow (E2E)', () => {
       headers,
       body: JSON.stringify({
         path: '/workspace/myapp/src/index.js',
-        content: 'console.log("Hello World");',
-
-      }),
+        content: 'console.log("Hello World");'
+      })
     });
 
     await fetch(`${workerUrl}/api/file/write`, {
@@ -534,9 +529,8 @@ describe('File Operations Workflow (E2E)', () => {
       headers,
       body: JSON.stringify({
         path: '/workspace/myapp/config/dev.json',
-        content: JSON.stringify({ env: 'development' }),
-
-      }),
+        content: JSON.stringify({ env: 'development' })
+      })
     });
 
     // Step 3: Rename config file
@@ -545,9 +539,8 @@ describe('File Operations Workflow (E2E)', () => {
       headers,
       body: JSON.stringify({
         oldPath: '/workspace/myapp/config/dev.json',
-        newPath: '/workspace/myapp/config/development.json',
-
-      }),
+        newPath: '/workspace/myapp/config/development.json'
+      })
     });
 
     expect(renameResponse.status).toBe(200);
@@ -559,8 +552,8 @@ describe('File Operations Workflow (E2E)', () => {
       body: JSON.stringify({
         path: '/workspace/myapp/src/lib',
 
-        recursive: true,
-      }),
+        recursive: true
+      })
     });
 
     const moveResponse = await fetch(`${workerUrl}/api/file/move`, {
@@ -568,9 +561,8 @@ describe('File Operations Workflow (E2E)', () => {
       headers,
       body: JSON.stringify({
         sourcePath: '/workspace/myapp/src/index.js',
-        destinationPath: '/workspace/myapp/src/lib/index.js',
-
-      }),
+        destinationPath: '/workspace/myapp/src/lib/index.js'
+      })
     });
 
     expect(moveResponse.status).toBe(200);
@@ -580,9 +572,8 @@ describe('File Operations Workflow (E2E)', () => {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        path: '/workspace/myapp/package.json',
-
-      }),
+        path: '/workspace/myapp/package.json'
+      })
     });
 
     const packageData = await readPackageResponse.json();
@@ -593,9 +584,8 @@ describe('File Operations Workflow (E2E)', () => {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        path: '/workspace/myapp/config/development.json',
-
-      }),
+        path: '/workspace/myapp/config/development.json'
+      })
     });
 
     const configData = await readConfigResponse.json();
@@ -606,9 +596,8 @@ describe('File Operations Workflow (E2E)', () => {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        path: '/workspace/myapp/src/lib/index.js',
-
-      }),
+        path: '/workspace/myapp/src/lib/index.js'
+      })
     });
 
     const indexData = await readIndexResponse.json();
@@ -620,9 +609,8 @@ describe('File Operations Workflow (E2E)', () => {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        command: 'rm -rf /workspace/myapp',
-
-      }),
+        command: 'rm -rf /workspace/myapp'
+      })
     });
 
     const deleteData = await deleteResponse.json();
@@ -634,9 +622,8 @@ describe('File Operations Workflow (E2E)', () => {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        command: 'ls /workspace/myapp',
-
-      }),
+        command: 'ls /workspace/myapp'
+      })
     });
 
     const lsData = await lsResponse.json();
@@ -653,14 +640,15 @@ describe('File Operations Workflow (E2E)', () => {
 
     // Try to write to /tmp (should work - users control their sandbox)
     const writeResponse = await vi.waitFor(
-      async () => fetchWithStartup(`${workerUrl}/api/file/write`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          path: '/tmp/test-no-restrictions.txt',
-          content: 'Users control their sandbox!',
+      async () =>
+        fetchWithStartup(`${workerUrl}/api/file/write`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            path: '/tmp/test-no-restrictions.txt',
+            content: 'Users control their sandbox!'
+          })
         }),
-      }),
       { timeout: 90000, interval: 2000 }
     );
 
@@ -673,8 +661,8 @@ describe('File Operations Workflow (E2E)', () => {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        path: '/tmp/test-no-restrictions.txt',
-      }),
+        path: '/tmp/test-no-restrictions.txt'
+      })
     });
 
     expect(readResponse.status).toBe(200);
@@ -688,14 +676,15 @@ describe('File Operations Workflow (E2E)', () => {
 
     // Create a text file
     await vi.waitFor(
-      async () => fetchWithStartup(`${workerUrl}/api/file/write`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          path: '/workspace/test.txt',
-          content: 'Hello, World! This is a test.',
+      async () =>
+        fetchWithStartup(`${workerUrl}/api/file/write`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            path: '/workspace/test.txt',
+            content: 'Hello, World! This is a test.'
+          })
         }),
-      }),
       { timeout: 90000, interval: 2000 }
     );
 
@@ -704,8 +693,8 @@ describe('File Operations Workflow (E2E)', () => {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        path: '/workspace/test.txt',
-      }),
+        path: '/workspace/test.txt'
+      })
     });
 
     expect(readResponse.status).toBe(200);
@@ -724,17 +713,19 @@ describe('File Operations Workflow (E2E)', () => {
     const headers = createTestHeaders(currentSandboxId);
 
     // Create a simple binary file (1x1 PNG - smallest valid PNG)
-    const pngBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChAI9jYlkKQAAAABJRU5ErkJggg==';
+    const pngBase64 =
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChAI9jYlkKQAAAABJRU5ErkJggg==';
 
     // First create the file using exec with base64 decode
     await vi.waitFor(
-      async () => fetchWithStartup(`${workerUrl}/api/execute`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          command: `echo '${pngBase64}' | base64 -d > /workspace/test.png`,
+      async () =>
+        fetchWithStartup(`${workerUrl}/api/execute`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            command: `echo '${pngBase64}' | base64 -d > /workspace/test.png`
+          })
         }),
-      }),
       { timeout: 90000, interval: 2000 }
     );
 
@@ -743,8 +734,8 @@ describe('File Operations Workflow (E2E)', () => {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        path: '/workspace/test.png',
-      }),
+        path: '/workspace/test.png'
+      })
     });
 
     expect(readResponse.status).toBe(200);
@@ -769,14 +760,15 @@ describe('File Operations Workflow (E2E)', () => {
 
     // Write JSON file
     await vi.waitFor(
-      async () => fetchWithStartup(`${workerUrl}/api/file/write`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          path: '/workspace/config.json',
-          content: jsonContent,
+      async () =>
+        fetchWithStartup(`${workerUrl}/api/file/write`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            path: '/workspace/config.json',
+            content: jsonContent
+          })
         }),
-      }),
       { timeout: 90000, interval: 2000 }
     );
 
@@ -785,8 +777,8 @@ describe('File Operations Workflow (E2E)', () => {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        path: '/workspace/config.json',
-      }),
+        path: '/workspace/config.json'
+      })
     });
 
     expect(readResponse.status).toBe(200);
@@ -807,14 +799,15 @@ describe('File Operations Workflow (E2E)', () => {
     const largeContent = 'Line content\n'.repeat(1000); // 13KB file
 
     await vi.waitFor(
-      async () => fetchWithStartup(`${workerUrl}/api/file/write`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          path: '/workspace/large.txt',
-          content: largeContent,
+      async () =>
+        fetchWithStartup(`${workerUrl}/api/file/write`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            path: '/workspace/large.txt',
+            content: largeContent
+          })
         }),
-      }),
       { timeout: 90000, interval: 2000 }
     );
 
@@ -823,12 +816,14 @@ describe('File Operations Workflow (E2E)', () => {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        path: '/workspace/large.txt',
-      }),
+        path: '/workspace/large.txt'
+      })
     });
 
     expect(streamResponse.status).toBe(200);
-    expect(streamResponse.headers.get('content-type')).toBe('text/event-stream');
+    expect(streamResponse.headers.get('content-type')).toBe(
+      'text/event-stream'
+    );
 
     // Collect events from stream
     const reader = streamResponse.body?.getReader();
@@ -887,13 +882,18 @@ describe('File Operations Workflow (E2E)', () => {
 
     // Try to delete a file that doesn't exist
     const deleteResponse = await vi.waitFor(
-      async () => fetchWithStartup(`${workerUrl}/api/file/delete`, {
-        method: 'DELETE',
-        headers,
-        body: JSON.stringify({
-          path: '/workspace/this-file-does-not-exist.txt',
-        }),
-      }, { expectSuccess: false }), // Don't throw on error - we expect this to fail
+      async () =>
+        fetchWithStartup(
+          `${workerUrl}/api/file/delete`,
+          {
+            method: 'DELETE',
+            headers,
+            body: JSON.stringify({
+              path: '/workspace/this-file-does-not-exist.txt'
+            })
+          },
+          { expectSuccess: false }
+        ), // Don't throw on error - we expect this to fail
       { timeout: 90000, interval: 2000 }
     );
 
@@ -910,14 +910,15 @@ describe('File Operations Workflow (E2E)', () => {
 
     // Create directory with files including executable script
     await vi.waitFor(
-      async () => fetchWithStartup(`${workerUrl}/api/file/mkdir`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          path: '/workspace/project',
-          recursive: true,
+      async () =>
+        fetchWithStartup(`${workerUrl}/api/file/mkdir`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            path: '/workspace/project',
+            recursive: true
+          })
         }),
-      }),
       { timeout: 90000, interval: 2000 }
     );
 
@@ -926,16 +927,17 @@ describe('File Operations Workflow (E2E)', () => {
       headers,
       body: JSON.stringify({
         path: '/workspace/project/data.txt',
-        content: 'Some data',
-      }),
+        content: 'Some data'
+      })
     });
 
     await fetch(`${workerUrl}/api/execute`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        command: 'echo "#!/bin/bash" > /workspace/project/script.sh && chmod +x /workspace/project/script.sh',
-      }),
+        command:
+          'echo "#!/bin/bash" > /workspace/project/script.sh && chmod +x /workspace/project/script.sh'
+      })
     });
 
     // List files and verify metadata
@@ -943,8 +945,8 @@ describe('File Operations Workflow (E2E)', () => {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        path: '/workspace/project',
-      }),
+        path: '/workspace/project'
+      })
     });
 
     expect(listResponse.status).toBe(200);
@@ -979,14 +981,15 @@ describe('File Operations Workflow (E2E)', () => {
 
     // Create nested directory structure
     await vi.waitFor(
-      async () => fetchWithStartup(`${workerUrl}/api/file/mkdir`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          path: '/workspace/tree/level1/level2',
-          recursive: true,
+      async () =>
+        fetchWithStartup(`${workerUrl}/api/file/mkdir`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            path: '/workspace/tree/level1/level2',
+            recursive: true
+          })
         }),
-      }),
       { timeout: 90000, interval: 2000 }
     );
 
@@ -995,8 +998,8 @@ describe('File Operations Workflow (E2E)', () => {
       headers,
       body: JSON.stringify({
         path: '/workspace/tree/root.txt',
-        content: 'Root',
-      }),
+        content: 'Root'
+      })
     });
 
     await fetch(`${workerUrl}/api/file/write`, {
@@ -1004,8 +1007,8 @@ describe('File Operations Workflow (E2E)', () => {
       headers,
       body: JSON.stringify({
         path: '/workspace/tree/level1/level2/deep.txt',
-        content: 'Deep',
-      }),
+        content: 'Deep'
+      })
     });
 
     const listResponse = await fetch(`${workerUrl}/api/list-files`, {
@@ -1013,8 +1016,8 @@ describe('File Operations Workflow (E2E)', () => {
       headers,
       body: JSON.stringify({
         path: '/workspace/tree',
-        options: { recursive: true },
-      }),
+        options: { recursive: true }
+      })
     });
 
     expect(listResponse.status).toBe(200);
@@ -1036,13 +1039,18 @@ describe('File Operations Workflow (E2E)', () => {
 
     // Test non-existent directory
     const notFoundResponse = await vi.waitFor(
-      async () => fetchWithStartup(`${workerUrl}/api/list-files`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          path: '/workspace/does-not-exist',
-        }),
-      }, { expectSuccess: false }),
+      async () =>
+        fetchWithStartup(
+          `${workerUrl}/api/list-files`,
+          {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              path: '/workspace/does-not-exist'
+            })
+          },
+          { expectSuccess: false }
+        ),
       { timeout: 90000, interval: 2000 }
     );
 
@@ -1057,16 +1065,16 @@ describe('File Operations Workflow (E2E)', () => {
       headers,
       body: JSON.stringify({
         path: '/workspace/file.txt',
-        content: 'Not a directory',
-      }),
+        content: 'Not a directory'
+      })
     });
 
     const wrongTypeResponse = await fetch(`${workerUrl}/api/list-files`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        path: '/workspace/file.txt',
-      }),
+        path: '/workspace/file.txt'
+      })
     });
 
     expect(wrongTypeResponse.status).toBe(500);
@@ -1080,14 +1088,15 @@ describe('File Operations Workflow (E2E)', () => {
 
     // Create a file and directory for testing
     await vi.waitFor(
-      async () => fetchWithStartup(`${workerUrl}/api/file/mkdir`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          path: '/workspace/testdir',
-          recursive: true,
+      async () =>
+        fetchWithStartup(`${workerUrl}/api/file/mkdir`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            path: '/workspace/testdir',
+            recursive: true
+          })
         }),
-      }),
       { timeout: 90000, interval: 2000 }
     );
 
@@ -1096,8 +1105,8 @@ describe('File Operations Workflow (E2E)', () => {
       headers,
       body: JSON.stringify({
         path: '/workspace/testfile.txt',
-        content: 'Test content',
-      }),
+        content: 'Test content'
+      })
     });
 
     // Check that file exists
@@ -1105,8 +1114,8 @@ describe('File Operations Workflow (E2E)', () => {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        path: '/workspace/testfile.txt',
-      }),
+        path: '/workspace/testfile.txt'
+      })
     });
 
     expect(fileExistsResponse.status).toBe(200);
@@ -1119,8 +1128,8 @@ describe('File Operations Workflow (E2E)', () => {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        path: '/workspace/testdir',
-      }),
+        path: '/workspace/testdir'
+      })
     });
 
     expect(dirExistsResponse.status).toBe(200);
@@ -1133,8 +1142,8 @@ describe('File Operations Workflow (E2E)', () => {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        path: '/workspace/nonexistent',
-      }),
+        path: '/workspace/nonexistent'
+      })
     });
 
     expect(notExistsResponse.status).toBe(200);

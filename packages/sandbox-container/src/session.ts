@@ -125,8 +125,10 @@ export class Session {
   constructor(options: SessionOptions) {
     this.id = options.id;
     this.options = options;
-    this.commandTimeoutMs = options.commandTimeoutMs ?? CONFIG.COMMAND_TIMEOUT_MS;
-    this.maxOutputSizeBytes = options.maxOutputSizeBytes ?? CONFIG.MAX_OUTPUT_SIZE_BYTES;
+    this.commandTimeoutMs =
+      options.commandTimeoutMs ?? CONFIG.COMMAND_TIMEOUT_MS;
+    this.maxOutputSizeBytes =
+      options.maxOutputSizeBytes ?? CONFIG.MAX_OUTPUT_SIZE_BYTES;
     // Use provided logger or create no-op logger (for backward compatibility/tests)
     this.logger = options.logger ?? createNoOpLogger();
   }
@@ -148,11 +150,11 @@ export class Session {
         ...this.options.env,
         // Ensure bash uses UTF-8 encoding
         LANG: 'C.UTF-8',
-        LC_ALL: 'C.UTF-8',
+        LC_ALL: 'C.UTF-8'
       },
       stdin: 'pipe',
       stdout: 'ignore', // We'll read from log files instead
-      stderr: 'ignore', // Ignore bash diagnostics
+      stderr: 'ignore' // Ignore bash diagnostics
     });
 
     // Set up shell exit monitor - rejects if shell dies unexpectedly
@@ -165,23 +167,32 @@ export class Session {
           return;
         }
 
-        this.logger.error('Shell process exited unexpectedly', new Error(`Exit code: ${exitCode ?? 'unknown'}`), {
-          sessionId: this.id,
-          exitCode: exitCode ?? 'unknown'
-        });
+        this.logger.error(
+          'Shell process exited unexpectedly',
+          new Error(`Exit code: ${exitCode ?? 'unknown'}`),
+          {
+            sessionId: this.id,
+            exitCode: exitCode ?? 'unknown'
+          }
+        );
         this.ready = false;
 
         // Reject with clear error message
-        reject(new Error(
-          `Shell terminated unexpectedly (exit code: ${exitCode ?? 'unknown'}). ` +
-          `Session is dead and cannot execute further commands.`
-        ));
+        reject(
+          new Error(
+            `Shell terminated unexpectedly (exit code: ${exitCode ?? 'unknown'}). Session is dead and cannot execute further commands.`
+          )
+        );
       }).catch((error) => {
         // Handle any errors from shell.exited promise
         if (!this.isDestroying) {
-          this.logger.error('Shell exit monitor error', error instanceof Error ? error : new Error(String(error)), {
-            sessionId: this.id
-          });
+          this.logger.error(
+            'Shell exit monitor error',
+            error instanceof Error ? error : new Error(String(error)),
+            {
+              sessionId: this.id
+            }
+          );
           this.ready = false;
           reject(error);
         }
@@ -216,7 +227,14 @@ export class Session {
 
       // Build FIFO-based bash script for FOREGROUND execution
       // State changes (cd, export, functions) persist across exec() calls
-      const bashScript = this.buildFIFOScript(command, commandId, logFile, exitCodeFile, options?.cwd, false);
+      const bashScript = this.buildFIFOScript(
+        command,
+        commandId,
+        logFile,
+        exitCodeFile,
+        options?.cwd,
+        false
+      );
 
       // Write script to shell's stdin
       if (this.shell!.stdin && typeof this.shell!.stdin !== 'number') {
@@ -259,14 +277,18 @@ export class Session {
         stderr,
         exitCode,
         duration,
-        timestamp: new Date(startTime).toISOString(),
+        timestamp: new Date(startTime).toISOString()
       };
     } catch (error) {
-      this.logger.error('Command execution failed', error instanceof Error ? error : new Error(String(error)), {
-        sessionId: this.id,
-        commandId,
-        operation: 'exec'
-      });
+      this.logger.error(
+        'Command execution failed',
+        error instanceof Error ? error : new Error(String(error)),
+        {
+          sessionId: this.id,
+          commandId,
+          operation: 'exec'
+        }
+      );
       // Untrack and clean up on error
       this.untrackCommand(commandId);
       await this.cleanupCommandFiles(logFile, exitCodeFile);
@@ -305,7 +327,14 @@ export class Session {
 
       // Build FIFO script for BACKGROUND execution
       // Command runs concurrently, shell continues immediately
-      const bashScript = this.buildFIFOScript(command, commandId, logFile, exitCodeFile, options?.cwd, true);
+      const bashScript = this.buildFIFOScript(
+        command,
+        commandId,
+        logFile,
+        exitCodeFile,
+        options?.cwd,
+        true
+      );
 
       if (this.shell!.stdin && typeof this.shell!.stdin !== 'number') {
         this.shell!.stdin.write(`${bashScript}\n`);
@@ -316,7 +345,7 @@ export class Session {
       yield {
         type: 'start',
         timestamp: new Date().toISOString(),
-        command,
+        command
       };
 
       // Hybrid approach: poll log file until exit code is written
@@ -357,13 +386,13 @@ export class Session {
                 yield {
                   type: 'stdout',
                   data: `${line.slice(STDOUT_PREFIX.length)}\n`,
-                  timestamp: new Date().toISOString(),
+                  timestamp: new Date().toISOString()
                 };
               } else if (line.startsWith(STDERR_PREFIX)) {
                 yield {
                   type: 'stderr',
                   data: `${line.slice(STDERR_PREFIX.length)}\n`,
-                  timestamp: new Date().toISOString(),
+                  timestamp: new Date().toISOString()
                 };
               }
             }
@@ -388,13 +417,13 @@ export class Session {
               yield {
                 type: 'stdout',
                 data: `${line.slice(STDOUT_PREFIX.length)}\n`,
-                timestamp: new Date().toISOString(),
+                timestamp: new Date().toISOString()
               };
             } else if (line.startsWith(STDERR_PREFIX)) {
               yield {
                 type: 'stderr',
                 data: `${line.slice(STDERR_PREFIX.length)}\n`,
-                timestamp: new Date().toISOString(),
+                timestamp: new Date().toISOString()
               };
             }
           }
@@ -428,8 +457,8 @@ export class Session {
           success: exitCode === 0,
           command,
           duration,
-          timestamp: new Date(startTime).toISOString(),
-        },
+          timestamp: new Date(startTime).toISOString()
+        }
       };
 
       // Untrack command
@@ -438,11 +467,15 @@ export class Session {
       // Clean up temp files
       await this.cleanupCommandFiles(logFile, exitCodeFile);
     } catch (error) {
-      this.logger.error('Streaming command execution failed', error instanceof Error ? error : new Error(String(error)), {
-        sessionId: this.id,
-        commandId,
-        operation: 'execStream'
-      });
+      this.logger.error(
+        'Streaming command execution failed',
+        error instanceof Error ? error : new Error(String(error)),
+        {
+          sessionId: this.id,
+          commandId,
+          operation: 'execStream'
+        }
+      );
       // Untrack and clean up on error
       this.untrackCommand(commandId);
       await this.cleanupCommandFiles(logFile, exitCodeFile);
@@ -450,7 +483,7 @@ export class Session {
       yield {
         type: 'error',
         timestamp: new Date().toISOString(),
-        error: error instanceof Error ? error.message : String(error),
+        error: error instanceof Error ? error.message : String(error)
       };
     }
   }
@@ -538,7 +571,9 @@ export class Session {
       try {
         await Promise.race([
           this.shell.exited,
-          new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 1000))
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('Timeout')), 1000)
+          )
         ]);
       } catch {
         // Timeout: force kill with SIGKILL
@@ -549,7 +584,9 @@ export class Session {
 
     // Clean up session directory
     if (this.sessionDir) {
-      await rm(this.sessionDir, { recursive: true, force: true }).catch(() => {});
+      await rm(this.sessionDir, { recursive: true, force: true }).catch(
+        () => {}
+      );
     }
 
     this.ready = false;
@@ -617,8 +654,6 @@ export class Session {
       script += `  \n`;
     }
 
-
-
     // Execute command based on execution mode (foreground vs background)
     if (isBackground) {
       // BACKGROUND PATTERN (for execStream/startProcess)
@@ -676,8 +711,8 @@ export class Session {
         script += `  # Write PID for process killing\n`;
         script += `  echo "$CMD_PID" > ${safePidFile}.tmp\n`;
         script += `  mv ${safePidFile}.tmp ${safePidFile}\n`;
-      script += `  # Background monitor: waits for labelers to finish (after FIFO EOF)\n`;
-      script += `  # and then removes the FIFOs. PID file is cleaned up by TypeScript.\n`;
+        script += `  # Background monitor: waits for labelers to finish (after FIFO EOF)\n`;
+        script += `  # and then removes the FIFOs. PID file is cleaned up by TypeScript.\n`;
         script += `  (\n`;
         script += `    wait "$r1" "$r2" 2>/dev/null\n`;
         script += `    rm -f "$sp" "$ep"\n`;
@@ -690,7 +725,6 @@ export class Session {
       // FOREGROUND: Avoid FIFOs to eliminate race conditions.
       // Use bash process substitution to prefix stdout/stderr while keeping
       // execution in the main shell so session state persists across commands.
-
 
       if (cwd) {
         const safeCwd = this.escapeShellPath(cwd);
@@ -787,39 +821,46 @@ export class Session {
             resolved = true;
             watcher.close();
             clearInterval(pollInterval);
-            reject(new Error(`Command timeout after ${this.commandTimeoutMs}ms`));
+            reject(
+              new Error(`Command timeout after ${this.commandTimeoutMs}ms`)
+            );
           }
         }, this.commandTimeoutMs);
       }
 
       // STEP 4: Check if file already exists
-      Bun.file(exitCodeFile).exists().then(async (exists) => {
-        if (exists && !resolved) {
-          resolved = true;
-          watcher.close();
-          clearInterval(pollInterval);
-          try {
-            const exitCode = await Bun.file(exitCodeFile).text();
-            resolve(parseInt(exitCode.trim(), 10));
-          } catch (error) {
-            reject(new Error(`Failed to read exit code: ${error}`));
+      Bun.file(exitCodeFile)
+        .exists()
+        .then(async (exists) => {
+          if (exists && !resolved) {
+            resolved = true;
+            watcher.close();
+            clearInterval(pollInterval);
+            try {
+              const exitCode = await Bun.file(exitCodeFile).text();
+              resolve(parseInt(exitCode.trim(), 10));
+            } catch (error) {
+              reject(new Error(`Failed to read exit code: ${error}`));
+            }
           }
-        }
-      }).catch((error) => {
-        if (!resolved) {
-          resolved = true;
-          watcher.close();
-          clearInterval(pollInterval);
-          reject(error);
-        }
-      });
+        })
+        .catch((error) => {
+          if (!resolved) {
+            resolved = true;
+            watcher.close();
+            clearInterval(pollInterval);
+            reject(error);
+          }
+        });
     });
   }
 
   /**
    * Parse log file and separate stdout/stderr using binary prefixes
    */
-  private async parseLogFile(logFile: string): Promise<{ stdout: string; stderr: string }> {
+  private async parseLogFile(
+    logFile: string
+  ): Promise<{ stdout: string; stderr: string }> {
     const file = Bun.file(logFile);
 
     if (!(await file.exists())) {
@@ -850,14 +891,17 @@ export class Session {
 
     return {
       stdout: stdoutLines.join('\n'),
-      stderr: stderrLines.join('\n'),
+      stderr: stderrLines.join('\n')
     };
   }
 
   /**
    * Clean up command temp files
    */
-  private async cleanupCommandFiles(logFile: string, exitCodeFile: string): Promise<void> {
+  private async cleanupCommandFiles(
+    logFile: string,
+    exitCodeFile: string
+  ): Promise<void> {
     // Derive PID file from log file
     const pidFile = logFile.replace('.log', '.pid');
 
@@ -900,12 +944,17 @@ export class Session {
   /**
    * Track a command when it starts
    */
-  private trackCommand(commandId: string, pidFile: string, logFile: string, exitCodeFile: string): void {
+  private trackCommand(
+    commandId: string,
+    pidFile: string,
+    logFile: string,
+    exitCodeFile: string
+  ): void {
     const handle: CommandHandle = {
       commandId,
       pidFile,
       logFile,
-      exitCodeFile,
+      exitCodeFile
     };
     this.runningCommands.set(commandId, handle);
   }

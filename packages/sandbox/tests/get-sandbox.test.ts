@@ -12,7 +12,7 @@ vi.mock('@cloudflare/containers', () => ({
       this.env = env;
     }
   },
-  getContainer: vi.fn(),
+  getContainer: vi.fn()
 }));
 
 describe('getSandbox', () => {
@@ -30,7 +30,7 @@ describe('getSandbox', () => {
       setSleepAfter: vi.fn((value: string | number) => {
         mockStub.sleepAfter = value;
       }),
-      setKeepAlive: vi.fn(),
+      setKeepAlive: vi.fn()
     };
 
     // Mock getContainer to return our stub
@@ -50,7 +50,7 @@ describe('getSandbox', () => {
   it('should apply sleepAfter option when provided as string', () => {
     const mockNamespace = {} as any;
     const sandbox = getSandbox(mockNamespace, 'test-sandbox', {
-      sleepAfter: '5m',
+      sleepAfter: '5m'
     });
 
     expect(sandbox.sleepAfter).toBe('5m');
@@ -59,7 +59,7 @@ describe('getSandbox', () => {
   it('should apply sleepAfter option when provided as number', () => {
     const mockNamespace = {} as any;
     const sandbox = getSandbox(mockNamespace, 'test-sandbox', {
-      sleepAfter: 300, // 5 minutes in seconds
+      sleepAfter: 300 // 5 minutes in seconds
     });
 
     expect(sandbox.sleepAfter).toBe(300);
@@ -68,7 +68,7 @@ describe('getSandbox', () => {
   it('should apply baseUrl option when provided', () => {
     const mockNamespace = {} as any;
     const sandbox = getSandbox(mockNamespace, 'test-sandbox', {
-      baseUrl: 'https://example.com',
+      baseUrl: 'https://example.com'
     });
 
     expect(sandbox.setBaseUrl).toHaveBeenCalledWith('https://example.com');
@@ -78,7 +78,7 @@ describe('getSandbox', () => {
     const mockNamespace = {} as any;
     const sandbox = getSandbox(mockNamespace, 'test-sandbox', {
       sleepAfter: '10m',
-      baseUrl: 'https://example.com',
+      baseUrl: 'https://example.com'
     });
 
     expect(sandbox.sleepAfter).toBe('10m');
@@ -102,7 +102,7 @@ describe('getSandbox', () => {
       mockStub.sleepAfter = '3m';
 
       const sandbox = getSandbox(mockNamespace, `test-sandbox-${timeString}`, {
-        sleepAfter: timeString,
+        sleepAfter: timeString
       });
 
       expect(sandbox.sleepAfter).toBe(timeString);
@@ -112,7 +112,7 @@ describe('getSandbox', () => {
   it('should apply keepAlive option when provided as true', () => {
     const mockNamespace = {} as any;
     const sandbox = getSandbox(mockNamespace, 'test-sandbox', {
-      keepAlive: true,
+      keepAlive: true
     });
 
     expect(sandbox.setKeepAlive).toHaveBeenCalledWith(true);
@@ -121,7 +121,7 @@ describe('getSandbox', () => {
   it('should apply keepAlive option when provided as false', () => {
     const mockNamespace = {} as any;
     const sandbox = getSandbox(mockNamespace, 'test-sandbox', {
-      keepAlive: false,
+      keepAlive: false
     });
 
     expect(sandbox.setKeepAlive).toHaveBeenCalledWith(false);
@@ -139,7 +139,7 @@ describe('getSandbox', () => {
     const sandbox = getSandbox(mockNamespace, 'test-sandbox', {
       sleepAfter: '5m',
       baseUrl: 'https://example.com',
-      keepAlive: true,
+      keepAlive: true
     });
 
     expect(sandbox.sleepAfter).toBe('5m');

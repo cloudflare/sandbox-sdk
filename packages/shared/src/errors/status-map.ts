@@ -62,7 +62,7 @@ export const ERROR_STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.GIT_OPERATION_FAILED]: 500,
   [ErrorCode.CODE_EXECUTION_ERROR]: 500,
   [ErrorCode.UNKNOWN_ERROR]: 500,
-  [ErrorCode.INTERNAL_ERROR]: 500,
+  [ErrorCode.INTERNAL_ERROR]: 500
 };
 
 /**

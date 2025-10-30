@@ -5,7 +5,7 @@ import type {
   ProcessListResult,
   ProcessLogsResult,
   ProcessStartResult,
-  StartProcessRequest,
+  StartProcessRequest
 } from '@repo/shared';
 import { BaseHttpClient } from './base-client';
 import type { HttpClientOptions } from './types';
@@ -18,15 +18,13 @@ export type {
   ProcessInfoResult,
   ProcessKillResult,
   ProcessLogsResult,
-  ProcessCleanupResult,
+  ProcessCleanupResult
 };
-
 
 /**
  * Client for background process management
  */
 export class ProcessClient extends BaseHttpClient {
-
   /**
    * Start a background process
    * @param command - Command to execute as a background process
@@ -42,7 +40,7 @@ export class ProcessClient extends BaseHttpClient {
       const data: StartProcessRequest = {
         command,
         sessionId,
-        processId: options?.processId,
+        processId: options?.processId
       };
 
       const response = await this.post<ProcessStartResult>(
@@ -70,7 +68,10 @@ export class ProcessClient extends BaseHttpClient {
       const url = `/api/process/list`;
       const response = await this.get<ProcessListResult>(url);
 
-      this.logSuccess('Processes listed', `${response.processes.length} processes`);
+      this.logSuccess(
+        'Processes listed',
+        `${response.processes.length} processes`
+      );
       return response;
     } catch (error) {
       this.logError('listProcesses', error);
@@ -157,11 +158,13 @@ export class ProcessClient extends BaseHttpClient {
    * Stream logs from a specific process (sandbox-scoped, not session-scoped)
    * @param processId - ID of the process to stream logs from
    */
-  async streamProcessLogs(processId: string): Promise<ReadableStream<Uint8Array>> {
+  async streamProcessLogs(
+    processId: string
+  ): Promise<ReadableStream<Uint8Array>> {
     try {
       const url = `/api/process/${processId}/stream`;
       const response = await this.doFetch(url, {
-        method: 'GET',
+        method: 'GET'
       });
 
       const stream = await this.handleStreamResponse(response);

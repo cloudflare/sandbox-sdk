@@ -94,7 +94,7 @@ export const ErrorCode = {
   // Generic Errors (400/500)
   INVALID_JSON_RESPONSE: 'INVALID_JSON_RESPONSE',
   UNKNOWN_ERROR: 'UNKNOWN_ERROR',
-  INTERNAL_ERROR: 'INTERNAL_ERROR',
+  INTERNAL_ERROR: 'INTERNAL_ERROR'
 } as const;
 
-export type ErrorCode = typeof ErrorCode[keyof typeof ErrorCode];
+export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];

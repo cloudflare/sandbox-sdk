@@ -3,7 +3,8 @@ import type {
   FileExistsRequest,
   FileExistsResult,
   FileStreamEvent,
-  ListFilesResult,Logger,
+  ListFilesResult,
+  Logger,
   MkdirResult,
   MoveFileResult,
   ReadFileResult,
@@ -57,18 +58,24 @@ export class FileHandler extends BaseHandler<Request, Response> {
       case '/api/exists':
         return await this.handleExists(request, context);
       default:
-        return this.createErrorResponse({
-          message: 'Invalid file endpoint',
-          code: ErrorCode.UNKNOWN_ERROR,
-        }, context);
+        return this.createErrorResponse(
+          {
+            message: 'Invalid file endpoint',
+            code: ErrorCode.UNKNOWN_ERROR
+          },
+          context
+        );
     }
   }
 
-  private async handleRead(request: Request, context: RequestContext): Promise<Response> {
+  private async handleRead(
+    request: Request,
+    context: RequestContext
+  ): Promise<Response> {
     const body = await this.parseRequestBody<ReadFileRequest>(request);
 
     const result = await this.fileService.readFile(body.path, {
-      encoding: body.encoding || 'utf-8',
+      encoding: body.encoding || 'utf-8'
     });
 
     if (result.success) {
@@ -80,7 +87,7 @@ export class FileHandler extends BaseHandler<Request, Response> {
         encoding: result.metadata?.encoding,
         isBinary: result.metadata?.isBinary,
         mimeType: result.metadata?.mimeType,
-        size: result.metadata?.size,
+        size: result.metadata?.size
       };
 
       return this.createTypedResponse(response, context);
@@ -89,12 +96,17 @@ export class FileHandler extends BaseHandler<Request, Response> {
     }
   }
 
-  private async handleReadStream(request: Request, context: RequestContext): Promise<Response> {
+  private async handleReadStream(
+    request: Request,
+    context: RequestContext
+  ): Promise<Response> {
     const body = await this.parseRequestBody<ReadFileRequest>(request);
 
     try {
       // Get file metadata first
-      const metadataResult = await this.fileService.readFile(body.path, { encoding: 'utf-8' });
+      const metadataResult = await this.fileService.readFile(body.path, {
+        encoding: 'utf-8'
+      });
 
       if (!metadataResult.success) {
         // Return error as SSE event
@@ -105,7 +117,9 @@ export class FileHandler extends BaseHandler<Request, Response> {
         };
         const stream = new ReadableStream({
           start(controller) {
-            controller.enqueue(encoder.encode(`data: ${JSON.stringify(errorEvent)}\n\n`));
+            controller.enqueue(
+              encoder.encode(`data: ${JSON.stringify(errorEvent)}\n\n`)
+            );
             controller.close();
           }
         });
@@ -114,28 +128,35 @@ export class FileHandler extends BaseHandler<Request, Response> {
           headers: {
             'Content-Type': 'text/event-stream',
             'Cache-Control': 'no-cache',
-            'Connection': 'keep-alive',
-            ...context.corsHeaders,
-          },
+            Connection: 'keep-alive',
+            ...context.corsHeaders
+          }
         });
       }
 
       // Create SSE stream
-      const stream = await this.fileService.readFileStreamOperation(body.path, body.sessionId);
+      const stream = await this.fileService.readFileStreamOperation(
+        body.path,
+        body.sessionId
+      );
 
       return new Response(stream, {
         headers: {
           'Content-Type': 'text/event-stream',
           'Cache-Control': 'no-cache',
-          'Connection': 'keep-alive',
-          ...context.corsHeaders,
-        },
+          Connection: 'keep-alive',
+          ...context.corsHeaders
+        }
       });
     } catch (error) {
-      this.logger.error('File streaming failed', error instanceof Error ? error : undefined, {
-        requestId: context.requestId,
-        path: body.path,
-      });
+      this.logger.error(
+        'File streaming failed',
+        error instanceof Error ? error : undefined,
+        {
+          requestId: context.requestId,
+          path: body.path
+        }
+      );
 
       // Return error as SSE event
       const encoder = new TextEncoder();
@@ -145,7 +166,9 @@ export class FileHandler extends BaseHandler<Request, Response> {
       };
       const stream = new ReadableStream({
         start(controller) {
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify(errorEvent)}\n\n`));
+          controller.enqueue(
+            encoder.encode(`data: ${JSON.stringify(errorEvent)}\n\n`)
+          );
           controller.close();
         }
       });
@@ -154,25 +177,28 @@ export class FileHandler extends BaseHandler<Request, Response> {
         headers: {
           'Content-Type': 'text/event-stream',
           'Cache-Control': 'no-cache',
-          'Connection': 'keep-alive',
-          ...context.corsHeaders,
-        },
+          Connection: 'keep-alive',
+          ...context.corsHeaders
+        }
       });
     }
   }
 
-  private async handleWrite(request: Request, context: RequestContext): Promise<Response> {
+  private async handleWrite(
+    request: Request,
+    context: RequestContext
+  ): Promise<Response> {
     const body = await this.parseRequestBody<WriteFileRequest>(request);
 
     const result = await this.fileService.writeFile(body.path, body.content, {
-      encoding: body.encoding || 'utf-8',
+      encoding: body.encoding || 'utf-8'
     });
 
     if (result.success) {
       const response: WriteFileResult = {
         success: true,
         path: body.path,
-        timestamp: new Date().toISOString(),
+        timestamp: new Date().toISOString()
       };
 
       return this.createTypedResponse(response, context);
@@ -181,7 +207,10 @@ export class FileHandler extends BaseHandler<Request, Response> {
     }
   }
 
-  private async handleDelete(request: Request, context: RequestContext): Promise<Response> {
+  private async handleDelete(
+    request: Request,
+    context: RequestContext
+  ): Promise<Response> {
     const body = await this.parseRequestBody<DeleteFileRequest>(request);
 
     const result = await this.fileService.deleteFile(body.path);
@@ -190,7 +219,7 @@ export class FileHandler extends BaseHandler<Request, Response> {
       const response: DeleteFileResult = {
         success: true,
         path: body.path,
-        timestamp: new Date().toISOString(),
+        timestamp: new Date().toISOString()
       };
 
       return this.createTypedResponse(response, context);
@@ -199,17 +228,23 @@ export class FileHandler extends BaseHandler<Request, Response> {
     }
   }
 
-  private async handleRename(request: Request, context: RequestContext): Promise<Response> {
+  private async handleRename(
+    request: Request,
+    context: RequestContext
+  ): Promise<Response> {
     const body = await this.parseRequestBody<RenameFileRequest>(request);
 
-    const result = await this.fileService.renameFile(body.oldPath, body.newPath);
+    const result = await this.fileService.renameFile(
+      body.oldPath,
+      body.newPath
+    );
 
     if (result.success) {
       const response: RenameFileResult = {
         success: true,
         path: body.oldPath,
         newPath: body.newPath,
-        timestamp: new Date().toISOString(),
+        timestamp: new Date().toISOString()
       };
 
       return this.createTypedResponse(response, context);
@@ -218,17 +253,23 @@ export class FileHandler extends BaseHandler<Request, Response> {
     }
   }
 
-  private async handleMove(request: Request, context: RequestContext): Promise<Response> {
+  private async handleMove(
+    request: Request,
+    context: RequestContext
+  ): Promise<Response> {
     const body = await this.parseRequestBody<MoveFileRequest>(request);
 
-    const result = await this.fileService.moveFile(body.sourcePath, body.destinationPath);
+    const result = await this.fileService.moveFile(
+      body.sourcePath,
+      body.destinationPath
+    );
 
     if (result.success) {
       const response: MoveFileResult = {
         success: true,
         path: body.sourcePath,
         newPath: body.destinationPath,
-        timestamp: new Date().toISOString(),
+        timestamp: new Date().toISOString()
       };
 
       return this.createTypedResponse(response, context);
@@ -237,11 +278,14 @@ export class FileHandler extends BaseHandler<Request, Response> {
     }
   }
 
-  private async handleMkdir(request: Request, context: RequestContext): Promise<Response> {
+  private async handleMkdir(
+    request: Request,
+    context: RequestContext
+  ): Promise<Response> {
     const body = await this.parseRequestBody<MkdirRequest>(request);
 
     const result = await this.fileService.createDirectory(body.path, {
-      recursive: body.recursive,
+      recursive: body.recursive
     });
 
     if (result.success) {
@@ -249,7 +293,7 @@ export class FileHandler extends BaseHandler<Request, Response> {
         success: true,
         path: body.path,
         recursive: body.recursive ?? false,
-        timestamp: new Date().toISOString(),
+        timestamp: new Date().toISOString()
       };
 
       return this.createTypedResponse(response, context);
@@ -258,7 +302,10 @@ export class FileHandler extends BaseHandler<Request, Response> {
     }
   }
 
-  private async handleListFiles(request: Request, context: RequestContext): Promise<Response> {
+  private async handleListFiles(
+    request: Request,
+    context: RequestContext
+  ): Promise<Response> {
     const body = await this.parseRequestBody<ListFilesRequest>(request);
 
     const result = await this.fileService.listFiles(
@@ -273,7 +320,7 @@ export class FileHandler extends BaseHandler<Request, Response> {
         path: body.path,
         files: result.data,
         count: result.data.length,
-        timestamp: new Date().toISOString(),
+        timestamp: new Date().toISOString()
       };
 
       return this.createTypedResponse(response, context);
@@ -282,7 +329,10 @@ export class FileHandler extends BaseHandler<Request, Response> {
     }
   }
 
-  private async handleExists(request: Request, context: RequestContext): Promise<Response> {
+  private async handleExists(
+    request: Request,
+    context: RequestContext
+  ): Promise<Response> {
     const body = await this.parseRequestBody<FileExistsRequest>(request);
 
     const result = await this.fileService.exists(body.path, body.sessionId);
@@ -292,7 +342,7 @@ export class FileHandler extends BaseHandler<Request, Response> {
         success: true,
         path: body.path,
         exists: result.data,
-        timestamp: new Date().toISOString(),
+        timestamp: new Date().toISOString()
       };
 
       return this.createTypedResponse(response, context);

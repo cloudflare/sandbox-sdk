@@ -21,13 +21,13 @@ describe('ProcessClient', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    
+
     mockFetch = vi.fn();
     global.fetch = mockFetch as unknown as typeof fetch;
-    
+
     client = new ProcessClient({
       baseUrl: 'http://test.com',
-      port: 3000,
+      port: 3000
     });
   });
 
@@ -44,15 +44,14 @@ describe('ProcessClient', () => {
           command: 'npm run dev',
           status: 'running',
           pid: 12345,
-          startTime: '2023-01-01T00:00:00Z',
+          startTime: '2023-01-01T00:00:00Z'
         },
-        timestamp: '2023-01-01T00:00:00Z',
+        timestamp: '2023-01-01T00:00:00Z'
       };
 
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify(mockResponse),
-        { status: 200 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(mockResponse), { status: 200 })
+      );
 
       const result = await client.startProcess('npm run dev', 'session-123');
 
@@ -71,17 +70,18 @@ describe('ProcessClient', () => {
           command: 'python app.py',
           status: 'running',
           pid: 54321,
-          startTime: '2023-01-01T00:00:00Z',
+          startTime: '2023-01-01T00:00:00Z'
         },
-        timestamp: '2023-01-01T00:00:00Z',
+        timestamp: '2023-01-01T00:00:00Z'
       };
 
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify(mockResponse),
-        { status: 200 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(mockResponse), { status: 200 })
+      );
 
-      const result = await client.startProcess('python app.py', 'session-456', { processId: 'my-api-server' });
+      const result = await client.startProcess('python app.py', 'session-456', {
+        processId: 'my-api-server'
+      });
 
       expect(result.success).toBe(true);
       expect(result.process.id).toBe('my-api-server');
@@ -97,21 +97,28 @@ describe('ProcessClient', () => {
           command: 'docker run postgres',
           status: 'running',
           pid: 99999,
-          startTime: '2023-01-01T00:00:00Z',
+          startTime: '2023-01-01T00:00:00Z'
         },
-        timestamp: '2023-01-01T00:00:05Z',
+        timestamp: '2023-01-01T00:00:05Z'
       };
 
-      mockFetch.mockImplementation(() =>
-        new Promise(resolve =>
-          setTimeout(() => resolve(new Response(
-            JSON.stringify(mockResponse),
-            { status: 200 }
-          )), 100)
-        )
+      mockFetch.mockImplementation(
+        () =>
+          new Promise((resolve) =>
+            setTimeout(
+              () =>
+                resolve(
+                  new Response(JSON.stringify(mockResponse), { status: 200 })
+                ),
+              100
+            )
+          )
       );
 
-      const result = await client.startProcess('docker run postgres', 'session-789');
+      const result = await client.startProcess(
+        'docker run postgres',
+        'session-789'
+      );
 
       expect(result.success).toBe(true);
       expect(result.process.status).toBe('running');
@@ -124,13 +131,13 @@ describe('ProcessClient', () => {
         code: 'COMMAND_NOT_FOUND'
       };
 
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify(errorResponse),
-        { status: 404 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(errorResponse), { status: 404 })
+      );
 
-      await expect(client.startProcess('invalidcmd', 'session-err'))
-        .rejects.toThrow(CommandNotFoundError);
+      await expect(
+        client.startProcess('invalidcmd', 'session-err')
+      ).rejects.toThrow(CommandNotFoundError);
     });
 
     it('should handle process startup failures', async () => {
@@ -139,13 +146,13 @@ describe('ProcessClient', () => {
         code: 'PROCESS_ERROR'
       };
 
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify(errorResponse),
-        { status: 500 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(errorResponse), { status: 500 })
+      );
 
-      await expect(client.startProcess('sudo privileged-command', 'session-err'))
-        .rejects.toThrow(ProcessError);
+      await expect(
+        client.startProcess('sudo privileged-command', 'session-err')
+      ).rejects.toThrow(ProcessError);
     });
   });
 
@@ -159,14 +166,14 @@ describe('ProcessClient', () => {
             command: 'npm run dev',
             status: 'running',
             pid: 12345,
-            startTime: '2023-01-01T00:00:00Z',
+            startTime: '2023-01-01T00:00:00Z'
           },
           {
             id: 'proc-api',
             command: 'python api.py',
             status: 'running',
             pid: 12346,
-            startTime: '2023-01-01T00:00:30Z',
+            startTime: '2023-01-01T00:00:30Z'
           },
           {
             id: 'proc-worker',
@@ -175,17 +182,16 @@ describe('ProcessClient', () => {
             pid: 12347,
             exitCode: 0,
             startTime: '2023-01-01T00:01:00Z',
-            endTime: '2023-01-01T00:05:00Z',
+            endTime: '2023-01-01T00:05:00Z'
           }
         ],
         count: 3,
-        timestamp: '2023-01-01T00:05:30Z',
+        timestamp: '2023-01-01T00:05:30Z'
       };
 
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify(mockResponse),
-        { status: 200 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(mockResponse), { status: 200 })
+      );
 
       const result = await client.listProcesses('session-list');
 
@@ -193,12 +199,16 @@ describe('ProcessClient', () => {
       expect(result.count).toBe(3);
       expect(result.processes).toHaveLength(3);
 
-      const runningProcesses = result.processes.filter(p => p.status === 'running');
+      const runningProcesses = result.processes.filter(
+        (p) => p.status === 'running'
+      );
       expect(runningProcesses).toHaveLength(2);
       expect(runningProcesses[0].pid).toBeDefined();
       expect(runningProcesses[1].pid).toBeDefined();
 
-      const completedProcess = result.processes.find(p => p.status === 'completed');
+      const completedProcess = result.processes.find(
+        (p) => p.status === 'completed'
+      );
       expect(completedProcess?.exitCode).toBe(0);
       expect(completedProcess?.endTime).toBeDefined();
     });
@@ -211,15 +221,14 @@ describe('ProcessClient', () => {
           command: 'python analytics.py --batch-size=1000',
           status: 'running',
           pid: 98765,
-          startTime: '2023-01-01T00:00:00Z',
+          startTime: '2023-01-01T00:00:00Z'
         },
-        timestamp: '2023-01-01T00:10:00Z',
+        timestamp: '2023-01-01T00:10:00Z'
       };
 
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify(mockResponse),
-        { status: 200 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(mockResponse), { status: 200 })
+      );
 
       const result = await client.getProcess('proc-analytics', 'session-get');
 
@@ -236,13 +245,13 @@ describe('ProcessClient', () => {
         code: 'PROCESS_NOT_FOUND'
       };
 
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify(errorResponse),
-        { status: 404 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(errorResponse), { status: 404 })
+      );
 
-      await expect(client.getProcess('nonexistent-proc', 'session-err'))
-        .rejects.toThrow(ProcessNotFoundError);
+      await expect(
+        client.getProcess('nonexistent-proc', 'session-err')
+      ).rejects.toThrow(ProcessNotFoundError);
     });
 
     it('should handle empty process list', async () => {
@@ -250,13 +259,12 @@ describe('ProcessClient', () => {
         success: true,
         processes: [],
         count: 0,
-        timestamp: '2023-01-01T00:00:00Z',
+        timestamp: '2023-01-01T00:00:00Z'
       };
 
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify(mockResponse),
-        { status: 200 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(mockResponse), { status: 200 })
+      );
 
       const result = await client.listProcesses('session-list');
 
@@ -271,13 +279,12 @@ describe('ProcessClient', () => {
       const mockResponse: KillProcessResponse = {
         success: true,
         message: 'Process proc-web killed successfully',
-        timestamp: '2023-01-01T00:10:00Z',
+        timestamp: '2023-01-01T00:10:00Z'
       };
 
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify(mockResponse),
-        { status: 200 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(mockResponse), { status: 200 })
+      );
 
       const result = await client.killProcess('proc-web', 'session-kill');
 
@@ -292,13 +299,13 @@ describe('ProcessClient', () => {
         code: 'PROCESS_NOT_FOUND'
       };
 
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify(errorResponse),
-        { status: 404 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(errorResponse), { status: 404 })
+      );
 
-      await expect(client.killProcess('already-dead-proc', 'session-err'))
-        .rejects.toThrow(ProcessNotFoundError);
+      await expect(
+        client.killProcess('already-dead-proc', 'session-err')
+      ).rejects.toThrow(ProcessNotFoundError);
     });
 
     it('should kill all processes at once', async () => {
@@ -306,13 +313,12 @@ describe('ProcessClient', () => {
         success: true,
         killedCount: 5,
         message: 'All 5 processes killed successfully',
-        timestamp: '2023-01-01T00:15:00Z',
+        timestamp: '2023-01-01T00:15:00Z'
       };
 
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify(mockResponse),
-        { status: 200 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(mockResponse), { status: 200 })
+      );
 
       const result = await client.killAllProcesses('session-killall');
 
@@ -326,13 +332,12 @@ describe('ProcessClient', () => {
         success: true,
         killedCount: 0,
         message: 'No processes to kill',
-        timestamp: '2023-01-01T00:00:00Z',
+        timestamp: '2023-01-01T00:00:00Z'
       };
 
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify(mockResponse),
-        { status: 200 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(mockResponse), { status: 200 })
+      );
 
       const result = await client.killAllProcesses('session-killall');
 
@@ -347,13 +352,13 @@ describe('ProcessClient', () => {
         code: 'PROCESS_ERROR'
       };
 
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify(errorResponse),
-        { status: 500 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(errorResponse), { status: 500 })
+      );
 
-      await expect(client.killProcess('protected-proc', 'session-err'))
-        .rejects.toThrow(ProcessError);
+      await expect(
+        client.killProcess('protected-proc', 'session-err')
+      ).rejects.toThrow(ProcessError);
     });
   });
 
@@ -370,13 +375,12 @@ describe('ProcessClient', () => {
 [INFO] Response: 200 OK`,
         stderr: `[WARN] Deprecated function used in auth.js:45
 [WARN] High memory usage: 85%`,
-        timestamp: '2023-01-01T00:10:00Z',
+        timestamp: '2023-01-01T00:10:00Z'
       };
 
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify(mockResponse),
-        { status: 200 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(mockResponse), { status: 200 })
+      );
 
       const result = await client.getProcessLogs('proc-server', 'session-logs');
 
@@ -394,13 +398,13 @@ describe('ProcessClient', () => {
         code: 'PROCESS_NOT_FOUND'
       };
 
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify(errorResponse),
-        { status: 404 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(errorResponse), { status: 404 })
+      );
 
-      await expect(client.getProcessLogs('missing-proc', 'session-err'))
-        .rejects.toThrow(ProcessNotFoundError);
+      await expect(
+        client.getProcessLogs('missing-proc', 'session-err')
+      ).rejects.toThrow(ProcessNotFoundError);
     });
 
     it('should retrieve logs for processes with large output', async () => {
@@ -412,13 +416,12 @@ describe('ProcessClient', () => {
         processId: 'proc-batch',
         stdout: largeStdout,
         stderr: largeStderr,
-        timestamp: '2023-01-01T00:30:00Z',
+        timestamp: '2023-01-01T00:30:00Z'
       };
 
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify(mockResponse),
-        { status: 200 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(mockResponse), { status: 200 })
+      );
 
       const result = await client.getProcessLogs('proc-batch', 'session-logs');
 
@@ -435,13 +438,12 @@ describe('ProcessClient', () => {
         processId: 'proc-silent',
         stdout: '',
         stderr: '',
-        timestamp: '2023-01-01T00:05:00Z',
+        timestamp: '2023-01-01T00:05:00Z'
       };
 
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify(mockResponse),
-        { status: 200 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(mockResponse), { status: 200 })
+      );
 
       const result = await client.getProcessLogs('proc-silent', 'session-logs');
 
@@ -471,12 +473,17 @@ data: {"type":"stdout","data":"Server ready on port 3000\\n","timestamp":"2023-0
         }
       });
 
-      mockFetch.mockResolvedValue(new Response(mockStream, {
-        status: 200,
-        headers: { 'Content-Type': 'text/event-stream' }
-      }));
+      mockFetch.mockResolvedValue(
+        new Response(mockStream, {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' }
+        })
+      );
 
-      const stream = await client.streamProcessLogs('proc-realtime', 'session-stream');
+      const stream = await client.streamProcessLogs(
+        'proc-realtime',
+        'session-stream'
+      );
 
       expect(stream).toBeInstanceOf(ReadableStream);
 
@@ -506,13 +513,13 @@ data: {"type":"stdout","data":"Server ready on port 3000\\n","timestamp":"2023-0
         code: 'PROCESS_NOT_FOUND'
       };
 
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify(errorResponse),
-        { status: 404 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(errorResponse), { status: 404 })
+      );
 
-      await expect(client.streamProcessLogs('stream-missing', 'session-err'))
-        .rejects.toThrow(ProcessNotFoundError);
+      await expect(
+        client.streamProcessLogs('stream-missing', 'session-err')
+      ).rejects.toThrow(ProcessNotFoundError);
     });
 
     it('should handle streaming setup failures', async () => {
@@ -521,23 +528,26 @@ data: {"type":"stdout","data":"Server ready on port 3000\\n","timestamp":"2023-0
         code: 'PROCESS_ERROR'
       };
 
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify(errorResponse),
-        { status: 500 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(errorResponse), { status: 500 })
+      );
 
-      await expect(client.streamProcessLogs('proc-no-logs', 'session-err'))
-        .rejects.toThrow(ProcessError);
+      await expect(
+        client.streamProcessLogs('proc-no-logs', 'session-err')
+      ).rejects.toThrow(ProcessError);
     });
 
     it('should handle missing stream body', async () => {
-      mockFetch.mockResolvedValue(new Response(null, {
-        status: 200,
-        headers: { 'Content-Type': 'text/event-stream' }
-      }));
+      mockFetch.mockResolvedValue(
+        new Response(null, {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' }
+        })
+      );
 
-      await expect(client.streamProcessLogs('proc-empty-stream', 'session-err'))
-        .rejects.toThrow('No response body for streaming');
+      await expect(
+        client.streamProcessLogs('proc-empty-stream', 'session-err')
+      ).rejects.toThrow('No response body for streaming');
     });
   });
 
@@ -550,17 +560,19 @@ data: {"type":"stdout","data":"Server ready on port 3000\\n","timestamp":"2023-0
           command: 'echo session-test',
           status: 'running',
           pid: 11111,
-          startTime: '2023-01-01T00:00:00Z',
+          startTime: '2023-01-01T00:00:00Z'
         },
-        timestamp: '2023-01-01T00:00:00Z',
+        timestamp: '2023-01-01T00:00:00Z'
       };
 
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify(mockResponse),
-        { status: 200 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(mockResponse), { status: 200 })
+      );
 
-      const result = await client.startProcess('echo session-test', 'session-test');
+      const result = await client.startProcess(
+        'echo session-test',
+        'session-test'
+      );
 
       expect(result.success).toBe(true);
 
@@ -575,32 +587,44 @@ data: {"type":"stdout","data":"Server ready on port 3000\\n","timestamp":"2023-0
     it('should handle multiple simultaneous process operations', async () => {
       mockFetch.mockImplementation((url: string, options: RequestInit) => {
         if (url.includes('/start')) {
-          return Promise.resolve(new Response(JSON.stringify({
-            success: true,
-            process: {
-              id: `proc-${Date.now()}`,
-              command: JSON.parse(options.body as string).command,
-              status: 'running',
-              pid: Math.floor(Math.random() * 90000) + 10000,
-              startTime: new Date().toISOString(),
-            },
-            timestamp: new Date().toISOString(),
-          })));
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                success: true,
+                process: {
+                  id: `proc-${Date.now()}`,
+                  command: JSON.parse(options.body as string).command,
+                  status: 'running',
+                  pid: Math.floor(Math.random() * 90000) + 10000,
+                  startTime: new Date().toISOString()
+                },
+                timestamp: new Date().toISOString()
+              })
+            )
+          );
         } else if (url.includes('/list')) {
-          return Promise.resolve(new Response(JSON.stringify({
-            success: true,
-            processes: [],
-            count: 0,
-            timestamp: new Date().toISOString(),
-          })));
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                success: true,
+                processes: [],
+                count: 0,
+                timestamp: new Date().toISOString()
+              })
+            )
+          );
         } else if (url.includes('/logs')) {
-          return Promise.resolve(new Response(JSON.stringify({
-            success: true,
-            processId: url.split('/')[4],
-            stdout: 'log output',
-            stderr: '',
-            timestamp: new Date().toISOString(),
-          })));
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                success: true,
+                processId: url.split('/')[4],
+                stdout: 'log output',
+                stderr: '',
+                timestamp: new Date().toISOString()
+              })
+            )
+          );
         }
         return Promise.resolve(new Response('{}', { status: 200 }));
       });
@@ -610,11 +634,11 @@ data: {"type":"stdout","data":"Server ready on port 3000\\n","timestamp":"2023-0
         client.startProcess('python api.py', 'session-concurrent'),
         client.listProcesses('session-concurrent'),
         client.getProcessLogs('existing-proc', 'session-concurrent'),
-        client.startProcess('node worker.js', 'session-concurrent'),
+        client.startProcess('node worker.js', 'session-concurrent')
       ]);
 
       expect(operations).toHaveLength(5);
-      operations.forEach(result => {
+      operations.forEach((result) => {
         expect(result.success).toBe(true);
       });
 
@@ -626,18 +650,19 @@ data: {"type":"stdout","data":"Server ready on port 3000\\n","timestamp":"2023-0
     it('should handle network failures gracefully', async () => {
       mockFetch.mockRejectedValue(new Error('Network connection failed'));
 
-      await expect(client.listProcesses('session-err'))
-        .rejects.toThrow('Network connection failed');
+      await expect(client.listProcesses('session-err')).rejects.toThrow(
+        'Network connection failed'
+      );
     });
 
     it('should handle malformed server responses', async () => {
-      mockFetch.mockResolvedValue(new Response(
-        'invalid json {',
-        { status: 200 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response('invalid json {', { status: 200 })
+      );
 
-      await expect(client.startProcess('test-command', 'session-err'))
-        .rejects.toThrow(SandboxError);
+      await expect(
+        client.startProcess('test-command', 'session-err')
+      ).rejects.toThrow(SandboxError);
     });
   });
 
@@ -650,7 +675,7 @@ data: {"type":"stdout","data":"Server ready on port 3000\\n","timestamp":"2023-0
     it('should initialize with full options', () => {
       const fullOptionsClient = new ProcessClient({
         baseUrl: 'http://custom.com',
-        port: 8080,
+        port: 8080
       });
       expect(fullOptionsClient).toBeDefined();
     });

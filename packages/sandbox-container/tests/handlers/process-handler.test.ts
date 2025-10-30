@@ -1,6 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from "bun:test";
+import { beforeEach, describe, expect, it, vi } from 'bun:test';
 import type {
-  ProcessCleanupResult, 
+  ProcessCleanupResult,
   ProcessInfoResult,
   ProcessKillResult,
   ProcessListResult,
@@ -9,7 +9,11 @@ import type {
   StartProcessRequest
 } from '@repo/shared';
 import type { ErrorResponse } from '@repo/shared/errors';
-import type { Logger, ProcessInfo, RequestContext } from '@sandbox-container/core/types';
+import type {
+  Logger,
+  ProcessInfo,
+  RequestContext
+} from '@sandbox-container/core/types';
 import { ProcessHandler } from '@sandbox-container/handlers/process-handler';
 import type { ProcessService } from '@sandbox-container/services/process-service';
 
@@ -21,14 +25,14 @@ const mockProcessService = {
   killAllProcesses: vi.fn(),
   listProcesses: vi.fn(),
   streamProcessLogs: vi.fn(),
-  executeCommand: vi.fn(),
+  executeCommand: vi.fn()
 } as unknown as ProcessService;
 
 const mockLogger: Logger = {
   info: vi.fn(),
   error: vi.fn(),
   warn: vi.fn(),
-  debug: vi.fn(),
+  debug: vi.fn()
 };
 
 // Mock request context
@@ -38,9 +42,9 @@ const mockContext: RequestContext = {
   corsHeaders: {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Headers': 'Content-Type'
   },
-  sessionId: 'session-456',
+  sessionId: 'session-456'
 };
 
 describe('ProcessHandler', () => {
@@ -70,7 +74,7 @@ describe('ProcessHandler', () => {
         stdout: '',
         stderr: '',
         outputListeners: new Set(),
-        statusListeners: new Set(),
+        statusListeners: new Set()
       };
 
       (mockProcessService.startProcess as any).mockResolvedValue({
@@ -87,7 +91,7 @@ describe('ProcessHandler', () => {
       const response = await processHandler.handle(request, mockContext);
 
       expect(response.status).toBe(200);
-      const responseData = await response.json() as ProcessStartResult;
+      const responseData = (await response.json()) as ProcessStartResult;
       expect(responseData.success).toBe(true);
       expect(responseData.processId).toBe('proc-123');
       expect(responseData.pid).toBe(12345);
@@ -123,7 +127,7 @@ describe('ProcessHandler', () => {
 
       // HTTP status is auto-mapped based on error code
       expect(response.status).toBe(404);
-      const responseData = await response.json() as ErrorResponse;
+      const responseData = (await response.json()) as ErrorResponse;
       expect(responseData.code).toBe('COMMAND_NOT_FOUND');
       expect(responseData.message).toBe('Command not found');
       expect(responseData.httpStatus).toBe(404);
@@ -144,7 +148,7 @@ describe('ProcessHandler', () => {
           stdout: '',
           stderr: '',
           outputListeners: new Set(),
-          statusListeners: new Set(),
+          statusListeners: new Set()
         },
         {
           id: 'proc-2',
@@ -158,7 +162,7 @@ describe('ProcessHandler', () => {
           stdout: '',
           stderr: '',
           outputListeners: new Set(),
-          statusListeners: new Set(),
+          statusListeners: new Set()
         }
       ];
 
@@ -174,7 +178,7 @@ describe('ProcessHandler', () => {
       const response = await processHandler.handle(request, mockContext);
 
       expect(response.status).toBe(200);
-      const responseData = await response.json() as ProcessListResult;
+      const responseData = (await response.json()) as ProcessListResult;
       expect(responseData.success).toBe(true);
       expect(responseData.processes).toHaveLength(2);
       expect(responseData.processes[0].id).toBe('proc-1');
@@ -192,9 +196,12 @@ describe('ProcessHandler', () => {
         data: []
       });
 
-      const request = new Request('http://localhost:3000/api/process/list?sessionId=session-123&status=running', {
-        method: 'GET'
-      });
+      const request = new Request(
+        'http://localhost:3000/api/process/list?sessionId=session-123&status=running',
+        {
+          method: 'GET'
+        }
+      );
 
       const response = await processHandler.handle(request, mockContext);
 
@@ -224,7 +231,7 @@ describe('ProcessHandler', () => {
 
       // HTTP status is auto-mapped based on error code
       expect(response.status).toBe(500);
-      const responseData = await response.json() as ErrorResponse;
+      const responseData = (await response.json()) as ErrorResponse;
       expect(responseData.code).toBe('UNKNOWN_ERROR');
       expect(responseData.message).toBe('Database error');
       expect(responseData.httpStatus).toBe(500);
@@ -244,7 +251,7 @@ describe('ProcessHandler', () => {
         stdout: 'Process output',
         stderr: 'Error output',
         outputListeners: new Set(),
-        statusListeners: new Set(),
+        statusListeners: new Set()
       };
 
       (mockProcessService.getProcess as any).mockResolvedValue({
@@ -252,14 +259,17 @@ describe('ProcessHandler', () => {
         data: mockProcessInfo
       });
 
-      const request = new Request('http://localhost:3000/api/process/proc-123', {
-        method: 'GET'
-      });
+      const request = new Request(
+        'http://localhost:3000/api/process/proc-123',
+        {
+          method: 'GET'
+        }
+      );
 
       const response = await processHandler.handle(request, mockContext);
 
       expect(response.status).toBe(200);
-      const responseData = await response.json() as ProcessInfoResult;
+      const responseData = (await response.json()) as ProcessInfoResult;
       expect(responseData.success).toBe(true);
       expect(responseData.process.id).toBe('proc-123');
       expect(responseData.timestamp).toBeDefined();
@@ -276,15 +286,18 @@ describe('ProcessHandler', () => {
         }
       });
 
-      const request = new Request('http://localhost:3000/api/process/nonexistent', {
-        method: 'GET'
-      });
+      const request = new Request(
+        'http://localhost:3000/api/process/nonexistent',
+        {
+          method: 'GET'
+        }
+      );
 
       const response = await processHandler.handle(request, mockContext);
 
       // HTTP status is auto-mapped: PROCESS_NOT_FOUND → 404
       expect(response.status).toBe(404);
-      const responseData = await response.json() as ErrorResponse;
+      const responseData = (await response.json()) as ErrorResponse;
       expect(responseData.code).toBe('PROCESS_NOT_FOUND');
       expect(responseData.message).toBe('Process not found');
       expect(responseData.httpStatus).toBe(404);
@@ -298,14 +311,17 @@ describe('ProcessHandler', () => {
         success: true
       });
 
-      const request = new Request('http://localhost:3000/api/process/proc-123', {
-        method: 'DELETE'
-      });
+      const request = new Request(
+        'http://localhost:3000/api/process/proc-123',
+        {
+          method: 'DELETE'
+        }
+      );
 
       const response = await processHandler.handle(request, mockContext);
 
       expect(response.status).toBe(200);
-      const responseData = await response.json() as ProcessKillResult;
+      const responseData = (await response.json()) as ProcessKillResult;
       expect(responseData.success).toBe(true);
       expect(responseData.processId).toBe('proc-123');
       expect(responseData.timestamp).toBeDefined();
@@ -322,15 +338,18 @@ describe('ProcessHandler', () => {
         }
       });
 
-      const request = new Request('http://localhost:3000/api/process/proc-123', {
-        method: 'DELETE'
-      });
+      const request = new Request(
+        'http://localhost:3000/api/process/proc-123',
+        {
+          method: 'DELETE'
+        }
+      );
 
       const response = await processHandler.handle(request, mockContext);
 
       // HTTP status is auto-mapped: PROCESS_ERROR → 500
       expect(response.status).toBe(500);
-      const responseData = await response.json() as ErrorResponse;
+      const responseData = (await response.json()) as ErrorResponse;
       expect(responseData.code).toBe('PROCESS_ERROR');
       expect(responseData.message).toBe('Process already terminated');
       expect(responseData.httpStatus).toBe(500);
@@ -345,14 +364,17 @@ describe('ProcessHandler', () => {
         data: 3 // Number of killed processes
       });
 
-      const request = new Request('http://localhost:3000/api/process/kill-all', {
-        method: 'POST'
-      });
+      const request = new Request(
+        'http://localhost:3000/api/process/kill-all',
+        {
+          method: 'POST'
+        }
+      );
 
       const response = await processHandler.handle(request, mockContext);
 
       expect(response.status).toBe(200);
-      const responseData = await response.json() as ProcessCleanupResult;
+      const responseData = (await response.json()) as ProcessCleanupResult;
       expect(responseData.success).toBe(true);
       expect(responseData.cleanedCount).toBe(3);
       expect(responseData.timestamp).toBeDefined();
@@ -367,15 +389,18 @@ describe('ProcessHandler', () => {
         }
       });
 
-      const request = new Request('http://localhost:3000/api/process/kill-all', {
-        method: 'POST'
-      });
+      const request = new Request(
+        'http://localhost:3000/api/process/kill-all',
+        {
+          method: 'POST'
+        }
+      );
 
       const response = await processHandler.handle(request, mockContext);
 
       // HTTP status is auto-mapped based on error code
       expect(response.status).toBe(500);
-      const responseData = await response.json() as ErrorResponse;
+      const responseData = (await response.json()) as ErrorResponse;
       expect(responseData.code).toBe('UNKNOWN_ERROR');
       expect(responseData.message).toBe('Failed to kill processes');
       expect(responseData.httpStatus).toBe(500);
@@ -395,7 +420,7 @@ describe('ProcessHandler', () => {
         stdout: 'test output',
         stderr: 'error output',
         outputListeners: new Set(),
-        statusListeners: new Set(),
+        statusListeners: new Set()
       };
 
       (mockProcessService.getProcess as any).mockResolvedValue({
@@ -403,14 +428,17 @@ describe('ProcessHandler', () => {
         data: mockProcessInfo
       });
 
-      const request = new Request('http://localhost:3000/api/process/proc-123/logs', {
-        method: 'GET'
-      });
+      const request = new Request(
+        'http://localhost:3000/api/process/proc-123/logs',
+        {
+          method: 'GET'
+        }
+      );
 
       const response = await processHandler.handle(request, mockContext);
 
       expect(response.status).toBe(200);
-      const responseData = await response.json() as ProcessLogsResult;
+      const responseData = (await response.json()) as ProcessLogsResult;
       expect(responseData.success).toBe(true);
       expect(responseData.processId).toBe('proc-123');
       expect(responseData.stdout).toBe('test output');
@@ -427,15 +455,18 @@ describe('ProcessHandler', () => {
         }
       });
 
-      const request = new Request('http://localhost:3000/api/process/nonexistent/logs', {
-        method: 'GET'
-      });
+      const request = new Request(
+        'http://localhost:3000/api/process/nonexistent/logs',
+        {
+          method: 'GET'
+        }
+      );
 
       const response = await processHandler.handle(request, mockContext);
 
       // HTTP status is auto-mapped: PROCESS_NOT_FOUND → 404
       expect(response.status).toBe(404);
-      const responseData = await response.json() as ErrorResponse;
+      const responseData = (await response.json()) as ErrorResponse;
       expect(responseData.code).toBe('PROCESS_NOT_FOUND');
       expect(responseData.message).toBe('Process not found');
       expect(responseData.httpStatus).toBe(404);
@@ -455,7 +486,7 @@ describe('ProcessHandler', () => {
         stdout: 'existing output',
         stderr: 'existing error',
         outputListeners: new Set(),
-        statusListeners: new Set(),
+        statusListeners: new Set()
       };
 
       (mockProcessService.streamProcessLogs as any).mockResolvedValue({
@@ -466,9 +497,12 @@ describe('ProcessHandler', () => {
         data: mockProcessInfo
       });
 
-      const request = new Request('http://localhost:3000/api/process/proc-123/stream', {
-        method: 'GET'
-      });
+      const request = new Request(
+        'http://localhost:3000/api/process/proc-123/stream',
+        {
+          method: 'GET'
+        }
+      );
 
       const response = await processHandler.handle(request, mockContext);
 
@@ -500,15 +534,18 @@ describe('ProcessHandler', () => {
         }
       });
 
-      const request = new Request('http://localhost:3000/api/process/proc-123/stream', {
-        method: 'GET'
-      });
+      const request = new Request(
+        'http://localhost:3000/api/process/proc-123/stream',
+        {
+          method: 'GET'
+        }
+      );
 
       const response = await processHandler.handle(request, mockContext);
 
       // HTTP status is auto-mapped based on error code
       expect(response.status).toBe(404);
-      const responseData = await response.json() as ErrorResponse;
+      const responseData = (await response.json()) as ErrorResponse;
       expect(responseData.code).toBe('PROCESS_NOT_FOUND');
       expect(responseData.message).toBe('Stream setup failed');
       expect(responseData.httpStatus).toBe(404);
@@ -527,15 +564,18 @@ describe('ProcessHandler', () => {
         }
       });
 
-      const request = new Request('http://localhost:3000/api/process/proc-123/stream', {
-        method: 'GET'
-      });
+      const request = new Request(
+        'http://localhost:3000/api/process/proc-123/stream',
+        {
+          method: 'GET'
+        }
+      );
 
       const response = await processHandler.handle(request, mockContext);
 
       // HTTP status is auto-mapped: PROCESS_NOT_FOUND → 404
       expect(response.status).toBe(404);
-      const responseData = await response.json() as ErrorResponse;
+      const responseData = (await response.json()) as ErrorResponse;
       expect(responseData.code).toBe('PROCESS_NOT_FOUND');
       expect(responseData.message).toBe('Process not found for streaming');
       expect(responseData.httpStatus).toBe(404);
@@ -554,15 +594,18 @@ describe('ProcessHandler', () => {
         }
       });
 
-      const request = new Request('http://localhost:3000/api/process/invalid-endpoint', {
-        method: 'GET'
-      });
+      const request = new Request(
+        'http://localhost:3000/api/process/invalid-endpoint',
+        {
+          method: 'GET'
+        }
+      );
 
       const response = await processHandler.handle(request, mockContext);
 
       // HTTP status is auto-mapped: PROCESS_NOT_FOUND → 404
       expect(response.status).toBe(404);
-      const responseData = await response.json() as ErrorResponse;
+      const responseData = (await response.json()) as ErrorResponse;
       expect(responseData.code).toBe('PROCESS_NOT_FOUND');
       expect(responseData.message).toBe('Process not found');
       expect(responseData.httpStatus).toBe(404);
@@ -586,37 +629,43 @@ describe('ProcessHandler', () => {
 
       // HTTP status is auto-mapped: PROCESS_NOT_FOUND → 404
       expect(response.status).toBe(404);
-      const responseData = await response.json() as ErrorResponse;
+      const responseData = (await response.json()) as ErrorResponse;
       expect(responseData.code).toBe('PROCESS_NOT_FOUND');
       expect(responseData.message).toBe('Process not found');
       expect(responseData.httpStatus).toBe(404);
     });
 
     it('should handle unsupported HTTP methods for process endpoints', async () => {
-      const request = new Request('http://localhost:3000/api/process/proc-123', {
-        method: 'PUT' // Unsupported method
-      });
+      const request = new Request(
+        'http://localhost:3000/api/process/proc-123',
+        {
+          method: 'PUT' // Unsupported method
+        }
+      );
 
       const response = await processHandler.handle(request, mockContext);
 
       // HTTP status is auto-mapped: UNKNOWN_ERROR → 500
       expect(response.status).toBe(500);
-      const responseData = await response.json() as ErrorResponse;
+      const responseData = (await response.json()) as ErrorResponse;
       expect(responseData.code).toBe('UNKNOWN_ERROR');
       expect(responseData.message).toBe('Invalid process endpoint');
       expect(responseData.httpStatus).toBe(500);
     });
 
     it('should handle unsupported actions on process endpoints', async () => {
-      const request = new Request('http://localhost:3000/api/process/proc-123/unsupported-action', {
-        method: 'GET'
-      });
+      const request = new Request(
+        'http://localhost:3000/api/process/proc-123/unsupported-action',
+        {
+          method: 'GET'
+        }
+      );
 
       const response = await processHandler.handle(request, mockContext);
 
       // HTTP status is auto-mapped: UNKNOWN_ERROR → 500
       expect(response.status).toBe(500);
-      const responseData = await response.json() as ErrorResponse;
+      const responseData = (await response.json()) as ErrorResponse;
       expect(responseData.code).toBe('UNKNOWN_ERROR');
       expect(responseData.message).toBe('Invalid process endpoint');
       expect(responseData.httpStatus).toBe(500);
@@ -637,8 +686,12 @@ describe('ProcessHandler', () => {
       const response = await processHandler.handle(request, mockContext);
 
       expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
-      expect(response.headers.get('Access-Control-Allow-Methods')).toBe('GET, POST, DELETE, OPTIONS');
-      expect(response.headers.get('Access-Control-Allow-Headers')).toBe('Content-Type');
+      expect(response.headers.get('Access-Control-Allow-Methods')).toBe(
+        'GET, POST, DELETE, OPTIONS'
+      );
+      expect(response.headers.get('Access-Control-Allow-Headers')).toBe(
+        'Content-Type'
+      );
     });
 
     it('should include CORS headers in error responses', async () => {

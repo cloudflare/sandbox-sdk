@@ -1,7 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from 'bun:test';
-import type { Logger, ProcessRecord, ServiceResult } from '@sandbox-container/core/types.ts';
-import { type ProcessFilters, ProcessService, type ProcessStore } from "@sandbox-container/services/process-service.js";
-import type { RawExecResult, SessionManager } from '@sandbox-container/services/session-manager';
+import type {
+  Logger,
+  ProcessRecord,
+  ServiceResult
+} from '@sandbox-container/core/types.ts';
+import {
+  type ProcessFilters,
+  ProcessService,
+  type ProcessStore
+} from '@sandbox-container/services/process-service.js';
+import type {
+  RawExecResult,
+  SessionManager
+} from '@sandbox-container/services/session-manager';
 import { mocked } from '../test-utils';
 
 // Mock the dependencies with proper typing
@@ -11,14 +22,14 @@ const mockProcessStore: ProcessStore = {
   update: vi.fn(),
   delete: vi.fn(),
   list: vi.fn(),
-  cleanup: vi.fn(),
+  cleanup: vi.fn()
 };
 
 const mockLogger: Logger = {
   info: vi.fn(),
   error: vi.fn(),
   warn: vi.fn(),
-  debug: vi.fn(),
+  debug: vi.fn()
 };
 
 // Mock SessionManager with proper typing
@@ -28,11 +39,13 @@ const mockSessionManager: Partial<SessionManager> = {
   killCommand: vi.fn(),
   setEnvVars: vi.fn(),
   getSession: vi.fn(),
-  createSession: vi.fn(),
+  createSession: vi.fn()
 };
 
 // Mock factory functions
-const createMockProcess = (overrides: Partial<ProcessRecord> = {}): ProcessRecord => ({
+const createMockProcess = (
+  overrides: Partial<ProcessRecord> = {}
+): ProcessRecord => ({
   id: 'proc-123',
   command: 'test command',
   status: 'running',
@@ -43,9 +56,9 @@ const createMockProcess = (overrides: Partial<ProcessRecord> = {}): ProcessRecor
   statusListeners: new Set(),
   commandHandle: {
     sessionId: 'default',
-    commandId: 'proc-123',
+    commandId: 'proc-123'
   },
-  ...overrides,
+  ...overrides
 });
 
 describe('ProcessService', () => {
@@ -71,12 +84,12 @@ describe('ProcessService', () => {
         data: {
           exitCode: 0,
           stdout: 'hello world\n',
-          stderr: '',
-        },
+          stderr: ''
+        }
       } as ServiceResult<RawExecResult>);
 
       const result = await processService.executeCommand('echo "hello world"', {
-        cwd: '/tmp',
+        cwd: '/tmp'
       });
 
       expect(result.success).toBe(true);
@@ -89,10 +102,10 @@ describe('ProcessService', () => {
 
       // Verify SessionManager was called correctly
       expect(mockSessionManager.executeInSession).toHaveBeenCalledWith(
-        'default',  // sessionId
+        'default', // sessionId
         'echo "hello world"',
-        '/tmp',  // cwd
-        undefined  // timeoutMs (not provided in options)
+        '/tmp', // cwd
+        undefined // timeoutMs (not provided in options)
       );
     });
 
@@ -102,8 +115,8 @@ describe('ProcessService', () => {
         data: {
           exitCode: 1,
           stdout: '',
-          stderr: 'error message',
-        },
+          stderr: 'error message'
+        }
       } as ServiceResult<RawExecResult>);
 
       const result = await processService.executeCommand('false');
@@ -120,8 +133,8 @@ describe('ProcessService', () => {
         success: false,
         error: {
           message: 'Session execution failed',
-          code: 'SESSION_ERROR',
-        },
+          code: 'SESSION_ERROR'
+        }
       } as ServiceResult<RawExecResult>);
 
       const result = await processService.executeCommand('some command');
@@ -145,7 +158,7 @@ describe('ProcessService', () => {
 
       const result = await processService.startProcess('sleep 10', {
         cwd: '/tmp',
-        sessionId: 'session-123',
+        sessionId: 'session-123'
       });
 
       expect(result.success).toBe(true);
@@ -155,7 +168,7 @@ describe('ProcessService', () => {
         expect(result.data.status).toBe('running');
         expect(result.data.commandHandle).toEqual({
           sessionId: 'session-123',
-          commandId: result.data.id,
+          commandId: result.data.id
         });
       }
 
@@ -163,9 +176,9 @@ describe('ProcessService', () => {
       expect(mockSessionManager.executeStreamInSession).toHaveBeenCalledWith(
         'session-123',
         'sleep 10',
-        expect.any(Function),  // event handler callback
+        expect.any(Function), // event handler callback
         '/tmp',
-        expect.any(String)  // commandId (generated dynamically)
+        expect.any(String) // commandId (generated dynamically)
       );
 
       // Verify process was stored
@@ -174,8 +187,8 @@ describe('ProcessService', () => {
           command: 'sleep 10',
           status: 'running',
           commandHandle: expect.objectContaining({
-            sessionId: 'session-123',
-          }),
+            sessionId: 'session-123'
+          })
         })
       );
     });
@@ -195,16 +208,20 @@ describe('ProcessService', () => {
 
     it('should handle stream execution errors', async () => {
       // Mock SessionManager to throw error
-      mocked(mockSessionManager.executeStreamInSession).mockImplementation(() => {
-        throw new Error('Failed to execute stream');
-      });
+      mocked(mockSessionManager.executeStreamInSession).mockImplementation(
+        () => {
+          throw new Error('Failed to execute stream');
+        }
+      );
 
       const result = await processService.startProcess('echo test', {});
 
       expect(result.success).toBe(false);
       if (!result.success) {
         expect(result.error.code).toBe('STREAM_START_ERROR');
-        expect(result.error.message).toContain('Failed to start streaming command');
+        expect(result.error.message).toContain(
+          'Failed to start streaming command'
+        );
       }
     });
   });
@@ -243,13 +260,13 @@ describe('ProcessService', () => {
         command: 'sleep 10',
         commandHandle: {
           sessionId: 'default',
-          commandId: 'proc-123',
-        },
+          commandId: 'proc-123'
+        }
       });
 
       mocked(mockProcessStore.get).mockResolvedValue(mockProcess);
       mocked(mockSessionManager.killCommand).mockResolvedValue({
-        success: true,
+        success: true
       } as ServiceResult<void>);
 
       const result = await processService.killProcess('proc-123');
@@ -265,7 +282,7 @@ describe('ProcessService', () => {
       // Verify store was updated
       expect(mockProcessStore.update).toHaveBeenCalledWith('proc-123', {
         status: 'killed',
-        endTime: expect.any(Date),
+        endTime: expect.any(Date)
       });
     });
 
@@ -283,7 +300,7 @@ describe('ProcessService', () => {
     it('should succeed when process has no commandHandle', async () => {
       const mockProcess = createMockProcess({
         command: 'echo test',
-        commandHandle: undefined,
+        commandHandle: undefined
       });
 
       mocked(mockProcessStore.get).mockResolvedValue(mockProcess);
@@ -301,7 +318,11 @@ describe('ProcessService', () => {
     it('should return all processes from store', async () => {
       const mockProcesses = [
         createMockProcess({ id: 'proc-1', command: 'ls', status: 'completed' }),
-        createMockProcess({ id: 'proc-2', command: 'sleep 10', status: 'running' }),
+        createMockProcess({
+          id: 'proc-2',
+          command: 'sleep 10',
+          status: 'running'
+        })
       ];
 
       mocked(mockProcessStore.list).mockResolvedValue(mockProcesses);
@@ -321,13 +342,13 @@ describe('ProcessService', () => {
         createMockProcess({
           id: 'proc-1',
           command: 'sleep 10',
-          commandHandle: { sessionId: 'default', commandId: 'proc-1' },
+          commandHandle: { sessionId: 'default', commandId: 'proc-1' }
         }),
         createMockProcess({
           id: 'proc-2',
           command: 'sleep 20',
-          commandHandle: { sessionId: 'default', commandId: 'proc-2' },
-        }),
+          commandHandle: { sessionId: 'default', commandId: 'proc-2' }
+        })
       ];
 
       mocked(mockProcessStore.list).mockResolvedValue(mockProcesses);
@@ -335,7 +356,7 @@ describe('ProcessService', () => {
         .mockResolvedValueOnce(mockProcesses[0])
         .mockResolvedValueOnce(mockProcesses[1]);
       mocked(mockSessionManager.killCommand).mockResolvedValue({
-        success: true,
+        success: true
       } as ServiceResult<void>);
 
       const result = await processService.killAllProcesses();

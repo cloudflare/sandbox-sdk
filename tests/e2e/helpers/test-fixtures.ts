@@ -43,10 +43,13 @@ export function createSessionId(): string {
  * const headers1 = createTestHeaders(sandboxId, createSessionId());
  * const headers2 = createTestHeaders(sandboxId, createSessionId());
  */
-export function createTestHeaders(sandboxId: string, sessionId?: string): Record<string, string> {
+export function createTestHeaders(
+  sandboxId: string,
+  sessionId?: string
+): Record<string, string> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    'X-Sandbox-Id': sandboxId,
+    'X-Sandbox-Id': sandboxId
   };
 
   if (sessionId) {
@@ -107,7 +110,8 @@ export async function waitForCondition<T>(
 ): Promise<T> {
   const timeout = options.timeout || 10000;
   const interval = options.interval || 500;
-  const errorMessage = options.errorMessage || 'Condition not met within timeout';
+  const errorMessage =
+    options.errorMessage || 'Condition not met within timeout';
 
   const startTime = Date.now();
 
@@ -116,7 +120,7 @@ export async function waitForCondition<T>(
       return await condition();
     } catch (error) {
       // Wait before retrying
-      await new Promise(resolve => setTimeout(resolve, interval));
+      await new Promise((resolve) => setTimeout(resolve, interval));
     }
   }
 
@@ -127,7 +131,7 @@ export async function waitForCondition<T>(
  * Sleep for specified milliseconds
  */
 export function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**
@@ -210,18 +214,23 @@ export async function fetchWithStartup(
  * });
  * ```
  */
-export async function cleanupSandbox(workerUrl: string, sandboxId: string): Promise<void> {
+export async function cleanupSandbox(
+  workerUrl: string,
+  sandboxId: string
+): Promise<void> {
   try {
     const headers = createTestHeaders(sandboxId);
 
     // Call the cleanup RPC method via a special endpoint
     const response = await fetch(`${workerUrl}/cleanup`, {
       method: 'POST',
-      headers,
+      headers
     });
 
     if (!response.ok) {
-      console.warn(`Failed to cleanup sandbox ${sandboxId}: ${response.status}`);
+      console.warn(
+        `Failed to cleanup sandbox ${sandboxId}: ${response.status}`
+      );
     } else {
       console.log(`Cleaned up sandbox: ${sandboxId}`);
     }

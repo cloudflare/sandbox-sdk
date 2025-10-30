@@ -15,7 +15,7 @@ import { SecurityService } from '@sandbox-container/security/security-service';
 const mockLogger: Logger = {
   info: () => {},
   warn: () => {},
-  error: () => {},
+  error: () => {}
 };
 
 describe('SecurityService - Simplified Security Model', () => {
@@ -35,7 +35,7 @@ describe('SecurityService - Simplified Security Model', () => {
         '/bin/bash',
         '/tmp/script.sh',
         '/root/.ssh',
-        '/sys/kernel',
+        '/sys/kernel'
       ];
 
       for (const path of systemPaths) {
@@ -51,7 +51,7 @@ describe('SecurityService - Simplified Security Model', () => {
         '../../../etc/passwd',
         '/workspace/../../../etc/passwd',
         './../../sensitive',
-        '/tmp/..',
+        '/tmp/..'
       ];
 
       for (const path of traversalPaths) {
@@ -90,12 +90,12 @@ describe('SecurityService - Simplified Security Model', () => {
     test('should allow all other ports (users control their sandbox)', () => {
       // Phase 0: No arbitrary port restrictions
       const allowedPorts = [
-        22,    // SSH (was blocked in old system)
-        80,    // HTTP
-        443,   // HTTPS
-        1024,  // First user port
-        8080,  // Common dev port
-        65535, // Max port
+        22, // SSH (was blocked in old system)
+        80, // HTTP
+        443, // HTTPS
+        1024, // First user port
+        8080, // Common dev port
+        65535 // Max port
       ];
 
       for (const port of allowedPorts) {
@@ -130,7 +130,7 @@ describe('SecurityService - Simplified Security Model', () => {
         'chmod 777 /tmp/test',
         'dd if=/dev/zero of=/tmp/test bs=1M count=10',
         'mount',
-        'eval "echo hello"',
+        'eval "echo hello"'
       ];
 
       for (const command of legitimateCommands) {
@@ -173,11 +173,11 @@ describe('SecurityService - Simplified Security Model', () => {
         'https://github.com/user/repo.git',
         'https://gitlab.com/user/repo.git',
         'https://bitbucket.org/user/repo.git',
-        'https://git.company.com/user/repo.git',        // Self-hosted
-        'https://my-git-server.io/repo.git',            // Custom domain
+        'https://git.company.com/user/repo.git', // Self-hosted
+        'https://my-git-server.io/repo.git', // Custom domain
         'git@github.com:user/repo.git',
-        'git@gitlab.company.com:user/repo.git',         // Enterprise GitLab
-        'https://dev.azure.com/org/project/_git/repo',  // Azure DevOps
+        'git@gitlab.company.com:user/repo.git', // Enterprise GitLab
+        'https://dev.azure.com/org/project/_git/repo' // Azure DevOps
       ];
 
       for (const url of gitUrls) {
@@ -188,7 +188,9 @@ describe('SecurityService - Simplified Security Model', () => {
     });
 
     test('should reject null bytes (format validation)', () => {
-      const result = service.validateGitUrl('https://github.com/user\0/repo.git');
+      const result = service.validateGitUrl(
+        'https://github.com/user\0/repo.git'
+      );
       expect(result.isValid).toBe(false);
       expect(result.errors[0].message).toContain('null bytes');
     });
@@ -207,7 +209,9 @@ describe('SecurityService - Simplified Security Model', () => {
     });
 
     test('should trim whitespace', () => {
-      const result = service.validateGitUrl('  https://github.com/user/repo.git  ');
+      const result = service.validateGitUrl(
+        '  https://github.com/user/repo.git  '
+      );
       expect(result.isValid).toBe(true);
       expect(result.data).toBe('https://github.com/user/repo.git');
     });
@@ -228,7 +232,7 @@ describe('SecurityService - Simplified Security Model', () => {
       const testLogger: Logger = {
         info: () => {},
         warn: (msg, data) => logs.push({ msg, data }),
-        error: () => {},
+        error: () => {}
       };
 
       const testService = new SecurityService(testLogger);

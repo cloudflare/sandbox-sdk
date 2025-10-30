@@ -18,7 +18,6 @@ export interface GitCheckoutRequest extends SessionRequest {
  * Client for Git repository operations
  */
 export class GitClient extends BaseHttpClient {
-
   /**
    * Clone a Git repository
    * @param repoUrl - URL of the Git repository to clone
@@ -45,7 +44,7 @@ export class GitClient extends BaseHttpClient {
       const data: GitCheckoutRequest = {
         repoUrl,
         sessionId,
-        targetDir,
+        targetDir
       };
 
       // Only include branch if explicitly specified
@@ -79,7 +78,7 @@ export class GitClient extends BaseHttpClient {
       const url = new URL(repoUrl);
       const pathParts = url.pathname.split('/');
       const repoName = pathParts[pathParts.length - 1];
-      
+
       // Remove .git extension if present
       return repoName.replace(/\.git$/, '');
     } catch {

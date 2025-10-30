@@ -28,8 +28,8 @@ Bun.serve({
     },
     close(ws) {
       console.log('WebSocket client disconnected');
-    },
-  },
+    }
+  }
 });
 
 console.log(`WebSocket echo server listening on port ${port}`);

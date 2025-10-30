@@ -1,13 +1,27 @@
-import { describe, test, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
+import {
+  describe,
+  test,
+  expect,
+  beforeAll,
+  afterAll,
+  afterEach,
+  vi
+} from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import WebSocket from 'ws';
 import { getTestWorkerUrl, WranglerDevRunner } from './helpers/wrangler-runner';
-import { createSandboxId, createTestHeaders, fetchWithStartup, cleanupSandbox } from './helpers/test-fixtures';
+import {
+  createSandboxId,
+  createTestHeaders,
+  fetchWithStartup,
+  cleanupSandbox
+} from './helpers/test-fixtures';
 
 // Port exposure tests require custom domain with wildcard DNS routing
 // Skip these tests when running against workers.dev deployment (no wildcard support)
-const skipWebSocketTests = process.env.TEST_WORKER_URL?.endsWith('.workers.dev') ?? false;
+const skipWebSocketTests =
+  process.env.TEST_WORKER_URL?.endsWith('.workers.dev') ?? false;
 
 /**
  * WebSocket Workflow Integration Tests
@@ -67,14 +81,15 @@ describe('WebSocket Workflow', () => {
 
       // Step 1: Write the WebSocket echo server to the container
       await vi.waitFor(
-        async () => fetchWithStartup(`${workerUrl}/api/file/write`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            path: '/workspace/ws-server.ts',
-            content: serverCode,
+        async () =>
+          fetchWithStartup(`${workerUrl}/api/file/write`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              path: '/workspace/ws-server.ts',
+              content: serverCode
+            })
           }),
-        }),
         { timeout: 90000, interval: 2000 }
       );
 
@@ -84,8 +99,8 @@ describe('WebSocket Workflow', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: `bun run /workspace/ws-server.ts ${port}`,
-        }),
+          command: `bun run /workspace/ws-server.ts ${port}`
+        })
       });
 
       expect(startResponse.status).toBe(200);
@@ -94,7 +109,7 @@ describe('WebSocket Workflow', () => {
       expect(processData.status).toBe('running');
 
       // Wait for server to be ready (generous timeout for first startup)
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      await new Promise((resolve) => setTimeout(resolve, 2000));
 
       // Step 3: Expose the port to get preview URL
       const exposeResponse = await fetch(`${workerUrl}/api/port/expose`, {
@@ -102,8 +117,8 @@ describe('WebSocket Workflow', () => {
         headers,
         body: JSON.stringify({
           port,
-          name: 'websocket-test',
-        }),
+          name: 'websocket-test'
+        })
       });
 
       expect(exposeResponse.status).toBe(200);
@@ -121,7 +136,10 @@ describe('WebSocket Workflow', () => {
       await new Promise<void>((resolve, reject) => {
         ws.on('open', () => resolve());
         ws.on('error', (error) => reject(error));
-        setTimeout(() => reject(new Error('WebSocket connection timeout')), 10000);
+        setTimeout(
+          () => reject(new Error('WebSocket connection timeout')),
+          10000
+        );
       });
 
       console.log('[DEBUG] WebSocket connected');
@@ -151,12 +169,12 @@ describe('WebSocket Workflow', () => {
       // Step 7: Cleanup - kill process and unexpose port
       await fetch(`${workerUrl}/api/process/${processId}`, {
         method: 'DELETE',
-        headers,
+        headers
       });
 
       await fetch(`${workerUrl}/api/exposed-ports/${port}`, {
         method: 'DELETE',
-        headers,
+        headers
       });
     }, 90000);
   });

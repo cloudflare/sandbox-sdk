@@ -1,6 +1,15 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
-import type { Logger, PortInfo, PortNotFoundResponse, ProxyErrorResponse } from '@sandbox-container/core/types';
-import { PortService, type PortStore, type SecurityService } from '@sandbox-container/services/port-service';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'bun:test';
+import type {
+  Logger,
+  PortInfo,
+  PortNotFoundResponse,
+  ProxyErrorResponse
+} from '@sandbox-container/core/types';
+import {
+  PortService,
+  type PortStore,
+  type SecurityService
+} from '@sandbox-container/services/port-service';
 import { mocked } from '../test-utils';
 
 // Properly typed mock dependencies
@@ -9,18 +18,18 @@ const mockPortStore: PortStore = {
   unexpose: vi.fn(),
   get: vi.fn(),
   list: vi.fn(),
-  cleanup: vi.fn(),
+  cleanup: vi.fn()
 };
 
 const mockSecurityService: SecurityService = {
-  validatePort: vi.fn(),
+  validatePort: vi.fn()
 };
 
 const mockLogger: Logger = {
   info: vi.fn(),
   error: vi.fn(),
   warn: vi.fn(),
-  debug: vi.fn(),
+  debug: vi.fn()
 };
 
 // Mock fetch for proxy testing
@@ -74,7 +83,10 @@ describe('PortService', () => {
       }
 
       expect(mockSecurityService.validatePort).toHaveBeenCalledWith(8080);
-      expect(mockPortStore.expose).toHaveBeenCalledWith(8080, expect.any(Object));
+      expect(mockPortStore.expose).toHaveBeenCalledWith(
+        8080,
+        expect.any(Object)
+      );
     });
 
     it('should return error when port validation fails', async () => {
@@ -88,9 +100,13 @@ describe('PortService', () => {
       expect(result.success).toBe(false);
       if (!result.success) {
         expect(result.error.code).toBe('INVALID_PORT_NUMBER');
-        expect(result.error.message).toContain('Port must be between 1024-65535');
+        expect(result.error.message).toContain(
+          'Port must be between 1024-65535'
+        );
         expect(result.error.details?.port).toBe(80);
-        expect(result.error.details?.reason).toContain('Port must be between 1024-65535');
+        expect(result.error.details?.reason).toContain(
+          'Port must be between 1024-65535'
+        );
       }
 
       // Should not attempt to store port
@@ -102,7 +118,7 @@ describe('PortService', () => {
         port: 8080,
         name: 'existing-service',
         exposedAt: new Date(),
-        status: 'active',
+        status: 'active'
       };
       mocked(mockPortStore.get).mockResolvedValue(existingPortInfo);
 
@@ -140,7 +156,7 @@ describe('PortService', () => {
         port: 8080,
         name: 'web-server',
         exposedAt: new Date(),
-        status: 'active',
+        status: 'active'
       };
       mocked(mockPortStore.get).mockResolvedValue(existingPortInfo);
 
@@ -170,7 +186,7 @@ describe('PortService', () => {
         port: 8080,
         name: 'web-server',
         exposedAt: new Date(),
-        status: 'active',
+        status: 'active'
       };
       mocked(mockPortStore.get).mockResolvedValue(existingPortInfo);
       const storeError = new Error('Unexpose failed');
@@ -194,7 +210,7 @@ describe('PortService', () => {
             port: 8080,
             name: 'web-server',
             exposedAt: new Date(),
-            status: 'active' as const,
+            status: 'active' as const
           }
         }
       ];
@@ -228,7 +244,7 @@ describe('PortService', () => {
         port: 8080,
         name: 'web-server',
         exposedAt: new Date(),
-        status: 'active',
+        status: 'active'
       };
       mocked(mockPortStore.get).mockResolvedValue(portInfo);
 
@@ -259,14 +275,16 @@ describe('PortService', () => {
         port: 8080,
         name: 'web-server',
         exposedAt: new Date(),
-        status: 'active',
+        status: 'active'
       };
       mocked(mockPortStore.get).mockResolvedValue(portInfo);
 
       const mockResponse = new Response('Hello World', { status: 200 });
       mockFetch.mockResolvedValue(mockResponse);
 
-      const testRequest = new Request('http://example.com/proxy/8080/api/test?param=value');
+      const testRequest = new Request(
+        'http://example.com/proxy/8080/api/test?param=value'
+      );
 
       const response = await portService.proxyRequest(8080, testRequest);
 
@@ -284,7 +302,7 @@ describe('PortService', () => {
       const response = await portService.proxyRequest(8080, testRequest);
 
       expect(response.status).toBe(404);
-      const responseData = await response.json() as PortNotFoundResponse;
+      const responseData = (await response.json()) as PortNotFoundResponse;
       expect(responseData.error).toBe('Port not found');
       expect(responseData.port).toBe(8080);
 
@@ -297,7 +315,7 @@ describe('PortService', () => {
         port: 8080,
         name: 'web-server',
         exposedAt: new Date(),
-        status: 'active',
+        status: 'active'
       };
       mocked(mockPortStore.get).mockResolvedValue(portInfo);
 
@@ -308,11 +326,10 @@ describe('PortService', () => {
       const response = await portService.proxyRequest(8080, testRequest);
 
       expect(response.status).toBe(502);
-      const responseData = await response.json() as ProxyErrorResponse;
+      const responseData = (await response.json()) as ProxyErrorResponse;
       expect(responseData.error).toBe('Proxy error');
       expect(responseData.message).toContain('Connection refused');
     });
-
   });
 
   describe('markPortInactive', () => {
@@ -321,7 +338,7 @@ describe('PortService', () => {
         port: 8080,
         name: 'web-server',
         exposedAt: new Date(),
-        status: 'active',
+        status: 'active'
       };
       mocked(mockPortStore.get).mockResolvedValue(portInfo);
       mocked(mockPortStore.expose).mockResolvedValue(undefined);
@@ -367,9 +384,7 @@ describe('PortService', () => {
       }
 
       // Verify cleanup was called with 1 hour ago threshold
-      expect(mockPortStore.cleanup).toHaveBeenCalledWith(
-        expect.any(Date)
-      );
+      expect(mockPortStore.cleanup).toHaveBeenCalledWith(expect.any(Date));
     });
 
     it('should handle cleanup errors', async () => {
@@ -384,5 +399,4 @@ describe('PortService', () => {
       }
     });
   });
-
 });

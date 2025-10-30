@@ -47,7 +47,7 @@ export class PortManager {
 
     return {
       targetPath,
-      targetUrl,
+      targetUrl
     };
   }
 
@@ -59,7 +59,7 @@ export class PortManager {
       port,
       name,
       exposedAt: new Date(),
-      status: 'active',
+      status: 'active'
     };
   }
 
@@ -69,7 +69,7 @@ export class PortManager {
   createInactivePortInfo(existingInfo: PortInfo): PortInfo {
     return {
       ...existingInfo,
-      status: 'inactive',
+      status: 'inactive'
     };
   }
 
@@ -85,15 +85,24 @@ export class PortManager {
       return 'PORT_NOT_FOUND';
     }
 
-    if (lowerMessage.includes('already exposed') || lowerMessage.includes('conflict')) {
+    if (
+      lowerMessage.includes('already exposed') ||
+      lowerMessage.includes('conflict')
+    ) {
       return 'PORT_ALREADY_EXPOSED';
     }
 
-    if (lowerMessage.includes('connection refused') || lowerMessage.includes('econnrefused')) {
+    if (
+      lowerMessage.includes('connection refused') ||
+      lowerMessage.includes('econnrefused')
+    ) {
       return 'CONNECTION_REFUSED';
     }
 
-    if (lowerMessage.includes('timeout') || lowerMessage.includes('etimedout')) {
+    if (
+      lowerMessage.includes('timeout') ||
+      lowerMessage.includes('etimedout')
+    ) {
       return 'CONNECTION_TIMEOUT';
     }
 
@@ -129,7 +138,7 @@ export class PortManager {
       get: 'get info for',
       proxy: 'proxy request to',
       update: 'update',
-      cleanup: 'cleanup',
+      cleanup: 'cleanup'
     };
 
     const verb = operationVerbs[operation] || 'operate on';
@@ -148,7 +157,10 @@ export class PortManager {
    */
   formatPortList(ports: Array<{ port: number; info: PortInfo }>): string {
     return ports
-      .map(({ port, info }) => `${port} (${info.name || 'unnamed'}, ${info.status})`)
+      .map(
+        ({ port, info }) =>
+          `${port} (${info.name || 'unnamed'}, ${info.status})`
+      )
       .join(', ');
   }
 

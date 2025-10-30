@@ -5,6 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Documentation Resources
 
 **Always consult the Cloudflare Docs MCP when working on this repository.** The MCP provides comprehensive documentation about:
+
 - API usage patterns and examples
 - Architecture concepts and best practices
 - Configuration reference (wrangler, Dockerfile)
@@ -92,15 +93,17 @@ npm run docker:rebuild     # Rebuild container image locally (includes clean bui
 ```
 
 **Note:** Docker images are automatically built and published by CI (`release.yml`):
+
 - Beta images on every main commit
 - Stable images when "Version Packages" PR is merged
 - Multi-arch builds (amd64, arm64) handled by CI
 
-**Critical:** Docker image version MUST match npm package version (`@cloudflare/sandbox@0.4.7` → `cloudflare/sandbox:0.4.12`). This is enforced via `ARG SANDBOX_VERSION` in Dockerfile.
+**Critical:** Docker image version MUST match npm package version. This is enforced via `ARG SANDBOX_VERSION` in Dockerfile.
 
 ### Development Server
 
 From an example directory (e.g., `examples/minimal/`):
+
 ```bash
 npm run dev                # Start wrangler dev server (builds Docker on first run)
 ```
@@ -116,12 +119,15 @@ npm run dev                # Start wrangler dev server (builds Docker on first r
 1. Make your changes
 
 2. **Run code quality checks after any meaningful change:**
+
    ```bash
    npm run check    # Runs Biome linter + typecheck
    ```
+
    This catches type errors that often expose real issues with code changes. Fix any issues before proceeding.
 
 3. **Run unit tests to verify your changes:**
+
    ```bash
    npm test
    ```
@@ -129,9 +135,10 @@ npm run dev                # Start wrangler dev server (builds Docker on first r
 4. Create a changeset if your change affects published packages:
 
    Create a new file in `.changeset/` directory (e.g., `.changeset/your-feature-name.md`):
+
    ```markdown
    ---
-   "@cloudflare/sandbox": patch
+   '@cloudflare/sandbox': patch
    ---
 
    Brief description of your change
@@ -159,6 +166,7 @@ npm run dev                # Start wrangler dev server (builds Docker on first r
 **Tests are critical** - they verify functionality at multiple levels and run on every PR.
 
 **Development practice:** After making any meaningful code change:
+
 1. Run `npm run check` to catch type errors (these often expose real issues)
 2. Run `npm test` to verify unit tests pass
 3. Run E2E tests if touching core functionality
@@ -177,6 +185,7 @@ npm test -w @repo/sandbox-container      # Container runtime tests (Bun)
 ```
 
 **Architecture:**
+
 - **SDK tests** (`packages/sandbox/tests/`) run in Workers runtime via `@cloudflare/vitest-pool-workers`
 - **Container tests** (`packages/sandbox-container/tests/`) run in Bun runtime
 - Mock container for isolated testing (SDK), no Docker required
@@ -200,6 +209,7 @@ npm run test:e2e -- -- tests/e2e/git-clone-workflow.test.ts -t 'should handle cl
 ```
 
 **Architecture:**
+
 - Tests in `tests/e2e/` run against real Cloudflare Workers + Docker containers
 - **In CI**: Tests deploy to actual Cloudflare infrastructure and run against deployed workers
 - **Locally**: Each test file spawns its own `wrangler dev` instance
@@ -208,6 +218,7 @@ npm run test:e2e -- -- tests/e2e/git-clone-workflow.test.ts -t 'should handle cl
 - Longer timeouts (2min per test) for container operations
 
 **CI behavior:** E2E tests in CI (`pullrequest.yml`):
+
 1. Build Docker image locally (`npm run docker:local`)
 2. Deploy test worker to Cloudflare with unique name (pr-XXX)
 3. Run E2E tests against deployed worker URL
@@ -238,6 +249,7 @@ Entry point: `packages/sandbox-container/src/index.ts` starts Bun HTTP server on
 ## Monorepo Structure
 
 Uses npm workspaces + Turbo:
+
 - `packages/sandbox`: Main SDK package
 - `packages/shared`: Shared types
 - `packages/sandbox-container`: Container runtime
@@ -251,6 +263,7 @@ Turbo handles task orchestration (`turbo.json`) with dependency-aware builds.
 ### TypeScript
 
 **Never use the `any` type** unless absolutely necessary (which should be a final resort):
+
 - First, look for existing types that can be reused appropriately
 - If no suitable type exists, define a proper type in the right location:
   - Shared types → `packages/shared/src/types.ts` or relevant subdirectory
@@ -274,6 +287,7 @@ Turbo handles task orchestration (`turbo.json`) with dependency-aware builds.
 **Be concise, not verbose.** Every word should add value. Avoid unnecessary details about implementation mechanics - focus on what changed and why it matters.
 
 Example:
+
 ```
 Add session isolation for concurrent executions
 
@@ -289,25 +303,29 @@ different users share the same sandbox instance.
 ## Important Patterns
 
 ### Error Handling
+
 - Custom error classes in `packages/shared/src/errors/`
 - Errors flow from container → Sandbox DO → Worker
 - Use `ErrorCode` enum for consistent error types
 
 ### Logging
+
 - Centralized logger from `@repo/shared`
 - Structured logging with component context
 - Configurable via `SANDBOX_LOG_LEVEL` and `SANDBOX_LOG_FORMAT` env vars
 
 ### Session Management
+
 - Sessions isolate execution contexts (working directory, env vars, etc.)
 - Default session created automatically
 - Multiple sessions per sandbox supported
 
 ### Port Management
+
 - Expose internal services via preview URLs
 - Token-based authentication for exposed ports
 - Automatic cleanup on sandbox sleep
-- **Production requirement**: Preview URLs require custom domain with wildcard DNS (*.yourdomain.com)
+- **Production requirement**: Preview URLs require custom domain with wildcard DNS (\*.yourdomain.com)
   - `.workers.dev` domains do NOT support the subdomain patterns needed for preview URLs
   - See Cloudflare docs for "Deploy to Production" guide when ready to expose services
 
@@ -328,12 +346,14 @@ different users share the same sandbox instance.
 ## Container Base Image
 
 The container runtime uses Ubuntu 22.04 with:
+
 - Python 3.11 (with matplotlib, numpy, pandas, ipython)
 - Node.js 20 LTS
 - Bun 1.x runtime (powers the container HTTP server)
 - Git, curl, wget, jq, and other common utilities
 
 When modifying the base image (`packages/sandbox/Dockerfile`), remember:
+
 - Keep images lean - every MB affects cold start time
 - Pin versions for reproducibility
 - Clean up package manager caches to reduce image size

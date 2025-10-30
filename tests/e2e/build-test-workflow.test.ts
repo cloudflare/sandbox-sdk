@@ -1,6 +1,11 @@
 import { describe, test, expect, beforeAll, afterAll, vi } from 'vitest';
 import { getTestWorkerUrl, WranglerDevRunner } from './helpers/wrangler-runner';
-import { createSandboxId, createTestHeaders, fetchWithStartup, cleanupSandbox } from './helpers/test-fixtures';
+import {
+  createSandboxId,
+  createTestHeaders,
+  fetchWithStartup,
+  cleanupSandbox
+} from './helpers/test-fixtures';
 
 /**
  * Build and Test Workflow Integration Tests
@@ -45,14 +50,14 @@ describe('Build and Test Workflow', () => {
       // Step 1: Execute simple command
       // Use vi.waitFor to handle container startup time
       const echoResponse = await vi.waitFor(
-        async () => fetchWithStartup(`${workerUrl}/api/execute`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            command: 'echo "Hello from sandbox"',
-
+        async () =>
+          fetchWithStartup(`${workerUrl}/api/execute`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              command: 'echo "Hello from sandbox"'
+            })
           }),
-        }),
         { timeout: 90000, interval: 1000 }
       );
 
@@ -67,9 +72,8 @@ describe('Build and Test Workflow', () => {
         headers,
         body: JSON.stringify({
           path: '/test-file.txt',
-          content: 'Integration test content',
-
-        }),
+          content: 'Integration test content'
+        })
       });
 
       expect(writeResponse.status).toBe(200);
@@ -81,9 +85,8 @@ describe('Build and Test Workflow', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          path: '/test-file.txt',
-
-        }),
+          path: '/test-file.txt'
+        })
       });
 
       expect(readResponse.status).toBe(200);
@@ -95,8 +98,8 @@ describe('Build and Test Workflow', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: 'pwd',
-        }),
+          command: 'pwd'
+        })
       });
 
       expect(pwdResponse.status).toBe(200);
@@ -111,8 +114,8 @@ describe('Build and Test Workflow', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: 'exit 1',
-        }),
+          command: 'exit 1'
+        })
       });
 
       // Should return 500 error since shell terminated unexpectedly

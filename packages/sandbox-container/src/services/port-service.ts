@@ -5,7 +5,7 @@ import type {
   InvalidPortContext,
   PortAlreadyExposedContext,
   PortErrorContext,
-  PortNotExposedContext,
+  PortNotExposedContext
 } from '@repo/shared/errors';
 import { ErrorCode } from '@repo/shared/errors';
 import type { PortInfo, ServiceResult } from '../core/types';
@@ -42,7 +42,7 @@ export class InMemoryPortStore implements PortStore {
   async list(): Promise<Array<{ port: number; info: PortInfo }>> {
     return Array.from(this.exposedPorts.entries()).map(([port, info]) => ({
       port,
-      info,
+      info
     }));
   }
 
@@ -81,7 +81,10 @@ export class PortService {
     this.startCleanupProcess();
   }
 
-  async exposePort(port: number, name?: string): Promise<ServiceResult<PortInfo>> {
+  async exposePort(
+    port: number,
+    name?: string
+  ): Promise<ServiceResult<PortInfo>> {
     try {
       // Validate port number
       const validation = this.security.validatePort(port);
@@ -89,13 +92,15 @@ export class PortService {
         return {
           success: false,
           error: {
-            message: `Invalid port number ${port}: ${validation.errors.join(', ')}`,
+            message: `Invalid port number ${port}: ${validation.errors.join(
+              ', '
+            )}`,
             code: ErrorCode.INVALID_PORT_NUMBER,
             details: {
               port,
               reason: validation.errors.join(', ')
-            } satisfies InvalidPortContext,
-          },
+            } satisfies InvalidPortContext
+          }
         };
       }
 
@@ -105,13 +110,15 @@ export class PortService {
         return {
           success: false,
           error: {
-            message: `Port ${port}${existing.name ? ` (${existing.name})` : ''} is already exposed`,
+            message: `Port ${port}${
+              existing.name ? ` (${existing.name})` : ''
+            } is already exposed`,
             code: ErrorCode.PORT_ALREADY_EXPOSED,
             details: {
               port,
               portName: existing.name
-            } satisfies PortAlreadyExposedContext,
-          },
+            } satisfies PortAlreadyExposedContext
+          }
         };
       }
 
@@ -121,23 +128,30 @@ export class PortService {
 
       return {
         success: true,
-        data: portInfo,
+        data: portInfo
       };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Failed to expose port', error instanceof Error ? error : undefined, { port, name });
+      const errorMessage =
+        error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error(
+        'Failed to expose port',
+        error instanceof Error ? error : undefined,
+        { port, name }
+      );
 
       return {
         success: false,
         error: {
-          message: `Failed to expose port ${port}${name ? ` (${name})` : ''}: ${errorMessage}`,
+          message: `Failed to expose port ${port}${
+            name ? ` (${name})` : ''
+          }: ${errorMessage}`,
           code: ErrorCode.PORT_OPERATION_ERROR,
           details: {
             port,
             portName: name,
             stderr: errorMessage
-          } satisfies PortErrorContext,
-        },
+          } satisfies PortErrorContext
+        }
       };
     }
   }
@@ -154,19 +168,24 @@ export class PortService {
             code: ErrorCode.PORT_NOT_EXPOSED,
             details: {
               port
-            } satisfies PortNotExposedContext,
-          },
+            } satisfies PortNotExposedContext
+          }
         };
       }
 
       await this.store.unexpose(port);
 
       return {
-        success: true,
+        success: true
       };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Failed to unexpose port', error instanceof Error ? error : undefined, { port });
+      const errorMessage =
+        error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error(
+        'Failed to unexpose port',
+        error instanceof Error ? error : undefined,
+        { port }
+      );
 
       return {
         success: false,
@@ -176,8 +195,8 @@ export class PortService {
           details: {
             port,
             stderr: errorMessage
-          } satisfies PortErrorContext,
-        },
+          } satisfies PortErrorContext
+        }
       };
     }
   }
@@ -185,15 +204,19 @@ export class PortService {
   async getExposedPorts(): Promise<ServiceResult<PortInfo[]>> {
     try {
       const ports = await this.store.list();
-      const portInfos = ports.map(p => p.info);
+      const portInfos = ports.map((p) => p.info);
 
       return {
         success: true,
-        data: portInfos,
+        data: portInfos
       };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Failed to list exposed ports', error instanceof Error ? error : undefined);
+      const errorMessage =
+        error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error(
+        'Failed to list exposed ports',
+        error instanceof Error ? error : undefined
+      );
 
       return {
         success: false,
@@ -201,10 +224,10 @@ export class PortService {
           message: `Failed to list exposed ports: ${errorMessage}`,
           code: ErrorCode.PORT_OPERATION_ERROR,
           details: {
-            port: 0,  // No specific port for list operation
+            port: 0, // No specific port for list operation
             stderr: errorMessage
-          } satisfies PortErrorContext,
-        },
+          } satisfies PortErrorContext
+        }
       };
     }
   }
@@ -221,18 +244,23 @@ export class PortService {
             code: ErrorCode.PORT_NOT_EXPOSED,
             details: {
               port
-            } satisfies PortNotExposedContext,
-          },
+            } satisfies PortNotExposedContext
+          }
         };
       }
 
       return {
         success: true,
-        data: portInfo,
+        data: portInfo
       };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Failed to get port info', error instanceof Error ? error : undefined, { port });
+      const errorMessage =
+        error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error(
+        'Failed to get port info',
+        error instanceof Error ? error : undefined,
+        { port }
+      );
 
       return {
         success: false,
@@ -242,8 +270,8 @@ export class PortService {
           details: {
             port,
             stderr: errorMessage
-          } satisfies PortErrorContext,
-        },
+          } satisfies PortErrorContext
+        }
       };
     }
   }
@@ -257,23 +285,26 @@ export class PortService {
           JSON.stringify({
             error: 'Port not found',
             message: `Port ${port} is not exposed`,
-            port,
+            port
           }),
           {
             status: 404,
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json' }
           }
         );
       }
 
       // Parse proxy path using manager
-      const { targetPath, targetUrl } = this.manager.parseProxyPath(request.url, port);
+      const { targetPath, targetUrl } = this.manager.parseProxyPath(
+        request.url,
+        port
+      );
 
       // Forward the request to the local service
       const proxyRequest = new Request(targetUrl, {
         method: request.method,
         headers: request.headers,
-        body: request.body,
+        body: request.body
       });
 
       const response = await fetch(proxyRequest);
@@ -281,21 +312,26 @@ export class PortService {
       return new Response(response.body, {
         status: response.status,
         statusText: response.statusText,
-        headers: response.headers,
+        headers: response.headers
       });
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Proxy request failed', error instanceof Error ? error : undefined, { port });
+      const errorMessage =
+        error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error(
+        'Proxy request failed',
+        error instanceof Error ? error : undefined,
+        { port }
+      );
 
       return new Response(
         JSON.stringify({
           error: 'Proxy error',
           message: `Failed to proxy request to port ${port}: ${errorMessage}`,
-          port,
+          port
         }),
         {
           status: 502,
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json' }
         }
       );
     }
@@ -312,8 +348,8 @@ export class PortService {
             code: ErrorCode.PORT_NOT_EXPOSED,
             details: {
               port
-            } satisfies PortNotExposedContext,
-          },
+            } satisfies PortNotExposedContext
+          }
         };
       }
 
@@ -322,11 +358,16 @@ export class PortService {
       await this.store.expose(port, updatedInfo);
 
       return {
-        success: true,
+        success: true
       };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Failed to mark port as inactive', error instanceof Error ? error : undefined, { port });
+      const errorMessage =
+        error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error(
+        'Failed to mark port as inactive',
+        error instanceof Error ? error : undefined,
+        { port }
+      );
 
       return {
         success: false,
@@ -336,8 +377,8 @@ export class PortService {
           details: {
             port,
             stderr: errorMessage
-          } satisfies PortErrorContext,
-        },
+          } satisfies PortErrorContext
+        }
       };
     }
   }
@@ -349,11 +390,15 @@ export class PortService {
 
       return {
         success: true,
-        data: cleaned,
+        data: cleaned
       };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Failed to cleanup ports', error instanceof Error ? error : undefined);
+      const errorMessage =
+        error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error(
+        'Failed to cleanup ports',
+        error instanceof Error ? error : undefined
+      );
 
       return {
         success: false,
@@ -361,18 +406,21 @@ export class PortService {
           message: `Failed to cleanup inactive ports: ${errorMessage}`,
           code: ErrorCode.PORT_OPERATION_ERROR,
           details: {
-            port: 0,  // No specific port for cleanup operation
+            port: 0, // No specific port for cleanup operation
             stderr: errorMessage
-          } satisfies PortErrorContext,
-        },
+          } satisfies PortErrorContext
+        }
       };
     }
   }
 
   private startCleanupProcess(): void {
-    this.cleanupInterval = setInterval(async () => {
-      await this.cleanupInactivePorts();
-    }, 60 * 60 * 1000); // 1 hour
+    this.cleanupInterval = setInterval(
+      async () => {
+        await this.cleanupInactivePorts();
+      },
+      60 * 60 * 1000
+    ); // 1 hour
   }
 
   // Cleanup method for graceful shutdown

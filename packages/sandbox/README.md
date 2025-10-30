@@ -144,7 +144,6 @@ See the [examples directory](./examples) for complete working examples:
 
 - [Minimal](./examples/minimal) - Basic sandbox setup
 - [Code Interpreter](./examples/code-interpreter) - Use sandbox as an interpreter tool with gpt-oss
-- [Complete](./examples/basic) - Huge example integrated with every sandbox feature
 
 ## Status
 

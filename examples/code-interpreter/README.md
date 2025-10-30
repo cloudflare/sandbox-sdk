@@ -50,18 +50,21 @@ curl -X POST http://localhost:8787/foo \
 ## Setup
 
 1. From the project root, run
+
 ```bash
 npm install
 npm run build
 ```
 
 2. In this directory, create `.dev.vars` file with your Cloudflare credentials:
+
 ```
 CLOUDFLARE_API_KEY=your_api_key_here
 CLOUDFLARE_ACCOUNT_ID=your_account_id_here
 ```
 
 3. Run locally:
+
 ```bash
 cd examples/code-interpreter # if you're not already here
 npm run dev

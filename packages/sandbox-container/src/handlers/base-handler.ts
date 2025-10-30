@@ -5,13 +5,9 @@ import {
   type ErrorResponse,
   getHttpStatus,
   getSuggestion,
-  type OperationType,
-} from "@repo/shared/errors";
-import type {
-  Handler,
-  RequestContext,
-  ServiceError,
-} from "../core/types";
+  type OperationType
+} from '@repo/shared/errors';
+import type { Handler, RequestContext, ServiceError } from '../core/types';
 
 export abstract class BaseHandler<TRequest, TResponse>
   implements Handler<TRequest, TResponse>
@@ -35,9 +31,9 @@ export abstract class BaseHandler<TRequest, TResponse>
     return new Response(JSON.stringify(responseData), {
       status: statusCode,
       headers: {
-        "Content-Type": "application/json",
-        ...context.corsHeaders,
-      },
+        'Content-Type': 'application/json',
+        ...context.corsHeaders
+      }
     });
   }
 
@@ -54,9 +50,9 @@ export abstract class BaseHandler<TRequest, TResponse>
     return new Response(JSON.stringify(errorResponse), {
       status: errorResponse.httpStatus,
       headers: {
-        "Content-Type": "application/json",
-        ...context.corsHeaders,
-      },
+        'Content-Type': 'application/json',
+        ...context.corsHeaders
+      }
     });
   }
 
@@ -73,10 +69,12 @@ export abstract class BaseHandler<TRequest, TResponse>
       code: errorCode,
       message: serviceError.message,
       context: serviceError.details || {},
-      operation: operation || (serviceError.details?.operation as OperationType | undefined),
+      operation:
+        operation ||
+        (serviceError.details?.operation as OperationType | undefined),
       httpStatus: getHttpStatus(errorCode),
       timestamp: new Date().toISOString(),
-      suggestion: getSuggestion(errorCode, serviceError.details || {}),
+      suggestion: getSuggestion(errorCode, serviceError.details || {})
     };
   }
 
@@ -90,14 +88,16 @@ export abstract class BaseHandler<TRequest, TResponse>
       return body as T;
     } catch (error) {
       throw new Error(
-        `Failed to parse request body: ${error instanceof Error ? error.message : 'Invalid JSON'}`
+        `Failed to parse request body: ${
+          error instanceof Error ? error.message : 'Invalid JSON'
+        }`
       );
     }
   }
 
   protected extractPathParam(pathname: string, position: number): string {
-    const segments = pathname.split("/");
-    return segments[position] || "";
+    const segments = pathname.split('/');
+    return segments[position] || '';
   }
 
   protected extractQueryParam(request: Request, param: string): string | null {

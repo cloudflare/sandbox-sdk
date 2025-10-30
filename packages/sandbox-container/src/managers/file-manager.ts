@@ -49,7 +49,9 @@ export class FileManager {
     const parts = output.trim().split(':');
 
     if (parts.length < 4) {
-      throw new Error(`Invalid stat output format: expected 4 parts, got ${parts.length}`);
+      throw new Error(
+        `Invalid stat output format: expected 4 parts, got ${parts.length}`
+      );
     }
 
     const [type, size, modified, created] = parts;
@@ -62,7 +64,7 @@ export class FileManager {
       isDirectory: normalizedType.includes('directory'),
       size: parseInt(size, 10),
       modified: new Date(parseInt(modified, 10) * 1000),
-      created: new Date(parseInt(created, 10) * 1000),
+      created: new Date(parseInt(created, 10) * 1000)
     };
   }
 
@@ -85,11 +87,15 @@ export class FileManager {
    * Build stat command arguments for getting file stats
    * Uses format: type:size:modified:created
    */
-  buildStatArgs(path: string): { command: string; args: string[]; format: string } {
+  buildStatArgs(path: string): {
+    command: string;
+    args: string[];
+    format: string;
+  } {
     return {
       command: 'stat',
       args: ['-c', '%F:%s:%Y:%W', path],
-      format: 'type:size:modified:created',
+      format: 'type:size:modified:created'
     };
   }
 
@@ -105,7 +111,10 @@ export class FileManager {
       return 'FILE_NOT_FOUND';
     }
 
-    if (lowerMessage.includes('permission') || lowerMessage.includes('eacces')) {
+    if (
+      lowerMessage.includes('permission') ||
+      lowerMessage.includes('eacces')
+    ) {
       return 'PERMISSION_DENIED';
     }
 
@@ -117,7 +126,10 @@ export class FileManager {
       return 'DISK_FULL';
     }
 
-    if (lowerMessage.includes('directory not empty') || lowerMessage.includes('enotempty')) {
+    if (
+      lowerMessage.includes('directory not empty') ||
+      lowerMessage.includes('enotempty')
+    ) {
       return 'DIR_NOT_EMPTY';
     }
 
@@ -173,7 +185,7 @@ export class FileManager {
 
     return {
       valid: errors.length === 0,
-      errors,
+      errors
     };
   }
 
@@ -186,14 +198,14 @@ export class FileManager {
         return {
           operation: 'read',
           paths: [paths[0]],
-          requiresCheck: true,
+          requiresCheck: true
         };
 
       case 'write':
         return {
           operation: 'write',
           paths: [paths[0]],
-          requiresCheck: false,
+          requiresCheck: false
         };
 
       case 'delete':
@@ -203,8 +215,8 @@ export class FileManager {
           requiresCheck: true,
           command: {
             executable: 'rm',
-            args: [paths[0]],
-          },
+            args: [paths[0]]
+          }
         };
 
       case 'rename':
@@ -214,29 +226,29 @@ export class FileManager {
           requiresCheck: true,
           command: {
             executable: 'mv',
-            args: [paths[0], paths[1]],
-          },
+            args: [paths[0], paths[1]]
+          }
         };
 
       case 'move':
         return {
           operation: 'move',
           paths: [paths[0], paths[1]],
-          requiresCheck: true,
+          requiresCheck: true
         };
 
       case 'mkdir':
         return {
           operation: 'mkdir',
           paths: [paths[0]],
-          requiresCheck: false,
+          requiresCheck: false
         };
 
       case 'stat':
         return {
           operation: 'stat',
           paths: [paths[0]],
-          requiresCheck: true,
+          requiresCheck: true
         };
 
       default:
@@ -282,7 +294,7 @@ export class FileManager {
       move: 'move',
       mkdir: 'create directory',
       stat: 'get stats for',
-      exists: 'check existence of',
+      exists: 'check existence of'
     };
 
     const verb = operationVerbs[operation] || 'operate on';

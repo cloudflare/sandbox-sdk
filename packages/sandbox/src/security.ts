@@ -10,7 +10,10 @@
  */
 
 export class SecurityError extends Error {
-  constructor(message: string, public readonly code?: string) {
+  constructor(
+    message: string,
+    public readonly code?: string
+  ) {
     super(message);
     this.name = 'SecurityError';
   }
@@ -34,7 +37,7 @@ export function validatePort(port: number): boolean {
   // Exclude ports reserved by our system
   const reservedPorts = [
     3000, // Control plane port
-    8787, // Common wrangler dev port
+    8787 // Common wrangler dev port
   ];
 
   if (reservedPorts.includes(port)) {
@@ -67,8 +70,13 @@ export function sanitizeSandboxId(id: string): string {
 
   // Prevent reserved names that cause technical conflicts
   const reservedNames = [
-    'www', 'api', 'admin', 'root', 'system',
-    'cloudflare', 'workers'
+    'www',
+    'api',
+    'admin',
+    'root',
+    'system',
+    'cloudflare',
+    'workers'
   ];
 
   const lowerCaseId = id.toLowerCase();
@@ -82,7 +90,6 @@ export function sanitizeSandboxId(id: string): string {
   return id;
 }
 
-
 /**
  * Validates language for code interpreter
  * Only allows supported languages
@@ -92,7 +99,15 @@ export function validateLanguage(language: string | undefined): void {
     return; // undefined is valid, will default to python
   }
 
-  const supportedLanguages = ['python', 'python3', 'javascript', 'js', 'node', 'typescript', 'ts'];
+  const supportedLanguages = [
+    'python',
+    'python3',
+    'javascript',
+    'js',
+    'node',
+    'typescript',
+    'ts'
+  ];
   const normalized = language.toLowerCase();
 
   if (!supportedLanguages.includes(normalized)) {

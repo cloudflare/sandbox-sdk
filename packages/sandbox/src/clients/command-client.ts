@@ -1,5 +1,9 @@
 import { BaseHttpClient } from './base-client';
-import type { BaseApiResponse, HttpClientOptions, SessionRequest } from './types';
+import type {
+  BaseApiResponse,
+  HttpClientOptions,
+  SessionRequest
+} from './types';
 
 /**
  * Request interface for command execution
@@ -23,7 +27,6 @@ export interface ExecuteResponse extends BaseApiResponse {
  * Client for command execution operations
  */
 export class CommandClient extends BaseHttpClient {
-
   /**
    * Execute a command and return the complete result
    * @param command - The command to execute
@@ -42,10 +45,7 @@ export class CommandClient extends BaseHttpClient {
         ...(timeoutMs !== undefined && { timeoutMs })
       };
 
-      const response = await this.post<ExecuteResponse>(
-        '/api/execute',
-        data
-      );
+      const response = await this.post<ExecuteResponse>('/api/execute', data);
 
       this.logSuccess(
         'Command executed',
@@ -90,9 +90,9 @@ export class CommandClient extends BaseHttpClient {
       const response = await this.doFetch('/api/execute/stream', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
+          'Content-Type': 'application/json'
         },
-        body: JSON.stringify(data),
+        body: JSON.stringify(data)
       });
 
       const stream = await this.handleStreamResponse(response);

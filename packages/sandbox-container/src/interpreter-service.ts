@@ -1,6 +1,10 @@
-import { randomUUID } from "node:crypto";
-import type { Logger } from "@repo/shared";
-import { type InterpreterLanguage, processPool, type RichOutput } from "./runtime/process-pool";
+import { randomUUID } from 'node:crypto';
+import type { Logger } from '@repo/shared';
+import {
+  type InterpreterLanguage,
+  processPool,
+  type RichOutput
+} from './runtime/process-pool';
 
 export interface CreateContextRequest {
   language?: string;
@@ -29,7 +33,7 @@ export class InterpreterNotReadyError extends Error {
     super(message);
     this.progress = progress;
     this.retryAfter = retryAfter;
-    this.name = "InterpreterNotReadyError";
+    this.name = 'InterpreterNotReadyError';
   }
 }
 
@@ -45,20 +49,20 @@ export class InterpreterService {
     return {
       ready: true,
       initializing: false,
-      progress: 100,
+      progress: 100
     };
   }
 
   async createContext(request: CreateContextRequest): Promise<Context> {
     const id = randomUUID();
-    const language = this.mapLanguage(request.language || "python");
+    const language = this.mapLanguage(request.language || 'python');
 
     const context: Context = {
       id,
       language,
-      cwd: request.cwd || "/workspace",
+      cwd: request.cwd || '/workspace',
       createdAt: new Date().toISOString(),
-      lastUsed: new Date().toISOString(),
+      lastUsed: new Date().toISOString()
     };
 
     this.contexts.set(id, context);
@@ -87,11 +91,11 @@ export class InterpreterService {
     if (!context) {
       return new Response(
         JSON.stringify({
-          error: `Context ${contextId} not found`,
+          error: `Context ${contextId} not found`
         }),
         {
           status: 404,
-          headers: { "Content-Type": "application/json" },
+          headers: { 'Content-Type': 'application/json' }
         }
       );
     }
@@ -120,8 +124,8 @@ export class InterpreterService {
             controller.enqueue(
               encoder.encode(
                 self.formatSSE({
-                  type: "stdout",
-                  text: result.stdout,
+                  type: 'stdout',
+                  text: result.stdout
                 })
               )
             );
@@ -131,8 +135,8 @@ export class InterpreterService {
             controller.enqueue(
               encoder.encode(
                 self.formatSSE({
-                  type: "stderr",
-                  text: result.stderr,
+                  type: 'stderr',
+                  text: result.stderr
                 })
               )
             );
@@ -144,9 +148,9 @@ export class InterpreterService {
               controller.enqueue(
                 encoder.encode(
                   self.formatSSE({
-                    type: "result",
+                    type: 'result',
                     ...outputData,
-                    metadata: output.metadata || {},
+                    metadata: output.metadata || {}
                   })
                 )
               );
@@ -157,8 +161,8 @@ export class InterpreterService {
             controller.enqueue(
               encoder.encode(
                 self.formatSSE({
-                  type: "execution_complete",
-                  execution_count: 1,
+                  type: 'execution_complete',
+                  execution_count: 1
                 })
               )
             );
@@ -166,10 +170,12 @@ export class InterpreterService {
             controller.enqueue(
               encoder.encode(
                 self.formatSSE({
-                  type: "error",
-                  ename: result.error.type || "ExecutionError",
-                  evalue: result.error.message || "Code execution failed",
-                  traceback: result.error.traceback ? result.error.traceback.split('\n') : [],
+                  type: 'error',
+                  ename: result.error.type || 'ExecutionError',
+                  evalue: result.error.message || 'Code execution failed',
+                  traceback: result.error.traceback
+                    ? result.error.traceback.split('\n')
+                    : []
                 })
               )
             );
@@ -177,10 +183,10 @@ export class InterpreterService {
             controller.enqueue(
               encoder.encode(
                 self.formatSSE({
-                  type: "error",
-                  ename: "ExecutionError",
-                  evalue: result.stderr || "Code execution failed",
-                  traceback: [],
+                  type: 'error',
+                  ename: 'ExecutionError',
+                  evalue: result.stderr || 'Code execution failed',
+                  traceback: []
                 })
               )
             );
@@ -196,25 +202,25 @@ export class InterpreterService {
           controller.enqueue(
             encoder.encode(
               self.formatSSE({
-                type: "error",
-                ename: "InternalError",
+                type: 'error',
+                ename: 'InternalError',
                 evalue: error instanceof Error ? error.message : String(error),
-                traceback: [],
+                traceback: []
               })
             )
           );
 
           controller.close();
         }
-      },
+      }
     });
 
     return new Response(stream, {
       headers: {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        Connection: "keep-alive",
-      },
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive'
+      }
     });
   }
 
@@ -222,21 +228,21 @@ export class InterpreterService {
     const normalized = language.toLowerCase();
 
     switch (normalized) {
-      case "python":
-      case "python3":
-        return "python";
-      case "javascript":
-      case "js":
-      case "node":
-        return "javascript";
-      case "typescript":
-      case "ts":
-        return "typescript";
+      case 'python':
+      case 'python3':
+        return 'python';
+      case 'javascript':
+      case 'js':
+      case 'node':
+        return 'javascript';
+      case 'typescript':
+      case 'ts':
+        return 'typescript';
       default:
         this.logger.warn('Unknown language, defaulting to python', {
           requestedLanguage: language
         });
-        return "python";
+        return 'python';
     }
   }
 
@@ -244,31 +250,34 @@ export class InterpreterService {
     const result: Record<string, unknown> = {};
 
     switch (output.type) {
-      case "image":
+      case 'image':
         result.png = output.data;
         break;
-      case "jpeg":
+      case 'jpeg':
         result.jpeg = output.data;
         break;
-      case "svg":
+      case 'svg':
         result.svg = output.data;
         break;
-      case "html":
+      case 'html':
         result.html = output.data;
         break;
-      case "json":
-        result.json = typeof output.data === 'string' ? JSON.parse(output.data) : output.data;
+      case 'json':
+        result.json =
+          typeof output.data === 'string'
+            ? JSON.parse(output.data)
+            : output.data;
         break;
-      case "latex":
+      case 'latex':
         result.latex = output.data;
         break;
-      case "markdown":
+      case 'markdown':
         result.markdown = output.data;
         break;
-      case "javascript":
+      case 'javascript':
         result.javascript = output.data;
         break;
-      case "text":
+      case 'text':
         result.text = output.data;
         break;
       default:

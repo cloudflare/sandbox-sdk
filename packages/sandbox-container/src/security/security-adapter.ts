@@ -9,7 +9,7 @@ export class SecurityServiceAdapter {
     const result = this.securityService.validatePath(path);
     return {
       isValid: result.isValid,
-      errors: result.errors.map(e => e.message)
+      errors: result.errors.map((e) => e.message)
     };
   }
 
@@ -18,16 +18,16 @@ export class SecurityServiceAdapter {
     const result = this.securityService.validatePort(port);
     return {
       isValid: result.isValid,
-      errors: result.errors.map(e => e.message)
+      errors: result.errors.map((e) => e.message)
     };
   }
 
-  // Git service interface  
+  // Git service interface
   validateGitUrl(url: string): { isValid: boolean; errors: string[] } {
     const result = this.securityService.validateGitUrl(url);
     return {
       isValid: result.isValid,
-      errors: result.errors.map(e => e.message)
+      errors: result.errors.map((e) => e.message)
     };
   }
 
@@ -36,7 +36,7 @@ export class SecurityServiceAdapter {
     const result = this.securityService.validateCommand(command);
     return {
       isValid: result.isValid,
-      errors: result.errors.map(e => e.message)
+      errors: result.errors.map((e) => e.message)
     };
   }
 }

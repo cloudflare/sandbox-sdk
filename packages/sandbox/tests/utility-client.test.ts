@@ -5,12 +5,12 @@ import type {
   VersionResponse
 } from '../src/clients';
 import { UtilityClient } from '../src/clients/utility-client';
-import {
-  SandboxError
-} from '../src/errors';
+import { SandboxError } from '../src/errors';
 
 // Mock data factory for creating test responses
-const mockPingResponse = (overrides: Partial<PingResponse> = {}): PingResponse => ({
+const mockPingResponse = (
+  overrides: Partial<PingResponse> = {}
+): PingResponse => ({
   success: true,
   message: 'pong',
   uptime: 12345,
@@ -18,7 +18,10 @@ const mockPingResponse = (overrides: Partial<PingResponse> = {}): PingResponse =
   ...overrides
 });
 
-const mockCommandsResponse = (commands: string[], overrides: Partial<CommandsResponse> = {}): CommandsResponse => ({
+const mockCommandsResponse = (
+  commands: string[],
+  overrides: Partial<CommandsResponse> = {}
+): CommandsResponse => ({
   success: true,
   availableCommands: commands,
   count: commands.length,
@@ -26,7 +29,10 @@ const mockCommandsResponse = (commands: string[], overrides: Partial<CommandsRes
   ...overrides
 });
 
-const mockVersionResponse = (version: string = '0.4.5', overrides: Partial<VersionResponse> = {}): VersionResponse => ({
+const mockVersionResponse = (
+  version: string = '0.4.5',
+  overrides: Partial<VersionResponse> = {}
+): VersionResponse => ({
   success: true,
   version,
   timestamp: '2023-01-01T00:00:00Z',
@@ -45,7 +51,7 @@ describe('UtilityClient', () => {
 
     client = new UtilityClient({
       baseUrl: 'http://test.com',
-      port: 3000,
+      port: 3000
     });
   });
 
@@ -55,10 +61,9 @@ describe('UtilityClient', () => {
 
   describe('health checking', () => {
     it('should check sandbox health successfully', async () => {
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify(mockPingResponse()),
-        { status: 200 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(mockPingResponse()), { status: 200 })
+      );
 
       const result = await client.ping();
 
@@ -69,10 +74,11 @@ describe('UtilityClient', () => {
       const messages = ['pong', 'alive', 'ok'];
 
       for (const message of messages) {
-        mockFetch.mockResolvedValueOnce(new Response(
-          JSON.stringify(mockPingResponse({ message })),
-          { status: 200 }
-        ));
+        mockFetch.mockResolvedValueOnce(
+          new Response(JSON.stringify(mockPingResponse({ message })), {
+            status: 200
+          })
+        );
 
         const result = await client.ping();
         expect(result).toBe(message);
@@ -87,11 +93,11 @@ describe('UtilityClient', () => {
       const healthChecks = await Promise.all([
         client.ping(),
         client.ping(),
-        client.ping(),
+        client.ping()
       ]);
 
       expect(healthChecks).toHaveLength(3);
-      healthChecks.forEach(result => {
+      healthChecks.forEach((result) => {
         expect(result).toBe('pong');
       });
 
@@ -104,10 +110,9 @@ describe('UtilityClient', () => {
         code: 'HEALTH_CHECK_FAILED'
       };
 
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify(errorResponse),
-        { status: 503 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(errorResponse), { status: 503 })
+      );
 
       await expect(client.ping()).rejects.toThrow();
     });
@@ -123,10 +128,11 @@ describe('UtilityClient', () => {
     it('should discover available system commands', async () => {
       const systemCommands = ['ls', 'cat', 'echo', 'grep', 'find'];
 
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify(mockCommandsResponse(systemCommands)),
-        { status: 200 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(mockCommandsResponse(systemCommands)), {
+          status: 200
+        })
+      );
 
       const result = await client.getCommands();
 
@@ -139,10 +145,11 @@ describe('UtilityClient', () => {
     it('should handle minimal command environments', async () => {
       const minimalCommands = ['sh', 'echo', 'cat'];
 
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify(mockCommandsResponse(minimalCommands)),
-        { status: 200 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(mockCommandsResponse(minimalCommands)), {
+          status: 200
+        })
+      );
 
       const result = await client.getCommands();
 
@@ -153,10 +160,11 @@ describe('UtilityClient', () => {
     it('should handle large command environments', async () => {
       const richCommands = Array.from({ length: 150 }, (_, i) => `cmd_${i}`);
 
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify(mockCommandsResponse(richCommands)),
-        { status: 200 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(mockCommandsResponse(richCommands)), {
+          status: 200
+        })
+      );
 
       const result = await client.getCommands();
 
@@ -165,10 +173,9 @@ describe('UtilityClient', () => {
     });
 
     it('should handle empty command environments', async () => {
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify(mockCommandsResponse([])),
-        { status: 200 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(mockCommandsResponse([])), { status: 200 })
+      );
 
       const result = await client.getCommands();
 
@@ -182,10 +189,9 @@ describe('UtilityClient', () => {
         code: 'PERMISSION_DENIED'
       };
 
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify(errorResponse),
-        { status: 403 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(errorResponse), { status: 403 })
+      );
 
       await expect(client.getCommands()).rejects.toThrow();
     });
@@ -193,10 +199,9 @@ describe('UtilityClient', () => {
 
   describe('error handling and resilience', () => {
     it('should handle malformed server responses gracefully', async () => {
-      mockFetch.mockResolvedValue(new Response(
-        'invalid json {',
-        { status: 200 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response('invalid json {', { status: 200 })
+      );
 
       await expect(client.ping()).rejects.toThrow(SandboxError);
     });
@@ -210,10 +215,9 @@ describe('UtilityClient', () => {
 
     it('should handle partial service failures', async () => {
       // First call (ping) succeeds
-      mockFetch.mockResolvedValueOnce(new Response(
-        JSON.stringify(mockPingResponse()),
-        { status: 200 }
-      ));
+      mockFetch.mockResolvedValueOnce(
+        new Response(JSON.stringify(mockPingResponse()), { status: 200 })
+      );
 
       // Second call (getCommands) fails
       const errorResponse = {
@@ -221,10 +225,9 @@ describe('UtilityClient', () => {
         code: 'SERVICE_UNAVAILABLE'
       };
 
-      mockFetch.mockResolvedValueOnce(new Response(
-        JSON.stringify(errorResponse),
-        { status: 503 }
-      ));
+      mockFetch.mockResolvedValueOnce(
+        new Response(JSON.stringify(errorResponse), { status: 503 })
+      );
 
       const pingResult = await client.ping();
       expect(pingResult).toBe('pong');
@@ -239,7 +242,9 @@ describe('UtilityClient', () => {
         if (callCount % 2 === 0) {
           return Promise.reject(new Error('Intermittent failure'));
         } else {
-          return Promise.resolve(new Response(JSON.stringify(mockPingResponse())));
+          return Promise.resolve(
+            new Response(JSON.stringify(mockPingResponse()))
+          );
         }
       });
 
@@ -247,7 +252,7 @@ describe('UtilityClient', () => {
         client.ping(), // Should succeed (call 1)
         client.ping(), // Should fail (call 2)
         client.ping(), // Should succeed (call 3)
-        client.ping(), // Should fail (call 4)
+        client.ping() // Should fail (call 4)
       ]);
 
       expect(results[0].status).toBe('fulfilled');
@@ -259,10 +264,11 @@ describe('UtilityClient', () => {
 
   describe('version checking', () => {
     it('should get container version successfully', async () => {
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify(mockVersionResponse('0.4.5')),
-        { status: 200 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(mockVersionResponse('0.4.5')), {
+          status: 200
+        })
+      );
 
       const result = await client.getVersion();
 
@@ -273,10 +279,11 @@ describe('UtilityClient', () => {
       const versions = ['1.0.0', '2.5.3-beta', '0.0.1', '10.20.30'];
 
       for (const version of versions) {
-        mockFetch.mockResolvedValueOnce(new Response(
-          JSON.stringify(mockVersionResponse(version)),
-          { status: 200 }
-        ));
+        mockFetch.mockResolvedValueOnce(
+          new Response(JSON.stringify(mockVersionResponse(version)), {
+            status: 200
+          })
+        );
 
         const result = await client.getVersion();
         expect(result).toBe(version);
@@ -285,10 +292,9 @@ describe('UtilityClient', () => {
 
     it('should return "unknown" when version endpoint does not exist (backward compatibility)', async () => {
       // Simulate 404 or other error for old containers
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify({ error: 'Not Found' }),
-        { status: 404 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify({ error: 'Not Found' }), { status: 404 })
+      );
 
       const result = await client.getVersion();
 
@@ -304,10 +310,11 @@ describe('UtilityClient', () => {
     });
 
     it('should handle version response with unknown value', async () => {
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify(mockVersionResponse('unknown')),
-        { status: 200 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(mockVersionResponse('unknown')), {
+          status: 200
+        })
+      );
 
       const result = await client.getVersion();
 
@@ -324,7 +331,7 @@ describe('UtilityClient', () => {
     it('should initialize with full options', () => {
       const fullOptionsClient = new UtilityClient({
         baseUrl: 'http://custom.com',
-        port: 8080,
+        port: 8080
       });
       expect(fullOptionsClient).toBeInstanceOf(UtilityClient);
     });

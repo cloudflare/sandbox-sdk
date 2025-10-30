@@ -1,6 +1,5 @@
 // Export the main Sandbox class and utilities
 
-
 // Export the new client architecture
 export {
   CommandClient,
@@ -10,8 +9,8 @@ export {
   ProcessClient,
   SandboxClient,
   UtilityClient
-} from "./clients";
-export { getSandbox, Sandbox } from "./sandbox";
+} from './clients';
+export { connect, getSandbox, Sandbox } from './sandbox';
 
 // Legacy types are now imported from the new client architecture
 
@@ -20,21 +19,20 @@ export type {
   BaseExecOptions,
   ExecEvent,
   ExecOptions,
-  ExecResult,FileChunk, FileMetadata, FileStreamEvent, 
+  ExecResult,
+  FileChunk,
+  FileMetadata,
+  FileStreamEvent,
   ISandbox,
   LogEvent,
   Process,
   ProcessOptions,
   ProcessStatus,
-  StreamOptions 
-} from "@repo/shared";
+  StreamOptions
+} from '@repo/shared';
 export * from '@repo/shared';
 // Export type guards for runtime validation
-export {
-  isExecResult,
-  isProcess,
-  isProcessStatus
-} from "@repo/shared";
+export { isExecResult, isProcess, isProcessStatus } from '@repo/shared';
 // Export all client types from new architecture
 export type {
   BaseApiResponse,
@@ -79,15 +77,24 @@ export type {
   StartProcessRequest,
   UnexposePortRequest,
   WriteFileRequest
-} from "./clients";
-export type { ExecutionCallbacks, InterpreterClient } from './clients/interpreter-client.js';
+} from './clients';
+export type {
+  ExecutionCallbacks,
+  InterpreterClient
+} from './clients/interpreter-client.js';
 // Export file streaming utilities for binary file support
 export { collectFile, streamFile } from './file-stream';
 // Export interpreter functionality
 export { CodeInterpreter } from './interpreter.js';
 // Re-export request handler utilities
 export {
-  proxyToSandbox, type RouteInfo, type SandboxEnv
+  proxyToSandbox,
+  type RouteInfo,
+  type SandboxEnv
 } from './request-handler';
 // Export SSE parser for converting ReadableStream to AsyncIterable
-export { asyncIterableToSSEStream, parseSSEStream, responseToAsyncIterable } from "./sse-parser";
+export {
+  asyncIterableToSSEStream,
+  parseSSEStream,
+  responseToAsyncIterable
+} from './sse-parser';

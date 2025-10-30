@@ -1,0 +1,23 @@
+{
+  "name": "@repo/integration",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "description": "Integration testing app for the Sandbox SDK",
+  "scripts": {
+    "start": "vite dev",
+    "deploy": "vite build && wrangler deploy"
+  },
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@cloudflare/sandbox": "*",
+    "katex": "^0.16.25",
+    "react-katex": "^3.1.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
+  },
+  "devDependencies": {
+    "@types/react-katex": "^3.0.4"
+  }
+}

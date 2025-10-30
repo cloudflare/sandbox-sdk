@@ -76,7 +76,6 @@ export async function* parseSSEStream<T>(
   }
 }
 
-
 /**
  * Helper to convert a Response with SSE stream directly to AsyncIterable
  * @param response - Response object with SSE stream
@@ -87,7 +86,9 @@ export async function* responseToAsyncIterable<T>(
   signal?: AbortSignal
 ): AsyncIterable<T> {
   if (!response.ok) {
-    throw new Error(`Response not ok: ${response.status} ${response.statusText}`);
+    throw new Error(
+      `Response not ok: ${response.status} ${response.statusText}`
+    );
   }
 
   if (!response.body) {

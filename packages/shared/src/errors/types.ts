@@ -39,10 +39,10 @@ export const Operation = {
   // Code Interpreter
   CODE_EXECUTE: 'code.execute',
   CODE_CONTEXT_CREATE: 'code.context.create',
-  CODE_CONTEXT_DELETE: 'code.context.delete',
+  CODE_CONTEXT_DELETE: 'code.context.delete'
 } as const;
 
-export type OperationType = typeof Operation[keyof typeof Operation];
+export type OperationType = (typeof Operation)[keyof typeof Operation];
 
 /**
  * Standard error response format with generic context type
@@ -97,7 +97,7 @@ export interface ErrorResponse<TContext = Record<string, unknown>> {
 export interface ServiceError {
   message: string;
   code: ErrorCode;
-  details?: Record<string, unknown>;  // Becomes context in ErrorResponse
+  details?: Record<string, unknown>; // Becomes context in ErrorResponse
 }
 
 /**

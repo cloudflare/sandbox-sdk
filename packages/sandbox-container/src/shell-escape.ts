@@ -5,7 +5,7 @@
 /**
  * Escapes a string for safe use in shell commands.
  * This follows POSIX shell escaping rules to prevent command injection.
- * 
+ *
  * @param str - The string to escape
  * @returns The escaped string safe for shell use
  */
@@ -29,14 +29,14 @@ export function escapeShellArg(str: string): string {
 
 /**
  * Escapes a file path for safe use in shell commands.
- * 
+ *
  * @param path - The file path to escape
  * @returns The escaped path safe for shell use
  */
 export function escapeShellPath(path: string): string {
   // Normalize path to prevent issues with multiple slashes
   const normalizedPath = path.replace(/\/+/g, '/');
-  
+
   // Apply standard shell escaping
   return escapeShellArg(normalizedPath);
 }

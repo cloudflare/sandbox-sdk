@@ -14,7 +14,7 @@ const COLORS = {
   info: '\x1b[32m', // Green
   warn: '\x1b[33m', // Yellow
   error: '\x1b[31m', // Red
-  dim: '\x1b[2m', // Dim
+  dim: '\x1b[2m' // Dim
 };
 
 /**
@@ -107,7 +107,7 @@ export class CloudflareLogger implements Logger {
       msg: message,
       ...this.baseContext,
       ...context,
-      timestamp: new Date().toISOString(),
+      timestamp: new Date().toISOString()
     };
 
     // Add error details if provided
@@ -115,7 +115,7 @@ export class CloudflareLogger implements Logger {
       logData.error = {
         message: error.message,
         stack: error.stack,
-        name: error.name,
+        name: error.name
       };
     }
 
@@ -179,7 +179,9 @@ export class CloudflareLogger implements Logger {
     const traceIdShort = traceId ? String(traceId).substring(0, 12) : '';
 
     // Start with level and component
-    let logLine = `${levelColor}${levelStr.padEnd(5)}${COLORS.reset} ${componentBadge} ${msg}`;
+    let logLine = `${levelColor}${levelStr.padEnd(5)}${
+      COLORS.reset
+    } ${componentBadge} ${msg}`;
 
     // Add trace ID if present
     if (traceIdShort) {
@@ -189,9 +191,11 @@ export class CloudflareLogger implements Logger {
     // Collect important context fields
     const contextFields: string[] = [];
     if (operation) contextFields.push(`operation: ${operation}`);
-    if (commandId) contextFields.push(`commandId: ${String(commandId).substring(0, 12)}`);
+    if (commandId)
+      contextFields.push(`commandId: ${String(commandId).substring(0, 12)}`);
     if (sandboxId) contextFields.push(`sandboxId: ${sandboxId}`);
-    if (sessionId) contextFields.push(`sessionId: ${String(sessionId).substring(0, 12)}`);
+    if (sessionId)
+      contextFields.push(`sessionId: ${String(sessionId).substring(0, 12)}`);
     if (processId) contextFields.push(`processId: ${processId}`);
     if (duration !== undefined) contextFields.push(`duration: ${duration}ms`);
 
@@ -205,7 +209,11 @@ export class CloudflareLogger implements Logger {
 
     // Output error details on separate lines if present
     if (error && typeof error === 'object') {
-      const errorObj = error as { message?: string; stack?: string; name?: string };
+      const errorObj = error as {
+        message?: string;
+        stack?: string;
+        name?: string;
+      };
       if (errorObj.message) {
         consoleFn(`  ${COLORS.error}Error: ${errorObj.message}${COLORS.reset}`);
       }
@@ -216,7 +224,9 @@ export class CloudflareLogger implements Logger {
 
     // Output additional context if present
     if (Object.keys(rest).length > 0) {
-      consoleFn(`  ${COLORS.dim}${JSON.stringify(rest, null, 2)}${COLORS.reset}`);
+      consoleFn(
+        `  ${COLORS.dim}${JSON.stringify(rest, null, 2)}${COLORS.reset}`
+      );
     }
   }
 

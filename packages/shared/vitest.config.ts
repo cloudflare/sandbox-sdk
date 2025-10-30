@@ -14,9 +14,9 @@ export default defineConfig({
     include: ['tests/**/*.test.ts'],
     environment: 'node',
     testTimeout: 10000,
-    hookTimeout: 10000,
+    hookTimeout: 10000
   },
   esbuild: {
-    target: 'esnext',
-  },
+    target: 'esnext'
+  }
 });

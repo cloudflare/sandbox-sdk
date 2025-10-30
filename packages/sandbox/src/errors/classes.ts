@@ -9,7 +9,8 @@ import type {
   CodeExecutionContext,
   CommandErrorContext,
   CommandNotFoundContext,
-  ContextNotFoundContext,ErrorResponse,
+  ContextNotFoundContext,
+  ErrorResponse,
   FileExistsContext,
   FileNotFoundContext,
   FileSystemContext,
@@ -25,7 +26,7 @@ import type {
   PortNotExposedContext,
   ProcessErrorContext,
   ProcessNotFoundContext,
-  ValidationFailedContext,
+  ValidationFailedContext
 } from '@repo/shared/errors';
 
 /**
@@ -39,13 +40,27 @@ export class SandboxError<TContext = Record<string, unknown>> extends Error {
   }
 
   // Convenience accessors
-  get code() { return this.errorResponse.code; }
-  get context() { return this.errorResponse.context; }
-  get httpStatus() { return this.errorResponse.httpStatus; }
-  get operation() { return this.errorResponse.operation; }
-  get suggestion() { return this.errorResponse.suggestion; }
-  get timestamp() { return this.errorResponse.timestamp; }
-  get documentation() { return this.errorResponse.documentation; }
+  get code() {
+    return this.errorResponse.code;
+  }
+  get context() {
+    return this.errorResponse.context;
+  }
+  get httpStatus() {
+    return this.errorResponse.httpStatus;
+  }
+  get operation() {
+    return this.errorResponse.operation;
+  }
+  get suggestion() {
+    return this.errorResponse.suggestion;
+  }
+  get timestamp() {
+    return this.errorResponse.timestamp;
+  }
+  get documentation() {
+    return this.errorResponse.documentation;
+  }
 
   // Custom serialization for logging
   toJSON() {
@@ -78,7 +93,9 @@ export class FileNotFoundError extends SandboxError<FileNotFoundContext> {
   }
 
   // Type-safe accessors
-  get path() { return this.context.path; }
+  get path() {
+    return this.context.path;
+  }
 }
 
 /**
@@ -91,7 +108,9 @@ export class FileExistsError extends SandboxError<FileExistsContext> {
   }
 
   // Type-safe accessor
-  get path() { return this.context.path; }
+  get path() {
+    return this.context.path;
+  }
 }
 
 /**
@@ -104,9 +123,15 @@ export class FileSystemError extends SandboxError<FileSystemContext> {
   }
 
   // Type-safe accessors
-  get path() { return this.context.path; }
-  get stderr() { return this.context.stderr; }
-  get exitCode() { return this.context.exitCode; }
+  get path() {
+    return this.context.path;
+  }
+  get stderr() {
+    return this.context.stderr;
+  }
+  get exitCode() {
+    return this.context.exitCode;
+  }
 }
 
 /**
@@ -118,7 +143,9 @@ export class PermissionDeniedError extends SandboxError<FileSystemContext> {
     this.name = 'PermissionDeniedError';
   }
 
-  get path() { return this.context.path; }
+  get path() {
+    return this.context.path;
+  }
 }
 
 // ============================================================================
@@ -135,7 +162,9 @@ export class CommandNotFoundError extends SandboxError<CommandNotFoundContext> {
   }
 
   // Type-safe accessor
-  get command() { return this.context.command; }
+  get command() {
+    return this.context.command;
+  }
 }
 
 /**
@@ -148,10 +177,18 @@ export class CommandError extends SandboxError<CommandErrorContext> {
   }
 
   // Type-safe accessors
-  get command() { return this.context.command; }
-  get exitCode() { return this.context.exitCode; }
-  get stdout() { return this.context.stdout; }
-  get stderr() { return this.context.stderr; }
+  get command() {
+    return this.context.command;
+  }
+  get exitCode() {
+    return this.context.exitCode;
+  }
+  get stdout() {
+    return this.context.stdout;
+  }
+  get stderr() {
+    return this.context.stderr;
+  }
 }
 
 // ============================================================================
@@ -168,7 +205,9 @@ export class ProcessNotFoundError extends SandboxError<ProcessNotFoundContext> {
   }
 
   // Type-safe accessor
-  get processId() { return this.context.processId; }
+  get processId() {
+    return this.context.processId;
+  }
 }
 
 /**
@@ -181,10 +220,18 @@ export class ProcessError extends SandboxError<ProcessErrorContext> {
   }
 
   // Type-safe accessors
-  get processId() { return this.context.processId; }
-  get pid() { return this.context.pid; }
-  get exitCode() { return this.context.exitCode; }
-  get stderr() { return this.context.stderr; }
+  get processId() {
+    return this.context.processId;
+  }
+  get pid() {
+    return this.context.pid;
+  }
+  get exitCode() {
+    return this.context.exitCode;
+  }
+  get stderr() {
+    return this.context.stderr;
+  }
 }
 
 // ============================================================================
@@ -201,8 +248,12 @@ export class PortAlreadyExposedError extends SandboxError<PortAlreadyExposedCont
   }
 
   // Type-safe accessors
-  get port() { return this.context.port; }
-  get portName() { return this.context.portName; }
+  get port() {
+    return this.context.port;
+  }
+  get portName() {
+    return this.context.portName;
+  }
 }
 
 /**
@@ -215,7 +266,9 @@ export class PortNotExposedError extends SandboxError<PortNotExposedContext> {
   }
 
   // Type-safe accessor
-  get port() { return this.context.port; }
+  get port() {
+    return this.context.port;
+  }
 }
 
 /**
@@ -228,8 +281,12 @@ export class InvalidPortError extends SandboxError<InvalidPortContext> {
   }
 
   // Type-safe accessors
-  get port() { return this.context.port; }
-  get reason() { return this.context.reason; }
+  get port() {
+    return this.context.port;
+  }
+  get reason() {
+    return this.context.reason;
+  }
 }
 
 /**
@@ -242,8 +299,12 @@ export class ServiceNotRespondingError extends SandboxError<PortErrorContext> {
   }
 
   // Type-safe accessors
-  get port() { return this.context.port; }
-  get portName() { return this.context.portName; }
+  get port() {
+    return this.context.port;
+  }
+  get portName() {
+    return this.context.portName;
+  }
 }
 
 /**
@@ -256,7 +317,9 @@ export class PortInUseError extends SandboxError<PortErrorContext> {
   }
 
   // Type-safe accessor
-  get port() { return this.context.port; }
+  get port() {
+    return this.context.port;
+  }
 }
 
 /**
@@ -269,9 +332,15 @@ export class PortError extends SandboxError<PortErrorContext> {
   }
 
   // Type-safe accessors
-  get port() { return this.context.port; }
-  get portName() { return this.context.portName; }
-  get stderr() { return this.context.stderr; }
+  get port() {
+    return this.context.port;
+  }
+  get portName() {
+    return this.context.portName;
+  }
+  get stderr() {
+    return this.context.stderr;
+  }
 }
 
 /**
@@ -298,7 +367,9 @@ export class GitRepositoryNotFoundError extends SandboxError<GitRepositoryNotFou
   }
 
   // Type-safe accessor
-  get repository() { return this.context.repository; }
+  get repository() {
+    return this.context.repository;
+  }
 }
 
 /**
@@ -311,7 +382,9 @@ export class GitAuthenticationError extends SandboxError<GitAuthFailedContext> {
   }
 
   // Type-safe accessor
-  get repository() { return this.context.repository; }
+  get repository() {
+    return this.context.repository;
+  }
 }
 
 /**
@@ -324,8 +397,12 @@ export class GitBranchNotFoundError extends SandboxError<GitBranchNotFoundContex
   }
 
   // Type-safe accessors
-  get branch() { return this.context.branch; }
-  get repository() { return this.context.repository; }
+  get branch() {
+    return this.context.branch;
+  }
+  get repository() {
+    return this.context.repository;
+  }
 }
 
 /**
@@ -338,9 +415,15 @@ export class GitNetworkError extends SandboxError<GitErrorContext> {
   }
 
   // Type-safe accessors
-  get repository() { return this.context.repository; }
-  get branch() { return this.context.branch; }
-  get targetDir() { return this.context.targetDir; }
+  get repository() {
+    return this.context.repository;
+  }
+  get branch() {
+    return this.context.branch;
+  }
+  get targetDir() {
+    return this.context.targetDir;
+  }
 }
 
 /**
@@ -353,10 +436,18 @@ export class GitCloneError extends SandboxError<GitErrorContext> {
   }
 
   // Type-safe accessors
-  get repository() { return this.context.repository; }
-  get targetDir() { return this.context.targetDir; }
-  get stderr() { return this.context.stderr; }
-  get exitCode() { return this.context.exitCode; }
+  get repository() {
+    return this.context.repository;
+  }
+  get targetDir() {
+    return this.context.targetDir;
+  }
+  get stderr() {
+    return this.context.stderr;
+  }
+  get exitCode() {
+    return this.context.exitCode;
+  }
 }
 
 /**
@@ -369,9 +460,15 @@ export class GitCheckoutError extends SandboxError<GitErrorContext> {
   }
 
   // Type-safe accessors
-  get branch() { return this.context.branch; }
-  get repository() { return this.context.repository; }
-  get stderr() { return this.context.stderr; }
+  get branch() {
+    return this.context.branch;
+  }
+  get repository() {
+    return this.context.repository;
+  }
+  get stderr() {
+    return this.context.stderr;
+  }
 }
 
 /**
@@ -384,7 +481,9 @@ export class InvalidGitUrlError extends SandboxError<ValidationFailedContext> {
   }
 
   // Type-safe accessor
-  get validationErrors() { return this.context.validationErrors; }
+  get validationErrors() {
+    return this.context.validationErrors;
+  }
 }
 
 /**
@@ -397,11 +496,21 @@ export class GitError extends SandboxError<GitErrorContext> {
   }
 
   // Type-safe accessors
-  get repository() { return this.context.repository; }
-  get branch() { return this.context.branch; }
-  get targetDir() { return this.context.targetDir; }
-  get stderr() { return this.context.stderr; }
-  get exitCode() { return this.context.exitCode; }
+  get repository() {
+    return this.context.repository;
+  }
+  get branch() {
+    return this.context.branch;
+  }
+  get targetDir() {
+    return this.context.targetDir;
+  }
+  get stderr() {
+    return this.context.stderr;
+  }
+  get exitCode() {
+    return this.context.exitCode;
+  }
 }
 
 // ============================================================================
@@ -418,8 +527,12 @@ export class InterpreterNotReadyError extends SandboxError<InterpreterNotReadyCo
   }
 
   // Type-safe accessors
-  get retryAfter() { return this.context.retryAfter; }
-  get progress() { return this.context.progress; }
+  get retryAfter() {
+    return this.context.retryAfter;
+  }
+  get progress() {
+    return this.context.progress;
+  }
 }
 
 /**
@@ -432,7 +545,9 @@ export class ContextNotFoundError extends SandboxError<ContextNotFoundContext> {
   }
 
   // Type-safe accessor
-  get contextId() { return this.context.contextId; }
+  get contextId() {
+    return this.context.contextId;
+  }
 }
 
 /**
@@ -445,10 +560,18 @@ export class CodeExecutionError extends SandboxError<CodeExecutionContext> {
   }
 
   // Type-safe accessors
-  get contextId() { return this.context.contextId; }
-  get ename() { return this.context.ename; }
-  get evalue() { return this.context.evalue; }
-  get traceback() { return this.context.traceback; }
+  get contextId() {
+    return this.context.contextId;
+  }
+  get ename() {
+    return this.context.ename;
+  }
+  get evalue() {
+    return this.context.evalue;
+  }
+  get traceback() {
+    return this.context.traceback;
+  }
 }
 
 // ============================================================================
@@ -465,5 +588,7 @@ export class ValidationFailedError extends SandboxError<ValidationFailedContext>
   }
 
   // Type-safe accessor
-  get validationErrors() { return this.context.validationErrors; }
+  get validationErrors() {
+    return this.context.validationErrors;
+  }
 }

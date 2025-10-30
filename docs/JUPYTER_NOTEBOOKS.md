@@ -5,6 +5,7 @@ The Sandbox SDK provides lightweight code interpreters by default for optimal pe
 ## Overview
 
 This guide shows how to extend your sandbox container with Jupyter server to enable:
+
 - Full Jupyter notebook interface at `http://your-preview-url:8888`
 - Interactive Python and JavaScript kernels
 - Rich visualizations and data analysis tools
@@ -100,14 +101,14 @@ exec /container-server/startup.sh
 Once deployed, access Jupyter through your sandbox:
 
 ```typescript
-import { getSandbox } from "@cloudflare/sandbox";
+import { getSandbox } from '@cloudflare/sandbox';
 
 export default {
   async fetch(request, env) {
-    const sandbox = getSandbox(env.Sandbox, "jupyter-env");
+    const sandbox = getSandbox(env.Sandbox, 'jupyter-env');
 
     // Expose Jupyter port
-    const preview = await sandbox.exposePort(8888, { name: "jupyter" });
+    const preview = await sandbox.exposePort(8888, { name: 'jupyter' });
 
     return new Response(`Jupyter available at: ${preview.url}`);
   }
@@ -118,38 +119,44 @@ export default {
 
 ```typescript
 // Create sample data files for analysis
-await sandbox.writeFile("/workspace/sample_data.csv", `
+await sandbox.writeFile(
+  '/workspace/sample_data.csv',
+  `
 date,sales,marketing_spend
 2024-01-01,1200,450
 2024-01-02,980,520
 2024-01-03,1100,480
 2024-01-04,1350,600
 2024-01-05,1050,400
-`);
+`
+);
 
 // Create a starter notebook
-await sandbox.writeFile("/workspace/analysis.ipynb", JSON.stringify({
-  "cells": [
-    {
-      "cell_type": "code",
-      "execution_count": null,
-      "metadata": {},
-      "outputs": [],
-      "source": [
-        "import pandas as pd\nimport matplotlib.pyplot as plt\n\n# Load the sample data\ndf = pd.read_csv('sample_data.csv')\nprint(\"Data loaded successfully!\")\ndf.head()"
-      ]
-    }
-  ],
-  "metadata": {
-    "kernelspec": {
-      "display_name": "Python 3",
-      "language": "python",
-      "name": "python3"
-    }
-  },
-  "nbformat": 4,
-  "nbformat_minor": 4
-}));
+await sandbox.writeFile(
+  '/workspace/analysis.ipynb',
+  JSON.stringify({
+    cells: [
+      {
+        cell_type: 'code',
+        execution_count: null,
+        metadata: {},
+        outputs: [],
+        source: [
+          'import pandas as pd\nimport matplotlib.pyplot as plt\n\n# Load the sample data\ndf = pd.read_csv(\'sample_data.csv\')\nprint("Data loaded successfully!")\ndf.head()'
+        ]
+      }
+    ],
+    metadata: {
+      kernelspec: {
+        display_name: 'Python 3',
+        language: 'python',
+        name: 'python3'
+      }
+    },
+    nbformat: 4,
+    nbformat_minor: 4
+  })
+);
 
 // Expose Jupyter interface
 const preview = await sandbox.exposePort(8888);

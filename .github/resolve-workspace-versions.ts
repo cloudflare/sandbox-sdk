@@ -1,8 +1,8 @@
 // this looks for all package.jsons in /packages/**/package.json
 // and replaces it with the actual version ids
 
-import * as fs from "node:fs";
-import fg from "fast-glob";
+import * as fs from 'node:fs';
+import fg from 'fast-glob';
 
 // we do this in 2 passes
 // first let's cycle through all packages and get thier version numbers
@@ -11,12 +11,12 @@ import fg from "fast-glob";
 const packageJsons: Record<string, any> = {};
 
 for await (const file of await fg.glob(
-  "./(packages|examples|guides)/*/package.json"
+  './(packages|examples|guides)/*/package.json'
 )) {
-  const packageJson = JSON.parse(fs.readFileSync(file, "utf8"));
+  const packageJson = JSON.parse(fs.readFileSync(file, 'utf8'));
   packageJsons[packageJson.name] = {
     file,
-    packageJson,
+    packageJson
   };
 }
 
@@ -28,17 +28,17 @@ for (const [packageName, { file, packageJson }] of Object.entries(
 )) {
   let changed = false;
   for (const field of [
-    "dependencies",
-    "devDependencies",
-    "peerDependencies",
-    "optionalDependencies",
+    'dependencies',
+    'devDependencies',
+    'peerDependencies',
+    'optionalDependencies'
   ]) {
     for (const [dependencyName, dependencyVersion] of Object.entries(
       packageJson[field] || {}
     )) {
       if (dependencyName in packageJsons) {
         let actualVersion = packageJsons[dependencyName].packageJson.version;
-        if (!actualVersion.startsWith("0.0.0-")) {
+        if (!actualVersion.startsWith('0.0.0-')) {
           actualVersion = `^${actualVersion}`;
         }
 

@@ -46,7 +46,7 @@ describe('ProcessManager', () => {
       const options: ProcessOptions = {
         sessionId: 'session-123',
         cwd: '/tmp',
-        env: { NODE_ENV: 'test' },
+        env: { NODE_ENV: 'test' }
       };
 
       const result = manager.createProcessRecord('echo test', 12345, options);
@@ -66,7 +66,11 @@ describe('ProcessManager', () => {
     it('should create process record with undefined pid', () => {
       const options: ProcessOptions = {};
 
-      const result = manager.createProcessRecord('sleep 10', undefined, options);
+      const result = manager.createProcessRecord(
+        'sleep 10',
+        undefined,
+        options
+      );
 
       expect(result.pid).toBeUndefined();
       expect(result.command).toBe('sleep 10');

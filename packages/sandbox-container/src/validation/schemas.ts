@@ -9,7 +9,7 @@ export const ProcessOptionsSchema = z.object({
   env: z.record(z.string()).optional(),
   cwd: z.string().optional(),
   encoding: z.string().optional(),
-  autoCleanup: z.boolean().optional(),
+  autoCleanup: z.boolean().optional()
 });
 
 // Execute request schema
@@ -17,53 +17,55 @@ export const ExecuteRequestSchema = z.object({
   command: z.string().min(1, 'Command cannot be empty'),
   sessionId: z.string().optional(),
   background: z.boolean().optional(),
-  timeoutMs: z.number().positive().optional(),
+  timeoutMs: z.number().positive().optional()
 });
 
 // File operation schemas
 export const ReadFileRequestSchema = z.object({
   path: z.string().min(1, 'Path cannot be empty'),
   encoding: z.string().optional(),
-  sessionId: z.string().optional(),
+  sessionId: z.string().optional()
 });
 
 export const WriteFileRequestSchema = z.object({
   path: z.string().min(1, 'Path cannot be empty'),
   content: z.string(),
   encoding: z.string().optional(),
-  sessionId: z.string().optional(),
+  sessionId: z.string().optional()
 });
 
 export const DeleteFileRequestSchema = z.object({
   path: z.string().min(1, 'Path cannot be empty'),
-  sessionId: z.string().optional(),
+  sessionId: z.string().optional()
 });
 
 export const RenameFileRequestSchema = z.object({
   oldPath: z.string().min(1, 'Old path cannot be empty'),
   newPath: z.string().min(1, 'New path cannot be empty'),
-  sessionId: z.string().optional(),
+  sessionId: z.string().optional()
 });
 
 export const MoveFileRequestSchema = z.object({
   sourcePath: z.string().min(1, 'Source path cannot be empty'),
   destinationPath: z.string().min(1, 'Destination path cannot be empty'),
-  sessionId: z.string().optional(),
+  sessionId: z.string().optional()
 });
 
 export const MkdirRequestSchema = z.object({
   path: z.string().min(1, 'Path cannot be empty'),
   recursive: z.boolean().optional(),
-  sessionId: z.string().optional(),
+  sessionId: z.string().optional()
 });
 
 export const ListFilesRequestSchema = z.object({
   path: z.string().min(1, 'Path cannot be empty'),
-  options: z.object({
-    recursive: z.boolean().optional(),
-    includeHidden: z.boolean().optional(),
-  }).optional(),
-  sessionId: z.string().optional(),
+  options: z
+    .object({
+      recursive: z.boolean().optional(),
+      includeHidden: z.boolean().optional()
+    })
+    .optional(),
+  sessionId: z.string().optional()
 });
 
 // Process management schemas
@@ -76,14 +78,14 @@ export const StartProcessRequestSchema = z.object({
   env: z.record(z.string()).optional(),
   cwd: z.string().optional(),
   encoding: z.string().optional(),
-  autoCleanup: z.boolean().optional(),
+  autoCleanup: z.boolean().optional()
 });
 
 // Port management schemas
 // Phase 0: Allow all ports 1-65535 (services will validate - only port 3000 is blocked)
 export const ExposePortRequestSchema = z.object({
   port: z.number().int().min(1).max(65535, 'Port must be between 1 and 65535'),
-  name: z.string().optional(),
+  name: z.string().optional()
 });
 
 // Git operation schemas
@@ -93,7 +95,7 @@ export const GitCheckoutRequestSchema = z.object({
   repoUrl: z.string().min(1, 'Repository URL cannot be empty'),
   branch: z.string().optional(),
   targetDir: z.string().optional(),
-  sessionId: z.string().optional(),
+  sessionId: z.string().optional()
 });
 
 // Infer TypeScript types from schemas - single source of truth!
@@ -129,7 +131,7 @@ export const FileRequestSchemas = {
   rename: RenameFileRequestSchema,
   move: MoveFileRequestSchema,
   mkdir: MkdirRequestSchema,
-  listFiles: ListFilesRequestSchema,
+  listFiles: ListFilesRequestSchema
 } as const;
 
 export type FileOperation = keyof typeof FileRequestSchemas;

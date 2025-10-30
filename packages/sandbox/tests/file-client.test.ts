@@ -11,11 +11,11 @@ import type {
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FileClient } from '../src/clients/file-client';
 import {
-  FileExistsError, 
-  FileNotFoundError, 
+  FileExistsError,
+  FileNotFoundError,
   FileSystemError,
-  PermissionDeniedError, 
-  SandboxError 
+  PermissionDeniedError,
+  SandboxError
 } from '../src/errors';
 
 describe('FileClient', () => {
@@ -24,13 +24,13 @@ describe('FileClient', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    
+
     mockFetch = vi.fn();
     global.fetch = mockFetch as unknown as typeof fetch;
-    
+
     client = new FileClient({
       baseUrl: 'http://test.com',
-      port: 3000,
+      port: 3000
     });
   });
 
@@ -45,13 +45,12 @@ describe('FileClient', () => {
         exitCode: 0,
         path: '/app/new-directory',
         recursive: false,
-        timestamp: '2023-01-01T00:00:00Z',
+        timestamp: '2023-01-01T00:00:00Z'
       };
 
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify(mockResponse),
-        { status: 200 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(mockResponse), { status: 200 })
+      );
 
       const result = await client.mkdir('/app/new-directory', 'session-mkdir');
 
@@ -67,15 +66,18 @@ describe('FileClient', () => {
         exitCode: 0,
         path: '/app/deep/nested/directory',
         recursive: true,
-        timestamp: '2023-01-01T00:00:00Z',
+        timestamp: '2023-01-01T00:00:00Z'
       };
 
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify(mockResponse),
-        { status: 200 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(mockResponse), { status: 200 })
+      );
 
-      const result = await client.mkdir('/app/deep/nested/directory', 'session-mkdir', { recursive: true });
+      const result = await client.mkdir(
+        '/app/deep/nested/directory',
+        'session-mkdir',
+        { recursive: true }
+      );
 
       expect(result.success).toBe(true);
       expect(result.recursive).toBe(true);
@@ -89,13 +91,13 @@ describe('FileClient', () => {
         path: '/root/secure'
       };
 
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify(errorResponse),
-        { status: 403 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(errorResponse), { status: 403 })
+      );
 
-      await expect(client.mkdir('/root/secure', 'session-mkdir'))
-        .rejects.toThrow(PermissionDeniedError);
+      await expect(
+        client.mkdir('/root/secure', 'session-mkdir')
+      ).rejects.toThrow(PermissionDeniedError);
     });
 
     it('should handle directory already exists errors', async () => {
@@ -105,13 +107,13 @@ describe('FileClient', () => {
         path: '/app/existing'
       };
 
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify(errorResponse),
-        { status: 409 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(errorResponse), { status: 409 })
+      );
 
-      await expect(client.mkdir('/app/existing', 'session-mkdir'))
-        .rejects.toThrow(FileExistsError);
+      await expect(
+        client.mkdir('/app/existing', 'session-mkdir')
+      ).rejects.toThrow(FileExistsError);
     });
   });
 
@@ -121,16 +123,19 @@ describe('FileClient', () => {
         success: true,
         exitCode: 0,
         path: '/app/config.json',
-        timestamp: '2023-01-01T00:00:00Z',
+        timestamp: '2023-01-01T00:00:00Z'
       };
 
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify(mockResponse),
-        { status: 200 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(mockResponse), { status: 200 })
+      );
 
       const content = '{"setting": "value", "enabled": true}';
-      const result = await client.writeFile('/app/config.json', content, 'session-write');
+      const result = await client.writeFile(
+        '/app/config.json',
+        content,
+        'session-write'
+      );
 
       expect(result.success).toBe(true);
       expect(result.path).toBe('/app/config.json');
@@ -142,16 +147,21 @@ describe('FileClient', () => {
         success: true,
         exitCode: 0,
         path: '/app/image.png',
-        timestamp: '2023-01-01T00:00:00Z',
+        timestamp: '2023-01-01T00:00:00Z'
       };
 
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify(mockResponse),
-        { status: 200 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(mockResponse), { status: 200 })
+      );
 
-      const binaryData = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChAI9jYlkKQAAAABJRU5ErkJggg==';
-      const result = await client.writeFile('/app/image.png', binaryData, 'session-write', { encoding: 'base64' });
+      const binaryData =
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChAI9jYlkKQAAAABJRU5ErkJggg==';
+      const result = await client.writeFile(
+        '/app/image.png',
+        binaryData,
+        'session-write',
+        { encoding: 'base64' }
+      );
 
       expect(result.success).toBe(true);
       expect(result.path).toBe('/app/image.png');
@@ -164,13 +174,13 @@ describe('FileClient', () => {
         path: '/system/readonly.txt'
       };
 
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify(errorResponse),
-        { status: 403 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(errorResponse), { status: 403 })
+      );
 
-      await expect(client.writeFile('/system/readonly.txt', 'content', 'session-err'))
-        .rejects.toThrow(PermissionDeniedError);
+      await expect(
+        client.writeFile('/system/readonly.txt', 'content', 'session-err')
+      ).rejects.toThrow(PermissionDeniedError);
     });
 
     it('should handle disk space errors', async () => {
@@ -180,13 +190,17 @@ describe('FileClient', () => {
         path: '/app/largefile.dat'
       };
 
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify(errorResponse),
-        { status: 507 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(errorResponse), { status: 507 })
+      );
 
-      await expect(client.writeFile('/app/largefile.dat', 'x'.repeat(1000000), 'session-err'))
-        .rejects.toThrow(FileSystemError);
+      await expect(
+        client.writeFile(
+          '/app/largefile.dat',
+          'x'.repeat(1000000),
+          'session-err'
+        )
+      ).rejects.toThrow(FileSystemError);
     });
   });
 
@@ -208,13 +222,12 @@ database:
         encoding: 'utf-8',
         isBinary: false,
         mimeType: 'text/yaml',
-        size: 100,
+        size: 100
       };
 
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify(mockResponse),
-        { status: 200 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(mockResponse), { status: 200 })
+      );
 
       const result = await client.readFile('/app/config.yaml', 'session-read');
 
@@ -230,7 +243,8 @@ database:
     });
 
     it('should read binary files with base64 encoding and metadata', async () => {
-      const binaryContent = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChAI9jYlkKQAAAABJRU5ErkJggg==';
+      const binaryContent =
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChAI9jYlkKQAAAABJRU5ErkJggg==';
       const mockResponse: ReadFileResult = {
         success: true,
         exitCode: 0,
@@ -240,15 +254,16 @@ database:
         encoding: 'base64',
         isBinary: true,
         mimeType: 'image/png',
-        size: 95,
+        size: 95
       };
 
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify(mockResponse),
-        { status: 200 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(mockResponse), { status: 200 })
+      );
 
-      const result = await client.readFile('/app/logo.png', 'session-read', { encoding: 'base64' });
+      const result = await client.readFile('/app/logo.png', 'session-read', {
+        encoding: 'base64'
+      });
 
       expect(result.success).toBe(true);
       expect(result.content).toBe(binaryContent);
@@ -266,13 +281,13 @@ database:
         path: '/app/missing.txt'
       };
 
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify(errorResponse),
-        { status: 404 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(errorResponse), { status: 404 })
+      );
 
-      await expect(client.readFile('/app/missing.txt', 'session-read'))
-        .rejects.toThrow(FileNotFoundError);
+      await expect(
+        client.readFile('/app/missing.txt', 'session-read')
+      ).rejects.toThrow(FileNotFoundError);
     });
 
     it('should handle directory read attempts', async () => {
@@ -282,13 +297,13 @@ database:
         path: '/app/logs'
       };
 
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify(errorResponse),
-        { status: 400 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(errorResponse), { status: 400 })
+      );
 
-      await expect(client.readFile('/app/logs', 'session-read'))
-        .rejects.toThrow(FileSystemError);
+      await expect(
+        client.readFile('/app/logs', 'session-read')
+      ).rejects.toThrow(FileSystemError);
     });
   });
 
@@ -296,19 +311,36 @@ database:
     it('should stream file successfully', async () => {
       const mockStream = new ReadableStream({
         start(controller) {
-          controller.enqueue(new TextEncoder().encode('data: {"type":"metadata","mimeType":"text/plain","size":100,"isBinary":false,"encoding":"utf-8"}\n\n'));
-          controller.enqueue(new TextEncoder().encode('data: {"type":"chunk","data":"Hello"}\n\n'));
-          controller.enqueue(new TextEncoder().encode('data: {"type":"complete","bytesRead":5}\n\n'));
+          controller.enqueue(
+            new TextEncoder().encode(
+              'data: {"type":"metadata","mimeType":"text/plain","size":100,"isBinary":false,"encoding":"utf-8"}\n\n'
+            )
+          );
+          controller.enqueue(
+            new TextEncoder().encode(
+              'data: {"type":"chunk","data":"Hello"}\n\n'
+            )
+          );
+          controller.enqueue(
+            new TextEncoder().encode(
+              'data: {"type":"complete","bytesRead":5}\n\n'
+            )
+          );
           controller.close();
         }
       });
 
-      mockFetch.mockResolvedValue(new Response(mockStream, {
-        status: 200,
-        headers: { 'Content-Type': 'text/event-stream' }
-      }));
+      mockFetch.mockResolvedValue(
+        new Response(mockStream, {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' }
+        })
+      );
 
-      const result = await client.readFileStream('/app/test.txt', 'session-stream');
+      const result = await client.readFileStream(
+        '/app/test.txt',
+        'session-stream'
+      );
 
       expect(result).toBeInstanceOf(ReadableStream);
       expect(mockFetch).toHaveBeenCalledWith(
@@ -317,7 +349,7 @@ database:
           method: 'POST',
           body: JSON.stringify({
             path: '/app/test.txt',
-            sessionId: 'session-stream',
+            sessionId: 'session-stream'
           })
         })
       );
@@ -326,19 +358,36 @@ database:
     it('should handle binary file streams', async () => {
       const mockStream = new ReadableStream({
         start(controller) {
-          controller.enqueue(new TextEncoder().encode('data: {"type":"metadata","mimeType":"image/png","size":1024,"isBinary":true,"encoding":"base64"}\n\n'));
-          controller.enqueue(new TextEncoder().encode('data: {"type":"chunk","data":"iVBORw0K"}\n\n'));
-          controller.enqueue(new TextEncoder().encode('data: {"type":"complete","bytesRead":1024}\n\n'));
+          controller.enqueue(
+            new TextEncoder().encode(
+              'data: {"type":"metadata","mimeType":"image/png","size":1024,"isBinary":true,"encoding":"base64"}\n\n'
+            )
+          );
+          controller.enqueue(
+            new TextEncoder().encode(
+              'data: {"type":"chunk","data":"iVBORw0K"}\n\n'
+            )
+          );
+          controller.enqueue(
+            new TextEncoder().encode(
+              'data: {"type":"complete","bytesRead":1024}\n\n'
+            )
+          );
           controller.close();
         }
       });
 
-      mockFetch.mockResolvedValue(new Response(mockStream, {
-        status: 200,
-        headers: { 'Content-Type': 'text/event-stream' }
-      }));
+      mockFetch.mockResolvedValue(
+        new Response(mockStream, {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' }
+        })
+      );
 
-      const result = await client.readFileStream('/app/image.png', 'session-stream');
+      const result = await client.readFileStream(
+        '/app/image.png',
+        'session-stream'
+      );
 
       expect(result).toBeInstanceOf(ReadableStream);
     });
@@ -350,20 +399,21 @@ database:
         path: '/app/missing.txt'
       };
 
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify(errorResponse),
-        { status: 404 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(errorResponse), { status: 404 })
+      );
 
-      await expect(client.readFileStream('/app/missing.txt', 'session-stream'))
-        .rejects.toThrow(FileNotFoundError);
+      await expect(
+        client.readFileStream('/app/missing.txt', 'session-stream')
+      ).rejects.toThrow(FileNotFoundError);
     });
 
     it('should handle network errors during streaming', async () => {
       mockFetch.mockRejectedValue(new Error('Network timeout'));
 
-      await expect(client.readFileStream('/app/file.txt', 'session-stream'))
-        .rejects.toThrow('Network timeout');
+      await expect(
+        client.readFileStream('/app/file.txt', 'session-stream')
+      ).rejects.toThrow('Network timeout');
     });
   });
 
@@ -373,13 +423,12 @@ database:
         success: true,
         exitCode: 0,
         path: '/app/temp.txt',
-        timestamp: '2023-01-01T00:00:00Z',
+        timestamp: '2023-01-01T00:00:00Z'
       };
 
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify(mockResponse),
-        { status: 200 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(mockResponse), { status: 200 })
+      );
 
       const result = await client.deleteFile('/app/temp.txt', 'session-delete');
 
@@ -395,13 +444,13 @@ database:
         path: '/app/nonexistent.txt'
       };
 
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify(errorResponse),
-        { status: 404 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(errorResponse), { status: 404 })
+      );
 
-      await expect(client.deleteFile('/app/nonexistent.txt', 'session-delete'))
-        .rejects.toThrow(FileNotFoundError);
+      await expect(
+        client.deleteFile('/app/nonexistent.txt', 'session-delete')
+      ).rejects.toThrow(FileNotFoundError);
     });
 
     it('should handle delete permission errors', async () => {
@@ -411,13 +460,13 @@ database:
         path: '/system/important.conf'
       };
 
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify(errorResponse),
-        { status: 403 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(errorResponse), { status: 403 })
+      );
 
-      await expect(client.deleteFile('/system/important.conf', 'session-delete'))
-        .rejects.toThrow(PermissionDeniedError);
+      await expect(
+        client.deleteFile('/system/important.conf', 'session-delete')
+      ).rejects.toThrow(PermissionDeniedError);
     });
   });
 
@@ -428,15 +477,18 @@ database:
         exitCode: 0,
         path: '/app/old-name.txt',
         newPath: '/app/new-name.txt',
-        timestamp: '2023-01-01T00:00:00Z',
+        timestamp: '2023-01-01T00:00:00Z'
       };
 
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify(mockResponse),
-        { status: 200 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(mockResponse), { status: 200 })
+      );
 
-      const result = await client.renameFile('/app/old-name.txt', '/app/new-name.txt', 'session-rename');
+      const result = await client.renameFile(
+        '/app/old-name.txt',
+        '/app/new-name.txt',
+        'session-rename'
+      );
 
       expect(result.success).toBe(true);
       expect(result.path).toBe('/app/old-name.txt');
@@ -451,13 +503,17 @@ database:
         path: '/app/existing.txt'
       };
 
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify(errorResponse),
-        { status: 409 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(errorResponse), { status: 409 })
+      );
 
-      await expect(client.renameFile('/app/source.txt', '/app/existing.txt', 'session-rename'))
-        .rejects.toThrow(FileExistsError);
+      await expect(
+        client.renameFile(
+          '/app/source.txt',
+          '/app/existing.txt',
+          'session-rename'
+        )
+      ).rejects.toThrow(FileExistsError);
     });
   });
 
@@ -468,15 +524,18 @@ database:
         exitCode: 0,
         path: '/src/document.pdf',
         newPath: '/dest/document.pdf',
-        timestamp: '2023-01-01T00:00:00Z',
+        timestamp: '2023-01-01T00:00:00Z'
       };
 
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify(mockResponse),
-        { status: 200 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(mockResponse), { status: 200 })
+      );
 
-      const result = await client.moveFile('/src/document.pdf', '/dest/document.pdf', 'session-move');
+      const result = await client.moveFile(
+        '/src/document.pdf',
+        '/dest/document.pdf',
+        'session-move'
+      );
 
       expect(result.success).toBe(true);
       expect(result.path).toBe('/src/document.pdf');
@@ -491,13 +550,17 @@ database:
         path: '/nonexistent/'
       };
 
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify(errorResponse),
-        { status: 404 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(errorResponse), { status: 404 })
+      );
 
-      await expect(client.moveFile('/app/file.txt', '/nonexistent/file.txt', 'session-move'))
-        .rejects.toThrow(FileSystemError);
+      await expect(
+        client.moveFile(
+          '/app/file.txt',
+          '/nonexistent/file.txt',
+          'session-move'
+        )
+      ).rejects.toThrow(FileSystemError);
     });
   });
 
@@ -511,7 +574,7 @@ database:
       modifiedAt: '2023-01-01T00:00:00Z',
       mode: 'rw-r--r--',
       permissions: { readable: true, writable: true, executable: false },
-      ...overrides,
+      ...overrides
     });
 
     it('should list files with correct structure', async () => {
@@ -520,13 +583,15 @@ database:
         path: '/workspace',
         files: [
           createMockFile({ name: 'file.txt' }),
-          createMockFile({ name: 'dir', type: 'directory', mode: 'rwxr-xr-x' }),
+          createMockFile({ name: 'dir', type: 'directory', mode: 'rwxr-xr-x' })
         ],
         count: 2,
-        timestamp: '2023-01-01T00:00:00Z',
+        timestamp: '2023-01-01T00:00:00Z'
       };
 
-      mockFetch.mockResolvedValue(new Response(JSON.stringify(mockResponse), { status: 200 }));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(mockResponse), { status: 200 })
+      );
 
       const result = await client.listFiles('/workspace', 'session-list');
 
@@ -543,12 +608,17 @@ database:
         path: '/workspace',
         files: [createMockFile({ name: '.hidden', relativePath: '.hidden' })],
         count: 1,
-        timestamp: '2023-01-01T00:00:00Z',
+        timestamp: '2023-01-01T00:00:00Z'
       };
 
-      mockFetch.mockResolvedValue(new Response(JSON.stringify(mockResponse), { status: 200 }));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(mockResponse), { status: 200 })
+      );
 
-      await client.listFiles('/workspace', 'session-list', { recursive: true, includeHidden: true });
+      await client.listFiles('/workspace', 'session-list', {
+        recursive: true,
+        includeHidden: true
+      });
 
       expect(mockFetch).toHaveBeenCalledWith(
         expect.stringContaining('/api/list-files'),
@@ -556,17 +626,25 @@ database:
           body: JSON.stringify({
             path: '/workspace',
             sessionId: 'session-list',
-            options: { recursive: true, includeHidden: true },
+            options: { recursive: true, includeHidden: true }
           })
         })
       );
     });
 
     it('should handle empty directories', async () => {
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify({ success: true, path: '/empty', files: [], count: 0, timestamp: '2023-01-01T00:00:00Z' }),
-        { status: 200 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            success: true,
+            path: '/empty',
+            files: [],
+            count: 0,
+            timestamp: '2023-01-01T00:00:00Z'
+          }),
+          { status: 200 }
+        )
+      );
 
       const result = await client.listFiles('/empty', 'session-list');
 
@@ -575,13 +653,19 @@ database:
     });
 
     it('should handle error responses', async () => {
-      mockFetch.mockResolvedValue(new Response(
-        JSON.stringify({ error: 'Directory not found', code: 'FILE_NOT_FOUND' }),
-        { status: 404 }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            error: 'Directory not found',
+            code: 'FILE_NOT_FOUND'
+          }),
+          { status: 404 }
+        )
+      );
 
-      await expect(client.listFiles('/nonexistent', 'session-list'))
-        .rejects.toThrow(FileNotFoundError);
+      await expect(
+        client.listFiles('/nonexistent', 'session-list')
+      ).rejects.toThrow(FileNotFoundError);
     });
   });
 
@@ -591,12 +675,17 @@ database:
         success: true,
         path: '/workspace/test.txt',
         exists: true,
-        timestamp: '2023-01-01T00:00:00Z',
+        timestamp: '2023-01-01T00:00:00Z'
       };
 
-      mockFetch.mockResolvedValue(new Response(JSON.stringify(mockResponse), { status: 200 }));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(mockResponse), { status: 200 })
+      );
 
-      const result = await client.exists('/workspace/test.txt', 'session-exists');
+      const result = await client.exists(
+        '/workspace/test.txt',
+        'session-exists'
+      );
 
       expect(result.success).toBe(true);
       expect(result.exists).toBe(true);
@@ -608,12 +697,17 @@ database:
         success: true,
         path: '/workspace/nonexistent.txt',
         exists: false,
-        timestamp: '2023-01-01T00:00:00Z',
+        timestamp: '2023-01-01T00:00:00Z'
       };
 
-      mockFetch.mockResolvedValue(new Response(JSON.stringify(mockResponse), { status: 200 }));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(mockResponse), { status: 200 })
+      );
 
-      const result = await client.exists('/workspace/nonexistent.txt', 'session-exists');
+      const result = await client.exists(
+        '/workspace/nonexistent.txt',
+        'session-exists'
+      );
 
       expect(result.success).toBe(true);
       expect(result.exists).toBe(false);
@@ -624,12 +718,17 @@ database:
         success: true,
         path: '/workspace/some-dir',
         exists: true,
-        timestamp: '2023-01-01T00:00:00Z',
+        timestamp: '2023-01-01T00:00:00Z'
       };
 
-      mockFetch.mockResolvedValue(new Response(JSON.stringify(mockResponse), { status: 200 }));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(mockResponse), { status: 200 })
+      );
 
-      const result = await client.exists('/workspace/some-dir', 'session-exists');
+      const result = await client.exists(
+        '/workspace/some-dir',
+        'session-exists'
+      );
 
       expect(result.success).toBe(true);
       expect(result.exists).toBe(true);
@@ -640,10 +739,12 @@ database:
         success: true,
         path: '/test/path',
         exists: true,
-        timestamp: '2023-01-01T00:00:00Z',
+        timestamp: '2023-01-01T00:00:00Z'
       };
 
-      mockFetch.mockResolvedValue(new Response(JSON.stringify(mockResponse), { status: 200 }));
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(mockResponse), { status: 200 })
+      );
 
       await client.exists('/test/path', 'session-test');
 
@@ -653,7 +754,7 @@ database:
           method: 'POST',
           body: JSON.stringify({
             path: '/test/path',
-            sessionId: 'session-test',
+            sessionId: 'session-test'
           })
         })
       );
@@ -664,40 +765,51 @@ database:
     it('should handle network failures gracefully', async () => {
       mockFetch.mockRejectedValue(new Error('Network connection failed'));
 
-      await expect(client.readFile('/app/file.txt', 'session-read'))
-        .rejects.toThrow('Network connection failed');
+      await expect(
+        client.readFile('/app/file.txt', 'session-read')
+      ).rejects.toThrow('Network connection failed');
     });
 
     it('should handle malformed server responses', async () => {
-      mockFetch.mockResolvedValue(new Response(
-        'invalid json {',
-        { status: 200, headers: { 'Content-Type': 'application/json' } }
-      ));
+      mockFetch.mockResolvedValue(
+        new Response('invalid json {', {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        })
+      );
 
-      await expect(client.writeFile('/app/file.txt', 'content', 'session-err'))
-        .rejects.toThrow(SandboxError);
+      await expect(
+        client.writeFile('/app/file.txt', 'content', 'session-err')
+      ).rejects.toThrow(SandboxError);
     });
 
     it('should handle server errors with proper mapping', async () => {
       const serverErrorScenarios = [
         { status: 400, code: 'FILESYSTEM_ERROR', error: FileSystemError },
-        { status: 403, code: 'PERMISSION_DENIED', error: PermissionDeniedError },
+        {
+          status: 403,
+          code: 'PERMISSION_DENIED',
+          error: PermissionDeniedError
+        },
         { status: 404, code: 'FILE_NOT_FOUND', error: FileNotFoundError },
         { status: 409, code: 'FILE_EXISTS', error: FileExistsError },
-        { status: 500, code: 'INTERNAL_ERROR', error: SandboxError },
+        { status: 500, code: 'INTERNAL_ERROR', error: SandboxError }
       ];
 
       for (const scenario of serverErrorScenarios) {
-        mockFetch.mockResolvedValueOnce(new Response(
-          JSON.stringify({
-            error: 'Test error',
-            code: scenario.code
-          }),
-          { status: scenario.status }
-        ));
+        mockFetch.mockResolvedValueOnce(
+          new Response(
+            JSON.stringify({
+              error: 'Test error',
+              code: scenario.code
+            }),
+            { status: scenario.status }
+          )
+        );
 
-        await expect(client.readFile('/app/test.txt', 'session-read'))
-          .rejects.toThrow(scenario.error);
+        await expect(
+          client.readFile('/app/test.txt', 'session-read')
+        ).rejects.toThrow(scenario.error);
       }
     });
   });
@@ -711,7 +823,7 @@ database:
     it('should initialize with full options', () => {
       const fullOptionsClient = new FileClient({
         baseUrl: 'http://custom.com',
-        port: 8080,
+        port: 8080
       });
       expect(fullOptionsClient).toBeDefined();
     });

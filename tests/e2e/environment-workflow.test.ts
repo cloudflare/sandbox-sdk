@@ -1,6 +1,19 @@
-import { describe, test, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
+import {
+  describe,
+  test,
+  expect,
+  beforeAll,
+  afterAll,
+  afterEach,
+  vi
+} from 'vitest';
 import { getTestWorkerUrl, WranglerDevRunner } from './helpers/wrangler-runner';
-import { createSandboxId, createTestHeaders, fetchWithStartup, cleanupSandbox } from './helpers/test-fixtures';
+import {
+  createSandboxId,
+  createTestHeaders,
+  fetchWithStartup,
+  cleanupSandbox
+} from './helpers/test-fixtures';
 
 describe('Environment Variables Workflow', () => {
   describe('local', () => {
@@ -35,13 +48,14 @@ describe('Environment Variables Workflow', () => {
 
       // Step 1: Set environment variable
       const setEnvResponse = await vi.waitFor(
-        async () => fetchWithStartup(`${workerUrl}/api/env/set`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            envVars: { TEST_VAR: 'hello_world' },
+        async () =>
+          fetchWithStartup(`${workerUrl}/api/env/set`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              envVars: { TEST_VAR: 'hello_world' }
+            })
           }),
-        }),
         { timeout: 90000, interval: 2000 }
       );
 
@@ -54,8 +68,8 @@ describe('Environment Variables Workflow', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: 'echo $TEST_VAR',
-        }),
+          command: 'echo $TEST_VAR'
+        })
       });
 
       expect(execResponse.status).toBe(200);
@@ -70,17 +84,18 @@ describe('Environment Variables Workflow', () => {
 
       // Step 1: Set multiple environment variables
       const setEnvResponse = await vi.waitFor(
-        async () => fetchWithStartup(`${workerUrl}/api/env/set`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            envVars: {
-              API_KEY: 'secret123',
-              DB_HOST: 'localhost',
-              PORT: '3000',
-            },
+        async () =>
+          fetchWithStartup(`${workerUrl}/api/env/set`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              envVars: {
+                API_KEY: 'secret123',
+                DB_HOST: 'localhost',
+                PORT: '3000'
+              }
+            })
           }),
-        }),
         { timeout: 90000, interval: 2000 }
       );
 
@@ -93,8 +108,8 @@ describe('Environment Variables Workflow', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: 'echo "$API_KEY|$DB_HOST|$PORT"',
-        }),
+          command: 'echo "$API_KEY|$DB_HOST|$PORT"'
+        })
       });
 
       expect(execResponse.status).toBe(200);
@@ -109,13 +124,14 @@ describe('Environment Variables Workflow', () => {
 
       // Step 1: Set environment variable
       const setEnvResponse = await vi.waitFor(
-        async () => fetchWithStartup(`${workerUrl}/api/env/set`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            envVars: { PERSISTENT_VAR: 'still_here' },
+        async () =>
+          fetchWithStartup(`${workerUrl}/api/env/set`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              envVars: { PERSISTENT_VAR: 'still_here' }
+            })
           }),
-        }),
         { timeout: 90000, interval: 2000 }
       );
 
@@ -126,8 +142,8 @@ describe('Environment Variables Workflow', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: 'echo $PERSISTENT_VAR',
-        }),
+          command: 'echo $PERSISTENT_VAR'
+        })
       });
 
       expect(exec1Response.status).toBe(200);
@@ -140,8 +156,8 @@ describe('Environment Variables Workflow', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: 'printenv PERSISTENT_VAR',
-        }),
+          command: 'printenv PERSISTENT_VAR'
+        })
       });
 
       expect(exec2Response.status).toBe(200);
@@ -154,8 +170,8 @@ describe('Environment Variables Workflow', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: 'sh -c "echo $PERSISTENT_VAR"',
-        }),
+          command: 'sh -c "echo $PERSISTENT_VAR"'
+        })
       });
 
       expect(exec3Response.status).toBe(200);
@@ -170,13 +186,14 @@ describe('Environment Variables Workflow', () => {
 
       // Step 1: Set environment variable
       const setEnvResponse = await vi.waitFor(
-        async () => fetchWithStartup(`${workerUrl}/api/env/set`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            envVars: { PROCESS_VAR: 'from_env' },
+        async () =>
+          fetchWithStartup(`${workerUrl}/api/env/set`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              envVars: { PROCESS_VAR: 'from_env' }
+            })
           }),
-        }),
         { timeout: 90000, interval: 2000 }
       );
 
@@ -189,8 +206,8 @@ describe('Environment Variables Workflow', () => {
         headers,
         body: JSON.stringify({
           path: '/workspace/env-test.sh',
-          content: '#!/bin/sh\necho "ENV_VALUE=$PROCESS_VAR"\n',
-        }),
+          content: '#!/bin/sh\necho "ENV_VALUE=$PROCESS_VAR"\n'
+        })
       });
 
       expect(writeResponse.status).toBe(200);
@@ -200,8 +217,8 @@ describe('Environment Variables Workflow', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: 'chmod +x /workspace/env-test.sh',
-        }),
+          command: 'chmod +x /workspace/env-test.sh'
+        })
       });
 
       // Step 3: Start the process (same sandbox)
@@ -209,8 +226,8 @@ describe('Environment Variables Workflow', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: '/workspace/env-test.sh',
-        }),
+          command: '/workspace/env-test.sh'
+        })
       });
 
       expect(startResponse.status).toBe(200);
@@ -225,7 +242,7 @@ describe('Environment Variables Workflow', () => {
         `${workerUrl}/api/process/${processId}/logs`,
         {
           method: 'GET',
-          headers,
+          headers
         }
       );
 
@@ -238,8 +255,8 @@ describe('Environment Variables Workflow', () => {
         method: 'DELETE',
         headers,
         body: JSON.stringify({
-          path: '/workspace/env-test.sh',
-        }),
+          path: '/workspace/env-test.sh'
+        })
       });
     }, 90000);
 
@@ -249,13 +266,14 @@ describe('Environment Variables Workflow', () => {
 
       // Test 1: cat with no arguments should exit immediately with EOF
       const catResponse = await vi.waitFor(
-        async () => fetchWithStartup(`${workerUrl}/api/execute`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            command: 'cat',
+        async () =>
+          fetchWithStartup(`${workerUrl}/api/execute`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              command: 'cat'
+            })
           }),
-        }),
         { timeout: 90000, interval: 2000 }
       );
 
@@ -270,8 +288,8 @@ describe('Environment Variables Workflow', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: 'read -t 1 INPUT_VAR || echo "read returned"',
-        }),
+          command: 'read -t 1 INPUT_VAR || echo "read returned"'
+        })
       });
 
       expect(readResponse.status).toBe(200);
@@ -284,8 +302,8 @@ describe('Environment Variables Workflow', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: 'grep "test" || true',
-        }),
+          command: 'grep "test" || true'
+        })
       });
 
       expect(grepResponse.status).toBe(200);

@@ -1,5 +1,5 @@
 import type { DurableObject } from 'cloudflare:workers';
-import { Container, getContainer } from "@cloudflare/containers";
+import { Container, getContainer, switchPort } from '@cloudflare/containers';
 import type {
   CodeContext,
   CreateContextOptions,
@@ -16,27 +16,23 @@ import type {
   SandboxOptions,
   SessionOptions,
   StreamOptions
-} from "@repo/shared";
-import { createLogger, runWithLogger, TraceContext } from "@repo/shared";
-import { type ExecuteResponse, SandboxClient } from "./clients";
+} from '@repo/shared';
+import { createLogger, runWithLogger, TraceContext } from '@repo/shared';
+import { type ExecuteResponse, SandboxClient } from './clients';
 import type { ErrorResponse } from './errors';
 import { CustomDomainRequiredError, ErrorCode } from './errors';
-import { CodeInterpreter } from "./interpreter";
-import { isLocalhostPattern } from "./request-handler";
-import {
-  SecurityError,
-  sanitizeSandboxId,
-  validatePort
-} from "./security";
-import { parseSSEStream } from "./sse-parser";
-import { SDK_VERSION } from "./version";
+import { CodeInterpreter } from './interpreter';
+import { isLocalhostPattern } from './request-handler';
+import { SecurityError, sanitizeSandboxId, validatePort } from './security';
+import { parseSSEStream } from './sse-parser';
+import { SDK_VERSION } from './version';
 
 export function getSandbox(
   ns: DurableObjectNamespace<Sandbox>,
   id: string,
   options?: SandboxOptions
-) {
-  const stub = getContainer(ns, id);
+): Sandbox {
+  const stub = getContainer(ns, id) as any as Sandbox;
 
   // Store the name on first access
   stub.setSandboxName?.(id);
@@ -56,9 +52,43 @@ export function getSandbox(
   return stub;
 }
 
+/**
+ * Connect an incoming WebSocket request to a specific port inside the container.
+ *
+ * Note: This is a standalone function (not a Sandbox method) because WebSocket
+ * connections cannot be serialized over Durable Object RPC.
+ *
+ * @param sandbox - The Sandbox instance to route the request through
+ * @param request - The incoming WebSocket upgrade request
+ * @param port - The port number to connect to (1024-65535)
+ * @returns The WebSocket upgrade response
+ * @throws {SecurityError} - If port is invalid or in restricted range
+ *
+ * @example
+ * const sandbox = getSandbox(env.Sandbox, 'sandbox-id');
+ * if (request.headers.get('Upgrade')?.toLowerCase() === 'websocket') {
+ *   return await connect(sandbox, request, 8080);
+ * }
+ */
+export async function connect(
+  sandbox: Sandbox,
+  request: Request,
+  port: number
+): Promise<Response> {
+  // Validate port before routing
+  if (!validatePort(port)) {
+    throw new SecurityError(
+      `Invalid or restricted port: ${port}. Ports must be in range 1024-65535 and not reserved.`
+    );
+  }
+
+  const portSwitchedRequest = switchPort(request, port);
+  return await sandbox.fetch(portSwitchedRequest);
+}
+
 export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   defaultPort = 3000; // Default port for the container's Bun server
-  sleepAfter: string | number = "10m"; // Sleep the sandbox if no requests are made in this timeframe
+  sleepAfter: string | number = '10m'; // Sleep the sandbox if no requests are made in this timeframe
 
   client: SandboxClient;
   private codeInterpreter: CodeInterpreter;
@@ -76,7 +106,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     const envObj = env as any;
     // Set sandbox environment variables from env object
     const sandboxEnvKeys = ['SANDBOX_LOG_LEVEL', 'SANDBOX_LOG_FORMAT'] as const;
-    sandboxEnvKeys.forEach(key => {
+    sandboxEnvKeys.forEach((key) => {
       if (envObj?.[key]) {
         this.envVars[key] = envObj[key];
       }
@@ -90,7 +120,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     this.client = new SandboxClient({
       logger: this.logger,
       port: 3000, // Control plane port
-      stub: this,
+      stub: this
     });
 
     // Initialize code interpreter - pass 'this' after client is ready
@@ -99,9 +129,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     // Load the sandbox name, port tokens, and default session from storage on initialization
     this.ctx.blockConcurrencyWhile(async () => {
-      this.sandboxName = await this.ctx.storage.get<string>('sandboxName') || null;
-      this.defaultSession = await this.ctx.storage.get<string>('defaultSession') || null;
-      const storedTokens = await this.ctx.storage.get<Record<string, string>>('portTokens') || {};
+      this.sandboxName =
+        (await this.ctx.storage.get<string>('sandboxName')) || null;
+      this.defaultSession =
+        (await this.ctx.storage.get<string>('defaultSession')) || null;
+      const storedTokens =
+        (await this.ctx.storage.get<Record<string, string>>('portTokens')) ||
+        {};
 
       // Convert stored tokens back to Map
       this.portTokens = new Map();
@@ -125,8 +159,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       this.baseUrl = baseUrl;
       await this.ctx.storage.put('baseUrl', baseUrl);
     } else {
-      if(this.baseUrl !== baseUrl) {
-        throw new Error('Base URL already set and different from one previously provided');
+      if (this.baseUrl !== baseUrl) {
+        throw new Error(
+          'Base URL already set and different from one previously provided'
+        );
       }
     }
   }
@@ -140,9 +176,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   async setKeepAlive(keepAlive: boolean): Promise<void> {
     this.keepAliveEnabled = keepAlive;
     if (keepAlive) {
-      this.logger.info('KeepAlive mode enabled - container will stay alive until explicitly destroyed');
+      this.logger.info(
+        'KeepAlive mode enabled - container will stay alive until explicitly destroyed'
+      );
     } else {
-      this.logger.info('KeepAlive mode disabled - container will timeout normally');
+      this.logger.info(
+        'KeepAlive mode disabled - container will timeout normally'
+      );
     }
   }
 
@@ -158,10 +198,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         const escapedValue = value.replace(/'/g, "'\\''");
         const exportCommand = `export ${key}='${escapedValue}'`;
 
-        const result = await this.client.commands.execute(exportCommand, this.defaultSession);
+        const result = await this.client.commands.execute(
+          exportCommand,
+          this.defaultSession
+        );
 
         if (result.exitCode !== 0) {
-          throw new Error(`Failed to set ${key}: ${result.stderr || 'Unknown error'}`);
+          throw new Error(
+            `Failed to set ${key}: ${result.stderr || 'Unknown error'}`
+          );
         }
       }
     }
@@ -179,8 +224,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     this.logger.debug('Sandbox started');
 
     // Check version compatibility asynchronously (don't block startup)
-    this.checkVersionCompatibility().catch(error => {
-      this.logger.error('Version compatibility check failed', error instanceof Error ? error : new Error(String(error)));
+    this.checkVersionCompatibility().catch((error) => {
+      this.logger.error(
+        'Version compatibility check failed',
+        error instanceof Error ? error : new Error(String(error))
+      );
     });
   }
 
@@ -200,8 +248,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       if (containerVersion === 'unknown') {
         this.logger.warn(
           'Container version check: Container version could not be determined. ' +
-          'This may indicate an outdated container image. ' +
-          'Please update your container to match SDK version ' + sdkVersion
+            'This may indicate an outdated container image. ' +
+            'Please update your container to match SDK version ' +
+            sdkVersion
         );
         return;
       }
@@ -217,7 +266,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         // so we always use warning level as requested by the user
         this.logger.warn(message);
       } else {
-        this.logger.debug('Version check passed', { sdkVersion, containerVersion });
+        this.logger.debug('Version check passed', {
+          sdkVersion,
+          containerVersion
+        });
       }
     } catch (error) {
       // Don't fail the sandbox initialization if version check fails
@@ -232,7 +284,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   override onError(error: unknown) {
-    this.logger.error('Sandbox error', error instanceof Error ? error : new Error(String(error)));
+    this.logger.error(
+      'Sandbox error',
+      error instanceof Error ? error : new Error(String(error))
+    );
   }
 
   /**
@@ -241,7 +296,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    */
   override async onActivityExpired(): Promise<void> {
     if (this.keepAliveEnabled) {
-      this.logger.debug('Activity expired but keepAlive is enabled - container will stay alive');
+      this.logger.debug(
+        'Activity expired but keepAlive is enabled - container will stay alive'
+      );
       // Do nothing - don't call stop(), container stays alive
     } else {
       // Default behavior: stop the container
@@ -250,11 +307,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
   }
 
-
   // Override fetch to route internal container requests to appropriate ports
   override async fetch(request: Request): Promise<Response> {
     // Extract or generate trace ID from request
-    const traceId = TraceContext.fromHeaders(request.headers) || TraceContext.generate();
+    const traceId =
+      TraceContext.fromHeaders(request.headers) || TraceContext.generate();
 
     // Create request-specific logger with trace ID
     const requestLogger = this.logger.child({ traceId, operation: 'fetch' });
@@ -269,14 +326,30 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         await this.ctx.storage.put('sandboxName', name);
       }
 
-      // Detect WebSocket upgrade request
+      // Detect WebSocket upgrade request (RFC 6455 compliant)
       const upgradeHeader = request.headers.get('Upgrade');
-      const isWebSocket = upgradeHeader?.toLowerCase() === 'websocket';
+      const connectionHeader = request.headers.get('Connection');
+      const isWebSocket =
+        upgradeHeader?.toLowerCase() === 'websocket' &&
+        connectionHeader?.toLowerCase().includes('upgrade');
 
       if (isWebSocket) {
         // WebSocket path: Let parent Container class handle WebSocket proxying
         // This bypasses containerFetch() which uses JSRPC and cannot handle WebSocket upgrades
-        return await super.fetch(request);
+        try {
+          requestLogger.debug('WebSocket upgrade requested', {
+            path: url.pathname,
+            port: this.determinePort(url)
+          });
+          return await super.fetch(request);
+        } catch (error) {
+          requestLogger.error(
+            'WebSocket connection failed',
+            error instanceof Error ? error : new Error(String(error)),
+            { path: url.pathname }
+          );
+          throw error;
+        }
       }
 
       // Non-WebSocket: Use existing port determination and HTTP routing logic
@@ -316,7 +389,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         await this.client.utils.createSession({
           id: sessionId,
           env: this.envVars || {},
-          cwd: '/workspace',
+          cwd: '/workspace'
         });
 
         this.defaultSession = sessionId;
@@ -326,7 +399,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       } catch (error: any) {
         // If session already exists (e.g., after hot reload), reuse it
         if (error?.message?.includes('already exists')) {
-          this.logger.debug('Reusing existing session after reload', { sessionId });
+          this.logger.debug('Reusing existing session after reload', {
+            sessionId
+          });
           this.defaultSession = sessionId;
           // Persist to storage in case it wasn't saved before
           await this.ctx.storage.put('defaultSession', sessionId);
@@ -370,13 +445,23 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
       if (options?.stream && options?.onOutput) {
         // Streaming with callbacks - we need to collect the final result
-        result = await this.executeWithStreaming(command, sessionId, options, startTime, timestamp);
+        result = await this.executeWithStreaming(
+          command,
+          sessionId,
+          options,
+          startTime,
+          timestamp
+        );
       } else {
         // Regular execution with session
         const response = await this.client.commands.execute(command, sessionId);
 
         const duration = Date.now() - startTime;
-        result = this.mapExecuteResponseToExecResult(response, duration, sessionId);
+        result = this.mapExecuteResponseToExecResult(
+          response,
+          duration,
+          sessionId
+        );
       }
 
       // Call completion callback if provided
@@ -408,7 +493,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     let stderr = '';
 
     try {
-      const stream = await this.client.commands.executeStream(command, sessionId);
+      const stream = await this.client.commands.executeStream(
+        command,
+        sessionId
+      );
 
       for await (const event of parseSSEStream<ExecEvent>(stream)) {
         // Check for cancellation
@@ -453,7 +541,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
       // If we get here without a complete event, something went wrong
       throw new Error('Stream ended without completion event');
-
     } catch (error) {
       if (options.signal?.aborted) {
         throw new Error('Operation was aborted');
@@ -501,8 +588,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       pid: data.pid,
       command: data.command,
       status: data.status,
-      startTime: typeof data.startTime === 'string' ? new Date(data.startTime) : data.startTime,
-      endTime: data.endTime ? (typeof data.endTime === 'string' ? new Date(data.endTime) : data.endTime) : undefined,
+      startTime:
+        typeof data.startTime === 'string'
+          ? new Date(data.startTime)
+          : data.startTime,
+      endTime: data.endTime
+        ? typeof data.endTime === 'string'
+          ? new Date(data.endTime)
+          : data.endTime
+        : undefined,
       exitCode: data.exitCode,
       sessionId,
 
@@ -522,25 +616,35 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     };
   }
 
-
   // Background process management
-  async startProcess(command: string, options?: ProcessOptions, sessionId?: string): Promise<Process> {
+  async startProcess(
+    command: string,
+    options?: ProcessOptions,
+    sessionId?: string
+  ): Promise<Process> {
     // Use the new HttpClient method to start the process
     try {
-      const session = sessionId ?? await this.ensureDefaultSession();
-      const response = await this.client.processes.startProcess(command, session, {
-        processId: options?.processId
-      });
+      const session = sessionId ?? (await this.ensureDefaultSession());
+      const response = await this.client.processes.startProcess(
+        command,
+        session,
+        {
+          processId: options?.processId
+        }
+      );
 
-      const processObj = this.createProcessFromDTO({
-        id: response.processId,
-        pid: response.pid,
-        command: response.command,
-        status: 'running' as ProcessStatus,
-        startTime: new Date(),
-        endTime: undefined,
-        exitCode: undefined
-      }, session);
+      const processObj = this.createProcessFromDTO(
+        {
+          id: response.processId,
+          pid: response.pid,
+          command: response.command,
+          status: 'running' as ProcessStatus,
+          startTime: new Date(),
+          endTime: undefined,
+          exitCode: undefined
+        },
+        session
+      );
 
       // Call onStart callback if provided
       if (options?.onStart) {
@@ -548,7 +652,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       }
 
       return processObj;
-
     } catch (error) {
       if (options?.onError && error instanceof Error) {
         options.onError(error);
@@ -559,11 +662,35 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   async listProcesses(sessionId?: string): Promise<Process[]> {
-    const session = sessionId ?? await this.ensureDefaultSession();
+    const session = sessionId ?? (await this.ensureDefaultSession());
     const response = await this.client.processes.listProcesses();
 
-    return response.processes.map(processData =>
-      this.createProcessFromDTO({
+    return response.processes.map((processData) =>
+      this.createProcessFromDTO(
+        {
+          id: processData.id,
+          pid: processData.pid,
+          command: processData.command,
+          status: processData.status,
+          startTime: processData.startTime,
+          endTime: processData.endTime,
+          exitCode: processData.exitCode
+        },
+        session
+      )
+    );
+  }
+
+  async getProcess(id: string, sessionId?: string): Promise<Process | null> {
+    const session = sessionId ?? (await this.ensureDefaultSession());
+    const response = await this.client.processes.getProcess(id);
+    if (!response.process) {
+      return null;
+    }
+
+    const processData = response.process;
+    return this.createProcessFromDTO(
+      {
         id: processData.id,
         pid: processData.pid,
         command: processData.command,
@@ -571,30 +698,16 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         startTime: processData.startTime,
         endTime: processData.endTime,
         exitCode: processData.exitCode
-      }, session)
+      },
+      session
     );
   }
 
-  async getProcess(id: string, sessionId?: string): Promise<Process | null> {
-    const session = sessionId ?? await this.ensureDefaultSession();
-    const response = await this.client.processes.getProcess(id);
-    if (!response.process) {
-      return null;
-    }
-
-    const processData = response.process;
-    return this.createProcessFromDTO({
-      id: processData.id,
-      pid: processData.pid,
-      command: processData.command,
-      status: processData.status,
-      startTime: processData.startTime,
-      endTime: processData.endTime,
-      exitCode: processData.exitCode
-    }, session);
-  }
-
-  async killProcess(id: string, signal?: string, sessionId?: string): Promise<void> {
+  async killProcess(
+    id: string,
+    signal?: string,
+    sessionId?: string
+  ): Promise<void> {
     // Note: signal parameter is not currently supported by the HttpClient implementation
     // The HTTP client already throws properly typed errors, so we just let them propagate
     await this.client.processes.killProcess(id);
@@ -612,7 +725,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     return 0;
   }
 
-  async getProcessLogs(id: string, sessionId?: string): Promise<{ stdout: string; stderr: string; processId: string }> {
+  async getProcessLogs(
+    id: string,
+    sessionId?: string
+  ): Promise<{ stdout: string; stderr: string; processId: string }> {
     // The HTTP client already throws properly typed errors, so we just let them propagate
     const response = await this.client.processes.getProcessLogs(id);
     return {
@@ -622,8 +738,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     };
   }
 
-// Streaming methods - return ReadableStream for RPC compatibility
-  async execStream(command: string, options?: StreamOptions): Promise<ReadableStream<Uint8Array>> {
+  // Streaming methods - return ReadableStream for RPC compatibility
+  async execStream(
+    command: string,
+    options?: StreamOptions
+  ): Promise<ReadableStream<Uint8Array>> {
     // Check for cancellation
     if (options?.signal?.aborted) {
       throw new Error('Operation was aborted');
@@ -637,7 +756,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   /**
    * Internal session-aware execStream implementation
    */
-  private async execStreamWithSession(command: string, sessionId: string, options?: StreamOptions): Promise<ReadableStream<Uint8Array>> {
+  private async execStreamWithSession(
+    command: string,
+    sessionId: string,
+    options?: StreamOptions
+  ): Promise<ReadableStream<Uint8Array>> {
     // Check for cancellation
     if (options?.signal?.aborted) {
       throw new Error('Operation was aborted');
@@ -649,7 +772,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   /**
    * Stream logs from a background process as a ReadableStream.
    */
-  async streamProcessLogs(processId: string, options?: { signal?: AbortSignal }): Promise<ReadableStream<Uint8Array>> {
+  async streamProcessLogs(
+    processId: string,
+    options?: { signal?: AbortSignal }
+  ): Promise<ReadableStream<Uint8Array>> {
     // Check for cancellation
     if (options?.signal?.aborted) {
       throw new Error('Operation was aborted');
@@ -662,7 +788,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     repoUrl: string,
     options: { branch?: string; targetDir?: string; sessionId?: string }
   ) {
-    const session = options.sessionId ?? await this.ensureDefaultSession();
+    const session = options.sessionId ?? (await this.ensureDefaultSession());
     return this.client.git.checkout(repoUrl, session, {
       branch: options.branch,
       targetDir: options.targetDir
@@ -673,8 +799,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     path: string,
     options: { recursive?: boolean; sessionId?: string } = {}
   ) {
-    const session = options.sessionId ?? await this.ensureDefaultSession();
-    return this.client.files.mkdir(path, session, { recursive: options.recursive });
+    const session = options.sessionId ?? (await this.ensureDefaultSession());
+    return this.client.files.mkdir(path, session, {
+      recursive: options.recursive
+    });
   }
 
   async writeFile(
@@ -682,21 +810,19 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     content: string,
     options: { encoding?: string; sessionId?: string } = {}
   ) {
-    const session = options.sessionId ?? await this.ensureDefaultSession();
-    return this.client.files.writeFile(path, content, session, { encoding: options.encoding });
+    const session = options.sessionId ?? (await this.ensureDefaultSession());
+    return this.client.files.writeFile(path, content, session, {
+      encoding: options.encoding
+    });
   }
 
   async deleteFile(path: string, sessionId?: string) {
-    const session = sessionId ?? await this.ensureDefaultSession();
+    const session = sessionId ?? (await this.ensureDefaultSession());
     return this.client.files.deleteFile(path, session);
   }
 
-  async renameFile(
-    oldPath: string,
-    newPath: string,
-    sessionId?: string
-  ) {
-    const session = sessionId ?? await this.ensureDefaultSession();
+  async renameFile(oldPath: string, newPath: string, sessionId?: string) {
+    const session = sessionId ?? (await this.ensureDefaultSession());
     return this.client.files.renameFile(oldPath, newPath, session);
   }
 
@@ -705,7 +831,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     destinationPath: string,
     sessionId?: string
   ) {
-    const session = sessionId ?? await this.ensureDefaultSession();
+    const session = sessionId ?? (await this.ensureDefaultSession());
     return this.client.files.moveFile(sourcePath, destinationPath, session);
   }
 
@@ -713,8 +839,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     path: string,
     options: { encoding?: string; sessionId?: string } = {}
   ) {
-    const session = options.sessionId ?? await this.ensureDefaultSession();
-    return this.client.files.readFile(path, session, { encoding: options.encoding });
+    const session = options.sessionId ?? (await this.ensureDefaultSession());
+    return this.client.files.readFile(path, session, {
+      encoding: options.encoding
+    });
   }
 
   /**
@@ -727,7 +855,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     path: string,
     options: { sessionId?: string } = {}
   ): Promise<ReadableStream<Uint8Array>> {
-    const session = options.sessionId ?? await this.ensureDefaultSession();
+    const session = options.sessionId ?? (await this.ensureDefaultSession());
     return this.client.files.readFileStream(path, session);
   }
 
@@ -740,7 +868,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   async exists(path: string, sessionId?: string) {
-    const session = sessionId ?? await this.ensureDefaultSession();
+    const session = sessionId ?? (await this.ensureDefaultSession());
     return this.client.files.exists(path, session);
   }
 
@@ -762,7 +890,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     // We need the sandbox name to construct preview URLs
     if (!this.sandboxName) {
-      throw new Error('Sandbox name not available. Ensure sandbox is accessed through getSandbox()');
+      throw new Error(
+        'Sandbox name not available. Ensure sandbox is accessed through getSandbox()'
+      );
     }
 
     // Generate and store token for this port
@@ -770,18 +900,25 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     this.portTokens.set(port, token);
     await this.persistPortTokens();
 
-    const url = this.constructPreviewUrl(port, this.sandboxName, options.hostname, token);
+    const url = this.constructPreviewUrl(
+      port,
+      this.sandboxName,
+      options.hostname,
+      token
+    );
 
     return {
       url,
       port,
-      name: options?.name,
+      name: options?.name
     };
   }
 
   async unexposePort(port: number) {
     if (!validatePort(port)) {
-      throw new SecurityError(`Invalid port number: ${port}. Must be between 1024-65535 and not reserved.`);
+      throw new SecurityError(
+        `Invalid port number: ${port}. Must be between 1024-65535 and not reserved.`
+      );
     }
 
     const sessionId = await this.ensureDefaultSession();
@@ -800,32 +937,44 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     // We need the sandbox name to construct preview URLs
     if (!this.sandboxName) {
-      throw new Error('Sandbox name not available. Ensure sandbox is accessed through getSandbox()');
+      throw new Error(
+        'Sandbox name not available. Ensure sandbox is accessed through getSandbox()'
+      );
     }
 
-    return response.ports.map(port => {
+    return response.ports.map((port) => {
       // Get token for this port - must exist for all exposed ports
       const token = this.portTokens.get(port.port);
       if (!token) {
-        throw new Error(`Port ${port.port} is exposed but has no token. This should not happen.`);
+        throw new Error(
+          `Port ${port.port} is exposed but has no token. This should not happen.`
+        );
       }
 
       return {
-        url: this.constructPreviewUrl(port.port, this.sandboxName!, hostname, token),
+        url: this.constructPreviewUrl(
+          port.port,
+          this.sandboxName!,
+          hostname,
+          token
+        ),
         port: port.port,
-        status: port.status,
+        status: port.status
       };
     });
   }
-
 
   async isPortExposed(port: number): Promise<boolean> {
     try {
       const sessionId = await this.ensureDefaultSession();
       const response = await this.client.ports.getExposedPorts(sessionId);
-      return response.ports.some(exposedPort => exposedPort.port === port);
+      return response.ports.some((exposedPort) => exposedPort.port === port);
     } catch (error) {
-      this.logger.error('Error checking if port is exposed', error instanceof Error ? error : new Error(String(error)), { port });
+      this.logger.error(
+        'Error checking if port is exposed',
+        error instanceof Error ? error : new Error(String(error)),
+        { port }
+      );
       return false;
     }
   }
@@ -841,7 +990,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     const storedToken = this.portTokens.get(port);
     if (!storedToken) {
       // This should not happen - all exposed ports must have tokens
-      this.logger.error('Port is exposed but has no token - bug detected', undefined, { port });
+      this.logger.error(
+        'Port is exposed but has no token - bug detected',
+        undefined,
+        { port }
+      );
       return false;
     }
 
@@ -857,7 +1010,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     // Convert to base64url format (URL-safe, no padding, lowercase)
     const base64 = btoa(String.fromCharCode(...array));
-    return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '').toLowerCase();
+    return base64
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=/g, '')
+      .toLowerCase();
   }
 
   private async persistPortTokens(): Promise<void> {
@@ -869,9 +1026,16 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     await this.ctx.storage.put('portTokens', tokensObj);
   }
 
-  private constructPreviewUrl(port: number, sandboxId: string, hostname: string, token: string): string {
+  private constructPreviewUrl(
+    port: number,
+    sandboxId: string,
+    hostname: string,
+    token: string
+  ): string {
     if (!validatePort(port)) {
-      throw new SecurityError(`Invalid port number: ${port}. Must be between 1024-65535 and not reserved.`);
+      throw new SecurityError(
+        `Invalid port number: ${port}. Must be between 1024-65535 and not reserved.`
+      );
     }
 
     // Validate sandbox ID (will throw SecurityError if invalid)
@@ -893,14 +1057,18 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
         return baseUrl.toString();
       } catch (error) {
-        throw new SecurityError(`Failed to construct preview URL: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        throw new SecurityError(
+          `Failed to construct preview URL: ${
+            error instanceof Error ? error.message : 'Unknown error'
+          }`
+        );
       }
     }
 
     // Production subdomain logic - enforce HTTPS
     try {
       // Always use HTTPS for production (non-localhost)
-      const protocol = "https";
+      const protocol = 'https';
       const baseUrl = new URL(`${protocol}://${hostname}`);
 
       // Construct subdomain safely with mandatory token
@@ -909,7 +1077,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
       return baseUrl.toString();
     } catch (error) {
-      throw new SecurityError(`Failed to construct preview URL: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      throw new SecurityError(
+        `Failed to construct preview URL: ${
+          error instanceof Error ? error.message : 'Unknown error'
+        }`
+      );
     }
   }
 
@@ -928,7 +1100,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     await this.client.utils.createSession({
       id: sessionId,
       env: options?.env,
-      cwd: options?.cwd,
+      cwd: options?.cwd
     });
 
     // Return wrapper that binds sessionId to all operations
@@ -959,32 +1131,42 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       id: sessionId,
 
       // Command execution - delegate to internal session-aware methods
-      exec: (command, options) => this.execWithSession(command, sessionId, options),
-      execStream: (command, options) => this.execStreamWithSession(command, sessionId, options),
+      exec: (command, options) =>
+        this.execWithSession(command, sessionId, options),
+      execStream: (command, options) =>
+        this.execStreamWithSession(command, sessionId, options),
 
       // Process management
-      startProcess: (command, options) => this.startProcess(command, options, sessionId),
+      startProcess: (command, options) =>
+        this.startProcess(command, options, sessionId),
       listProcesses: () => this.listProcesses(sessionId),
       getProcess: (id) => this.getProcess(id, sessionId),
       killProcess: (id, signal) => this.killProcess(id, signal),
       killAllProcesses: () => this.killAllProcesses(),
       cleanupCompletedProcesses: () => this.cleanupCompletedProcesses(),
       getProcessLogs: (id) => this.getProcessLogs(id),
-      streamProcessLogs: (processId, options) => this.streamProcessLogs(processId, options),
+      streamProcessLogs: (processId, options) =>
+        this.streamProcessLogs(processId, options),
 
       // File operations - pass sessionId via options or parameter
-      writeFile: (path, content, options) => this.writeFile(path, content, { ...options, sessionId }),
-      readFile: (path, options) => this.readFile(path, { ...options, sessionId }),
+      writeFile: (path, content, options) =>
+        this.writeFile(path, content, { ...options, sessionId }),
+      readFile: (path, options) =>
+        this.readFile(path, { ...options, sessionId }),
       readFileStream: (path) => this.readFileStream(path, { sessionId }),
       mkdir: (path, options) => this.mkdir(path, { ...options, sessionId }),
       deleteFile: (path) => this.deleteFile(path, sessionId),
-      renameFile: (oldPath, newPath) => this.renameFile(oldPath, newPath, sessionId),
-      moveFile: (sourcePath, destPath) => this.moveFile(sourcePath, destPath, sessionId),
-      listFiles: (path, options) => this.client.files.listFiles(path, sessionId, options),
+      renameFile: (oldPath, newPath) =>
+        this.renameFile(oldPath, newPath, sessionId),
+      moveFile: (sourcePath, destPath) =>
+        this.moveFile(sourcePath, destPath, sessionId),
+      listFiles: (path, options) =>
+        this.client.files.listFiles(path, sessionId, options),
       exists: (path) => this.exists(path, sessionId),
 
       // Git operations
-      gitCheckout: (repoUrl, options) => this.gitCheckout(repoUrl, { ...options, sessionId }),
+      gitCheckout: (repoUrl, options) =>
+        this.gitCheckout(repoUrl, { ...options, sessionId }),
 
       // Environment management - needs special handling
       setEnvVars: async (envVars: Record<string, string>) => {
@@ -994,27 +1176,39 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
             const escapedValue = value.replace(/'/g, "'\\''");
             const exportCommand = `export ${key}='${escapedValue}'`;
 
-            const result = await this.client.commands.execute(exportCommand, sessionId);
+            const result = await this.client.commands.execute(
+              exportCommand,
+              sessionId
+            );
 
             if (result.exitCode !== 0) {
-              throw new Error(`Failed to set ${key}: ${result.stderr || 'Unknown error'}`);
+              throw new Error(
+                `Failed to set ${key}: ${result.stderr || 'Unknown error'}`
+              );
             }
           }
         } catch (error) {
-          this.logger.error('Failed to set environment variables', error instanceof Error ? error : new Error(String(error)), { sessionId });
+          this.logger.error(
+            'Failed to set environment variables',
+            error instanceof Error ? error : new Error(String(error)),
+            { sessionId }
+          );
           throw error;
         }
       },
 
       // Code interpreter methods - delegate to sandbox's code interpreter
-      createCodeContext: (options) => this.codeInterpreter.createCodeContext(options),
+      createCodeContext: (options) =>
+        this.codeInterpreter.createCodeContext(options),
       runCode: async (code, options) => {
         const execution = await this.codeInterpreter.runCode(code, options);
         return execution.toJSON();
       },
-      runCodeStream: (code, options) => this.codeInterpreter.runCodeStream(code, options),
+      runCodeStream: (code, options) =>
+        this.codeInterpreter.runCodeStream(code, options),
       listCodeContexts: () => this.codeInterpreter.listCodeContexts(),
-      deleteCodeContext: (contextId) => this.codeInterpreter.deleteCodeContext(contextId),
+      deleteCodeContext: (contextId) =>
+        this.codeInterpreter.deleteCodeContext(contextId)
     };
   }
 
@@ -1022,16 +1216,24 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   // Code interpreter methods - delegate to CodeInterpreter wrapper
   // ============================================================================
 
-  async createCodeContext(options?: CreateContextOptions): Promise<CodeContext> {
+  async createCodeContext(
+    options?: CreateContextOptions
+  ): Promise<CodeContext> {
     return this.codeInterpreter.createCodeContext(options);
   }
 
-  async runCode(code: string, options?: RunCodeOptions): Promise<ExecutionResult> {
+  async runCode(
+    code: string,
+    options?: RunCodeOptions
+  ): Promise<ExecutionResult> {
     const execution = await this.codeInterpreter.runCode(code, options);
     return execution.toJSON();
   }
 
-  async runCodeStream(code: string, options?: RunCodeOptions): Promise<ReadableStream> {
+  async runCodeStream(
+    code: string,
+    options?: RunCodeOptions
+  ): Promise<ReadableStream> {
     return this.codeInterpreter.runCodeStream(code, options);
   }
 
