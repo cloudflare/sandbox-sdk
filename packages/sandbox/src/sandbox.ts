@@ -27,7 +27,7 @@ import { SecurityError, sanitizeSandboxId, validatePort } from './security';
 import { parseSSEStream } from './sse-parser';
 import { SDK_VERSION } from './version';
 
-export type ISandbox = Sandbox & {
+export type ISandbox = DurableObjectStub<Sandbox> & {
   /**
    * Connect an incoming WebSocket request to a specific port inside the container.
    *
