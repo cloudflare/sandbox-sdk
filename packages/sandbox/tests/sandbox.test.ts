@@ -1,7 +1,8 @@
-import { Container } from '@cloudflare/containers';
+import { Container, switchPort } from '@cloudflare/containers';
 import type { DurableObjectState } from '@cloudflare/workers-types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { connect, Sandbox } from '../src/sandbox';
+import { Sandbox } from '../src/sandbox';
+import { SecurityError, validatePort } from '../src/security';
 
 // Mock dependencies before imports
 vi.mock('./interpreter', () => ({
@@ -88,6 +89,20 @@ describe('Sandbox - Automatic Session Management', () => {
     await vi.waitFor(() => {
       expect(mockCtx.blockConcurrencyWhile).toHaveBeenCalled();
     });
+
+    // Add wsConnect method to sandbox (simulating what getSandbox() does)
+    (sandbox as any).wsConnect = async (
+      request: Request,
+      port: number
+    ): Promise<Response> => {
+      if (!validatePort(port)) {
+        throw new SecurityError(
+          `Invalid or restricted port: ${port}. Ports must be in range 1024-65535 and not reserved.`
+        );
+      }
+      const portSwitchedRequest = switchPort(request, port);
+      return await sandbox.fetch(portSwitchedRequest);
+    };
 
     // Now spy on the client methods that we need for testing
     vi.spyOn(sandbox.client.utils, 'createSession').mockResolvedValue({
@@ -621,7 +636,7 @@ describe('Sandbox - Automatic Session Management', () => {
     });
   });
 
-  describe('connect() function', () => {
+  describe('wsConnect() method', () => {
     it('should route WebSocket request through switchPort to sandbox.fetch', async () => {
       const { switchPort } = await import('@cloudflare/containers');
       const switchPortMock = vi.mocked(switchPort);
@@ -634,7 +649,7 @@ describe('Sandbox - Automatic Session Management', () => {
       });
 
       const fetchSpy = vi.spyOn(sandbox, 'fetch');
-      const response = await connect(sandbox, request, 8080);
+      const response = await sandbox.wsConnect(request, 8080);
 
       // Verify switchPort was called with correct port
       expect(switchPortMock).toHaveBeenCalledWith(request, 8080);
@@ -653,21 +668,21 @@ describe('Sandbox - Automatic Session Management', () => {
       });
 
       // Invalid port values
-      await expect(connect(sandbox, request, -1)).rejects.toThrow(
+      await expect(sandbox.wsConnect(request, -1)).rejects.toThrow(
         'Invalid or restricted port'
       );
-      await expect(connect(sandbox, request, 0)).rejects.toThrow(
+      await expect(sandbox.wsConnect(request, 0)).rejects.toThrow(
         'Invalid or restricted port'
       );
-      await expect(connect(sandbox, request, 70000)).rejects.toThrow(
+      await expect(sandbox.wsConnect(request, 70000)).rejects.toThrow(
         'Invalid or restricted port'
       );
 
       // Privileged ports
-      await expect(connect(sandbox, request, 80)).rejects.toThrow(
+      await expect(sandbox.wsConnect(request, 80)).rejects.toThrow(
         'Invalid or restricted port'
       );
-      await expect(connect(sandbox, request, 443)).rejects.toThrow(
+      await expect(sandbox.wsConnect(request, 443)).rejects.toThrow(
         'Invalid or restricted port'
       );
     });
@@ -685,7 +700,7 @@ describe('Sandbox - Automatic Session Management', () => {
       );
 
       const fetchSpy = vi.spyOn(sandbox, 'fetch');
-      await connect(sandbox, request, 8080);
+      await sandbox.wsConnect(request, 8080);
 
       const calledRequest = fetchSpy.mock.calls[0][0];
 

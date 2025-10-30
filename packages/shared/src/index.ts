@@ -64,7 +64,6 @@ export type {
   HealthCheckResult,
   // Code interpreter result types
   InterpreterHealthResult,
-  ISandbox,
   ListFilesOptions,
   ListFilesResult,
   LogEvent,

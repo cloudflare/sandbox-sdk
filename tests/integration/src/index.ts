@@ -1,7 +1,6 @@
 import {
   getSandbox,
   proxyToSandbox,
-  connect,
   type Sandbox
 } from '@cloudflare/sandbox';
 import { codeExamples } from '../shared/examples';
@@ -106,7 +105,7 @@ export default {
           sandboxId
         ) as unknown as Sandbox<unknown>;
         // Route WebSocket connection to echo server on port 8080
-        return await connect(sandbox, request, 8080);
+        return await sandbox.wsConnect(request, 8080);
       }
 
       const sandbox = getUserSandbox(

@@ -1,5 +1,6 @@
 import type { DurableObject } from 'cloudflare:workers';
 import { Container, getContainer, switchPort } from '@cloudflare/containers';
+import type { DurableObjectStub } from '@cloudflare/workers-types';
 import type {
   CodeContext,
   CreateContextOptions,
@@ -8,7 +9,6 @@ import type {
   ExecResult,
   ExecutionResult,
   ExecutionSession,
-  ISandbox,
   Process,
   ProcessOptions,
   ProcessStatus,
@@ -27,12 +27,24 @@ import { SecurityError, sanitizeSandboxId, validatePort } from './security';
 import { parseSSEStream } from './sse-parser';
 import { SDK_VERSION } from './version';
 
+export type ISandbox = DurableObjectStub<Sandbox> & {
+  /**
+   * Connect an incoming WebSocket request to a specific port inside the container.
+   *
+   * @param request - The incoming WebSocket upgrade request
+   * @param port - The port number to connect to (1024-65535)
+   * @returns The WebSocket upgrade response
+   * @throws {SecurityError} - If port is invalid or in restricted range
+   */
+  wsConnect(request: Request, port: number): Promise<Response>;
+};
+
 export function getSandbox(
   ns: DurableObjectNamespace<Sandbox>,
   id: string,
   options?: SandboxOptions
-): Sandbox {
-  const stub = getContainer(ns, id) as any as Sandbox;
+): ISandbox {
+  const stub = getContainer(ns, id);
 
   // Store the name on first access
   stub.setSandboxName?.(id);
@@ -49,44 +61,24 @@ export function getSandbox(
     stub.setKeepAlive(options.keepAlive);
   }
 
-  return stub;
+  // Implemented here to avoid websocket serialization error across RPC at runtime
+  (stub as any).wsConnect = async (
+    request: Request,
+    port: number
+  ): Promise<Response> => {
+    if (!validatePort(port)) {
+      throw new SecurityError(
+        `Invalid or restricted port: ${port}. Ports must be in range 1024-65535 and not reserved.`
+      );
+    }
+    const portSwitchedRequest = switchPort(request, port);
+    return await stub.fetch(portSwitchedRequest);
+  };
+
+  return stub as unknown as ISandbox;
 }
 
-/**
- * Connect an incoming WebSocket request to a specific port inside the container.
- *
- * Note: This is a standalone function (not a Sandbox method) because WebSocket
- * connections cannot be serialized over Durable Object RPC.
- *
- * @param sandbox - The Sandbox instance to route the request through
- * @param request - The incoming WebSocket upgrade request
- * @param port - The port number to connect to (1024-65535)
- * @returns The WebSocket upgrade response
- * @throws {SecurityError} - If port is invalid or in restricted range
- *
- * @example
- * const sandbox = getSandbox(env.Sandbox, 'sandbox-id');
- * if (request.headers.get('Upgrade')?.toLowerCase() === 'websocket') {
- *   return await connect(sandbox, request, 8080);
- * }
- */
-export async function connect(
-  sandbox: Sandbox,
-  request: Request,
-  port: number
-): Promise<Response> {
-  // Validate port before routing
-  if (!validatePort(port)) {
-    throw new SecurityError(
-      `Invalid or restricted port: ${port}. Ports must be in range 1024-65535 and not reserved.`
-    );
-  }
-
-  const portSwitchedRequest = switchPort(request, port);
-  return await sandbox.fetch(portSwitchedRequest);
-}
-
-export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
+export class Sandbox<Env = unknown> extends Container<Env> {
   defaultPort = 3000; // Default port for the container's Bun server
   sleepAfter: string | number = '10m'; // Sleep the sandbox if no requests are made in this timeframe
 

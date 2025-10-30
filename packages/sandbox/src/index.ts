@@ -10,7 +10,7 @@ export {
   SandboxClient,
   UtilityClient
 } from './clients';
-export { connect, getSandbox, Sandbox } from './sandbox';
+export { getSandbox, type ISandbox, Sandbox } from './sandbox';
 
 // Legacy types are now imported from the new client architecture
 
@@ -23,7 +23,6 @@ export type {
   FileChunk,
   FileMetadata,
   FileStreamEvent,
-  ISandbox,
   LogEvent,
   Process,
   ProcessOptions,

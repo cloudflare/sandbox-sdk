@@ -4,12 +4,7 @@
  * Exposes SDK methods via HTTP endpoints for E2E testing.
  * Supports both default sessions (implicit) and explicit sessions via X-Session-Id header.
  */
-import {
-  Sandbox,
-  getSandbox,
-  proxyToSandbox,
-  connect
-} from '@cloudflare/sandbox';
+import { Sandbox, getSandbox, proxyToSandbox } from '@cloudflare/sandbox';
 export { Sandbox };
 
 interface Env {
@@ -44,7 +39,7 @@ export default {
 
     const sandbox = getSandbox(env.Sandbox, sandboxId, {
       keepAlive
-    }) as Sandbox<Env>;
+    });
 
     // Get session ID from header (optional)
     // If provided, retrieve the session fresh from the Sandbox DO on each request
@@ -229,13 +224,13 @@ console.log('Terminal server on port ' + port);
       const upgradeHeader = request.headers.get('Upgrade');
       if (upgradeHeader?.toLowerCase() === 'websocket') {
         if (url.pathname === '/ws/echo') {
-          return await connect(sandbox, request, 8080);
+          return await sandbox.wsConnect(request, 8080);
         }
         if (url.pathname === '/ws/code') {
-          return await connect(sandbox, request, 8081);
+          return await sandbox.wsConnect(request, 8081);
         }
         if (url.pathname === '/ws/terminal') {
-          return await connect(sandbox, request, 8082);
+          return await sandbox.wsConnect(request, 8082);
         }
       }
 
