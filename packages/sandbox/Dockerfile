@@ -29,8 +29,9 @@ WORKDIR /app
 COPY --from=pruner /app/out/json/ .
 COPY --from=pruner /app/out/package-lock.json ./package-lock.json
 
-# Install ALL dependencies (including devDependencies for build)
-RUN npm ci
+# Install ALL dependencies with cache mount for npm packages
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci
 
 # Copy pruned source code
 COPY --from=pruner /app/out/full/ .
@@ -69,8 +70,12 @@ ENV DEBIAN_FRONTEND=noninteractive
 # Set the sandbox version as an environment variable for version checking
 ENV SANDBOX_VERSION=${SANDBOX_VERSION}
 
-# Install essential runtime packages
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Install essential runtime packages with cache mounts
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    rm -f /etc/apt/apt.conf.d/docker-clean && \
+    echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' >/etc/apt/apt.conf.d/keep-cache && \
+    apt-get update && apt-get install -y --no-install-recommends \
     curl \
     wget \
     ca-certificates \
@@ -82,8 +87,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     unzip \
     zip \
     jq \
-    file \
-    && rm -rf /var/lib/apt/lists/*
+    file
 
 # Set Python 3.11 as default python3
 RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
@@ -96,8 +100,9 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
 # Install Bun runtime from official image
 COPY --from=oven/bun:1 /usr/local/bin/bun /usr/local/bin/bun
 
-# Install essential Python packages for code execution
-RUN pip3 install --no-cache-dir \
+# Install essential Python packages with cache mount
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip3 install \
     matplotlib \
     numpy \
     pandas \
