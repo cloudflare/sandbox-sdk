@@ -2,7 +2,7 @@ name: Claude Code Review
 
 on:
   pull_request:
-    types: [opened, synchronize]
+    types: [opened, synchronize, labeled]
     # Optional: Only run on specific file changes
     # paths:
     #   - "src/**/*.ts"
@@ -13,7 +13,12 @@ on:
 jobs:
   claude-review:
     # Skip review for automated "Version Packages" PRs created by changesets
-    if: github.event.pull_request.title != 'Version Packages'
+    # For external PRs: requires 'ci' label
+    # For internal PRs: runs automatically
+    if: |
+      github.event.pull_request.title != 'Version Packages' &&
+      (github.event.pull_request.head.repo.full_name == github.repository ||
+       contains(github.event.pull_request.labels.*.name, 'ci'))
 
     runs-on: ubuntu-latest
     permissions:

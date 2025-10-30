@@ -5,6 +5,7 @@ permissions:
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, labeled]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -71,8 +72,13 @@ jobs:
         run: npm run test -w @repo/sandbox-container
 
   # E2E tests against deployed worker
+  # For external PRs: requires 'ci' label
+  # For internal PRs: runs automatically
   e2e-tests:
     needs: unit-tests
+    if: |
+      github.event.pull_request.head.repo.full_name == github.repository ||
+      contains(github.event.pull_request.labels.*.name, 'ci')
     timeout-minutes: 30
     runs-on: ubuntu-latest
     steps:

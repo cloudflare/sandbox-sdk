@@ -116,9 +116,17 @@ export default {
 - **Preview URLs** - Expose services with public URLs
 - **Git Integration** - Clone repositories directly
 
+## Contributing
+
+We welcome contributions from the community! See [CONTRIBUTING.md](./CONTRIBUTING.md) for guidelines on:
+
+- Setting up your development environment
+- Creating pull requests
+- Code style and testing requirements
+
 ## Development
 
-This repository contains the SDK source code. To contribute:
+This repository contains the SDK source code. Quick start:
 
 ```bash
 # Clone the repo

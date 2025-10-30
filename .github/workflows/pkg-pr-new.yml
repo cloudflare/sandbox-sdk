@@ -6,7 +6,7 @@ permissions:
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, labeled]
     paths:
       - '**'
       - '!**/*.md'
@@ -14,6 +14,11 @@ on:
 
 jobs:
   publish-preview:
+    # For external PRs: requires 'ci' label
+    # For internal PRs: runs automatically
+    if: |
+      github.event.pull_request.head.repo.full_name == github.repository ||
+      contains(github.event.pull_request.labels.*.name, 'ci')
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
