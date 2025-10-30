@@ -54,7 +54,8 @@ COPY --from=builder /app/packages ./packages
 COPY --from=builder /app/tooling ./tooling
 
 # Install ONLY production dependencies (excludes typescript, @types/*, etc.)
-RUN npm ci --production
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --production
 
 # ============================================================================
 # Stage 4: Runtime - Ubuntu 22.04 with only runtime dependencies
