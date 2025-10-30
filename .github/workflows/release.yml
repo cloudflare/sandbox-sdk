@@ -113,6 +113,18 @@ jobs:
           username: ${{ secrets.DOCKER_HUB_USERNAME }}
           password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
 
+      - name: Build and cache single-arch image (for PR cache reuse)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: packages/sandbox/Dockerfile
+          platforms: linux/amd64
+          push: false  # Don't push, just cache
+          cache-from: type=gha,scope=release-amd64
+          cache-to: type=gha,mode=max,scope=release-amd64
+          build-args: |
+            SANDBOX_VERSION=${{ needs.unit-tests.outputs.version }}
+
       - name: Build and push Docker image (beta)
         uses: docker/build-push-action@v6
         with:
@@ -121,7 +133,9 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: cloudflare/sandbox:${{ needs.unit-tests.outputs.version }}-beta
-          cache-from: type=gha,scope=release
+          cache-from: |
+            type=gha,scope=release-amd64
+            type=gha,scope=release
           cache-to: type=gha,mode=max,scope=release
           build-args: |
             SANDBOX_VERSION=${{ needs.unit-tests.outputs.version }}
@@ -170,6 +184,18 @@ jobs:
           username: ${{ secrets.DOCKER_HUB_USERNAME }}
           password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
 
+      - name: Build and cache single-arch image (for PR cache reuse)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: packages/sandbox/Dockerfile
+          platforms: linux/amd64
+          push: false  # Don't push, just cache
+          cache-from: type=gha,scope=release-amd64
+          cache-to: type=gha,mode=max,scope=release-amd64
+          build-args: |
+            SANDBOX_VERSION=${{ needs.unit-tests.outputs.version }}
+
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
         with:
@@ -178,7 +204,9 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: cloudflare/sandbox:${{ needs.unit-tests.outputs.version }}
-          cache-from: type=gha,scope=release
+          cache-from: |
+            type=gha,scope=release-amd64
+            type=gha,scope=release
           cache-to: type=gha,mode=max,scope=release
           build-args: |
             SANDBOX_VERSION=${{ needs.unit-tests.outputs.version }}
