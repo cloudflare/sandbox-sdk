@@ -220,7 +220,6 @@ export class FileService implements FileSystemOperations {
       // 6. Read file with appropriate encoding
       // Respect user's encoding preference if provided, otherwise use MIME-based detection
       const requestedEncoding = options.encoding;
-      let content: string;
       let actualEncoding: 'utf-8' | 'base64';
       let isBinary: boolean;
 
@@ -239,6 +238,8 @@ export class FileService implements FileSystemOperations {
         isBinary = isBinaryByMime;
       }
 
+      let content: string;
+      
       if (actualEncoding === 'base64') {
         // Binary files: read as base64, return as-is (DO NOT decode)
         const base64Command = `base64 -w 0 < ${escapedPath}`;
@@ -390,13 +391,31 @@ export class FileService implements FileSystemOperations {
       let command: string;
       
       if (encoding === 'base64') {
-        // Content is already base64 encoded, decode it directly to file
-        command = `echo '${content}' | base64 -d > ${escapedPath}`;
+        // Content is already base64 encoded, validate and decode it directly to file
+        // Validate that content only contains valid base64 characters to prevent command injection
+        if (!/^[A-Za-z0-9+/=]*$/.test(content)) {
+          return {
+            success: false,
+            error: {
+              message: `Invalid base64 content for '${path}': contains non-base64 characters`,
+              code: ErrorCode.VALIDATION_FAILED,
+              details: {
+                validationErrors: [{
+                  field: 'content',
+                  message: 'Content must contain only valid base64 characters (A-Z, a-z, 0-9, +, /, =)',
+                  code: 'INVALID_BASE64'
+                }]
+              } satisfies ValidationFailedContext
+            }
+          };
+        }
+        // Use printf to avoid single quote issues in echo
+        command = `printf '%s' '${content}' | base64 -d > ${escapedPath}`;
       } else {
         // Content is text, encode to base64 first to ensure safe shell handling
         // This avoids heredoc EOF collision issues and handles special characters
         const base64Content = Buffer.from(content, 'utf-8').toString('base64');
-        command = `echo '${base64Content}' | base64 -d > ${escapedPath}`;
+        command = `printf '%s' '${base64Content}' | base64 -d > ${escapedPath}`;
       }
 
       const execResult = await this.sessionManager.executeInSession(
