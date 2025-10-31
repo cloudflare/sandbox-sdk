@@ -145,16 +145,9 @@ RUN update-alternatives --install /usr/bin/python3 python3 /usr/local/bin/python
     find /usr/local/python/lib/python3.11 -name "*.pyo" -delete && \
     find /usr/local/python/lib/python3.11 -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 
-# Install Python packages and clean up
+# Install Python packages
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip3 install --no-cache-dir matplotlib numpy pandas ipython && \
-    # Remove test files and caches from installed packages to reduce image size
-    # Safe to remove: test directories in site-packages are only for package self-tests, not runtime use
-    # Error suppression is necessary: find encounters expected errors when parent dirs are deleted first
-    find /usr/local/python/lib/python3.11/site-packages -type d -name "test" -exec rm -rf {} + 2>/dev/null || true && \
-    find /usr/local/python/lib/python3.11/site-packages -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true && \
-    find /usr/local/python/lib/python3.11/site-packages -name "*.pyc" -delete && \
-    find /usr/local/python/lib/python3.11/site-packages -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+    pip3 install --no-cache-dir matplotlib numpy pandas ipython
 
 # Install Node.js 20 LTS from official Node image
 COPY --from=node:20-slim /usr/local/bin/node /usr/local/bin/node
