@@ -83,18 +83,20 @@ RUN --mount=type=cache,target=/tmp/python-cache \
     # Map Docker TARGETARCH to python-build-standalone arch naming
     if [ "$TARGETARCH" = "amd64" ]; then \
         PYTHON_ARCH="x86_64-unknown-linux-gnu"; \
+        EXPECTED_SHA256="edd8d11aa538953d12822fab418359a692fd1ee4ca2675579fbf0fa31e3688f1"; \
     elif [ "$TARGETARCH" = "arm64" ]; then \
         PYTHON_ARCH="aarch64-unknown-linux-gnu"; \
+        EXPECTED_SHA256="08141d31f95d86a23f23e4c741b726de0055f12f83200d1d4867b4e8e6e967c5"; \
     else \
         echo "Unsupported architecture: $TARGETARCH" && exit 1; \
     fi && \
     cd /tmp/python-cache && \
     wget -nc https://github.com/indygreg/python-build-standalone/releases/download/20251028/cpython-3.11.14+20251028-${PYTHON_ARCH}-install_only.tar.gz && \
+    # Verify SHA256 checksum for security
+    echo "${EXPECTED_SHA256}  cpython-3.11.14+20251028-${PYTHON_ARCH}-install_only.tar.gz" | sha256sum -c - && \
     cd /tmp && \
     tar -xzf /tmp/python-cache/cpython-3.11.14+20251028-${PYTHON_ARCH}-install_only.tar.gz && \
     mv python /usr/local/ && \
-    # Create symlinks for standard Python locations
-    ln -s /usr/local/python/bin/python3.11 /usr/local/bin/python3.11 && \
     rm -rf /tmp/cpython-*
 
 # ============================================================================
@@ -135,16 +137,20 @@ RUN ln -s /usr/local/python/bin/python3.11 /usr/local/bin/python3.11 && \
 # Set Python 3.11 as default python3 and clean up
 RUN update-alternatives --install /usr/bin/python3 python3 /usr/local/bin/python3.11 1 && \
     # Remove unnecessary Python files to reduce image size
-    find /usr/local/python/lib -type d -name "test" -exec rm -rf {} + 2>/dev/null || true && \
-    find /usr/local/python/lib -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true && \
-    find /usr/local/python/lib -name "*.pyc" -delete && \
-    find /usr/local/python/lib -name "*.pyo" -delete && \
-    find /usr/local/python/lib -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+    # Safe to remove: stdlib test directories are only used during Python development, not runtime
+    # Error suppression is necessary: find encounters expected errors when parent dirs are deleted first
+    find /usr/local/python/lib/python3.11 -type d -name "test" -exec rm -rf {} + 2>/dev/null || true && \
+    find /usr/local/python/lib/python3.11 -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true && \
+    find /usr/local/python/lib/python3.11 -name "*.pyc" -delete && \
+    find /usr/local/python/lib/python3.11 -name "*.pyo" -delete && \
+    find /usr/local/python/lib/python3.11 -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 
 # Install Python packages and clean up
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip3 install --no-cache-dir matplotlib numpy pandas ipython && \
-    # Remove test files and caches from installed packages
+    # Remove test files and caches from installed packages to reduce image size
+    # Safe to remove: test directories in site-packages are only for package self-tests, not runtime use
+    # Error suppression is necessary: find encounters expected errors when parent dirs are deleted first
     find /usr/local/python/lib/python3.11/site-packages -type d -name "test" -exec rm -rf {} + 2>/dev/null || true && \
     find /usr/local/python/lib/python3.11/site-packages -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true && \
     find /usr/local/python/lib/python3.11/site-packages -name "*.pyc" -delete && \
