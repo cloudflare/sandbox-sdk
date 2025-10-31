@@ -15,6 +15,8 @@ jobs:
     if: ${{ github.repository_owner == 'cloudflare' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    outputs:
+      version: ${{ steps.get-version.outputs.version }}
 
     steps:
       - uses: actions/checkout@v4
@@ -33,6 +35,12 @@ jobs:
 
       - name: Build packages
         run: npm run build
+
+      - name: Get package version
+        id: get-version
+        run: |
+          VERSION=$(node -p "require('./packages/sandbox/package.json').version")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Run sandbox unit tests
         run: |
@@ -105,8 +113,32 @@ jobs:
           username: ${{ secrets.DOCKER_HUB_USERNAME }}
           password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
 
+      - name: Build and cache single-arch image (for PR cache reuse)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: packages/sandbox/Dockerfile
+          platforms: linux/amd64
+          push: false  # Don't push, just cache
+          cache-from: type=gha,scope=release-amd64
+          cache-to: type=gha,mode=max,scope=release-amd64
+          build-args: |
+            SANDBOX_VERSION=${{ needs.unit-tests.outputs.version }}
+
       - name: Build and push Docker image (beta)
-        run: npm run docker:publish:beta --workspace=@cloudflare/sandbox
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: packages/sandbox/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: cloudflare/sandbox:${{ needs.unit-tests.outputs.version }}-beta
+          cache-from: |
+            type=gha,scope=release-amd64
+            type=gha,scope=release
+          cache-to: type=gha,mode=max,scope=release
+          build-args: |
+            SANDBOX_VERSION=${{ needs.unit-tests.outputs.version }}
 
       - name: Publish to npm with beta tag
         run: npm publish --tag beta --access public
@@ -152,8 +184,32 @@ jobs:
           username: ${{ secrets.DOCKER_HUB_USERNAME }}
           password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
 
+      - name: Build and cache single-arch image (for PR cache reuse)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: packages/sandbox/Dockerfile
+          platforms: linux/amd64
+          push: false  # Don't push, just cache
+          cache-from: type=gha,scope=release-amd64
+          cache-to: type=gha,mode=max,scope=release-amd64
+          build-args: |
+            SANDBOX_VERSION=${{ needs.unit-tests.outputs.version }}
+
       - name: Build and push Docker image
-        run: npm run docker:publish --workspace=@cloudflare/sandbox
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: packages/sandbox/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: cloudflare/sandbox:${{ needs.unit-tests.outputs.version }}
+          cache-from: |
+            type=gha,scope=release-amd64
+            type=gha,scope=release
+          cache-to: type=gha,mode=max,scope=release
+          build-args: |
+            SANDBOX_VERSION=${{ needs.unit-tests.outputs.version }}
 
       - id: changesets
         uses: changesets/action@v1

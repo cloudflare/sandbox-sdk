@@ -734,6 +734,9 @@ export interface ISandbox {
   ): Promise<ReadableStream>;
   listCodeContexts(): Promise<CodeContext[]>;
   deleteCodeContext(contextId: string): Promise<void>;
+
+  // WebSocket connection
+  wsConnect(request: Request, port: number): Promise<Response>;
 }
 
 // Type guards for runtime validation

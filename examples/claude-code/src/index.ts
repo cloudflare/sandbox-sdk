@@ -1,4 +1,4 @@
-import { getSandbox, type Sandbox } from '@cloudflare/sandbox';
+import { getSandbox } from '@cloudflare/sandbox';
 
 interface CmdOutput {
   success: boolean;
@@ -7,11 +7,6 @@ interface CmdOutput {
 }
 // helper to read the outputs from `.exec` results
 const getOutput = (res: CmdOutput) => (res.success ? res.stdout : res.stderr);
-
-type Env = {
-  Sandbox: DurableObjectNamespace<Sandbox>;
-  ANTHROPIC_API_KEY: string;
-};
 
 const EXTRA_SYSTEM =
   'You are an automatic feature-implementer/bug-fixer.' +

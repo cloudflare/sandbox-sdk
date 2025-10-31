@@ -1,10 +1,6 @@
-import { getSandbox, type Sandbox } from '@cloudflare/sandbox';
+import { getSandbox } from '@cloudflare/sandbox';
 
 export { Sandbox } from '@cloudflare/sandbox';
-
-type Env = {
-  Sandbox: DurableObjectNamespace<Sandbox>;
-};
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {

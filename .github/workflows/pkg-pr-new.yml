@@ -5,7 +5,7 @@ permissions:
   pull-requests: write # Required for pkg.pr.new to comment on PRs
 
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, synchronize, reopened]
     paths:
       - '**'
@@ -14,13 +14,17 @@ on:
 
 jobs:
   publish-preview:
+    # For external PRs: requires manual approval via 'external-pr' environment
+    # For internal PRs: runs automatically without approval
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
+    environment: ${{ github.event.pull_request.head.repo.full_name != github.repository && 'external-pr' || null }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
 
       - name: Setup Node.js
@@ -73,7 +77,21 @@ jobs:
           password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
 
       - name: Build and push Docker image (preview)
-        run: npm run docker:publish --workspace=@cloudflare/sandbox
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: packages/sandbox/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: cloudflare/sandbox:${{ steps.package-version.outputs.version }}
+          cache-from: |
+            type=gha,scope=preview-pr-${{ github.event.pull_request.number }}
+            type=gha,scope=pr-${{ github.event.pull_request.number }}-amd64
+            type=gha,scope=release-amd64
+            type=gha,scope=release
+          cache-to: type=gha,mode=max,scope=preview-pr-${{ github.event.pull_request.number }}
+          build-args: |
+            SANDBOX_VERSION=${{ steps.package-version.outputs.version }}
 
       - name: Publish to pkg.pr.new
         run: npx pkg-pr-new publish './packages/sandbox'

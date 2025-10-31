@@ -53,7 +53,7 @@ vi.mock('@cloudflare/containers', () => {
 
 describe('Sandbox - Automatic Session Management', () => {
   let sandbox: Sandbox;
-  let mockCtx: Partial<DurableObjectState>;
+  let mockCtx: Partial<DurableObjectState<{}>>;
   let mockEnv: any;
 
   beforeEach(async () => {
@@ -82,11 +82,15 @@ describe('Sandbox - Automatic Session Management', () => {
     mockEnv = {};
 
     // Create Sandbox instance - SandboxClient is created internally
-    sandbox = new Sandbox(mockCtx as DurableObjectState, mockEnv);
+    const stub = new Sandbox(mockCtx, mockEnv);
 
     // Wait for blockConcurrencyWhile to complete
     await vi.waitFor(() => {
       expect(mockCtx.blockConcurrencyWhile).toHaveBeenCalled();
+    });
+
+    sandbox = Object.assign(stub, {
+      wsConnect: connect(stub)
     });
 
     // Now spy on the client methods that we need for testing
@@ -621,7 +625,7 @@ describe('Sandbox - Automatic Session Management', () => {
     });
   });
 
-  describe('connect() function', () => {
+  describe('wsConnect() method', () => {
     it('should route WebSocket request through switchPort to sandbox.fetch', async () => {
       const { switchPort } = await import('@cloudflare/containers');
       const switchPortMock = vi.mocked(switchPort);
@@ -634,7 +638,7 @@ describe('Sandbox - Automatic Session Management', () => {
       });
 
       const fetchSpy = vi.spyOn(sandbox, 'fetch');
-      const response = await connect(sandbox, request, 8080);
+      const response = await sandbox.wsConnect(request, 8080);
 
       // Verify switchPort was called with correct port
       expect(switchPortMock).toHaveBeenCalledWith(request, 8080);
@@ -653,21 +657,21 @@ describe('Sandbox - Automatic Session Management', () => {
       });
 
       // Invalid port values
-      await expect(connect(sandbox, request, -1)).rejects.toThrow(
+      await expect(sandbox.wsConnect(request, -1)).rejects.toThrow(
         'Invalid or restricted port'
       );
-      await expect(connect(sandbox, request, 0)).rejects.toThrow(
+      await expect(sandbox.wsConnect(request, 0)).rejects.toThrow(
         'Invalid or restricted port'
       );
-      await expect(connect(sandbox, request, 70000)).rejects.toThrow(
+      await expect(sandbox.wsConnect(request, 70000)).rejects.toThrow(
         'Invalid or restricted port'
       );
 
       // Privileged ports
-      await expect(connect(sandbox, request, 80)).rejects.toThrow(
+      await expect(sandbox.wsConnect(request, 80)).rejects.toThrow(
         'Invalid or restricted port'
       );
-      await expect(connect(sandbox, request, 443)).rejects.toThrow(
+      await expect(sandbox.wsConnect(request, 443)).rejects.toThrow(
         'Invalid or restricted port'
       );
     });
@@ -685,7 +689,7 @@ describe('Sandbox - Automatic Session Management', () => {
       );
 
       const fetchSpy = vi.spyOn(sandbox, 'fetch');
-      await connect(sandbox, request, 8080);
+      await sandbox.wsConnect(request, 8080);
 
       const calledRequest = fetchSpy.mock.calls[0][0];
 

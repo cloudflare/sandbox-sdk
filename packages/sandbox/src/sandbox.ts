@@ -32,7 +32,7 @@ export function getSandbox(
   id: string,
   options?: SandboxOptions
 ): Sandbox {
-  const stub = getContainer(ns, id) as any as Sandbox;
+  const stub = getContainer(ns, id) as unknown as Sandbox;
 
   // Store the name on first access
   stub.setSandboxName?.(id);
@@ -49,41 +49,24 @@ export function getSandbox(
     stub.setKeepAlive(options.keepAlive);
   }
 
-  return stub;
+  return Object.assign(stub, {
+    wsConnect: connect(stub)
+  });
 }
 
-/**
- * Connect an incoming WebSocket request to a specific port inside the container.
- *
- * Note: This is a standalone function (not a Sandbox method) because WebSocket
- * connections cannot be serialized over Durable Object RPC.
- *
- * @param sandbox - The Sandbox instance to route the request through
- * @param request - The incoming WebSocket upgrade request
- * @param port - The port number to connect to (1024-65535)
- * @returns The WebSocket upgrade response
- * @throws {SecurityError} - If port is invalid or in restricted range
- *
- * @example
- * const sandbox = getSandbox(env.Sandbox, 'sandbox-id');
- * if (request.headers.get('Upgrade')?.toLowerCase() === 'websocket') {
- *   return await connect(sandbox, request, 8080);
- * }
- */
-export async function connect(
-  sandbox: Sandbox,
-  request: Request,
-  port: number
-): Promise<Response> {
-  // Validate port before routing
-  if (!validatePort(port)) {
-    throw new SecurityError(
-      `Invalid or restricted port: ${port}. Ports must be in range 1024-65535 and not reserved.`
-    );
-  }
-
-  const portSwitchedRequest = switchPort(request, port);
-  return await sandbox.fetch(portSwitchedRequest);
+export function connect(
+  stub: { fetch: (request: Request) => Promise<Response> }
+) {
+  return async (request: Request, port: number) => {
+    // Validate port before routing
+    if (!validatePort(port)) {
+      throw new SecurityError(
+        `Invalid or restricted port: ${port}. Ports must be in range 1024-65535 and not reserved.`
+      );
+    }
+    const portSwitchedRequest = switchPort(request, port);
+    return await stub.fetch(portSwitchedRequest);
+  };
 }
 
 export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
@@ -100,7 +83,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private logger: ReturnType<typeof createLogger>;
   private keepAliveEnabled: boolean = false;
 
-  constructor(ctx: DurableObject['ctx'], env: Env) {
+  constructor(ctx: DurableObjectState<{}>, env: Env) {
     super(ctx, env);
 
     const envObj = env as any;
@@ -358,6 +341,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       // Route to the appropriate port
       return await this.containerFetch(request, port);
     });
+  }
+
+  wsConnect(request: Request, port: number): Promise<Response> {
+    // Dummy implementation that will be overridden by the stub
+    throw new Error('Not implemented here to avoid RPC serialization issues');
   }
 
   private determinePort(url: URL): number {

@@ -3814,7 +3814,7 @@ function WebSocketTab() {
       <div className="websocket-header">
         <h3>WebSocket Echo Server</h3>
         <p>
-          Test the <code>connect()</code> method by sending messages to a
+          Test the <code>wsConnect()</code> method by sending messages to a
           WebSocket echo server running in the sandbox.
         </p>
       </div>
@@ -3922,7 +3922,7 @@ function WebSocketTab() {
           </li>
           <li>
             <strong>Connect:</strong> Uses{' '}
-            <code>connect(sandbox, request, 8080)</code> to route WebSocket to
+            <code>sandbox.wsConnect(request, 8080)</code> to route WebSocket to
             the server
           </li>
           <li>
@@ -3930,11 +3930,6 @@ function WebSocketTab() {
             the server
           </li>
         </ol>
-        <p>
-          This demonstrates the <code>connect()</code> method, which is
-          syntactic sugar for <code>fetch(switchPort())</code> to make WebSocket
-          routing clear and simple.
-        </p>
       </div>
     </div>
   );

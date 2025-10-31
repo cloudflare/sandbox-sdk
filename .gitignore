@@ -149,6 +149,8 @@ tests/e2e/test-worker/wrangler.jsonc
 # Allow config files and scripts
 !scripts/**/*.js
 !examples/**/*.js
+# Allow generated types in examples
+!examples/**/*.d.ts
 # Allow source in dist directories
 !dist/**
 !node_modules/**
