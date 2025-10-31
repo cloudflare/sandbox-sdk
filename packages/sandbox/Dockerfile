@@ -58,7 +58,44 @@ RUN --mount=type=cache,target=/root/.npm \
     npm ci --production
 
 # ============================================================================
-# Stage 4: Runtime - Ubuntu 22.04 with only runtime dependencies
+# Stage 4: Build Python 3.11.11 from source
+# ============================================================================
+FROM ubuntu:22.04 AS python-builder
+
+# Prevent interactive prompts during package installation
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install build dependencies for Python
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    rm -f /etc/apt/apt.conf.d/docker-clean && \
+    echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' >/etc/apt/apt.conf.d/keep-cache && \
+    apt-get update && apt-get install -y --no-install-recommends \
+    build-essential ccache wget ca-certificates \
+    libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev \
+    libncursesw5-dev xz-utils tk-dev libxml2-dev libxmlsec1-dev \
+    libffi-dev liblzma-dev
+
+# Download and build Python 3.11.11 with ccache
+RUN --mount=type=cache,target=/tmp/python-cache \
+    --mount=type=cache,target=/root/.ccache \
+    export PATH="/usr/lib/ccache:$PATH" && \
+    export CCACHE_DIR=/root/.ccache && \
+    cd /tmp/python-cache && \
+    wget -nc https://www.python.org/ftp/python/3.11.11/Python-3.11.11.tar.xz && \
+    cd /tmp && \
+    cp /tmp/python-cache/Python-3.11.11.tar.xz . && \
+    tar -xf Python-3.11.11.tar.xz && \
+    cd Python-3.11.11 && \
+    ./configure --prefix=/usr/local && \
+    make -j$(nproc) && \
+    make altinstall && \
+    ccache --show-stats && \
+    cd / && \
+    rm -rf /tmp/Python-3.11.11*
+
+# ============================================================================
+# Stage 5: Runtime - Ubuntu 22.04 with only runtime dependencies
 # ============================================================================
 FROM ubuntu:22.04 AS runtime
 
@@ -71,109 +108,55 @@ ENV DEBIAN_FRONTEND=noninteractive
 # Set the sandbox version as an environment variable for version checking
 ENV SANDBOX_VERSION=${SANDBOX_VERSION}
 
-# Install essential runtime packages with cache mounts
+# Install runtime packages and Python runtime libraries
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     rm -f /etc/apt/apt.conf.d/docker-clean && \
     echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' >/etc/apt/apt.conf.d/keep-cache && \
     apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    wget \
-    ca-certificates \
-    procps \
-    git \
-    unzip \
-    zip \
-    jq \
-    file \
-    # Build dependencies for Python
-    build-essential \
-    ccache \
-    libssl-dev \
-    zlib1g-dev \
-    libbz2-dev \
-    libreadline-dev \
-    libsqlite3-dev \
-    libncursesw5-dev \
-    xz-utils \
-    tk-dev \
-    libxml2-dev \
-    libxmlsec1-dev \
-    libffi-dev \
-    liblzma-dev
+    ca-certificates curl wget procps git unzip zip jq file binutils \
+    libssl3 zlib1g libbz2-1.0 libreadline8 libsqlite3-0 \
+    libncursesw6 libtinfo6 libxml2 libxmlsec1 libffi8 liblzma5 libtk8.6 && \
+    update-ca-certificates
 
-# Download and build Python 3.11.11 from source with ccache
-RUN --mount=type=cache,target=/tmp/python-cache \
-    --mount=type=cache,target=/root/.ccache \
-    export PATH="/usr/lib/ccache:$PATH" && \
-    export CCACHE_DIR=/root/.ccache && \
-    cd /tmp/python-cache && \
-    wget -nc https://www.python.org/ftp/python/3.11.11/Python-3.11.11.tar.xz && \
-    cd /tmp && \
-    cp /tmp/python-cache/Python-3.11.11.tar.xz . && \
-    tar -xf Python-3.11.11.tar.xz && \
-    cd Python-3.11.11 && \
-    ./configure --enable-optimizations --with-lto --prefix=/usr/local && \
-    make -j$(nproc) && \
-    make altinstall && \
-    ccache --show-stats && \
-    cd / && \
-    rm -rf /tmp/Python-3.11.11*
+# Copy compiled Python from python-builder stage
+COPY --from=python-builder /usr/local/bin/python3.11 /usr/local/bin/python3.11
+COPY --from=python-builder /usr/local/lib/python3.11 /usr/local/lib/python3.11
 
-# Set Python 3.11 as default python3 and install pip
+# Set Python 3.11 as default python3, install pip, and clean up
 RUN update-alternatives --install /usr/bin/python3 python3 /usr/local/bin/python3.11 1 && \
     /usr/local/bin/python3.11 -m ensurepip && \
-    /usr/local/bin/python3.11 -m pip install --upgrade pip
+    /usr/local/bin/python3.11 -m pip install --no-cache-dir --upgrade pip && \
+    # Remove unnecessary Python files to reduce image size
+    find /usr/local/lib/python3.11 -type d -name "test" -exec rm -rf {} + 2>/dev/null || true && \
+    find /usr/local/lib/python3.11 -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true && \
+    find /usr/local/lib/python3.11 -name "*.pyc" -delete && \
+    find /usr/local/lib/python3.11 -name "*.pyo" -delete && \
+    find /usr/local/lib/python3.11 -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true && \
+    # Strip debug symbols from Python binary
+    strip /usr/local/bin/python3.11 || true
+
+# Install Python packages and clean up
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip3 install --no-cache-dir matplotlib numpy pandas ipython && \
+    # Remove test files and caches from installed packages
+    find /usr/local/lib/python3.11/site-packages -type d -name "test" -exec rm -rf {} + 2>/dev/null || true && \
+    find /usr/local/lib/python3.11/site-packages -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true && \
+    find /usr/local/lib/python3.11/site-packages -name "*.pyc" -delete && \
+    find /usr/local/lib/python3.11/site-packages -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true && \
+    # Strip debug symbols from .so files
+    find /usr/local/lib/python3.11/site-packages -name "*.so" -exec strip {} \; 2>/dev/null || true && \
+    # Remove binutils after stripping
+    apt-get remove -y binutils && apt-get autoremove -y
 
 # Install Node.js 20 LTS using official NodeSource setup script
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-    && apt-get install -y nodejs \
-    && rm -rf /var/lib/apt/lists/*
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs
 
 # Install Bun runtime from official image
 COPY --from=oven/bun:1 /usr/local/bin/bun /usr/local/bin/bun
-
-# Install essential Python packages with cache mount
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip3 install \
-    matplotlib \
-    numpy \
-    pandas \
-    ipython
-
-# Mark runtime libraries as manually installed to prevent autoremove
-RUN apt-mark manual \
-    libssl3 \
-    zlib1g \
-    libbz2-1.0 \
-    libreadline8 \
-    libsqlite3-0 \
-    libncursesw6 \
-    libtinfo6 \
-    libxml2 \
-    libxmlsec1 \
-    libffi8 \
-    liblzma5 \
-    libtk8.6
-
-# Remove build dependencies to reduce image size (Python and packages are already compiled)
-RUN apt-get remove -y \
-    build-essential \
-    ccache \
-    libssl-dev \
-    zlib1g-dev \
-    libbz2-dev \
-    libreadline-dev \
-    libsqlite3-dev \
-    libncursesw5-dev \
-    xz-utils \
-    tk-dev \
-    libxml2-dev \
-    libxmlsec1-dev \
-    libffi-dev \
-    liblzma-dev && \
-    apt-get autoremove -y && \
-    apt-get clean
 
 # Set up runtime container server directory
 WORKDIR /container-server
