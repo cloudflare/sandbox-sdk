@@ -348,7 +348,7 @@ different users share the same sandbox instance.
 The container runtime uses Ubuntu 22.04 with:
 
 - Python 3.11 (with matplotlib, numpy, pandas, ipython)
-- Node.js 20 LTS
+- Node.js 24 LTS
 - Bun 1.x runtime (powers the container HTTP server)
 - Git, curl, wget, jq, and other common utilities
 
