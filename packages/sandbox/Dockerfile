@@ -133,6 +133,21 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     pandas \
     ipython
 
+# Mark runtime libraries as manually installed to prevent autoremove
+RUN apt-mark manual \
+    libssl3 \
+    zlib1g \
+    libbz2-1.0 \
+    libreadline8 \
+    libsqlite3-0 \
+    libncursesw6 \
+    libtinfo6 \
+    libxml2 \
+    libxmlsec1 \
+    libffi8 \
+    liblzma5 \
+    libtk8.6
+
 # Remove build dependencies to reduce image size (Python and packages are already compiled)
 RUN apt-get remove -y \
     build-essential \
