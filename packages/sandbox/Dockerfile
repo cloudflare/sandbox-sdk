@@ -88,6 +88,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     file \
     # Build dependencies for Python
     build-essential \
+    ccache \
     libssl-dev \
     zlib1g-dev \
     libbz2-dev \
@@ -101,14 +102,21 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     libffi-dev \
     liblzma-dev
 
-# Download and build Python 3.11.11 from source
-RUN cd /tmp && \
-    wget https://www.python.org/ftp/python/3.11.11/Python-3.11.11.tar.xz && \
+# Download and build Python 3.11.11 from source with ccache
+RUN --mount=type=cache,target=/tmp/python-cache \
+    --mount=type=cache,target=/root/.ccache \
+    export PATH="/usr/lib/ccache:$PATH" && \
+    export CCACHE_DIR=/root/.ccache && \
+    cd /tmp/python-cache && \
+    wget -nc https://www.python.org/ftp/python/3.11.11/Python-3.11.11.tar.xz && \
+    cd /tmp && \
+    cp /tmp/python-cache/Python-3.11.11.tar.xz . && \
     tar -xf Python-3.11.11.tar.xz && \
     cd Python-3.11.11 && \
     ./configure --enable-optimizations --with-lto --prefix=/usr/local && \
     make -j$(nproc) && \
     make altinstall && \
+    ccache --show-stats && \
     cd / && \
     rm -rf /tmp/Python-3.11.11*
 
@@ -151,6 +159,7 @@ RUN apt-mark manual \
 # Remove build dependencies to reduce image size (Python and packages are already compiled)
 RUN apt-get remove -y \
     build-essential \
+    ccache \
     libssl-dev \
     zlib1g-dev \
     libbz2-dev \
