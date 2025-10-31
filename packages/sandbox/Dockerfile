@@ -80,18 +80,42 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     curl \
     wget \
     ca-certificates \
-    python3.11 \
-    python3-pip \
-    python3.11-venv \
     procps \
     git \
     unzip \
     zip \
     jq \
-    file
+    file \
+    # Build dependencies for Python
+    build-essential \
+    libssl-dev \
+    zlib1g-dev \
+    libbz2-dev \
+    libreadline-dev \
+    libsqlite3-dev \
+    libncursesw5-dev \
+    xz-utils \
+    tk-dev \
+    libxml2-dev \
+    libxmlsec1-dev \
+    libffi-dev \
+    liblzma-dev
 
-# Set Python 3.11 as default python3
-RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
+# Download and build Python 3.11.11 from source
+RUN cd /tmp && \
+    wget https://www.python.org/ftp/python/3.11.11/Python-3.11.11.tar.xz && \
+    tar -xf Python-3.11.11.tar.xz && \
+    cd Python-3.11.11 && \
+    ./configure --enable-optimizations --with-lto --prefix=/usr/local && \
+    make -j$(nproc) && \
+    make altinstall && \
+    cd / && \
+    rm -rf /tmp/Python-3.11.11*
+
+# Set Python 3.11 as default python3 and install pip
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/local/bin/python3.11 1 && \
+    /usr/local/bin/python3.11 -m ensurepip && \
+    /usr/local/bin/python3.11 -m pip install --upgrade pip
 
 # Install Node.js 20 LTS using official NodeSource setup script
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
@@ -108,6 +132,24 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     numpy \
     pandas \
     ipython
+
+# Remove build dependencies to reduce image size (Python and packages are already compiled)
+RUN apt-get remove -y \
+    build-essential \
+    libssl-dev \
+    zlib1g-dev \
+    libbz2-dev \
+    libreadline-dev \
+    libsqlite3-dev \
+    libncursesw5-dev \
+    xz-utils \
+    tk-dev \
+    libxml2-dev \
+    libxmlsec1-dev \
+    libffi-dev \
+    liblzma-dev && \
+    apt-get autoremove -y && \
+    apt-get clean
 
 # Set up runtime container server directory
 WORKDIR /container-server
