@@ -4,8 +4,7 @@ permissions:
   contents: read
 
 on:
-  pull_request_target:
-    types: [opened, synchronize, reopened]
+  pull_request:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -20,8 +19,6 @@ jobs:
       version: ${{ steps.get-version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
 
       - uses: actions/setup-node@v4
         with:
@@ -74,17 +71,12 @@ jobs:
         run: npm run test -w @repo/sandbox-container
 
   # E2E tests against deployed worker
-  # For external PRs: requires manual approval via 'external-pr' environment
-  # For internal PRs: runs automatically without approval
   e2e-tests:
     needs: unit-tests
     timeout-minutes: 30
     runs-on: ubuntu-latest
-    environment: ${{ github.event.pull_request.head.repo.full_name != github.repository && 'external-pr' || null }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
 
       - uses: actions/setup-node@v4
         with:
@@ -105,7 +97,7 @@ jobs:
       - name: Set environment name
         id: env-name
         run: |
-          if [ "${{ github.event_name }}" = "pull_request_target" ]; then
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
             echo "env_name=pr-${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
             echo "worker_name=sandbox-e2e-test-worker-pr-${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
           else
@@ -163,7 +155,7 @@ jobs:
 
       # Cleanup: Delete test worker and container (only for PR environments)
       - name: Cleanup test deployment
-        if: always() && github.event_name == 'pull_request_target'
+        if: always() && github.event_name == 'pull_request'
         continue-on-error: true
         run: |
           cd tests/e2e/test-worker
