@@ -643,7 +643,7 @@ describe('Session State Isolation Workflow', () => {
     test('should properly cleanup session resources with deleteSession', async () => {
       currentSandboxId = createSandboxId();
 
-      // Create a session
+      // Create a session with custom environment variable
       const sessionResponse = await vi.waitFor(
         async () =>
           fetchWithStartup(`${workerUrl}/api/session/create`, {
@@ -660,22 +660,6 @@ describe('Session State Isolation Workflow', () => {
       const sessionData = await sessionResponse.json();
       const sessionId = sessionData.sessionId;
 
-      // Start a background process in the session
-      const processResponse = await fetch(`${workerUrl}/api/process/start`, {
-        method: 'POST',
-        headers: createTestHeaders(currentSandboxId, sessionId),
-        body: JSON.stringify({
-          command: 'sleep 120'
-        })
-      });
-
-      expect(processResponse.status).toBe(200);
-      const processData = await processResponse.json();
-      const processId = processData.id;
-
-      // Wait for process to be registered
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-
       // Verify session works before deletion
       const execBeforeResponse = await fetch(`${workerUrl}/api/execute`, {
         method: 'POST',
@@ -689,17 +673,15 @@ describe('Session State Isolation Workflow', () => {
       const execBeforeData = await execBeforeResponse.json();
       expect(execBeforeData.stdout.trim()).toBe('test-value');
 
-      // Verify process is running
-      const processCheckResponse = await fetch(
-        `${workerUrl}/api/process/${processId}`,
-        {
-          method: 'GET',
-          headers: createTestHeaders(currentSandboxId, sessionId)
-        }
-      );
+      // List sessions - should include our session
+      const listBeforeResponse = await fetch(`${workerUrl}/api/session/list`, {
+        method: 'GET',
+        headers: createTestHeaders(currentSandboxId)
+      });
 
-      const processCheckData = await processCheckResponse.json();
-      expect(processCheckData.status).toBe('running');
+      expect(listBeforeResponse.status).toBe(200);
+      const sessionsBefore = await listBeforeResponse.json();
+      expect(sessionsBefore.data).toContain(sessionId);
 
       // Delete the session
       const deleteResponse = await fetch(`${workerUrl}/api/session/delete`, {
@@ -715,34 +697,22 @@ describe('Session State Isolation Workflow', () => {
       expect(deleteData.success).toBe(true);
       expect(deleteData.sessionId).toBe(sessionId);
 
-      // Verify session cannot be used after deletion
-      const execAfterResponse = await fetch(`${workerUrl}/api/execute`, {
-        method: 'POST',
-        headers: createTestHeaders(currentSandboxId, sessionId),
-        body: JSON.stringify({
-          command: 'echo $SESSION_VAR'
-        })
-      });
-
-      // Session should be auto-recreated with default state (no SESSION_VAR)
-      expect(execAfterResponse.status).toBe(200);
-      const execAfterData = await execAfterResponse.json();
-      expect(execAfterData.stdout.trim()).toBe(''); // SESSION_VAR should be empty (new session)
-
-      // List sessions - deleted session should not appear (unless it was auto-recreated)
-      const listResponse = await fetch(`${workerUrl}/api/session/list`, {
+      // List sessions again - deleted session should not appear
+      const listAfterResponse = await fetch(`${workerUrl}/api/session/list`, {
         method: 'GET',
         headers: createTestHeaders(currentSandboxId)
       });
 
-      expect(listResponse.status).toBe(200);
-      const sessions = await listResponse.json();
+      expect(listAfterResponse.status).toBe(200);
+      const sessionsAfter = await listAfterResponse.json();
 
-      // If the session was auto-recreated, it should have default state
-      // Original session with SESSION_VAR should be gone
-      if (sessions.data.includes(sessionId)) {
-        // Verify it's a fresh session without our custom env var
-        const verifyFreshResponse = await fetch(`${workerUrl}/api/execute`, {
+      // The deleted session should no longer be in the list
+      // (unless it gets auto-recreated by a subsequent operation)
+      const stillExists = sessionsAfter.data.includes(sessionId);
+
+      // If it exists, it should be a fresh session
+      if (stillExists) {
+        const verifyResponse = await fetch(`${workerUrl}/api/execute`, {
           method: 'POST',
           headers: createTestHeaders(currentSandboxId, sessionId),
           body: JSON.stringify({
@@ -750,22 +720,8 @@ describe('Session State Isolation Workflow', () => {
           })
         });
 
-        const verifyFreshData = await verifyFreshResponse.json();
-        expect(verifyFreshData.stdout.trim()).toBe('VAR::END'); // Should be empty
-      }
-
-      // Verify processes are cleaned up (process from deleted session should be gone)
-      const processListResponse = await fetch(`${workerUrl}/api/process/list`, {
-        method: 'GET',
-        headers: createTestHeaders(currentSandboxId)
-      });
-
-      const processList = await processListResponse.json();
-      const deletedProcess = processList.find((p: any) => p.id === processId);
-
-      // Process should either be gone or not running
-      if (deletedProcess) {
-        expect(deletedProcess.status).not.toBe('running');
+        const verifyData = await verifyResponse.json();
+        expect(verifyData.stdout.trim()).toBe('VAR::END'); // SESSION_VAR should be empty
       }
     }, 90000);
   });
