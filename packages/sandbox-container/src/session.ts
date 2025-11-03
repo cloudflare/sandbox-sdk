@@ -554,7 +554,7 @@ export class Session {
     // Mark as destroying to prevent shell exit monitor from logging errors
     this.isDestroying = true;
 
-    // Kill all running commands first 
+    // Kill all running commands first
     const runningCommandIds = Array.from(this.runningCommands.keys());
     await Promise.all(
       runningCommandIds.map((commandId) => this.killCommand(commandId))

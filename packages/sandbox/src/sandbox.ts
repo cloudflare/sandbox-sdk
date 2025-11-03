@@ -1118,11 +1118,21 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   /**
    * Delete an execution session
    * Cleans up session resources and removes it from the container
+   * Note: Cannot delete the default session. To reset the default session,
+   * use sandbox.destroy() to terminate the entire sandbox.
    *
    * @param sessionId - The ID of the session to delete
    * @returns Result with success status, sessionId, and timestamp
+   * @throws Error if attempting to delete the default session
    */
   async deleteSession(sessionId: string): Promise<SessionDeleteResult> {
+    // Prevent deletion of default session
+    if (this.defaultSession && sessionId === this.defaultSession) {
+      throw new Error(
+        `Cannot delete default session '${sessionId}'. Use sandbox.destroy() to terminate the sandbox.`
+      );
+    }
+
     const response = await this.client.utils.deleteSession(sessionId);
 
     // Map HTTP response to result type
