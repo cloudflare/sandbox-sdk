@@ -722,17 +722,17 @@ export class Session {
       // FOREGROUND PATTERN (for exec)
       // Command runs in main shell, state persists!
 
-      // FOREGROUND: Avoid FIFOs to eliminate race conditions.
-      // Use bash process substitution to prefix stdout/stderr while keeping
-      // execution in the main shell so session state persists across commands.
+      // FOREGROUND: Write stdout/stderr to temp files, then prefix and merge.
+      // This ensures bash waits for all writes to complete before continuing,
+      // avoiding race conditions when reading the log file.
 
       if (cwd) {
         const safeCwd = this.escapeShellPath(cwd);
         script += `  # Save and change directory\n`;
         script += `  PREV_DIR=$(pwd)\n`;
         script += `  if cd ${safeCwd}; then\n`;
-        script += `    # Execute command with prefixed streaming via process substitution\n`;
-        script += `    { ${command}; } < /dev/null > >(while IFS= read -r line || [[ -n "$line" ]]; do printf '\\x01\\x01\\x01%s\\n' "$line"; done >> "$log") 2> >(while IFS= read -r line || [[ -n "$line" ]]; do printf '\\x02\\x02\\x02%s\\n' "$line"; done >> "$log")\n`;
+        script += `    # Execute command, redirect to temp files\n`;
+        script += `    { ${command}; } < /dev/null > "$log.stdout" 2> "$log.stderr"\n`;
         script += `    EXIT_CODE=$?\n`;
         script += `    # Restore directory\n`;
         script += `    cd "$PREV_DIR"\n`;
@@ -741,11 +741,16 @@ export class Session {
         script += `    EXIT_CODE=1\n`;
         script += `  fi\n`;
       } else {
-        script += `  # Execute command with prefixed streaming via process substitution\n`;
-        script += `  { ${command}; } < /dev/null > >(while IFS= read -r line || [[ -n "$line" ]]; do printf '\\x01\\x01\\x01%s\\n' "$line"; done >> "$log") 2> >(while IFS= read -r line || [[ -n "$line" ]]; do printf '\\x02\\x02\\x02%s\\n' "$line"; done >> "$log")\n`;
+        script += `  # Execute command, redirect to temp files\n`;
+        script += `  { ${command}; } < /dev/null > "$log.stdout" 2> "$log.stderr"\n`;
         script += `  EXIT_CODE=$?\n`;
       }
 
+      script += `  \n`;
+      script += `  # Prefix and merge stdout/stderr into main log\n`;
+      script += `  (while IFS= read -r line || [[ -n "$line" ]]; do printf '\\x01\\x01\\x01%s\\n' "$line"; done < "$log.stdout" >> "$log") 2>/dev/null\n`;
+      script += `  (while IFS= read -r line || [[ -n "$line" ]]; do printf '\\x02\\x02\\x02%s\\n' "$line"; done < "$log.stderr" >> "$log") 2>/dev/null\n`;
+      script += `  rm -f "$log.stdout" "$log.stderr"\n`;
       script += `  \n`;
       script += `  # Write exit code\n`;
       script += `  echo "$EXIT_CODE" > ${safeExitCodeFile}.tmp\n`;

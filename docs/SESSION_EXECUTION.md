@@ -14,20 +14,20 @@ This document explains how the container session executes commands reliably whil
 ### Foreground (`exec`)
 
 - Runs in the main bash shell so state persists across commands.
-- Uses bash process substitution to prefix stdout/stderr inline and append to the per-command log file.
-- After the command returns, we `wait` to ensure process-substitution consumers finish writing to the log before we write the exit code file.
-- Why process substitution (not FIFOs):
-  - Foreground previously used FIFOs + background labelers, which can race on silent commands because FIFO open/close ordering depends on cross-process scheduling.
-  - Process substitution keeps execution local to the main shell and avoids FIFO semantics entirely.
+- Writes stdout/stderr to temporary files, then prefixes and merges them into the log.
+- Bash waits for file redirects to complete before continuing, ensuring the log is fully written before the exit code is published.
+- This avoids race conditions from process substitution buffering where log reads could happen before writes complete.
 
 Pseudo:
 
 ```
 # Foreground
-{ command; } \
-  > >(while read; printf "\x01\x01\x01%s\n" "$REPLY" >> "$log") \
-  2> >(while read; printf "\x02\x02\x02%s\n" "$REPLY" >> "$log")
+{ command; } > "$log.stdout" 2> "$log.stderr"
 EXIT_CODE=$?
+# Prefix and merge into main log
+(while read line; do printf "\x01\x01\x01%s\n" "$line"; done < "$log.stdout") >> "$log"
+(while read line; do printf "\x02\x02\x02%s\n" "$line"; done < "$log.stderr") >> "$log"
+rm -f "$log.stdout" "$log.stderr"
 # Atomically publish exit code
 echo "$EXIT_CODE" > "$exit.tmp" && mv "$exit.tmp" "$exit"
 ```
@@ -95,5 +95,5 @@ mkfifo "$sp" "$ep"
 - Why not tee? Tee doesn’t split stdout/stderr into separate channels with stable ordering without extra plumbing; our prefixes are simple and explicit.
 - Is process substitution portable?
   - It is supported by bash (we spawn bash with `--norc`). The container environment supports it; if portability constraints change, we can revisit.
-- Why doesn't the foreground pattern need an explicit `wait`?
-  Bash waits for process substitutions automatically before returning control. Calling `wait` without arguments is dangerous because it waits for ALL child processes of the shell, not just the current command's process substitutions. In a session with background processes from `execStream`/`startProcess`, this would cause foreground commands to block on unrelated background jobs (e.g., `listFiles()` would hang for 60 seconds after `startProcess('sleep 60')`).
+- Why use temp files instead of process substitution for foreground?
+  Process substitutions run asynchronously - bash returns when the substitution processes close, but their writes to the log file may still be buffered. With large output (e.g., base64-encoded files), the log file can be incomplete when we try to read it. Using direct file redirects ensures bash waits for all writes to complete before continuing, eliminating this race condition.
