@@ -58,6 +58,10 @@ export type {
   MkdirRequest,
 
   // Utility client types
+  CreateSessionRequest,
+  CreateSessionResponse,
+  DeleteSessionRequest,
+  DeleteSessionResponse,
   PingResponse,
   PortCloseResult,
   PortExposeResult,
