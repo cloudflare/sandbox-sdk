@@ -134,16 +134,8 @@ RUN ln -s /usr/local/python/bin/python3.11 /usr/local/bin/python3.11 && \
     echo "/usr/local/python/lib" > /etc/ld.so.conf.d/python.conf && \
     ldconfig
 
-# Set Python 3.11 as default python3 and clean up
-RUN update-alternatives --install /usr/bin/python3 python3 /usr/local/bin/python3.11 1 && \
-    # Remove unnecessary Python files to reduce image size
-    # Safe to remove: stdlib test directories are only used during Python development, not runtime
-    # Error suppression is necessary: find encounters expected errors when parent dirs are deleted first
-    find /usr/local/python/lib/python3.11 -type d -name "test" -exec rm -rf {} + 2>/dev/null || true && \
-    find /usr/local/python/lib/python3.11 -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true && \
-    find /usr/local/python/lib/python3.11 -name "*.pyc" -delete && \
-    find /usr/local/python/lib/python3.11 -name "*.pyo" -delete && \
-    find /usr/local/python/lib/python3.11 -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+# Set Python 3.11 as default python3
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/local/bin/python3.11 1
 
 # Install Python packages
 RUN --mount=type=cache,target=/root/.cache/pip \
