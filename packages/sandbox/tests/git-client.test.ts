@@ -412,4 +412,72 @@ describe('GitClient', () => {
       expect(fullOptionsClient).toBeInstanceOf(GitClient);
     });
   });
+
+  describe('credential redaction in logs', () => {
+    it('should redact credentials from URLs but leave public URLs unchanged', async () => {
+      const mockLogger = {
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn(),
+        debug: vi.fn()
+      };
+
+      const clientWithLogger = new GitClient({
+        baseUrl: 'http://test.com',
+        port: 3000,
+        logger: mockLogger
+      });
+
+      // Test with credentials
+      mockFetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            success: true,
+            stdout: "Cloning into 'private-repo'...\nDone.",
+            stderr: '',
+            exitCode: 0,
+            repoUrl: 'https://oauth2:ghp_token123@github.com/user/private-repo.git',
+            branch: 'main',
+            targetDir: '/workspace/private-repo',
+            timestamp: '2023-01-01T00:00:00Z'
+          }),
+          { status: 200 }
+        )
+      );
+
+      await clientWithLogger.checkout(
+        'https://oauth2:ghp_token123@github.com/user/private-repo.git',
+        'test-session'
+      );
+
+      let logDetails = mockLogger.info.mock.calls[0]?.[1]?.details;
+      expect(logDetails).not.toContain('ghp_token123');
+      expect(logDetails).toContain('https://******@github.com/user/private-repo.git');
+
+      // Test without credentials
+      mockFetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            success: true,
+            stdout: "Cloning into 'react'...\nDone.",
+            stderr: '',
+            exitCode: 0,
+            repoUrl: 'https://github.com/facebook/react.git',
+            branch: 'main',
+            targetDir: '/workspace/react',
+            timestamp: '2023-01-01T00:00:00Z'
+          }),
+          { status: 200 }
+        )
+      );
+
+      await clientWithLogger.checkout(
+        'https://github.com/facebook/react.git',
+        'test-session'
+      );
+
+      logDetails = mockLogger.info.mock.calls[1]?.[1]?.details;
+      expect(logDetails).toContain('https://github.com/facebook/react.git');
+    });
+  });
 });

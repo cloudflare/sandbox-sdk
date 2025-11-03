@@ -1,4 +1,5 @@
 import type { GitCheckoutResult } from '@repo/shared';
+import { GitLogger } from '@repo/shared';
 import { BaseHttpClient } from './base-client';
 import type { HttpClientOptions, SessionRequest } from './types';
 
@@ -18,6 +19,11 @@ export interface GitCheckoutRequest extends SessionRequest {
  * Client for Git repository operations
  */
 export class GitClient extends BaseHttpClient {
+  constructor(options: HttpClientOptions = {}) {
+    super(options);
+    // Wrap logger with GitLogger to auto-redact credentials
+    this.logger = new GitLogger(this.logger);
+  }
   /**
    * Clone a Git repository
    * @param repoUrl - URL of the Git repository to clone
