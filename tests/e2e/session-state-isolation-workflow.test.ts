@@ -697,7 +697,7 @@ describe('Session State Isolation Workflow', () => {
       expect(deleteData.success).toBe(true);
       expect(deleteData.sessionId).toBe(sessionId);
 
-      // List sessions again - deleted session should not appear
+      // List sessions again - deleted session should NOT be in the list
       const listAfterResponse = await fetch(`${workerUrl}/api/session/list`, {
         method: 'GET',
         headers: createTestHeaders(currentSandboxId)
@@ -706,23 +706,22 @@ describe('Session State Isolation Workflow', () => {
       expect(listAfterResponse.status).toBe(200);
       const sessionsAfter = await listAfterResponse.json();
 
-      // The deleted session should no longer be in the list
-      // (unless it gets auto-recreated by a subsequent operation)
-      const stillExists = sessionsAfter.data.includes(sessionId);
+      // Deleted session must not appear in the list
+      expect(sessionsAfter.data).not.toContain(sessionId);
 
-      // If it exists, it should be a fresh session
-      if (stillExists) {
-        const verifyResponse = await fetch(`${workerUrl}/api/execute`, {
-          method: 'POST',
-          headers: createTestHeaders(currentSandboxId, sessionId),
-          body: JSON.stringify({
-            command: 'echo "VAR:$SESSION_VAR:END"'
-          })
-        });
+      // Verify we can still use the sandbox (it wasn't destroyed)
+      const sandboxStillAliveResponse = await fetch(`${workerUrl}/api/execute`, {
+        method: 'POST',
+        headers: createTestHeaders(currentSandboxId), // Use default session
+        body: JSON.stringify({
+          command: 'echo "sandbox-alive"'
+        })
+      });
 
-        const verifyData = await verifyResponse.json();
-        expect(verifyData.stdout.trim()).toBe('VAR::END'); // SESSION_VAR should be empty
-      }
+      expect(sandboxStillAliveResponse.status).toBe(200);
+      const sandboxAliveData = await sandboxStillAliveResponse.json();
+      expect(sandboxAliveData.success).toBe(true);
+      expect(sandboxAliveData.stdout.trim()).toBe('sandbox-alive');
     }, 90000);
   });
 });

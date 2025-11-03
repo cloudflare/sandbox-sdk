@@ -1,5 +1,8 @@
 import { randomBytes } from 'node:crypto';
-import type { Logger, SessionCreateResult } from '@repo/shared';
+import type {
+  Logger,
+  SessionDeleteRequest
+} from '@repo/shared';
 import { ErrorCode } from '@repo/shared/errors';
 
 import type { RequestContext } from '../core/types';
@@ -108,13 +111,12 @@ export class SessionHandler extends BaseHandler<Request, Response> {
     request: Request,
     context: RequestContext
   ): Promise<Response> {
-    let sessionId: string;
+    let body: SessionDeleteRequest;
 
     try {
-      const body = (await request.json()) as any;
-      sessionId = body.sessionId;
+      body = (await request.json()) as SessionDeleteRequest;
 
-      if (!sessionId) {
+      if (!body.sessionId) {
         return this.createErrorResponse(
           {
             message: 'sessionId is required',
@@ -132,6 +134,8 @@ export class SessionHandler extends BaseHandler<Request, Response> {
         context
       );
     }
+
+    const sessionId = body.sessionId;
 
     const result = await this.sessionManager.deleteSession(sessionId);
 
