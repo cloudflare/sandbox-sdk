@@ -58,7 +58,49 @@ RUN --mount=type=cache,target=/root/.npm \
     npm ci --production
 
 # ============================================================================
-# Stage 4: Runtime - Ubuntu 22.04 with only runtime dependencies
+# Stage 4: Download pre-built Python 3.11.14
+# ============================================================================
+FROM ubuntu:22.04 AS python-builder
+
+# Prevent interactive prompts during package installation
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Accept architecture from Docker BuildKit (for multi-arch builds)
+ARG TARGETARCH
+
+# Install minimal dependencies for downloading
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    rm -f /etc/apt/apt.conf.d/docker-clean && \
+    echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' >/etc/apt/apt.conf.d/keep-cache && \
+    apt-get update && apt-get install -y --no-install-recommends \
+    wget ca-certificates
+
+# Download and extract pre-built Python 3.11.14 from python-build-standalone
+# Using PGO+LTO optimized builds for better performance
+# Supports multi-arch: amd64 (x86_64) and arm64 (aarch64)
+RUN --mount=type=cache,target=/tmp/python-cache \
+    # Map Docker TARGETARCH to python-build-standalone arch naming
+    if [ "$TARGETARCH" = "amd64" ]; then \
+        PYTHON_ARCH="x86_64-unknown-linux-gnu"; \
+        EXPECTED_SHA256="edd8d11aa538953d12822fab418359a692fd1ee4ca2675579fbf0fa31e3688f1"; \
+    elif [ "$TARGETARCH" = "arm64" ]; then \
+        PYTHON_ARCH="aarch64-unknown-linux-gnu"; \
+        EXPECTED_SHA256="08141d31f95d86a23f23e4c741b726de0055f12f83200d1d4867b4e8e6e967c5"; \
+    else \
+        echo "Unsupported architecture: $TARGETARCH" && exit 1; \
+    fi && \
+    cd /tmp/python-cache && \
+    wget -nc https://github.com/indygreg/python-build-standalone/releases/download/20251028/cpython-3.11.14+20251028-${PYTHON_ARCH}-install_only.tar.gz && \
+    # Verify SHA256 checksum for security
+    echo "${EXPECTED_SHA256}  cpython-3.11.14+20251028-${PYTHON_ARCH}-install_only.tar.gz" | sha256sum -c - && \
+    cd /tmp && \
+    tar -xzf /tmp/python-cache/cpython-3.11.14+20251028-${PYTHON_ARCH}-install_only.tar.gz && \
+    mv python /usr/local/ && \
+    rm -rf /tmp/cpython-*
+
+# ============================================================================
+# Stage 5: Runtime - Ubuntu 22.04 with only runtime dependencies
 # ============================================================================
 FROM ubuntu:22.04 AS runtime
 
@@ -71,43 +113,42 @@ ENV DEBIAN_FRONTEND=noninteractive
 # Set the sandbox version as an environment variable for version checking
 ENV SANDBOX_VERSION=${SANDBOX_VERSION}
 
-# Install essential runtime packages with cache mounts
+# Install runtime packages and Python runtime libraries
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     rm -f /etc/apt/apt.conf.d/docker-clean && \
     echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' >/etc/apt/apt.conf.d/keep-cache && \
     apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    wget \
-    ca-certificates \
-    python3.11 \
-    python3-pip \
-    python3.11-venv \
-    procps \
-    git \
-    unzip \
-    zip \
-    jq \
-    file
+    ca-certificates curl wget procps git unzip zip jq file \
+    libssl3 zlib1g libbz2-1.0 libreadline8 libsqlite3-0 \
+    libncursesw6 libtinfo6 libxml2 libxmlsec1 libffi8 liblzma5 libtk8.6 && \
+    update-ca-certificates
+
+# Copy pre-built Python from python-builder stage
+COPY --from=python-builder /usr/local/python /usr/local/python
+
+# Create symlinks and update shared library cache
+RUN ln -s /usr/local/python/bin/python3.11 /usr/local/bin/python3.11 && \
+    ln -s /usr/local/python/bin/python3 /usr/local/bin/python3 && \
+    ln -s /usr/local/python/bin/pip3 /usr/local/bin/pip3 && \
+    echo "/usr/local/python/lib" > /etc/ld.so.conf.d/python.conf && \
+    ldconfig
 
 # Set Python 3.11 as default python3
-RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/local/bin/python3.11 1
 
-# Install Node.js 24 LTS using official NodeSource setup script
-RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
-    && apt-get install -y nodejs \
-    && rm -rf /var/lib/apt/lists/*
+# Install Python packages
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip3 install --no-cache-dir matplotlib numpy pandas ipython
+
+# Install Node.js 24 LTS from official Node image
+COPY --from=node:24-slim /usr/local/bin/node /usr/local/bin/node
+COPY --from=node:24-slim /usr/local/lib/node_modules /usr/local/lib/node_modules
+RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm && \
+    ln -s /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
 
 # Install Bun runtime from official image
 COPY --from=oven/bun:1 /usr/local/bin/bun /usr/local/bin/bun
-
-# Install essential Python packages with cache mount
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip3 install \
-    matplotlib \
-    numpy \
-    pandas \
-    ipython
 
 # Set up runtime container server directory
 WORKDIR /container-server
