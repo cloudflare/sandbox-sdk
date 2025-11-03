@@ -4,4 +4,4 @@
 "@repo/shared": patch
 ---
 
-expose deleteSession
+Expose deleteSession API

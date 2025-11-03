@@ -253,6 +253,13 @@ console.log('Terminal server on port ' + port);
         );
       }
 
+      if (url.pathname === '/api/session/delete' && request.method === 'POST') {
+        const result = await sandbox.deleteSession(body.sessionId);
+        return new Response(JSON.stringify(result), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
       // Command execution
       if (url.pathname === '/api/execute' && request.method === 'POST') {
         const result = await executor.exec(body.command);

@@ -554,6 +554,12 @@ export class Session {
     // Mark as destroying to prevent shell exit monitor from logging errors
     this.isDestroying = true;
 
+    // Kill all running commands first 
+    const runningCommandIds = Array.from(this.runningCommands.keys());
+    await Promise.all(
+      runningCommandIds.map((commandId) => this.killCommand(commandId))
+    );
+
     if (this.shell && !this.shell.killed) {
       // Close stdin to send EOF to bash (standard way to terminate interactive shells)
       if (this.shell.stdin && typeof this.shell.stdin !== 'number') {
@@ -582,7 +588,7 @@ export class Session {
       }
     }
 
-    // Clean up session directory
+    // Clean up session directory (includes pid files, FIFOs, log files)
     if (this.sessionDir) {
       await rm(this.sessionDir, { recursive: true, force: true }).catch(
         () => {}

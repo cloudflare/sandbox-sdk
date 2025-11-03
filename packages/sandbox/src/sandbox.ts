@@ -17,7 +17,12 @@ import type {
   SessionOptions,
   StreamOptions
 } from '@repo/shared';
-import { createLogger, runWithLogger, TraceContext } from '@repo/shared';
+import {
+  createLogger,
+  runWithLogger,
+  type SessionDeleteResult,
+  TraceContext
+} from '@repo/shared';
 import { type ExecuteResponse, SandboxClient } from './clients';
 import type { ErrorResponse } from './errors';
 import { CustomDomainRequiredError, ErrorCode } from './errors';
@@ -1115,9 +1120,17 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * Cleans up session resources and removes it from the container
    *
    * @param sessionId - The ID of the session to delete
+   * @returns Result with success status, sessionId, and timestamp
    */
-  async deleteSession(sessionId: string): Promise<void> {
-    await this.client.utils.deleteSession(sessionId);
+  async deleteSession(sessionId: string): Promise<SessionDeleteResult> {
+    const response = await this.client.utils.deleteSession(sessionId);
+
+    // Map HTTP response to result type
+    return {
+      success: response.success,
+      sessionId: response.sessionId,
+      timestamp: response.timestamp
+    };
   }
 
   /**

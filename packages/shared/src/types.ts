@@ -724,7 +724,7 @@ export interface ISandbox {
 
   // Session management
   createSession(options?: SessionOptions): Promise<ExecutionSession>;
-  deleteSession(sessionId: string): Promise<void>;
+  deleteSession(sessionId: string): Promise<SessionDeleteResult>;
 
   // Code interpreter methods
   createCodeContext(options?: CreateContextOptions): Promise<CodeContext>;
