@@ -28,8 +28,6 @@ Pseudo:
   > >(while read; printf "\x01\x01\x01%s\n" "$REPLY" >> "$log") \
   2> >(while read; printf "\x02\x02\x02%s\n" "$REPLY" >> "$log")
 EXIT_CODE=$?
-# Ensure consumers have drained
-wait 2>/dev/null
 # Atomically publish exit code
 echo "$EXIT_CODE" > "$exit.tmp" && mv "$exit.tmp" "$exit"
 ```
@@ -97,3 +95,5 @@ mkfifo "$sp" "$ep"
 - Why not tee? Tee doesn’t split stdout/stderr into separate channels with stable ordering without extra plumbing; our prefixes are simple and explicit.
 - Is process substitution portable?
   - It is supported by bash (we spawn bash with `--norc`). The container environment supports it; if portability constraints change, we can revisit.
+- Why doesn't the foreground pattern need an explicit `wait`?
+  Bash waits for process substitutions automatically before returning control. Calling `wait` without arguments is dangerous because it waits for ALL child processes of the shell, not just the current command's process substitutions. In a session with background processes from `execStream`/`startProcess`, this would cause foreground commands to block on unrelated background jobs (e.g., `listFiles()` would hang for 60 seconds after `startProcess('sleep 60')`).

@@ -746,8 +746,6 @@ export class Session {
         script += `  EXIT_CODE=$?\n`;
       }
 
-      // Ensure process-substitution consumers complete before writing exit code
-      script += `  wait 2>/dev/null\n`;
       script += `  \n`;
       script += `  # Write exit code\n`;
       script += `  echo "$EXIT_CODE" > ${safeExitCodeFile}.tmp\n`;
