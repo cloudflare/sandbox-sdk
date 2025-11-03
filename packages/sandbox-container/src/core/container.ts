@@ -111,7 +111,11 @@ export class Container {
       sessionManager
     );
     const portService = new PortService(portStore, securityAdapter, logger);
-    const gitService = new GitService(securityAdapter, gitLogger, sessionManager);
+    const gitService = new GitService(
+      securityAdapter,
+      gitLogger,
+      sessionManager
+    );
     const interpreterService = new InterpreterService(logger);
 
     // Initialize handlers

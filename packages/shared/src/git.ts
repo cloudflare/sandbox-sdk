@@ -1,4 +1,4 @@
-import type { LogContext, Logger } from "./logger";
+import type { LogContext, Logger } from './logger';
 
 /**
  * Redact credentials from URLs for secure logging
@@ -10,8 +10,24 @@ import type { LogContext, Logger } from "./logger";
  * @returns URL with credentials redacted
  */
 export function redactCredentials(url: string): string {
-  // Replace any credentials between :// and @ with ******
-  return url.replace(/:\/\/[^@]+@/g, '://******@');
+  try {
+    // Use URL parsing for correct handling of credentials
+    const parsed = new URL(url);
+    if (parsed.username || parsed.password) {
+      parsed.username = '******';
+      parsed.password = '';
+    }
+    return parsed.toString();
+  } catch {
+    // Not a valid URL, fall back to string operations
+    const protocolEnd = url.indexOf('://');
+    if (protocolEnd === -1) return url;
+
+    const atIndex = url.indexOf('@', protocolEnd + 3);
+    if (atIndex === -1) return url;
+
+    return `${url.substring(0, protocolEnd + 3)}******${url.substring(atIndex)}`;
+  }
 }
 
 /**
@@ -39,13 +55,15 @@ export function sanitizeGitData<T>(data: T): T {
     for (const [key, value] of Object.entries(data)) {
       // Field-specific redaction rules
       if (key === 'repoUrl' || key === 'repository') {
-        result[key] = typeof value === 'string' ? redactCredentials(value) : value;
+        result[key] =
+          typeof value === 'string' ? redactCredentials(value) : value;
       } else if (
         key === 'stderr' ||
         key === 'errorMessage' ||
         key === 'message'
       ) {
-        result[key] = typeof value === 'string' ? redactCredentials(value) : value;
+        result[key] =
+          typeof value === 'string' ? redactCredentials(value) : value;
       } else {
         // Recursively sanitize nested objects
         result[key] = sanitizeGitData(value);
@@ -63,37 +81,33 @@ export function sanitizeGitData<T>(data: T): T {
 export class GitLogger implements Logger {
   constructor(private readonly baseLogger: Logger) {}
 
-  debug(message: string, context?: Partial<LogContext>): void {
-    const sanitized = context
+  private sanitizeContext(
+    context?: Partial<LogContext>
+  ): Partial<LogContext> | undefined {
+    return context
       ? (sanitizeGitData(context) as Partial<LogContext>)
       : context;
-    this.baseLogger.debug(message, sanitized);
+  }
+
+  debug(message: string, context?: Partial<LogContext>): void {
+    this.baseLogger.debug(message, this.sanitizeContext(context));
   }
 
   info(message: string, context?: Partial<LogContext>): void {
-    const sanitized = context
-      ? (sanitizeGitData(context) as Partial<LogContext>)
-      : context;
-    this.baseLogger.info(message, sanitized);
+    this.baseLogger.info(message, this.sanitizeContext(context));
   }
 
   warn(message: string, context?: Partial<LogContext>): void {
-    const sanitized = context
-      ? (sanitizeGitData(context) as Partial<LogContext>)
-      : context;
-    this.baseLogger.warn(message, sanitized);
+    this.baseLogger.warn(message, this.sanitizeContext(context));
   }
 
   error(message: string, error?: Error, context?: Partial<LogContext>): void {
-    const sanitized = context
-      ? (sanitizeGitData(context) as Partial<LogContext>)
-      : context;
-    this.baseLogger.error(message, error, sanitized);
+    this.baseLogger.error(message, error, this.sanitizeContext(context));
   }
 
   child(context: Partial<LogContext>): Logger {
-    // Create child from base logger, then wrap it
-    const childLogger = this.baseLogger.child(context);
+    const sanitized = sanitizeGitData(context) as Partial<LogContext>;
+    const childLogger = this.baseLogger.child(sanitized);
     return new GitLogger(childLogger);
   }
 }

@@ -419,7 +419,8 @@ describe('GitClient', () => {
         info: vi.fn(),
         warn: vi.fn(),
         error: vi.fn(),
-        debug: vi.fn()
+        debug: vi.fn(),
+        child: vi.fn()
       };
 
       const clientWithLogger = new GitClient({
@@ -436,7 +437,8 @@ describe('GitClient', () => {
             stdout: "Cloning into 'private-repo'...\nDone.",
             stderr: '',
             exitCode: 0,
-            repoUrl: 'https://oauth2:ghp_token123@github.com/user/private-repo.git',
+            repoUrl:
+              'https://oauth2:ghp_token123@github.com/user/private-repo.git',
             branch: 'main',
             targetDir: '/workspace/private-repo',
             timestamp: '2023-01-01T00:00:00Z'
@@ -452,7 +454,9 @@ describe('GitClient', () => {
 
       let logDetails = mockLogger.info.mock.calls[0]?.[1]?.details;
       expect(logDetails).not.toContain('ghp_token123');
-      expect(logDetails).toContain('https://******@github.com/user/private-repo.git');
+      expect(logDetails).toContain(
+        'https://******@github.com/user/private-repo.git'
+      );
 
       // Test without credentials
       mockFetch.mockResolvedValueOnce(

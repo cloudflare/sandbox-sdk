@@ -24,6 +24,7 @@ export class GitClient extends BaseHttpClient {
     // Wrap logger with GitLogger to auto-redact credentials
     this.logger = new GitLogger(this.logger);
   }
+
   /**
    * Clone a Git repository
    * @param repoUrl - URL of the Git repository to clone

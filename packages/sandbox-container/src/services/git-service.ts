@@ -7,11 +7,7 @@ import type {
   ValidationFailedContext
 } from '@repo/shared/errors';
 import { ErrorCode } from '@repo/shared/errors';
-import type {
-  CloneOptions,
-  ServiceError,
-  ServiceResult
-} from '../core/types';
+import type { CloneOptions, ServiceError, ServiceResult } from '../core/types';
 import { GitManager } from '../managers/git-manager';
 import type { SessionManager } from './session-manager';
 
@@ -249,8 +245,7 @@ export class GitService {
             validationErrors: [
               {
                 field: 'branch',
-                message:
-                  branchValidation.error || 'Invalid branch name format',
+                message: branchValidation.error || 'Invalid branch name format',
                 code: 'INVALID_BRANCH'
               }
             ]
