@@ -1,5 +1,13 @@
 # @cloudflare/sandbox
 
+## 0.4.15
+
+### Patch Changes
+
+- [#185](https://github.com/cloudflare/sandbox-sdk/pull/185) [`7897cdd`](https://github.com/cloudflare/sandbox-sdk/commit/7897cddefc366bbd640ea138b34a520a0b2ddf8c) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Fix foreground commands blocking on background processes
+
+- [#183](https://github.com/cloudflare/sandbox-sdk/pull/183) [`ff2fa91`](https://github.com/cloudflare/sandbox-sdk/commit/ff2fa91479357ef88cfb22418f88acb257462faa) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - update python to 3.11.14
+
 ## 0.4.14
 
 ### Patch Changes
