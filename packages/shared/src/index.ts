@@ -44,6 +44,9 @@ export type {
 // Export all types from types.ts
 export type {
   BaseExecOptions,
+  // Bucket mounting types
+  BucketCredentials,
+  BucketProvider,
   ContextCreateResult,
   ContextDeleteResult,
   ContextListResult,
@@ -69,6 +72,7 @@ export type {
   ListFilesResult,
   LogEvent,
   MkdirResult,
+  MountBucketOptions,
   MoveFileResult,
   PortCloseResult,
   // Port management result types

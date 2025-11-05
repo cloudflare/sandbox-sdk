@@ -1,6 +1,8 @@
 import type { DurableObject } from 'cloudflare:workers';
 import { Container, getContainer, switchPort } from '@cloudflare/containers';
 import type {
+  BucketCredentials,
+  BucketProvider,
   CodeContext,
   CreateContextOptions,
   ExecEvent,
@@ -9,6 +11,7 @@ import type {
   ExecutionResult,
   ExecutionSession,
   ISandbox,
+  MountBucketOptions,
   Process,
   ProcessOptions,
   ProcessStatus,
@@ -25,6 +28,16 @@ import { CodeInterpreter } from './interpreter';
 import { isLocalhostPattern } from './request-handler';
 import { SecurityError, sanitizeSandboxId, validatePort } from './security';
 import { parseSSEStream } from './sse-parser';
+import {
+  detectCredentials,
+  detectProviderFromUrl,
+  resolveS3fsOptions
+} from './storage-mount';
+import {
+  InvalidMountConfigError,
+  S3FSMountError
+} from './storage-mount/errors';
+import type { MountInfo } from './storage-mount/types';
 import { SDK_VERSION } from './version';
 
 export function getSandbox(
@@ -82,6 +95,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   envVars: Record<string, string> = {};
   private logger: ReturnType<typeof createLogger>;
   private keepAliveEnabled: boolean = false;
+  private activeMounts: Map<string, MountInfo> = new Map();
 
   constructor(ctx: DurableObjectState<{}>, env: Env) {
     super(ctx, env);
@@ -196,10 +210,271 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   /**
+   * Mount an S3-compatible bucket as a local directory using S3FS-FUSE
+   *
+   * Requires explicit endpoint URL. Credentials are auto-detected from environment
+   * variables or can be provided explicitly.
+   *
+   * @param bucket - Bucket name (e.g., 'my-data')
+   * @param mountPath - Absolute path in container to mount at (e.g., '/mnt/data')
+   * @param options - Configuration options with required endpoint
+   * @throws MissingCredentialsError if no credentials found in environment
+   * @throws S3FSMountError if S3FS mount command fails
+   * @throws InvalidMountConfigError if bucket name, mount path, or endpoint is invalid
+   * 
+   * @example
+   * ```typescript
+   * // Cloudflare R2
+   * await sandbox.mountBucket('my-bucket', '/mnt/data', {
+   *   endpoint: 'https://abc123.r2.cloudflarestorage.com'
+   * });
+   * 
+   * // AWS S3
+   * await sandbox.mountBucket('my-bucket', '/mnt/data', {
+   *   endpoint: 'https://s3.us-west-2.amazonaws.com'
+   * });
+   * 
+   * // MinIO
+   * await sandbox.mountBucket('my-bucket', '/mnt/data', {
+   *   endpoint: 'http://minio.local:9000'
+   * });
+   * ```
+   */
+  async mountBucket(
+    bucket: string,
+    mountPath: string,
+    options: MountBucketOptions
+  ): Promise<void> {
+    this.logger.info(`Mounting bucket ${bucket} to ${mountPath}`, {
+      endpoint: options.endpoint
+    });
+
+    // Validate options
+    this.validateMountOptions(bucket, mountPath, options);
+
+    // Detect provider from explicit option or URL pattern
+    const provider: BucketProvider | null =
+      options.provider || detectProviderFromUrl(options.endpoint);
+
+    this.logger.debug(`Detected provider: ${provider || 'unknown'}`, {
+      endpoint: options.endpoint,
+      explicitProvider: options.provider
+    });
+
+    // Detect credentials
+    const credentials = detectCredentials(options, this.envVars);
+
+    // Inject credentials into environment
+    await this.injectCredentials(credentials);
+
+    // Create mount directory
+    await this.exec(`mkdir -p ${mountPath}`);
+
+    // Execute S3FS mount with provider-specific flags
+    await this.executeS3FSMount(bucket, mountPath, options, provider);
+
+    // Track active mount (use mountPath as key to support multiple mounts of same bucket)
+    this.activeMounts.set(mountPath, {
+      bucket,
+      mountPath,
+      endpoint: options.endpoint,
+      provider,
+      credentials,
+      mounted: true
+    });
+
+    this.logger.info(`Successfully mounted bucket ${bucket} to ${mountPath}`);
+  }
+
+  /**
+   * Manually unmount a bucket filesystem
+   * 
+   * @param mountPath - Absolute path where the bucket is mounted
+   * @throws InvalidMountConfigError if mount path doesn't exist or isn't mounted
+   * 
+   * @example
+   * ```typescript
+   * // Mount a bucket
+   * await sandbox.mountBucket('my-bucket', '/mnt/data', {
+   *   endpoint: 'https://abc123.r2.cloudflarestorage.com'
+   * });
+   * 
+   * // Later, unmount it manually
+   * await sandbox.unmountBucket('/mnt/data');
+   * ```
+   */
+  async unmountBucket(mountPath: string): Promise<void> {
+    this.logger.info(`Unmounting bucket from ${mountPath}`);
+
+    // Look up mount by path
+    const mountInfo = this.activeMounts.get(mountPath);
+
+    // Throw error if mount doesn't exist
+    if (!mountInfo) {
+      throw new InvalidMountConfigError(
+        `No active mount found at path: ${mountPath}`
+      );
+    }
+
+    // Unmount the filesystem
+    try {
+      await this.exec(`fusermount -u ${mountPath}`);
+      mountInfo.mounted = false;
+
+      // Remove from active mounts
+      this.activeMounts.delete(mountPath);
+
+      this.logger.info(`Successfully unmounted bucket from ${mountPath}`);
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      throw new S3FSMountError(
+        `Failed to unmount bucket from ${mountPath}: ${errorMsg}`
+      );
+    }
+  }
+
+  /**
+   * Validate mount options
+   */
+  private validateMountOptions(
+    bucket: string,
+    mountPath: string,
+    options: MountBucketOptions
+  ): void {
+    // Require endpoint field
+    if (!options.endpoint) {
+      throw new InvalidMountConfigError(
+        'Endpoint is required. Provide the full S3-compatible endpoint URL.\n' +
+          'Examples:\n' +
+          '  - R2: https://YOUR-ACCOUNT-ID.r2.cloudflarestorage.com\n' +
+          '  - AWS S3: https://s3.REGION.amazonaws.com\n' +
+          '  - GCS: https://storage.googleapis.com\n' +
+          '  - MinIO: http://minio.local:9000'
+      );
+    }
+
+    // Basic URL validation
+    try {
+      new URL(options.endpoint);
+    } catch (error) {
+      throw new InvalidMountConfigError(
+        `Invalid endpoint URL: "${options.endpoint}". Must be a valid HTTP(S) URL.`
+      );
+    }
+
+    // Validate bucket name (S3-compatible naming rules)
+    const bucketNameRegex = /^[a-z0-9]([a-z0-9.-]{0,61}[a-z0-9])?$/;
+    if (!bucketNameRegex.test(bucket)) {
+      throw new InvalidMountConfigError(
+        `Invalid bucket name: "${bucket}". Bucket names must be 3-63 characters, ` +
+          `lowercase alphanumeric, dots, or hyphens, and cannot start/end with dots or hyphens.`
+      );
+    }
+
+    // Validate mount path is absolute
+    if (!mountPath.startsWith('/')) {
+      throw new InvalidMountConfigError(
+        `Mount path must be absolute (start with /): "${mountPath}"`
+      );
+    }
+
+    // Check for duplicate mount path
+    if (this.activeMounts.has(mountPath)) {
+      const existingMount = this.activeMounts.get(mountPath);
+      throw new InvalidMountConfigError(
+        `Mount path "${mountPath}" is already in use by bucket "${existingMount?.bucket}". ` +
+          `Unmount the existing bucket first or use a different mount path.`
+      );
+    }
+  }
+
+  /**
+   * Inject S3 credentials into environment
+   */
+  private async injectCredentials(
+    credentials: BucketCredentials
+  ): Promise<void> {
+    const credEnvVars: Record<string, string> = {
+      AWS_ACCESS_KEY_ID: credentials.accessKeyId,
+      AWS_SECRET_ACCESS_KEY: credentials.secretAccessKey
+    };
+
+    if (credentials.sessionToken) {
+      credEnvVars.AWS_SESSION_TOKEN = credentials.sessionToken;
+    }
+
+    await this.setEnvVars(credEnvVars);
+  }
+
+  /**
+   * Execute S3FS mount command
+   */
+  private async executeS3FSMount(
+    bucket: string,
+    mountPath: string,
+    options: MountBucketOptions,
+    provider: BucketProvider | null
+  ): Promise<void> {
+    // Resolve s3fs options (provider defaults + user overrides)
+    const resolvedOptions = resolveS3fsOptions(provider, options.s3fsOptions);
+
+    // Build s3fs mount command
+    const s3fsArgs: string[] = [];
+
+    // Add resolved provider-specific and user options
+    s3fsArgs.push(...resolvedOptions);
+
+    // Add read-only flag if requested
+    if (options.readOnly) {
+      s3fsArgs.push('ro');
+    }
+
+    // Add endpoint URL
+    s3fsArgs.push(`url=${options.endpoint}`);
+
+    // Build final command
+    const optionsStr = s3fsArgs.join(',');
+    const mountCmd = `s3fs ${bucket} ${mountPath} -o ${optionsStr}`;
+
+    this.logger.debug(`Executing mount command: ${mountCmd}`, {
+      provider,
+      resolvedOptions
+    });
+
+    // Execute mount command
+    const result = await this.exec(mountCmd);
+
+    if (result.exitCode !== 0) {
+      throw new S3FSMountError(
+        `S3FS mount failed: ${result.stderr || result.stdout || 'Unknown error'}`
+      );
+    }
+
+    this.logger.debug('Mount command executed successfully');
+  }
+
+  /**
    * Cleanup and destroy the sandbox container
    */
   override async destroy(): Promise<void> {
     this.logger.info('Destroying sandbox container');
+
+    // Unmount all mounted buckets
+    for (const [mountPath, mountInfo] of this.activeMounts.entries()) {
+      if (mountInfo.mounted) {
+        try {
+          this.logger.info(`Unmounting bucket ${mountInfo.bucket} from ${mountPath}`);
+          await this.exec(`fusermount -u ${mountPath}`);
+          mountInfo.mounted = false;
+        } catch (error) {
+          const errorMsg = error instanceof Error ? error.message : String(error);
+          this.logger.warn(
+            `Failed to unmount bucket ${mountInfo.bucket} from ${mountPath}: ${errorMsg}`
+          );
+        }
+      }
+    }
+
     await super.destroy();
   }
 

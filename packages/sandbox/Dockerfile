@@ -113,6 +113,18 @@ ENV DEBIAN_FRONTEND=noninteractive
 # Set the sandbox version as an environment variable for version checking
 ENV SANDBOX_VERSION=${SANDBOX_VERSION}
 
+# Install S3FS-FUSE for bucket mounting
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    rm -f /etc/apt/apt.conf.d/docker-clean && \
+    echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' >/etc/apt/apt.conf.d/keep-cache && \
+    apt-get update && apt-get install -y --no-install-recommends \
+    s3fs \
+    fuse
+
+# Enable FUSE in container - allow non-root users to use FUSE
+RUN sed -i 's/#user_allow_other/user_allow_other/' /etc/fuse.conf
+
 # Install runtime packages and Python runtime libraries
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
