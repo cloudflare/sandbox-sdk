@@ -34,7 +34,7 @@ The Cloudflare Sandbox SDK enables secure, isolated code execution in containers
    - `CodeInterpreter`: High-level API for running Python/JavaScript with structured outputs
    - `proxyToSandbox()`: Request handler for preview URL routing
 
-2. **`@repo/shared` (packages/shared/)** - Shared types and error system
+2. **`@repo/shared` (packages/shared/)** - Shared utilities
    - Type definitions shared between SDK and container runtime
    - Centralized error handling and logging utilities
    - Not published to npm (internal workspace package)

@@ -1,8 +1,4 @@
-import {
-  getSandbox,
-  proxyToSandbox,
-  type Sandbox
-} from '@cloudflare/sandbox';
+import { getSandbox, proxyToSandbox, type Sandbox } from '@cloudflare/sandbox';
 import { codeExamples } from '../shared/examples';
 import {
   executeCommand,

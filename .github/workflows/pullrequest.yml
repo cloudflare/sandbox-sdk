@@ -120,8 +120,8 @@ jobs:
         with:
           context: .
           file: packages/sandbox/Dockerfile
-          platforms: linux/amd64  # Explicit single-arch for compatibility with release-amd64 cache
-          load: true  # Load into Docker daemon for local testing
+          platforms: linux/amd64 # Explicit single-arch for compatibility with release-amd64 cache
+          load: true # Load into Docker daemon for local testing
           tags: cloudflare/sandbox-test:${{ needs.unit-tests.outputs.version || '0.0.0' }}
           cache-from: |
             type=gha,scope=pr-${{ github.event.pull_request.number }}-amd64
