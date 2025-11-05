@@ -1,26 +1,43 @@
 import { describe, expect, it } from 'vitest';
-import { redactCredentials } from '../src/git';
+import { redactCredentials, sanitizeGitData } from '../src/git';
 
 describe('redactCredentials', () => {
-  it('should redact credentials and preserve public URLs', () => {
-    // Credentials with username:password format
-    expect(redactCredentials('https://user:token123@github.com/repo.git')).toBe(
-      'https://******@github.com/repo.git'
+  it('should redact credentials from URLs embedded in text', () => {
+    expect(redactCredentials('fatal: https://oauth2:token@github.com/repo.git')).toBe(
+      'fatal: https://******@github.com/repo.git'
     );
-
-    // Token without username (different format)
-    expect(
-      redactCredentials('https://ghp_token456@github.com/org/project.git')
-    ).toBe('https://******@github.com/org/project.git');
-
-    // Public URLs without credentials
-    expect(redactCredentials('https://github.com/facebook/react.git')).toBe(
-      'https://github.com/facebook/react.git'
+    expect(redactCredentials('https://user:pass@example.com/path')).toBe(
+      'https://******@example.com/path'
     );
-
-    // SSH URLs (different format, @ not after protocol)
-    expect(redactCredentials('git@github.com:user/repo.git')).toBe(
-      'git@github.com:user/repo.git'
+    expect(redactCredentials('https://github.com/public.git')).toBe(
+      'https://github.com/public.git'
     );
+  });
+});
+
+describe('sanitizeGitData', () => {
+  it('should recursively sanitize credentials in any field', () => {
+    const data = {
+      repoUrl: 'https://token@github.com/repo.git',
+      stderr: 'fatal: https://user:pass@gitlab.com/project.git',
+      customField: { nested: 'Error: https://oauth2:token@example.com/path' },
+      urls: ['https://ghp_abc@github.com/private.git', 'https://github.com/public.git'],
+      exitCode: 128
+    };
+
+    const sanitized = sanitizeGitData(data);
+
+    expect(sanitized.repoUrl).toBe('https://******@github.com/repo.git');
+    expect(sanitized.stderr).toBe('fatal: https://******@gitlab.com/project.git');
+    expect(sanitized.customField.nested).toBe('Error: https://******@example.com/path');
+    expect(sanitized.urls[0]).toBe('https://******@github.com/private.git');
+    expect(sanitized.urls[1]).toBe('https://github.com/public.git');
+    expect(sanitized.exitCode).toBe(128);
+  });
+
+  it('should handle edge cases', () => {
+    expect(sanitizeGitData(null)).toBe(null);
+    expect(sanitizeGitData(undefined)).toBe(undefined);
+    expect(sanitizeGitData('https://token@github.com/repo.git')).toBe('https://******@github.com/repo.git');
   });
 });

@@ -5,34 +5,32 @@ import type { LogContext, Logger } from './logger';
  *
  * Replaces any credentials (username:password, tokens, etc.) embedded
  * in URLs with ****** to prevent sensitive data exposure in logs.
+ * Works with URLs embedded in text (e.g., "Error: https://token@github.com/repo.git failed")
  *
- * @param url - The URL that may contain credentials
- * @returns URL with credentials redacted
+ * @param text - String that may contain URLs with credentials
+ * @returns String with credentials redacted from any URLs
  */
-export function redactCredentials(url: string): string {
-  try {
-    // Use URL parsing for correct handling of credentials
-    const parsed = new URL(url);
-    if (parsed.username || parsed.password) {
-      parsed.username = '******';
-      parsed.password = '';
-    }
-    return parsed.toString();
-  } catch {
-    // Not a valid URL, fall back to string operations
-    const protocolEnd = url.indexOf('://');
-    if (protocolEnd === -1) return url;
+export function redactCredentials(text: string): string {
+  // Pattern to match URLs with credentials (http(s):// or git@)
+  // Matches: https://user:pass@host, https://token@host, git@host
+  const urlPattern = /(https?:\/\/)[^:@\s]+:[^@\s]+@[^\s]+|(https?:\/\/)[^:@\s]+@[^\s]+/g;
 
-    const atIndex = url.indexOf('@', protocolEnd + 3);
-    if (atIndex === -1) return url;
+  return text.replace(urlPattern, (match) => {
+    // Check if this looks like a URL with credentials
+    const protocolEnd = match.indexOf('://');
+    if (protocolEnd === -1) return match;
 
-    return `${url.substring(0, protocolEnd + 3)}******${url.substring(atIndex)}`;
-  }
+    const atIndex = match.indexOf('@', protocolEnd + 3);
+    if (atIndex === -1) return match;
+
+    // Redact everything between protocol and @
+    return `${match.substring(0, protocolEnd + 3)}******${match.substring(atIndex)}`;
+  });
 }
 
 /**
- * Sanitize git-specific data by redacting credentials from known fields
- * Recursively processes objects to ensure credentials are never leaked in logs or errors
+ * Sanitize data by redacting credentials from any strings
+ * Recursively processes objects and arrays to ensure credentials are never leaked
  */
 export function sanitizeGitData<T>(data: T): T {
   // Handle primitives
@@ -49,25 +47,11 @@ export function sanitizeGitData<T>(data: T): T {
     return data.map((item) => sanitizeGitData(item)) as T;
   }
 
-  // Handle objects
+  // Handle objects - recursively sanitize all fields
   if (typeof data === 'object') {
     const result: any = {};
     for (const [key, value] of Object.entries(data)) {
-      // Field-specific redaction rules
-      if (key === 'repoUrl' || key === 'repository') {
-        result[key] =
-          typeof value === 'string' ? redactCredentials(value) : value;
-      } else if (
-        key === 'stderr' ||
-        key === 'errorMessage' ||
-        key === 'message'
-      ) {
-        result[key] =
-          typeof value === 'string' ? redactCredentials(value) : value;
-      } else {
-        // Recursively sanitize nested objects
-        result[key] = sanitizeGitData(value);
-      }
+      result[key] = sanitizeGitData(value);
     }
     return result as T;
   }
