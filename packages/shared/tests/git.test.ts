@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
-import { redactCredentials, sanitizeGitData } from '../src/git';
+import { describe, expect, it, vi } from 'vitest';
+import { redactCredentials, sanitizeGitData, GitLogger } from '../src/git';
+import { createNoOpLogger } from '../src/logger';
 
 describe('redactCredentials', () => {
   it('should redact credentials from URLs embedded in text', () => {
@@ -11,6 +12,21 @@ describe('redactCredentials', () => {
     );
     expect(redactCredentials('https://github.com/public.git')).toBe(
       'https://github.com/public.git'
+    );
+  });
+
+  it('should handle multiple URLs in a single string', () => {
+    expect(
+      redactCredentials('Error: https://token1@host1.com failed, tried https://token2@host2.com')
+    ).toBe('Error: https://******@host1.com failed, tried https://******@host2.com');
+  });
+
+  it('should handle URLs in structured formats', () => {
+    expect(redactCredentials('{"url":"https://token@github.com/repo.git"}')).toBe(
+      '{"url":"https://******@github.com/repo.git"}'
+    );
+    expect(redactCredentials('<url>https://token@github.com/repo.git</url>')).toBe(
+      '<url>https://******@github.com/repo.git</url>'
     );
   });
 });
@@ -39,5 +55,24 @@ describe('sanitizeGitData', () => {
     expect(sanitizeGitData(null)).toBe(null);
     expect(sanitizeGitData(undefined)).toBe(undefined);
     expect(sanitizeGitData('https://token@github.com/repo.git')).toBe('https://******@github.com/repo.git');
+  });
+});
+
+describe('GitLogger', () => {
+  it('should sanitize Error objects in error() method', () => {
+    const baseLogger = createNoOpLogger();
+    const errorSpy = vi.spyOn(baseLogger, 'error');
+    const gitLogger = new GitLogger(baseLogger);
+
+    const error = new Error('Auth failed for https://token@github.com/repo.git');
+    gitLogger.error('Git operation failed', error);
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      'Git operation failed',
+      expect.objectContaining({
+        message: 'Auth failed for https://******@github.com/repo.git'
+      }),
+      undefined
+    );
   });
 });

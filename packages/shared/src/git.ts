@@ -35,9 +35,11 @@ export function redactCredentials(text: string): string {
     const searchStart = protocolPos + protocolLen;
     const atPos = result.indexOf('@', searchStart);
 
-    // Find where the URL ends (whitespace or end of string)
+    // Find where the URL ends (whitespace, quotes, or structural delimiters)
     let urlEnd = searchStart;
-    while (urlEnd < result.length && !/\s/.test(result[urlEnd])) {
+    while (urlEnd < result.length) {
+      const char = result[urlEnd];
+      if (/[\s"'`<>,;{}[\]]/.test(char)) break;
       urlEnd++;
     }
 
@@ -73,7 +75,7 @@ export function sanitizeGitData<T>(data: T): T {
 
   // Handle objects - recursively sanitize all fields
   if (typeof data === 'object') {
-    const result: any = {};
+    const result: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(data)) {
       result[key] = sanitizeGitData(value);
     }
@@ -97,6 +99,26 @@ export class GitLogger implements Logger {
       : context;
   }
 
+  private sanitizeError(error?: Error): Error | undefined {
+    if (!error) return error;
+
+    // Create a new error with sanitized message and stack
+    const sanitized = new Error(redactCredentials(error.message));
+    sanitized.name = error.name;
+    if (error.stack) {
+      sanitized.stack = redactCredentials(error.stack);
+    }
+    // Preserve other enumerable properties
+    const sanitizedRecord = sanitized as unknown as Record<string, unknown>;
+    const errorRecord = error as unknown as Record<string, unknown>;
+    for (const key of Object.keys(error)) {
+      if (key !== 'message' && key !== 'stack' && key !== 'name') {
+        sanitizedRecord[key] = sanitizeGitData(errorRecord[key]);
+      }
+    }
+    return sanitized;
+  }
+
   debug(message: string, context?: Partial<LogContext>): void {
     this.baseLogger.debug(message, this.sanitizeContext(context));
   }
@@ -110,7 +132,7 @@ export class GitLogger implements Logger {
   }
 
   error(message: string, error?: Error, context?: Partial<LogContext>): void {
-    this.baseLogger.error(message, error, this.sanitizeContext(context));
+    this.baseLogger.error(message, this.sanitizeError(error), this.sanitizeContext(context));
   }
 
   child(context: Partial<LogContext>): Logger {
