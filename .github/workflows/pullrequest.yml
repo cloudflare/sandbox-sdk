@@ -120,8 +120,8 @@ jobs:
         with:
           context: .
           file: packages/sandbox/Dockerfile
-          platforms: linux/amd64  # Explicit single-arch for compatibility with release-amd64 cache
-          load: true  # Load into Docker daemon for local testing
+          platforms: linux/amd64 # Explicit single-arch for compatibility with release-amd64 cache
+          load: true # Load into Docker daemon for local testing
           tags: cloudflare/sandbox-test:${{ needs.unit-tests.outputs.version || '0.0.0' }}
           cache-from: |
             type=gha,scope=pr-${{ github.event.pull_request.number }}-amd64
@@ -152,6 +152,9 @@ jobs:
         env:
           TEST_WORKER_URL: ${{ steps.get-url.outputs.worker_url }}
           CI: true
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
       # Cleanup: Delete test worker and container (only for PR environments)
       - name: Cleanup test deployment

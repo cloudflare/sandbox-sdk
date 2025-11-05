@@ -67,9 +67,9 @@ export function getSandbox(
   });
 }
 
-export function connect(
-  stub: { fetch: (request: Request) => Promise<Response> }
-) {
+export function connect(stub: {
+  fetch: (request: Request) => Promise<Response>;
+}) {
   return async (request: Request, port: number) => {
     // Validate port before routing
     if (!validatePort(port)) {
@@ -215,30 +215,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * Requires explicit endpoint URL. Credentials are auto-detected from environment
    * variables or can be provided explicitly.
    *
-   * @param bucket - Bucket name (e.g., 'my-data')
-   * @param mountPath - Absolute path in container to mount at (e.g., '/mnt/data')
+   * @param bucket - Bucket name
+   * @param mountPath - Absolute path in container to mount at
    * @param options - Configuration options with required endpoint
    * @throws MissingCredentialsError if no credentials found in environment
    * @throws S3FSMountError if S3FS mount command fails
    * @throws InvalidMountConfigError if bucket name, mount path, or endpoint is invalid
-   * 
-   * @example
-   * ```typescript
-   * // Cloudflare R2
-   * await sandbox.mountBucket('my-bucket', '/mnt/data', {
-   *   endpoint: 'https://abc123.r2.cloudflarestorage.com'
-   * });
-   * 
-   * // AWS S3
-   * await sandbox.mountBucket('my-bucket', '/mnt/data', {
-   *   endpoint: 'https://s3.us-west-2.amazonaws.com'
-   * });
-   * 
-   * // MinIO
-   * await sandbox.mountBucket('my-bucket', '/mnt/data', {
-   *   endpoint: 'http://minio.local:9000'
-   * });
-   * ```
    */
   async mountBucket(
     bucket: string,
@@ -264,8 +246,17 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     // Detect credentials
     const credentials = detectCredentials(options, this.envVars);
 
-    // Inject credentials into environment
-    await this.injectCredentials(credentials);
+    // Inject credentials into container environment
+    const credEnvVars: Record<string, string> = {
+      AWS_ACCESS_KEY_ID: credentials.accessKeyId,
+      AWS_SECRET_ACCESS_KEY: credentials.secretAccessKey
+    };
+
+    if (credentials.sessionToken) {
+      credEnvVars.AWS_SESSION_TOKEN = credentials.sessionToken;
+    }
+
+    await this.setEnvVars(credEnvVars);
 
     // Create mount directory
     await this.exec(`mkdir -p ${mountPath}`);
@@ -288,20 +279,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   /**
    * Manually unmount a bucket filesystem
-   * 
+   *
    * @param mountPath - Absolute path where the bucket is mounted
    * @throws InvalidMountConfigError if mount path doesn't exist or isn't mounted
-   * 
-   * @example
-   * ```typescript
-   * // Mount a bucket
-   * await sandbox.mountBucket('my-bucket', '/mnt/data', {
-   *   endpoint: 'https://abc123.r2.cloudflarestorage.com'
-   * });
-   * 
-   * // Later, unmount it manually
-   * await sandbox.unmountBucket('/mnt/data');
-   * ```
    */
   async unmountBucket(mountPath: string): Promise<void> {
     this.logger.info(`Unmounting bucket from ${mountPath}`);
@@ -344,12 +324,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     // Require endpoint field
     if (!options.endpoint) {
       throw new InvalidMountConfigError(
-        'Endpoint is required. Provide the full S3-compatible endpoint URL.\n' +
-          'Examples:\n' +
-          '  - R2: https://YOUR-ACCOUNT-ID.r2.cloudflarestorage.com\n' +
-          '  - AWS S3: https://s3.REGION.amazonaws.com\n' +
-          '  - GCS: https://storage.googleapis.com\n' +
-          '  - MinIO: http://minio.local:9000'
+        'Endpoint is required. Provide the full S3-compatible endpoint URL.'
       );
     }
 
@@ -386,24 +361,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           `Unmount the existing bucket first or use a different mount path.`
       );
     }
-  }
-
-  /**
-   * Inject S3 credentials into environment
-   */
-  private async injectCredentials(
-    credentials: BucketCredentials
-  ): Promise<void> {
-    const credEnvVars: Record<string, string> = {
-      AWS_ACCESS_KEY_ID: credentials.accessKeyId,
-      AWS_SECRET_ACCESS_KEY: credentials.secretAccessKey
-    };
-
-    if (credentials.sessionToken) {
-      credEnvVars.AWS_SESSION_TOKEN = credentials.sessionToken;
-    }
-
-    await this.setEnvVars(credEnvVars);
   }
 
   /**
@@ -463,11 +420,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     for (const [mountPath, mountInfo] of this.activeMounts.entries()) {
       if (mountInfo.mounted) {
         try {
-          this.logger.info(`Unmounting bucket ${mountInfo.bucket} from ${mountPath}`);
+          this.logger.info(
+            `Unmounting bucket ${mountInfo.bucket} from ${mountPath}`
+          );
           await this.exec(`fusermount -u ${mountPath}`);
           mountInfo.mounted = false;
         } catch (error) {
-          const errorMsg = error instanceof Error ? error.message : String(error);
+          const errorMsg =
+            error instanceof Error ? error.message : String(error);
           this.logger.warn(
             `Failed to unmount bucket ${mountInfo.bucket} from ${mountPath}: ${errorMsg}`
           );

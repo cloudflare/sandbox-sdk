@@ -119,7 +119,7 @@ jobs:
           context: .
           file: packages/sandbox/Dockerfile
           platforms: linux/amd64
-          push: false  # Don't push, just cache
+          push: false # Don't push, just cache
           cache-from: type=gha,scope=release-amd64
           cache-to: type=gha,mode=max,scope=release-amd64
           build-args: |
@@ -190,7 +190,7 @@ jobs:
           context: .
           file: packages/sandbox/Dockerfile
           platforms: linux/amd64
-          push: false  # Don't push, just cache
+          push: false # Don't push, just cache
           cache-from: type=gha,scope=release-amd64
           cache-to: type=gha,mode=max,scope=release-amd64
           build-args: |

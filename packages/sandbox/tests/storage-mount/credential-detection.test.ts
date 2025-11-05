@@ -67,8 +67,9 @@ describe('Credential Detection', () => {
     const envVars = {};
     const options = { endpoint: 'https://test.r2.cloudflarestorage.com' };
 
-    expect(() => detectCredentials(options, envVars))
-      .toThrow('No credentials found');
+    expect(() => detectCredentials(options, envVars)).toThrow(
+      'No credentials found'
+    );
   });
 
   it('should include helpful error message with env var hints', () => {
@@ -98,8 +99,9 @@ describe('Credential Detection', () => {
     };
     const options = { endpoint: 'https://test.r2.cloudflarestorage.com' };
 
-    expect(() => detectCredentials(options, envVars))
-      .toThrow('No credentials found');
+    expect(() => detectCredentials(options, envVars)).toThrow(
+      'No credentials found'
+    );
   });
 
   it('should throw error when only secret key is present', () => {
@@ -109,7 +111,8 @@ describe('Credential Detection', () => {
     };
     const options = { endpoint: 'https://test.r2.cloudflarestorage.com' };
 
-    expect(() => detectCredentials(options, envVars))
-      .toThrow('No credentials found');
+    expect(() => detectCredentials(options, envVars)).toThrow(
+      'No credentials found'
+    );
   });
 });

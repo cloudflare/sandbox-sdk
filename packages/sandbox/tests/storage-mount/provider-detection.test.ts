@@ -19,13 +19,12 @@ describe('Provider Detection', () => {
       expect(detectProviderFromUrl(url)).toBe(expectedProvider);
     });
 
-    it.each([
-      ['https://custom.storage.example.com'],
-      ['not-a-url'],
-      ['']
-    ])('should return null for unknown/invalid: %s', (url) => {
-      expect(detectProviderFromUrl(url)).toBe(null);
-    });
+    it.each([['https://custom.storage.example.com'], ['not-a-url'], ['']])(
+      'should return null for unknown/invalid: %s',
+      (url) => {
+        expect(detectProviderFromUrl(url)).toBe(null);
+      }
+    );
   });
 
   describe('getProviderFlags', () => {
@@ -68,8 +67,13 @@ describe('Provider Detection', () => {
     });
 
     it('should deduplicate flags keeping last occurrence', () => {
-      const options = resolveS3fsOptions('minio', ['use_path_request_style', 'custom_flag']);
-      const count = options.filter(o => o === 'use_path_request_style').length;
+      const options = resolveS3fsOptions('minio', [
+        'use_path_request_style',
+        'custom_flag'
+      ]);
+      const count = options.filter(
+        (o) => o === 'use_path_request_style'
+      ).length;
       expect(count).toBe(1);
       expect(options).toContain('custom_flag');
     });

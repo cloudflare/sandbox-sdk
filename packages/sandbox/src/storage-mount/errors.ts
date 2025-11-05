@@ -1,6 +1,6 @@
 /**
  * Bucket mounting error classes
- * 
+ *
  * These are SDK-side validation errors that follow the same pattern as SecurityError.
  * They are thrown before any container interaction occurs.
  */
@@ -49,4 +49,3 @@ export class InvalidMountConfigError extends BucketMountError {
     this.name = 'InvalidMountConfigError';
   }
 }
-
