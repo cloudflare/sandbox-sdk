@@ -145,6 +145,7 @@ We use Biome for linting and formatting. Key guidelines:
 - Write concise, readable code
 - Add comments for complex logic
 - Follow patterns in existing code
+- Use the provided logger (`this.logger.info()`) instead of `console.log()` in production code
 
 ## Testing
 

@@ -1,5 +1,5 @@
 /**
- * Logger module for Cloudflare Sandbox SDK
+ * Logger module
  *
  * Provides structured, trace-aware logging with:
  * - AsyncLocalStorage for implicit context propagation

@@ -3,6 +3,8 @@
  * Used by both client SDK and container runtime
  */
 
+// Export git utilities
+export { GitLogger, redactCredentials, sanitizeGitData } from './git.js';
 // Export all interpreter types
 export type {
   ChartData,
