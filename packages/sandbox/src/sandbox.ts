@@ -1431,7 +1431,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         this.codeInterpreter.runCodeStream(code, options),
       listCodeContexts: () => this.codeInterpreter.listCodeContexts(),
       deleteCodeContext: (contextId) =>
-        this.codeInterpreter.deleteCodeContext(contextId)
+        this.codeInterpreter.deleteCodeContext(contextId),
+
+      // Bucket mounting - sandbox-level operations
+      mountBucket: (bucket, mountPath, options) =>
+        this.mountBucket(bucket, mountPath, options),
+      unmountBucket: (mountPath) => this.unmountBucket(mountPath)
     };
   }
 

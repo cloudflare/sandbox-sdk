@@ -665,6 +665,14 @@ export interface ExecutionSession {
   ): Promise<ReadableStream<Uint8Array>>;
   listCodeContexts(): Promise<CodeContext[]>;
   deleteCodeContext(contextId: string): Promise<void>;
+
+  // Bucket mounting operations
+  mountBucket(
+    bucket: string,
+    mountPath: string,
+    options: MountBucketOptions
+  ): Promise<void>;
+  unmountBucket(mountPath: string): Promise<void>;
 }
 
 // Bucket mounting types
@@ -705,9 +713,7 @@ export interface MountBucketOptions {
 
   /**
    * Optional provider hint for automatic s3fs flag configuration
-   *
    * If not specified, will attempt to detect from endpoint URL.
-   * Use 'custom' if you want to manually specify all s3fs options.
    *
    * Examples:
    * - 'r2' - Cloudflare R2 (adds nomixupload, endpoint=auto)
