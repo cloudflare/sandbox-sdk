@@ -15,11 +15,11 @@ export function detectProviderFromUrl(endpoint: string): BucketProvider | null {
     const url = new URL(endpoint);
     const hostname = url.hostname.toLowerCase();
 
-    if (hostname.includes('.r2.cloudflarestorage.com')) {
+    if (hostname.endsWith('.r2.cloudflarestorage.com')) {
       return 'r2';
     }
 
-    if (hostname.includes('.amazonaws.com') || hostname.startsWith('s3.')) {
+    if (hostname.endsWith('.amazonaws.com') || hostname.startsWith('s3.')) {
       return 's3';
     }
 

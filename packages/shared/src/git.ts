@@ -132,7 +132,11 @@ export class GitLogger implements Logger {
   }
 
   error(message: string, error?: Error, context?: Partial<LogContext>): void {
-    this.baseLogger.error(message, this.sanitizeError(error), this.sanitizeContext(context));
+    this.baseLogger.error(
+      message,
+      this.sanitizeError(error),
+      this.sanitizeContext(context)
+    );
   }
 
   child(context: Partial<LogContext>): Logger {

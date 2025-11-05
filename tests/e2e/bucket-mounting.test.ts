@@ -70,11 +70,17 @@ describe('Bucket Mounting E2E', () => {
 
     test('should mount bucket and perform file operations', async () => {
       // Verify required credentials are present
-      const requiredVars = ['CLOUDFLARE_ACCOUNT_ID', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY'];
-      const missing = requiredVars.filter(v => !process.env[v]);
+      const requiredVars = [
+        'CLOUDFLARE_ACCOUNT_ID',
+        'AWS_ACCESS_KEY_ID',
+        'AWS_SECRET_ACCESS_KEY'
+      ];
+      const missing = requiredVars.filter((v) => !process.env[v]);
 
       if (missing.length > 0) {
-        throw new Error(`Missing required environment variables: ${missing.join(', ')}`);
+        throw new Error(
+          `Missing required environment variables: ${missing.join(', ')}`
+        );
       }
 
       currentSandboxId = createSandboxId();

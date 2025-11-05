@@ -20,7 +20,12 @@ import type {
   SessionOptions,
   StreamOptions
 } from '@repo/shared';
-import { createLogger, runWithLogger, TraceContext } from '@repo/shared';
+import {
+  createLogger,
+  runWithLogger,
+  shellEscape,
+  TraceContext
+} from '@repo/shared';
 import { type ExecuteResponse, SandboxClient } from './clients';
 import type { ErrorResponse } from './errors';
 import { CustomDomainRequiredError, ErrorCode } from './errors';
@@ -246,35 +251,52 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     // Detect credentials
     const credentials = detectCredentials(options, this.envVars);
 
-    // Inject credentials into container environment
-    const credEnvVars: Record<string, string> = {
-      AWS_ACCESS_KEY_ID: credentials.accessKeyId,
-      AWS_SECRET_ACCESS_KEY: credentials.secretAccessKey
-    };
-
-    if (credentials.sessionToken) {
-      credEnvVars.AWS_SESSION_TOKEN = credentials.sessionToken;
-    }
-
-    await this.setEnvVars(credEnvVars);
-
-    // Create mount directory
-    await this.exec(`mkdir -p ${mountPath}`);
-
-    // Execute S3FS mount with provider-specific flags
-    await this.executeS3FSMount(bucket, mountPath, options, provider);
-
-    // Track active mount (use mountPath as key to support multiple mounts of same bucket)
+    // Reserve mount path immediately to prevent race conditions
+    // (two concurrent mount calls would both pass validation otherwise)
     this.activeMounts.set(mountPath, {
       bucket,
       mountPath,
       endpoint: options.endpoint,
       provider,
       credentials,
-      mounted: true
+      mounted: false
     });
 
-    this.logger.info(`Successfully mounted bucket ${bucket} to ${mountPath}`);
+    try {
+      // Inject credentials into container environment
+      const credEnvVars: Record<string, string> = {
+        AWS_ACCESS_KEY_ID: credentials.accessKeyId,
+        AWS_SECRET_ACCESS_KEY: credentials.secretAccessKey
+      };
+
+      if (credentials.sessionToken) {
+        credEnvVars.AWS_SESSION_TOKEN = credentials.sessionToken;
+      }
+
+      await this.setEnvVars(credEnvVars);
+
+      // Create mount directory
+      await this.exec(`mkdir -p ${shellEscape(mountPath)}`);
+
+      // Execute S3FS mount with provider-specific flags
+      await this.executeS3FSMount(bucket, mountPath, options, provider);
+
+      // Mark as successfully mounted
+      this.activeMounts.set(mountPath, {
+        bucket,
+        mountPath,
+        endpoint: options.endpoint,
+        provider,
+        credentials,
+        mounted: true
+      });
+
+      this.logger.info(`Successfully mounted bucket ${bucket} to ${mountPath}`);
+    } catch (error) {
+      // Clean up reservation on failure
+      this.activeMounts.delete(mountPath);
+      throw error;
+    }
   }
 
   /**
@@ -298,7 +320,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     // Unmount the filesystem
     try {
-      await this.exec(`fusermount -u ${mountPath}`);
+      await this.exec(`fusermount -u ${shellEscape(mountPath)}`);
       mountInfo.mounted = false;
 
       // Remove from active mounts
@@ -391,7 +413,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     // Build final command
     const optionsStr = s3fsArgs.join(',');
-    const mountCmd = `s3fs ${bucket} ${mountPath} -o ${optionsStr}`;
+    const mountCmd = `s3fs ${shellEscape(bucket)} ${shellEscape(mountPath)} -o ${optionsStr}`;
 
     this.logger.debug(`Executing mount command: ${mountCmd}`, {
       provider,
@@ -423,7 +445,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           this.logger.info(
             `Unmounting bucket ${mountInfo.bucket} from ${mountPath}`
           );
-          await this.exec(`fusermount -u ${mountPath}`);
+          await this.exec(`fusermount -u ${shellEscape(mountPath)}`);
           mountInfo.mounted = false;
         } catch (error) {
           const errorMsg =

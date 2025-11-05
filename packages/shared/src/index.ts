@@ -43,6 +43,8 @@ export type {
   StartProcessRequest,
   WriteFileRequest
 } from './request-types.js';
+// Export shell utilities
+export { shellEscape } from './shell-escape.js';
 // Export all types from types.ts
 export type {
   BaseExecOptions,
