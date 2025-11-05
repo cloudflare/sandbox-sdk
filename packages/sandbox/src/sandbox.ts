@@ -251,6 +251,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     // Detect credentials
     const credentials = detectCredentials(options, this.envVars);
 
+    // Generate unique password file path
+    const passwordFilePath = this.generatePasswordFilePath();
+
     // Reserve mount path immediately to prevent race conditions
     // (two concurrent mount calls would both pass validation otherwise)
     this.activeMounts.set(mountPath, {
@@ -259,27 +262,26 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       endpoint: options.endpoint,
       provider,
       credentials,
+      passwordFilePath,
       mounted: false
     });
 
     try {
-      // Inject credentials into container environment
-      const credEnvVars: Record<string, string> = {
-        AWS_ACCESS_KEY_ID: credentials.accessKeyId,
-        AWS_SECRET_ACCESS_KEY: credentials.secretAccessKey
-      };
+      // Create password file with credentials
+      await this.createPasswordFile(passwordFilePath, bucket, credentials);
 
+      // Handle session token via environment (s3fs doesn't support in passwd file)
       if (credentials.sessionToken) {
-        credEnvVars.AWS_SESSION_TOKEN = credentials.sessionToken;
+        await this.setEnvVars({
+          AWS_SESSION_TOKEN: credentials.sessionToken
+        });
       }
-
-      await this.setEnvVars(credEnvVars);
 
       // Create mount directory
       await this.exec(`mkdir -p ${shellEscape(mountPath)}`);
 
-      // Execute S3FS mount with provider-specific flags
-      await this.executeS3FSMount(bucket, mountPath, options, provider);
+      // Execute S3FS mount with password file
+      await this.executeS3FSMount(bucket, mountPath, options, provider, passwordFilePath);
 
       // Mark as successfully mounted
       this.activeMounts.set(mountPath, {
@@ -288,11 +290,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         endpoint: options.endpoint,
         provider,
         credentials,
+        passwordFilePath,
         mounted: true
       });
 
       this.logger.info(`Successfully mounted bucket ${bucket} to ${mountPath}`);
     } catch (error) {
+      // Clean up password file on failure
+      await this.deletePasswordFile(passwordFilePath);
+
       // Clean up reservation on failure
       this.activeMounts.delete(mountPath);
       throw error;
@@ -322,17 +328,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     try {
       await this.exec(`fusermount -u ${shellEscape(mountPath)}`);
       mountInfo.mounted = false;
+    } finally {
+      // Always cleanup password file, even if unmount fails
+      await this.deletePasswordFile(mountInfo.passwordFilePath);
 
       // Remove from active mounts
       this.activeMounts.delete(mountPath);
-
-      this.logger.info(`Successfully unmounted bucket from ${mountPath}`);
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      throw new S3FSMountError(
-        `Failed to unmount bucket from ${mountPath}: ${errorMsg}`
-      );
     }
+
+    this.logger.info(`Successfully unmounted bucket from ${mountPath}`);
   }
 
   /**
@@ -386,19 +390,63 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   /**
+   * Generate unique password file path for s3fs credentials
+   */
+  private generatePasswordFilePath(): string {
+    const uuid = crypto.randomUUID();
+    return `/tmp/.passwd-s3fs-${uuid}`;
+  }
+
+  /**
+   * Create password file with s3fs credentials
+   * Format: bucket:accessKeyId:secretAccessKey
+   */
+  private async createPasswordFile(
+    passwordFilePath: string,
+    bucket: string,
+    credentials: BucketCredentials
+  ): Promise<void> {
+    const content = `${bucket}:${credentials.accessKeyId}:${credentials.secretAccessKey}`;
+
+    await this.writeFile(passwordFilePath, content);
+
+    await this.exec(`chmod 0600 ${shellEscape(passwordFilePath)}`);
+
+    this.logger.debug(`Created password file: ${passwordFilePath}`);
+  }
+
+  /**
+   * Delete password file
+   */
+  private async deletePasswordFile(passwordFilePath: string): Promise<void> {
+    try {
+      await this.exec(`rm -f ${shellEscape(passwordFilePath)}`);
+      this.logger.debug(`Deleted password file: ${passwordFilePath}`);
+    } catch (error) {
+      this.logger.warn(`Failed to delete password file ${passwordFilePath}`, {
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  /**
    * Execute S3FS mount command
    */
   private async executeS3FSMount(
     bucket: string,
     mountPath: string,
     options: MountBucketOptions,
-    provider: BucketProvider | null
+    provider: BucketProvider | null,
+    passwordFilePath: string
   ): Promise<void> {
     // Resolve s3fs options (provider defaults + user overrides)
     const resolvedOptions = resolveS3fsOptions(provider, options.s3fsOptions);
 
     // Build s3fs mount command
     const s3fsArgs: string[] = [];
+
+    // Add password file option FIRST
+    s3fsArgs.push(`passwd_file=${passwordFilePath}`);
 
     // Add resolved provider-specific and user options
     s3fsArgs.push(...resolvedOptions);
@@ -411,8 +459,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     // Add endpoint URL
     s3fsArgs.push(`url=${options.endpoint}`);
 
-    // Build final command
-    const optionsStr = s3fsArgs.join(',');
+    // Build final command with escaped options
+    const optionsStr = shellEscape(s3fsArgs.join(','));
     const mountCmd = `s3fs ${shellEscape(bucket)} ${shellEscape(mountPath)} -o ${optionsStr}`;
 
     this.logger.debug(`Executing mount command: ${mountCmd}`, {
@@ -438,7 +486,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   override async destroy(): Promise<void> {
     this.logger.info('Destroying sandbox container');
 
-    // Unmount all mounted buckets
+    // Unmount all mounted buckets and cleanup password files
     for (const [mountPath, mountInfo] of this.activeMounts.entries()) {
       if (mountInfo.mounted) {
         try {
@@ -455,6 +503,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           );
         }
       }
+
+      // Always cleanup password file
+      await this.deletePasswordFile(mountInfo.passwordFilePath);
     }
 
     await super.destroy();

@@ -13,5 +13,6 @@ export interface MountInfo {
   endpoint: string;
   provider: BucketProvider | null;
   credentials: BucketCredentials;
+  passwordFilePath: string;
   mounted: boolean;
 }
