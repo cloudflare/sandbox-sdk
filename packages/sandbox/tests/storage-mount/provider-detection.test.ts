@@ -11,10 +11,7 @@ describe('Provider Detection', () => {
       ['https://abc123.r2.cloudflarestorage.com', 'r2'],
       ['https://s3.us-west-2.amazonaws.com', 's3'],
       ['https://storage.googleapis.com', 'gcs'],
-      ['http://minio.local:9000', 'minio'],
-      ['https://s3.us-west-001.backblazeb2.com', 'backblaze'],
-      ['https://s3.wasabisys.com', 'wasabi'],
-      ['https://nyc3.digitaloceanspaces.com', 'digitalocean']
+      ['http://minio.local:9000', 'minio']
     ])('should detect %s as %s', (url, expectedProvider) => {
       expect(detectProviderFromUrl(url)).toBe(expectedProvider);
     });
@@ -32,11 +29,7 @@ describe('Provider Detection', () => {
       ['r2', ['nomixupload', 'endpoint=auto']],
       ['s3', []],
       ['gcs', []],
-      ['minio', ['use_path_request_style']],
-      ['backblaze', []],
-      ['wasabi', []],
-      ['digitalocean', []],
-      ['custom', []]
+      ['minio', ['use_path_request_style']]
     ])('should return correct flags for %s', (provider, expected) => {
       expect(getProviderFlags(provider as any)).toEqual(expected);
     });

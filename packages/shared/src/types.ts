@@ -675,11 +675,7 @@ export type BucketProvider =
   | 'r2' // Cloudflare R2
   | 's3' // Amazon S3
   | 'gcs' // Google Cloud Storage
-  | 'minio' // MinIO
-  | 'backblaze' // Backblaze B2
-  | 'wasabi' // Wasabi
-  | 'digitalocean' // DigitalOcean Spaces
-  | 'custom'; // Custom S3-compatible provider
+  | 'minio'; // MinIO
 
 /**
  * Credentials for S3-compatible storage

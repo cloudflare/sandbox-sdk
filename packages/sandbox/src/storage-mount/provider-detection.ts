@@ -19,14 +19,6 @@ export function detectProviderFromUrl(endpoint: string): BucketProvider | null {
       return 'r2';
     }
 
-    if (hostname.includes('.backblazeb2.com')) {
-      return 'backblaze';
-    }
-
-    if (hostname.includes('.wasabisys.com')) {
-      return 'wasabi';
-    }
-
     if (hostname.includes('.amazonaws.com') || hostname.startsWith('s3.')) {
       return 's3';
     }
@@ -37,10 +29,6 @@ export function detectProviderFromUrl(endpoint: string): BucketProvider | null {
 
     if (hostname.includes('minio') || url.port === '9000') {
       return 'minio';
-    }
-
-    if (hostname.includes('.digitaloceanspaces.com')) {
-      return 'digitalocean';
     }
 
     return null;
@@ -72,18 +60,6 @@ export function getProviderFlags(provider: BucketProvider | null): string[] {
 
     case 'minio':
       return ['use_path_request_style'];
-
-    case 'backblaze':
-      return [];
-
-    case 'wasabi':
-      return [];
-
-    case 'digitalocean':
-      return [];
-
-    case 'custom':
-      return [];
 
     default:
       return ['use_path_request_style'];
