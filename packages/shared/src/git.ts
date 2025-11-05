@@ -42,7 +42,7 @@ export function redactCredentials(text: string): string {
     }
 
     if (atPos !== -1 && atPos < urlEnd) {
-      result = result.substring(0, searchStart) + '******' + result.substring(atPos);
+      result = `${result.substring(0, searchStart)}******${result.substring(atPos)}`;
       pos = searchStart + 6; // Move past '******'
     } else {
       pos = protocolPos + protocolLen;
