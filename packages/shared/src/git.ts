@@ -11,21 +11,45 @@ import type { LogContext, Logger } from './logger';
  * @returns String with credentials redacted from any URLs
  */
 export function redactCredentials(text: string): string {
-  // Pattern to match URLs with credentials (http(s):// or git@)
-  // Matches: https://user:pass@host, https://token@host, git@host
-  const urlPattern = /(https?:\/\/)[^:@\s]+:[^@\s]+@[^\s]+|(https?:\/\/)[^:@\s]+@[^\s]+/g;
+  // Scan for http(s):// URLs and redact any credentials found
+  let result = text;
+  let pos = 0;
 
-  return text.replace(urlPattern, (match) => {
-    // Check if this looks like a URL with credentials
-    const protocolEnd = match.indexOf('://');
-    if (protocolEnd === -1) return match;
+  while (pos < result.length) {
+    const httpPos = result.indexOf('http://', pos);
+    const httpsPos = result.indexOf('https://', pos);
 
-    const atIndex = match.indexOf('@', protocolEnd + 3);
-    if (atIndex === -1) return match;
+    let protocolPos = -1;
+    let protocolLen = 0;
 
-    // Redact everything between protocol and @
-    return `${match.substring(0, protocolEnd + 3)}******${match.substring(atIndex)}`;
-  });
+    if (httpPos === -1 && httpsPos === -1) break;
+    if (httpPos !== -1 && (httpsPos === -1 || httpPos < httpsPos)) {
+      protocolPos = httpPos;
+      protocolLen = 7; // 'http://'.length
+    } else {
+      protocolPos = httpsPos;
+      protocolLen = 8; // 'https://'.length
+    }
+
+    // Look for @ after the protocol
+    const searchStart = protocolPos + protocolLen;
+    const atPos = result.indexOf('@', searchStart);
+
+    // Find where the URL ends (whitespace or end of string)
+    let urlEnd = searchStart;
+    while (urlEnd < result.length && !/\s/.test(result[urlEnd])) {
+      urlEnd++;
+    }
+
+    if (atPos !== -1 && atPos < urlEnd) {
+      result = result.substring(0, searchStart) + '******' + result.substring(atPos);
+      pos = searchStart + 6; // Move past '******'
+    } else {
+      pos = protocolPos + protocolLen;
+    }
+  }
+
+  return result;
 }
 
 /**
