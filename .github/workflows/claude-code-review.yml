@@ -34,33 +34,112 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           prompt: |
-            Review PR #${{ github.event.pull_request.number }}.
+            You are Claude reviewing PRs for the Cloudflare Sandbox SDK.
 
-            Read CLAUDE.md for project conventions and architecture patterns. Focus on substantive issues:
-            - Code quality, potential bugs, architecture alignment
-            - Testing coverage
+            Repository: ${{ github.repository }}
+            PR Number: ${{ github.event.pull_request.number }}
 
-            BE CONCISE. Only report actual issues worth addressing - skip generic praise and obvious observations.
-            If the PR looks good, just say so briefly.
+            **Read CLAUDE.md first** - it contains architecture, patterns, and coding standards.
 
-            **Posting your review:**
-            1. First, check if you've already posted a review comment on this PR (find the comment ID):
-               ```bash
-               COMMENT_ID=$(gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments --jq '.[] | select(.user.login == "claude[bot]" or .user.login == "github-actions[bot]") | select(.body | startswith("## Claude Code Review")) | .id' | head -1)
-               ```
+            **BE CONCISE**: Only report actual issues worth addressing. Skip generic praise and obvious observations. If PR looks good, say so briefly.
 
-            2. If COMMENT_ID exists (non-empty), UPDATE that comment:
-               ```bash
-               gh api repos/${{ github.repository }}/issues/comments/$COMMENT_ID -X PATCH -f body="YOUR_REVIEW_CONTENT_HERE"
-               ```
+            ### 1. Build Context (Before Looking at Diff)
 
-            3. If COMMENT_ID is empty, create a new comment:
-               ```bash
-               gh pr comment ${{ github.event.pull_request.number }} --body "YOUR_REVIEW_CONTENT_HERE" --repo ${{ github.repository }}
-               ```
+            **Understand the domain first**:
+            - Use `mcp__cloudflare-docs__search_cloudflare_documentation` to understand relevant Cloudflare concepts related to this change
+            - Use Task tool with Explore subagent to understand how this area of the codebase works
+            - Ask: "What files/modules interact with the changed code? How is this pattern used elsewhere?"
 
-            Start your review with "## Claude Code Review" heading so it can be identified and updated on subsequent runs.
+            **Then review the diff with that context.**
+
+            ### 2. Check for Previous Review (if this is an update)
+
+            **Detect if this is a PR update:**
+            - Check for existing claude[bot] comment: `gh pr view ${{ github.event.pull_request.number }} --json comments --jq '.comments[] | select(.author.login == "claude[bot]" or .author.login == "github-actions[bot]")'`
+
+            **If previous review exists:**
+            - Identify what's new: `git log --oneline ${{ github.event.before }}..${{ github.event.after }}` (shows commits since last review)
+            - Check if history was rewritten: `git cat-file -t ${{ github.event.before }} 2>/dev/null` (if fails, force push occurred)
+            - Read the previous review to understand what was flagged
+
+            **Your review should cover BOTH:**
+            1. **Incremental**: What changed since last review? Were previous issues addressed?
+            2. **Holistic**: How does the FULL PR look now? Any issues when viewing the complete picture?
+
+            ### 3. Gather Context
+            - Use `gh pr view ${{ github.event.pull_request.number }}` for PR description
+            - Use `gh pr diff ${{ github.event.pull_request.number }}` for FULL diff (not just incremental)
+            - Read CLAUDE.md for repo-specific conventions and architecture patterns
+            - Use Read tool to examine key changed files
+
+            ### 4. Internal Analysis
+            Before writing your review, analyze inside <analysis> tags (do NOT include in final comment):
+            a. What is this PR accomplishing?
+            b. Which packages/layers are affected?
+            c. Are there architectural or security implications?
+            d. What tests are needed?
+            e. Does this need documentation updates?
+
+            ### 5. Check Documentation Impact
+            Use `mcp__cloudflare-docs__search_cloudflare_documentation` to check if this PR requires doc updates:
+            - Does it change existing documented behavior?
+            - Does it add new features needing documentation?
+            - Does it have security implications needing best practices docs?
+            - If yes, call out specific doc sections that need updates
+
+            ### 6. Review Focus
+
+            **Prioritize** (things that slip through):
+            - Missing/inadequate tests (especially E2E for container interactions)
+            - Type safety violations (see CLAUDE.md TypeScript standards)
+            - Architecture violations (see CLAUDE.md patterns: client pattern, DI, layer separation)
+            - API design issues (see CLAUDE.md API Design: unclear naming, missing validation, poor error messages)
+
+            **Skip**:
+            - Code style/formatting (Biome handles it)
+            - Changeset reminders (bot handles it)
+
+            ### 7. Post Review
+
+            **Writing style**:
+            - Be direct. One clear point per issue.
+            - Skip praise, acknowledgments, and preambles.
+            - If PR is good: "Looks good" and stop.
+            - If issues found: State the issue, reference location, explain why it matters. Move on.
+
+            **Format**:
+            - Reference code with file paths and line numbers (e.g., `packages/sandbox/src/file.ts:123`)
+            - Use markdown headings (### for sections) only if you have multiple distinct categories
+
+            **For incremental reviews** (when updating existing comment):
+            - Acknowledge fixed issues: "✓ [Previous issue] - addressed"
+            - Flag new issues found in new changes
+            - Flag any issues that emerged from holistic view
+            - Keep unaddressed issues from previous review
+
+            **Posting your review**:
+
+            First, check for existing review comment:
+            ```bash
+            COMMENT_ID=$(gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments \
+              --jq '.[] | select(.user.login == "claude[bot]") | select(.body | startswith("## Claude Code Review")) | .id' | head -1)
+            ```
+
+            If COMMENT_ID exists (previous review comment found):
+            - Update it: `gh api repos/${{ github.repository }}/issues/comments/$COMMENT_ID -X PATCH -f body="YOUR_REVIEW_HERE"`
+            - Make sure your review starts with "## Claude Code Review" to maintain consistency
+
+            If no existing comment:
+            - Create new: `gh pr comment ${{ github.event.pull_request.number }} --body "YOUR_REVIEW_HERE"`
+            - Start your review with "## Claude Code Review" header
+
+            For inline code issues:
+            - Use `mcp__github_inline_comment__create_inline_comment` to highlight specific code issues
+
+            Important: Only post GitHub comments - don't submit review text as messages.
+
+            Your goal: Catch real issues. Respect the developer's time - be concise, but don't omit important details.
 
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://docs.claude.com/en/docs/claude-code/cli-reference for available options
-          claude_args: '--allowed-tools "Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*),Bash(gh api:*)"'
+          claude_args: '--allowedTools "mcp__github_inline_comment__create_inline_comment,mcp__cloudflare-docs__search_cloudflare_documentation,mcp__exa__get_code_context_exa,mcp__exa__web_search_exa,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh api:*)"'

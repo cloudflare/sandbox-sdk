@@ -186,6 +186,61 @@ describe('Process Lifecycle Workflow', () => {
       });
     }, 90000);
 
+    test('should not block foreground operations when background processes are running', async () => {
+      const sandboxId = createSandboxId();
+      const headers = createTestHeaders(sandboxId);
+
+      // Start a long-running background process
+      const startResponse = await vi.waitFor(
+        async () =>
+          fetchWithStartup(`${workerUrl}/api/process/start`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              command: 'sleep 60'
+            })
+          }),
+        { timeout: 90000, interval: 2000 }
+      );
+
+      const startData = await startResponse.json();
+      const processId = startData.id;
+
+      // Immediately run a foreground command - should complete quickly
+      const execStart = Date.now();
+      const execResponse = await fetch(`${workerUrl}/api/execute`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          command: 'echo "test"'
+        })
+      });
+      const execDuration = Date.now() - execStart;
+
+      expect(execResponse.status).toBe(200);
+      expect(execDuration).toBeLessThan(2000); // Should complete in <2s, not wait for sleep
+
+      // Test listFiles as well - it uses the same foreground execution path
+      const listStart = Date.now();
+      const listResponse = await fetch(`${workerUrl}/api/list-files`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          path: '/workspace'
+        })
+      });
+      const listDuration = Date.now() - listStart;
+
+      expect(listResponse.status).toBe(200);
+      expect(listDuration).toBeLessThan(2000); // Should complete quickly
+
+      // Cleanup
+      await fetch(`${workerUrl}/api/process/${processId}`, {
+        method: 'DELETE',
+        headers
+      });
+    }, 90000);
+
     test('should get process logs after execution', async () => {
       const sandboxId = createSandboxId();
       const headers = createTestHeaders(sandboxId);

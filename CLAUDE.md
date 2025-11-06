@@ -34,7 +34,7 @@ The Cloudflare Sandbox SDK enables secure, isolated code execution in containers
    - `CodeInterpreter`: High-level API for running Python/JavaScript with structured outputs
    - `proxyToSandbox()`: Request handler for preview URL routing
 
-2. **`@repo/shared` (packages/shared/)** - Shared types and error system
+2. **`@repo/shared` (packages/shared/)** - Shared utilities
    - Type definitions shared between SDK and container runtime
    - Centralized error handling and logging utilities
    - Not published to npm (internal workspace package)
@@ -328,6 +328,16 @@ different users share the same sandbox instance.
 - **Production requirement**: Preview URLs require custom domain with wildcard DNS (\*.yourdomain.com)
   - `.workers.dev` domains do NOT support the subdomain patterns needed for preview URLs
   - See Cloudflare docs for "Deploy to Production" guide when ready to expose services
+
+### API Design
+
+When adding or modifying SDK methods:
+
+- Use clear, descriptive names that indicate what the method does
+- Validate inputs before passing to container APIs
+- Provide helpful error messages with context
+
+Note: Container isolation is handled at the Cloudflare platform level (VMs), not by SDK code.
 
 ## Version Management & Releases
 

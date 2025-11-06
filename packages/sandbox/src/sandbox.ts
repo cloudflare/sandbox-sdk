@@ -59,9 +59,9 @@ export function getSandbox(
   });
 }
 
-export function connect(
-  stub: { fetch: (request: Request) => Promise<Response> }
-) {
+export function connect(stub: {
+  fetch: (request: Request) => Promise<Response>;
+}) {
   return async (request: Request, port: number) => {
     // Validate port before routing
     if (!validatePort(port)) {

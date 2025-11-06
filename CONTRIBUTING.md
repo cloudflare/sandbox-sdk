@@ -15,17 +15,20 @@ Thank you for your interest in contributing to the Cloudflare Sandbox SDK! This 
 
 1. Fork the repository to your GitHub account
 2. Clone your fork:
+
    ```bash
    git clone https://github.com/YOUR-USERNAME/sandbox-sdk.git
    cd sandbox-sdk
    ```
 
 3. Install dependencies:
+
    ```bash
    npm install
    ```
 
 4. Build the packages:
+
    ```bash
    npm run build
    ```
@@ -40,6 +43,7 @@ Thank you for your interest in contributing to the Cloudflare Sandbox SDK! This 
 ### Making Changes
 
 1. Create a new branch for your changes:
+
    ```bash
    git checkout -b feat/your-feature-name
    # or
@@ -49,6 +53,7 @@ Thank you for your interest in contributing to the Cloudflare Sandbox SDK! This 
 2. Make your changes following our coding standards (see CLAUDE.md)
 
 3. Run code quality checks:
+
    ```bash
    npm run check    # Linting + type checking
    npm run fix      # Auto-fix linting issues
@@ -73,6 +78,7 @@ Follow the [7 rules for great commit messages](https://cbea.ms/git-commit/):
 7. Use the body to explain what and why vs. how
 
 Example:
+
 ```
 Add session isolation for concurrent executions
 
@@ -90,11 +96,13 @@ npx changeset
 ```
 
 This will interactively guide you through:
+
 1. Selecting which packages to include
 2. Choosing the semantic version bump (`patch`, `minor`, or `major`)
 3. Writing a description of your changes
 
 Use semantic versioning:
+
 - `patch`: Bug fixes, minor improvements
 - `minor`: New features, non-breaking changes
 - `major`: Breaking changes
@@ -104,6 +112,7 @@ The changeset bot will comment on your PR if a changeset is needed.
 ## Submitting a Pull Request
 
 1. Push your branch to your fork:
+
    ```bash
    git push origin feat/your-feature-name
    ```
@@ -119,6 +128,7 @@ The changeset bot will comment on your PR if a changeset is needed.
 ### Review Process
 
 A maintainer will review your PR and may:
+
 - Request changes
 - Ask questions
 - Suggest improvements
@@ -135,12 +145,14 @@ We use Biome for linting and formatting. Key guidelines:
 - Write concise, readable code
 - Add comments for complex logic
 - Follow patterns in existing code
+- Use the provided logger (`this.logger.info()`) instead of `console.log()` in production code
 
 ## Testing
 
 ### Unit Tests
 
 Located in `packages/*/tests/`:
+
 - Test individual components in isolation
 - Mock external dependencies
 - Fast feedback loop
@@ -150,6 +162,7 @@ Run with: `npm test`
 ### E2E Tests
 
 Located in `tests/e2e/`:
+
 - Test full workflows against real Workers and containers
 - Require Docker
 - Slower but comprehensive
