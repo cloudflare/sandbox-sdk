@@ -1,0 +1,7 @@
+# Lefthook configuration
+# https://github.com/evilmartians/lefthook
+
+pre-commit:
+  commands:
+    format:
+      run: npm run format
