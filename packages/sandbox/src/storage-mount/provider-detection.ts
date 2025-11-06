@@ -50,7 +50,7 @@ export function getProviderFlags(provider: BucketProvider | null): string[] {
 
   switch (provider) {
     case 'r2':
-      return ['nomixupload', 'endpoint=auto'];
+      return ['nomixupload'];
 
     case 's3':
       return [];

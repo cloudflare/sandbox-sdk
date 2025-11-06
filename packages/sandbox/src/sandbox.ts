@@ -328,12 +328,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     try {
       await this.exec(`fusermount -u ${shellEscape(mountPath)}`);
       mountInfo.mounted = false;
+
+      // Only remove from tracking if unmount succeeded
+      this.activeMounts.delete(mountPath);
     } finally {
       // Always cleanup password file, even if unmount fails
       await this.deletePasswordFile(mountInfo.passwordFilePath);
-
-      // Remove from active mounts
-      this.activeMounts.delete(mountPath);
     }
 
     this.logger.info(`Successfully unmounted bucket from ${mountPath}`);

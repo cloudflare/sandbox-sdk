@@ -26,7 +26,7 @@ describe('Provider Detection', () => {
 
   describe('getProviderFlags', () => {
     it.each([
-      ['r2', ['nomixupload', 'endpoint=auto']],
+      ['r2', ['nomixupload']],
       ['s3', []],
       ['gcs', []],
       ['minio', ['use_path_request_style']]
@@ -42,13 +42,12 @@ describe('Provider Detection', () => {
   describe('resolveS3fsOptions', () => {
     it('should use provider defaults when no user options', () => {
       const options = resolveS3fsOptions('r2');
-      expect(options).toEqual(['nomixupload', 'endpoint=auto']);
+      expect(options).toEqual(['nomixupload']);
     });
 
     it('should merge provider flags with user options', () => {
       const options = resolveS3fsOptions('r2', ['custom_flag']);
       expect(options).toContain('nomixupload');
-      expect(options).toContain('endpoint=auto');
       expect(options).toContain('custom_flag');
     });
 
