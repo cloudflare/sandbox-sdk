@@ -341,6 +341,10 @@ Note: Container isolation is handled at the Cloudflare platform level (VMs), not
 
 ## Version Management & Releases
 
+### Creating Changesets
+
+**Important:** Changeset files should only reference `@cloudflare/sandbox`, never `@repo/shared` or `@repo/sandbox-container`. These internal packages should not be versioned independently - changes to them flow through the public package. Pre-commit hooks and CI will validate this rule.
+
 **Releases are fully automated** via GitHub Actions (`.github/workflows/release.yml`) and changesets (`.changeset/`):
 
 - **Changesets**: Create a `.changeset/your-feature-name.md` file to document changes affecting published packages (see PR process above)
