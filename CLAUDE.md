@@ -332,6 +332,7 @@ different users share the same sandbox instance.
 ### API Design
 
 When adding or modifying SDK methods:
+
 - Use clear, descriptive names that indicate what the method does
 - Validate inputs before passing to container APIs
 - Provide helpful error messages with context
