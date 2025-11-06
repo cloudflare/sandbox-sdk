@@ -76,7 +76,7 @@ jobs:
     needs: [unit-tests]
     if: ${{ github.repository_owner == 'cloudflare' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     permissions:
       contents: read
 
@@ -151,7 +151,7 @@ jobs:
     needs: [unit-tests]
     if: ${{ github.repository_owner == 'cloudflare' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     permissions:
       contents: write
 
