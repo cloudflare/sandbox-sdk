@@ -1,7 +1,7 @@
 // Git Operations Service
 
 import type { Logger } from '@repo/shared';
-import { sanitizeGitData } from '@repo/shared';
+import { sanitizeGitData, shellEscape } from '@repo/shared';
 import type {
   GitErrorContext,
   ValidationFailedContext
@@ -29,17 +29,10 @@ export class GitService {
 
   /**
    * Build a shell command string from an array of arguments
-   * Quotes arguments that contain spaces for safe shell execution
+   * Escapes all arguments to prevent command injection
    */
   private buildCommand(args: string[]): string {
-    return args
-      .map((arg) => {
-        if (arg.includes(' ')) {
-          return `"${arg}"`;
-        }
-        return arg;
-      })
-      .join(' ');
+    return args.map((arg) => shellEscape(arg)).join(' ');
   }
 
   /**

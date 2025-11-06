@@ -1,4 +1,8 @@
+import { config } from 'dotenv';
 import { defineConfig } from 'vitest/config';
+
+// Load environment variables from .env file
+config();
 
 /**
  * E2E test configuration

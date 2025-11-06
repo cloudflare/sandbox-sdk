@@ -9,6 +9,10 @@ export { Sandbox };
 
 interface Env {
   Sandbox: DurableObjectNamespace<Sandbox>;
+  // R2 credentials for bucket mounting tests
+  CLOUDFLARE_ACCOUNT_ID?: string;
+  AWS_ACCESS_KEY_ID?: string;
+  AWS_SECRET_ACCESS_KEY?: string;
 }
 
 async function parseBody(request: Request): Promise<any> {
@@ -291,6 +295,30 @@ console.log('Terminal server on port ' + port);
           branch: body.branch,
           targetDir: body.targetDir
         });
+        return new Response(JSON.stringify({ success: true }), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      // Bucket mount
+      if (url.pathname === '/api/bucket/mount' && request.method === 'POST') {
+        // Pass R2 credentials from worker env to sandbox env
+        const sandboxEnvVars: Record<string, string> = {};
+        if (env.CLOUDFLARE_ACCOUNT_ID) {
+          sandboxEnvVars.CLOUDFLARE_ACCOUNT_ID = env.CLOUDFLARE_ACCOUNT_ID;
+        }
+        if (env.AWS_ACCESS_KEY_ID) {
+          sandboxEnvVars.AWS_ACCESS_KEY_ID = env.AWS_ACCESS_KEY_ID;
+        }
+        if (env.AWS_SECRET_ACCESS_KEY) {
+          sandboxEnvVars.AWS_SECRET_ACCESS_KEY = env.AWS_SECRET_ACCESS_KEY;
+        }
+
+        if (Object.keys(sandboxEnvVars).length > 0) {
+          await sandbox.setEnvVars(sandboxEnvVars);
+        }
+
+        await sandbox.mountBucket(body.bucket, body.mountPath, body.options);
         return new Response(JSON.stringify({ success: true }), {
           headers: { 'Content-Type': 'application/json' }
         });

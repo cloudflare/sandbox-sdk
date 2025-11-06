@@ -33,6 +33,7 @@
 export { ErrorCode, type ErrorCode as ErrorCodeType } from './codes';
 // Export context interfaces
 export type {
+  BucketMountContext,
   CodeExecutionContext,
   CommandErrorContext,
   CommandNotFoundContext,
@@ -46,7 +47,9 @@ export type {
   GitRepositoryNotFoundContext,
   InternalErrorContext,
   InterpreterNotReadyContext,
+  InvalidMountConfigContext,
   InvalidPortContext,
+  MissingCredentialsContext,
   PortAlreadyExposedContext,
   PortErrorContext,
   PortNotExposedContext,

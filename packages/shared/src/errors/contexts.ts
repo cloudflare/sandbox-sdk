@@ -126,6 +126,29 @@ export interface ValidationFailedContext {
 }
 
 /**
+ * Bucket mounting error contexts
+ */
+export interface BucketMountContext {
+  bucket: string;
+  mountPath: string;
+  endpoint: string;
+  stderr?: string;
+  exitCode?: number;
+}
+
+export interface MissingCredentialsContext {
+  bucket: string;
+  endpoint: string;
+}
+
+export interface InvalidMountConfigContext {
+  bucket?: string;
+  mountPath?: string;
+  endpoint?: string;
+  reason?: string;
+}
+
+/**
  * Generic error contexts
  */
 export interface InternalErrorContext {
