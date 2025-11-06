@@ -1,5 +1,17 @@
 # @cloudflare/sandbox
 
+## 0.4.16
+
+### Patch Changes
+
+- [#184](https://github.com/cloudflare/sandbox-sdk/pull/184) [`7989b61`](https://github.com/cloudflare/sandbox-sdk/commit/7989b6105cea8c381dd162be0bcb29db3e214fde) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Redact credentials from Git URLs in logs
+
+- [#186](https://github.com/cloudflare/sandbox-sdk/pull/186) [`c2e3384`](https://github.com/cloudflare/sandbox-sdk/commit/c2e3384b151ae3f430c2edc8c492921d0b6b8b1c) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - Expose deleteSession API with proper safeguards
+  - Add `deleteSession(sessionId)` method to public SDK API
+  - Prevent deletion of default session (throws error with guidance to use `sandbox.destroy()`)
+  - Session cleanup kills all running commands in parallel before destroying shell
+  - Return structured `SessionDeleteResult` with success status, sessionId, and timestamp
+
 ## 0.4.15
 
 ### Patch Changes
