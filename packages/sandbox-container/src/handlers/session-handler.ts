@@ -1,8 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import type {
-  Logger,
-  SessionDeleteRequest
-} from '@repo/shared';
+import type { Logger, SessionDeleteRequest } from '@repo/shared';
 import { ErrorCode } from '@repo/shared/errors';
 
 import type { RequestContext } from '../core/types';

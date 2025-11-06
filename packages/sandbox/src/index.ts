@@ -38,6 +38,12 @@ export type {
   BaseApiResponse,
   CommandsResponse,
   ContainerStub,
+
+  // Utility client types
+  CreateSessionRequest,
+  CreateSessionResponse,
+  DeleteSessionRequest,
+  DeleteSessionResponse,
   ErrorResponse,
 
   // Command client types
@@ -56,12 +62,6 @@ export type {
 
   // File client types
   MkdirRequest,
-
-  // Utility client types
-  CreateSessionRequest,
-  CreateSessionResponse,
-  DeleteSessionRequest,
-  DeleteSessionResponse,
   PingResponse,
   PortCloseResult,
   PortExposeResult,

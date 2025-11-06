@@ -688,14 +688,37 @@ describe('Session State Isolation Workflow', () => {
       expect(deleteData.sessionId).toBe(sessionId);
       expect(deleteData.timestamp).toBeTruthy();
 
+      // Verify the deleted session's state is gone
+      // Note: Container auto-creates sessions on first use, so this succeeds
+      // but we should verify the custom environment variable is gone
+      const useDeletedSessionResponse = await fetch(
+        `${workerUrl}/api/execute`,
+        {
+          method: 'POST',
+          headers: createTestHeaders(currentSandboxId, sessionId), // Use same session ID
+          body: JSON.stringify({
+            command: 'echo $SESSION_VAR'
+          })
+        }
+      );
+
+      expect(useDeletedSessionResponse.status).toBe(200);
+      const recreatedSessionData = await useDeletedSessionResponse.json();
+      expect(recreatedSessionData.success).toBe(true);
+      // Session state should be gone - SESSION_VAR should be empty (fresh session)
+      expect(recreatedSessionData.stdout.trim()).toBe('');
+
       // Verify we can still use the sandbox (it wasn't destroyed)
-      const sandboxStillAliveResponse = await fetch(`${workerUrl}/api/execute`, {
-        method: 'POST',
-        headers: createTestHeaders(currentSandboxId!), // Use default session
-        body: JSON.stringify({
-          command: 'echo "sandbox-alive"'
-        })
-      });
+      const sandboxStillAliveResponse = await fetch(
+        `${workerUrl}/api/execute`,
+        {
+          method: 'POST',
+          headers: createTestHeaders(currentSandboxId!), // Use default session
+          body: JSON.stringify({
+            command: 'echo "sandbox-alive"'
+          })
+        }
+      );
 
       expect(sandboxStillAliveResponse.status).toBe(200);
       const sandboxAliveData = await sandboxStillAliveResponse.json();
