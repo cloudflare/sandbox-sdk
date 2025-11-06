@@ -17,7 +17,12 @@ import type {
   SessionOptions,
   StreamOptions
 } from '@repo/shared';
-import { createLogger, runWithLogger, TraceContext } from '@repo/shared';
+import {
+  createLogger,
+  runWithLogger,
+  type SessionDeleteResult,
+  TraceContext
+} from '@repo/shared';
 import { type ExecuteResponse, SandboxClient } from './clients';
 import type { ErrorResponse } from './errors';
 import { CustomDomainRequiredError, ErrorCode } from './errors';
@@ -1108,6 +1113,34 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   async getSession(sessionId: string): Promise<ExecutionSession> {
     // No need to verify session exists in container - operations will fail naturally if it doesn't
     return this.getSessionWrapper(sessionId);
+  }
+
+  /**
+   * Delete an execution session
+   * Cleans up session resources and removes it from the container
+   * Note: Cannot delete the default session. To reset the default session,
+   * use sandbox.destroy() to terminate the entire sandbox.
+   *
+   * @param sessionId - The ID of the session to delete
+   * @returns Result with success status, sessionId, and timestamp
+   * @throws Error if attempting to delete the default session
+   */
+  async deleteSession(sessionId: string): Promise<SessionDeleteResult> {
+    // Prevent deletion of default session
+    if (this.defaultSession && sessionId === this.defaultSession) {
+      throw new Error(
+        `Cannot delete default session '${sessionId}'. Use sandbox.destroy() to terminate the sandbox.`
+      );
+    }
+
+    const response = await this.client.utils.deleteSession(sessionId);
+
+    // Map HTTP response to result type
+    return {
+      success: response.success,
+      sessionId: response.sessionId,
+      timestamp: response.timestamp
+    };
   }
 
   /**

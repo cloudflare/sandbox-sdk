@@ -42,6 +42,20 @@ export interface CreateSessionResponse extends BaseApiResponse {
 }
 
 /**
+ * Request interface for deleting sessions
+ */
+export interface DeleteSessionRequest {
+  sessionId: string;
+}
+
+/**
+ * Response interface for deleting sessions
+ */
+export interface DeleteSessionResponse extends BaseApiResponse {
+  sessionId: string;
+}
+
+/**
  * Client for health checks and utility operations
  */
 export class UtilityClient extends BaseHttpClient {
@@ -96,6 +110,25 @@ export class UtilityClient extends BaseHttpClient {
       return response;
     } catch (error) {
       this.logError('createSession', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Delete an execution session
+   * @param sessionId - Session ID to delete
+   */
+  async deleteSession(sessionId: string): Promise<DeleteSessionResponse> {
+    try {
+      const response = await this.post<DeleteSessionResponse>(
+        '/api/session/delete',
+        { sessionId }
+      );
+
+      this.logSuccess('Session deleted', `ID: ${sessionId}`);
+      return response;
+    } catch (error) {
+      this.logError('deleteSession', error);
       throw error;
     }
   }

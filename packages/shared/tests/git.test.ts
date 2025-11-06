@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { redactCredentials, sanitizeGitData, GitLogger } from '../src/git';
+import { GitLogger, redactCredentials, sanitizeGitData } from '../src/git';
 import { createNoOpLogger } from '../src/logger';
 
 describe('redactCredentials', () => {

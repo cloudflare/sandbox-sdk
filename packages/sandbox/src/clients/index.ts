@@ -54,6 +54,10 @@ export type {
 // Utility client types
 export type {
   CommandsResponse,
+  CreateSessionRequest,
+  CreateSessionResponse,
+  DeleteSessionRequest,
+  DeleteSessionResponse,
   PingResponse,
   VersionResponse
 } from './utility-client';

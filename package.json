@@ -3,7 +3,6 @@
   "version": "0.0.0",
   "description": "an api for computers",
   "scripts": {
-    "prepare": "lefthook install",
     "typecheck": "turbo run typecheck",
     "format": "prettier --write .",
     "check": "sherif && biome check && turbo run typecheck",
