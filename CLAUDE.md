@@ -329,6 +329,15 @@ different users share the same sandbox instance.
   - `.workers.dev` domains do NOT support the subdomain patterns needed for preview URLs
   - See Cloudflare docs for "Deploy to Production" guide when ready to expose services
 
+### API Design
+
+When adding or modifying SDK methods:
+- Use clear, descriptive names that indicate what the method does
+- Validate inputs before passing to container APIs
+- Provide helpful error messages with context
+
+Note: Container isolation is handled at the Cloudflare platform level (VMs), not by SDK code.
+
 ## Version Management & Releases
 
 **Releases are fully automated** via GitHub Actions (`.github/workflows/release.yml`) and changesets (`.changeset/`):
