@@ -27,10 +27,6 @@ export function detectProviderFromUrl(endpoint: string): BucketProvider | null {
       return 'gcs';
     }
 
-    if (hostname.includes('minio') || url.port === '9000') {
-      return 'minio';
-    }
-
     return null;
   } catch {
     return null;
@@ -57,9 +53,6 @@ export function getProviderFlags(provider: BucketProvider | null): string[] {
 
     case 'gcs':
       return [];
-
-    case 'minio':
-      return ['use_path_request_style'];
 
     default:
       return ['use_path_request_style'];

@@ -10,8 +10,7 @@ describe('Provider Detection', () => {
     it.each([
       ['https://abc123.r2.cloudflarestorage.com', 'r2'],
       ['https://s3.us-west-2.amazonaws.com', 's3'],
-      ['https://storage.googleapis.com', 'gcs'],
-      ['http://minio.local:9000', 'minio']
+      ['https://storage.googleapis.com', 'gcs']
     ])('should detect %s as %s', (url, expectedProvider) => {
       expect(detectProviderFromUrl(url)).toBe(expectedProvider);
     });
@@ -28,8 +27,7 @@ describe('Provider Detection', () => {
     it.each([
       ['r2', ['nomixupload']],
       ['s3', []],
-      ['gcs', []],
-      ['minio', ['use_path_request_style']]
+      ['gcs', []]
     ])('should return correct flags for %s', (provider, expected) => {
       expect(getProviderFlags(provider as any)).toEqual(expected);
     });
@@ -59,7 +57,7 @@ describe('Provider Detection', () => {
     });
 
     it('should deduplicate flags keeping last occurrence', () => {
-      const options = resolveS3fsOptions('minio', [
+      const options = resolveS3fsOptions(null, [
         'use_path_request_style',
         'custom_flag'
       ]);

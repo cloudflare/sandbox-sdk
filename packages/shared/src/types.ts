@@ -682,8 +682,7 @@ export interface ExecutionSession {
 export type BucketProvider =
   | 'r2' // Cloudflare R2
   | 's3' // Amazon S3
-  | 'gcs' // Google Cloud Storage
-  | 'minio'; // MinIO
+  | 'gcs'; // Google Cloud Storage
 
 /**
  * Credentials for S3-compatible storage
@@ -705,7 +704,6 @@ export interface MountBucketOptions {
    * - R2: 'https://abc123.r2.cloudflarestorage.com'
    * - AWS S3: 'https://s3.us-west-2.amazonaws.com'
    * - GCS: 'https://storage.googleapis.com'
-   * - MinIO: 'http://minio.local:9000'
    *
    * Required field
    */
@@ -716,10 +714,9 @@ export interface MountBucketOptions {
    * If not specified, will attempt to detect from endpoint URL.
    *
    * Examples:
-   * - 'r2' - Cloudflare R2 (adds nomixupload, endpoint=auto)
+   * - 'r2' - Cloudflare R2 (adds nomixupload)
    * - 's3' - Amazon S3 (standard configuration)
    * - 'gcs' - Google Cloud Storage (no special flags needed)
-   * - 'minio' - MinIO (adds use_path_request_style)
    */
   provider?: BucketProvider;
 
