@@ -187,4 +187,4 @@ COPY packages/sandbox/startup.sh ./
 RUN chmod +x startup.sh
 
 # Use startup script
-CMD ["./startup.sh"]
+CMD ["/container-server/startup.sh"]
