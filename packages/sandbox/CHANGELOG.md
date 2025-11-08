@@ -1,5 +1,11 @@
 # @cloudflare/sandbox
 
+## 0.4.17
+
+### Patch Changes
+
+- [#198](https://github.com/cloudflare/sandbox-sdk/pull/198) [`93c6cc7`](https://github.com/cloudflare/sandbox-sdk/commit/93c6cc7c6b8df9e0a733fa852faf5d2f1c5758da) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Fix container startup failures when WORKDIR is changed in derived Dockerfiles
+
 ## 0.4.16
 
 ### Patch Changes
