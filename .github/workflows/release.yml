@@ -76,7 +76,7 @@ jobs:
     needs: [unit-tests]
     if: ${{ github.repository_owner == 'cloudflare' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     permissions:
       contents: read
 
@@ -119,7 +119,7 @@ jobs:
           context: .
           file: packages/sandbox/Dockerfile
           platforms: linux/amd64
-          push: false  # Don't push, just cache
+          push: false # Don't push, just cache
           cache-from: type=gha,scope=release-amd64
           cache-to: type=gha,mode=max,scope=release-amd64
           build-args: |
@@ -151,7 +151,7 @@ jobs:
     needs: [unit-tests]
     if: ${{ github.repository_owner == 'cloudflare' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     permissions:
       contents: write
 
@@ -190,7 +190,7 @@ jobs:
           context: .
           file: packages/sandbox/Dockerfile
           platforms: linux/amd64
-          push: false  # Don't push, just cache
+          push: false # Don't push, just cache
           cache-from: type=gha,scope=release-amd64
           cache-to: type=gha,mode=max,scope=release-amd64
           build-args: |

@@ -1,5 +1,5 @@
 # Integration test Dockerfile
-FROM docker.io/cloudflare/sandbox-test:0.4.14
+FROM docker.io/cloudflare/sandbox-test:0.4.17
 
 # Expose ports used for testing
 EXPOSE 8080

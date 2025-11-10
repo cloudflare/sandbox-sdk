@@ -1,3 +1,3 @@
 #!/bin/bash
 
-exec bun dist/index.js
+exec bun /container-server/dist/index.js

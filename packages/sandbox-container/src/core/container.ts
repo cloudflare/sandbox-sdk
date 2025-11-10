@@ -1,5 +1,5 @@
 import type { Logger } from '@repo/shared';
-import { createLogger } from '@repo/shared';
+import { createLogger, GitLogger } from '@repo/shared';
 import { ExecuteHandler } from '../handlers/execute-handler';
 import { FileHandler } from '../handlers/file-handler';
 import { GitHandler } from '../handlers/git-handler';
@@ -96,6 +96,9 @@ export class Container {
     // Initialize SessionManager
     const sessionManager = new SessionManager(logger);
 
+    // Create git-specific logger that automatically sanitizes credentials
+    const gitLogger = new GitLogger(logger);
+
     // Initialize services
     const processService = new ProcessService(
       processStore,
@@ -108,7 +111,11 @@ export class Container {
       sessionManager
     );
     const portService = new PortService(portStore, securityAdapter, logger);
-    const gitService = new GitService(securityAdapter, logger, sessionManager);
+    const gitService = new GitService(
+      securityAdapter,
+      gitLogger,
+      sessionManager
+    );
     const interpreterService = new InterpreterService(logger);
 
     // Initialize handlers
@@ -117,7 +124,7 @@ export class Container {
     const fileHandler = new FileHandler(fileService, logger);
     const processHandler = new ProcessHandler(processService, logger);
     const portHandler = new PortHandler(portService, logger);
-    const gitHandler = new GitHandler(gitService, logger);
+    const gitHandler = new GitHandler(gitService, gitLogger);
     const interpreterHandler = new InterpreterHandler(
       interpreterService,
       logger

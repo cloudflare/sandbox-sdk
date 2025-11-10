@@ -703,4 +703,37 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(url.searchParams.get('room')).toBe('lobby');
     });
   });
+
+  describe('deleteSession', () => {
+    it('should prevent deletion of default session', async () => {
+      // Trigger creation of default session
+      await sandbox.exec('echo "test"');
+
+      // Verify default session exists
+      expect((sandbox as any).defaultSession).toBeTruthy();
+      const defaultSessionId = (sandbox as any).defaultSession;
+
+      // Attempt to delete default session should throw
+      await expect(sandbox.deleteSession(defaultSessionId)).rejects.toThrow(
+        `Cannot delete default session '${defaultSessionId}'. Use sandbox.destroy() to terminate the sandbox.`
+      );
+    });
+
+    it('should allow deletion of non-default sessions', async () => {
+      // Mock the deleteSession API response
+      vi.spyOn(sandbox.client.utils, 'deleteSession').mockResolvedValue({
+        success: true,
+        sessionId: 'custom-session',
+        timestamp: new Date().toISOString()
+      });
+
+      // Create a custom session
+      await sandbox.createSession({ id: 'custom-session' });
+
+      // Should successfully delete non-default session
+      const result = await sandbox.deleteSession('custom-session');
+      expect(result.success).toBe(true);
+      expect(result.sessionId).toBe('custom-session');
+    });
+  });
 });

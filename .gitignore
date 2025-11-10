@@ -137,6 +137,9 @@ tests/e2e/test-worker/wrangler.jsonc
 
 .DS_Store
 
+# Claude Code user-specific settings
+.claude/settings.local.json
+
 # Turborepo cache
 .turbo
 

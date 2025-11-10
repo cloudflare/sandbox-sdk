@@ -150,6 +150,130 @@ describe('SessionHandler', () => {
     });
   });
 
+  describe('handleDelete - POST /api/session/delete', () => {
+    it('should delete session successfully', async () => {
+      (mockSessionManager.deleteSession as any).mockResolvedValue({
+        success: true
+      });
+
+      const request = new Request('http://localhost:3000/api/session/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: 'test-session-123' })
+      });
+
+      const response = await sessionHandler.handle(request, mockContext);
+
+      expect(response.status).toBe(200);
+      const responseBody = await response.json();
+      expect(responseBody.success).toBe(true);
+      expect(responseBody.sessionId).toBe('test-session-123');
+      expect(responseBody.timestamp).toBeDefined();
+      expect(responseBody.timestamp).toMatch(
+        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
+      );
+
+      // Verify service was called correctly
+      expect(mockSessionManager.deleteSession).toHaveBeenCalledWith(
+        'test-session-123'
+      );
+    });
+
+    it('should handle session deletion failures', async () => {
+      (mockSessionManager.deleteSession as any).mockResolvedValue({
+        success: false,
+        error: {
+          message: "Session 'nonexistent' not found",
+          code: 'INTERNAL_ERROR',
+          details: {
+            sessionId: 'nonexistent',
+            originalError: 'Session not found'
+          }
+        }
+      });
+
+      const request = new Request('http://localhost:3000/api/session/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: 'nonexistent' })
+      });
+
+      const response = await sessionHandler.handle(request, mockContext);
+
+      expect(response.status).toBe(500);
+      const responseData = (await response.json()) as ErrorResponse;
+      expect(responseData.code).toBe('INTERNAL_ERROR');
+      expect(responseData.message).toBe("Session 'nonexistent' not found");
+      expect(responseData.context).toEqual({
+        sessionId: 'nonexistent',
+        originalError: 'Session not found'
+      });
+      expect(responseData.httpStatus).toBe(500);
+      expect(responseData.timestamp).toBeDefined();
+    });
+
+    it('should reject requests without sessionId', async () => {
+      const request = new Request('http://localhost:3000/api/session/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({})
+      });
+
+      const response = await sessionHandler.handle(request, mockContext);
+
+      expect(response.status).toBe(400);
+      const responseData = (await response.json()) as ErrorResponse;
+      expect(responseData.code).toBe('VALIDATION_FAILED');
+      expect(responseData.message).toBe('sessionId is required');
+      expect(responseData.httpStatus).toBe(400);
+
+      // Should not call service
+      expect(mockSessionManager.deleteSession).not.toHaveBeenCalled();
+    });
+
+    it('should reject requests with invalid JSON', async () => {
+      const request = new Request('http://localhost:3000/api/session/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: 'invalid json'
+      });
+
+      const response = await sessionHandler.handle(request, mockContext);
+
+      expect(response.status).toBe(400);
+      const responseData = (await response.json()) as ErrorResponse;
+      expect(responseData.code).toBe('VALIDATION_FAILED');
+      expect(responseData.message).toBe('Invalid request body');
+      expect(responseData.httpStatus).toBe(400);
+
+      // Should not call service
+      expect(mockSessionManager.deleteSession).not.toHaveBeenCalled();
+    });
+
+    it('should include CORS headers in delete responses', async () => {
+      (mockSessionManager.deleteSession as any).mockResolvedValue({
+        success: true
+      });
+
+      const request = new Request('http://localhost:3000/api/session/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: 'test-session' })
+      });
+
+      const response = await sessionHandler.handle(request, mockContext);
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
+      expect(response.headers.get('Access-Control-Allow-Methods')).toBe(
+        'GET, POST, OPTIONS'
+      );
+      expect(response.headers.get('Access-Control-Allow-Headers')).toBe(
+        'Content-Type'
+      );
+    });
+  });
+
   describe('handleList - GET /api/session/list', () => {
     it('should list sessions successfully with active processes', async () => {
       // SessionManager.listSessions() returns string[] (just session IDs)
@@ -298,6 +422,7 @@ describe('SessionHandler', () => {
       // Should not call any service methods
       expect(mockSessionManager.createSession).not.toHaveBeenCalled();
       expect(mockSessionManager.listSessions).not.toHaveBeenCalled();
+      expect(mockSessionManager.deleteSession).not.toHaveBeenCalled();
     });
 
     it('should return 500 for root session path', async () => {
