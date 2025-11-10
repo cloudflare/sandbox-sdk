@@ -96,7 +96,7 @@ describe('FileHandler', () => {
       });
     });
 
-    it('should use default encoding when not specified', async () => {
+    it('should pass undefined encoding when not specified', async () => {
       const readFileData = {
         path: '/tmp/test.txt'
         // encoding not specified
@@ -123,7 +123,7 @@ describe('FileHandler', () => {
       expect(responseData.timestamp).toBeDefined();
 
       expect(mockFileService.readFile).toHaveBeenCalledWith('/tmp/test.txt', {
-        encoding: 'utf-8'
+        encoding: undefined
       });
     });
 
