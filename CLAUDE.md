@@ -217,6 +217,8 @@ npm run test:e2e -- -- tests/e2e/git-clone-workflow.test.ts -t 'should handle cl
 - Sequential execution (`singleFork: true`) to prevent container resource contention
 - Longer timeouts (2min per test) for container operations
 
+**Build system trust:** The monorepo build system (turbo + npm workspaces) is robust and handles all package dependencies automatically. E2E tests always run against the latest built code - there's no need to manually rebuild or worry about stale builds unless explicitly working on the build setup itself.
+
 **CI behavior:** E2E tests in CI (`pullrequest.yml`):
 
 1. Build Docker image locally (`npm run docker:local`)
