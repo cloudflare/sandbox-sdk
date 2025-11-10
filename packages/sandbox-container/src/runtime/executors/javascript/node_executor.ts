@@ -35,7 +35,9 @@ const sandbox = {
   __filename: __filename
 };
 
-const context = vm.createContext(sandbox);
+const context = vm.createContext(sandbox, {
+  microtaskMode: 'afterEvaluate'
+});
 
 console.log(JSON.stringify({ status: 'ready' }));
 
@@ -83,7 +85,77 @@ rl.on('line', async (line: string) => {
         options.timeout = timeout;
       }
 
+      // Track execution time for the synchronous part
+      const startTime = Date.now();
+
       result = vm.runInContext(code, context, options);
+
+      const syncExecutionTime = Date.now() - startTime;
+
+      if (
+        result &&
+        typeof result === 'object' &&
+        'then' in result &&
+        typeof result.then === 'function'
+      ) {
+        // We need to manually drain the microtask queue for promises from the inner context
+        // Create a loop that keeps draining microtasks until the promise settles
+        const promise = result as Promise<unknown>;
+        let keepDraining = true;
+        let timeoutHandle: NodeJS.Timeout | null = null;
+
+        result = await new Promise((resolve, reject) => {
+          // VM's timeout only applies to synchronous execution, so we need to handle async timeout ourselves
+          if (timeout && timeout > 0) {
+            const remainingTimeout = timeout - syncExecutionTime;
+            if (remainingTimeout <= 0) {
+              // Already exceeded timeout during sync execution
+              keepDraining = false;
+              reject(new Error(`Execution timed out after ${timeout}ms`));
+              return;
+            }
+            timeoutHandle = setTimeout(() => {
+              keepDraining = false;
+              reject(new Error(`Execution timed out after ${timeout}ms`));
+            }, remainingTimeout);
+          }
+
+          promise
+            .then(
+              (value) => {
+                keepDraining = false;
+                if (timeoutHandle) clearTimeout(timeoutHandle);
+                resolve(value);
+              },
+              (error) => {
+                keepDraining = false;
+                if (timeoutHandle) clearTimeout(timeoutHandle);
+                reject(error);
+              }
+            )
+            .catch((err) => {
+              // Just in case
+              keepDraining = false;
+              if (timeoutHandle) clearTimeout(timeoutHandle);
+              reject(err);
+            });
+
+          // Drain microtasks in a loop until the promise settles
+          const drainMicrotasks = () => {
+            if (!keepDraining) return;
+
+            try {
+              vm.runInContext('', context);
+            } catch (err) {
+              // Context might error, but we continue draining
+            }
+
+            // Schedule next drain
+            setImmediate(drainMicrotasks);
+          };
+          setImmediate(drainMicrotasks);
+        });
+      }
     } catch (error: unknown) {
       const err = error as Error;
       stderr += err.stack || err.toString();
