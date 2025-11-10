@@ -56,6 +56,37 @@ describe('FileService', () => {
   });
 
   describe('read', () => {
+    // Helper to setup common mocks for read operations
+    function setupReadMocks(
+      fileSize: number,
+      mimeType: string,
+      commandOutput: string
+    ) {
+      // Mock exists check
+      mocked(mockSessionManager.executeInSession).mockResolvedValueOnce({
+        success: true,
+        data: { exitCode: 0, stdout: '', stderr: '' }
+      } as ServiceResult<RawExecResult>);
+
+      // Mock stat command
+      mocked(mockSessionManager.executeInSession).mockResolvedValueOnce({
+        success: true,
+        data: { exitCode: 0, stdout: fileSize.toString(), stderr: '' }
+      } as ServiceResult<RawExecResult>);
+
+      // Mock MIME type detection
+      mocked(mockSessionManager.executeInSession).mockResolvedValueOnce({
+        success: true,
+        data: { exitCode: 0, stdout: mimeType, stderr: '' }
+      } as ServiceResult<RawExecResult>);
+
+      // Mock file read command (base64 or cat)
+      mocked(mockSessionManager.executeInSession).mockResolvedValueOnce({
+        success: true,
+        data: { exitCode: 0, stdout: commandOutput, stderr: '' }
+      } as ServiceResult<RawExecResult>);
+    }
+
     it('should read text file with MIME type detection', async () => {
       const testPath = '/tmp/test.txt';
       const testContent = 'Hello, World!';
@@ -350,6 +381,88 @@ describe('FileService', () => {
         expect(result.error.code).toBe('FILESYSTEM_ERROR');
       }
     });
+
+    it('should force base64 encoding when explicitly requested', async () => {
+      const testPath = '/tmp/text.txt';
+      const testContent = 'Hello World';
+      const base64Content = Buffer.from(testContent).toString('base64');
+
+      setupReadMocks(11, 'text/plain', base64Content);
+
+      const result = await fileService.read(
+        testPath,
+        { encoding: 'base64' },
+        'session-123'
+      );
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data).toBe(base64Content);
+        expect(result.metadata?.encoding).toBe('base64');
+        expect(result.metadata?.isBinary).toBe(true);
+        expect(result.metadata?.mimeType).toBe('text/plain');
+      }
+
+      expect(mockSessionManager.executeInSession).toHaveBeenCalledWith(
+        'session-123',
+        "base64 -w 0 < '/tmp/text.txt'"
+      );
+    });
+
+    it('should force utf-8 encoding when explicitly requested', async () => {
+      const testPath = '/tmp/data.bin';
+      const testContent = 'Some text content';
+
+      setupReadMocks(17, 'application/octet-stream', testContent);
+
+      const result = await fileService.read(
+        testPath,
+        { encoding: 'utf-8' },
+        'session-123'
+      );
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data).toBe(testContent);
+        expect(result.metadata?.encoding).toBe('utf-8');
+        expect(result.metadata?.isBinary).toBe(false);
+        expect(result.metadata?.mimeType).toBe('application/octet-stream');
+      }
+
+      expect(mockSessionManager.executeInSession).toHaveBeenCalledWith(
+        'session-123',
+        "cat '/tmp/data.bin'"
+      );
+
+      // Also test 'utf8' alias works the same way
+      vi.clearAllMocks();
+      setupReadMocks(17, 'application/octet-stream', testContent);
+
+      const aliasResult = await fileService.read(
+        testPath,
+        { encoding: 'utf8' },
+        'session-123'
+      );
+
+      expect(aliasResult.success).toBe(true);
+      expect(aliasResult.metadata?.encoding).toBe('utf-8');
+    });
+
+    it('should use MIME-based detection when no encoding specified', async () => {
+      const testPath = '/tmp/auto.json';
+      const testContent = '{"key": "value"}';
+
+      setupReadMocks(16, 'application/json', testContent);
+
+      const result = await fileService.read(testPath, {}, 'session-123');
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data).toBe(testContent);
+        expect(result.metadata?.encoding).toBe('utf-8');
+        expect(result.metadata?.isBinary).toBe(false);
+      }
+    });
   });
 
   describe('write', () => {
@@ -378,11 +491,125 @@ describe('FileService', () => {
 
       expect(result.success).toBe(true);
 
-      // Verify SessionManager was called with base64 encoded content (cwd is undefined, so only 2 params)
+      // Verify SessionManager was called with base64 encoded content
       expect(mockSessionManager.executeInSession).toHaveBeenCalledWith(
         'session-123',
-        `echo '${base64Content}' | base64 -d > '/tmp/test.txt'`
+        `printf '%s' '${base64Content}' | base64 -d > '/tmp/test.txt'`
       );
+    });
+
+    it('should support utf8 as alias for utf-8 encoding in write', async () => {
+      const testPath = '/tmp/test.txt';
+      const testContent = 'Test content';
+      const base64Content = Buffer.from(testContent, 'utf-8').toString(
+        'base64'
+      );
+
+      mocked(mockSessionManager.executeInSession).mockResolvedValue({
+        success: true,
+        data: {
+          exitCode: 0,
+          stdout: '',
+          stderr: ''
+        }
+      } as ServiceResult<RawExecResult>);
+
+      const result = await fileService.write(
+        testPath,
+        testContent,
+        { encoding: 'utf8' },
+        'session-123'
+      );
+
+      expect(result.success).toBe(true);
+
+      // Verify text encoding path is used (printf + base64)
+      expect(mockSessionManager.executeInSession).toHaveBeenCalledWith(
+        'session-123',
+        `printf '%s' '${base64Content}' | base64 -d > '/tmp/test.txt'`
+      );
+    });
+
+    it('should write binary file with base64 encoding option', async () => {
+      const testPath = '/tmp/image.png';
+      const binaryData = Buffer.from([0x89, 0x50, 0x4e, 0x47]); // PNG header
+      const base64Content = binaryData.toString('base64');
+
+      mocked(mockSessionManager.executeInSession).mockResolvedValue({
+        success: true,
+        data: {
+          exitCode: 0,
+          stdout: '',
+          stderr: ''
+        }
+      } as ServiceResult<RawExecResult>);
+
+      const result = await fileService.write(
+        testPath,
+        base64Content,
+        { encoding: 'base64' },
+        'session-123'
+      );
+
+      expect(result.success).toBe(true);
+
+      // Verify that content is passed directly without re-encoding
+      expect(mockSessionManager.executeInSession).toHaveBeenCalledWith(
+        'session-123',
+        `printf '%s' '${base64Content}' | base64 -d > '/tmp/image.png'`
+      );
+    });
+
+    it('should reject base64 content with invalid characters', async () => {
+      const testPath = '/tmp/test.txt';
+
+      const maliciousInputs = [
+        "abc'; rm -rf / #", // Shell command injection
+        'valid$(whoami)base64', // Command substitution
+        'test\nmalicious', // Newline injection
+        'test`whoami`test', // Backtick injection
+        'test|whoami', // Pipe injection
+        'test&whoami&' // Background command injection
+      ];
+
+      for (const maliciousContent of maliciousInputs) {
+        vi.clearAllMocks();
+
+        const result = await fileService.write(
+          testPath,
+          maliciousContent,
+          { encoding: 'base64' },
+          'session-123'
+        );
+
+        expect(result.success).toBe(false);
+        expect(result.error?.code).toBe('VALIDATION_FAILED');
+        expect(mockSessionManager.executeInSession).not.toHaveBeenCalled();
+      }
+    });
+
+    it('should accept valid base64 content with padding', async () => {
+      const testPath = '/tmp/test.txt';
+      const validBase64 = 'SGVsbG8gV29ybGQ='; // "Hello World" with padding
+
+      mocked(mockSessionManager.executeInSession).mockResolvedValue({
+        success: true,
+        data: {
+          exitCode: 0,
+          stdout: '',
+          stderr: ''
+        }
+      } as ServiceResult<RawExecResult>);
+
+      const result = await fileService.write(
+        testPath,
+        validBase64,
+        { encoding: 'base64' },
+        'session-123'
+      );
+
+      expect(result.success).toBe(true);
+      expect(mockSessionManager.executeInSession).toHaveBeenCalled();
     });
 
     it('should handle write errors', async () => {

@@ -98,7 +98,7 @@ export class FileClient extends BaseHttpClient {
         path,
         content,
         sessionId,
-        encoding: options?.encoding ?? 'utf8'
+        encoding: options?.encoding
       };
 
       const response = await this.post<WriteFileResult>('/api/write', data);
@@ -126,7 +126,7 @@ export class FileClient extends BaseHttpClient {
       const data = {
         path,
         sessionId,
-        encoding: options?.encoding ?? 'utf8'
+        encoding: options?.encoding
       };
 
       const response = await this.post<ReadFileResult>('/api/read', data);

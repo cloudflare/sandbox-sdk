@@ -75,7 +75,7 @@ export class FileHandler extends BaseHandler<Request, Response> {
     const body = await this.parseRequestBody<ReadFileRequest>(request);
 
     const result = await this.fileService.readFile(body.path, {
-      encoding: body.encoding || 'utf-8'
+      encoding: body.encoding
     });
 
     if (result.success) {
@@ -191,7 +191,7 @@ export class FileHandler extends BaseHandler<Request, Response> {
     const body = await this.parseRequestBody<WriteFileRequest>(request);
 
     const result = await this.fileService.writeFile(body.path, body.content, {
-      encoding: body.encoding || 'utf-8'
+      encoding: body.encoding
     });
 
     if (result.success) {
