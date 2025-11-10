@@ -211,35 +211,26 @@ export class FileService implements FileSystemOperations {
 
       // 5. Determine if file is binary based on MIME type
       // Text MIME types: text/*, application/json, application/xml, application/javascript, etc.
-      const isBinaryByMime = !mimeType.startsWith('text/') &&
-                             !mimeType.includes('json') &&
-                             !mimeType.includes('xml') &&
-                             !mimeType.includes('javascript') &&
-                             !mimeType.includes('x-empty');
+      const isBinary =
+        !mimeType.startsWith('text/') &&
+        !mimeType.includes('json') &&
+        !mimeType.includes('xml') &&
+        !mimeType.includes('javascript') &&
+        !mimeType.includes('x-empty');
 
       // 6. Read file with appropriate encoding
       // Respect user's encoding preference if provided, otherwise use MIME-based detection
-      const requestedEncoding = options.encoding;
       let actualEncoding: 'utf-8' | 'base64';
-      let isBinary: boolean;
-
-      // Determine final encoding and binary flag
-      if (requestedEncoding === 'base64') {
-        // User explicitly requested base64 - always use base64 regardless of MIME type
+      if (options.encoding === 'base64') {
         actualEncoding = 'base64';
-        isBinary = true; // Mark as binary when returning base64
-      } else if (requestedEncoding === 'utf-8' || requestedEncoding === 'utf8') {
-        // User explicitly requested UTF-8 - always use UTF-8 regardless of MIME type
+      } else if (options.encoding === 'utf-8' || options.encoding === 'utf8') {
         actualEncoding = 'utf-8';
-        isBinary = false; // Mark as text when returning UTF-8
       } else {
         // No explicit encoding requested - use MIME-based detection (original behavior)
-        actualEncoding = isBinaryByMime ? 'base64' : 'utf-8';
-        isBinary = isBinaryByMime;
+        actualEncoding = isBinary ? 'base64' : 'utf-8';
       }
 
       let content: string;
-      
       if (actualEncoding === 'base64') {
         // Binary files: read as base64, return as-is (DO NOT decode)
         const base64Command = `base64 -w 0 < ${escapedPath}`;
@@ -279,7 +270,6 @@ export class FileService implements FileSystemOperations {
         }
 
         content = base64Result.data.stdout.trim();
-        actualEncoding = 'base64';
       } else {
         // Text files: read normally
         const catCommand = `cat ${escapedPath}`;
@@ -319,7 +309,6 @@ export class FileService implements FileSystemOperations {
         }
 
         content = catResult.data.stdout;
-        actualEncoding = 'utf-8';
       }
 
       return {
@@ -327,7 +316,7 @@ export class FileService implements FileSystemOperations {
         data: content,
         metadata: {
           encoding: actualEncoding,
-          isBinary,
+          isBinary: actualEncoding === 'base64',
           mimeType,
           size: fileSize
         }
@@ -387,9 +376,9 @@ export class FileService implements FileSystemOperations {
       // 2. Write file using SessionManager with proper encoding handling
       const escapedPath = this.escapePath(path);
       const encoding = options.encoding || 'utf-8';
-      
+
       let command: string;
-      
+
       if (encoding === 'base64') {
         // Content is already base64 encoded, validate and decode it directly to file
         // Validate that content only contains valid base64 characters to prevent command injection
@@ -397,23 +386,25 @@ export class FileService implements FileSystemOperations {
           return {
             success: false,
             error: {
-              message: `Invalid base64 content for '${path}': contains non-base64 characters`,
+              message: `Invalid base64 content for '${path}': must contain only A-Z, a-z, 0-9, +, /, =`,
               code: ErrorCode.VALIDATION_FAILED,
               details: {
-                validationErrors: [{
-                  field: 'content',
-                  message: 'Content must contain only valid base64 characters (A-Z, a-z, 0-9, +, /, =)',
-                  code: 'INVALID_BASE64'
-                }]
+                validationErrors: [
+                  {
+                    field: 'content',
+                    message: 'Invalid base64 characters',
+                    code: 'INVALID_BASE64'
+                  }
+                ]
               } satisfies ValidationFailedContext
             }
           };
         }
-        // Use printf to avoid single quote issues in echo
+        // Use printf to output base64 literally without trailing newline
         command = `printf '%s' '${content}' | base64 -d > ${escapedPath}`;
       } else {
-        // Content is text, encode to base64 first to ensure safe shell handling
-        // This avoids heredoc EOF collision issues and handles special characters
+        // Encode text to base64 to safely handle shell metacharacters (quotes, backticks, $, etc.)
+        // and special characters (newlines, control chars, null bytes) in user content
         const base64Content = Buffer.from(content, 'utf-8').toString('base64');
         command = `printf '%s' '${base64Content}' | base64 -d > ${escapedPath}`;
       }
