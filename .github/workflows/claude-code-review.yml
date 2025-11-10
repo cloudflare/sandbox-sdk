@@ -33,6 +33,10 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          plugin_marketplaces: |
+            obra/superpowers-marketplace
+          plugins: |
+            superpowers@superpowers-marketplace
           prompt: |
             You are Claude reviewing PRs for the Cloudflare Sandbox SDK.
 
@@ -52,19 +56,20 @@ jobs:
 
             **Then review the diff with that context.**
 
-            ### 2. Check for Previous Review (if this is an update)
+            ### 2. Check for Previous Review (Internal Context Only)
 
-            **Detect if this is a PR update:**
-            - Check for existing claude[bot] comment: `gh pr view ${{ github.event.pull_request.number }} --json comments --jq '.comments[] | select(.author.login == "claude[bot]" or .author.login == "github-actions[bot]")'`
+            Check if you've reviewed this PR before:
+            ```bash
+            gh pr view ${{ github.event.pull_request.number }} --json comments --jq '.comments[] | select(.author.login == "claude[bot]" or .author.login == "github-actions[bot]")'
+            ```
 
-            **If previous review exists:**
-            - Identify what's new: `git log --oneline ${{ github.event.before }}..${{ github.event.after }}` (shows commits since last review)
-            - Check if history was rewritten: `git cat-file -t ${{ github.event.before }} 2>/dev/null` (if fails, force push occurred)
-            - Read the previous review to understand what was flagged
+            If previous review exists:
+            - Read it to understand what you said before
+            - Note what commits have been added since: `git log --oneline ${{ github.event.before }}..${{ github.event.after }}`
+            - Check if history was rewritten: `git cat-file -t ${{ github.event.before }} 2>/dev/null`
+            - Use this context internally when writing your review
 
-            **Your review should cover BOTH:**
-            1. **Incremental**: What changed since last review? Were previous issues addressed?
-            2. **Holistic**: How does the FULL PR look now? Any issues when viewing the complete picture?
+            **Don't announce "Update N" or link to previous reviews** - just write naturally.
 
             ### 3. Gather Context
             - Use `gh pr view ${{ github.event.pull_request.number }}` for PR description
@@ -72,7 +77,14 @@ jobs:
             - Read CLAUDE.md for repo-specific conventions and architecture patterns
             - Use Read tool to examine key changed files
 
-            ### 4. Internal Analysis
+            ### 4. Check Documentation Impact
+            Use `mcp__cloudflare-docs__search_cloudflare_documentation` to check if this PR requires doc updates:
+            - Does it change existing documented behavior?
+            - Does it add new features needing documentation?
+            - Does it have security implications needing best practices docs?
+            - If yes, call out specific doc sections that need updates
+
+            ### 5. Internal Analysis
             Before writing your review, analyze inside <analysis> tags (do NOT include in final comment):
             a. What is this PR accomplishing?
             b. Which packages/layers are affected?
@@ -80,24 +92,15 @@ jobs:
             d. What tests are needed?
             e. Does this need documentation updates?
 
-            ### 5. Check Documentation Impact
-            Use `mcp__cloudflare-docs__search_cloudflare_documentation` to check if this PR requires doc updates:
-            - Does it change existing documented behavior?
-            - Does it add new features needing documentation?
-            - Does it have security implications needing best practices docs?
-            - If yes, call out specific doc sections that need updates
+            ### 6. Execute Review
 
-            ### 6. Review Focus
+            Launch superpowers:code-reviewer subagent (Task tool) with the context gathered above:
+            - Full PR diff from step 3
+            - Relevant architecture patterns from CLAUDE.md
+            - Documentation requirements from step 4
+            - Previous review feedback (if incremental update from step 2)
 
-            **Prioritize** (things that slip through):
-            - Missing/inadequate tests (especially E2E for container interactions)
-            - Type safety violations (see CLAUDE.md TypeScript standards)
-            - Architecture violations (see CLAUDE.md patterns: client pattern, DI, layer separation)
-            - API design issues (see CLAUDE.md API Design: unclear naming, missing validation, poor error messages)
-
-            **Skip**:
-            - Code style/formatting (Biome handles it)
-            - Changeset reminders (bot handles it)
+            The code-reviewer will analyze correctness, architecture, testing, and code quality.
 
             ### 7. Post Review
 
@@ -108,38 +111,24 @@ jobs:
             - If issues found: State the issue, reference location, explain why it matters. Move on.
 
             **Format**:
-            - Reference code with file paths and line numbers (e.g., `packages/sandbox/src/file.ts:123`)
-            - Use markdown headings (### for sections) only if you have multiple distinct categories
+            - **Inline comments** (using `mcp__github_inline_comment__create_inline_comment`): Use for specific line-by-line code issues
+            - **Main comment**: Summary only - overall assessment, architectural concerns, testing strategy, verdict. Do NOT duplicate inline comments here.
 
-            **For incremental reviews** (when updating existing comment):
-            - Acknowledge fixed issues: "✓ [Previous issue] - addressed"
-            - Flag new issues found in new changes
-            - Flag any issues that emerged from holistic view
-            - Keep unaddressed issues from previous review
+            **Main comment - write naturally:**
+            - Start with "## Claude Code Review"
+            - If previous review exists, write conversationally: "The encoding issue is fixed. Tests look better too."
+            - Mention what still needs work: "I still see the over-mocking in file-service.test.ts:45"
+            - New concerns: "New issue: error handling in container.ts doesn't cover..."
+            - Overall verdict: "Looks good" or "Needs fixes before merge"
 
-            **Posting your review**:
+            **Post inline comments** for specific code issues using `mcp__github_inline_comment__create_inline_comment`
 
-            First, check for existing review comment:
+            **Post your main comment:**
             ```bash
-            COMMENT_ID=$(gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments \
-              --jq '.[] | select(.user.login == "claude[bot]") | select(.body | startswith("## Claude Code Review")) | .id' | head -1)
+            gh pr comment ${{ github.event.pull_request.number }} --body "YOUR_REVIEW_HERE" --repo ${{ github.repository }}
             ```
 
-            If COMMENT_ID exists (previous review comment found):
-            - Update it: `gh api repos/${{ github.repository }}/issues/comments/$COMMENT_ID -X PATCH -f body="YOUR_REVIEW_HERE"`
-            - Make sure your review starts with "## Claude Code Review" to maintain consistency
-
-            If no existing comment:
-            - Create new: `gh pr comment ${{ github.event.pull_request.number }} --body "YOUR_REVIEW_HERE"`
-            - Start your review with "## Claude Code Review" header
-
-            For inline code issues:
-            - Use `mcp__github_inline_comment__create_inline_comment` to highlight specific code issues
-
-            Important: Only post GitHub comments - don't submit review text as messages.
-
-            Your goal: Catch real issues. Respect the developer's time - be concise, but don't omit important details.
-
+            Always post a NEW comment - never update previous ones. Natural conversation flow.
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://docs.claude.com/en/docs/claude-code/cli-reference for available options
-          claude_args: '--allowedTools "mcp__github_inline_comment__create_inline_comment,mcp__cloudflare-docs__search_cloudflare_documentation,mcp__exa__get_code_context_exa,mcp__exa__web_search_exa,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh api:*)"'
+          claude_args: '--allowedTools "Task,Skill,mcp__github_inline_comment__create_inline_comment,mcp__cloudflare-docs__search_cloudflare_documentation,mcp__exa__get_code_context_exa,mcp__exa__web_search_exa,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh api:*),Bash(git *)"'

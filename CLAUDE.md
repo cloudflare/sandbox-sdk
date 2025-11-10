@@ -286,18 +286,37 @@ Turbo handles task orchestration (`turbo.json`) with dependency-aware builds.
 
 **Be concise, not verbose.** Every word should add value. Avoid unnecessary details about implementation mechanics - focus on what changed and why it matters.
 
-Example:
+**Subject line should stand alone** - don't require reading the body to understand the change. Body is optional and only needed for non-obvious context.
+
+Good examples:
 
 ```
 Add session isolation for concurrent executions
+```
 
-Previously, multiple concurrent exec() calls would interfere with each
-other's working directories and environment variables. This adds proper
-session management to isolate execution contexts.
+```
+Fix encoding parameter handling in file operations
 
-The SessionManager tracks active sessions and ensures cleanup when
-processes complete. This is critical for multi-tenant scenarios where
-different users share the same sandbox instance.
+The encoding parameter wasn't properly passed through the validation
+layer, causing base64 content to be treated as UTF-8.
+```
+
+Bad examples:
+
+```
+Update files
+
+Changes some things related to sessions and also fixes a bug.
+```
+
+```
+Add file operations support
+
+Implements FileClient with read/write methods and adds FileService
+in the container with a validation layer. Includes comprehensive test
+coverage for edge cases and supports both UTF-8 text and base64 binary
+encodings. Uses proper error handling with custom error types from the
+shared package for consistency across the SDK.
 ```
 
 ## Important Patterns
