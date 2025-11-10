@@ -1151,4 +1151,106 @@ describe('File Operations Workflow (E2E)', () => {
     expect(notExistsData.success).toBe(true);
     expect(notExistsData.exists).toBe(false);
   }, 90000);
+
+  test('should list files in hidden directories without includeHidden flag', async () => {
+    currentSandboxId = createSandboxId();
+    const headers = createTestHeaders(currentSandboxId);
+
+    // Create hidden directory structure with non-hidden files
+    await vi.waitFor(
+      async () =>
+        fetchWithStartup(`${workerUrl}/api/file/mkdir`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            path: '/workspace/.hidden/foo/bar',
+            recursive: true
+          })
+        }),
+      { timeout: 90000, interval: 2000 }
+    );
+
+    // Write visible files in hidden directory
+    await fetch(`${workerUrl}/api/file/write`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        path: '/workspace/.hidden/foo/visible1.txt',
+        content: 'Visible file 1'
+      })
+    });
+
+    await fetch(`${workerUrl}/api/file/write`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        path: '/workspace/.hidden/foo/visible2.txt',
+        content: 'Visible file 2'
+      })
+    });
+
+    // Write hidden file in hidden directory
+    await fetch(`${workerUrl}/api/file/write`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        path: '/workspace/.hidden/foo/.hiddenfile.txt',
+        content: 'Hidden file'
+      })
+    });
+
+    // List files WITHOUT includeHidden flag - should show visible files only
+    const listResponse = await fetch(`${workerUrl}/api/list-files`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        path: '/workspace/.hidden/foo'
+      })
+    });
+
+    expect(listResponse.status).toBe(200);
+    const listData = await listResponse.json();
+
+    expect(listData.success).toBe(true);
+    expect(listData.files).toBeInstanceOf(Array);
+
+    // Should contain visible files
+    const visibleFiles = listData.files.filter(
+      (f: any) => !f.name.startsWith('.')
+    );
+    expect(visibleFiles.length).toBe(3); // visible1.txt, visible2.txt, bar/
+
+    const visible1 = listData.files.find((f: any) => f.name === 'visible1.txt');
+    expect(visible1).toBeDefined();
+
+    const visible2 = listData.files.find((f: any) => f.name === 'visible2.txt');
+    expect(visible2).toBeDefined();
+
+    // Should NOT contain hidden file
+    const hiddenFile = listData.files.find(
+      (f: any) => f.name === '.hiddenfile.txt'
+    );
+    expect(hiddenFile).toBeUndefined();
+
+    // List files WITH includeHidden flag - should show all files
+    const listWithHiddenResponse = await fetch(`${workerUrl}/api/list-files`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        path: '/workspace/.hidden/foo',
+        options: { includeHidden: true }
+      })
+    });
+
+    expect(listWithHiddenResponse.status).toBe(200);
+    const listWithHiddenData = await listWithHiddenResponse.json();
+
+    expect(listWithHiddenData.success).toBe(true);
+    expect(listWithHiddenData.files.length).toBe(4); // visible1.txt, visible2.txt, bar/, .hiddenfile.txt
+
+    const hiddenFileWithFlag = listWithHiddenData.files.find(
+      (f: any) => f.name === '.hiddenfile.txt'
+    );
+    expect(hiddenFileWithFlag).toBeDefined();
+  }, 90000);
 });
