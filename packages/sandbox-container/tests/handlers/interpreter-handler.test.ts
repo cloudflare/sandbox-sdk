@@ -6,6 +6,7 @@ import type {
   InterpreterHealthResult
 } from '@repo/shared';
 import type { ErrorResponse } from '@repo/shared/errors';
+import { ErrorCode } from '@repo/shared/errors';
 import type {
   Logger,
   RequestContext,
@@ -491,6 +492,191 @@ describe('InterpreterHandler', () => {
       expect(responseData.message).toBe('Context not found');
       expect(responseData.context).toMatchObject({ contextId: 'ctx-invalid' });
       expect(responseData.httpStatus).toBe(404);
+      expect(responseData.timestamp).toBeDefined();
+    });
+  });
+
+  describe('handle - Execute Async Code', () => {
+    it('should execute code that returns a resolved Promise and stream the result', async () => {
+      // Simulate a streaming response for resolved Promise
+      const mockStream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(
+            'data: {"type":"start","timestamp":"2023-01-01T00:00:00Z"}\n\n'
+          );
+          controller.enqueue(
+            'data: {"type":"stdout","data":"42\\n","timestamp":"2023-01-01T00:00:01Z"}\n\n'
+          );
+          controller.enqueue(
+            'data: {"type":"complete","exitCode":0,"timestamp":"2023-01-01T00:00:02Z"}\n\n'
+          );
+          controller.close();
+        }
+      });
+      const mockStreamResponse = new Response(mockStream, {
+        status: 200,
+        headers: {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache'
+        }
+      });
+      mocked(mockInterpreterService.executeCode).mockResolvedValue(
+        mockStreamResponse
+      );
+
+      const executeRequest = {
+        context_id: 'ctx-123',
+        code: 'Promise.resolve(42)',
+        language: 'javascript'
+      };
+
+      const request = new Request('http://localhost:3000/api/execute/code', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(executeRequest)
+      });
+
+      const response = await interpreterHandler.handle(request, mockContext);
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get('Content-Type')).toBe('text/event-stream');
+      expect(response.body).toBeDefined();
+      expect(mockInterpreterService.executeCode).toHaveBeenCalledWith(
+        'ctx-123',
+        'Promise.resolve(42)',
+        'javascript'
+      );
+    });
+
+    it('should execute code that returns from an async function and stream the result', async () => {
+      const mockStream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(
+            'data: {"type":"start","timestamp":"2023-01-01T00:00:00Z"}\n\n'
+          );
+          controller.enqueue(
+            'data: {"type":"stdout","data":"async result\\n","timestamp":"2023-01-01T00:00:01Z"}\n\n'
+          );
+          controller.enqueue(
+            'data: {"type":"complete","exitCode":0,"timestamp":"2023-01-01T00:00:02Z"}\n\n'
+          );
+          controller.close();
+        }
+      });
+      const mockStreamResponse = new Response(mockStream, {
+        status: 200,
+        headers: {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache'
+        }
+      });
+      mocked(mockInterpreterService.executeCode).mockResolvedValue(
+        mockStreamResponse
+      );
+
+      const executeRequest = {
+        context_id: 'ctx-123',
+        code: '(async () => { return "async result" })()',
+        language: 'javascript'
+      };
+
+      const request = new Request('http://localhost:3000/api/execute/code', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(executeRequest)
+      });
+
+      const response = await interpreterHandler.handle(request, mockContext);
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get('Content-Type')).toBe('text/event-stream');
+      expect(response.body).toBeDefined();
+      expect(mockInterpreterService.executeCode).toHaveBeenCalledWith(
+        'ctx-123',
+        '(async () => { return "async result" })()',
+        'javascript'
+      );
+    });
+
+    it('should handle code that returns a rejected Promise', async () => {
+      const mockErrorResponse = new Response(
+        JSON.stringify({
+          code: ErrorCode.CODE_EXECUTION_ERROR,
+          message: 'Promise rejected',
+          context: { contextId: 'ctx-123' },
+          httpStatus: 500,
+          timestamp: new Date().toISOString()
+        }),
+        {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' }
+        }
+      );
+      mocked(mockInterpreterService.executeCode).mockResolvedValue(
+        mockErrorResponse
+      );
+
+      const executeRequest = {
+        context_id: 'ctx-123',
+        code: 'Promise.reject(new Error("Promise rejected"))',
+        language: 'javascript'
+      };
+
+      const request = new Request('http://localhost:3000/api/execute/code', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(executeRequest)
+      });
+
+      const response = await interpreterHandler.handle(request, mockContext);
+
+      expect(response.status).toBe(500);
+      const responseData = (await response.json()) as ErrorResponse;
+      expect(responseData.code).toBe(ErrorCode.CODE_EXECUTION_ERROR);
+      expect(responseData.message).toBe('Promise rejected');
+      expect(responseData.context).toMatchObject({ contextId: 'ctx-123' });
+      expect(responseData.httpStatus).toBe(500);
+      expect(responseData.timestamp).toBeDefined();
+    });
+
+    it('should handle code that throws an error in async context', async () => {
+      const mockErrorResponse = new Response(
+        JSON.stringify({
+          code: ErrorCode.CODE_EXECUTION_ERROR,
+          message: 'Thrown error',
+          context: { contextId: 'ctx-123' },
+          httpStatus: 500,
+          timestamp: new Date().toISOString()
+        }),
+        {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' }
+        }
+      );
+      mocked(mockInterpreterService.executeCode).mockResolvedValue(
+        mockErrorResponse
+      );
+
+      const executeRequest = {
+        context_id: 'ctx-123',
+        code: '(async () => { throw new Error("Thrown error") })()',
+        language: 'javascript'
+      };
+
+      const request = new Request('http://localhost:3000/api/execute/code', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(executeRequest)
+      });
+
+      const response = await interpreterHandler.handle(request, mockContext);
+
+      expect(response.status).toBe(500);
+      const responseData = (await response.json()) as ErrorResponse;
+      expect(responseData.code).toBe(ErrorCode.CODE_EXECUTION_ERROR);
+      expect(responseData.message).toBe('Thrown error');
+      expect(responseData.context).toMatchObject({ contextId: 'ctx-123' });
+      expect(responseData.httpStatus).toBe(500);
       expect(responseData.timestamp).toBeDefined();
     });
   });
