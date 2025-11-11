@@ -20,6 +20,7 @@ import {
   test,
   vi
 } from 'vitest';
+import type { FileInfo } from '@repo/shared';
 import { getTestWorkerUrl, WranglerDevRunner } from './helpers/wrangler-runner';
 import {
   createSandboxId,
@@ -958,7 +959,9 @@ describe('File Operations Workflow (E2E)', () => {
     expect(listData.count).toBeGreaterThan(0);
 
     // Verify file has correct metadata and permissions
-    const dataFile = listData.files.find((f: any) => f.name === 'data.txt');
+    const dataFile = listData.files.find(
+      (f: FileInfo) => f.name === 'data.txt'
+    );
     expect(dataFile).toBeDefined();
     expect(dataFile.type).toBe('file');
     expect(dataFile.absolutePath).toBe('/workspace/project/data.txt');
@@ -970,7 +973,9 @@ describe('File Operations Workflow (E2E)', () => {
     expect(dataFile.permissions.executable).toBe(false);
 
     // Verify executable script has correct permissions
-    const scriptFile = listData.files.find((f: any) => f.name === 'script.sh');
+    const scriptFile = listData.files.find(
+      (f: FileInfo) => f.name === 'script.sh'
+    );
     expect(scriptFile).toBeDefined();
     expect(scriptFile.permissions.executable).toBe(true);
   }, 90000);
@@ -1026,10 +1031,14 @@ describe('File Operations Workflow (E2E)', () => {
     expect(listData.success).toBe(true);
 
     // Verify relative paths are correct
-    const rootFile = listData.files.find((f: any) => f.name === 'root.txt');
+    const rootFile = listData.files.find(
+      (f: FileInfo) => f.name === 'root.txt'
+    );
     expect(rootFile?.relativePath).toBe('root.txt');
 
-    const deepFile = listData.files.find((f: any) => f.name === 'deep.txt');
+    const deepFile = listData.files.find(
+      (f: FileInfo) => f.name === 'deep.txt'
+    );
     expect(deepFile?.relativePath).toBe('level1/level2/deep.txt');
   }, 90000);
 
@@ -1216,19 +1225,23 @@ describe('File Operations Workflow (E2E)', () => {
 
     // Should contain visible files
     const visibleFiles = listData.files.filter(
-      (f: any) => !f.name.startsWith('.')
+      (f: FileInfo) => !f.name.startsWith('.')
     );
     expect(visibleFiles.length).toBe(3); // visible1.txt, visible2.txt, bar/
 
-    const visible1 = listData.files.find((f: any) => f.name === 'visible1.txt');
+    const visible1 = listData.files.find(
+      (f: FileInfo) => f.name === 'visible1.txt'
+    );
     expect(visible1).toBeDefined();
 
-    const visible2 = listData.files.find((f: any) => f.name === 'visible2.txt');
+    const visible2 = listData.files.find(
+      (f: FileInfo) => f.name === 'visible2.txt'
+    );
     expect(visible2).toBeDefined();
 
     // Should NOT contain hidden file
     const hiddenFile = listData.files.find(
-      (f: any) => f.name === '.hiddenfile.txt'
+      (f: FileInfo) => f.name === '.hiddenfile.txt'
     );
     expect(hiddenFile).toBeUndefined();
 
@@ -1249,7 +1262,7 @@ describe('File Operations Workflow (E2E)', () => {
     expect(listWithHiddenData.files.length).toBe(4); // visible1.txt, visible2.txt, bar/, .hiddenfile.txt
 
     const hiddenFileWithFlag = listWithHiddenData.files.find(
-      (f: any) => f.name === '.hiddenfile.txt'
+      (f: FileInfo) => f.name === '.hiddenfile.txt'
     );
     expect(hiddenFileWithFlag).toBeDefined();
   }, 90000);
