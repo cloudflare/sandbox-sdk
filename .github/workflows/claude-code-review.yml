@@ -34,7 +34,7 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           plugin_marketplaces: |
-            obra/superpowers-marketplace
+            https://github.com/obra/superpowers-marketplace.git
           plugins: |
             superpowers@superpowers-marketplace
           prompt: |
