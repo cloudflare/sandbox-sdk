@@ -644,22 +644,23 @@ export class Session {
     const safeSessionDir = this.escapeShellPath(this.sessionDir!);
     const safePidFile = this.escapeShellPath(pidFile);
 
-    // Build environment variable prefix if env vars are provided
-    // These env vars are set only for this command execution (do not persist in session)
-    let envPrefix = '';
+    // Build command with environment variables if provided
+    // Use a subshell with export to ensure vars are available for the command
+    // This works with both builtins and external commands
+    let commandWithEnv: string;
     if (env && Object.keys(env).length > 0) {
-      envPrefix =
-        Object.entries(env)
-          .map(([key, value]) => {
-            // Escape the value for safe shell usage
-            const escapedValue = value.replace(/'/g, "'\\''");
-            return `${key}='${escapedValue}'`;
-          })
-          .join(' ') + ' ';
+      const exports = Object.entries(env)
+        .map(([key, value]) => {
+          // Escape the value for safe shell usage
+          const escapedValue = value.replace(/'/g, "'\\''");
+          return `export ${key}='${escapedValue}'`;
+        })
+        .join('; ');
+      // Wrap in subshell to isolate env vars (they don't persist in session)
+      commandWithEnv = `(${exports}; ${command})`;
+    } else {
+      commandWithEnv = command;
     }
-
-    // Prepend env vars to command
-    const commandWithEnv = envPrefix + command;
 
     // Build the FIFO script
     // For background: monitor handles cleanup (no trap needed)
