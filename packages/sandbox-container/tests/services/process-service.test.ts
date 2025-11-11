@@ -105,7 +105,8 @@ describe('ProcessService', () => {
         'default', // sessionId
         'echo "hello world"',
         '/tmp', // cwd
-        undefined // timeoutMs (not provided in options)
+        undefined, // timeoutMs (not provided in options)
+        undefined // env (not provided in options)
       );
     });
 

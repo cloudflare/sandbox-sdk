@@ -142,7 +142,10 @@ describe('Sandbox - Automatic Session Management', () => {
 
       expect(sandbox.client.commands.execute).toHaveBeenCalledWith(
         'echo test',
-        expect.stringMatching(/^sandbox-/)
+        expect.stringMatching(/^sandbox-/),
+        undefined,
+        undefined,
+        undefined
       );
     });
 
@@ -284,7 +287,10 @@ describe('Sandbox - Automatic Session Management', () => {
 
       expect(sandbox.client.commands.execute).toHaveBeenCalledWith(
         'echo test',
-        'isolated-session'
+        'isolated-session',
+        undefined,
+        undefined,
+        undefined
       );
     });
 
@@ -387,7 +393,10 @@ describe('Sandbox - Automatic Session Management', () => {
       await session.exec('pwd');
       expect(sandbox.client.commands.execute).toHaveBeenCalledWith(
         'pwd',
-        'test-session'
+        'test-session',
+        undefined,
+        undefined,
+        undefined
       );
     });
 

@@ -48,7 +48,9 @@ export class ExecuteHandler extends BaseHandler<Request, Response> {
         body.command,
         {
           sessionId,
-          timeoutMs: body.timeoutMs
+          timeoutMs: body.timeoutMs,
+          env: body.env,
+          cwd: body.cwd
         }
       );
 
@@ -72,7 +74,9 @@ export class ExecuteHandler extends BaseHandler<Request, Response> {
     // For non-background commands, execute and return result
     const result = await this.processService.executeCommand(body.command, {
       sessionId,
-      timeoutMs: body.timeoutMs
+      timeoutMs: body.timeoutMs,
+      env: body.env,
+      cwd: body.cwd
     });
 
     if (!result.success) {
@@ -105,7 +109,9 @@ export class ExecuteHandler extends BaseHandler<Request, Response> {
 
     // Start the process for streaming
     const processResult = await this.processService.startProcess(body.command, {
-      sessionId
+      sessionId,
+      env: body.env,
+      cwd: body.cwd
     });
 
     if (!processResult.success) {

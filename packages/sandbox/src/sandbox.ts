@@ -447,7 +447,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         );
       } else {
         // Regular execution with session
-        const response = await this.client.commands.execute(command, sessionId);
+        const response = await this.client.commands.execute(
+          command,
+          sessionId,
+          options?.timeout,
+          options?.env,
+          options?.cwd
+        );
 
         const duration = Date.now() - startTime;
         result = this.mapExecuteResponseToExecResult(

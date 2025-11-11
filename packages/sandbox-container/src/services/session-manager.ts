@@ -116,7 +116,8 @@ export class SessionManager {
     sessionId: string,
     command: string,
     cwd?: string,
-    timeoutMs?: number
+    timeoutMs?: number,
+    env?: Record<string, string>
   ): Promise<ServiceResult<RawExecResult>> {
     try {
       // Get or create session on demand
@@ -141,7 +142,10 @@ export class SessionManager {
 
       const session = sessionResult.data;
 
-      const result = await session.exec(command, cwd ? { cwd } : undefined);
+      const result = await session.exec(
+        command,
+        cwd || env ? { cwd, env } : undefined
+      );
 
       return {
         success: true,

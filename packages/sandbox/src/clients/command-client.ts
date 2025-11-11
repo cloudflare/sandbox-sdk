@@ -11,6 +11,8 @@ import type {
 export interface ExecuteRequest extends SessionRequest {
   command: string;
   timeoutMs?: number;
+  env?: Record<string, string>;
+  cwd?: string;
 }
 
 /**
@@ -32,17 +34,23 @@ export class CommandClient extends BaseHttpClient {
    * @param command - The command to execute
    * @param sessionId - The session ID for this command execution
    * @param timeoutMs - Optional timeout in milliseconds (unlimited by default)
+   * @param env - Optional environment variables for this command
+   * @param cwd - Optional working directory for this command
    */
   async execute(
     command: string,
     sessionId: string,
-    timeoutMs?: number
+    timeoutMs?: number,
+    env?: Record<string, string>,
+    cwd?: string
   ): Promise<ExecuteResponse> {
     try {
       const data: ExecuteRequest = {
         command,
         sessionId,
-        ...(timeoutMs !== undefined && { timeoutMs })
+        ...(timeoutMs !== undefined && { timeoutMs }),
+        ...(env !== undefined && { env }),
+        ...(cwd !== undefined && { cwd })
       };
 
       const response = await this.post<ExecuteResponse>('/api/execute', data);
