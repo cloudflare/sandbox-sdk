@@ -1,5 +1,13 @@
 # @cloudflare/sandbox
 
+## 0.4.20
+
+### Patch Changes
+
+- [#208](https://github.com/cloudflare/sandbox-sdk/pull/208) [`d4bb3b7`](https://github.com/cloudflare/sandbox-sdk/commit/d4bb3b782db458f81c2c0b9148ac4b4fb65eca9f) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Add Apache License 2.0
+
+  Formalizes project licensing under Apache 2.0 for consistency with Cloudflare's platform projects. Previous versions (0.1.0-0.4.18) had ambiguous licensing (ISC in package.json, MIT referenced in README, no LICENSE file).
+
 ## 0.4.19
 
 ### Patch Changes
