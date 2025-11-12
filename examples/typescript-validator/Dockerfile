@@ -8,7 +8,7 @@ RUN npm install -g esbuild
 WORKDIR /base
 RUN npm init -y && \
     npm pkg set type="module" && \
-    npm install zod@^3.23.0
+    npm install zod
 
 # Verify installation
 RUN node --version && npm --version && esbuild --version

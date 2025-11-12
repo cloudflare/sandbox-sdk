@@ -13,7 +13,6 @@ export interface ValidateResponse {
   sessionId: string;
   compiled: boolean;
   timings: {
-    install?: number;
     bundle?: number;
     load: number;
     execute: number;

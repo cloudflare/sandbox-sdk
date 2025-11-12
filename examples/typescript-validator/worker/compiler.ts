@@ -100,6 +100,11 @@ export class CompilerDO implements DurableObject {
         );
       }
 
+      // Extend alarm immediately to prevent cleanup during request processing
+      await this.state.storage.setAlarm(
+        Date.now() + CompilerDO.CLEANUP_DELAY_MS
+      );
+
       // Hash schema code to check cache
       const codeHash = await this.hashCode(body.schemaCode);
       const sessionId = codeHash.slice(0, 8); // Short ID
@@ -154,11 +159,6 @@ export class CompilerDO implements DurableObject {
           // Store bundle in DO storage
           await this.state.storage.put(codeHash, bundledCode);
           compiled = true;
-
-          // Set alarm to clean up after 2 hours of inactivity
-          await this.state.storage.setAlarm(
-            Date.now() + CompilerDO.CLEANUP_DELAY_MS
-          );
         } finally {
           // Always cleanup sandbox
           await sandbox.destroy();
@@ -187,7 +187,7 @@ export class CompilerDO implements DurableObject {
                   } catch (error) {
                     return new Response(JSON.stringify({
                       error: 'Execution failed',
-                      details: error.message
+                      details: error instanceof Error ? error.message : String(error)
                     }), {
                       status: 500,
                       headers: { 'content-type': 'application/json' }
@@ -223,11 +223,6 @@ export class CompilerDO implements DurableObject {
       };
 
       timings.execute = Date.now() - executeStart;
-
-      // Update alarm on each validation to extend cleanup time
-      await this.state.storage.setAlarm(
-        Date.now() + CompilerDO.CLEANUP_DELAY_MS
-      );
 
       // Return validation response
       return Response.json({
