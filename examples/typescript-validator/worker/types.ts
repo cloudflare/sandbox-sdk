@@ -33,3 +33,14 @@ export interface ErrorResponse {
   error: string;
   details?: string;
 }
+
+/**
+ * Result from Zod schema validation
+ */
+export interface ZodParseResult {
+  success: boolean;
+  data?: unknown;
+  error?: {
+    issues: unknown[];
+  };
+}

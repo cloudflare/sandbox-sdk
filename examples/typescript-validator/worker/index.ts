@@ -9,7 +9,16 @@ export default {
 
     // Route API requests to Compiler DO
     if (url.pathname === '/validate') {
-      const id = env.Compiler.idFromName('singleton');
+      // Use session ID from header to isolate per user
+      const sessionId = request.headers.get('X-Session-ID');
+      if (!sessionId) {
+        return Response.json(
+          { error: 'Missing X-Session-ID header' },
+          { status: 400 }
+        );
+      }
+
+      const id = env.Compiler.idFromName(sessionId);
       const stub = env.Compiler.get(id);
       return stub.fetch(request);
     }

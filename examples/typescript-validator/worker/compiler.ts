@@ -1,5 +1,10 @@
 import { getSandbox } from '@cloudflare/sandbox';
-import type { ValidateRequest, ValidateResponse, ErrorResponse } from './types';
+import type {
+  ValidateRequest,
+  ValidateResponse,
+  ErrorResponse,
+  ZodParseResult
+} from './types';
 
 /**
  * Compiler Durable Object
@@ -216,11 +221,7 @@ export class CompilerDO implements DurableObject {
       });
 
       const response = await worker.getEntrypoint().fetch(testRequest);
-      const result = (await response.json()) as {
-        success: boolean;
-        data?: unknown;
-        error?: { issues: unknown[] };
-      };
+      const result = (await response.json()) as ZodParseResult;
 
       timings.execute = Date.now() - executeStart;
 
