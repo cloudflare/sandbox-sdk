@@ -41,15 +41,59 @@ jobs:
           additional_permissions: |
             actions: read
 
-          # Custom prompt that ensures Claude reads CLAUDE.md first
           prompt: |
             REPO: ${{ github.repository }}
             ISSUE/PR: #${{ github.event.issue.number || github.event.pull_request.number }}
 
-            IMPORTANT: Before starting any work, read the CLAUDE.md file at the root of this repository. It contains critical project conventions, architecture patterns, and development guidelines that you must follow.
+            ## Task Context
 
-            After reading CLAUDE.md, proceed with the following task:
             ${{ github.event.comment.body || github.event.issue.body || github.event.review.body }}
+
+            ## Workflow Instructions
+
+            **STEP 1: Read project conventions**
+            Read CLAUDE.md at the root of this repository. It contains critical project conventions, architecture patterns, and development guidelines.
+
+            **STEP 2: Assess task complexity**
+            Determine if this task requires planning:
+            - **Needs planning**: New features, architectural changes, significant refactoring, adding major functionality
+            - **Direct execution**: Bug fixes, test fixes, investigations, documentation updates, simple one-line changes
+
+            **STEP 3: Execute appropriate workflow**
+
+            **For tasks needing planning:**
+            1. Use the brainstorming skill (`superpowers:brainstorming`) to:
+               - **IMPORTANT**: You are working autonomously (no user to answer questions)
+               - Use Socratic method on yourself: ask questions, explore answers, consider trade-offs
+               - The task context above contains all available information
+               - Explore 2-3 different approaches with pros/cons
+               - Design the solution covering: architecture, components, data flow, error handling, testing
+               - Save design to `/tmp/claude-plans/YYYY-MM-DD-<topic>-design.md` (temporary, not committed)
+
+            2. Use the writing-plans skill (`superpowers:writing-plans`) to:
+               - Create detailed, bite-sized implementation plan
+               - Include exact file paths, complete code examples, verification steps
+               - Save plan to `/tmp/claude-plans/YYYY-MM-DD-<feature>-implementation.md` (temporary, not committed)
+
+            3. Execute the complete implementation:
+               - Follow TDD for all code changes (write test first, watch fail, implement, verify pass)
+               - Complete the entire implementation
+               - Run all tests and verification steps
+               - **After completion**: Use requesting-code-review skill to review your own work
+               - Fix any issues found in self-review
+               - Commit changes following CLAUDE.md git guidelines
+
+            **For direct execution tasks:**
+            - Use test-driven-development for code changes
+            - Use systematic-debugging for investigations
+            - Use verification-before-completion before claiming done
+            - Follow CLAUDE.md conventions
+
+            **REMEMBER:**
+            - If a superpowers skill applies to your task, you MUST use it (not optional)
+            - Write tests before code (TDD iron law)
+            - Verify with evidence before claiming completion
+            - Create commits following CLAUDE.md git guidelines
 
           # Optional: Add claude_args to customize behavior and configuration
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
