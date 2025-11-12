@@ -1,5 +1,11 @@
 # @cloudflare/sandbox
 
+## 0.4.19
+
+### Patch Changes
+
+- [#203](https://github.com/cloudflare/sandbox-sdk/pull/203) [`63b07c0`](https://github.com/cloudflare/sandbox-sdk/commit/63b07c0895f3cb9bf44fc84df1b5671b27391152) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - Fix listFiles to work in hidden directories without includeHidden flag
+
 ## 0.4.18
 
 ### Patch Changes
