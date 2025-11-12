@@ -159,7 +159,7 @@ See the [examples directory](./examples) for complete working examples:
 
 ## License
 
-[MIT License](LICENSE)
+[Apache License 2.0](LICENSE)
 
 ## Links
 
