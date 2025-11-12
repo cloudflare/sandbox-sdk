@@ -101,4 +101,3 @@ Result
 
 - [Sandbox SDK Docs](https://developers.cloudflare.com/sandbox/)
 - [Dynamic Workers Docs](https://developers.cloudflare.com/workers/runtime-apis/bindings/worker-loader/)
-- [Design Doc](../../docs/plans/2025-11-11-typescript-validator-design.md)

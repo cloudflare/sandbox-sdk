@@ -52,11 +52,32 @@ export class CompilerDO implements DurableObject {
   private async handleValidate(request: Request): Promise<Response> {
     try {
       // Parse request
-      const body = (await request.json()) as ValidateRequest;
+      let body: ValidateRequest;
+      try {
+        body = (await request.json()) as ValidateRequest;
+      } catch (error) {
+        return Response.json(
+          {
+            error: 'Invalid JSON in request body',
+            details: error instanceof Error ? error.message : String(error)
+          } satisfies ErrorResponse,
+          { status: 400 }
+        );
+      }
+
       if (!body.schemaCode || typeof body.schemaCode !== 'string') {
         return Response.json(
           {
             error: 'Missing or invalid "schemaCode" field'
+          } satisfies ErrorResponse,
+          { status: 400 }
+        );
+      }
+
+      if (body.testData === undefined || body.testData === null) {
+        return Response.json(
+          {
+            error: 'Missing "testData" field'
           } satisfies ErrorResponse,
           { status: 400 }
         );
@@ -88,7 +109,6 @@ export class CompilerDO implements DurableObject {
 
       let compiled = false;
       const timings: {
-        install?: number;
         bundle?: number;
         load: number;
         execute: number;
@@ -178,7 +198,8 @@ export class CompilerDO implements DurableObject {
             `,
             'validator.js': bundledCode!
           },
-          globalOutbound: null // No network access
+          // Security: Prevent user-provided code from making external network requests
+          globalOutbound: null
         };
       });
 
