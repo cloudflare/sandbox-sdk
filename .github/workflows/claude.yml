@@ -68,12 +68,12 @@ jobs:
                - The task context above contains all available information
                - Explore 2-3 different approaches with pros/cons
                - Design the solution covering: architecture, components, data flow, error handling, testing
-               - Save design to `/tmp/claude-plans/YYYY-MM-DD-<topic>-design.md` (temporary, not committed)
+               - Save design to `${{ runner.temp }}/design.md` (temporary, not committed)
 
             2. Use the writing-plans skill (`superpowers:writing-plans`) to:
                - Create detailed, bite-sized implementation plan
                - Include exact file paths, complete code examples, verification steps
-               - Save plan to `/tmp/claude-plans/YYYY-MM-DD-<feature>-implementation.md` (temporary, not committed)
+               - Save plan to `${{ runner.temp }}/implementation.md` (temporary, not committed)
 
             3. Execute the complete implementation:
                - Follow TDD for all code changes (write test first, watch fail, implement, verify pass)
