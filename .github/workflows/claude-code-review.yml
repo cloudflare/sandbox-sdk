@@ -111,7 +111,7 @@ jobs:
             - If issues found: State the issue, reference location, explain why it matters. Move on.
 
             **Format**:
-            - **Inline comments** (using `mcp__github_inline_comment__create_inline_comment`): Use for specific line-by-line code issues
+            - **Inline comments**: Use for specific line-by-line code issues (file path, line number, comment)
             - **Main comment**: Summary only - overall assessment, architectural concerns, testing strategy, verdict. Do NOT duplicate inline comments here.
 
             **Main comment - write naturally:**
@@ -121,14 +121,39 @@ jobs:
             - New concerns: "New issue: error handling in container.ts doesn't cover..."
             - Overall verdict: "Looks good" or "Needs fixes before merge"
 
-            **Post inline comments** for specific code issues using `mcp__github_inline_comment__create_inline_comment`
+            **Submit review as a single cohesive unit:**
 
-            **Post your main comment:**
+            1. Get the latest commit SHA:
             ```bash
-            gh pr comment ${{ github.event.pull_request.number }} --body "YOUR_REVIEW_HERE" --repo ${{ github.repository }}
+            COMMIT_SHA=$(gh pr view ${{ github.event.pull_request.number }} --json headRefOid --jq '.headRefOid')
             ```
+
+            2. Create a JSON file (review.json) with this structure:
+            ```json
+            {
+              "body": "## Claude Code Review\n\nYour overall assessment here...",
+              "event": "COMMENT",
+              "commit_id": "COMMIT_SHA_HERE",
+              "comments": [
+                {
+                  "path": "path/to/file.ts",
+                  "line": 42,
+                  "body": "Your inline comment here"
+                }
+              ]
+            }
+            ```
+
+            3. Post the unified review:
+            ```bash
+            gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews \
+              --method POST \
+              --input review.json
+            ```
+
+            **Important**: This submits all inline comments AND the summary as a single review event, matching GitHub's native "Start a review" flow.
 
             Always post a NEW comment - never update previous ones. Natural conversation flow.
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://docs.claude.com/en/docs/claude-code/cli-reference for available options
-          claude_args: '--allowedTools "Task,Skill,mcp__github_inline_comment__create_inline_comment,mcp__cloudflare-docs__search_cloudflare_documentation,mcp__exa__get_code_context_exa,mcp__exa__web_search_exa,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh api:*),Bash(git *)"'
+          claude_args: '--allowedTools "Task,Skill,Write,mcp__cloudflare-docs__search_cloudflare_documentation,mcp__exa__get_code_context_exa,mcp__exa__web_search_exa,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh api:*),Bash(git *)"'
