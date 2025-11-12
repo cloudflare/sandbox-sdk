@@ -1220,8 +1220,9 @@ export class FileService implements FileSystemOperations {
       }
 
       // Filter hidden files unless includeHidden is true
+      // Use -name to filter by basename only, not full path
       if (!options.includeHidden) {
-        findCommand += ' -not -path "*/\\.*"';
+        findCommand += ' -not -name ".*"';
       }
 
       // Skip the base directory itself and format output

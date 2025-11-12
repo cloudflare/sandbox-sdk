@@ -20,6 +20,7 @@ import {
   test,
   vi
 } from 'vitest';
+import type { FileInfo } from '@repo/shared';
 import { getTestWorkerUrl, WranglerDevRunner } from './helpers/wrangler-runner';
 import {
   createSandboxId,
@@ -958,7 +959,9 @@ describe('File Operations Workflow (E2E)', () => {
     expect(listData.count).toBeGreaterThan(0);
 
     // Verify file has correct metadata and permissions
-    const dataFile = listData.files.find((f: any) => f.name === 'data.txt');
+    const dataFile = listData.files.find(
+      (f: FileInfo) => f.name === 'data.txt'
+    );
     expect(dataFile).toBeDefined();
     expect(dataFile.type).toBe('file');
     expect(dataFile.absolutePath).toBe('/workspace/project/data.txt');
@@ -970,7 +973,9 @@ describe('File Operations Workflow (E2E)', () => {
     expect(dataFile.permissions.executable).toBe(false);
 
     // Verify executable script has correct permissions
-    const scriptFile = listData.files.find((f: any) => f.name === 'script.sh');
+    const scriptFile = listData.files.find(
+      (f: FileInfo) => f.name === 'script.sh'
+    );
     expect(scriptFile).toBeDefined();
     expect(scriptFile.permissions.executable).toBe(true);
   }, 90000);
@@ -1026,10 +1031,14 @@ describe('File Operations Workflow (E2E)', () => {
     expect(listData.success).toBe(true);
 
     // Verify relative paths are correct
-    const rootFile = listData.files.find((f: any) => f.name === 'root.txt');
+    const rootFile = listData.files.find(
+      (f: FileInfo) => f.name === 'root.txt'
+    );
     expect(rootFile?.relativePath).toBe('root.txt');
 
-    const deepFile = listData.files.find((f: any) => f.name === 'deep.txt');
+    const deepFile = listData.files.find(
+      (f: FileInfo) => f.name === 'deep.txt'
+    );
     expect(deepFile?.relativePath).toBe('level1/level2/deep.txt');
   }, 90000);
 
@@ -1150,5 +1159,111 @@ describe('File Operations Workflow (E2E)', () => {
     const notExistsData = await notExistsResponse.json();
     expect(notExistsData.success).toBe(true);
     expect(notExistsData.exists).toBe(false);
+  }, 90000);
+
+  test('should list files in hidden directories without includeHidden flag', async () => {
+    currentSandboxId = createSandboxId();
+    const headers = createTestHeaders(currentSandboxId);
+
+    // Create hidden directory structure with non-hidden files
+    await vi.waitFor(
+      async () =>
+        fetchWithStartup(`${workerUrl}/api/file/mkdir`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            path: '/workspace/.hidden/foo/bar',
+            recursive: true
+          })
+        }),
+      { timeout: 90000, interval: 2000 }
+    );
+
+    // Write visible files in hidden directory
+    await fetch(`${workerUrl}/api/file/write`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        path: '/workspace/.hidden/foo/visible1.txt',
+        content: 'Visible file 1'
+      })
+    });
+
+    await fetch(`${workerUrl}/api/file/write`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        path: '/workspace/.hidden/foo/visible2.txt',
+        content: 'Visible file 2'
+      })
+    });
+
+    // Write hidden file in hidden directory
+    await fetch(`${workerUrl}/api/file/write`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        path: '/workspace/.hidden/foo/.hiddenfile.txt',
+        content: 'Hidden file'
+      })
+    });
+
+    // List files WITHOUT includeHidden flag - should show visible files only
+    const listResponse = await fetch(`${workerUrl}/api/list-files`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        path: '/workspace/.hidden/foo'
+      })
+    });
+
+    expect(listResponse.status).toBe(200);
+    const listData = await listResponse.json();
+
+    expect(listData.success).toBe(true);
+    expect(listData.files).toBeInstanceOf(Array);
+
+    // Should contain visible files
+    const visibleFiles = listData.files.filter(
+      (f: FileInfo) => !f.name.startsWith('.')
+    );
+    expect(visibleFiles.length).toBe(3); // visible1.txt, visible2.txt, bar/
+
+    const visible1 = listData.files.find(
+      (f: FileInfo) => f.name === 'visible1.txt'
+    );
+    expect(visible1).toBeDefined();
+
+    const visible2 = listData.files.find(
+      (f: FileInfo) => f.name === 'visible2.txt'
+    );
+    expect(visible2).toBeDefined();
+
+    // Should NOT contain hidden file
+    const hiddenFile = listData.files.find(
+      (f: FileInfo) => f.name === '.hiddenfile.txt'
+    );
+    expect(hiddenFile).toBeUndefined();
+
+    // List files WITH includeHidden flag - should show all files
+    const listWithHiddenResponse = await fetch(`${workerUrl}/api/list-files`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        path: '/workspace/.hidden/foo',
+        options: { includeHidden: true }
+      })
+    });
+
+    expect(listWithHiddenResponse.status).toBe(200);
+    const listWithHiddenData = await listWithHiddenResponse.json();
+
+    expect(listWithHiddenData.success).toBe(true);
+    expect(listWithHiddenData.files.length).toBe(4); // visible1.txt, visible2.txt, bar/, .hiddenfile.txt
+
+    const hiddenFileWithFlag = listWithHiddenData.files.find(
+      (f: FileInfo) => f.name === '.hiddenfile.txt'
+    );
+    expect(hiddenFileWithFlag).toBeDefined();
   }, 90000);
 });
