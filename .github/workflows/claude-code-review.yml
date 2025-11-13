@@ -228,3 +228,6 @@ jobs:
             **Important**: This workflow maintains conversation continuity - resolved issues show as "Resolved", ongoing issues have threaded replies, and only new issues create new comment threads.
 
             Always post a NEW comment - never update previous ones. Natural conversation flow.
+          # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
+          # or https://docs.claude.com/en/docs/claude-code/cli-reference for available options
+          claude_args: '--allowedTools "Task,Skill,Read,Glob,Grep,Write,TodoWrite,mcp__cloudflare-docs__search_cloudflare_documentation,mcp__exa__get_code_context_exa,mcp__exa__web_search_exa,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh repo view:*),Bash(gh api:*),Bash(git log:*),Bash(git cat-file:*),Bash(git rev-parse:*),Bash(jq:*)"'
