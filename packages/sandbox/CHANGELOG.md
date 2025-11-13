@@ -1,5 +1,13 @@
 # @cloudflare/sandbox
 
+## 0.4.21
+
+### Patch Changes
+
+- [#214](https://github.com/cloudflare/sandbox-sdk/pull/214) [`102fc4f`](https://github.com/cloudflare/sandbox-sdk/commit/102fc4fdfddac98189610334de6ca096153e2fe8) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Fix Docker build failures caused by turbo prune lockfile mismatch
+
+  Remove @cloudflare/vite-plugin from root devDependencies to avoid turbo prune bug with nested optionalDependencies. The vite-plugin is only used by examples which are excluded from Docker builds and already have it in their own package.json.
+
 ## 0.4.20
 
 ### Patch Changes
