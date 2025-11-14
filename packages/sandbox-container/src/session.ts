@@ -88,6 +88,8 @@ export interface RawExecResult {
 interface ExecOptions {
   /** Override working directory for this command only */
   cwd?: string;
+  /** Environment variables for this command only (does not persist in session) */
+  env?: Record<string, string>;
 }
 
 /** Command handle for tracking and killing running commands */
@@ -233,7 +235,8 @@ export class Session {
         logFile,
         exitCodeFile,
         options?.cwd,
-        false
+        false,
+        options?.env
       );
 
       // Write script to shell's stdin
@@ -333,7 +336,8 @@ export class Session {
         logFile,
         exitCodeFile,
         options?.cwd,
-        true
+        true,
+        options?.env
       );
 
       if (this.shell!.stdin && typeof this.shell!.stdin !== 'number') {
@@ -624,7 +628,8 @@ export class Session {
     logFile: string,
     exitCodeFile: string,
     cwd?: string,
-    isBackground = false
+    isBackground = false,
+    env?: Record<string, string>
   ): string {
     // Create unique FIFO names to prevent collisions
     const stdoutPipe = join(this.sessionDir!, `${cmdId}.stdout.pipe`);
@@ -638,6 +643,24 @@ export class Session {
     const safeExitCodeFile = this.escapeShellPath(exitCodeFile);
     const safeSessionDir = this.escapeShellPath(this.sessionDir!);
     const safePidFile = this.escapeShellPath(pidFile);
+
+    // Build command with environment variables if provided
+    // Use a subshell with export to ensure vars are available for the command
+    // This works with both builtins and external commands
+    let commandWithEnv: string;
+    if (env && Object.keys(env).length > 0) {
+      const exports = Object.entries(env)
+        .map(([key, value]) => {
+          // Escape the value for safe shell usage
+          const escapedValue = value.replace(/'/g, "'\\''");
+          return `export ${key}='${escapedValue}'`;
+        })
+        .join('; ');
+      // Wrap in subshell to isolate env vars (they don't persist in session)
+      commandWithEnv = `(${exports}; ${command})`;
+    } else {
+      commandWithEnv = command;
+    }
 
     // Build the FIFO script
     // For background: monitor handles cleanup (no trap needed)
@@ -684,7 +707,7 @@ export class Session {
         script += `  if cd ${safeCwd}; then\n`;
         script += `    # Execute command in BACKGROUND (runs in subshell, enables concurrency)\n`;
         script += `    {\n`;
-        script += `      ${command}\n`;
+        script += `      ${commandWithEnv}\n`;
         script += `      CMD_EXIT=$?\n`;
         script += `      # Write exit code\n`;
         script += `      echo "$CMD_EXIT" > ${safeExitCodeFile}.tmp\n`;
@@ -708,7 +731,7 @@ export class Session {
       } else {
         script += `  # Execute command in BACKGROUND (runs in subshell, enables concurrency)\n`;
         script += `  {\n`;
-        script += `    ${command}\n`;
+        script += `    ${commandWithEnv}\n`;
         script += `    CMD_EXIT=$?\n`;
         script += `    # Write exit code\n`;
         script += `    echo "$CMD_EXIT" > ${safeExitCodeFile}.tmp\n`;
@@ -738,7 +761,7 @@ export class Session {
         script += `  PREV_DIR=$(pwd)\n`;
         script += `  if cd ${safeCwd}; then\n`;
         script += `    # Execute command, redirect to temp files\n`;
-        script += `    { ${command}; } < /dev/null > "$log.stdout" 2> "$log.stderr"\n`;
+        script += `    { ${commandWithEnv}; } < /dev/null > "$log.stdout" 2> "$log.stderr"\n`;
         script += `    EXIT_CODE=$?\n`;
         script += `    # Restore directory\n`;
         script += `    cd "$PREV_DIR"\n`;
@@ -748,7 +771,7 @@ export class Session {
         script += `  fi\n`;
       } else {
         script += `  # Execute command, redirect to temp files\n`;
-        script += `  { ${command}; } < /dev/null > "$log.stdout" 2> "$log.stderr"\n`;
+        script += `  { ${commandWithEnv}; } < /dev/null > "$log.stdout" 2> "$log.stderr"\n`;
         script += `  EXIT_CODE=$?\n`;
       }
 

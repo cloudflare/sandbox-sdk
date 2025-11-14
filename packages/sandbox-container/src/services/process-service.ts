@@ -101,7 +101,8 @@ export class ProcessService {
         sessionId,
         command,
         options.cwd,
-        options.timeoutMs
+        options.timeoutMs,
+        options.env
       );
 
       if (!result.success) {
