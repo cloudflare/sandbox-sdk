@@ -1,5 +1,21 @@
 # @cloudflare/sandbox
 
+## 0.5.0
+
+### Minor Changes
+
+- [#213](https://github.com/cloudflare/sandbox-sdk/pull/213) [`8503265`](https://github.com/cloudflare/sandbox-sdk/commit/8503265d2491a1f8e1fc1ab2f9cf7f9f0baef34b) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Add opt-in `normalizeId` option to `getSandbox()` for preview URL compatibility.
+
+  Sandbox IDs with uppercase letters cause preview URL requests to route to different Durable Object instances (hostnames are case-insensitive). Use `{ normalizeId: true }` to lowercase IDs for preview URL support:
+
+  ```typescript
+  getSandbox(ns, 'MyProject-123', { normalizeId: true }); // Creates DO with key "myproject-123"
+  ```
+
+  **Important:** Different `normalizeId` values create different DO instances. If you have an existing sandbox with uppercase letters, create a new one with `normalizeId: true`.
+
+  **Deprecation warning:** IDs with uppercase letters will trigger a warning. In a future version, `normalizeId` will default to `true`.
+
 ## 0.4.21
 
 ### Patch Changes
