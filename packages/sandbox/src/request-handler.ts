@@ -36,7 +36,8 @@ export async function proxyToSandbox<E extends SandboxEnv>(
     }
 
     const { sandboxId, port, path, token } = routeInfo;
-    const sandbox = getSandbox(env.Sandbox, sandboxId);
+    // Preview URLs always use normalized (lowercase) IDs
+    const sandbox = getSandbox(env.Sandbox, sandboxId, { normalizeId: true });
 
     // Critical security check: Validate token (mandatory for all user ports)
     // Skip check for control plane port 3000

@@ -37,10 +37,24 @@ export function getSandbox(
   id: string,
   options?: SandboxOptions
 ): Sandbox {
-  const stub = getContainer(ns, id) as unknown as Sandbox;
+  const sanitizedId = sanitizeSandboxId(id);
+  const effectiveId = options?.normalizeId
+    ? sanitizedId.toLowerCase()
+    : sanitizedId;
 
-  // Store the name on first access
-  stub.setSandboxName?.(id);
+  const hasUppercase = /[A-Z]/.test(sanitizedId);
+  if (!options?.normalizeId && hasUppercase) {
+    const logger = createLogger({ component: 'sandbox-do' });
+    logger.warn(
+      `Sandbox ID "${sanitizedId}" contains uppercase letters, which causes issues with preview URLs (hostnames are case-insensitive). ` +
+        `normalizeId will default to true in a future version to prevent this. ` +
+        `Use lowercase IDs or pass { normalizeId: true } to prepare.`
+    );
+  }
+
+  const stub = getContainer(ns, effectiveId) as unknown as Sandbox;
+
+  stub.setSandboxName?.(effectiveId, options?.normalizeId);
 
   if (options?.baseUrl) {
     stub.setBaseUrl(options.baseUrl);
@@ -63,7 +77,6 @@ export function connect(stub: {
   fetch: (request: Request) => Promise<Response>;
 }) {
   return async (request: Request, port: number) => {
-    // Validate port before routing
     if (!validatePort(port)) {
       throw new SecurityError(
         `Invalid or restricted port: ${port}. Ports must be in range 1024-65535 and not reserved.`
@@ -81,6 +94,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   client: SandboxClient;
   private codeInterpreter: CodeInterpreter;
   private sandboxName: string | null = null;
+  private normalizeId: boolean = false;
   private baseUrl: string | null = null;
   private portTokens: Map<number, string> = new Map();
   private defaultSession: string | null = null;
@@ -115,10 +129,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     // The CodeInterpreter extracts client.interpreter from the sandbox
     this.codeInterpreter = new CodeInterpreter(this);
 
-    // Load the sandbox name, port tokens, and default session from storage on initialization
     this.ctx.blockConcurrencyWhile(async () => {
       this.sandboxName =
         (await this.ctx.storage.get<string>('sandboxName')) || null;
+      this.normalizeId =
+        (await this.ctx.storage.get<boolean>('normalizeId')) || false;
       this.defaultSession =
         (await this.ctx.storage.get<string>('defaultSession')) || null;
       const storedTokens =
@@ -133,11 +148,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     });
   }
 
-  // RPC method to set the sandbox name
-  async setSandboxName(name: string): Promise<void> {
+  async setSandboxName(name: string, normalizeId?: boolean): Promise<void> {
     if (!this.sandboxName) {
       this.sandboxName = name;
+      this.normalizeId = normalizeId || false;
       await this.ctx.storage.put('sandboxName', name);
+      await this.ctx.storage.put('normalizeId', this.normalizeId);
     }
   }
 
@@ -1031,20 +1047,29 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       );
     }
 
-    // Validate sandbox ID (will throw SecurityError if invalid)
-    const sanitizedSandboxId = sanitizeSandboxId(sandboxId);
+    // Hostnames are case-insensitive, routing requests to wrong DO instance when keys contain uppercase letters
+    const effectiveId = this.sandboxName || sandboxId;
+    const hasUppercase = /[A-Z]/.test(effectiveId);
+    if (!this.normalizeId && hasUppercase) {
+      throw new SecurityError(
+        `Preview URLs require lowercase sandbox IDs. Your ID "${effectiveId}" contains uppercase letters.\n\n` +
+          `To fix this:\n` +
+          `1. Create a new sandbox with: getSandbox(ns, "${effectiveId}", { normalizeId: true })\n` +
+          `2. This will create a sandbox with ID: "${effectiveId.toLowerCase()}"\n\n` +
+          `Note: Due to DNS case-insensitivity, IDs with uppercase letters cannot be used with preview URLs.`
+      );
+    }
+
+    const sanitizedSandboxId = sanitizeSandboxId(sandboxId).toLowerCase();
 
     const isLocalhost = isLocalhostPattern(hostname);
 
     if (isLocalhost) {
-      // Unified subdomain approach for localhost (RFC 6761)
       const [host, portStr] = hostname.split(':');
       const mainPort = portStr || '80';
 
-      // Use URL constructor for safe URL building
       try {
         const baseUrl = new URL(`http://${host}:${mainPort}`);
-        // Construct subdomain safely with mandatory token
         const subdomainHost = `${port}-${sanitizedSandboxId}-${token}.${host}`;
         baseUrl.hostname = subdomainHost;
 
@@ -1058,13 +1083,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       }
     }
 
-    // Production subdomain logic - enforce HTTPS
     try {
-      // Always use HTTPS for production (non-localhost)
-      const protocol = 'https';
-      const baseUrl = new URL(`${protocol}://${hostname}`);
-
-      // Construct subdomain safely with mandatory token
+      const baseUrl = new URL(`https://${hostname}`);
       const subdomainHost = `${port}-${sanitizedSandboxId}-${token}.${hostname}`;
       baseUrl.hostname = subdomainHost;
 

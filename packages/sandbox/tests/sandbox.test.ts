@@ -736,4 +736,90 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(result.sessionId).toBe('custom-session');
     });
   });
+
+  describe('constructPreviewUrl validation', () => {
+    it('should throw clear error for ID with uppercase letters without normalizeId', async () => {
+      await sandbox.setSandboxName('MyProject-123', false);
+
+      vi.spyOn(sandbox.client.ports, 'exposePort').mockResolvedValue({
+        port: 8080,
+        token: 'test-token-1234',
+        previewUrl: ''
+      });
+
+      await expect(
+        sandbox.exposePort(8080, { hostname: 'example.com' })
+      ).rejects.toThrow(/Preview URLs require lowercase sandbox IDs/);
+    });
+
+    it('should construct valid URL for lowercase ID', async () => {
+      await sandbox.setSandboxName('my-project', false);
+
+      vi.spyOn(sandbox.client.ports, 'exposePort').mockResolvedValue({
+        port: 8080,
+        token: 'mock-token',
+        previewUrl: ''
+      });
+
+      const result = await sandbox.exposePort(8080, {
+        hostname: 'example.com'
+      });
+
+      expect(result.url).toMatch(
+        /^https:\/\/8080-my-project-[a-z0-9_-]{16}\.example\.com\/?$/
+      );
+      expect(result.port).toBe(8080);
+    });
+
+    it('should construct valid URL with normalized ID', async () => {
+      await sandbox.setSandboxName('myproject-123', true);
+
+      vi.spyOn(sandbox.client.ports, 'exposePort').mockResolvedValue({
+        port: 4000,
+        token: 'mock-token',
+        previewUrl: ''
+      });
+
+      const result = await sandbox.exposePort(4000, { hostname: 'my-app.dev' });
+
+      expect(result.url).toMatch(
+        /^https:\/\/4000-myproject-123-[a-z0-9_-]{16}\.my-app\.dev\/?$/
+      );
+      expect(result.port).toBe(4000);
+    });
+
+    it('should construct valid localhost URL', async () => {
+      await sandbox.setSandboxName('test-sandbox', false);
+
+      vi.spyOn(sandbox.client.ports, 'exposePort').mockResolvedValue({
+        port: 8080,
+        token: 'mock-token',
+        previewUrl: ''
+      });
+
+      const result = await sandbox.exposePort(8080, {
+        hostname: 'localhost:3000'
+      });
+
+      expect(result.url).toMatch(
+        /^http:\/\/8080-test-sandbox-[a-z0-9_-]{16}\.localhost:3000\/?$/
+      );
+    });
+
+    it('should include helpful guidance in error message', async () => {
+      await sandbox.setSandboxName('MyProject-ABC', false);
+
+      vi.spyOn(sandbox.client.ports, 'exposePort').mockResolvedValue({
+        port: 8080,
+        token: 'test-token-1234',
+        previewUrl: ''
+      });
+
+      await expect(
+        sandbox.exposePort(8080, { hostname: 'example.com' })
+      ).rejects.toThrow(
+        /getSandbox\(ns, "MyProject-ABC", \{ normalizeId: true \}\)/
+      );
+    });
+  });
 });
