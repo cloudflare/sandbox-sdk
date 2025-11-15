@@ -1,20 +1,15 @@
-import process from 'node:process';
 import { Sandbox, getSandbox } from '@cloudflare/sandbox';
-import { env } from 'cloudflare:workers';
-
 export { Sandbox }; // export the Sandbox class for the worker
 
 import {
   Agent,
   run,
-  withTrace,
   Shell,
   ShellAction,
   ShellResult,
   ShellOutputResult,
   shellTool
 } from '@openai/agents';
-// import chalk from 'chalk';
 
 // Tool result for API responses
 interface ToolResult {
@@ -169,71 +164,11 @@ async function handleRunRequest(request: Request, env: Env): Promise<Response> {
   }
 }
 
-async function promptShellApproval(commands: string[]): Promise<boolean> {
-  if (process.env.SHELL_AUTO_APPROVE === '1') {
-    return true;
-  }
-
-  console.log('⚠️  Shell command approval required: \n');
-  commands.forEach((cmd) => console.log(`  💻 > ${cmd}`));
-  const { createInterface } = await import('node:readline/promises');
-  const rl = createInterface({
-    input: process.stdin,
-    output: process.stdout
-  });
-  try {
-    const answer = await rl.question('\nProceed? [y/N] ');
-    const approved = answer.trim().toLowerCase();
-    return approved === 'y' || approved === 'yes';
-  } finally {
-    rl.close();
-  }
-}
-
-async function main() {
-  const shell = new SandboxShell(
-    env.Sandbox as unknown as DurableObjectNamespace<Sandbox>
-  ); // hmm this should just work
-
-  const agent = new Agent({
-    name: 'Shell Assistant',
-    model: 'gpt-5.1',
-    instructions:
-      'You can execute shell commands to inspect the repository. Keep responses concise and include command output when helpful.',
-    tools: [
-      shellTool({
-        shell,
-        // could also be a function for you to determine if approval is needed
-        needsApproval: true,
-        onApproval: async (_ctx, approvalItem) => {
-          const commands =
-            approvalItem.rawItem.type === 'shell_call'
-              ? approvalItem.rawItem.action.commands
-              : [];
-          const approve = await promptShellApproval(commands);
-          return { approve };
-        }
-      })
-    ]
-  });
-
-  await withTrace('shell-tool-example', async () => {
-    const result = await run(agent, 'Show the Node.js version.');
-
-    console.log(`🤖 Agent: ${result.finalOutput}`);
-  });
-}
-
-// main().catch((error) => {
-//   console.error(error);
-//   process.exitCode = 1;
-// });
-
 export default {
   async fetch(
     request: Request,
     env: Env,
-    ctx: ExecutionContext
+    _ctx: ExecutionContext
   ): Promise<Response> {
     const url = new URL(request.url);
 
