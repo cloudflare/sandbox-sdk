@@ -1,0 +1,138 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu',
+    'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-color: #ffffff;
+  color: #1a1a1a;
+}
+
+.app {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+}
+
+.container {
+  width: 100%;
+  max-width: 600px;
+}
+
+form {
+  margin-bottom: 1.5rem;
+}
+
+.input {
+  width: 100%;
+  padding: 0.75rem 1rem;
+  font-size: 1rem;
+  border: 1px solid #808080;
+  border-radius: 4px;
+  background-color: #ffffff;
+  color: #1a1a1a;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.input:focus {
+  border-color: #404040;
+}
+
+.input:disabled {
+  background-color: #f5f5f5;
+  cursor: not-allowed;
+}
+
+.input::placeholder {
+  color: #808080;
+}
+
+.output {
+  border: 1px solid #808080;
+  border-radius: 4px;
+  background-color: #fafafa;
+  padding: 1rem;
+  min-height: 100px;
+}
+
+.output-section {
+  margin-bottom: 1.5rem;
+}
+
+.output-section:last-child {
+  margin-bottom: 0;
+}
+
+.output-label {
+  font-weight: 600;
+  color: #1a1a1a;
+  margin-bottom: 0.5rem;
+  font-size: 0.9rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.output-content {
+  color: #1a1a1a;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  line-height: 1.5;
+}
+
+.tool-result {
+  margin-bottom: 1rem;
+  padding: 0.75rem;
+  background-color: #ffffff;
+  border: 1px solid #d0d0d0;
+  border-radius: 4px;
+}
+
+.tool-result:last-child {
+  margin-bottom: 0;
+}
+
+.tool-command {
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-size: 0.9rem;
+  color: #404040;
+  margin-bottom: 0.5rem;
+  font-weight: 600;
+}
+
+.tool-output {
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-size: 0.85rem;
+  color: #1a1a1a;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  margin-top: 0.5rem;
+  padding-left: 0.5rem;
+  border-left: 2px solid #808080;
+}
+
+.tool-error {
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-size: 0.85rem;
+  color: #404040;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  margin-top: 0.5rem;
+  padding-left: 0.5rem;
+  border-left: 2px solid #808080;
+}
+
+.tool-exit-code {
+  font-size: 0.8rem;
+  color: #808080;
+  margin-top: 0.5rem;
+  font-style: italic;
+}
