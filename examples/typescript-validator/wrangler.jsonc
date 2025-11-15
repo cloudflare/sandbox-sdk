@@ -14,7 +14,7 @@
   "containers": [
     {
       "class_name": "Sandbox",
-      "image": "./Dockerfile",
+      "image": "./Dockerfile"
     }
   ],
   "durable_objects": {
