@@ -22,11 +22,11 @@
   "devDependencies": {
     "@cloudflare/vite-plugin": "^1.14.1",
     "@tailwindcss/vite": "^4.1.17",
-    "@types/node": "^24.9.2",
-    "@vitejs/plugin-react": "^5.1.0",
+    "@types/node": "^24.10.1",
+    "@vitejs/plugin-react": "^5.1.1",
     "typescript": "^5.9.3",
     "vite": "^7.2.2",
-    "wrangler": "^4.47.0"
+    "wrangler": "4.47.0"
   },
   "author": "",
   "license": "MIT"
