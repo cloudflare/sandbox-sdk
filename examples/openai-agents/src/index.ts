@@ -19,6 +19,32 @@ import {
 import { logger } from './logger';
 import type { CommandResult, FileOperationResult } from './types';
 
+// Helper functions for error handling
+function isErrorWithProperties(error: unknown): error is {
+  message?: string;
+  exitCode?: number;
+  stdout?: string;
+  stderr?: string;
+  status?: number;
+  stack?: string;
+} {
+  return typeof error === 'object' && error !== null;
+}
+
+function getErrorMessage(error: unknown): string {
+  if (isErrorWithProperties(error) && typeof error.message === 'string') {
+    return error.message;
+  }
+  return String(error);
+}
+
+function getErrorStack(error: unknown): string | undefined {
+  if (isErrorWithProperties(error) && typeof error.stack === 'string') {
+    return error.stack;
+  }
+  return undefined;
+}
+
 class SandboxShell implements Shell {
   private cwd: string = '/workspace';
   public results: CommandResult[] = [];
@@ -71,14 +97,16 @@ class SandboxShell implements Shell {
         } else {
           logger.info(`Command completed successfully`, { command });
         }
-      } catch (error: any) {
+      } catch (error: unknown) {
         // Handle network/HTTP errors or timeout errors
-        exitCode = typeof error?.exitCode === 'number' ? error.exitCode : null;
-        stdout = error?.stdout ?? '';
-        stderr = error?.stderr ?? '';
+        const errorObj = isErrorWithProperties(error) ? error : {};
+        exitCode =
+          typeof errorObj.exitCode === 'number' ? errorObj.exitCode : null;
+        stdout = typeof errorObj.stdout === 'string' ? errorObj.stdout : '';
+        stderr = typeof errorObj.stderr === 'string' ? errorObj.stderr : '';
 
         // Check if it's a timeout error
-        const errorMessage = error?.message ?? '';
+        const errorMessage = getErrorMessage(error);
         if (
           errorMessage.includes('timeout') ||
           errorMessage.includes('Timeout') ||
@@ -186,20 +214,21 @@ class WorkspaceEditor implements Editor {
         timestamp
       });
       return { status: 'completed', output: `Created ${operation.path}` };
-    } catch (error: any) {
+    } catch (error: unknown) {
       const timestamp = Date.now();
+      const errorMessage = getErrorMessage(error);
       const result: FileOperationResult = {
         operation: 'create',
         path: operation.path,
         status: 'failed',
         output: `Failed to create ${operation.path}`,
-        error: error?.message || String(error),
+        error: errorMessage,
         timestamp
       };
       this.results.push(result);
       logger.error('Failed to create file', {
         path: operation.path,
-        error: error?.message || error
+        error: errorMessage
       });
       throw error;
     }
@@ -226,19 +255,21 @@ class WorkspaceEditor implements Editor {
           path: targetPath,
           originalLength: original.length
         });
-      } catch (error: any) {
+      } catch (error: unknown) {
         // Sandbox API may throw errors for missing files
+        const errorObj = isErrorWithProperties(error) ? error : {};
+        const errorMessage = getErrorMessage(error);
         if (
-          error?.message?.includes('not found') ||
-          error?.message?.includes('ENOENT') ||
-          error?.status === 404
+          errorMessage.includes('not found') ||
+          errorMessage.includes('ENOENT') ||
+          errorObj.status === 404
         ) {
           logger.error('Cannot update missing file', { path: operation.path });
           throw new Error(`Cannot update missing file: ${operation.path}`);
         }
         logger.error('Error reading file', {
           path: operation.path,
-          error: error?.message || error
+          error: errorMessage
         });
         throw error;
       }
@@ -264,20 +295,21 @@ class WorkspaceEditor implements Editor {
         timestamp
       });
       return { status: 'completed', output: `Updated ${operation.path}` };
-    } catch (error: any) {
+    } catch (error: unknown) {
       const timestamp = Date.now();
+      const errorMessage = getErrorMessage(error);
       const result: FileOperationResult = {
         operation: 'update',
         path: operation.path,
         status: 'failed',
         output: `Failed to update ${operation.path}`,
-        error: error?.message || String(error),
+        error: errorMessage,
         timestamp
       };
       this.results.push(result);
       logger.error('Failed to update file', {
         path: operation.path,
-        error: error?.message || error
+        error: errorMessage
       });
       throw error;
     }
@@ -308,20 +340,21 @@ class WorkspaceEditor implements Editor {
         timestamp
       });
       return { status: 'completed', output: `Deleted ${operation.path}` };
-    } catch (error: any) {
+    } catch (error: unknown) {
       const timestamp = Date.now();
+      const errorMessage = getErrorMessage(error);
       const result: FileOperationResult = {
         operation: 'delete',
         path: operation.path,
         status: 'failed',
         output: `Failed to delete ${operation.path}`,
-        error: error?.message || String(error),
+        error: errorMessage,
         timestamp
       };
       this.results.push(result);
       logger.error('Failed to delete file', {
         path: operation.path,
-        error: error?.message || error
+        error: errorMessage
       });
       throw error;
     }
@@ -439,14 +472,16 @@ async function handleRunRequest(request: Request, env: Env): Promise<Response> {
         'Content-Type': 'application/json'
       }
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const errorMessage = getErrorMessage(error);
+    const errorStack = getErrorStack(error);
     logger.error('Error handling run request', {
-      error: error?.message || error,
-      stack: error?.stack
+      error: errorMessage,
+      stack: errorStack
     });
     return new Response(
       JSON.stringify({
-        error: error.message || 'Internal server error',
+        error: errorMessage || 'Internal server error',
         naturalResponse: 'An error occurred while processing your request.',
         commandResults: [],
         fileOperations: []
