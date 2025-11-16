@@ -10,3 +10,4 @@ FROM --platform=linux/arm64 cloudflare/sandbox-test:0.5.0
 
 # Required during local development to access exposed ports
 EXPOSE 8080
+EXPOSE 3000
