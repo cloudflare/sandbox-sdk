@@ -17,25 +17,7 @@ import {
 } from '@openai/agents';
 
 import { logger } from './logger';
-
-// Command result for API responses
-interface CommandResult {
-  command: string;
-  stdout: string;
-  stderr: string;
-  exitCode: number | null;
-  timestamp: number;
-}
-
-// File operation result for API responses
-interface FileOperationResult {
-  operation: 'create' | 'update' | 'delete';
-  path: string;
-  status: 'completed' | 'failed';
-  output: string;
-  error?: string;
-  timestamp: number;
-}
+import type { CommandResult, FileOperationResult } from './types';
 
 class SandboxShell implements Shell {
   private cwd: string = '/workspace';
@@ -364,12 +346,6 @@ class WorkspaceEditor implements Editor {
     }
     return filePath.substring(0, lastSlash) || '/';
   }
-
-  async seedWorkspace(): Promise<void> {
-    logger.debug('Seeding workspace', { root: this.root });
-    await this.sandbox.mkdir(this.root, { recursive: true });
-    logger.info('Workspace seeded', { root: this.root });
-  }
 }
 
 async function handleRunRequest(request: Request, env: Env): Promise<Response> {
@@ -398,10 +374,7 @@ async function handleRunRequest(request: Request, env: Env): Promise<Response> {
     logger.debug('Getting sandbox instance', {
       sessionId: 'workspace-session'
     });
-    const sandbox = getSandbox(
-      env.Sandbox as unknown as DurableObjectNamespace<Sandbox>,
-      'workspace-session'
-    );
+    const sandbox = getSandbox(env.Sandbox, 'workspace-session');
 
     // Create shell (automatically collects results)
     logger.debug('Creating SandboxShell');
@@ -410,9 +383,6 @@ async function handleRunRequest(request: Request, env: Env): Promise<Response> {
     // Create workspace editor
     logger.debug('Creating WorkspaceEditor', { root: '/workspace' });
     const editor = new WorkspaceEditor(sandbox, '/workspace');
-
-    // this seems to hang operations, so just commenting out for now
-    // await editor.seedWorkspace();
 
     // Create agent with both shell and patch tools, auto-approval for web API
     logger.debug('Creating Agent', {
@@ -444,7 +414,7 @@ async function handleRunRequest(request: Request, env: Env): Promise<Response> {
       outputLength: result.finalOutput?.length || 0
     });
 
-    // Combine and sort all results by timestamp
+    // Combine and sort all results by timestamp for logging
     const allResults = [
       ...shell.results.map((r) => ({ type: 'command' as const, ...r })),
       ...editor.results.map((r) => ({ type: 'file' as const, ...r }))
@@ -460,8 +430,7 @@ async function handleRunRequest(request: Request, env: Env): Promise<Response> {
     const response = {
       naturalResponse: result.finalOutput || null,
       commandResults: shell.results.sort((a, b) => a.timestamp - b.timestamp),
-      fileOperations: editor.results.sort((a, b) => a.timestamp - b.timestamp),
-      allResults
+      fileOperations: editor.results.sort((a, b) => a.timestamp - b.timestamp)
     };
 
     logger.info('Request completed successfully');

@@ -6,14 +6,14 @@
   "scripts": {
     "start": "vite dev",
     "deploy": "vite build && wrangler deploy",
-    "types": "wrangler types env.d.ts --include-runtime false"
+    "types": "wrangler types env.d.ts --include-runtime false",
+    "check": "tsc --noEmit"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "module",
   "dependencies": {
-    "@codesandbox/sandpack-react": "^2.20.0",
     "@openai/agents": "^0.3.2",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"

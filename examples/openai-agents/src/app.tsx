@@ -1,23 +1,7 @@
 import { createRoot } from 'react-dom/client';
 import { useState, useEffect, useRef } from 'react';
 import './index.css';
-
-interface CommandResult {
-  command: string;
-  stdout: string;
-  stderr: string;
-  exitCode: number | null;
-  timestamp: number;
-}
-
-interface FileOperationResult {
-  operation: 'create' | 'update' | 'delete';
-  path: string;
-  status: 'completed' | 'failed';
-  output: string;
-  error?: string;
-  timestamp: number;
-}
+import type { CommandResult, FileOperationResult } from './types';
 
 interface Response {
   naturalResponse: string | null;
