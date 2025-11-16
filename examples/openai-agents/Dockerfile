@@ -7,3 +7,6 @@
 # On a mac, you might need to actively pick up the
 # arm64 build of the image.
 FROM --platform=linux/arm64 cloudflare/sandbox-test:0.5.0
+
+# Required during local development to access exposed ports
+EXPOSE 8080
