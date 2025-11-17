@@ -68,6 +68,10 @@ export function getSandbox(
     stub.setKeepAlive(options.keepAlive);
   }
 
+  if (options?.containerTimeouts) {
+    stub.setContainerTimeouts(options.containerTimeouts);
+  }
+
   return Object.assign(stub, {
     wsConnect: connect(stub)
   });
@@ -120,6 +124,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     waitIntervalMS: 1000 // 1 second (reduces load)
   };
 
+  /**
+   * Active container timeout configuration
+   * Can be set via options, env vars, or defaults
+   */
+  private containerTimeouts = { ...this.DEFAULT_CONTAINER_TIMEOUTS };
+
   constructor(ctx: DurableObjectState<{}>, env: Env) {
     super(ctx, env);
 
@@ -131,6 +141,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         this.envVars[key] = envObj[key];
       }
     });
+
+    // Initialize timeouts with env var fallbacks
+    this.containerTimeouts = this.getDefaultTimeouts(envObj);
 
     this.logger = createLogger({
       component: 'sandbox-do',
@@ -162,6 +175,18 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       this.portTokens = new Map();
       for (const [portStr, token] of Object.entries(storedTokens)) {
         this.portTokens.set(parseInt(portStr, 10), token);
+      }
+
+      // Load saved timeout configuration (highest priority)
+      const storedTimeouts =
+        await this.ctx.storage.get<
+          NonNullable<SandboxOptions['containerTimeouts']>
+        >('containerTimeouts');
+      if (storedTimeouts) {
+        this.containerTimeouts = {
+          ...this.containerTimeouts,
+          ...storedTimeouts
+        };
       }
     });
   }
@@ -232,6 +257,41 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         }
       }
     }
+  }
+
+  /**
+   * RPC method to configure container startup timeouts
+   */
+  async setContainerTimeouts(
+    timeouts: NonNullable<SandboxOptions['containerTimeouts']>
+  ): Promise<void> {
+    this.containerTimeouts = {
+      ...this.containerTimeouts,
+      ...timeouts
+    };
+
+    // Persist to storage
+    await this.ctx.storage.put('containerTimeouts', this.containerTimeouts);
+
+    this.logger.debug('Container timeouts updated', this.containerTimeouts);
+  }
+
+  /**
+   * Get default timeouts with env var fallbacks
+   * Precedence: SDK defaults < Env vars < User config
+   */
+  private getDefaultTimeouts(env: any): typeof this.DEFAULT_CONTAINER_TIMEOUTS {
+    return {
+      instanceGetTimeoutMS:
+        parseInt(env?.SANDBOX_INSTANCE_TIMEOUT_MS, 10) ||
+        this.DEFAULT_CONTAINER_TIMEOUTS.instanceGetTimeoutMS,
+      portReadyTimeoutMS:
+        parseInt(env?.SANDBOX_PORT_TIMEOUT_MS, 10) ||
+        this.DEFAULT_CONTAINER_TIMEOUTS.portReadyTimeoutMS,
+      waitIntervalMS:
+        parseInt(env?.SANDBOX_POLL_INTERVAL_MS, 10) ||
+        this.DEFAULT_CONTAINER_TIMEOUTS.waitIntervalMS
+    };
   }
 
   /**
