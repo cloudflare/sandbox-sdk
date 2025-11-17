@@ -3,7 +3,6 @@ import { getTestWorkerUrl, WranglerDevRunner } from './helpers/wrangler-runner';
 import {
   createSandboxId,
   createTestHeaders,
-  fetchWithStartup,
   cleanupSandbox
 } from './helpers/test-fixtures';
 
@@ -48,18 +47,13 @@ describe('Build and Test Workflow', () => {
 
     test('should execute basic commands and verify file operations', async () => {
       // Step 1: Execute simple command
-      // Use vi.waitFor to handle container startup time
-      const echoResponse = await vi.waitFor(
-        async () =>
-          fetchWithStartup(`${workerUrl}/api/execute`, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify({
-              command: 'echo "Hello from sandbox"'
-            })
-          }),
-        { timeout: 90000, interval: 1000 }
-      );
+      const echoResponse = await fetch(`${workerUrl}/api/execute`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          command: 'echo "Hello from sandbox"'
+        })
+      });
 
       expect(echoResponse.status).toBe(200);
       const echoData = await echoResponse.json();

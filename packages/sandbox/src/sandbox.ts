@@ -21,6 +21,7 @@ import type {
 } from '@repo/shared';
 import {
   createLogger,
+  getEnvString,
   runWithLogger,
   type SessionDeleteResult,
   shellEscape,
@@ -81,6 +82,10 @@ export function getSandbox(
     stub.setKeepAlive(options.keepAlive);
   }
 
+  if (options?.containerTimeouts) {
+    stub.setContainerTimeouts(options.containerTimeouts);
+  }
+
   return Object.assign(stub, {
     wsConnect: connect(stub)
   });
@@ -116,17 +121,44 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private keepAliveEnabled: boolean = false;
   private activeMounts: Map<string, MountInfo> = new Map();
 
+  /**
+   * Default container startup timeouts (conservative for production)
+   * Based on Cloudflare docs: "Containers take several minutes to provision"
+   */
+  private readonly DEFAULT_CONTAINER_TIMEOUTS = {
+    // Time to get container instance and launch VM
+    // @cloudflare/containers default: 8s (too short for cold starts)
+    instanceGetTimeoutMS: 30_000, // 30 seconds
+
+    // Time for application to start and ports to be ready
+    // @cloudflare/containers default: 20s
+    portReadyTimeoutMS: 90_000, // 90 seconds (allows for heavy containers)
+
+    // Polling interval for checking container readiness
+    // @cloudflare/containers default: 300ms (too aggressive)
+    waitIntervalMS: 1000 // 1 second (reduces load)
+  };
+
+  /**
+   * Active container timeout configuration
+   * Can be set via options, env vars, or defaults
+   */
+  private containerTimeouts = { ...this.DEFAULT_CONTAINER_TIMEOUTS };
+
   constructor(ctx: DurableObjectState<{}>, env: Env) {
     super(ctx, env);
 
-    const envObj = env as any;
+    const envObj = env as Record<string, unknown>;
     // Set sandbox environment variables from env object
     const sandboxEnvKeys = ['SANDBOX_LOG_LEVEL', 'SANDBOX_LOG_FORMAT'] as const;
     sandboxEnvKeys.forEach((key) => {
       if (envObj?.[key]) {
-        this.envVars[key] = envObj[key];
+        this.envVars[key] = String(envObj[key]);
       }
     });
+
+    // Initialize timeouts with env var fallbacks
+    this.containerTimeouts = this.getDefaultTimeouts(envObj);
 
     this.logger = createLogger({
       component: 'sandbox-do',
@@ -158,6 +190,18 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       this.portTokens = new Map();
       for (const [portStr, token] of Object.entries(storedTokens)) {
         this.portTokens.set(parseInt(portStr, 10), token);
+      }
+
+      // Load saved timeout configuration (highest priority)
+      const storedTimeouts =
+        await this.ctx.storage.get<
+          NonNullable<SandboxOptions['containerTimeouts']>
+        >('containerTimeouts');
+      if (storedTimeouts) {
+        this.containerTimeouts = {
+          ...this.containerTimeouts,
+          ...storedTimeouts
+        };
       }
     });
   }
@@ -231,6 +275,137 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   /**
+   * RPC method to configure container startup timeouts
+   */
+  async setContainerTimeouts(
+    timeouts: NonNullable<SandboxOptions['containerTimeouts']>
+  ): Promise<void> {
+    const validated = { ...this.containerTimeouts };
+
+    // Validate each timeout if provided
+    if (timeouts.instanceGetTimeoutMS !== undefined) {
+      validated.instanceGetTimeoutMS = this.validateTimeout(
+        timeouts.instanceGetTimeoutMS,
+        'instanceGetTimeoutMS',
+        5_000,
+        300_000
+      );
+    }
+
+    if (timeouts.portReadyTimeoutMS !== undefined) {
+      validated.portReadyTimeoutMS = this.validateTimeout(
+        timeouts.portReadyTimeoutMS,
+        'portReadyTimeoutMS',
+        10_000,
+        600_000
+      );
+    }
+
+    if (timeouts.waitIntervalMS !== undefined) {
+      validated.waitIntervalMS = this.validateTimeout(
+        timeouts.waitIntervalMS,
+        'waitIntervalMS',
+        100,
+        5_000
+      );
+    }
+
+    this.containerTimeouts = validated;
+
+    // Persist to storage
+    await this.ctx.storage.put('containerTimeouts', this.containerTimeouts);
+
+    this.logger.debug('Container timeouts updated', this.containerTimeouts);
+  }
+
+  /**
+   * Validate a timeout value is within acceptable range
+   * Throws error if invalid - used for user-provided values
+   */
+  private validateTimeout(
+    value: number,
+    name: string,
+    min: number,
+    max: number
+  ): number {
+    if (
+      typeof value !== 'number' ||
+      Number.isNaN(value) ||
+      !Number.isFinite(value)
+    ) {
+      throw new Error(`${name} must be a valid finite number, got ${value}`);
+    }
+
+    if (value < min || value > max) {
+      throw new Error(
+        `${name} must be between ${min}-${max}ms, got ${value}ms`
+      );
+    }
+
+    return value;
+  }
+
+  /**
+   * Get default timeouts with env var fallbacks and validation
+   * Precedence: SDK defaults < Env vars < User config
+   */
+  private getDefaultTimeouts(
+    env: Record<string, unknown>
+  ): typeof this.DEFAULT_CONTAINER_TIMEOUTS {
+    const parseAndValidate = (
+      envVar: string | undefined,
+      name: keyof typeof this.DEFAULT_CONTAINER_TIMEOUTS,
+      min: number,
+      max: number
+    ): number => {
+      const defaultValue = this.DEFAULT_CONTAINER_TIMEOUTS[name];
+
+      if (envVar === undefined) {
+        return defaultValue;
+      }
+
+      const parsed = parseInt(envVar, 10);
+
+      if (Number.isNaN(parsed)) {
+        this.logger.warn(
+          `Invalid ${name}: "${envVar}" is not a number. Using default: ${defaultValue}ms`
+        );
+        return defaultValue;
+      }
+
+      if (parsed < min || parsed > max) {
+        this.logger.warn(
+          `Invalid ${name}: ${parsed}ms. Must be ${min}-${max}ms. Using default: ${defaultValue}ms`
+        );
+        return defaultValue;
+      }
+
+      return parsed;
+    };
+
+    return {
+      instanceGetTimeoutMS: parseAndValidate(
+        getEnvString(env, 'SANDBOX_INSTANCE_TIMEOUT_MS'),
+        'instanceGetTimeoutMS',
+        5_000, // Min 5s
+        300_000 // Max 5min
+      ),
+      portReadyTimeoutMS: parseAndValidate(
+        getEnvString(env, 'SANDBOX_PORT_TIMEOUT_MS'),
+        'portReadyTimeoutMS',
+        10_000, // Min 10s
+        600_000 // Max 10min
+      ),
+      waitIntervalMS: parseAndValidate(
+        getEnvString(env, 'SANDBOX_POLL_INTERVAL_MS'),
+        'waitIntervalMS',
+        100, // Min 100ms
+        5_000 // Max 5s
+      )
+    };
+  }
+
+  /*
    * Mount an S3-compatible bucket as a local directory using S3FS-FUSE
    *
    * Requires explicit endpoint URL. Credentials are auto-detected from environment
@@ -594,6 +769,117 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   /**
+   * Override Container.containerFetch to use production-friendly timeouts
+   * Automatically starts container with longer timeouts if not running
+   */
+  override async containerFetch(
+    requestOrUrl: Request | string | URL,
+    portOrInit?: number | RequestInit,
+    portParam?: number
+  ): Promise<Response> {
+    // Parse arguments to extract request and port
+    const { request, port } = this.parseContainerFetchArgs(
+      requestOrUrl,
+      portOrInit,
+      portParam
+    );
+
+    const state = await this.getState();
+
+    // If container not healthy, start it with production timeouts
+    if (state.status !== 'healthy') {
+      try {
+        this.logger.debug('Starting container with configured timeouts', {
+          instanceTimeout: this.containerTimeouts.instanceGetTimeoutMS,
+          portTimeout: this.containerTimeouts.portReadyTimeoutMS
+        });
+
+        await this.startAndWaitForPorts({
+          ports: port,
+          cancellationOptions: {
+            instanceGetTimeoutMS: this.containerTimeouts.instanceGetTimeoutMS,
+            portReadyTimeoutMS: this.containerTimeouts.portReadyTimeoutMS,
+            waitInterval: this.containerTimeouts.waitIntervalMS,
+            abort: request.signal
+          }
+        });
+      } catch (e) {
+        // Handle provisioning vs startup errors
+        if (this.isNoInstanceError(e)) {
+          return new Response(
+            'Container is currently provisioning. This can take several minutes on first deployment. Please retry in a moment.',
+            {
+              status: 503,
+              headers: { 'Retry-After': '10' } // Suggest 10s retry
+            }
+          );
+        }
+
+        // Other startup errors
+        this.logger.error(
+          'Container startup failed',
+          e instanceof Error ? e : new Error(String(e))
+        );
+        return new Response(
+          `Failed to start container: ${e instanceof Error ? e.message : String(e)}`,
+          { status: 500 }
+        );
+      }
+    }
+
+    // Delegate to parent for the actual fetch (handles TCP port access internally)
+    return await super.containerFetch(requestOrUrl, portOrInit, portParam);
+  }
+
+  /**
+   * Helper: Check if error is "no container instance available"
+   */
+  private isNoInstanceError(error: unknown): boolean {
+    return (
+      error instanceof Error &&
+      error.message.toLowerCase().includes('no container instance')
+    );
+  }
+
+  /**
+   * Helper: Parse containerFetch arguments (supports multiple signatures)
+   */
+  private parseContainerFetchArgs(
+    requestOrUrl: Request | string | URL,
+    portOrInit?: number | RequestInit,
+    portParam?: number
+  ): { request: Request; port: number } {
+    let request: Request;
+    let port: number | undefined;
+
+    if (requestOrUrl instanceof Request) {
+      request = requestOrUrl;
+      port = typeof portOrInit === 'number' ? portOrInit : undefined;
+    } else {
+      const url =
+        typeof requestOrUrl === 'string'
+          ? requestOrUrl
+          : requestOrUrl.toString();
+      const init = typeof portOrInit === 'number' ? {} : portOrInit || {};
+      port =
+        typeof portOrInit === 'number'
+          ? portOrInit
+          : typeof portParam === 'number'
+            ? portParam
+            : undefined;
+      request = new Request(url, init);
+    }
+
+    port ??= this.defaultPort;
+
+    if (port === undefined) {
+      throw new Error('No port specified for container fetch');
+    }
+
+    return { request, port };
+  }
+
+  /**
    * Override onActivityExpired to prevent automatic shutdown when keepAlive is enabled
    * When keepAlive is disabled, calls parent implementation which stops the container
    */
@@ -704,9 +990,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         // Persist to storage so it survives hot reloads
         await this.ctx.storage.put('defaultSession', sessionId);
         this.logger.debug('Default session initialized', { sessionId });
-      } catch (error: any) {
+      } catch (error: unknown) {
         // If session already exists (e.g., after hot reload), reuse it
-        if (error?.message?.includes('already exists')) {
+        if (
+          error instanceof Error &&
+          error.message.includes('already exists')
+        ) {
           this.logger.debug('Reusing existing session after reload', {
             sessionId
           });

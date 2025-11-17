@@ -308,6 +308,54 @@ export interface SandboxOptions {
    * @default false
    */
   normalizeId?: boolean;
+
+  /**
+   * Container startup timeout configuration
+   *
+   * Tune timeouts based on your container's characteristics. SDK defaults (30s instance, 90s ports)
+   * work for most use cases. Adjust for heavy containers or fail-fast applications.
+   *
+   * Can also be configured via environment variables:
+   * - SANDBOX_INSTANCE_TIMEOUT_MS
+   * - SANDBOX_PORT_TIMEOUT_MS
+   * - SANDBOX_POLL_INTERVAL_MS
+   *
+   * Precedence: options > env vars > SDK defaults
+   *
+   * @example
+   * // Heavy containers (ML models, large apps)
+   * getSandbox(ns, id, {
+   *   containerTimeouts: { portReadyTimeoutMS: 180_000 }
+   * })
+   *
+   * @example
+   * // Fail-fast for latency-sensitive apps
+   * getSandbox(ns, id, {
+   *   containerTimeouts: {
+   *     instanceGetTimeoutMS: 15_000,
+   *     portReadyTimeoutMS: 30_000
+   *   }
+   * })
+   */
+  containerTimeouts?: {
+    /**
+     * Time to wait for container instance provisioning
+     * @default 30000 (30s) - or SANDBOX_INSTANCE_TIMEOUT_MS env var
+     */
+    instanceGetTimeoutMS?: number;
+
+    /**
+     * Time to wait for application startup and ports to be ready
+     * @default 90000 (90s) - or SANDBOX_PORT_TIMEOUT_MS env var
+     */
+    portReadyTimeoutMS?: number;
+
+    /**
+     * How often to poll for container readiness
+     * @default 1000 (1s) - or SANDBOX_POLL_INTERVAL_MS env var
+     */
+    waitIntervalMS?: number;
+  };
 }
 
 /**

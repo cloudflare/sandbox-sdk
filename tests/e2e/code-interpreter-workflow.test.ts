@@ -27,7 +27,6 @@ import { getTestWorkerUrl, WranglerDevRunner } from './helpers/wrangler-runner';
 import {
   createSandboxId,
   createTestHeaders,
-  fetchWithStartup,
   cleanupSandbox
 } from './helpers/test-fixtures';
 
@@ -64,14 +63,13 @@ describe('Code Interpreter Workflow (E2E)', () => {
     const headers = createTestHeaders(currentSandboxId);
 
     // Create Python context
-    const pythonCtxResponse = await vi.waitFor(
-      async () =>
-        fetchWithStartup(`${workerUrl}/api/code/context/create`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({ language: 'python' })
-        }),
-      { timeout: 90000, interval: 2000 }
+    const pythonCtxResponse = await fetch(
+      `${workerUrl}/api/code/context/create`,
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ language: 'python' })
+      }
     );
 
     expect(pythonCtxResponse.status).toBe(200);
@@ -113,15 +111,11 @@ describe('Code Interpreter Workflow (E2E)', () => {
     const headers = createTestHeaders(currentSandboxId);
 
     // Create context
-    const createResponse = await vi.waitFor(
-      async () =>
-        fetchWithStartup(`${workerUrl}/api/code/context/create`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({ language: 'python' })
-        }),
-      { timeout: 90000, interval: 2000 }
-    );
+    const createResponse = await fetch(`${workerUrl}/api/code/context/create`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ language: 'python' })
+    });
 
     const context = await createResponse.json();
     const contextId = context.id;
@@ -160,15 +154,11 @@ describe('Code Interpreter Workflow (E2E)', () => {
     const headers = createTestHeaders(currentSandboxId);
 
     // Create Python context
-    const ctxResponse = await vi.waitFor(
-      async () =>
-        fetchWithStartup(`${workerUrl}/api/code/context/create`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({ language: 'python' })
-        }),
-      { timeout: 90000, interval: 2000 }
-    );
+    const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ language: 'python' })
+    });
 
     const context = await ctxResponse.json();
 
@@ -195,15 +185,11 @@ describe('Code Interpreter Workflow (E2E)', () => {
     const headers = createTestHeaders(currentSandboxId);
 
     // Create context
-    const ctxResponse = await vi.waitFor(
-      async () =>
-        fetchWithStartup(`${workerUrl}/api/code/context/create`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({ language: 'python' })
-        }),
-      { timeout: 90000, interval: 2000 }
-    );
+    const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ language: 'python' })
+    });
 
     const context = await ctxResponse.json();
 
@@ -242,15 +228,11 @@ describe('Code Interpreter Workflow (E2E)', () => {
     const headers = createTestHeaders(currentSandboxId);
 
     // Create context
-    const ctxResponse = await vi.waitFor(
-      async () =>
-        fetchWithStartup(`${workerUrl}/api/code/context/create`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({ language: 'python' })
-        }),
-      { timeout: 90000, interval: 2000 }
-    );
+    const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ language: 'python' })
+    });
 
     const context = await ctxResponse.json();
 
@@ -283,15 +265,11 @@ describe('Code Interpreter Workflow (E2E)', () => {
     const headers = createTestHeaders(currentSandboxId);
 
     // Create JavaScript context
-    const ctxResponse = await vi.waitFor(
-      async () =>
-        fetchWithStartup(`${workerUrl}/api/code/context/create`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({ language: 'javascript' })
-        }),
-      { timeout: 90000, interval: 2000 }
-    );
+    const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ language: 'javascript' })
+    });
 
     const context = await ctxResponse.json();
 
@@ -317,15 +295,11 @@ describe('Code Interpreter Workflow (E2E)', () => {
     const headers = createTestHeaders(currentSandboxId);
 
     // Create context
-    const ctxResponse = await vi.waitFor(
-      async () =>
-        fetchWithStartup(`${workerUrl}/api/code/context/create`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({ language: 'javascript' })
-        }),
-      { timeout: 90000, interval: 2000 }
-    );
+    const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ language: 'javascript' })
+    });
 
     const context = await ctxResponse.json();
 
@@ -361,15 +335,11 @@ describe('Code Interpreter Workflow (E2E)', () => {
     const headers = createTestHeaders(currentSandboxId);
 
     // Create context
-    const ctxResponse = await vi.waitFor(
-      async () =>
-        fetchWithStartup(`${workerUrl}/api/code/context/create`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({ language: 'javascript' })
-        }),
-      { timeout: 90000, interval: 2000 }
-    );
+    const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ language: 'javascript' })
+    });
 
     const context = await ctxResponse.json();
 
@@ -401,15 +371,11 @@ describe('Code Interpreter Workflow (E2E)', () => {
     const headers = createTestHeaders(currentSandboxId);
 
     // Create context
-    const ctxResponse = await vi.waitFor(
-      async () =>
-        fetchWithStartup(`${workerUrl}/api/code/context/create`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({ language: 'python' })
-        }),
-      { timeout: 90000, interval: 2000 }
-    );
+    const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ language: 'python' })
+    });
 
     const context = await ctxResponse.json();
 
@@ -487,14 +453,13 @@ for i in range(3):
     const headers = createTestHeaders(currentSandboxId);
 
     // Create Python context
-    const pythonCtxResponse = await vi.waitFor(
-      async () =>
-        fetchWithStartup(`${workerUrl}/api/code/context/create`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({ language: 'python' })
-        }),
-      { timeout: 90000, interval: 2000 }
+    const pythonCtxResponse = await fetch(
+      `${workerUrl}/api/code/context/create`,
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ language: 'python' })
+      }
     );
 
     const pythonCtx = await pythonCtxResponse.json();
@@ -559,15 +524,11 @@ console.log('Sum:', sum);
     const headers = createTestHeaders(currentSandboxId);
 
     // Create two Python contexts
-    const ctx1Response = await vi.waitFor(
-      async () =>
-        fetchWithStartup(`${workerUrl}/api/code/context/create`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({ language: 'python' })
-        }),
-      { timeout: 90000, interval: 2000 }
-    );
+    const ctx1Response = await fetch(`${workerUrl}/api/code/context/create`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ language: 'python' })
+    });
 
     const context1 = await ctx1Response.json();
 
@@ -620,19 +581,11 @@ console.log('Sum:', sum);
     const headers = createTestHeaders(currentSandboxId);
 
     // Try to create context with invalid language
-    const ctxResponse = await vi.waitFor(
-      async () =>
-        fetchWithStartup(
-          `${workerUrl}/api/code/context/create`,
-          {
-            method: 'POST',
-            headers,
-            body: JSON.stringify({ language: 'invalid-lang' })
-          },
-          { expectSuccess: false }
-        ),
-      { timeout: 90000, interval: 2000 }
-    );
+    const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ language: 'invalid-lang' })
+    });
 
     // Should return error
     expect(ctxResponse.status).toBeGreaterThanOrEqual(400);
@@ -645,24 +598,16 @@ console.log('Sum:', sum);
     const headers = createTestHeaders(currentSandboxId);
 
     // Try to execute with fake context
-    const execResponse = await vi.waitFor(
-      async () =>
-        fetchWithStartup(
-          `${workerUrl}/api/code/execute`,
-          {
-            method: 'POST',
-            headers,
-            body: JSON.stringify({
-              code: 'print("test")',
-              options: {
-                context: { id: 'fake-context-id-12345', language: 'python' }
-              }
-            })
-          },
-          { expectSuccess: false }
-        ),
-      { timeout: 90000, interval: 2000 }
-    );
+    const execResponse = await fetch(`${workerUrl}/api/code/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        code: 'print("test")',
+        options: {
+          context: { id: 'fake-context-id-12345', language: 'python' }
+        }
+      })
+    });
 
     // Should return error
     expect(execResponse.status).toBeGreaterThanOrEqual(400);
@@ -675,15 +620,11 @@ console.log('Sum:', sum);
     const headers = createTestHeaders(currentSandboxId);
 
     // Initialize sandbox
-    await vi.waitFor(
-      async () =>
-        fetchWithStartup(`${workerUrl}/api/execute`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({ command: 'echo "init"' })
-        }),
-      { timeout: 90000, interval: 2000 }
-    );
+    await fetch(`${workerUrl}/api/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ command: 'echo "init"' })
+    });
 
     // Try to delete non-existent context
     const deleteResponse = await fetch(
