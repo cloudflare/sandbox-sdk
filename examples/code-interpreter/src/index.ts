@@ -1,5 +1,5 @@
-import OpenAI from 'openai';
 import { getSandbox } from '@cloudflare/sandbox';
+import type OpenAI from 'openai';
 
 export { Sandbox } from '@cloudflare/sandbox';
 
@@ -10,12 +10,6 @@ type AIResponse = OpenAI.Responses.Response;
 type ResponseInputItem = OpenAI.Responses.ResponseInputItem;
 type FunctionTool = OpenAI.Responses.FunctionTool;
 type FunctionCall = OpenAI.Responses.ResponseFunctionToolCall;
-
-interface SandboxResult {
-  results?: Array<{ text?: string; html?: string; [key: string]: any }>;
-  logs?: { stdout?: string[]; stderr?: string[] };
-  error?: string;
-}
 
 async function callCloudflareAPI(
   env: Env,
@@ -51,9 +45,9 @@ async function executePythonCode(env: Env, code: string): Promise<string> {
   const sandboxId = env.Sandbox.idFromName('default');
   const sandbox = getSandbox(env.Sandbox, sandboxId.toString());
   const pythonCtx = await sandbox.createCodeContext({ language: 'python' });
-  const result = (await sandbox.runCode(code, {
+  const result = await sandbox.runCode(code, {
     context: pythonCtx
-  })) as SandboxResult;
+  });
 
   // Extract output from results (expressions)
   if (result.results?.length) {
@@ -70,7 +64,7 @@ async function executePythonCode(env: Env, code: string): Promise<string> {
   }
   if (result.logs?.stderr?.length) {
     if (output) output += '\n';
-    output += 'Error: ' + result.logs.stderr.join('\n');
+    output += `Error: ${result.logs.stderr.join('\n')}`;
   }
 
   return result.error

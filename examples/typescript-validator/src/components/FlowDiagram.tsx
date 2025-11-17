@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
-import DottedBackground from './DottedBackground';
 import type { StatusLine } from '../types';
+import DottedBackground from './DottedBackground';
 
 interface FlowDiagramProps {
   statusLines: StatusLine[];
@@ -54,10 +54,10 @@ export default function FlowDiagram({ statusLines }: FlowDiagramProps) {
       const loadMatch = line.text.match(/Load.*?\((\d+)ms\)/);
       const executeMatch = line.text.match(/Execute.*?\((\d+)ms\)/);
 
-      if (installMatch) result.install = parseInt(installMatch[1]);
-      if (bundleMatch) result.bundle = parseInt(bundleMatch[1]);
-      if (loadMatch) result.load = parseInt(loadMatch[1]);
-      if (executeMatch) result.execute = parseInt(executeMatch[1]);
+      if (installMatch) result.install = parseInt(installMatch[1], 10);
+      if (bundleMatch) result.bundle = parseInt(bundleMatch[1], 10);
+      if (loadMatch) result.load = parseInt(loadMatch[1], 10);
+      if (executeMatch) result.execute = parseInt(executeMatch[1], 10);
     });
 
     return result;
@@ -123,9 +123,10 @@ export default function FlowDiagram({ statusLines }: FlowDiagramProps) {
         {/* Schema Node */}
         <div className="flex flex-col items-center">
           <div
-            className={`w-24 h-24 rounded-sm border-2 border-dashed flex flex-col items-center justify-center gap-1 transition-all duration-300 ${schemaNodeDone ? 'border-[#521000] bg-[#5210000d]' : 'border-[#ebd5c1] bg-[#fffbf5]'}`}
+            className={`w-24 h-24 rounded-sm border-2 border-dashed flex flex-col items-center justify-center gap-1 transition-all duration-300 ${schemaNodeDone ? 'border-text-dark bg-[#5210000d]' : 'border-border-beige bg-bg-cream'}`}
           >
             <svg className="w-8 h-8" viewBox="0 0 25 24" fill="none">
+              <title>Schema</title>
               <path
                 d="M9.87182 18.3256L5.14774 12.0072L9.84586 5.86857L8.93876 4.63086L3.64504 11.5551L3.6377 12.4407L8.95688 19.5633L9.87182 18.3256Z"
                 fill="currentColor"
@@ -177,6 +178,7 @@ export default function FlowDiagram({ statusLines }: FlowDiagramProps) {
             className="absolute inset-0 w-full h-full"
             preserveAspectRatio="none"
           >
+            <title>Connection</title>
             <line
               x1="0"
               y1="50%"
@@ -193,14 +195,15 @@ export default function FlowDiagram({ statusLines }: FlowDiagramProps) {
         {/* Sandbox Node */}
         <div className="flex flex-col items-center relative">
           {isCached && (
-            <div className="absolute -top-6 left-1/2 -translate-x-1/2 bg-[#19e306] text-[#fffbf5] text-[9px] font-medium px-2 py-0.5 rounded-full whitespace-nowrap">
+            <div className="absolute -top-6 left-1/2 -translate-x-1/2 bg-[#19e306] text-bg-cream text-[9px] font-medium px-2 py-0.5 rounded-full whitespace-nowrap">
               Cached ⚡
             </div>
           )}
           <div
-            className={`w-24 h-24 rounded-sm border-2 border-dashed flex flex-col items-center justify-center gap-1 transition-all duration-300 ${sandboxNodeDone ? 'border-[#521000] bg-[#5210000d]' : 'border-[#ebd5c1] bg-[#fffbf5]'}`}
+            className={`w-24 h-24 rounded-sm border-2 border-dashed flex flex-col items-center justify-center gap-1 transition-all duration-300 ${sandboxNodeDone ? 'border-text-dark bg-[#5210000d]' : 'border-border-beige bg-bg-cream'}`}
           >
             <svg className="w-8 h-8" viewBox="0 0 25 24" fill="none">
+              <title>Sandbox SDK</title>
               <path
                 d="M21.5 16.0018V7.99739C21.4997 7.73541 21.4308 7.47807 21.3001 7.25101C21.1694 7.02394 20.9815 6.83506 20.7552 6.70317L13.6302 2.55661C13.2869 2.35675 12.8968 2.25146 12.4995 2.25146C12.1023 2.25146 11.7122 2.35675 11.3689 2.55661L4.24484 6.70317C4.01848 6.83506 3.83061 7.02394 3.69993 7.25101C3.56925 7.47807 3.50032 7.73541 3.5 7.99739V16.0018C3.50016 16.2639 3.56901 16.5214 3.6997 16.7487C3.83038 16.9759 4.01834 17.1649 4.24484 17.2969L11.3698 21.4435C11.7132 21.6431 12.1033 21.7482 12.5005 21.7482C12.8976 21.7482 13.2877 21.6431 13.6311 21.4435L20.7561 17.2969C20.9824 17.1648 21.1702 16.9758 21.3007 16.7485C21.4312 16.5213 21.4999 16.2638 21.5 16.0018Z"
                 stroke="currentColor"
@@ -241,6 +244,7 @@ export default function FlowDiagram({ statusLines }: FlowDiagramProps) {
             className="absolute inset-0 w-full h-full"
             preserveAspectRatio="none"
           >
+            <title>Connection</title>
             <line
               x1="0"
               y1="50%"
@@ -257,9 +261,10 @@ export default function FlowDiagram({ statusLines }: FlowDiagramProps) {
         {/* Dynamic Worker Node */}
         <div className="flex flex-col items-center">
           <div
-            className={`w-24 h-24 rounded-sm border-2 border-dashed flex flex-col items-center justify-center gap-1 transition-all duration-300 ${workerNodeDone ? 'border-[#521000] bg-[#5210000d]' : 'border-[#ebd5c1] bg-[#fffbf5]'}`}
+            className={`w-24 h-24 rounded-sm border-2 border-dashed flex flex-col items-center justify-center gap-1 transition-all duration-300 ${workerNodeDone ? 'border-text-dark bg-[#5210000d]' : 'border-border-beige bg-bg-cream'}`}
           >
             <svg className="w-8 h-8" viewBox="0 0 25 24" fill="none">
+              <title>Dynamic Worker</title>
               <path
                 d="M9.87182 18.3256L5.14774 12.0072L9.84586 5.86857L8.93876 4.63086L3.64504 11.5551L3.6377 12.4407L8.95688 19.5633L9.87182 18.3256Z"
                 fill="currentColor"
@@ -301,6 +306,7 @@ export default function FlowDiagram({ statusLines }: FlowDiagramProps) {
             className="absolute inset-0 w-full h-full"
             preserveAspectRatio="none"
           >
+            <title>Connection</title>
             <line
               x1="0"
               y1="50%"
@@ -317,9 +323,10 @@ export default function FlowDiagram({ statusLines }: FlowDiagramProps) {
         {/* Result Node */}
         <div className="flex flex-col items-center">
           <div
-            className={`w-24 h-24 rounded-sm border-2 border-dashed flex flex-col items-center justify-center gap-1 transition-all duration-300 ${resultNodeDone ? 'border-[#521000] bg-[#5210000d]' : 'border-[#ebd5c1] bg-[#fffbf5]'}`}
+            className={`w-24 h-24 rounded-sm border-2 border-dashed flex flex-col items-center justify-center gap-1 transition-all duration-300 ${resultNodeDone ? 'border-text-dark bg-[#5210000d]' : 'border-border-beige bg-bg-cream'}`}
           >
             <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none">
+              <title>Result</title>
               <circle
                 cx="12"
                 cy="12"

@@ -1,10 +1,10 @@
 import { useState } from 'react';
+import CodeViewerSheet from './components/CodeViewerSheet';
+import CornerSquares from './components/CornerSquares';
+import FlowDiagram from './components/FlowDiagram';
 import SchemaEditor from './components/SchemaEditor';
 import TestDataPanel from './components/TestDataPanel';
-import FlowDiagram from './components/FlowDiagram';
-import CornerSquares from './components/CornerSquares';
-import CodeViewerSheet from './components/CodeViewerSheet';
-import type { ValidateResponse, ErrorResponse, StatusLine } from './types';
+import type { ErrorResponse, StatusLine, ValidateResponse } from './types';
 
 const DEFAULT_SCHEMA = `import { z } from 'zod';
 
@@ -69,7 +69,7 @@ export default function App() {
       return;
     }
 
-    let parsedTestData;
+    let parsedTestData: unknown;
     try {
       parsedTestData = JSON.parse(trimmedTestData);
     } catch (error) {
@@ -182,12 +182,14 @@ export default function App() {
           </div>
           <div className="flex gap-3">
             <button
+              type="button"
               onClick={() => setIsCodeViewerOpen(true)}
               className="bg-bg-cream hover:bg-bg-cream-dark text-text-dark border border-border-beige px-6 py-3 rounded-full font-medium text-sm transition-all duration-200 active:scale-[0.98]"
             >
               View Code
             </button>
             <button
+              type="button"
               onClick={handleValidate}
               disabled={isValidating}
               className="bg-orange-primary hover:border-dashed disabled:bg-border-light disabled:cursor-not-allowed text-bg-cream border border-orange-primary px-6 py-3 rounded-full font-medium text-sm transition-all duration-200 active:scale-[0.98]"
