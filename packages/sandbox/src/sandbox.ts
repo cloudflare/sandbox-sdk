@@ -283,7 +283,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
   }
 
-  override onStop() {
+  override async onStop() {
     this.logger.debug('Sandbox stopped');
 
     // Clear in-memory state that references the old container
@@ -292,8 +292,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     this.defaultSession = null;
 
     // Persist cleanup to storage so state is clean on next container start
-    this.ctx.storage.delete('portTokens');
-    this.ctx.storage.delete('defaultSession');
+    await Promise.all([
+      this.ctx.storage.delete('portTokens'),
+      this.ctx.storage.delete('defaultSession')
+    ]);
   }
 
   override onError(error: unknown) {

@@ -66,8 +66,8 @@ export class ProcessStore {
       updated.status
     );
     if (isTerminal) {
-      await this.writeProcessFile(id, updated);
       this.processes.delete(id);
+      await this.writeProcessFile(id, updated);
     }
   }
 
@@ -79,7 +79,29 @@ export class ProcessStore {
 
   async list(filters?: ProcessFilters): Promise<ProcessRecord[]> {
     await this.ensureInitialized();
+
+    // Start with active processes in memory
     let processes = Array.from(this.processes.values());
+
+    // Include completed processes from disk
+    try {
+      const files = (await Bun.file(this.processDir).exists())
+        ? await Array.fromAsync(
+            new Bun.Glob('*.json').scan({ cwd: this.processDir })
+          )
+        : [];
+
+      for (const file of files) {
+        const processId = file.replace('.json', '');
+        const process = await this.readProcessFile(processId);
+        if (process) {
+          processes.push(process);
+        }
+      }
+    } catch (error) {
+      // If scanning fails, just return in-memory processes
+      console.error('Failed to scan completed processes:', error);
+    }
 
     if (filters?.status) {
       processes = processes.filter((p) => p.status === filters.status);

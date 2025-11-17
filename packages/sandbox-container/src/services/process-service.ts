@@ -439,6 +439,17 @@ export class ProcessService {
         | null = null;
       let statusListener: ((status: string) => void) | null = null;
 
+      const cleanup = () => {
+        if (outputListener) {
+          process.outputListeners.delete(outputListener);
+          outputListener = null;
+        }
+        if (statusListener) {
+          process.statusListeners.delete(statusListener);
+          statusListener = null;
+        }
+      };
+
       const stream = new ReadableStream({
         start(controller) {
           const encoder = new TextEncoder();
@@ -458,6 +469,7 @@ export class ProcessService {
 
           statusListener = (status: string) => {
             if (['completed', 'failed', 'killed', 'error'].includes(status)) {
+              cleanup();
               controller.close();
             }
           };
@@ -469,17 +481,12 @@ export class ProcessService {
           if (
             ['completed', 'failed', 'killed', 'error'].includes(process.status)
           ) {
+            cleanup();
             controller.close();
           }
         },
         cancel() {
-          // Critical: Remove listeners when stream is cancelled to prevent memory leak
-          if (outputListener) {
-            process.outputListeners.delete(outputListener);
-          }
-          if (statusListener) {
-            process.statusListeners.delete(statusListener);
-          }
+          cleanup();
         }
       });
 
