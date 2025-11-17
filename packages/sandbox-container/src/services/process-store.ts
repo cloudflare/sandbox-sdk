@@ -99,11 +99,9 @@ export class ProcessStore {
 
     // Include completed processes from disk
     try {
-      const files = (await Bun.file(this.processDir).exists())
-        ? await Array.fromAsync(
-            new Bun.Glob('*.json').scan({ cwd: this.processDir })
-          )
-        : [];
+      const files = await Array.fromAsync(
+        new Bun.Glob('*.json').scan({ cwd: this.processDir })
+      );
 
       for (const file of files) {
         const processId = file.replace('.json', '');
@@ -113,7 +111,7 @@ export class ProcessStore {
         }
       }
     } catch (error) {
-      // If scanning fails, just return in-memory processes
+      // If scanning fails (e.g., directory doesn't exist), just return in-memory processes
       this.logger.error(
         'Failed to scan completed processes from disk',
         error instanceof Error ? error : new Error(String(error))
