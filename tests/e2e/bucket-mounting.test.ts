@@ -10,8 +10,7 @@ import {
 import {
   cleanupSandbox,
   createSandboxId,
-  createTestHeaders,
-  fetchWithStartup
+  createTestHeaders
 } from './helpers/test-fixtures';
 import {
   getTestWorkerUrl,
@@ -88,8 +87,8 @@ describe('Bucket Mounting E2E', () => {
 
       // Mount the bucket
       const mountResponse = await vi.waitFor(
-        async () =>
-          fetchWithStartup(`${workerUrl}/api/bucket/mount`, {
+        async () => {
+          const res = await fetch(`${workerUrl}/api/bucket/mount`, {
             method: 'POST',
             headers,
             body: JSON.stringify({
@@ -99,7 +98,10 @@ describe('Bucket Mounting E2E', () => {
                 endpoint: `https://${process.env.CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com`
               }
             })
-          }),
+          });
+          if (!res.ok) throw new Error('Not ready');
+          return res;
+        },
         { timeout: 60000, interval: 2000 }
       );
 
