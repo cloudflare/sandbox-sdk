@@ -1,4 +1,4 @@
-import OpenAI from 'openai';
+import type OpenAI from 'openai';
 import { getSandbox } from '@cloudflare/sandbox';
 
 export { Sandbox } from '@cloudflare/sandbox';
@@ -70,7 +70,7 @@ async function executePythonCode(env: Env, code: string): Promise<string> {
   }
   if (result.logs?.stderr?.length) {
     if (output) output += '\n';
-    output += 'Error: ' + result.logs.stderr.join('\n');
+    output += `Error: ${result.logs.stderr.join('\n')}`;
   }
 
   return result.error

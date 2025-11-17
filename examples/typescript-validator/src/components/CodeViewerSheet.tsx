@@ -84,6 +84,7 @@ const result = await response.json();`;
     <>
       {/* Backdrop */}
       {isOpen && (
+        // biome-ignore lint/a11y/noStaticElementInteractions: backdrop is interactive
         <div
           className="fixed inset-0 bg-black/20 z-40 transition-opacity"
           onClick={onClose}
@@ -119,6 +120,7 @@ const result = await response.json();`;
                     stroke="currentColor"
                     viewBox="0 0 24 24"
                   >
+                    <title>Sandbox SDK Docs</title>
                     <path
                       strokeLinecap="round"
                       strokeLinejoin="round"
@@ -140,6 +142,7 @@ const result = await response.json();`;
                     stroke="currentColor"
                     viewBox="0 0 24 24"
                   >
+                    <title>Dynamic Workers Docs</title>
                     <path
                       strokeLinecap="round"
                       strokeLinejoin="round"
@@ -151,6 +154,7 @@ const result = await response.json();`;
               </div>
             </div>
             <button
+              type="button"
               onClick={onClose}
               className="text-text-dark hover:text-orange-primary transition-colors"
               aria-label="Close"
@@ -161,6 +165,7 @@ const result = await response.json();`;
                 stroke="currentColor"
                 viewBox="0 0 24 24"
               >
+                <title>Close</title>
                 <path
                   strokeLinecap="round"
                   strokeLinejoin="round"
@@ -174,6 +179,7 @@ const result = await response.json();`;
           {/* Tabs */}
           <div className="flex border-b border-border-beige bg-bg-cream-dark">
             <button
+              type="button"
               onClick={() => setActiveTab('compilation')}
               className={`px-6 py-3 text-sm font-medium transition-colors border-b-2 ${
                 activeTab === 'compilation'
@@ -184,6 +190,7 @@ const result = await response.json();`;
               Compilation (Sandbox SDK)
             </button>
             <button
+              type="button"
               onClick={() => setActiveTab('execution')}
               className={`px-6 py-3 text-sm font-medium transition-colors border-b-2 ${
                 activeTab === 'execution'
@@ -210,9 +217,21 @@ const result = await response.json();`;
                   style={{ ...style, backgroundColor: 'transparent' }}
                 >
                   {tokens.map((line, i) => (
-                    <div key={i} {...getLineProps({ line })}>
+                    <div
+                      key={
+                        // biome-ignore lint/suspicious/noArrayIndexKey: i is a valid prop
+                        i
+                      }
+                      {...getLineProps({ line })}
+                    >
                       {line.map((token, key) => (
-                        <span key={key} {...getTokenProps({ token })} />
+                        <span
+                          key={
+                            // biome-ignore lint/suspicious/noArrayIndexKey: key is a valid prop
+                            key
+                          }
+                          {...getTokenProps({ token })}
+                        />
                       ))}
                     </div>
                   ))}
