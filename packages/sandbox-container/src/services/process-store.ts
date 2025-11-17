@@ -69,8 +69,19 @@ export class ProcessStore {
       updated.status
     );
     if (isTerminal) {
+      try {
+        await this.writeProcessFile(id, updated);
+      } catch (error) {
+        // Write failed, still delete to prevent memory leak
+        // Explicit tradeoff: container stability > process history
+        this.logger.error(
+          'Failed to persist completed process, will be lost on restart',
+          error instanceof Error ? error : new Error(String(error)),
+          { processId: id }
+        );
+      }
+      // Always delete from memory to prevent leak, even if write failed
       this.processes.delete(id);
-      await this.writeProcessFile(id, updated);
     }
   }
 
@@ -126,32 +137,23 @@ export class ProcessStore {
     id: string,
     process: ProcessRecord
   ): Promise<void> {
-    try {
-      // Serialize process record, excluding non-serializable fields
-      const serializable = {
-        id: process.id,
-        pid: process.pid,
-        command: process.command,
-        status: process.status,
-        startTime: process.startTime,
-        endTime: process.endTime,
-        exitCode: process.exitCode,
-        stdout: process.stdout,
-        stderr: process.stderr,
-        commandHandle: process.commandHandle
-        // Exclude: outputListeners, statusListeners (Set objects, not serializable)
-      };
+    // Serialize process record, excluding non-serializable fields
+    const serializable = {
+      id: process.id,
+      pid: process.pid,
+      command: process.command,
+      status: process.status,
+      startTime: process.startTime,
+      endTime: process.endTime,
+      exitCode: process.exitCode,
+      stdout: process.stdout,
+      stderr: process.stderr,
+      commandHandle: process.commandHandle
+      // Exclude: outputListeners, statusListeners (Set objects, not serializable)
+    };
 
-      const filePath = this.getProcessFilePath(id);
-      await Bun.write(filePath, JSON.stringify(serializable, null, 2));
-    } catch (error) {
-      // Log but don't throw - file persistence is best-effort
-      this.logger.error(
-        'Failed to persist process to disk',
-        error instanceof Error ? error : new Error(String(error)),
-        { processId: id }
-      );
-    }
+    const filePath = this.getProcessFilePath(id);
+    await Bun.write(filePath, JSON.stringify(serializable, null, 2));
   }
 
   private async readProcessFile(id: string): Promise<ProcessRecord | null> {
