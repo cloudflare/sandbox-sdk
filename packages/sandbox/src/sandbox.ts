@@ -261,7 +261,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       mountPath,
       endpoint: options.endpoint,
       provider,
-      credentials,
       passwordFilePath,
       mounted: false
     });
@@ -289,7 +288,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         mountPath,
         endpoint: options.endpoint,
         provider,
-        credentials,
         passwordFilePath,
         mounted: true
       });
@@ -463,7 +461,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     const optionsStr = shellEscape(s3fsArgs.join(','));
     const mountCmd = `s3fs ${shellEscape(bucket)} ${shellEscape(mountPath)} -o ${optionsStr}`;
 
-    this.logger.debug(`Executing mount command: ${mountCmd}`, {
+    this.logger.debug('Executing s3fs mount', {
+      bucket,
+      mountPath,
       provider,
       resolvedOptions
     });
