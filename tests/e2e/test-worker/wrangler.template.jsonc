@@ -35,5 +35,12 @@
       "new_sqlite_classes": ["Sandbox"],
       "tag": "v1"
     }
+  ],
+
+  "r2_buckets": [
+    {
+      "binding": "TEST_BUCKET",
+      "bucket_name": "sandbox-e2e-test"
+    }
   ]
 }
