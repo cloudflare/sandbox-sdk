@@ -4,8 +4,6 @@ export { Sandbox }; // export the Sandbox class for the worker
 
 import { Agent, run, shellTool, applyPatchTool } from '@openai/agents';
 
-import { logger } from './logger';
-
 // Helper functions for error handling
 function isErrorWithProperties(error: unknown): error is {
   message?: string;
@@ -33,43 +31,49 @@ function getErrorStack(error: unknown): string | undefined {
 }
 
 async function handleRunRequest(request: Request, env: Env): Promise<Response> {
-  logger.debug('handleRunRequest called', {
+  console.debug('[openai-example]', 'handleRunRequest called', {
     method: request.method,
     url: request.url
   });
 
   try {
     // Parse request body
-    logger.debug('Parsing request body');
+    console.debug('[openai-example]', 'Parsing request body');
     const body = (await request.json()) as { input?: string };
     const input = body.input;
 
     if (!input || typeof input !== 'string') {
-      logger.warn('Invalid or missing input field', { input });
+      console.warn('[openai-example]', 'Invalid or missing input field', {
+        input
+      });
       return new Response(
         JSON.stringify({ error: 'Missing or invalid input field' }),
         { status: 400, headers: { 'Content-Type': 'application/json' } }
       );
     }
 
-    logger.info('Processing request', { inputLength: input.length });
+    console.info('[openai-example]', 'Processing request', {
+      inputLength: input.length
+    });
 
     // Get sandbox instance (reused for both shell and editor)
-    logger.debug('Getting sandbox instance', {
+    console.debug('[openai-example]', 'Getting sandbox instance', {
       sessionId: 'workspace-session'
     });
     const sandbox = getSandbox(env.Sandbox, 'workspace-session');
 
     // Create shell (automatically collects results)
-    logger.debug('Creating SandboxShell');
+    console.debug('[openai-example]', 'Creating SandboxShell');
     const shell = new Shell(sandbox);
 
     // Create workspace editor
-    logger.debug('Creating WorkspaceEditor', { root: '/workspace' });
+    console.debug('[openai-example]', 'Creating WorkspaceEditor', {
+      root: '/workspace'
+    });
     const editor = new Editor(sandbox, '/workspace');
 
     // Create agent with both shell and patch tools, auto-approval for web API
-    logger.debug('Creating Agent', {
+    console.debug('[openai-example]', 'Creating Agent', {
       name: 'Sandbox Studio',
       model: 'gpt-5.1'
     });
@@ -91,9 +95,9 @@ async function handleRunRequest(request: Request, env: Env): Promise<Response> {
     });
 
     // Run the agent
-    logger.info('Running agent', { input });
+    console.info('[openai-example]', 'Running agent', { input });
     const result = await run(agent, input);
-    logger.debug('Agent run completed', {
+    console.debug('[openai-example]', 'Agent run completed', {
       hasOutput: !!result.finalOutput,
       outputLength: result.finalOutput?.length || 0
     });
@@ -104,7 +108,7 @@ async function handleRunRequest(request: Request, env: Env): Promise<Response> {
       ...editor.results.map((r) => ({ type: 'file' as const, ...r }))
     ].sort((a, b) => a.timestamp - b.timestamp);
 
-    logger.debug('Results collected', {
+    console.debug('[openai-example]', 'Results collected', {
       commandResults: shell.results.length,
       fileOperations: editor.results.length,
       totalResults: allResults.length
@@ -117,7 +121,7 @@ async function handleRunRequest(request: Request, env: Env): Promise<Response> {
       fileOperations: editor.results.sort((a, b) => a.timestamp - b.timestamp)
     };
 
-    logger.info('Request completed successfully');
+    console.info('[openai-example]', 'Request completed successfully');
     return new Response(JSON.stringify(response), {
       headers: {
         'Content-Type': 'application/json'
@@ -126,7 +130,7 @@ async function handleRunRequest(request: Request, env: Env): Promise<Response> {
   } catch (error: unknown) {
     const errorMessage = getErrorMessage(error);
     const errorStack = getErrorStack(error);
-    logger.error('Error handling run request', {
+    console.error('[openai-example]', 'Error handling run request', {
       error: errorMessage,
       stack: errorStack
     });
@@ -154,7 +158,7 @@ export default {
     _ctx: ExecutionContext
   ): Promise<Response> {
     const url = new URL(request.url);
-    logger.debug('Fetch handler called', {
+    console.debug('[openai-example]', 'Fetch handler called', {
       pathname: url.pathname,
       method: request.method
     });
@@ -163,7 +167,7 @@ export default {
       return handleRunRequest(request, env);
     }
 
-    logger.warn('Route not found', {
+    console.warn('[openai-example]', 'Route not found', {
       pathname: url.pathname,
       method: request.method
     });
