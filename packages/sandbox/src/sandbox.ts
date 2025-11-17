@@ -1,6 +1,7 @@
-import type { DurableObject } from 'cloudflare:workers';
 import { Container, getContainer, switchPort } from '@cloudflare/containers';
 import type {
+  BucketCredentials,
+  BucketProvider,
   CodeContext,
   CreateContextOptions,
   ExecEvent,
@@ -9,6 +10,7 @@ import type {
   ExecutionResult,
   ExecutionSession,
   ISandbox,
+  MountBucketOptions,
   Process,
   ProcessOptions,
   ProcessStatus,
@@ -22,6 +24,7 @@ import {
   getEnvString,
   runWithLogger,
   type SessionDeleteResult,
+  shellEscape,
   TraceContext
 } from '@repo/shared';
 import { type ExecuteResponse, SandboxClient } from './clients';
@@ -31,6 +34,16 @@ import { CodeInterpreter } from './interpreter';
 import { isLocalhostPattern } from './request-handler';
 import { SecurityError, sanitizeSandboxId, validatePort } from './security';
 import { parseSSEStream } from './sse-parser';
+import {
+  detectCredentials,
+  detectProviderFromUrl,
+  resolveS3fsOptions
+} from './storage-mount';
+import {
+  InvalidMountConfigError,
+  S3FSMountError
+} from './storage-mount/errors';
+import type { MountInfo } from './storage-mount/types';
 import { SDK_VERSION } from './version';
 
 export function getSandbox(
@@ -106,6 +119,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   envVars: Record<string, string> = {};
   private logger: ReturnType<typeof createLogger>;
   private keepAliveEnabled: boolean = false;
+  private activeMounts: Map<string, MountInfo> = new Map();
 
   /**
    * Default container startup timeouts (conservative for production)
@@ -337,11 +351,296 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     };
   }
 
+  /*
+   * Mount an S3-compatible bucket as a local directory using S3FS-FUSE
+   *
+   * Requires explicit endpoint URL. Credentials are auto-detected from environment
+   * variables or can be provided explicitly.
+   *
+   * @param bucket - Bucket name
+   * @param mountPath - Absolute path in container to mount at
+   * @param options - Configuration options with required endpoint
+   * @throws MissingCredentialsError if no credentials found in environment
+   * @throws S3FSMountError if S3FS mount command fails
+   * @throws InvalidMountConfigError if bucket name, mount path, or endpoint is invalid
+   */
+  async mountBucket(
+    bucket: string,
+    mountPath: string,
+    options: MountBucketOptions
+  ): Promise<void> {
+    this.logger.info(`Mounting bucket ${bucket} to ${mountPath}`);
+
+    // Validate options
+    this.validateMountOptions(bucket, mountPath, options);
+
+    // Detect provider from explicit option or URL pattern
+    const provider: BucketProvider | null =
+      options.provider || detectProviderFromUrl(options.endpoint);
+
+    this.logger.debug(`Detected provider: ${provider || 'unknown'}`, {
+      explicitProvider: options.provider
+    });
+
+    // Detect credentials
+    const credentials = detectCredentials(options, this.envVars);
+
+    // Generate unique password file path
+    const passwordFilePath = this.generatePasswordFilePath();
+
+    // Reserve mount path immediately to prevent race conditions
+    // (two concurrent mount calls would both pass validation otherwise)
+    this.activeMounts.set(mountPath, {
+      bucket,
+      mountPath,
+      endpoint: options.endpoint,
+      provider,
+      passwordFilePath,
+      mounted: false
+    });
+
+    try {
+      // Create password file with credentials
+      await this.createPasswordFile(passwordFilePath, bucket, credentials);
+
+      // Create mount directory
+      await this.exec(`mkdir -p ${shellEscape(mountPath)}`);
+
+      // Execute S3FS mount with password file
+      await this.executeS3FSMount(
+        bucket,
+        mountPath,
+        options,
+        provider,
+        passwordFilePath
+      );
+
+      // Mark as successfully mounted
+      this.activeMounts.set(mountPath, {
+        bucket,
+        mountPath,
+        endpoint: options.endpoint,
+        provider,
+        passwordFilePath,
+        mounted: true
+      });
+
+      this.logger.info(`Successfully mounted bucket ${bucket} to ${mountPath}`);
+    } catch (error) {
+      // Clean up password file on failure
+      await this.deletePasswordFile(passwordFilePath);
+
+      // Clean up reservation on failure
+      this.activeMounts.delete(mountPath);
+      throw error;
+    }
+  }
+
+  /**
+   * Manually unmount a bucket filesystem
+   *
+   * @param mountPath - Absolute path where the bucket is mounted
+   * @throws InvalidMountConfigError if mount path doesn't exist or isn't mounted
+   */
+  async unmountBucket(mountPath: string): Promise<void> {
+    this.logger.info(`Unmounting bucket from ${mountPath}`);
+
+    // Look up mount by path
+    const mountInfo = this.activeMounts.get(mountPath);
+
+    // Throw error if mount doesn't exist
+    if (!mountInfo) {
+      throw new InvalidMountConfigError(
+        `No active mount found at path: ${mountPath}`
+      );
+    }
+
+    // Unmount the filesystem
+    try {
+      await this.exec(`fusermount -u ${shellEscape(mountPath)}`);
+      mountInfo.mounted = false;
+
+      // Only remove from tracking if unmount succeeded
+      this.activeMounts.delete(mountPath);
+    } finally {
+      // Always cleanup password file, even if unmount fails
+      await this.deletePasswordFile(mountInfo.passwordFilePath);
+    }
+
+    this.logger.info(`Successfully unmounted bucket from ${mountPath}`);
+  }
+
+  /**
+   * Validate mount options
+   */
+  private validateMountOptions(
+    bucket: string,
+    mountPath: string,
+    options: MountBucketOptions
+  ): void {
+    // Require endpoint field
+    if (!options.endpoint) {
+      throw new InvalidMountConfigError(
+        'Endpoint is required. Provide the full S3-compatible endpoint URL.'
+      );
+    }
+
+    // Basic URL validation
+    try {
+      new URL(options.endpoint);
+    } catch (error) {
+      throw new InvalidMountConfigError(
+        `Invalid endpoint URL: "${options.endpoint}". Must be a valid HTTP(S) URL.`
+      );
+    }
+
+    // Validate bucket name (S3-compatible naming rules)
+    const bucketNameRegex = /^[a-z0-9]([a-z0-9.-]{0,61}[a-z0-9])?$/;
+    if (!bucketNameRegex.test(bucket)) {
+      throw new InvalidMountConfigError(
+        `Invalid bucket name: "${bucket}". Bucket names must be 3-63 characters, ` +
+          `lowercase alphanumeric, dots, or hyphens, and cannot start/end with dots or hyphens.`
+      );
+    }
+
+    // Validate mount path is absolute
+    if (!mountPath.startsWith('/')) {
+      throw new InvalidMountConfigError(
+        `Mount path must be absolute (start with /): "${mountPath}"`
+      );
+    }
+
+    // Check for duplicate mount path
+    if (this.activeMounts.has(mountPath)) {
+      const existingMount = this.activeMounts.get(mountPath);
+      throw new InvalidMountConfigError(
+        `Mount path "${mountPath}" is already in use by bucket "${existingMount?.bucket}". ` +
+          `Unmount the existing bucket first or use a different mount path.`
+      );
+    }
+  }
+
+  /**
+   * Generate unique password file path for s3fs credentials
+   */
+  private generatePasswordFilePath(): string {
+    const uuid = crypto.randomUUID();
+    return `/tmp/.passwd-s3fs-${uuid}`;
+  }
+
+  /**
+   * Create password file with s3fs credentials
+   * Format: bucket:accessKeyId:secretAccessKey
+   */
+  private async createPasswordFile(
+    passwordFilePath: string,
+    bucket: string,
+    credentials: BucketCredentials
+  ): Promise<void> {
+    const content = `${bucket}:${credentials.accessKeyId}:${credentials.secretAccessKey}`;
+
+    await this.writeFile(passwordFilePath, content);
+
+    await this.exec(`chmod 0600 ${shellEscape(passwordFilePath)}`);
+
+    this.logger.debug(`Created password file: ${passwordFilePath}`);
+  }
+
+  /**
+   * Delete password file
+   */
+  private async deletePasswordFile(passwordFilePath: string): Promise<void> {
+    try {
+      await this.exec(`rm -f ${shellEscape(passwordFilePath)}`);
+      this.logger.debug(`Deleted password file: ${passwordFilePath}`);
+    } catch (error) {
+      this.logger.warn(`Failed to delete password file ${passwordFilePath}`, {
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  /**
+   * Execute S3FS mount command
+   */
+  private async executeS3FSMount(
+    bucket: string,
+    mountPath: string,
+    options: MountBucketOptions,
+    provider: BucketProvider | null,
+    passwordFilePath: string
+  ): Promise<void> {
+    // Resolve s3fs options (provider defaults + user overrides)
+    const resolvedOptions = resolveS3fsOptions(provider, options.s3fsOptions);
+
+    // Build s3fs mount command
+    const s3fsArgs: string[] = [];
+
+    // Add password file option FIRST
+    s3fsArgs.push(`passwd_file=${passwordFilePath}`);
+
+    // Add resolved provider-specific and user options
+    s3fsArgs.push(...resolvedOptions);
+
+    // Add read-only flag if requested
+    if (options.readOnly) {
+      s3fsArgs.push('ro');
+    }
+
+    // Add endpoint URL
+    s3fsArgs.push(`url=${options.endpoint}`);
+
+    // Build final command with escaped options
+    const optionsStr = shellEscape(s3fsArgs.join(','));
+    const mountCmd = `s3fs ${shellEscape(bucket)} ${shellEscape(mountPath)} -o ${optionsStr}`;
+
+    this.logger.debug('Executing s3fs mount', {
+      bucket,
+      mountPath,
+      provider,
+      resolvedOptions
+    });
+
+    // Execute mount command
+    const result = await this.exec(mountCmd);
+
+    if (result.exitCode !== 0) {
+      throw new S3FSMountError(
+        `S3FS mount failed: ${result.stderr || result.stdout || 'Unknown error'}`
+      );
+    }
+
+    this.logger.debug('Mount command executed successfully');
+  }
+
   /**
    * Cleanup and destroy the sandbox container
    */
   override async destroy(): Promise<void> {
     this.logger.info('Destroying sandbox container');
+
+    // Unmount all mounted buckets and cleanup password files
+    for (const [mountPath, mountInfo] of this.activeMounts.entries()) {
+      if (mountInfo.mounted) {
+        try {
+          this.logger.info(
+            `Unmounting bucket ${mountInfo.bucket} from ${mountPath}`
+          );
+          await this.exec(`fusermount -u ${shellEscape(mountPath)}`);
+          mountInfo.mounted = false;
+        } catch (error) {
+          const errorMsg =
+            error instanceof Error ? error.message : String(error);
+          this.logger.warn(
+            `Failed to unmount bucket ${mountInfo.bucket} from ${mountPath}: ${errorMsg}`
+          );
+        }
+      }
+
+      // Always cleanup password file
+      await this.deletePasswordFile(mountInfo.passwordFilePath);
+    }
+
     await super.destroy();
   }
 
@@ -1484,7 +1783,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         this.codeInterpreter.runCodeStream(code, options),
       listCodeContexts: () => this.codeInterpreter.listCodeContexts(),
       deleteCodeContext: (contextId) =>
-        this.codeInterpreter.deleteCodeContext(contextId)
+        this.codeInterpreter.deleteCodeContext(contextId),
+
+      // Bucket mounting - sandbox-level operations
+      mountBucket: (bucket, mountPath, options) =>
+        this.mountBucket(bucket, mountPath, options),
+      unmountBucket: (mountPath) => this.unmountBucket(mountPath)
     };
   }
 

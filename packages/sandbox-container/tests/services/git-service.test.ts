@@ -105,14 +105,14 @@ describe('GitService', () => {
       expect(mockSessionManager.executeInSession).toHaveBeenNthCalledWith(
         1,
         'default',
-        'git clone https://github.com/user/repo.git /workspace/repo'
+        "'git' 'clone' 'https://github.com/user/repo.git' '/workspace/repo'"
       );
 
       // Verify SessionManager was called for getting current branch
       expect(mockSessionManager.executeInSession).toHaveBeenNthCalledWith(
         2,
         'default',
-        'git branch --show-current',
+        "'git' 'branch' '--show-current'",
         '/workspace/repo'
       );
     });
@@ -157,7 +157,7 @@ describe('GitService', () => {
       expect(mockSessionManager.executeInSession).toHaveBeenNthCalledWith(
         1,
         'session-123',
-        'git clone --branch develop https://github.com/user/repo.git /tmp/custom-target'
+        "'git' 'clone' '--branch' 'develop' 'https://github.com/user/repo.git' '/tmp/custom-target'"
       );
     });
 
@@ -273,7 +273,7 @@ describe('GitService', () => {
       // Verify SessionManager was called with correct parameters
       expect(mockSessionManager.executeInSession).toHaveBeenCalledWith(
         'session-123',
-        'git checkout develop',
+        "'git' 'checkout' 'develop'",
         '/tmp/repo'
       );
     });
@@ -336,7 +336,7 @@ describe('GitService', () => {
 
       expect(mockSessionManager.executeInSession).toHaveBeenCalledWith(
         'session-123',
-        'git branch --show-current',
+        "'git' 'branch' '--show-current'",
         '/tmp/repo'
       );
     });
@@ -379,7 +379,7 @@ describe('GitService', () => {
 
       expect(mockSessionManager.executeInSession).toHaveBeenCalledWith(
         'session-123',
-        'git branch -a',
+        "'git' 'branch' '-a'",
         '/tmp/repo'
       );
     });

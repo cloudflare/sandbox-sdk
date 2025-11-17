@@ -10,11 +10,16 @@ on:
     #   - "src/**/*.js"
     #   - "src/**/*.jsx"
 
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   claude-review:
     # Skip review for automated "Version Packages" PRs created by changesets
     if: github.event.pull_request.title != 'Version Packages'
 
+    timeout-minutes: 30
     runs-on: ubuntu-latest
     permissions:
       contents: read
