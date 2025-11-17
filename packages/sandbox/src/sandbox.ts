@@ -285,6 +285,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   override onStop() {
     this.logger.debug('Sandbox stopped');
+
+    // Clear in-memory state that references the old container
+    // This prevents stale references after container restarts
+    this.portTokens.clear();
+    this.defaultSession = null;
+
+    // Persist cleanup to storage so state is clean on next container start
+    this.ctx.storage.delete('portTokens');
+    this.ctx.storage.delete('defaultSession');
   }
 
   override onError(error: unknown) {
