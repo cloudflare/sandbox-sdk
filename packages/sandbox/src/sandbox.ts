@@ -277,20 +277,60 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   /**
-   * Get default timeouts with env var fallbacks
+   * Get default timeouts with env var fallbacks and validation
    * Precedence: SDK defaults < Env vars < User config
    */
   private getDefaultTimeouts(env: any): typeof this.DEFAULT_CONTAINER_TIMEOUTS {
+    const parseAndValidate = (
+      envVar: string | undefined,
+      name: keyof typeof this.DEFAULT_CONTAINER_TIMEOUTS,
+      min: number,
+      max: number
+    ): number => {
+      const defaultValue = this.DEFAULT_CONTAINER_TIMEOUTS[name];
+
+      if (envVar === undefined) {
+        return defaultValue;
+      }
+
+      const parsed = parseInt(envVar, 10);
+
+      if (Number.isNaN(parsed)) {
+        this.logger.warn(
+          `Invalid ${name}: "${envVar}" is not a number. Using default: ${defaultValue}ms`
+        );
+        return defaultValue;
+      }
+
+      if (parsed < min || parsed > max) {
+        this.logger.warn(
+          `Invalid ${name}: ${parsed}ms. Must be ${min}-${max}ms. Using default: ${defaultValue}ms`
+        );
+        return defaultValue;
+      }
+
+      return parsed;
+    };
+
     return {
-      instanceGetTimeoutMS:
-        parseInt(env?.SANDBOX_INSTANCE_TIMEOUT_MS, 10) ||
-        this.DEFAULT_CONTAINER_TIMEOUTS.instanceGetTimeoutMS,
-      portReadyTimeoutMS:
-        parseInt(env?.SANDBOX_PORT_TIMEOUT_MS, 10) ||
-        this.DEFAULT_CONTAINER_TIMEOUTS.portReadyTimeoutMS,
-      waitIntervalMS:
-        parseInt(env?.SANDBOX_POLL_INTERVAL_MS, 10) ||
-        this.DEFAULT_CONTAINER_TIMEOUTS.waitIntervalMS
+      instanceGetTimeoutMS: parseAndValidate(
+        env?.SANDBOX_INSTANCE_TIMEOUT_MS,
+        'instanceGetTimeoutMS',
+        5_000, // Min 5s
+        300_000 // Max 5min
+      ),
+      portReadyTimeoutMS: parseAndValidate(
+        env?.SANDBOX_PORT_TIMEOUT_MS,
+        'portReadyTimeoutMS',
+        10_000, // Min 10s
+        600_000 // Max 10min
+      ),
+      waitIntervalMS: parseAndValidate(
+        env?.SANDBOX_POLL_INTERVAL_MS,
+        'waitIntervalMS',
+        100, // Min 100ms
+        5_000 // Max 5s
+      )
     };
   }
 
@@ -393,19 +433,17 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     // If container not healthy, start it with production timeouts
     if (state.status !== 'healthy') {
       try {
-        this.logger.debug('Starting container with production timeouts', {
-          instanceTimeout: this.DEFAULT_CONTAINER_TIMEOUTS.instanceGetTimeoutMS,
-          portTimeout: this.DEFAULT_CONTAINER_TIMEOUTS.portReadyTimeoutMS
+        this.logger.debug('Starting container with configured timeouts', {
+          instanceTimeout: this.containerTimeouts.instanceGetTimeoutMS,
+          portTimeout: this.containerTimeouts.portReadyTimeoutMS
         });
 
         await this.startAndWaitForPorts({
           ports: port,
           cancellationOptions: {
-            instanceGetTimeoutMS:
-              this.DEFAULT_CONTAINER_TIMEOUTS.instanceGetTimeoutMS,
-            portReadyTimeoutMS:
-              this.DEFAULT_CONTAINER_TIMEOUTS.portReadyTimeoutMS,
-            waitInterval: this.DEFAULT_CONTAINER_TIMEOUTS.waitIntervalMS,
+            instanceGetTimeoutMS: this.containerTimeouts.instanceGetTimeoutMS,
+            portReadyTimeoutMS: this.containerTimeouts.portReadyTimeoutMS,
+            waitInterval: this.containerTimeouts.waitIntervalMS,
             abort: request.signal
           }
         });
