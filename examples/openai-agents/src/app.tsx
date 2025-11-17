@@ -1,7 +1,10 @@
 import { createRoot } from 'react-dom/client';
 import { useState, useEffect, useRef } from 'react';
 import './index.css';
-import type { CommandResult, FileOperationResult } from './types';
+import type {
+  CommandResult,
+  FileOperationResult
+} from '@cloudflare/sandbox/openai';
 
 interface Response {
   naturalResponse: string | null;
