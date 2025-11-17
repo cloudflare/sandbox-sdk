@@ -40,7 +40,8 @@
   "r2_buckets": [
     {
       "binding": "TEST_BUCKET",
-      "bucket_name": "sandbox-e2e-test"
+      "bucket_name": "sandbox-e2e-test",
+      "preview_bucket_name": "sandbox-e2e-test"
     }
   ]
 }
