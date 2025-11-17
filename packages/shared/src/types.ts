@@ -712,7 +712,6 @@ export type BucketProvider =
 export interface BucketCredentials {
   accessKeyId: string;
   secretAccessKey: string;
-  sessionToken?: string;
 }
 
 /**

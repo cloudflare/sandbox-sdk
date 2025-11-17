@@ -29,8 +29,7 @@ export function detectCredentials(
   if (awsAccessKeyId && awsSecretAccessKey) {
     return {
       accessKeyId: awsAccessKeyId,
-      secretAccessKey: awsSecretAccessKey,
-      sessionToken: envVars.AWS_SESSION_TOKEN
+      secretAccessKey: awsSecretAccessKey
     };
   }
 

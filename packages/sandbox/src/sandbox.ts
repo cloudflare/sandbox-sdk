@@ -282,13 +282,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       // Create password file with credentials
       await this.createPasswordFile(passwordFilePath, bucket, credentials);
 
-      // Handle session token via environment (s3fs doesn't support in passwd file)
-      if (credentials.sessionToken) {
-        await this.setEnvVars({
-          AWS_SESSION_TOKEN: credentials.sessionToken
-        });
-      }
-
       // Create mount directory
       await this.exec(`mkdir -p ${shellEscape(mountPath)}`);
 

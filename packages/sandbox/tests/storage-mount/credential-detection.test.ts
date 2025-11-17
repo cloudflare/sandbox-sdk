@@ -31,7 +31,7 @@ describe('Credential Detection', () => {
     expect(credentials.secretAccessKey).toBe('aws-secret');
   });
 
-  it('should include session token if present', () => {
+  it('should ignore session token in environment', () => {
     const envVars = {
       AWS_ACCESS_KEY_ID: 'aws-key',
       AWS_SECRET_ACCESS_KEY: 'aws-secret',
@@ -41,7 +41,8 @@ describe('Credential Detection', () => {
 
     const credentials = detectCredentials(options, envVars);
 
-    expect(credentials.sessionToken).toBe('session-token');
+    expect(credentials.accessKeyId).toBe('aws-key');
+    expect(credentials.secretAccessKey).toBe('aws-secret');
   });
 
   it('should prioritize explicit credentials over env vars', () => {
