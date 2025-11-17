@@ -248,9 +248,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     mountPath: string,
     options: MountBucketOptions
   ): Promise<void> {
-    this.logger.info(`Mounting bucket ${bucket} to ${mountPath}`, {
-      endpoint: options.endpoint
-    });
+    this.logger.info(`Mounting bucket ${bucket} to ${mountPath}`);
 
     // Validate options
     this.validateMountOptions(bucket, mountPath, options);
@@ -260,7 +258,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       options.provider || detectProviderFromUrl(options.endpoint);
 
     this.logger.debug(`Detected provider: ${provider || 'unknown'}`, {
-      endpoint: options.endpoint,
       explicitProvider: options.provider
     });
 

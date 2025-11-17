@@ -19,7 +19,11 @@ export function detectProviderFromUrl(endpoint: string): BucketProvider | null {
       return 'r2';
     }
 
-    if (hostname.endsWith('.amazonaws.com') || hostname.startsWith('s3.')) {
+    // Match AWS S3: *.amazonaws.com or s3.amazonaws.com
+    if (
+      hostname.endsWith('.amazonaws.com') ||
+      hostname === 's3.amazonaws.com'
+    ) {
       return 's3';
     }
 
