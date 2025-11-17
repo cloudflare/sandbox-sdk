@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
-import DottedBackground from './DottedBackground';
 import type { StatusLine } from '../types';
+import DottedBackground from './DottedBackground';
 
 interface FlowDiagramProps {
   statusLines: StatusLine[];

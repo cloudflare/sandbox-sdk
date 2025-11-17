@@ -1,10 +1,10 @@
 import { useState } from 'react';
+import CodeViewerSheet from './components/CodeViewerSheet';
+import CornerSquares from './components/CornerSquares';
+import FlowDiagram from './components/FlowDiagram';
 import SchemaEditor from './components/SchemaEditor';
 import TestDataPanel from './components/TestDataPanel';
-import FlowDiagram from './components/FlowDiagram';
-import CornerSquares from './components/CornerSquares';
-import CodeViewerSheet from './components/CodeViewerSheet';
-import type { ValidateResponse, ErrorResponse, StatusLine } from './types';
+import type { ErrorResponse, StatusLine, ValidateResponse } from './types';
 
 const DEFAULT_SCHEMA = `import { z } from 'zod';
 
