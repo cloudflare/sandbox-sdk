@@ -102,6 +102,24 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private logger: ReturnType<typeof createLogger>;
   private keepAliveEnabled: boolean = false;
 
+  /**
+   * Default container startup timeouts (conservative for production)
+   * Based on Cloudflare docs: "Containers take several minutes to provision"
+   */
+  private readonly DEFAULT_CONTAINER_TIMEOUTS = {
+    // Time to get container instance and launch VM
+    // @cloudflare/containers default: 8s (too short for cold starts)
+    instanceGetTimeoutMS: 30_000, // 30 seconds
+
+    // Time for application to start and ports to be ready
+    // @cloudflare/containers default: 20s
+    portReadyTimeoutMS: 90_000, // 90 seconds (allows for heavy containers)
+
+    // Polling interval for checking container readiness
+    // @cloudflare/containers default: 300ms (too aggressive)
+    waitIntervalMS: 1000 // 1 second (reduces load)
+  };
+
   constructor(ctx: DurableObjectState<{}>, env: Env) {
     super(ctx, env);
 
@@ -292,6 +310,119 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       'Sandbox error',
       error instanceof Error ? error : new Error(String(error))
     );
+  }
+
+  /**
+   * Override Container.containerFetch to use production-friendly timeouts
+   * Automatically starts container with longer timeouts if not running
+   */
+  override async containerFetch(
+    requestOrUrl: Request | string | URL,
+    portOrInit?: number | RequestInit,
+    portParam?: number
+  ): Promise<Response> {
+    // Parse arguments to extract request and port
+    const { request, port } = this.parseContainerFetchArgs(
+      requestOrUrl,
+      portOrInit,
+      portParam
+    );
+
+    const state = await this.getState();
+
+    // If container not healthy, start it with production timeouts
+    if (state.status !== 'healthy') {
+      try {
+        this.logger.debug('Starting container with production timeouts', {
+          instanceTimeout: this.DEFAULT_CONTAINER_TIMEOUTS.instanceGetTimeoutMS,
+          portTimeout: this.DEFAULT_CONTAINER_TIMEOUTS.portReadyTimeoutMS
+        });
+
+        await this.startAndWaitForPorts({
+          ports: port,
+          cancellationOptions: {
+            instanceGetTimeoutMS:
+              this.DEFAULT_CONTAINER_TIMEOUTS.instanceGetTimeoutMS,
+            portReadyTimeoutMS:
+              this.DEFAULT_CONTAINER_TIMEOUTS.portReadyTimeoutMS,
+            waitInterval: this.DEFAULT_CONTAINER_TIMEOUTS.waitIntervalMS,
+            abort: request.signal
+          }
+        });
+      } catch (e) {
+        // Handle provisioning vs startup errors
+        if (this.isNoInstanceError(e)) {
+          return new Response(
+            'Container is currently provisioning. This can take several minutes on first deployment. Please retry in a moment.',
+            {
+              status: 503,
+              headers: { 'Retry-After': '10' } // Suggest 10s retry
+            }
+          );
+        }
+
+        // Other startup errors
+        this.logger.error(
+          'Container startup failed',
+          e instanceof Error ? e : new Error(String(e))
+        );
+        return new Response(
+          `Failed to start container: ${e instanceof Error ? e.message : String(e)}`,
+          { status: 500 }
+        );
+      }
+    }
+
+    // Delegate to parent for the actual fetch (handles TCP port access internally)
+    return await super.containerFetch(requestOrUrl, portOrInit, portParam);
+  }
+
+  /**
+   * Helper: Check if error is "no container instance available"
+   */
+  private isNoInstanceError(error: unknown): boolean {
+    return (
+      error instanceof Error &&
+      error.message.toLowerCase().includes('no container instance')
+    );
+  }
+
+  /**
+   * Helper: Parse containerFetch arguments (supports multiple signatures)
+   */
+  private parseContainerFetchArgs(
+    requestOrUrl: Request | string | URL,
+    portOrInit?: number | RequestInit,
+    portParam?: number
+  ): { request: Request; port: number } {
+    let request: Request;
+    let port: number | undefined;
+
+    if (requestOrUrl instanceof Request) {
+      request = requestOrUrl;
+      port = typeof portOrInit === 'number' ? portOrInit : undefined;
+    } else {
+      const url =
+        typeof requestOrUrl === 'string'
+          ? requestOrUrl
+          : requestOrUrl.toString();
+      const init = typeof portOrInit === 'number' ? {} : portOrInit || {};
+      port =
+        typeof portOrInit === 'number'
+          ? portOrInit
+          : typeof portParam === 'number'
+            ? portParam
+            : undefined;
+      request = new Request(url, init);
+    }
+
+    port ??= this.defaultPort;
+
+    if (port === undefined) {
+      throw new Error('No port specified for container fetch');
+    }
+
+    return { request, port };
   }
 
   /**
