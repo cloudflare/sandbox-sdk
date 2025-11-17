@@ -1,4 +1,5 @@
 import { mkdir, unlink } from 'node:fs/promises';
+import type { Logger } from '@repo/shared';
 import type { ProcessFilters, ProcessRecord } from './process-service';
 
 /**
@@ -10,6 +11,8 @@ export class ProcessStore {
   private processes = new Map<string, ProcessRecord>();
   private processDir = '/tmp/.sandbox-internal/processes';
   private initialized = false;
+
+  constructor(private logger: Logger) {}
 
   private async ensureInitialized(): Promise<void> {
     if (this.initialized) {
@@ -100,7 +103,10 @@ export class ProcessStore {
       }
     } catch (error) {
       // If scanning fails, just return in-memory processes
-      console.error('Failed to scan completed processes:', error);
+      this.logger.error(
+        'Failed to scan completed processes from disk',
+        error instanceof Error ? error : new Error(String(error))
+      );
     }
 
     if (filters?.status) {
@@ -140,7 +146,11 @@ export class ProcessStore {
       await Bun.write(filePath, JSON.stringify(serializable, null, 2));
     } catch (error) {
       // Log but don't throw - file persistence is best-effort
-      console.error(`Failed to write process file for ${id}:`, error);
+      this.logger.error(
+        'Failed to persist process to disk',
+        error instanceof Error ? error : new Error(String(error)),
+        { processId: id }
+      );
     }
   }
 

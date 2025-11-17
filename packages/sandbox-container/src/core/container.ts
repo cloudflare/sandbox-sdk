@@ -88,7 +88,7 @@ export class Container {
     const validator = new RequestValidator();
 
     // Initialize stores
-    const processStore = new ProcessStore();
+    const processStore = new ProcessStore(logger);
     const portStore = new InMemoryPortStore();
 
     // Initialize SessionManager
