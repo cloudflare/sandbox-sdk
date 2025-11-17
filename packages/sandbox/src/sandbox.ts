@@ -19,6 +19,7 @@ import type {
 } from '@repo/shared';
 import {
   createLogger,
+  getEnvString,
   runWithLogger,
   type SessionDeleteResult,
   TraceContext
@@ -133,12 +134,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   constructor(ctx: DurableObjectState<{}>, env: Env) {
     super(ctx, env);
 
-    const envObj = env as any;
+    const envObj = env as Record<string, unknown>;
     // Set sandbox environment variables from env object
     const sandboxEnvKeys = ['SANDBOX_LOG_LEVEL', 'SANDBOX_LOG_FORMAT'] as const;
     sandboxEnvKeys.forEach((key) => {
       if (envObj?.[key]) {
-        this.envVars[key] = envObj[key];
+        this.envVars[key] = String(envObj[key]);
       }
     });
 
@@ -280,7 +281,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * Get default timeouts with env var fallbacks and validation
    * Precedence: SDK defaults < Env vars < User config
    */
-  private getDefaultTimeouts(env: any): typeof this.DEFAULT_CONTAINER_TIMEOUTS {
+  private getDefaultTimeouts(
+    env: Record<string, unknown>
+  ): typeof this.DEFAULT_CONTAINER_TIMEOUTS {
     const parseAndValidate = (
       envVar: string | undefined,
       name: keyof typeof this.DEFAULT_CONTAINER_TIMEOUTS,
@@ -314,19 +317,19 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     return {
       instanceGetTimeoutMS: parseAndValidate(
-        env?.SANDBOX_INSTANCE_TIMEOUT_MS,
+        getEnvString(env, 'SANDBOX_INSTANCE_TIMEOUT_MS'),
         'instanceGetTimeoutMS',
         5_000, // Min 5s
         300_000 // Max 5min
       ),
       portReadyTimeoutMS: parseAndValidate(
-        env?.SANDBOX_PORT_TIMEOUT_MS,
+        getEnvString(env, 'SANDBOX_PORT_TIMEOUT_MS'),
         'portReadyTimeoutMS',
         10_000, // Min 10s
         600_000 // Max 10min
       ),
       waitIntervalMS: parseAndValidate(
-        env?.SANDBOX_POLL_INTERVAL_MS,
+        getEnvString(env, 'SANDBOX_POLL_INTERVAL_MS'),
         'waitIntervalMS',
         100, // Min 100ms
         5_000 // Max 5s
@@ -634,9 +637,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         // Persist to storage so it survives hot reloads
         await this.ctx.storage.put('defaultSession', sessionId);
         this.logger.debug('Default session initialized', { sessionId });
-      } catch (error: any) {
+      } catch (error: unknown) {
         // If session already exists (e.g., after hot reload), reuse it
-        if (error?.message?.includes('already exists')) {
+        if (
+          error instanceof Error &&
+          error.message.includes('already exists')
+        ) {
           this.logger.debug('Reusing existing session after reload', {
             sessionId
           });

@@ -82,7 +82,7 @@ export abstract class BaseHttpClient {
    */
   protected async post<T>(
     endpoint: string,
-    data: Record<string, any>,
+    data: unknown,
     responseHandler?: ResponseHandler<T>
   ): Promise<T> {
     const response = await this.doFetch(endpoint, {
@@ -244,6 +244,10 @@ export abstract class BaseHttpClient {
   /**
    * Check if response indicates a retryable container error
    * Uses fail-safe strategy: only retry known transient errors
+   *
+   * TODO: This relies on string matching error messages, which is brittle.
+   * Ideally, the container API should return structured errors with a
+   * `retryable: boolean` field to avoid coupling to error message format.
    *
    * @param response - HTTP response to check
    * @returns true if error is retryable container error, false otherwise
