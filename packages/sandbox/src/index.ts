@@ -17,20 +17,31 @@ export { getSandbox, Sandbox } from './sandbox';
 // Export core SDK types for consumers
 export type {
   BaseExecOptions,
+  BucketCredentials,
+  BucketProvider,
+  CodeContext,
+  CreateContextOptions,
   ExecEvent,
   ExecOptions,
   ExecResult,
+  ExecutionResult,
+  ExecutionSession,
   FileChunk,
   FileMetadata,
   FileStreamEvent,
+  GitCheckoutResult,
   ISandbox,
+  ListFilesOptions,
   LogEvent,
+  MountBucketOptions,
   Process,
   ProcessOptions,
   ProcessStatus,
+  RunCodeOptions,
+  SandboxOptions,
+  SessionOptions,
   StreamOptions
 } from '@repo/shared';
-export * from '@repo/shared';
 // Export type guards for runtime validation
 export { isExecResult, isProcess, isProcessStatus } from '@repo/shared';
 // Export all client types from new architecture
@@ -56,7 +67,6 @@ export type {
 
   // Git client types
   GitCheckoutRequest,
-  GitCheckoutResult,
   // Base client types
   HttpClientOptions as SandboxClientOptions,
 
@@ -102,3 +112,10 @@ export {
   parseSSEStream,
   responseToAsyncIterable
 } from './sse-parser';
+// Export bucket mounting errors
+export {
+  BucketMountError,
+  InvalidMountConfigError,
+  MissingCredentialsError,
+  S3FSMountError
+} from './storage-mount/errors';

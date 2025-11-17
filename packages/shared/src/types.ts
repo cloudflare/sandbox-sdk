@@ -687,6 +687,85 @@ export interface ExecutionSession {
   ): Promise<ReadableStream<Uint8Array>>;
   listCodeContexts(): Promise<CodeContext[]>;
   deleteCodeContext(contextId: string): Promise<void>;
+
+  // Bucket mounting operations
+  mountBucket(
+    bucket: string,
+    mountPath: string,
+    options: MountBucketOptions
+  ): Promise<void>;
+  unmountBucket(mountPath: string): Promise<void>;
+}
+
+// Bucket mounting types
+/**
+ * Supported S3-compatible storage providers
+ */
+export type BucketProvider =
+  | 'r2' // Cloudflare R2
+  | 's3' // Amazon S3
+  | 'gcs'; // Google Cloud Storage
+
+/**
+ * Credentials for S3-compatible storage
+ */
+export interface BucketCredentials {
+  accessKeyId: string;
+  secretAccessKey: string;
+}
+
+/**
+ * Options for mounting an S3-compatible bucket
+ */
+export interface MountBucketOptions {
+  /**
+   * S3-compatible endpoint URL
+   *
+   * Examples:
+   * - R2: 'https://abc123.r2.cloudflarestorage.com'
+   * - AWS S3: 'https://s3.us-west-2.amazonaws.com'
+   * - GCS: 'https://storage.googleapis.com'
+   *
+   * Required field
+   */
+  endpoint: string;
+
+  /**
+   * Optional provider hint for automatic s3fs flag configuration
+   * If not specified, will attempt to detect from endpoint URL.
+   *
+   * Examples:
+   * - 'r2' - Cloudflare R2 (adds nomixupload)
+   * - 's3' - Amazon S3 (standard configuration)
+   * - 'gcs' - Google Cloud Storage (no special flags needed)
+   */
+  provider?: BucketProvider;
+
+  /**
+   * Explicit credentials (overrides env var auto-detection)
+   */
+  credentials?: BucketCredentials;
+
+  /**
+   * Mount filesystem as read-only
+   * Default: false
+   */
+  readOnly?: boolean;
+
+  /**
+   * Advanced: Override or extend s3fs options
+   *
+   * These will be merged with provider-specific defaults.
+   * To override defaults completely, specify all options here.
+   *
+   * Common options:
+   * - 'use_path_request_style' - Use path-style URLs (bucket/path vs bucket.host/path)
+   * - 'nomixupload' - Disable mixed multipart uploads (needed for some providers)
+   * - 'nomultipart' - Disable all multipart operations
+   * - 'sigv2' - Use signature version 2 instead of v4
+   * - 'no_check_certificate' - Skip SSL certificate validation (dev/testing only)
+   */
+  s3fsOptions?: string[];
 }
 
 // Main Sandbox interface
@@ -743,6 +822,14 @@ export interface ISandbox {
     repoUrl: string,
     options?: { branch?: string; targetDir?: string }
   ): Promise<GitCheckoutResult>;
+
+  // Bucket mounting operations
+  mountBucket(
+    bucket: string,
+    mountPath: string,
+    options: MountBucketOptions
+  ): Promise<void>;
+  unmountBucket(mountPath: string): Promise<void>;
 
   // Session management
   createSession(options?: SessionOptions): Promise<ExecutionSession>;

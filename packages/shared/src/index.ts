@@ -43,9 +43,14 @@ export type {
   StartProcessRequest,
   WriteFileRequest
 } from './request-types.js';
+// Export shell utilities
+export { shellEscape } from './shell-escape.js';
 // Export all types from types.ts
 export type {
   BaseExecOptions,
+  // Bucket mounting types
+  BucketCredentials,
+  BucketProvider,
   ContextCreateResult,
   ContextDeleteResult,
   ContextListResult,
@@ -71,6 +76,7 @@ export type {
   ListFilesResult,
   LogEvent,
   MkdirResult,
+  MountBucketOptions,
   MoveFileResult,
   PortCloseResult,
   // Port management result types
