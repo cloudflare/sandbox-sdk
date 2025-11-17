@@ -11,7 +11,6 @@ import { getTestWorkerUrl, WranglerDevRunner } from './helpers/wrangler-runner';
 import {
   createSandboxId,
   createTestHeaders,
-  fetchWithStartup,
   cleanupSandbox
 } from './helpers/test-fixtures';
 
@@ -67,17 +66,13 @@ describe('KeepAlive Workflow', () => {
       };
 
       // Step 1: Initialize sandbox with keepAlive
-      const initResponse = await vi.waitFor(
-        async () =>
-          fetchWithStartup(`${workerUrl}/api/execute`, {
-            method: 'POST',
-            headers: keepAliveHeaders,
-            body: JSON.stringify({
-              command: 'echo "Container initialized with keepAlive"'
-            })
-          }),
-        { timeout: 90000, interval: 2000 }
-      );
+      const initResponse = await fetch(`${workerUrl}/api/execute`, {
+        method: 'POST',
+        headers: keepAliveHeaders,
+        body: JSON.stringify({
+          command: 'echo "Container initialized with keepAlive"'
+        })
+      });
 
       expect(initResponse.status).toBe(200);
       const initData = await initResponse.json();
@@ -111,17 +106,13 @@ describe('KeepAlive Workflow', () => {
       };
 
       // Start a long sleep process (30 seconds)
-      const startResponse = await vi.waitFor(
-        async () =>
-          fetchWithStartup(`${workerUrl}/api/process/start`, {
-            method: 'POST',
-            headers: keepAliveHeaders,
-            body: JSON.stringify({
-              command: 'sleep 30'
-            })
-          }),
-        { timeout: 90000, interval: 2000 }
-      );
+      const startResponse = await fetch(`${workerUrl}/api/process/start`, {
+        method: 'POST',
+        headers: keepAliveHeaders,
+        body: JSON.stringify({
+          command: 'sleep 30'
+        })
+      });
 
       expect(startResponse.status).toBe(200);
       const startData = await startResponse.json();
@@ -161,17 +152,13 @@ describe('KeepAlive Workflow', () => {
       };
 
       // Step 1: Initialize sandbox with keepAlive
-      await vi.waitFor(
-        async () =>
-          fetchWithStartup(`${workerUrl}/api/execute`, {
-            method: 'POST',
-            headers: keepAliveHeaders,
-            body: JSON.stringify({
-              command: 'echo "Testing destroy"'
-            })
-          }),
-        { timeout: 90000, interval: 2000 }
-      );
+      await fetch(`${workerUrl}/api/execute`, {
+        method: 'POST',
+        headers: keepAliveHeaders,
+        body: JSON.stringify({
+          command: 'echo "Testing destroy"'
+        })
+      });
 
       // Step 2: Explicitly destroy the container
       const destroyResponse = await fetch(`${workerUrl}/cleanup`, {
@@ -211,17 +198,13 @@ describe('KeepAlive Workflow', () => {
       };
 
       // Initialize
-      await vi.waitFor(
-        async () =>
-          fetchWithStartup(`${workerUrl}/api/execute`, {
-            method: 'POST',
-            headers: keepAliveHeaders,
-            body: JSON.stringify({
-              command: 'echo "Command 1"'
-            })
-          }),
-        { timeout: 90000, interval: 2000 }
-      );
+      await fetch(`${workerUrl}/api/execute`, {
+        method: 'POST',
+        headers: keepAliveHeaders,
+        body: JSON.stringify({
+          command: 'echo "Command 1"'
+        })
+      });
 
       // Execute multiple commands with delays between them
       for (let i = 2; i <= 4; i++) {
@@ -252,18 +235,14 @@ describe('KeepAlive Workflow', () => {
       };
 
       // Initialize
-      await vi.waitFor(
-        async () =>
-          fetchWithStartup(`${workerUrl}/api/file/write`, {
-            method: 'POST',
-            headers: keepAliveHeaders,
-            body: JSON.stringify({
-              path: '/workspace/test.txt',
-              content: 'Initial content'
-            })
-          }),
-        { timeout: 90000, interval: 2000 }
-      );
+      await fetch(`${workerUrl}/api/file/write`, {
+        method: 'POST',
+        headers: keepAliveHeaders,
+        body: JSON.stringify({
+          path: '/workspace/test.txt',
+          content: 'Initial content'
+        })
+      });
 
       // Wait longer than normal timeout
       await new Promise((resolve) => setTimeout(resolve, 15000));
