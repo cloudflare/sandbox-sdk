@@ -24,7 +24,12 @@ import {
   setupVue,
   setupStatic,
   createTestBinaryFile,
-  initializeWebSocketServer
+  initializeWebSocketServer,
+  putObject,
+  getObject,
+  listObjects,
+  deleteObject,
+  mountBucket
 } from './endpoints';
 import {
   createSession,
@@ -52,6 +57,7 @@ function generateSecureRandomString(length: number = 12): string {
 type Env = {
   Sandbox: DurableObjectNamespace<Sandbox>;
   ASSETS: Fetcher;
+  TEST_BUCKET: R2Bucket;
 };
 
 // Helper to get sandbox instance with user-specific ID
@@ -233,6 +239,27 @@ export default {
 
       if (pathname === '/api/create-test-binary' && request.method === 'POST') {
         return await createTestBinaryFile(sandbox);
+      }
+
+      // Bucket Operations API (R2)
+      if (pathname === '/api/bucket/put' && request.method === 'POST') {
+        return await putObject(env.TEST_BUCKET, request);
+      }
+
+      if (pathname === '/api/bucket/get' && request.method === 'GET') {
+        return await getObject(env.TEST_BUCKET, request);
+      }
+
+      if (pathname === '/api/bucket/list' && request.method === 'GET') {
+        return await listObjects(env.TEST_BUCKET, request);
+      }
+
+      if (pathname === '/api/bucket/delete' && request.method === 'POST') {
+        return await deleteObject(env.TEST_BUCKET, request);
+      }
+
+      if (pathname === '/api/bucket/mount' && request.method === 'POST') {
+        return await mountBucket(sandbox, request);
       }
 
       // Template Setup APIs

@@ -17,3 +17,10 @@ export { gitCheckout } from './gitCheckout';
 export { setupNextjs, setupReact, setupVue, setupStatic } from './templates';
 export { createTestBinaryFile } from './createTestBinary';
 export { initializeWebSocketServer } from './websocketInit';
+export {
+  putObject,
+  getObject,
+  listObjects,
+  deleteObject,
+  mountBucket
+} from './bucket';

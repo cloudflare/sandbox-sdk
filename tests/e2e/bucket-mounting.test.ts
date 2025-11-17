@@ -1,12 +1,4 @@
-import {
-  afterAll,
-  afterEach,
-  beforeAll,
-  describe,
-  expect,
-  test,
-  vi
-} from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, test } from 'vitest';
 import {
   cleanupSandbox,
   createSandboxId,
@@ -67,7 +59,7 @@ describe('Bucket Mounting E2E', () => {
       }
     });
 
-    test('should mount bucket and perform file operations', async () => {
+    test('should mount bucket and perform bidirectional file operations', async () => {
       // Verify required credentials are present
       const requiredVars = [
         'CLOUDFLARE_ACCOUNT_ID',
@@ -85,92 +77,106 @@ describe('Bucket Mounting E2E', () => {
       currentSandboxId = createSandboxId();
       const headers = createTestHeaders(currentSandboxId);
 
-      // Mount the bucket
-      const mountResponse = await vi.waitFor(
-        async () => {
-          const res = await fetch(`${workerUrl}/api/bucket/mount`, {
+      const PRE_EXISTING_FILE = `pre-existing-${Date.now()}.txt`;
+      const PRE_EXISTING_CONTENT =
+        'This file was created in R2 before mounting';
+
+      try {
+        // 1. Create a file in R2 via binding (before mounting)
+        const putResponse = await fetch(`${workerUrl}/api/bucket/put`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            key: PRE_EXISTING_FILE,
+            content: PRE_EXISTING_CONTENT,
+            contentType: 'text/plain'
+          })
+        });
+        expect(putResponse.ok).toBe(true);
+
+        // 2. Mount the bucket (no vi.waitFor - let BaseHttpClient handle retries)
+        const mountResponse = await fetch(`${workerUrl}/api/bucket/mount`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            bucket: TEST_BUCKET,
+            mountPath: MOUNT_PATH,
+            options: {
+              endpoint: `https://${process.env.CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com`
+            }
+          })
+        });
+        expect(mountResponse.ok).toBe(true);
+        const mountResult = await mountResponse.json();
+        expect(mountResult.success).toBe(true);
+
+        // 3. Verify pre-existing R2 file appears in mount (R2 → Mount)
+        const readPreExistingResponse = await fetch(
+          `${workerUrl}/api/execute`,
+          {
             method: 'POST',
             headers,
             body: JSON.stringify({
-              bucket: TEST_BUCKET,
-              mountPath: MOUNT_PATH,
-              options: {
-                endpoint: `https://${process.env.CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com`
-              }
+              command: `cat ${MOUNT_PATH}/${PRE_EXISTING_FILE}`
             })
-          });
-          if (!res.ok) throw new Error('Not ready');
-          return res;
-        },
-        { timeout: 60000, interval: 2000 }
-      );
+          }
+        );
+        const readPreExistingResult = await readPreExistingResponse.json();
+        expect(readPreExistingResult.exitCode).toBe(0);
+        expect(readPreExistingResult.stdout?.trim()).toBe(PRE_EXISTING_CONTENT);
 
-      expect(mountResponse.ok).toBe(true);
-      const mountResult = await mountResponse.json();
-      expect(mountResult.success).toBe(true);
+        // 4. Write new file via mount
+        const writeResponse = await fetch(`${workerUrl}/api/execute`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            command: `echo "${TEST_CONTENT}" > ${MOUNT_PATH}/${TEST_FILE}`
+          })
+        });
+        const writeResult = await writeResponse.json();
+        expect(writeResult.exitCode).toBe(0);
 
-      // Verify mount point exists
-      const verifyResponse = await fetch(`${workerUrl}/api/execute`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          command: `test -d ${MOUNT_PATH} && echo "mounted"`
-        })
-      });
+        // 5. Verify new file appears in R2 via binding (Mount → R2)
+        const getResponse = await fetch(
+          `${workerUrl}/api/bucket/get?key=${TEST_FILE}`,
+          {
+            method: 'GET',
+            headers
+          }
+        );
+        expect(getResponse.ok).toBe(true);
+        const getResult = await getResponse.json();
+        expect(getResult.success).toBe(true);
+        expect(getResult.content.trim()).toBe(TEST_CONTENT);
 
-      const verifyResult = await verifyResponse.json();
-      expect(verifyResult.stdout?.trim()).toBe('mounted');
-      expect(verifyResult.exitCode).toBe(0);
+        // 6. Cleanup: delete both test files from R2
+        await fetch(`${workerUrl}/api/bucket/delete`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ key: PRE_EXISTING_FILE })
+        });
 
-      // Write test file to mounted bucket
-      const writeResponse = await fetch(`${workerUrl}/api/execute`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          command: `echo "${TEST_CONTENT}" > ${MOUNT_PATH}/${TEST_FILE}`
-        })
-      });
+        await fetch(`${workerUrl}/api/bucket/delete`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ key: TEST_FILE })
+        });
+      } catch (error) {
+        // Cleanup on error
+        await fetch(`${workerUrl}/api/bucket/delete`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ key: PRE_EXISTING_FILE })
+        }).catch(() => {});
 
-      const writeResult = await writeResponse.json();
-      expect(writeResult.exitCode).toBe(0);
+        await fetch(`${workerUrl}/api/bucket/delete`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ key: TEST_FILE })
+        }).catch(() => {});
 
-      // Read file back
-      const readResponse = await fetch(`${workerUrl}/api/execute`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          command: `cat ${MOUNT_PATH}/${TEST_FILE}`
-        })
-      });
-
-      const readResult = await readResponse.json();
-      expect(readResult.exitCode).toBe(0);
-      expect(readResult.stdout?.trim()).toBe(TEST_CONTENT);
-
-      // List directory contents
-      const lsResponse = await fetch(`${workerUrl}/api/execute`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          command: `ls -lh ${MOUNT_PATH}/${TEST_FILE}`
-        })
-      });
-
-      const lsResult = await lsResponse.json();
-      expect(lsResult.exitCode).toBe(0);
-      expect(lsResult.stdout).toContain(TEST_FILE);
-
-      // Cleanup: delete test file
-      const cleanupResponse = await fetch(`${workerUrl}/api/execute`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          command: `rm -f ${MOUNT_PATH}/${TEST_FILE}`
-        })
-      });
-
-      const cleanupResult = await cleanupResponse.json();
-      expect(cleanupResult.exitCode).toBe(0);
+        throw error;
+      }
     }, 120000); // 2 minute timeout
   });
 });
