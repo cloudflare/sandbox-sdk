@@ -31,7 +31,7 @@ const createMockProcess = (
 
 describe('ProcessStore', () => {
   let processStore: ProcessStore;
-  const testProcessDir = '/tmp/.sandbox-internal/processes';
+  const testProcessDir = '/tmp/sandbox-internal/processes';
 
   beforeEach(async () => {
     vi.clearAllMocks();

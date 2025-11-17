@@ -9,7 +9,7 @@ import type { ProcessFilters, ProcessRecord } from './process-service';
  */
 export class ProcessStore {
   private processes = new Map<string, ProcessRecord>();
-  private processDir = '/tmp/.sandbox-internal/processes';
+  private processDir = '/tmp/sandbox-internal/processes';
   private initialized = false;
 
   constructor(private logger: Logger) {}
