@@ -738,5 +738,113 @@ console.log("Server listening on port 8080");
       },
       90000
     );
+
+    test('should retrieve completed process metadata', async () => {
+      const sandboxId = createSandboxId();
+      const headers = createTestHeaders(sandboxId);
+
+      // Start a short-lived process that completes quickly
+      const startResponse = await vi.waitFor(
+        async () =>
+          fetchWithStartup(`${workerUrl}/api/process/start`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              command: 'echo "test output" && exit 0'
+            })
+          }),
+        { timeout: 90000, interval: 2000 }
+      );
+
+      expect(startResponse.status).toBe(200);
+      const startData = await startResponse.json();
+      const processId = startData.id;
+
+      // Wait for process to complete
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+
+      // Get completed process metadata
+      const getResponse = await fetch(`${workerUrl}/api/process/${processId}`, {
+        method: 'GET',
+        headers
+      });
+
+      expect(getResponse.status).toBe(200);
+      const processData = await getResponse.json();
+
+      // Verify completed status
+      expect(processData.id).toBe(processId);
+      expect(processData.status).toBe('completed');
+      expect(processData.exitCode).toBe(0);
+      expect(processData.stdout).toContain('test output');
+      expect(processData.startTime).toBeTruthy();
+      expect(processData.endTime).toBeTruthy();
+    }, 90000);
+
+    test('should include completed processes in list', async () => {
+      const sandboxId = createSandboxId();
+      const headers = createTestHeaders(sandboxId);
+
+      // Start a process that completes quickly
+      const completedResponse = await vi.waitFor(
+        async () =>
+          fetchWithStartup(`${workerUrl}/api/process/start`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              command: 'echo "completed process"'
+            })
+          }),
+        { timeout: 90000, interval: 2000 }
+      );
+
+      const completedData = await completedResponse.json();
+      const completedId = completedData.id;
+
+      // Wait for first process to complete
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+
+      // Start a long-running process
+      const runningResponse = await fetch(`${workerUrl}/api/process/start`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          command: 'sleep 60'
+        })
+      });
+
+      const runningData = await runningResponse.json();
+      const runningId = runningData.id;
+
+      // Wait for running process to start
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      // List all processes
+      const listResponse = await fetch(`${workerUrl}/api/process/list`, {
+        method: 'GET',
+        headers
+      });
+
+      expect(listResponse.status).toBe(200);
+      const listData = await listResponse.json();
+
+      // Should include both completed and running processes
+      const processIds = listData.map((p: any) => p.id);
+      expect(processIds).toContain(completedId);
+      expect(processIds).toContain(runningId);
+
+      // Verify statuses
+      const completedProcess = listData.find((p: any) => p.id === completedId);
+      const runningProcess = listData.find((p: any) => p.id === runningId);
+
+      expect(completedProcess.status).toBe('completed');
+      expect(runningProcess.status).toBe('running');
+
+      // Cleanup - kill running process
+      await fetch(`${workerUrl}/api/process/${runningId}`, {
+        method: 'DELETE',
+        headers
+      });
+    }, 90000);
   });
 });
