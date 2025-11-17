@@ -1,8 +1,8 @@
-import { Sandbox, getSandbox } from '@cloudflare/sandbox';
-import { Shell, Editor } from '@cloudflare/sandbox/openai';
+import { getSandbox, Sandbox } from '@cloudflare/sandbox';
+import { Editor, Shell } from '@cloudflare/sandbox/openai';
 export { Sandbox }; // export the Sandbox class for the worker
 
-import { Agent, run, shellTool, applyPatchTool } from '@openai/agents';
+import { Agent, applyPatchTool, run, shellTool } from '@openai/agents';
 
 // Helper functions for error handling
 function isErrorWithProperties(error: unknown): error is {

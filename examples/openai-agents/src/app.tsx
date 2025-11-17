@@ -1,5 +1,5 @@
+import { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { useState, useEffect, useRef } from 'react';
 import './index.css';
 import type {
   CommandResult,
@@ -72,7 +72,7 @@ function App() {
   // Scroll to bottom whenever messages change
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, loading]);
+  }, []);
 
   // Focus input on mount
   useEffect(() => {
@@ -196,7 +196,13 @@ function App() {
 
                       if (result.type === 'command') {
                         return (
-                          <div key={index} className="tool-result">
+                          <div
+                            key={
+                              // biome-ignore lint/suspicious/noArrayIndexKey: key is a valid prop
+                              index
+                            }
+                            className="tool-result"
+                          >
                             <div className="tool-header">
                               <div className="tool-command">
                                 $ {result.command}
@@ -219,7 +225,13 @@ function App() {
                         );
                       } else {
                         return (
-                          <div key={index} className="tool-result">
+                          <div
+                            key={
+                              // biome-ignore lint/suspicious/noArrayIndexKey: key is a valid prop
+                              index
+                            }
+                            className="tool-result"
+                          >
                             <div className="tool-header">
                               <div className="tool-command">
                                 {result.operation === 'create' && '📄 Create'}
@@ -268,7 +280,11 @@ function App() {
         <div className="header">
           <h1 className="app-title">Sandbox Studio</h1>
           {messages.length > 0 && (
-            <button className="clear-button" onClick={clearHistory}>
+            <button
+              type="button"
+              className="clear-button"
+              onClick={clearHistory}
+            >
               Clear History
             </button>
           )}
