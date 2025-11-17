@@ -209,10 +209,19 @@ export class FileService implements FileSystemOperations {
         !mimeType.includes('x-empty');
 
       // 6. Read file with appropriate encoding
-      let content: string;
+      // Respect user's encoding preference if provided, otherwise use MIME-based detection
       let actualEncoding: 'utf-8' | 'base64';
+      if (options.encoding === 'base64') {
+        actualEncoding = 'base64';
+      } else if (options.encoding === 'utf-8' || options.encoding === 'utf8') {
+        actualEncoding = 'utf-8';
+      } else {
+        // No explicit encoding requested - use MIME-based detection (original behavior)
+        actualEncoding = isBinary ? 'base64' : 'utf-8';
+      }
 
-      if (isBinary) {
+      let content: string;
+      if (actualEncoding === 'base64') {
         // Binary files: read as base64, return as-is (DO NOT decode)
         const base64Command = `base64 -w 0 < ${escapedPath}`;
         const base64Result = await this.sessionManager.executeInSession(
@@ -251,7 +260,6 @@ export class FileService implements FileSystemOperations {
         }
 
         content = base64Result.data.stdout.trim();
-        actualEncoding = 'base64';
       } else {
         // Text files: read normally
         const catCommand = `cat ${escapedPath}`;
@@ -291,7 +299,6 @@ export class FileService implements FileSystemOperations {
         }
 
         content = catResult.data.stdout;
-        actualEncoding = 'utf-8';
       }
 
       return {
@@ -299,7 +306,7 @@ export class FileService implements FileSystemOperations {
         data: content,
         metadata: {
           encoding: actualEncoding,
-          isBinary,
+          isBinary: actualEncoding === 'base64',
           mimeType,
           size: fileSize
         }
@@ -356,12 +363,41 @@ export class FileService implements FileSystemOperations {
         };
       }
 
-      // 2. Write file using SessionManager with base64 encoding
-      // Base64 ensures binary files (images, PDFs, etc.) are written correctly
-      // and avoids heredoc EOF collision issues
+      // 2. Write file using SessionManager with proper encoding handling
       const escapedPath = shellEscape(path);
-      const base64Content = Buffer.from(content, 'utf-8').toString('base64');
-      const command = `echo '${base64Content}' | base64 -d > ${escapedPath}`;
+      const encoding = options.encoding || 'utf-8';
+
+      let command: string;
+
+      if (encoding === 'base64') {
+        // Content is already base64 encoded, validate and decode it directly to file
+        // Validate that content only contains valid base64 characters to prevent command injection
+        if (!/^[A-Za-z0-9+/=]*$/.test(content)) {
+          return {
+            success: false,
+            error: {
+              message: `Invalid base64 content for '${path}': must contain only A-Z, a-z, 0-9, +, /, =`,
+              code: ErrorCode.VALIDATION_FAILED,
+              details: {
+                validationErrors: [
+                  {
+                    field: 'content',
+                    message: 'Invalid base64 characters',
+                    code: 'INVALID_BASE64'
+                  }
+                ]
+              } satisfies ValidationFailedContext
+            }
+          };
+        }
+        // Use printf to output base64 literally without trailing newline
+        command = `printf '%s' '${content}' | base64 -d > ${escapedPath}`;
+      } else {
+        // Encode text to base64 to safely handle shell metacharacters (quotes, backticks, $, etc.)
+        // and special characters (newlines, control chars, null bytes) in user content
+        const base64Content = Buffer.from(content, 'utf-8').toString('base64');
+        command = `printf '%s' '${base64Content}' | base64 -d > ${escapedPath}`;
+      }
 
       const execResult = await this.sessionManager.executeInSession(
         sessionId,
@@ -1174,8 +1210,9 @@ export class FileService implements FileSystemOperations {
       }
 
       // Filter hidden files unless includeHidden is true
+      // Use -name to filter by basename only, not full path
       if (!options.includeHidden) {
-        findCommand += ' -not -path "*/\\.*"';
+        findCommand += ' -not -name ".*"';
       }
 
       // Skip the base directory itself and format output

@@ -1,5 +1,67 @@
 # @cloudflare/sandbox
 
+## 0.5.0
+
+### Minor Changes
+
+- [#213](https://github.com/cloudflare/sandbox-sdk/pull/213) [`8503265`](https://github.com/cloudflare/sandbox-sdk/commit/8503265d2491a1f8e1fc1ab2f9cf7f9f0baef34b) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Add opt-in `normalizeId` option to `getSandbox()` for preview URL compatibility.
+
+  Sandbox IDs with uppercase letters cause preview URL requests to route to different Durable Object instances (hostnames are case-insensitive). Use `{ normalizeId: true }` to lowercase IDs for preview URL support:
+
+  ```typescript
+  getSandbox(ns, 'MyProject-123', { normalizeId: true }); // Creates DO with key "myproject-123"
+  ```
+
+  **Important:** Different `normalizeId` values create different DO instances. If you have an existing sandbox with uppercase letters, create a new one with `normalizeId: true`.
+
+  **Deprecation warning:** IDs with uppercase letters will trigger a warning. In a future version, `normalizeId` will default to `true`.
+
+## 0.4.21
+
+### Patch Changes
+
+- [#214](https://github.com/cloudflare/sandbox-sdk/pull/214) [`102fc4f`](https://github.com/cloudflare/sandbox-sdk/commit/102fc4fdfddac98189610334de6ca096153e2fe8) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Fix Docker build failures caused by turbo prune lockfile mismatch
+
+  Remove @cloudflare/vite-plugin from root devDependencies to avoid turbo prune bug with nested optionalDependencies. The vite-plugin is only used by examples which are excluded from Docker builds and already have it in their own package.json.
+
+## 0.4.20
+
+### Patch Changes
+
+- [#208](https://github.com/cloudflare/sandbox-sdk/pull/208) [`d4bb3b7`](https://github.com/cloudflare/sandbox-sdk/commit/d4bb3b782db458f81c2c0b9148ac4b4fb65eca9f) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Add Apache License 2.0
+
+  Formalizes project licensing under Apache 2.0 for consistency with Cloudflare's platform projects. Previous versions (0.1.0-0.4.18) had ambiguous licensing (ISC in package.json, MIT referenced in README, no LICENSE file).
+
+## 0.4.19
+
+### Patch Changes
+
+- [#203](https://github.com/cloudflare/sandbox-sdk/pull/203) [`63b07c0`](https://github.com/cloudflare/sandbox-sdk/commit/63b07c0895f3cb9bf44fc84df1b5671b27391152) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - Fix listFiles to work in hidden directories without includeHidden flag
+
+## 0.4.18
+
+### Patch Changes
+
+- [`228ef5b`](https://github.com/cloudflare/sandbox-sdk/commit/228ef5b6e57fa3c38dc8d90e006ae58d0815aaec) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Fix encoding parameter handling in file operations to enable MIME auto-detection. Previously, SDK and container handlers added default 'utf8' encoding, preventing MIME-based detection of binary files. Now encoding parameter is passed through as-is, allowing automatic detection when not explicitly specified.
+
+## 0.4.17
+
+### Patch Changes
+
+- [#198](https://github.com/cloudflare/sandbox-sdk/pull/198) [`93c6cc7`](https://github.com/cloudflare/sandbox-sdk/commit/93c6cc7c6b8df9e0a733fa852faf5d2f1c5758da) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Fix container startup failures when WORKDIR is changed in derived Dockerfiles
+
+## 0.4.16
+
+### Patch Changes
+
+- [#184](https://github.com/cloudflare/sandbox-sdk/pull/184) [`7989b61`](https://github.com/cloudflare/sandbox-sdk/commit/7989b6105cea8c381dd162be0bcb29db3e214fde) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Redact credentials from Git URLs in logs
+
+- [#186](https://github.com/cloudflare/sandbox-sdk/pull/186) [`c2e3384`](https://github.com/cloudflare/sandbox-sdk/commit/c2e3384b151ae3f430c2edc8c492921d0b6b8b1c) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - Expose deleteSession API with proper safeguards
+  - Add `deleteSession(sessionId)` method to public SDK API
+  - Prevent deletion of default session (throws error with guidance to use `sandbox.destroy()`)
+  - Session cleanup kills all running commands in parallel before destroying shell
+  - Return structured `SessionDeleteResult` with success status, sessionId, and timestamp
+
 ## 0.4.15
 
 ### Patch Changes

@@ -217,6 +217,8 @@ npm run test:e2e -- -- tests/e2e/git-clone-workflow.test.ts -t 'should handle cl
 - Sequential execution (`singleFork: true`) to prevent container resource contention
 - Longer timeouts (2min per test) for container operations
 
+**Build system trust:** The monorepo build system (turbo + npm workspaces) is robust and handles all package dependencies automatically. E2E tests always run against the latest built code - there's no need to manually rebuild or worry about stale builds unless explicitly working on the build setup itself.
+
 **CI behavior:** E2E tests in CI (`pullrequest.yml`):
 
 1. Build Docker image locally (`npm run docker:local`)
@@ -286,18 +288,37 @@ Turbo handles task orchestration (`turbo.json`) with dependency-aware builds.
 
 **Be concise, not verbose.** Every word should add value. Avoid unnecessary details about implementation mechanics - focus on what changed and why it matters.
 
-Example:
+**Subject line should stand alone** - don't require reading the body to understand the change. Body is optional and only needed for non-obvious context.
+
+Good examples:
 
 ```
 Add session isolation for concurrent executions
+```
 
-Previously, multiple concurrent exec() calls would interfere with each
-other's working directories and environment variables. This adds proper
-session management to isolate execution contexts.
+```
+Fix encoding parameter handling in file operations
 
-The SessionManager tracks active sessions and ensures cleanup when
-processes complete. This is critical for multi-tenant scenarios where
-different users share the same sandbox instance.
+The encoding parameter wasn't properly passed through the validation
+layer, causing base64 content to be treated as UTF-8.
+```
+
+Bad examples:
+
+```
+Update files
+
+Changes some things related to sessions and also fixes a bug.
+```
+
+```
+Add file operations support
+
+Implements FileClient with read/write methods and adds FileService
+in the container with a validation layer. Includes comprehensive test
+coverage for edge cases and supports both UTF-8 text and base64 binary
+encodings. Uses proper error handling with custom error types from the
+shared package for consistency across the SDK.
 ```
 
 ## Important Patterns
@@ -332,6 +353,7 @@ different users share the same sandbox instance.
 ### API Design
 
 When adding or modifying SDK methods:
+
 - Use clear, descriptive names that indicate what the method does
 - Validate inputs before passing to container APIs
 - Provide helpful error messages with context
@@ -339,6 +361,10 @@ When adding or modifying SDK methods:
 Note: Container isolation is handled at the Cloudflare platform level (VMs), not by SDK code.
 
 ## Version Management & Releases
+
+### Creating Changesets
+
+**Important:** Changeset files should only reference `@cloudflare/sandbox`, never `@repo/shared` or `@repo/sandbox-container`. These internal packages should not be versioned independently - changes to them flow through the public package. Pre-commit hooks and CI will validate this rule.
 
 **Releases are fully automated** via GitHub Actions (`.github/workflows/release.yml`) and changesets (`.changeset/`):
 

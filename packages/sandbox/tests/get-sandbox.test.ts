@@ -44,7 +44,10 @@ describe('getSandbox', () => {
     const sandbox = getSandbox(mockNamespace, 'test-sandbox');
 
     expect(sandbox).toBeDefined();
-    expect(sandbox.setSandboxName).toHaveBeenCalledWith('test-sandbox');
+    expect(sandbox.setSandboxName).toHaveBeenCalledWith(
+      'test-sandbox',
+      undefined
+    );
   });
 
   it('should apply sleepAfter option when provided as string', () => {
@@ -145,5 +148,25 @@ describe('getSandbox', () => {
     expect(sandbox.sleepAfter).toBe('5m');
     expect(sandbox.setBaseUrl).toHaveBeenCalledWith('https://example.com');
     expect(sandbox.setKeepAlive).toHaveBeenCalledWith(true);
+  });
+
+  it('should preserve sandbox ID case by default', () => {
+    const mockNamespace = {} as any;
+    getSandbox(mockNamespace, 'MyProject-ABC123');
+
+    expect(mockGetContainer).toHaveBeenCalledWith(
+      mockNamespace,
+      'MyProject-ABC123'
+    );
+  });
+
+  it('should normalize sandbox ID to lowercase when normalizeId option is true', () => {
+    const mockNamespace = {} as any;
+    getSandbox(mockNamespace, 'MyProject-ABC123', { normalizeId: true });
+
+    expect(mockGetContainer).toHaveBeenCalledWith(
+      mockNamespace,
+      'myproject-abc123'
+    );
   });
 });

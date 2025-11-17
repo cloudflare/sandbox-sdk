@@ -1,0 +1,23 @@
+# Lefthook configuration
+# https://github.com/evilmartians/lefthook
+
+pre-commit:
+  commands:
+    biome-fix:
+      glob: 'packages/**/*.{js,ts,tsx,json}'
+      run: npx biome check --write {staged_files}
+      stage_fixed: true
+
+    format:
+      glob: '*.{js,json,ts,tsx,md,yml,yaml}'
+      run: npx prettier --write {staged_files}
+      stage_fixed: true
+
+    validate-changesets:
+      glob: '.changeset/*.md'
+      run: node scripts/validate-changesets.js {staged_files}
+
+pre-push:
+  commands:
+    typecheck:
+      run: npm run typecheck

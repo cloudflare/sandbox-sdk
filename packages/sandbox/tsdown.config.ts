@@ -8,5 +8,6 @@ export default defineConfig({
     resolve: ['@repo/shared']
   },
   sourcemap: true,
-  format: 'esm'
+  format: 'esm',
+  fixedExtension: false
 });

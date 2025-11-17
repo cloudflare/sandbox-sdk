@@ -286,6 +286,28 @@ export interface SandboxOptions {
    * Default: false
    */
   keepAlive?: boolean;
+
+  /**
+   * Normalize sandbox ID to lowercase for preview URL compatibility
+   *
+   * Required for preview URLs because hostnames are case-insensitive (RFC 3986), which
+   * would route requests to a different Durable Object instance with IDs containing uppercase letters.
+   *
+   * **Important:** Different normalizeId values create different Durable Object instances:
+   * - `getSandbox(ns, "MyProject")` → DO key: "MyProject"
+   * - `getSandbox(ns, "MyProject", {normalizeId: true})` → DO key: "myproject"
+   *
+   * **Future change:** In a future version, this will default to `true` (automatically lowercase all IDs).
+   * IDs with uppercase letters will trigger a warning. To prepare, use lowercase IDs or explicitly
+   * pass `normalizeId: true`.
+   *
+   * @example
+   * getSandbox(ns, "my-project")  // Works with preview URLs (lowercase)
+   * getSandbox(ns, "MyProject", {normalizeId: true})  // Normalized to "myproject"
+   *
+   * @default false
+   */
+  normalizeId?: boolean;
 }
 
 /**
@@ -812,6 +834,7 @@ export interface ISandbox {
 
   // Session management
   createSession(options?: SessionOptions): Promise<ExecutionSession>;
+  deleteSession(sessionId: string): Promise<SessionDeleteResult>;
 
   // Code interpreter methods
   createCodeContext(options?: CreateContextOptions): Promise<CodeContext>;

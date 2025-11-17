@@ -31,7 +31,7 @@ COPY --from=pruner /app/out/package-lock.json ./package-lock.json
 
 # Install ALL dependencies with cache mount for npm packages
 RUN --mount=type=cache,target=/root/.npm \
-    npm ci
+    CI=true npm ci
 
 # Copy pruned source code
 COPY --from=pruner /app/out/full/ .
@@ -55,7 +55,7 @@ COPY --from=builder /app/tooling ./tooling
 
 # Install ONLY production dependencies (excludes typescript, @types/*, etc.)
 RUN --mount=type=cache,target=/root/.npm \
-    npm ci --production
+    CI=true npm ci --production
 
 # ============================================================================
 # Stage 4: Download pre-built Python 3.11.14
@@ -191,4 +191,4 @@ COPY packages/sandbox/startup.sh ./
 RUN chmod +x startup.sh
 
 # Use startup script
-CMD ["./startup.sh"]
+CMD ["/container-server/startup.sh"]

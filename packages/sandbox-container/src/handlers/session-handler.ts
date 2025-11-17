@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import type { Logger, SessionCreateResult } from '@repo/shared';
+import type { Logger, SessionDeleteRequest } from '@repo/shared';
 import { ErrorCode } from '@repo/shared/errors';
 
 import type { RequestContext } from '../core/types';
@@ -30,6 +30,8 @@ export class SessionHandler extends BaseHandler<Request, Response> {
         return await this.handleCreate(request, context);
       case '/api/session/list':
         return await this.handleList(request, context);
+      case '/api/session/delete':
+        return await this.handleDelete(request, context);
       default:
         return this.createErrorResponse(
           {
@@ -93,6 +95,51 @@ export class SessionHandler extends BaseHandler<Request, Response> {
       const response: SessionListResult = {
         success: true,
         data: result.data,
+        timestamp: new Date().toISOString()
+      };
+
+      return this.createTypedResponse(response, context);
+    } else {
+      return this.createErrorResponse(result.error, context);
+    }
+  }
+
+  private async handleDelete(
+    request: Request,
+    context: RequestContext
+  ): Promise<Response> {
+    let body: SessionDeleteRequest;
+
+    try {
+      body = (await request.json()) as SessionDeleteRequest;
+
+      if (!body.sessionId) {
+        return this.createErrorResponse(
+          {
+            message: 'sessionId is required',
+            code: ErrorCode.VALIDATION_FAILED
+          },
+          context
+        );
+      }
+    } catch {
+      return this.createErrorResponse(
+        {
+          message: 'Invalid request body',
+          code: ErrorCode.VALIDATION_FAILED
+        },
+        context
+      );
+    }
+
+    const sessionId = body.sessionId;
+
+    const result = await this.sessionManager.deleteSession(sessionId);
+
+    if (result.success) {
+      const response = {
+        success: true,
+        sessionId,
         timestamp: new Date().toISOString()
       };
 

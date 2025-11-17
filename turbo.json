@@ -6,6 +6,7 @@
       "dependsOn": ["^build"],
       "outputs": ["dist/**"],
       "inputs": [
+        "tsdown.config.ts",
         "src/**/*.ts",
         "src/**/*.tsx",
         "package.json",
