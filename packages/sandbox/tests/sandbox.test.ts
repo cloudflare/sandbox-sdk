@@ -42,6 +42,10 @@ vi.mock('@cloudflare/containers', () => {
       // Mock implementation for HTTP path
       return new Response('Mock Container HTTP fetch');
     }
+    async getState() {
+      // Mock implementation - return healthy state
+      return { status: 'healthy' };
+    }
   };
 
   return {
@@ -820,6 +824,74 @@ describe('Sandbox - Automatic Session Management', () => {
       ).rejects.toThrow(
         /getSandbox\(ns, "MyProject-ABC", \{ normalizeId: true \}\)/
       );
+    });
+  });
+
+  describe('timeout configuration validation', () => {
+    it('should reject negative timeout values', async () => {
+      await expect(
+        sandbox.setContainerTimeouts({ instanceGetTimeoutMS: -1 })
+      ).rejects.toThrow('instanceGetTimeoutMS must be between');
+    });
+
+    it('should reject NaN timeout values', async () => {
+      await expect(
+        sandbox.setContainerTimeouts({ portReadyTimeoutMS: NaN })
+      ).rejects.toThrow('portReadyTimeoutMS must be a valid finite number');
+    });
+
+    it('should reject Infinity timeout values', async () => {
+      await expect(
+        sandbox.setContainerTimeouts({ waitIntervalMS: Infinity })
+      ).rejects.toThrow('waitIntervalMS must be a valid finite number');
+    });
+
+    it('should reject timeout values below minimum', async () => {
+      await expect(
+        sandbox.setContainerTimeouts({ instanceGetTimeoutMS: 1000 })
+      ).rejects.toThrow('instanceGetTimeoutMS must be between 5000-300000ms');
+
+      await expect(
+        sandbox.setContainerTimeouts({ portReadyTimeoutMS: 5000 })
+      ).rejects.toThrow('portReadyTimeoutMS must be between 10000-600000ms');
+
+      await expect(
+        sandbox.setContainerTimeouts({ waitIntervalMS: 50 })
+      ).rejects.toThrow('waitIntervalMS must be between 100-5000ms');
+    });
+
+    it('should reject timeout values above maximum', async () => {
+      await expect(
+        sandbox.setContainerTimeouts({ instanceGetTimeoutMS: 500_000 })
+      ).rejects.toThrow('instanceGetTimeoutMS must be between 5000-300000ms');
+
+      await expect(
+        sandbox.setContainerTimeouts({ portReadyTimeoutMS: 700_000 })
+      ).rejects.toThrow('portReadyTimeoutMS must be between 10000-600000ms');
+
+      await expect(
+        sandbox.setContainerTimeouts({ waitIntervalMS: 10_000 })
+      ).rejects.toThrow('waitIntervalMS must be between 100-5000ms');
+    });
+
+    it('should accept valid timeout values', async () => {
+      await expect(
+        sandbox.setContainerTimeouts({
+          instanceGetTimeoutMS: 30_000,
+          portReadyTimeoutMS: 90_000,
+          waitIntervalMS: 1000
+        })
+      ).resolves.toBeUndefined();
+    });
+
+    it('should allow partial updates with validation', async () => {
+      await expect(
+        sandbox.setContainerTimeouts({ instanceGetTimeoutMS: 15_000 })
+      ).resolves.toBeUndefined();
+
+      await expect(
+        sandbox.setContainerTimeouts({ portReadyTimeoutMS: 60_000 })
+      ).resolves.toBeUndefined();
     });
   });
 });

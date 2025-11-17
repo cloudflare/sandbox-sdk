@@ -280,15 +280,69 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   async setContainerTimeouts(
     timeouts: NonNullable<SandboxOptions['containerTimeouts']>
   ): Promise<void> {
-    this.containerTimeouts = {
-      ...this.containerTimeouts,
-      ...timeouts
-    };
+    const validated = { ...this.containerTimeouts };
+
+    // Validate each timeout if provided
+    if (timeouts.instanceGetTimeoutMS !== undefined) {
+      validated.instanceGetTimeoutMS = this.validateTimeout(
+        timeouts.instanceGetTimeoutMS,
+        'instanceGetTimeoutMS',
+        5_000,
+        300_000
+      );
+    }
+
+    if (timeouts.portReadyTimeoutMS !== undefined) {
+      validated.portReadyTimeoutMS = this.validateTimeout(
+        timeouts.portReadyTimeoutMS,
+        'portReadyTimeoutMS',
+        10_000,
+        600_000
+      );
+    }
+
+    if (timeouts.waitIntervalMS !== undefined) {
+      validated.waitIntervalMS = this.validateTimeout(
+        timeouts.waitIntervalMS,
+        'waitIntervalMS',
+        100,
+        5_000
+      );
+    }
+
+    this.containerTimeouts = validated;
 
     // Persist to storage
     await this.ctx.storage.put('containerTimeouts', this.containerTimeouts);
 
     this.logger.debug('Container timeouts updated', this.containerTimeouts);
+  }
+
+  /**
+   * Validate a timeout value is within acceptable range
+   * Throws error if invalid - used for user-provided values
+   */
+  private validateTimeout(
+    value: number,
+    name: string,
+    min: number,
+    max: number
+  ): number {
+    if (
+      typeof value !== 'number' ||
+      Number.isNaN(value) ||
+      !Number.isFinite(value)
+    ) {
+      throw new Error(`${name} must be a valid finite number, got ${value}`);
+    }
+
+    if (value < min || value > max) {
+      throw new Error(
+        `${name} must be between ${min}-${max}ms, got ${value}ms`
+      );
+    }
+
+    return value;
   }
 
   /**
