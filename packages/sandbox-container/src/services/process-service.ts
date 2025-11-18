@@ -146,7 +146,7 @@ export class ProcessService {
       const streamResult = await this.sessionManager.executeStreamInSession(
         sessionId,
         command,
-        (event) => {
+        async (event) => {
           // Route events to process record listeners
           if (event.type === 'stdout' && event.data) {
             processRecord.stdout += event.data;
@@ -171,17 +171,22 @@ export class ProcessService {
               listener(status);
             });
 
-            this.store
-              .update(processRecord.id, {
+            // Await store update to ensure consistency before next event
+            try {
+              await this.store.update(processRecord.id, {
                 status,
                 endTime,
                 exitCode
-              })
-              .catch((error) => {
-                this.logger.error('Failed to update process status', error, {
-                  processId: processRecord.id
-                });
               });
+            } catch (error) {
+              this.logger.error(
+                'Failed to update process status',
+                error instanceof Error ? error : undefined,
+                {
+                  processId: processRecord.id
+                }
+              );
+            }
           } else if (event.type === 'error') {
             processRecord.status = 'error';
             processRecord.endTime = new Date();
