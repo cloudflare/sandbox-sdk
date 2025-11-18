@@ -25,6 +25,8 @@ export const ERROR_STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.INVALID_JSON_RESPONSE]: 400,
   [ErrorCode.NAME_TOO_LONG]: 400,
   [ErrorCode.VALIDATION_FAILED]: 400,
+  [ErrorCode.MISSING_CREDENTIALS]: 400,
+  [ErrorCode.INVALID_MOUNT_CONFIG]: 400,
 
   // 401 Unauthorized
   [ErrorCode.GIT_AUTH_FAILED]: 401,
@@ -61,6 +63,8 @@ export const ERROR_STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.GIT_CHECKOUT_FAILED]: 500,
   [ErrorCode.GIT_OPERATION_FAILED]: 500,
   [ErrorCode.CODE_EXECUTION_ERROR]: 500,
+  [ErrorCode.BUCKET_MOUNT_ERROR]: 500,
+  [ErrorCode.S3FS_MOUNT_ERROR]: 500,
   [ErrorCode.UNKNOWN_ERROR]: 500,
   [ErrorCode.INTERNAL_ERROR]: 500
 };

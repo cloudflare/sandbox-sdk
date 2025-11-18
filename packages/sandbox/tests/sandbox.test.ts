@@ -42,6 +42,10 @@ vi.mock('@cloudflare/containers', () => {
       // Mock implementation for HTTP path
       return new Response('Mock Container HTTP fetch');
     }
+    async getState() {
+      // Mock implementation - return healthy state
+      return { status: 'healthy' };
+    }
   };
 
   return {
@@ -820,6 +824,37 @@ describe('Sandbox - Automatic Session Management', () => {
       ).rejects.toThrow(
         /getSandbox\(ns, "MyProject-ABC", \{ normalizeId: true \}\)/
       );
+    });
+  });
+
+  describe('timeout configuration validation', () => {
+    it('should reject invalid timeout values', async () => {
+      // NaN, Infinity, and out-of-range values should all be rejected
+      await expect(
+        sandbox.setContainerTimeouts({ instanceGetTimeoutMS: NaN })
+      ).rejects.toThrow();
+
+      await expect(
+        sandbox.setContainerTimeouts({ portReadyTimeoutMS: Infinity })
+      ).rejects.toThrow();
+
+      await expect(
+        sandbox.setContainerTimeouts({ instanceGetTimeoutMS: -1 })
+      ).rejects.toThrow();
+
+      await expect(
+        sandbox.setContainerTimeouts({ waitIntervalMS: 999_999 })
+      ).rejects.toThrow();
+    });
+
+    it('should accept valid timeout values', async () => {
+      await expect(
+        sandbox.setContainerTimeouts({
+          instanceGetTimeoutMS: 30_000,
+          portReadyTimeoutMS: 90_000,
+          waitIntervalMS: 1000
+        })
+      ).resolves.toBeUndefined();
     });
   });
 });

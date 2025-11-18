@@ -6,9 +6,9 @@ import { createErrorFromResponse, ErrorCode } from '../errors';
 import type { SandboxError } from '../errors/classes';
 import type { HttpClientOptions, ResponseHandler } from './types';
 
-// Container provisioning retry configuration
-const TIMEOUT_MS = 60_000; // 60 seconds total timeout budget
-const MIN_TIME_FOR_RETRY_MS = 10_000; // Need at least 10s remaining to retry (8s Container + 2s delay)
+// Container startup retry configuration
+const TIMEOUT_MS = 120_000; // 2 minutes total retry budget
+const MIN_TIME_FOR_RETRY_MS = 15_000; // Need at least 15s remaining to retry (allows for longer container startups)
 
 /**
  * Abstract base class providing common HTTP functionality for all domain clients
@@ -25,7 +25,8 @@ export abstract class BaseHttpClient {
   }
 
   /**
-   * Core HTTP request method with automatic retry for container provisioning delays
+   * Core HTTP request method with automatic retry for container startup delays
+   * Retries both 503 (provisioning) and 500 (startup failure) errors when they're container-related
    */
   protected async doFetch(
     path: string,
@@ -37,42 +38,41 @@ export abstract class BaseHttpClient {
     while (true) {
       const response = await this.executeFetch(path, options);
 
-      // Only retry container provisioning 503s, not user app 503s
-      if (response.status === 503) {
-        const isContainerProvisioning =
-          await this.isContainerProvisioningError(response);
+      // Check if this is a retryable container error (both 500 and 503)
+      const shouldRetry = await this.isRetryableContainerError(response);
 
-        if (isContainerProvisioning) {
-          const elapsed = Date.now() - startTime;
-          const remaining = TIMEOUT_MS - elapsed;
+      if (shouldRetry) {
+        const elapsed = Date.now() - startTime;
+        const remaining = TIMEOUT_MS - elapsed;
 
-          // Check if we have enough time for another attempt
-          // (Need at least 10s: 8s for Container timeout + 2s delay)
-          if (remaining > MIN_TIME_FOR_RETRY_MS) {
-            // Exponential backoff: 2s, 4s, 8s, 16s (capped at 16s)
-            const delay = Math.min(2000 * 2 ** attempt, 16000);
+        // Check if we have enough time for another attempt
+        if (remaining > MIN_TIME_FOR_RETRY_MS) {
+          // Exponential backoff with longer delays for container ops: 3s, 6s, 12s, 24s, 30s
+          const delay = Math.min(3000 * 2 ** attempt, 30000);
 
-            this.logger.info('Container provisioning in progress, retrying', {
-              attempt: attempt + 1,
-              delayMs: delay,
-              remainingSec: Math.floor(remaining / 1000)
-            });
+          this.logger.info('Container not ready, retrying', {
+            status: response.status,
+            attempt: attempt + 1,
+            delayMs: delay,
+            remainingSec: Math.floor(remaining / 1000)
+          });
 
-            await new Promise((resolve) => setTimeout(resolve, delay));
-            attempt++;
-            continue;
-          } else {
-            // Exhausted retries - log error and return response
-            // Let existing error handling convert to proper error
-            this.logger.error(
-              'Container failed to provision after multiple attempts',
-              new Error(`Failed after ${attempt + 1} attempts over 60s`)
-            );
-            return response;
-          }
+          await new Promise((resolve) => setTimeout(resolve, delay));
+          attempt++;
+          continue;
         }
+
+        // Timeout exhausted
+        this.logger.error(
+          'Container failed to become ready',
+          new Error(
+            `Failed after ${attempt + 1} attempts over ${Math.floor(elapsed / 1000)}s`
+          )
+        );
+        return response;
       }
 
+      // Not a retryable error or request succeeded
       return response;
     }
   }
@@ -82,7 +82,7 @@ export abstract class BaseHttpClient {
    */
   protected async post<T>(
     endpoint: string,
-    data: Record<string, any>,
+    data: unknown,
     responseHandler?: ResponseHandler<T>
   ): Promise<T> {
     const response = await this.doFetch(endpoint, {
@@ -242,25 +242,86 @@ export abstract class BaseHttpClient {
   }
 
   /**
-   * Check if 503 response is from container provisioning (retryable)
-   * vs user application (not retryable)
+   * Check if response indicates a retryable container error
+   * Uses fail-safe strategy: only retry known transient errors
+   *
+   * TODO: This relies on string matching error messages, which is brittle.
+   * Ideally, the container API should return structured errors with a
+   * `retryable: boolean` field to avoid coupling to error message format.
+   *
+   * @param response - HTTP response to check
+   * @returns true if error is retryable container error, false otherwise
    */
-  private async isContainerProvisioningError(
+  private async isRetryableContainerError(
     response: Response
   ): Promise<boolean> {
+    // Only consider 500 and 503 status codes
+    if (response.status !== 500 && response.status !== 503) {
+      return false;
+    }
+
     try {
-      // Clone response so we don't consume the original body
       const cloned = response.clone();
       const text = await cloned.text();
+      const textLower = text.toLowerCase();
 
-      // Container package returns specific message for provisioning errors
-      return text.includes('There is no Container instance available');
+      // Step 1: Check for permanent errors (fail fast)
+      const permanentErrors = [
+        'no such image', // Missing Docker image
+        'container already exists', // Name collision
+        'malformed containerinspect' // Docker API issue
+      ];
+
+      if (permanentErrors.some((err) => textLower.includes(err))) {
+        this.logger.debug('Detected permanent error, not retrying', { text });
+        return false; // Don't retry
+      }
+
+      // Step 2: Check for known transient errors (do retry)
+      const transientErrors = [
+        // Platform provisioning (503)
+        'no container instance available',
+        'currently provisioning',
+
+        // Port mapping race conditions (500)
+        'container port not found',
+        'connection refused: container port',
+
+        // Application startup delays (500)
+        'the container is not listening',
+        'failed to verify port',
+        'container did not start',
+
+        // Network transients (500)
+        'network connection lost',
+        'container suddenly disconnected',
+
+        // Monitor race conditions (500)
+        'monitor failed to find container',
+
+        // General timeouts (500)
+        'timed out',
+        'timeout'
+      ];
+
+      const shouldRetry = transientErrors.some((err) =>
+        textLower.includes(err)
+      );
+
+      if (!shouldRetry) {
+        this.logger.debug('Unknown error pattern, not retrying', {
+          status: response.status,
+          text: text.substring(0, 200) // Log first 200 chars
+        });
+      }
+
+      return shouldRetry;
     } catch (error) {
       this.logger.error(
-        'Error checking response body',
+        'Error checking if response is retryable',
         error instanceof Error ? error : new Error(String(error))
       );
-      // If we can't read the body, don't retry to be safe
+      // If we can't read response, don't retry (fail fast)
       return false;
     }
   }

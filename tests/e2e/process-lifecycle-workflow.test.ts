@@ -11,7 +11,6 @@ import { getTestWorkerUrl, WranglerDevRunner } from './helpers/wrangler-runner';
 import {
   createSandboxId,
   createTestHeaders,
-  fetchWithStartup,
   cleanupSandbox
 } from './helpers/test-fixtures';
 
@@ -72,17 +71,13 @@ describe('Process Lifecycle Workflow', () => {
       const headers = createTestHeaders(currentSandboxId);
 
       // Step 1: Start a simple sleep process (easier to test than a server)
-      const startResponse = await vi.waitFor(
-        async () =>
-          fetchWithStartup(`${workerUrl}/api/process/start`, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify({
-              command: 'sleep 30'
-            })
-          }),
-        { timeout: 90000, interval: 2000 }
-      );
+      const startResponse = await fetch(`${workerUrl}/api/process/start`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          command: 'sleep 30'
+        })
+      });
 
       expect(startResponse.status).toBe(200);
       const startData = await startResponse.json();
@@ -124,17 +119,13 @@ describe('Process Lifecycle Workflow', () => {
       const headers = createTestHeaders(sandboxId);
 
       // Start 2 long-running processes
-      const process1Response = await vi.waitFor(
-        async () =>
-          fetchWithStartup(`${workerUrl}/api/process/start`, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify({
-              command: 'sleep 60'
-            })
-          }),
-        { timeout: 90000, interval: 2000 }
-      );
+      const process1Response = await fetch(`${workerUrl}/api/process/start`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          command: 'sleep 60'
+        })
+      });
 
       const process1Data = await process1Response.json();
       const process1Id = process1Data.id;
@@ -191,17 +182,13 @@ describe('Process Lifecycle Workflow', () => {
       const headers = createTestHeaders(sandboxId);
 
       // Start a long-running background process
-      const startResponse = await vi.waitFor(
-        async () =>
-          fetchWithStartup(`${workerUrl}/api/process/start`, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify({
-              command: 'sleep 60'
-            })
-          }),
-        { timeout: 90000, interval: 2000 }
-      );
+      const startResponse = await fetch(`${workerUrl}/api/process/start`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          command: 'sleep 60'
+        })
+      });
 
       const startData = await startResponse.json();
       const processId = startData.id;
@@ -246,17 +233,13 @@ describe('Process Lifecycle Workflow', () => {
       const headers = createTestHeaders(sandboxId);
 
       // Start a process that outputs to stdout
-      const startResponse = await vi.waitFor(
-        async () =>
-          fetchWithStartup(`${workerUrl}/api/process/start`, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify({
-              command: 'echo "Hello from process"'
-            })
-          }),
-        { timeout: 90000, interval: 2000 }
-      );
+      const startResponse = await fetch(`${workerUrl}/api/process/start`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          command: 'echo "Hello from process"'
+        })
+      });
 
       const startData = await startResponse.json();
       const processId = startData.id;
@@ -291,18 +274,14 @@ await Bun.sleep(100);
 console.log("Line 3");
       `.trim();
 
-      await vi.waitFor(
-        async () =>
-          fetchWithStartup(`${workerUrl}/api/file/write`, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify({
-              path: '/workspace/script.js',
-              content: scriptCode
-            })
-          }),
-        { timeout: 90000, interval: 2000 }
-      );
+      await fetch(`${workerUrl}/api/file/write`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          path: '/workspace/script.js',
+          content: scriptCode
+        })
+      });
 
       // Start the script
       const startResponse = await fetch(`${workerUrl}/api/process/start`, {
@@ -398,18 +377,14 @@ const server = Bun.serve({
 console.log("Server started on port 8080");
       `.trim();
 
-        await vi.waitFor(
-          async () =>
-            fetchWithStartup(`${workerUrl}/api/file/write`, {
-              method: 'POST',
-              headers,
-              body: JSON.stringify({
-                path: '/workspace/app.js',
-                content: serverCode
-              })
-            }),
-          { timeout: 90000, interval: 2000 }
-        );
+        await fetch(`${workerUrl}/api/file/write`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            path: '/workspace/app.js',
+            content: serverCode
+          })
+        });
 
         // Start the server
         const startResponse = await fetch(`${workerUrl}/api/process/start`, {
@@ -467,17 +442,13 @@ console.log("Server started on port 8080");
       // Start 3 long-running processes
       const processes: string[] = [];
       for (let i = 0; i < 3; i++) {
-        const startResponse = await vi.waitFor(
-          async () =>
-            fetchWithStartup(`${workerUrl}/api/process/start`, {
-              method: 'POST',
-              headers,
-              body: JSON.stringify({
-                command: 'sleep 120'
-              })
-            }),
-          { timeout: 90000, interval: 2000 }
-        );
+        const startResponse = await fetch(`${workerUrl}/api/process/start`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            command: 'sleep 120'
+          })
+        });
 
         const data = await startResponse.json();
         processes.push(data.id);
@@ -545,18 +516,14 @@ console.log("Server listening on port 8080");
       `.trim();
 
         // Step 1: Write server code
-        await vi.waitFor(
-          async () =>
-            fetchWithStartup(`${workerUrl}/api/file/write`, {
-              method: 'POST',
-              headers,
-              body: JSON.stringify({
-                path: '/workspace/health-server.js',
-                content: serverCode
-              })
-            }),
-          { timeout: 90000, interval: 2000 }
-        );
+        await fetch(`${workerUrl}/api/file/write`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            path: '/workspace/health-server.js',
+            content: serverCode
+          })
+        });
 
         // Step 2: Start the process
         const startResponse = await fetch(`${workerUrl}/api/process/start`, {
@@ -644,17 +611,12 @@ console.log("Server listening on port 8080");
       const headers = createTestHeaders(currentSandboxId);
 
       // Try to kill a process that doesn't exist
-      const killResponse = await vi.waitFor(
-        async () =>
-          fetchWithStartup(
-            `${workerUrl}/api/process/fake-process-id-12345`,
-            {
-              method: 'DELETE',
-              headers
-            },
-            { expectSuccess: false }
-          ),
-        { timeout: 90000, interval: 2000 }
+      const killResponse = await fetch(
+        `${workerUrl}/api/process/fake-process-id-12345`,
+        {
+          method: 'DELETE',
+          headers
+        }
       );
 
       // Should return error
@@ -673,22 +635,14 @@ console.log("Server listening on port 8080");
         const headers = createTestHeaders(currentSandboxId);
 
         // Try to expose a reserved port (e.g., port 22 - SSH)
-        const exposeResponse = await vi.waitFor(
-          async () =>
-            fetchWithStartup(
-              `${workerUrl}/api/port/expose`,
-              {
-                method: 'POST',
-                headers,
-                body: JSON.stringify({
-                  port: 22,
-                  name: 'ssh-server'
-                })
-              },
-              { expectSuccess: false }
-            ),
-          { timeout: 90000, interval: 2000 }
-        );
+        const exposeResponse = await fetch(`${workerUrl}/api/port/expose`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            port: 22,
+            name: 'ssh-server'
+          })
+        });
 
         // Should return error for reserved port
         expect(exposeResponse.status).toBe(500);
@@ -708,17 +662,13 @@ console.log("Server listening on port 8080");
         const headers = createTestHeaders(currentSandboxId);
 
         // Initialize sandbox first
-        await vi.waitFor(
-          async () =>
-            fetchWithStartup(`${workerUrl}/api/execute`, {
-              method: 'POST',
-              headers,
-              body: JSON.stringify({
-                command: 'echo "init"'
-              })
-            }),
-          { timeout: 90000, interval: 2000 }
-        );
+        await fetch(`${workerUrl}/api/execute`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            command: 'echo "init"'
+          })
+        });
 
         // Try to unexpose a port that was never exposed
         const unexposeResponse = await fetch(

@@ -11,7 +11,6 @@ import { getTestWorkerUrl, WranglerDevRunner } from './helpers/wrangler-runner';
 import {
   createSandboxId,
   createTestHeaders,
-  fetchWithStartup,
   cleanupSandbox
 } from './helpers/test-fixtures';
 
@@ -47,17 +46,13 @@ describe('Environment Variables Workflow', () => {
       const headers = createTestHeaders(currentSandboxId);
 
       // Step 1: Set environment variable
-      const setEnvResponse = await vi.waitFor(
-        async () =>
-          fetchWithStartup(`${workerUrl}/api/env/set`, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify({
-              envVars: { TEST_VAR: 'hello_world' }
-            })
-          }),
-        { timeout: 90000, interval: 2000 }
-      );
+      const setEnvResponse = await fetch(`${workerUrl}/api/env/set`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          envVars: { TEST_VAR: 'hello_world' }
+        })
+      });
 
       expect(setEnvResponse.status).toBe(200);
       const setEnvData = await setEnvResponse.json();
@@ -83,21 +78,17 @@ describe('Environment Variables Workflow', () => {
       const headers = createTestHeaders(currentSandboxId);
 
       // Step 1: Set multiple environment variables
-      const setEnvResponse = await vi.waitFor(
-        async () =>
-          fetchWithStartup(`${workerUrl}/api/env/set`, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify({
-              envVars: {
-                API_KEY: 'secret123',
-                DB_HOST: 'localhost',
-                PORT: '3000'
-              }
-            })
-          }),
-        { timeout: 90000, interval: 2000 }
-      );
+      const setEnvResponse = await fetch(`${workerUrl}/api/env/set`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          envVars: {
+            API_KEY: 'secret123',
+            DB_HOST: 'localhost',
+            PORT: '3000'
+          }
+        })
+      });
 
       expect(setEnvResponse.status).toBe(200);
       const setEnvData = await setEnvResponse.json();
@@ -123,17 +114,13 @@ describe('Environment Variables Workflow', () => {
       const headers = createTestHeaders(currentSandboxId);
 
       // Step 1: Set environment variable
-      const setEnvResponse = await vi.waitFor(
-        async () =>
-          fetchWithStartup(`${workerUrl}/api/env/set`, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify({
-              envVars: { PERSISTENT_VAR: 'still_here' }
-            })
-          }),
-        { timeout: 90000, interval: 2000 }
-      );
+      const setEnvResponse = await fetch(`${workerUrl}/api/env/set`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          envVars: { PERSISTENT_VAR: 'still_here' }
+        })
+      });
 
       expect(setEnvResponse.status).toBe(200);
 
@@ -185,17 +172,13 @@ describe('Environment Variables Workflow', () => {
       const headers = createTestHeaders(currentSandboxId);
 
       // Step 1: Set environment variable
-      const setEnvResponse = await vi.waitFor(
-        async () =>
-          fetchWithStartup(`${workerUrl}/api/env/set`, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify({
-              envVars: { PROCESS_VAR: 'from_env' }
-            })
-          }),
-        { timeout: 90000, interval: 2000 }
-      );
+      const setEnvResponse = await fetch(`${workerUrl}/api/env/set`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          envVars: { PROCESS_VAR: 'from_env' }
+        })
+      });
 
       expect(setEnvResponse.status).toBe(200);
 
@@ -265,17 +248,13 @@ describe('Environment Variables Workflow', () => {
       const headers = createTestHeaders(currentSandboxId);
 
       // Test 1: cat with no arguments should exit immediately with EOF
-      const catResponse = await vi.waitFor(
-        async () =>
-          fetchWithStartup(`${workerUrl}/api/execute`, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify({
-              command: 'cat'
-            })
-          }),
-        { timeout: 90000, interval: 2000 }
-      );
+      const catResponse = await fetch(`${workerUrl}/api/execute`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          command: 'cat'
+        })
+      });
 
       expect(catResponse.status).toBe(200);
       const catData = await catResponse.json();

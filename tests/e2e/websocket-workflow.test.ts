@@ -14,7 +14,6 @@ import { getTestWorkerUrl, WranglerDevRunner } from './helpers/wrangler-runner';
 import {
   createSandboxId,
   createTestHeaders,
-  fetchWithStartup,
   cleanupSandbox
 } from './helpers/test-fixtures';
 
@@ -80,18 +79,14 @@ describe('WebSocket Workflow', () => {
       );
 
       // Step 1: Write the WebSocket echo server to the container
-      await vi.waitFor(
-        async () =>
-          fetchWithStartup(`${workerUrl}/api/file/write`, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify({
-              path: '/workspace/ws-server.ts',
-              content: serverCode
-            })
-          }),
-        { timeout: 90000, interval: 2000 }
-      );
+      await fetch(`${workerUrl}/api/file/write`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          path: '/workspace/ws-server.ts',
+          content: serverCode
+        })
+      });
 
       // Step 2: Start the WebSocket server as a background process
       const port = 8080;

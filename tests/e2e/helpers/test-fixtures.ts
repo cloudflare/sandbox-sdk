@@ -135,68 +135,6 @@ export function sleep(ms: number): Promise<void> {
 }
 
 /**
- * Fetch with container startup handling
- *
- * Automatically handles 503 responses during container startup.
- * Use this with vi.waitFor() for the first request to a new sandbox.
- *
- * By default, only retries on infrastructure errors (503).
- * Set expectSuccess=true to also throw on application errors (4xx, 5xx).
- *
- * @param url - The URL to fetch
- * @param init - Fetch options
- * @param options - Configuration options
- * @param options.expectSuccess - If true, throws on any non-2xx response (default: true)
- *
- * @example
- * ```typescript
- * // For tests expecting success (most cases)
- * const response = await vi.waitFor(
- *   async () => fetchWithStartup(`${workerUrl}/api/execute`, {
- *     method: 'POST',
- *     headers,
- *     body: JSON.stringify({ command: 'echo hello' })
- *   }),
- *   { timeout: 30000, interval: 1000 }
- * );
- *
- * // For tests expecting errors (error handling tests)
- * const response = await vi.waitFor(
- *   async () => fetchWithStartup(`${workerUrl}/api/git/clone`, {
- *     method: 'POST',
- *     headers,
- *     body: JSON.stringify({ repoUrl: 'invalid' })
- *   }, { expectSuccess: false }),
- *   { timeout: 30000, interval: 1000 }
- * );
- * // Now you can check: expect(response.status).toBe(500)
- * ```
- */
-export async function fetchWithStartup(
-  url: string,
-  init?: RequestInit,
-  options: { expectSuccess?: boolean } = { expectSuccess: true }
-): Promise<Response> {
-  const res = await fetch(url, init);
-
-  // 503 means container is still starting up - always retry
-  if (res.status === 503) {
-    throw new Error('Container not ready yet, retrying...');
-  }
-
-  // If we expect success, throw on any non-2xx response
-  // This helps tests fail fast on unexpected errors
-  if (options.expectSuccess && !res.ok) {
-    const body = await res.text();
-    throw new Error(`Request failed with ${res.status}: ${body}`);
-  }
-
-  // Otherwise, return the response (even if it's an error)
-  // This allows error-handling tests to verify error responses
-  return res;
-}
-
-/**
  * Cleanup a sandbox instance by calling its destroy() RPC method
  *
  * This destroys the container and triggers the onStop() lifecycle hook.

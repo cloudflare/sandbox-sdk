@@ -1,8 +1,8 @@
 import { getSandbox } from '@cloudflare/sandbox';
 import type {
+  ErrorResponse,
   ValidateRequest,
   ValidateResponse,
-  ErrorResponse,
   ZodParseResult
 } from './types';
 

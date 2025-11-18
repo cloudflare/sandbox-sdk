@@ -1,8 +1,9 @@
 {
   "compilerOptions": {
     "target": "esnext",
-    "lib": ["esnext"],
+    "lib": ["esnext", "dom", "dom.iterable"],
     "module": "esnext",
+    "jsx": "react-jsx",
     "moduleResolution": "bundler",
     "types": ["@types/node", "./worker-configuration.d.ts"],
     "esModuleInterop": true,
@@ -11,5 +12,10 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["worker-configuration.d.ts", "worker/**/*.ts", "src/**/*.ts"]
+  "include": [
+    "worker-configuration.d.ts",
+    "worker/**/*.ts",
+    "src/**/*.ts",
+    "src/**/*.tsx"
+  ]
 }

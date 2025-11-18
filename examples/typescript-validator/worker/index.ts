@@ -28,8 +28,7 @@ export default {
   }
 } satisfies ExportedHandler<Env>;
 
-// Export Compiler DO
-export { CompilerDO } from './compiler';
-
 // Export Sandbox DO from SDK
 export { Sandbox } from '@cloudflare/sandbox';
+// Export Compiler DO
+export { CompilerDO } from './compiler';

@@ -19,6 +19,7 @@ jobs:
     # Skip review for automated "Version Packages" PRs created by changesets
     if: github.event.pull_request.title != 'Version Packages'
 
+    timeout-minutes: 30
     runs-on: ubuntu-latest
     permissions:
       contents: read
