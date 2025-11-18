@@ -30,3 +30,13 @@ All conversations are saved in your browser's localStorage.
 ```bash
 npm run deploy
 ```
+
+## Security Warning
+
+**This example auto-approves all AI operations without human review.** The AI can:
+
+- Execute ANY shell command
+- Create, modify, or delete ANY file in /workspace
+- No safety limits beyond the container itself
+
+**Do not use in production without proper approval flows and rate limiting.**

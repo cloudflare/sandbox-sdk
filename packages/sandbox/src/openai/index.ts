@@ -406,12 +406,35 @@ export class Editor implements OpenAIEeditor {
     // Remove leading ./ or / if present, then join with root
     const normalized = relativePath.replace(/^\.\//, '').replace(/^\//, '');
     const resolved = normalized ? `${this.root}/${normalized}` : this.root;
+
+    // Normalize path separators first
+    const pathWithNormalizedSeparators = resolved.replace(/\/+/g, '/');
+
+    // Normalize .. segments by processing path segments
+    const segments = pathWithNormalizedSeparators
+      .split('/')
+      .filter((s) => s && s !== '.');
+    const stack: string[] = [];
+
+    for (const segment of segments) {
+      if (segment === '..') {
+        if (stack.length === 0) {
+          throw new Error(`Operation outside workspace: ${relativePath}`);
+        }
+        stack.pop();
+      } else {
+        stack.push(segment);
+      }
+    }
+
+    const normalizedPath = `/${stack.join('/')}`;
+
     // Ensure the resolved path is within the workspace
-    if (!resolved.startsWith(this.root)) {
+    if (!normalizedPath.startsWith(this.root)) {
       throw new Error(`Operation outside workspace: ${relativePath}`);
     }
-    // Normalize path separators
-    return resolved.replace(/\/+/g, '/');
+
+    return normalizedPath;
   }
 
   private getDirname(filePath: string): string {

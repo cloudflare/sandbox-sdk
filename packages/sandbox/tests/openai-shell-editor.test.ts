@@ -1,6 +1,15 @@
 import type { ApplyPatchOperation } from '@openai/agents';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Editor, Shell } from '../src/openai/index.ts';
+import type { Sandbox } from '../src/sandbox.ts';
+
+interface MockSandbox {
+  exec?: ReturnType<typeof vi.fn>;
+  mkdir?: ReturnType<typeof vi.fn>;
+  writeFile?: ReturnType<typeof vi.fn>;
+  readFile?: ReturnType<typeof vi.fn>;
+  deleteFile?: ReturnType<typeof vi.fn>;
+}
 
 const { loggerSpies, createLoggerMock, applyDiffMock } = vi.hoisted(() => {
   const logger = {
@@ -38,7 +47,8 @@ describe('Shell', () => {
       exitCode: 0
     });
 
-    const shell = new Shell({ exec: execMock } as unknown as any);
+    const mockSandbox: MockSandbox = { exec: execMock };
+    const shell = new Shell(mockSandbox as unknown as Sandbox);
 
     const result = await shell.run({
       commands: ['echo hello'],
@@ -67,7 +77,8 @@ describe('Shell', () => {
     const timeoutError = new Error('Command timed out');
     const execMock = vi.fn().mockRejectedValue(timeoutError);
 
-    const shell = new Shell({ exec: execMock } as unknown as any);
+    const mockSandbox: MockSandbox = { exec: execMock };
+    const shell = new Shell(mockSandbox as unknown as Sandbox);
     const action = {
       commands: ['sleep 1', 'echo never'],
       timeoutMs: 25
@@ -101,12 +112,12 @@ describe('Editor', () => {
   it('creates files using applyDiff output', async () => {
     applyDiffMock.mockReturnValueOnce('file contents');
 
-    const sandbox = {
+    const mockSandbox: MockSandbox = {
       mkdir: vi.fn().mockResolvedValue(undefined),
       writeFile: vi.fn().mockResolvedValue(undefined)
     };
 
-    const editor = new Editor(sandbox as unknown as any);
+    const editor = new Editor(mockSandbox as unknown as Sandbox);
     const operation = {
       type: 'create_file',
       path: 'src/app.ts',
@@ -116,10 +127,10 @@ describe('Editor', () => {
     await editor.createFile(operation);
 
     expect(applyDiffMock).toHaveBeenCalledWith('', operation.diff, 'create');
-    expect(sandbox.mkdir).toHaveBeenCalledWith('/workspace/src', {
+    expect(mockSandbox.mkdir).toHaveBeenCalledWith('/workspace/src', {
       recursive: true
     });
-    expect(sandbox.writeFile).toHaveBeenCalledWith(
+    expect(mockSandbox.writeFile).toHaveBeenCalledWith(
       '/workspace/src/app.ts',
       'file contents',
       { encoding: 'utf-8' }
@@ -138,12 +149,12 @@ describe('Editor', () => {
   it('applies diffs when updating existing files', async () => {
     applyDiffMock.mockReturnValueOnce('patched content');
 
-    const sandbox = {
+    const mockSandbox: MockSandbox = {
       readFile: vi.fn().mockResolvedValue({ content: 'original content' }),
       writeFile: vi.fn().mockResolvedValue(undefined)
     };
 
-    const editor = new Editor(sandbox as unknown as any);
+    const editor = new Editor(mockSandbox as unknown as Sandbox);
     const operation = {
       type: 'update_file',
       path: 'README.md',
@@ -152,14 +163,14 @@ describe('Editor', () => {
 
     await editor.updateFile(operation);
 
-    expect(sandbox.readFile).toHaveBeenCalledWith('/workspace/README.md', {
+    expect(mockSandbox.readFile).toHaveBeenCalledWith('/workspace/README.md', {
       encoding: 'utf-8'
     });
     expect(applyDiffMock).toHaveBeenCalledWith(
       'original content',
       operation.diff
     );
-    expect(sandbox.writeFile).toHaveBeenCalledWith(
+    expect(mockSandbox.writeFile).toHaveBeenCalledWith(
       '/workspace/README.md',
       'patched content',
       { encoding: 'utf-8' }
@@ -173,11 +184,11 @@ describe('Editor', () => {
 
   it('throws descriptive error when attempting to update a missing file', async () => {
     const missingError = Object.assign(new Error('not found'), { status: 404 });
-    const sandbox = {
+    const mockSandbox: MockSandbox = {
       readFile: vi.fn().mockRejectedValue(missingError)
     };
 
-    const editor = new Editor(sandbox as unknown as any);
+    const editor = new Editor(mockSandbox as unknown as Sandbox);
     const operation = {
       type: 'update_file',
       path: 'missing.txt',
@@ -192,5 +203,205 @@ describe('Editor', () => {
       undefined,
       { path: 'missing.txt' }
     );
+  });
+
+  describe('Path traversal security', () => {
+    it('should reject path traversal attempts with ../', async () => {
+      const mockSandbox: MockSandbox = {
+        mkdir: vi.fn(),
+        writeFile: vi.fn()
+      };
+
+      const editor = new Editor(mockSandbox as unknown as Sandbox);
+      const operation = {
+        type: 'create_file',
+        path: '../etc/passwd',
+        diff: 'malicious content'
+      } as Extract<ApplyPatchOperation, { type: 'create_file' }>;
+
+      await expect(editor.createFile(operation)).rejects.toThrow(
+        'Operation outside workspace: ../etc/passwd'
+      );
+      expect(mockSandbox.writeFile).not.toHaveBeenCalled();
+    });
+
+    it('should reject path traversal attempts with ../../', async () => {
+      const mockSandbox: MockSandbox = {
+        mkdir: vi.fn(),
+        writeFile: vi.fn()
+      };
+
+      const editor = new Editor(mockSandbox as unknown as Sandbox);
+      const operation = {
+        type: 'create_file',
+        path: '../../etc/passwd',
+        diff: 'malicious content'
+      } as Extract<ApplyPatchOperation, { type: 'create_file' }>;
+
+      await expect(editor.createFile(operation)).rejects.toThrow(
+        'Operation outside workspace: ../../etc/passwd'
+      );
+      expect(mockSandbox.writeFile).not.toHaveBeenCalled();
+    });
+
+    it('should reject path traversal attempts with mixed paths like src/../../etc/passwd', async () => {
+      const mockSandbox: MockSandbox = {
+        mkdir: vi.fn(),
+        writeFile: vi.fn()
+      };
+
+      const editor = new Editor(mockSandbox as unknown as Sandbox);
+      const operation = {
+        type: 'create_file',
+        path: 'src/../../etc/passwd',
+        diff: 'malicious content'
+      } as Extract<ApplyPatchOperation, { type: 'create_file' }>;
+
+      await expect(editor.createFile(operation)).rejects.toThrow(
+        'Operation outside workspace: src/../../etc/passwd'
+      );
+      expect(mockSandbox.writeFile).not.toHaveBeenCalled();
+    });
+
+    it('should reject path traversal attempts with leading slash /../../etc/passwd', async () => {
+      const mockSandbox: MockSandbox = {
+        mkdir: vi.fn(),
+        writeFile: vi.fn()
+      };
+
+      const editor = new Editor(mockSandbox as unknown as Sandbox);
+      const operation = {
+        type: 'create_file',
+        path: '/../../etc/passwd',
+        diff: 'malicious content'
+      } as Extract<ApplyPatchOperation, { type: 'create_file' }>;
+
+      await expect(editor.createFile(operation)).rejects.toThrow(
+        'Operation outside workspace: /../../etc/passwd'
+      );
+      expect(mockSandbox.writeFile).not.toHaveBeenCalled();
+    });
+
+    it('should reject path traversal attempts with leading dot-slash ./../../etc/passwd', async () => {
+      const mockSandbox: MockSandbox = {
+        mkdir: vi.fn(),
+        writeFile: vi.fn()
+      };
+
+      const editor = new Editor(mockSandbox as unknown as Sandbox);
+      const operation = {
+        type: 'create_file',
+        path: './../../etc/passwd',
+        diff: 'malicious content'
+      } as Extract<ApplyPatchOperation, { type: 'create_file' }>;
+
+      await expect(editor.createFile(operation)).rejects.toThrow(
+        'Operation outside workspace: ./../../etc/passwd'
+      );
+      expect(mockSandbox.writeFile).not.toHaveBeenCalled();
+    });
+
+    it('should reject path traversal in updateFile operations', async () => {
+      const mockSandbox: MockSandbox = {
+        readFile: vi.fn()
+      };
+
+      const editor = new Editor(mockSandbox as unknown as Sandbox);
+      const operation = {
+        type: 'update_file',
+        path: '../../etc/passwd',
+        diff: 'patch diff'
+      } as Extract<ApplyPatchOperation, { type: 'update_file' }>;
+
+      await expect(editor.updateFile(operation)).rejects.toThrow(
+        'Operation outside workspace: ../../etc/passwd'
+      );
+      expect(mockSandbox.readFile).not.toHaveBeenCalled();
+    });
+
+    it('should reject path traversal in deleteFile operations', async () => {
+      const mockSandbox: MockSandbox = {
+        deleteFile: vi.fn()
+      };
+
+      const editor = new Editor(mockSandbox as unknown as Sandbox);
+      const operation = {
+        type: 'delete_file',
+        path: '../../etc/passwd'
+      } as Extract<ApplyPatchOperation, { type: 'delete_file' }>;
+
+      await expect(editor.deleteFile(operation)).rejects.toThrow(
+        'Operation outside workspace: ../../etc/passwd'
+      );
+      expect(mockSandbox.deleteFile).not.toHaveBeenCalled();
+    });
+
+    it('should allow valid paths that use .. but stay within workspace', async () => {
+      applyDiffMock.mockReturnValueOnce('file contents');
+
+      const mockSandbox: MockSandbox = {
+        mkdir: vi.fn().mockResolvedValue(undefined),
+        writeFile: vi.fn().mockResolvedValue(undefined)
+      };
+
+      const editor = new Editor(mockSandbox as unknown as Sandbox);
+      const operation = {
+        type: 'create_file',
+        path: 'src/subdir/../../file.txt',
+        diff: '--- diff ---'
+      } as Extract<ApplyPatchOperation, { type: 'create_file' }>;
+
+      await editor.createFile(operation);
+
+      // Should resolve to /workspace/file.txt
+      expect(mockSandbox.writeFile).toHaveBeenCalledWith(
+        '/workspace/file.txt',
+        'file contents',
+        { encoding: 'utf-8' }
+      );
+    });
+
+    it('should handle paths with multiple consecutive slashes correctly', async () => {
+      applyDiffMock.mockReturnValueOnce('file contents');
+
+      const mockSandbox: MockSandbox = {
+        mkdir: vi.fn().mockResolvedValue(undefined),
+        writeFile: vi.fn().mockResolvedValue(undefined)
+      };
+
+      const editor = new Editor(mockSandbox as unknown as Sandbox);
+      const operation = {
+        type: 'create_file',
+        path: 'src//subdir///file.txt',
+        diff: '--- diff ---'
+      } as Extract<ApplyPatchOperation, { type: 'create_file' }>;
+
+      await editor.createFile(operation);
+
+      expect(mockSandbox.writeFile).toHaveBeenCalledWith(
+        '/workspace/src/subdir/file.txt',
+        'file contents',
+        { encoding: 'utf-8' }
+      );
+    });
+
+    it('should reject deep path traversal attempts', async () => {
+      const mockSandbox: MockSandbox = {
+        mkdir: vi.fn(),
+        writeFile: vi.fn()
+      };
+
+      const editor = new Editor(mockSandbox as unknown as Sandbox);
+      const operation = {
+        type: 'create_file',
+        path: 'a/b/c/../../../../etc/passwd',
+        diff: 'malicious content'
+      } as Extract<ApplyPatchOperation, { type: 'create_file' }>;
+
+      await expect(editor.createFile(operation)).rejects.toThrow(
+        'Operation outside workspace: a/b/c/../../../../etc/passwd'
+      );
+      expect(mockSandbox.writeFile).not.toHaveBeenCalled();
+    });
   });
 });
