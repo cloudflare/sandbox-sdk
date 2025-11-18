@@ -764,6 +764,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     // This prevents stale references after container restarts
     this.portTokens.clear();
     this.defaultSession = null;
+    this.activeMounts.clear();
 
     // Persist cleanup to storage so state is clean on next container start
     await Promise.all([
