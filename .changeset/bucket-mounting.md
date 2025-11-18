@@ -1,5 +1,5 @@
 ---
-'@cloudflare/sandbox': minor
+'@cloudflare/sandbox': patch
 ---
 
 Add S3-compatible bucket mounting
