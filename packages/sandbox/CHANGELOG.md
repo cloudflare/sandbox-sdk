@@ -1,5 +1,19 @@
 # @cloudflare/sandbox
 
+## 0.5.1
+
+### Patch Changes
+
+- [#190](https://github.com/cloudflare/sandbox-sdk/pull/190) [`57d764c`](https://github.com/cloudflare/sandbox-sdk/commit/57d764c2f01ca3ed93fd3d3244a50e8262405e1b) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Add S3-compatible bucket mounting
+
+  Enable mounting S3-compatible buckets (R2, S3, GCS, MinIO, etc.) as local filesystem paths using s3fs-fuse. Supports automatic credential detection from environment variables and intelligent provider detection from endpoint URLs.
+
+- [#223](https://github.com/cloudflare/sandbox-sdk/pull/223) [`b1a86c8`](https://github.com/cloudflare/sandbox-sdk/commit/b1a86c89285ebcae36ee9bb2f68f7765265e4504) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Improve container startup resiliency
+
+  SDK now retries both 503 (provisioning) and 500 (startup failure) errors automatically. Container timeouts increased to 30s instance + 90s ports (was 8s + 20s).
+
+- [#219](https://github.com/cloudflare/sandbox-sdk/pull/219) [`94e53f8`](https://github.com/cloudflare/sandbox-sdk/commit/94e53f80daf746148b7c0c83b27e256637b935c2) Thanks [@threepointone](https://github.com/threepointone)! - Update dependencies
+
 ## 0.5.0
 
 ### Minor Changes
