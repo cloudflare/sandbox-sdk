@@ -1,0 +1,35 @@
+{
+  "name": "@cloudflare/sandbox-site",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "types": "wrangler types env.d.ts --include-runtime false",
+    "deploy": "astro build && wrangler deploy",
+    "typecheck": "astro check"
+  },
+  "dependencies": {
+    "@astrojs/check": "^0.9.5",
+    "@astrojs/react": "^4.4.2",
+    "@cloudflare/vite-plugin": "^1.15.0",
+    "@tailwindcss/vite": "^4.1.17",
+    "astro": "^5.15.9",
+    "clsx": "^2.1.1",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "shiki": "^3.15.0",
+    "wrangler": "^4.49.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@tailwindcss/vite": "^4.1.17",
+    "@types/node": "^24.10.1",
+    "@types/react": "^19.2.6",
+    "@types/react-dom": "^19.2.3",
+    "tailwindcss": "^4",
+    "typescript": "^5.9.3"
+  }
+}
