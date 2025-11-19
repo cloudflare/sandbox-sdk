@@ -1,0 +1,14 @@
+{
+  "name": "sandbox-site",
+  "compatibility_date": "2025-03-14",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "single-page-application"
+  },
+  "observability": {
+    "logs": {
+      "enabled": true
+    }
+  }
+}

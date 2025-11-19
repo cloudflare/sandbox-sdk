@@ -1,0 +1,142 @@
+@import 'tailwindcss';
+
+/* Font face declarations */
+@font-face {
+  font-family: 'Inter';
+  src: url('/fonts/inter/Inter.var.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Inter';
+  src: url('/fonts/inter/Inter-Italic.var.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: italic;
+  font-display: swap;
+}
+
+/* IBM Plex Mono will be loaded from Google Fonts via link tag in HTML */
+
+:root {
+  --background: var(--color-neutral-100);
+  --foreground: var(--color-neutral-950);
+  --font-sans: 'Inter', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', monospace;
+  --color-orange-800: #ea580c;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-sans);
+  --font-title: var(--font-title);
+  /* --font-mono: 'Google Sans Code', monospace; */
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0a0a0a;
+    --foreground: #ededed;
+    --color-orange-800: #fb923c;
+  }
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+}
+
+.title {
+  letter-spacing: -0.05em;
+}
+
+/* Tube animations */
+.tube-path {
+  stroke-dasharray: 6 28;
+  stroke-dashoffset: 0;
+  animation: tube-path-flow var(--tube-duration, 0.8s) linear infinite;
+  animation-delay: var(--tube-delay, 0s);
+  animation-direction: var(--tube-direction, normal);
+  opacity: 0.9;
+}
+
+.tube-bar {
+  position: relative;
+  overflow: hidden;
+}
+
+.tube-bar::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(234, 88, 12, 0.7) 50%,
+    transparent 100%
+  );
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    color-mix(in srgb, var(--color-orange-800) 70%, transparent) 50%,
+    transparent 100%
+  );
+  opacity: 0.7;
+  transform: translateX(-100%);
+  animation: tube-bar-horizontal var(--tube-duration, 0.8s) linear infinite;
+  animation-delay: var(--tube-delay, 0s);
+  animation-direction: var(--tube-direction, normal);
+  pointer-events: none;
+}
+
+.tube-bar-vertical::after {
+  background: linear-gradient(
+    180deg,
+    transparent 0%,
+    rgba(234, 88, 12, 0.7) 50%,
+    transparent 100%
+  );
+  background: linear-gradient(
+    180deg,
+    transparent 0%,
+    color-mix(in srgb, var(--color-orange-800) 70%, transparent) 50%,
+    transparent 100%
+  );
+  transform: translateY(-100%);
+  animation: tube-bar-vertical var(--tube-duration, 0.8s) linear infinite;
+  animation-delay: var(--tube-delay, 0s);
+  animation-direction: var(--tube-direction, normal);
+}
+
+@keyframes tube-path-flow {
+  to {
+    stroke-dashoffset: -34;
+  }
+}
+
+@keyframes tube-bar-horizontal {
+  to {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes tube-bar-vertical {
+  to {
+    transform: translateY(100%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tube-path {
+    animation: none;
+  }
+
+  .tube-bar::after,
+  .tube-bar-vertical::after {
+    animation: none;
+    transform: none;
+  }
+}
