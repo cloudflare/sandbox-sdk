@@ -5,6 +5,7 @@ import type {
   CommandResult,
   FileOperationResult
 } from '@cloudflare/sandbox/openai';
+import { nanoid } from 'nanoid';
 
 interface Response {
   naturalResponse: string | null;
@@ -19,6 +20,21 @@ interface Message {
   timestamp: number;
 }
 
+/**
+ * Get or create a session ID for this user.
+ * The session ID is stored in localStorage and persists across browser sessions.
+ */
+function getOrCreateSessionId(): string {
+  let sessionId = localStorage.getItem('session-id');
+
+  if (!sessionId) {
+    sessionId = nanoid(8);
+    localStorage.setItem('session-id', sessionId);
+  }
+
+  return sessionId;
+}
+
 const STORAGE_KEY = 'openai-agents-history';
 
 async function makeApiCall(input: string): Promise<Response> {
@@ -26,7 +42,8 @@ async function makeApiCall(input: string): Promise<Response> {
     const response = await fetch('/run', {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'X-Session-Id': getOrCreateSessionId()
       },
       body: JSON.stringify({ input })
     });

@@ -30,7 +30,11 @@ function getErrorStack(error: unknown): string | undefined {
   return undefined;
 }
 
-async function handleRunRequest(request: Request, env: Env): Promise<Response> {
+async function handleRunRequest(
+  request: Request,
+  env: Env,
+  sessionId: string
+): Promise<Response> {
   console.debug('[openai-example]', 'handleRunRequest called', {
     method: request.method,
     url: request.url
@@ -58,9 +62,9 @@ async function handleRunRequest(request: Request, env: Env): Promise<Response> {
 
     // Get sandbox instance (reused for both shell and editor)
     console.debug('[openai-example]', 'Getting sandbox instance', {
-      sessionId: 'workspace-session'
+      sandboxId: `session-${sessionId}`
     });
-    const sandbox = getSandbox(env.Sandbox, 'workspace-session');
+    const sandbox = getSandbox(env.Sandbox, `session-${sessionId}`);
 
     // Create shell (automatically collects results)
     console.debug('[openai-example]', 'Creating SandboxShell');
@@ -163,8 +167,18 @@ export default {
       method: request.method
     });
 
+    const sessionId = request.headers.get('X-Session-Id');
+    console.log({ sessionId });
+    if (!sessionId) {
+      return new Response('Missing X-Session-Id header', { status: 400 });
+    }
+
+    if (url.pathname === '/.well-known/appspecific/com.chrome.devtools.json') {
+      return Response.json({});
+    }
+
     if (url.pathname === '/run' && request.method === 'POST') {
-      return handleRunRequest(request, env);
+      return handleRunRequest(request, env, sessionId);
     }
 
     console.warn('[openai-example]', 'Route not found', {
