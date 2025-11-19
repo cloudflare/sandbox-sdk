@@ -26,8 +26,7 @@ export const codeTheme = {
   ]
 };
 
-// @ts-expect-error - this is a valid code sample
-const originalCode = `import { getSandbox } from "@cloudflare/sandbox";
+export const originalCode = `import { getSandbox } from "@cloudflare/sandbox";
 
 // Export the Sandbox class in your Worker
 export { Sandbox } from "@cloudflare/sandbox";
@@ -52,8 +51,7 @@ export default {
   },
 };`;
 
-// @ts-expect-error - this is a valid code sample
-const originalNodeCode = `const sandbox = getSandbox(env.Sandbox, "node-app");
+export const originalNodeCode = `const sandbox = getSandbox(env.Sandbox, "node-app");
 
 // Write a simple Express server
 await sandbox.writeFile(

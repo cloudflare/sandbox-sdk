@@ -33,7 +33,7 @@ export function TextShadow({
     >
       {Array.from({ length: count }).map((_, index) => (
         <TextStroke
-          // biome-ignore lint/suspicious/noArrayIndexKey: <explanation>
+          // biome-ignore lint/suspicious/noArrayIndexKey: it's fine
           key={index}
           className="select-none"
         >

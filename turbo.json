@@ -9,6 +9,7 @@
         "tsdown.config.ts",
         "src/**/*.ts",
         "src/**/*.tsx",
+        "src/**/*.astro",
         "package.json",
         "tsconfig.json",
         "tsconfig.*.json",
@@ -22,6 +23,8 @@
       "outputs": [],
       "inputs": [
         "src/**/*.ts",
+        "src/**/*.tsx",
+        "src/**/*.astro",
         "tests/**/*.ts",
         "vitest.config.ts",
         "package.json"
@@ -31,12 +34,18 @@
     "typecheck": {
       "dependsOn": ["^build"],
       "outputs": [],
-      "inputs": ["src/**/*.ts", "tsconfig.json", "tsconfig.*.json"]
+      "inputs": [
+        "src/**/*.ts",
+        "src/**/*.tsx",
+        "src/**/*.astro",
+        "tsconfig.json",
+        "tsconfig.*.json"
+      ]
     },
     "check": {
       "dependsOn": ["typecheck"],
       "outputs": [],
-      "inputs": ["src/**/*.ts", "biome.json"]
+      "inputs": ["src/**/*.ts", "src/**/*.tsx", "src/**/*.astro", "biome.json"]
     },
     "docker:local": {
       "dependsOn": ["^build"],

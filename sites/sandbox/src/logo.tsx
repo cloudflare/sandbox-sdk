@@ -6,6 +6,7 @@ export function Logo({ size = 60 }: { size?: number | string }) {
       fill="white"
       viewBox="-1 -1 62 29"
     >
+      <title>Sandbox</title>
       <g>
         <path
           fill="#FBAD41"

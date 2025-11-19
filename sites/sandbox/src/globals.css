@@ -78,6 +78,7 @@ body {
     rgba(234, 88, 12, 0.7) 50%,
     transparent 100%
   );
+  /* biome-ignore lint/suspicious/noDuplicateProperties: it's fine */
   background: linear-gradient(
     90deg,
     transparent 0%,
@@ -99,6 +100,7 @@ body {
     rgba(234, 88, 12, 0.7) 50%,
     transparent 100%
   );
+  /* biome-ignore lint/suspicious/noDuplicateProperties: it's fine */
   background: linear-gradient(
     180deg,
     transparent 0%,

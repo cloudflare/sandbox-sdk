@@ -1,8 +1,8 @@
-import { CodeBlock, DotBox, GridBox, StripeBox } from '../components/grid';
-import { Logo } from '../logo';
+import type { CSSProperties } from 'react';
 import { code } from '../code-sample';
 import { File } from '../components/file';
-import type { CSSProperties } from 'react';
+import { CodeBlock, DotBox, GridBox, StripeBox } from '../components/grid';
+import { Logo } from '../logo';
 
 export function Hero() {
   return (
@@ -88,6 +88,7 @@ export function Hero() {
               fill="none"
               width="80"
             >
+              <title>Sandbox</title>
               <path
                 fillRule="evenodd"
                 clipRule="evenodd"
@@ -113,6 +114,7 @@ export function Hero() {
               fill="none"
               width="80"
             >
+              <title>Sandbox</title>
               <path
                 fillRule="evenodd"
                 clipRule="evenodd"
@@ -250,7 +252,7 @@ export function Hero() {
           </div>
           <div className="relative ml-8 border bg-background h-full w-full p-8 grid grid-cols-4">
             {Array.from({ length: 12 }).map((_, i) => {
-              // biome-ignore lint/suspicious/noArrayIndexKey: <explanation>
+              // biome-ignore lint/suspicious/noArrayIndexKey: it's fine
               return <File key={i} />;
             })}
           </div>

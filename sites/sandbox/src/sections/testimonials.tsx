@@ -1,3 +1,4 @@
+/** biome-ignore-all lint/suspicious/noArrayIndexKey: it's fine */
 import { DotBox, GridBox, StripeBox } from '../components/grid';
 import { TextShadow } from '../components/text-shadow';
 
@@ -37,7 +38,6 @@ export function Testimonials() {
     <div className="lg:grid lg:grid-cols-8 lg:border-l lg:auto-rows-fr flex flex-col lg:block">
       {/* Desktop decorative grid cells */}
       {Array.from({ length: 26 }).map((_, index) => (
-        // biome-ignore lint/suspicious/noArrayIndexKey: <explanation>
         <div
           key={index}
           className="hidden lg:block border-r border-b aspect-square"
@@ -81,6 +81,7 @@ export function Testimonials() {
                 fill="currentColor"
                 width="48"
               >
+                <title>Testimonial</title>
                 <path d="M14.017 21v-7.391c0-5.704 3.731-9.57 8.983-10.609l.995 2.151c-2.432.917-3.995 3.638-3.995 5.849h4v10h-9.983zm-14.017 0v-7.391c0-5.704 3.748-9.57 9-10.609l.996 2.151c-2.433.917-3.996 3.638-3.996 5.849h3.983v10h-9.983z" />
               </svg>
             </div>
@@ -165,6 +166,7 @@ function TestimonialCard({
                 width="24"
                 className="opacity-30"
               >
+                <title>Testimonial</title>
                 <path d="M14.017 21v-7.391c0-5.704 3.731-9.57 8.983-10.609l.995 2.151c-2.432.917-3.995 3.638-3.995 5.849h4v10h-9.983zm-14.017 0v-7.391c0-5.704 3.748-9.57 9-10.609l.996 2.151c-2.433.917-3.996 3.638-3.996 5.849h3.983v10h-9.983z" />
               </svg>
             </div>
@@ -197,6 +199,7 @@ function TestimonialMobile({ testimonial }: { testimonial: Testimonial }) {
           width="24"
           className="opacity-30 mb-3"
         >
+          <title>Testimonial</title>
           <path d="M14.017 21v-7.391c0-5.704 3.731-9.57 8.983-10.609l.995 2.151c-2.432.917-3.995 3.638-3.995 5.849h4v10h-9.983zm-14.017 0v-7.391c0-5.704 3.748-9.57 9-10.609l.996 2.151c-2.433.917-3.996 3.638-3.996 5.849h3.983v10h-9.983z" />
         </svg>
         <p className="text-sm leading-relaxed text-foreground/90">

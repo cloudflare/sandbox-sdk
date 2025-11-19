@@ -1,11 +1,12 @@
+/** biome-ignore-all lint/suspicious/noArrayIndexKey: it's fine */
 'use client';
 import { useMemo, useState } from 'react';
 import {
-  nodeExample,
   code,
   exposeExample,
-  processingExample,
   filesExample,
+  nodeExample,
+  processingExample,
   websocketExample
 } from '../code-sample';
 import { CodeBlock, GridBox, StripeBox } from '../components/grid';
@@ -42,7 +43,6 @@ export function Examples() {
     <div className="lg:grid lg:grid-cols-8 lg:border-l lg:auto-rows-fr flex flex-col lg:block">
       {/* Desktop decorative grid cells */}
       {Array.from({ length: 15 }).map((_, index) => (
-        // biome-ignore lint/suspicious/noArrayIndexKey: <explanation>
         <div
           key={index}
           className="hidden lg:block border-r border-b aspect-square"
@@ -85,6 +85,7 @@ export function Examples() {
             strokeLinecap="round"
             strokeLinejoin="round"
           >
+            <title>File Operations</title>
             <polyline points="9 18 15 12 9 6" />
           </svg>
         </button>
@@ -105,6 +106,7 @@ export function Examples() {
             strokeLinecap="round"
             strokeLinejoin="round"
           >
+            <title>Expose services with preview URLs</title>
             <polyline points="9 18 15 12 9 6" />
           </svg>
         </button>
@@ -125,6 +127,7 @@ export function Examples() {
             strokeLinecap="round"
             strokeLinejoin="round"
           >
+            <title>Run a Node.js app</title>
             <polyline points="9 18 15 12 9 6" />
           </svg>
         </button>
@@ -145,6 +148,7 @@ export function Examples() {
             strokeLinecap="round"
             strokeLinejoin="round"
           >
+            <title>Code Interpreter</title>
             <polyline points="9 18 15 12 9 6" />
           </svg>
         </button>
@@ -165,6 +169,7 @@ export function Examples() {
             strokeLinecap="round"
             strokeLinejoin="round"
           >
+            <title>WebSocket Connections</title>
             <polyline points="9 18 15 12 9 6" />
           </svg>
         </button>
@@ -185,6 +190,7 @@ export function Examples() {
             strokeLinecap="round"
             strokeLinejoin="round"
           >
+            <title>WebSocket Connections</title>
             <polyline points="9 18 15 12 9 6" />
           </svg>
         </button>
@@ -216,6 +222,7 @@ export function Examples() {
             strokeLinecap="round"
             strokeLinejoin="round"
           >
+            <title>File Operations</title>
             <polyline points="9 18 15 12 9 6" />
           </svg>
         </p>
@@ -235,6 +242,7 @@ export function Examples() {
             strokeLinecap="round"
             strokeLinejoin="round"
           >
+            <title>Expose services with preview URLs</title>
             <polyline points="9 18 15 12 9 6" />
           </svg>
         </p>
@@ -256,6 +264,7 @@ export function Examples() {
             strokeLinecap="round"
             strokeLinejoin="round"
           >
+            <title>Run a Node.js app</title>
             <polyline points="9 18 15 12 9 6" />
           </svg>
         </p>
@@ -275,6 +284,7 @@ export function Examples() {
             strokeLinecap="round"
             strokeLinejoin="round"
           >
+            <title>Code Interpreter</title>
             <polyline points="9 18 15 12 9 6" />
           </svg>
         </p>
@@ -296,6 +306,7 @@ export function Examples() {
             strokeLinecap="round"
             strokeLinejoin="round"
           >
+            <title>WebSocket Connections</title>
             <polyline points="9 18 15 12 9 6" />
           </svg>
         </p>
@@ -315,6 +326,7 @@ export function Examples() {
             strokeLinecap="round"
             strokeLinejoin="round"
           >
+            <title>WebSocket Connections</title>
             <polyline points="9 18 15 12 9 6" />
           </svg>
         </p>

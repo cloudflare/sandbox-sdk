@@ -1,60 +1,7 @@
-import clsx from 'clsx';
+'use client';
 import { useEffect, useRef, useState } from 'react';
-import { TextShadow } from './components/text-shadow';
-import { Examples } from './sections/example';
-import { Features } from './sections/features';
-import { Footer } from './sections/footer';
-import { Hero } from './sections/hero';
-import { Testimonials } from './sections/testimonials';
 
-function App() {
-  // Load fonts and set CSS variables
-  useEffect(() => {
-    // Set font CSS variables
-    document.documentElement.style.setProperty(
-      '--font-sans',
-      'Inter, system-ui, sans-serif'
-    );
-    document.documentElement.style.setProperty(
-      '--font-mono',
-      'IBM Plex Mono, monospace'
-    );
-
-    // Add font classes to body
-    document.body.className = 'antialiased bg-background font-sans';
-  }, []);
-
-  return (
-    <div className="min-h-screen">
-      <GridLine className="left-6 hidden lg:flex" />
-      <GridLine className="right-6 hidden lg:flex" />
-      <div className="px-4 sm:px-8 lg:px-16">
-        <main className="pt-4 pb-6 max-w-[1400px] mx-auto lg:border-x border-dashed">
-          <h1 className="title mx-auto w-fit font-medium relative z-30 text-[70px] sm:text-[120px] md:text-[160px] lg:text-[260px] leading-none">
-            <TextShadow text="sandbox" count={10} />
-          </h1>
-          <div className="h-6 bg-background sticky top-0 z-20 -mt-6 sm:-mt-10 lg:-mt-14" />
-          <div className="w-full lg:w-[calc(100%+2px)] lg:-mx-px">
-            <Header />
-            <Hero />
-            <Divider />
-            <Features />
-            <Divider />
-            <Examples />
-            <Divider />
-            <Testimonials />
-            <Divider />
-            <Footer />
-          </div>
-        </main>
-      </div>
-    </div>
-  );
-}
-
-// ---
-
-function Header() {
+export default function Header() {
   const command = 'npm i @cloudflare/sandbox';
   const [copied, setCopied] = useState(false);
   const resetTimer = useRef<number | null>(null);
@@ -167,30 +114,3 @@ function Header() {
     </header>
   );
 }
-
-function Divider() {
-  return (
-    <div className="h-4 sm:h-6 border border-t-0 relative bg-neutral-200" />
-  );
-}
-
-const LINES = 7;
-
-function GridLine({ className }: { className?: string }) {
-  return (
-    <div
-      className={clsx(
-        'fixed top-6 bottom-6 flex flex-col items-center justify-between',
-        className
-      )}
-    >
-      <div className="top-0 bottom-0 absolute border-r border-current" />
-      {Array.from({ length: LINES }).map((_, index) => (
-        // biome-ignore lint/suspicious/noArrayIndexKey: it's fine
-        <div key={index} className="border-t w-3" />
-      ))}
-    </div>
-  );
-}
-
-export default App;

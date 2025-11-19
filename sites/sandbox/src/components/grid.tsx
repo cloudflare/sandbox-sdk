@@ -1,10 +1,10 @@
 import clsx from 'clsx';
 import {
-  ReactNode,
-  useId,
-  useState,
   type ComponentPropsWithoutRef,
-  type CSSProperties
+  type CSSProperties,
+  type ReactNode,
+  useId,
+  useState
 } from 'react';
 import { DotPattern, StripePattern } from '../stripe-pattern';
 
@@ -108,6 +108,7 @@ export function CodeBlock({ children }: { children: string }) {
             strokeLinecap="round"
             strokeLinejoin="round"
           >
+            <title>Copied</title>
             <polyline points="20 6 9 17 4 12" />
           </svg>
         ) : (
@@ -122,6 +123,7 @@ export function CodeBlock({ children }: { children: string }) {
             strokeLinecap="round"
             strokeLinejoin="round"
           >
+            <title>Copy</title>
             <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
             <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
           </svg>
@@ -130,7 +132,7 @@ export function CodeBlock({ children }: { children: string }) {
 
       <div
         className="h-full w-full border bg-background flex items-center justify-center p-3 sm:p-4 min-w-0 min-h-0"
-        // biome-ignore lint/security/noDangerouslySetInnerHtml: <explanation>
+        // biome-ignore lint/security/noDangerouslySetInnerHtml: children is safe
         dangerouslySetInnerHTML={{ __html: children }}
         style={
           {

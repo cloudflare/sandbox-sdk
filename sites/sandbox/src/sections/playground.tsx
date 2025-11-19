@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { CodeBlock, DotBox, GridBox } from '../components/grid';
 import { TextShadow } from '../components/text-shadow';
 
@@ -42,6 +42,7 @@ export function Playground() {
   const code = useMemo(() => generateCode(repo, command), [repo, command]);
 
   // Scroll to bottom when output changes
+  // biome-ignore lint/correctness/useExhaustiveDependencies: we need this to happen when the output changes
   useEffect(() => {
     if (outputRef.current) {
       outputRef.current.scrollTop = outputRef.current.scrollHeight;
@@ -128,8 +129,8 @@ export function Playground() {
     <div className="lg:grid lg:grid-cols-8 lg:border-l lg:auto-rows-fr flex flex-col lg:block">
       {/* Desktop decorative grid cells */}
       {Array.from({ length: 4 }).map((_, index) => (
-        // biome-ignore lint/suspicious/noArrayIndexKey: <explanation>
         <div
+          // biome-ignore lint/suspicious/noArrayIndexKey: it's fine
           key={index}
           className="hidden lg:block border-r border-b aspect-square"
         />

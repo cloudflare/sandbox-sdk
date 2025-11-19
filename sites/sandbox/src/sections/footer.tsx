@@ -1,3 +1,4 @@
+/** biome-ignore-all lint/suspicious/noArrayIndexKey: it's fine */
 import { useState } from 'react';
 import { GridBox } from '../components/grid';
 
@@ -19,7 +20,6 @@ export function Footer() {
     <div className="lg:grid lg:grid-cols-8 lg:border-l lg:auto-rows-fr flex flex-col lg:block">
       {/* Desktop decorative grid cells */}
       {Array.from({ length: 8 }).map((_, index) => (
-        // biome-ignore lint/suspicious/noArrayIndexKey: <explanation>
         <div
           key={index}
           className="hidden lg:block border-r border-b aspect-square"

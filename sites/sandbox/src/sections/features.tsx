@@ -1,15 +1,16 @@
-import { ReactNode, useState, useEffect, type CSSProperties } from 'react';
+/** biome-ignore-all lint/suspicious/noArrayIndexKey: it's fine */
+'use client';
+import { type CSSProperties, type ReactNode, useEffect, useState } from 'react';
+import { pythonExample } from '../code-sample';
+import { File } from '../components/file';
 import { DotBox, GridBox } from '../components/grid';
 import { TextShadow } from '../components/text-shadow';
-import { File } from '../components/file';
-import { pythonExample } from '../code-sample';
 
 export function Features() {
   return (
     <div className="lg:grid lg:grid-cols-8 lg:border-l lg:auto-rows-fr flex flex-col lg:block">
       {/* Desktop decorative grid cells */}
       {Array.from({ length: 18 }).map((_, index) => (
-        // biome-ignore lint/suspicious/noArrayIndexKey: <explanation>
         <div
           key={index}
           className="hidden lg:block border-r border-b aspect-square"
@@ -65,6 +66,7 @@ export function Features() {
                 className="animate-spin"
                 strokeWidth="4"
               >
+                <title>Processing</title>
                 <path
                   d="M20.5 12C20.5 16.6944 16.6944 20.5 12 20.5C7.30558 20.5 3.5 16.6944 3.5 12C3.5 7.30558 7.30558 3.5 12 3.5C16.6944 3.5 20.5 7.30558 20.5 12Z"
                   stroke="black"
@@ -87,6 +89,7 @@ export function Features() {
                 fill="currentColor"
                 width="48"
               >
+                <title>Processing</title>
                 <path d="M12 2C12.5523 2 13 2.44772 13 3V4C13 4.55228 12.5523 5 12 5C11.4477 5 11 4.55228 11 4V3C11 2.44772 11.4477 2 12 2ZM2 12C2 11.4477 2.44772 11 3 11H4C4.55228 11 5 11.4477 5 12C5 12.5523 4.55228 13 4 13H3C2.44772 13 2 12.5523 2 12ZM19 12C19 11.4477 19.4477 11 20 11H21C21.5523 11 22 11.4477 22 12C22 12.5523 21.5523 13 21 13H20C19.4477 13 19 12.5523 19 12Z" />
                 <path d="M16.9491 7.05025C16.5586 6.65973 16.5586 6.02656 16.9491 5.63604L17.6562 4.92893C18.0468 4.53841 18.6799 4.53841 19.0705 4.92893C19.461 5.31946 19.461 5.95262 19.0705 6.34315L18.3634 7.05025C17.9728 7.44078 17.3397 7.44078 16.9491 7.05025Z" />
                 <path d="M2 16C2 15.4477 2.44772 15 3 15H21C21.5523 15 22 15.4477 22 16C22 16.5523 21.5523 17 21 17H3C2.44772 17 2 16.5523 2 16ZM6 20C6 19.4477 6.44772 19 7 19H17C17.5523 19 18 19.4477 18 20C18 20.5523 17.5523 21 17 21H7C6.44772 21 6 20.5523 6 20Z" />
@@ -129,6 +132,7 @@ export function Features() {
                 fill="currentColor"
                 width="32"
               >
+                <title>Real time streaming</title>
                 <path d="M14 8C14 7.44772 13.5523 7 13 7C12.4477 7 12 7.44772 12 8C12 10.3085 11.4892 11.7424 10.6158 12.6158C9.74243 13.4892 8.30849 14 6 14C5.44772 14 5 14.4477 5 15C5 15.5523 5.44772 16 6 16C8.30849 16 9.74243 16.5108 10.6158 17.3842C11.4892 18.2576 12 19.6915 12 22C12 22.5523 12.4477 23 13 23C13.5523 23 14 22.5523 14 22C14 19.6915 14.5108 18.2576 15.3842 17.3842C16.2576 16.5108 17.6915 16 20 16C20.5523 16 21 15.5523 21 15C21 14.4477 20.5523 14 20 14C17.6915 14 16.2576 13.4892 15.3842 12.6158C14.5108 11.7424 14 10.3085 14 8Z" />
                 <path d="M6 5.5C6 5.22386 5.77614 5 5.5 5C5.22386 5 5 5.22386 5 5.5C5 6.48063 4.78279 7.0726 4.4277 7.4277C4.0726 7.78279 3.48063 8 2.5 8C2.22386 8 2 8.22386 2 8.5C2 8.77614 2.22386 9 2.5 9C3.48063 9 4.0726 9.21721 4.4277 9.5723C4.78279 9.9274 5 10.5194 5 11.5C5 11.7761 5.22386 12 5.5 12C5.77614 12 6 11.7761 6 11.5C6 10.5194 6.21721 9.9274 6.5723 9.5723C6.9274 9.21721 7.51937 9 8.5 9C8.77614 9 9 8.77614 9 8.5C9 8.22386 8.77614 8 8.5 8C7.51937 8 6.9274 7.78279 6.5723 7.4277C6.21721 7.0726 6 6.48063 6 5.5Z" />
                 <path d="M11 1.5C11 1.22386 10.7761 1 10.5 1C10.2239 1 10 1.22386 10 1.5C10 2.13341 9.85918 2.47538 9.66728 2.66728C9.47538 2.85918 9.13341 3 8.5 3C8.22386 3 8 3.22386 8 3.5C8 3.77614 8.22386 4 8.5 4C9.13341 4 9.47538 4.14082 9.66728 4.33272C9.85918 4.52462 10 4.86659 10 5.5C10 5.77614 10.2239 6 10.5 6C10.7761 6 11 5.77614 11 5.5C11 4.86659 11.1408 4.52462 11.3327 4.33272C11.5246 4.14082 11.8666 4 12.5 4C12.7761 4 13 3.77614 13 3.5C13 3.22386 12.7761 3 12.5 3C11.8666 3 11.5246 2.85918 11.3327 2.66728C11.1408 2.47538 11 2.13341 11 1.5Z" />
@@ -258,6 +262,7 @@ export function Features() {
               </div>
               <div
                 className="p-4"
+                // biome-ignore lint/security/noDangerouslySetInnerHtml: pythonExample is safe
                 dangerouslySetInnerHTML={{ __html: pythonExample }}
               />
             </div>
@@ -363,6 +368,7 @@ export function Features() {
                   strokeLinejoin="round"
                   width="32"
                 >
+                  <title>Worker</title>
                   <polyline points="16 18 22 12 16 6" />
                   <polyline points="8 6 2 12 8 18" />
                 </svg>
@@ -395,6 +401,7 @@ export function Features() {
                 width="24"
                 className="rotate-90"
               >
+                <title>WebSockets</title>
                 <path d="M8 3 4 7l4 4" />
                 <path d="M4 7h16" />
                 <path d="m16 21 4-4-4-4" />
@@ -427,6 +434,7 @@ export function Features() {
                   strokeLinejoin="round"
                   width="32"
                 >
+                  <title>Sandbox</title>
                   <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
                   <polyline points="3.29 7 12 12 20.71 7" />
                   <line x1="12" y1="22" x2="12" y2="12" />
