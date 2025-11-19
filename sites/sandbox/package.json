@@ -13,7 +13,6 @@
   },
   "dependencies": {
     "@astrojs/check": "^0.9.5",
-    "@astrojs/cloudflare": "^12.6.11",
     "@astrojs/react": "^4.4.2",
     "@cloudflare/vite-plugin": "^1.15.0",
     "@tailwindcss/vite": "^4.1.17",
