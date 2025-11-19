@@ -331,9 +331,22 @@ shared package for consistency across the SDK.
 
 ### Logging
 
-- Centralized logger from `@repo/shared`
-- Structured logging with component context
-- Configurable via `SANDBOX_LOG_LEVEL` and `SANDBOX_LOG_FORMAT` env vars
+**Pattern**: Explicit logger passing via constructor injection throughout the codebase.
+
+```typescript
+class MyService {
+  constructor(private logger: Logger) {}
+
+  async doWork() {
+    const childLogger = this.logger.child({ operation: 'work' });
+    childLogger.info('Working', { context });
+  }
+}
+```
+
+**Configuration**: `SANDBOX_LOG_LEVEL` (debug|info|warn|error) and `SANDBOX_LOG_FORMAT` (json|pretty) env vars, read at startup.
+
+**Testing**: Use `createNoOpLogger()` from `@repo/shared` in tests.
 
 ### Session Management
 

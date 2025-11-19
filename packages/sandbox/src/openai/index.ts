@@ -35,11 +35,6 @@ export interface FileOperationResult {
 import { createLogger, type Logger } from '@repo/shared';
 import type { Sandbox } from '../sandbox';
 
-const logger: Logger = createLogger({
-  component: 'sandbox-do',
-  operation: 'openai-agent'
-});
-
 // Helper functions for error handling
 function isErrorWithProperties(error: unknown): error is {
   message?: string;
@@ -74,18 +69,24 @@ function toError(error: unknown): Error | undefined {
 export class Shell implements OpenAIShell {
   private cwd: string = '/workspace';
   public results: CommandResult[] = [];
+  private readonly logger: Logger;
 
-  constructor(private readonly sandbox: Sandbox) {}
+  constructor(private readonly sandbox: Sandbox) {
+    this.logger = createLogger({
+      component: 'sandbox-do',
+      operation: 'openai-shell'
+    });
+  }
 
   async run(action: ShellAction): Promise<ShellResult> {
-    logger.debug('SandboxShell.run called', {
+    this.logger.debug('SandboxShell.run called', {
       commands: action.commands,
       timeout: action.timeoutMs
     });
     const output: ShellResult['output'] = [];
 
     for (const command of action.commands) {
-      logger.debug('Executing command', { command, cwd: this.cwd });
+      this.logger.debug('Executing command', { command, cwd: this.cwd });
       let stdout = '';
       let stderr = '';
       let exitCode: number | null = 0;
@@ -105,7 +106,7 @@ export class Shell implements OpenAIShell {
         // Timeout would be indicated by a specific error or exit code
         outcome = { type: 'exit', exitCode };
 
-        logger.debug('Command executed successfully', {
+        this.logger.debug('Command executed successfully', {
           command,
           exitCode,
           stdoutLength: stdout.length,
@@ -114,14 +115,17 @@ export class Shell implements OpenAIShell {
 
         // Log warnings for non-zero exit codes or stderr output
         if (exitCode !== 0) {
-          logger.warn(`Command failed with exit code ${exitCode}`, {
+          this.logger.warn(`Command failed with exit code ${exitCode}`, {
             command,
             stderr
           });
         } else if (stderr) {
-          logger.warn(`Command produced stderr output`, { command, stderr });
+          this.logger.warn(`Command produced stderr output`, {
+            command,
+            stderr
+          });
         } else {
-          logger.info(`Command completed successfully`, { command });
+          this.logger.info(`Command completed successfully`, { command });
         }
       } catch (error: unknown) {
         // Handle network/HTTP errors or timeout errors
@@ -138,13 +142,13 @@ export class Shell implements OpenAIShell {
           errorMessage.includes('Timeout') ||
           errorMessage.includes('timed out')
         ) {
-          logger.error(`Command timed out`, undefined, {
+          this.logger.error(`Command timed out`, undefined, {
             command,
             timeout: action.timeoutMs
           });
           outcome = { type: 'timeout' };
         } else {
-          logger.error(`Error executing command`, toError(error), {
+          this.logger.error(`Error executing command`, toError(error), {
             command,
             error: errorMessage || error,
             exitCode
@@ -170,19 +174,19 @@ export class Shell implements OpenAIShell {
         exitCode: collectedExitCode,
         timestamp
       });
-      logger.debug('Result collected', {
+      this.logger.debug('Result collected', {
         command,
         exitCode: collectedExitCode,
         timestamp
       });
 
       if (outcome.type === 'timeout') {
-        logger.warn('Breaking command loop due to timeout');
+        this.logger.warn('Breaking command loop due to timeout');
         break;
       }
     }
 
-    logger.debug('SandboxShell.run completed', {
+    this.logger.debug('SandboxShell.run completed', {
       totalCommands: action.commands.length,
       resultsCount: this.results.length
     });
@@ -201,11 +205,17 @@ export class Shell implements OpenAIShell {
  */
 export class Editor implements OpenAIEeditor {
   public results: FileOperationResult[] = [];
+  private readonly logger: Logger;
 
   constructor(
     private readonly sandbox: Sandbox,
     private readonly root: string = '/workspace'
-  ) {}
+  ) {
+    this.logger = createLogger({
+      component: 'sandbox-do',
+      operation: 'openai-editor'
+    });
+  }
 
   /**
    * Create a new file inside the sandbox by applying the provided diff.
@@ -214,7 +224,7 @@ export class Editor implements OpenAIEeditor {
     operation: Extract<ApplyPatchOperation, { type: 'create_file' }>
   ): Promise<ApplyPatchResult | undefined> {
     const targetPath = this.resolve(operation.path);
-    logger.debug('WorkspaceEditor.createFile called', {
+    this.logger.debug('WorkspaceEditor.createFile called', {
       path: operation.path,
       targetPath
     });
@@ -223,12 +233,12 @@ export class Editor implements OpenAIEeditor {
       // Create parent directory if needed
       const dirPath = this.getDirname(targetPath);
       if (dirPath !== this.root && dirPath !== '/') {
-        logger.debug('Creating parent directory', { dirPath });
+        this.logger.debug('Creating parent directory', { dirPath });
         await this.sandbox.mkdir(dirPath, { recursive: true });
       }
 
       const content = applyDiff('', operation.diff, 'create');
-      logger.debug('Writing file content', {
+      this.logger.debug('Writing file content', {
         path: targetPath,
         contentLength: content.length
       });
@@ -242,7 +252,7 @@ export class Editor implements OpenAIEeditor {
         timestamp
       };
       this.results.push(result);
-      logger.info('File created successfully', {
+      this.logger.info('File created successfully', {
         path: operation.path,
         timestamp
       });
@@ -259,7 +269,7 @@ export class Editor implements OpenAIEeditor {
         timestamp
       };
       this.results.push(result);
-      logger.error('Failed to create file', toError(error), {
+      this.logger.error('Failed to create file', toError(error), {
         path: operation.path,
         error: errorMessage
       });
@@ -275,7 +285,7 @@ export class Editor implements OpenAIEeditor {
     operation: Extract<ApplyPatchOperation, { type: 'update_file' }>
   ): Promise<ApplyPatchResult | undefined> {
     const targetPath = this.resolve(operation.path);
-    logger.debug('WorkspaceEditor.updateFile called', {
+    this.logger.debug('WorkspaceEditor.updateFile called', {
       path: operation.path,
       targetPath
     });
@@ -283,12 +293,12 @@ export class Editor implements OpenAIEeditor {
     try {
       let original: string;
       try {
-        logger.debug('Reading original file', { path: targetPath });
+        this.logger.debug('Reading original file', { path: targetPath });
         const fileInfo = await this.sandbox.readFile(targetPath, {
           encoding: 'utf-8'
         });
         original = fileInfo.content;
-        logger.debug('Original file read', {
+        this.logger.debug('Original file read', {
           path: targetPath,
           originalLength: original.length
         });
@@ -301,12 +311,12 @@ export class Editor implements OpenAIEeditor {
           errorMessage.includes('ENOENT') ||
           errorObj.status === 404
         ) {
-          logger.error('Cannot update missing file', undefined, {
+          this.logger.error('Cannot update missing file', undefined, {
             path: operation.path
           });
           throw new Error(`Cannot update missing file: ${operation.path}`);
         }
-        logger.error('Error reading file', toError(error), {
+        this.logger.error('Error reading file', toError(error), {
           path: operation.path,
           error: errorMessage
         });
@@ -314,7 +324,7 @@ export class Editor implements OpenAIEeditor {
       }
 
       const patched = applyDiff(original, operation.diff);
-      logger.debug('Applied diff', {
+      this.logger.debug('Applied diff', {
         path: targetPath,
         originalLength: original.length,
         patchedLength: patched.length
@@ -329,7 +339,7 @@ export class Editor implements OpenAIEeditor {
         timestamp
       };
       this.results.push(result);
-      logger.info('File updated successfully', {
+      this.logger.info('File updated successfully', {
         path: operation.path,
         timestamp
       });
@@ -346,7 +356,7 @@ export class Editor implements OpenAIEeditor {
         timestamp
       };
       this.results.push(result);
-      logger.error('Failed to update file', toError(error), {
+      this.logger.error('Failed to update file', toError(error), {
         path: operation.path,
         error: errorMessage
       });
@@ -361,7 +371,7 @@ export class Editor implements OpenAIEeditor {
     operation: Extract<ApplyPatchOperation, { type: 'delete_file' }>
   ): Promise<ApplyPatchResult | undefined> {
     const targetPath = this.resolve(operation.path);
-    logger.debug('WorkspaceEditor.deleteFile called', {
+    this.logger.debug('WorkspaceEditor.deleteFile called', {
       path: operation.path,
       targetPath
     });
@@ -377,7 +387,7 @@ export class Editor implements OpenAIEeditor {
         timestamp
       };
       this.results.push(result);
-      logger.info('File deleted successfully', {
+      this.logger.info('File deleted successfully', {
         path: operation.path,
         timestamp
       });
@@ -394,7 +404,7 @@ export class Editor implements OpenAIEeditor {
         timestamp
       };
       this.results.push(result);
-      logger.error('Failed to delete file', toError(error), {
+      this.logger.error('Failed to delete file', toError(error), {
         path: operation.path,
         error: errorMessage
       });
