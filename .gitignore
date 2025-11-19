@@ -158,4 +158,4 @@ tests/e2e/test-worker/wrangler.jsonc
 !dist/**
 !node_modules/**
 
-site/*/.astro/*.*
+sites/**/.astro/
