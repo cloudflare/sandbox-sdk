@@ -18,6 +18,7 @@ import type { SessionManager } from './session-manager';
 
 // Re-export types for use by ProcessStore implementations
 export type { ProcessRecord, ProcessStatus } from '../core/types';
+export type { ProcessStore } from './process-store';
 
 export interface ProcessFilters {
   status?: ProcessStatus;

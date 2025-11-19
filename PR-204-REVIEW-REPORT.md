@@ -1870,6 +1870,7 @@ $ npm run test:e2e
    - Less flexible
 
 3. **Subshell with export** (chosen)
+
    ```bash
    (export VAR=val; command)
    ```

@@ -1,12 +1,4 @@
-import {
-  describe,
-  test,
-  expect,
-  beforeAll,
-  afterAll,
-  afterEach,
-  vi
-} from 'vitest';
+import { describe, test, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import { getTestWorkerUrl, WranglerDevRunner } from './helpers/wrangler-runner';
 import {
   createSandboxId,
@@ -694,33 +686,41 @@ console.log("Server listening on port 8080");
       const headers = createTestHeaders(sandboxId);
 
       // Start a short-lived process that completes quickly
-      const startResponse = await vi.waitFor(
-        async () =>
-          fetchWithStartup(`${workerUrl}/api/process/start`, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify({
-              command: 'echo "test output"'
-            })
-          }),
-        { timeout: 90000, interval: 2000 }
-      );
+      const startResponse = await fetch(`${workerUrl}/api/process/start`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          command: 'echo "test output"'
+        })
+      });
 
       expect(startResponse.status).toBe(200);
       const startData = await startResponse.json();
       const processId = startData.id;
 
-      // Wait for process to complete
-      await new Promise((resolve) => setTimeout(resolve, 2000));
+      // Poll until process completes (pattern developers would use)
+      let processData;
+      const maxAttempts = 60; // 30 seconds with 500ms intervals
+      for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        const getResponse = await fetch(
+          `${workerUrl}/api/process/${processId}`,
+          {
+            method: 'GET',
+            headers
+          }
+        );
 
-      // Get completed process metadata
-      const getResponse = await fetch(`${workerUrl}/api/process/${processId}`, {
-        method: 'GET',
-        headers
-      });
+        expect(getResponse.status).toBe(200);
+        processData = await getResponse.json();
 
-      expect(getResponse.status).toBe(200);
-      const processData = await getResponse.json();
+        if (processData.status === 'completed') {
+          break;
+        }
+
+        if (attempt < maxAttempts - 1) {
+          await new Promise((resolve) => setTimeout(resolve, 500));
+        }
+      }
 
       // Verify completed status
       expect(processData.id).toBe(processId);
@@ -735,23 +735,39 @@ console.log("Server listening on port 8080");
       const headers = createTestHeaders(sandboxId);
 
       // Start a process that completes quickly
-      const completedResponse = await vi.waitFor(
-        async () =>
-          fetchWithStartup(`${workerUrl}/api/process/start`, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify({
-              command: 'echo "completed process"'
-            })
-          }),
-        { timeout: 90000, interval: 2000 }
-      );
+      const completedResponse = await fetch(`${workerUrl}/api/process/start`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          command: 'echo "completed process"'
+        })
+      });
 
       const completedData = await completedResponse.json();
       const completedId = completedData.id;
 
-      // Wait for first process to complete
-      await new Promise((resolve) => setTimeout(resolve, 2000));
+      // Poll until first process completes (pattern developers would use)
+      const maxAttempts = 60; // 30 seconds with 500ms intervals
+      for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        const getResponse = await fetch(
+          `${workerUrl}/api/process/${completedId}`,
+          {
+            method: 'GET',
+            headers
+          }
+        );
+
+        expect(getResponse.status).toBe(200);
+        const data = await getResponse.json();
+
+        if (data.status === 'completed') {
+          break;
+        }
+
+        if (attempt < maxAttempts - 1) {
+          await new Promise((resolve) => setTimeout(resolve, 500));
+        }
+      }
 
       // Start a long-running process
       const runningResponse = await fetch(`${workerUrl}/api/process/start`, {

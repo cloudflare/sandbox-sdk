@@ -1,14 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'bun:test';
 import { mkdir, rm } from 'node:fs/promises';
-import type { Logger, ProcessRecord } from '@sandbox-container/core/types.ts';
+import type { Logger } from '@repo/shared';
+import type { ProcessRecord } from '@sandbox-container/core/types';
 import { ProcessStore } from '@sandbox-container/services/process-store.js';
 
-const mockLogger: Logger = {
+const mockLogger = {
   info: vi.fn(),
   error: vi.fn(),
   warn: vi.fn(),
-  debug: vi.fn()
-};
+  debug: vi.fn(),
+  child: vi.fn()
+} as Logger;
+mockLogger.child = vi.fn(() => mockLogger);
 
 const createMockProcess = (
   overrides: Partial<ProcessRecord> = {}
@@ -300,7 +303,7 @@ describe('ProcessStore', () => {
       const originalGlob = Bun.Glob;
       Bun.Glob = vi.fn().mockImplementation(() => {
         throw new Error('Scan failed');
-      });
+      }) as unknown as typeof Bun.Glob;
 
       try {
         // Should still return in-memory processes

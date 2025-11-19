@@ -76,6 +76,7 @@ describe('Sandbox - Automatic Session Management', () => {
         .mockImplementation(
           <T>(callback: () => Promise<T>): Promise<T> => callback()
         ),
+      waitUntil: vi.fn(),
       id: {
         toString: () => 'test-sandbox-id',
         equals: vi.fn(),
@@ -86,7 +87,7 @@ describe('Sandbox - Automatic Session Management', () => {
     mockEnv = {};
 
     // Create Sandbox instance - SandboxClient is created internally
-    const stub = new Sandbox(mockCtx, mockEnv);
+    const stub = new Sandbox(mockCtx as DurableObjectState<{}>, mockEnv);
 
     // Wait for blockConcurrencyWhile to complete
     await vi.waitFor(() => {
@@ -746,9 +747,10 @@ describe('Sandbox - Automatic Session Management', () => {
       await sandbox.setSandboxName('MyProject-123', false);
 
       vi.spyOn(sandbox.client.ports, 'exposePort').mockResolvedValue({
+        success: true,
         port: 8080,
-        token: 'test-token-1234',
-        previewUrl: ''
+        url: '',
+        timestamp: '2023-01-01T00:00:00Z'
       });
 
       await expect(
@@ -760,9 +762,10 @@ describe('Sandbox - Automatic Session Management', () => {
       await sandbox.setSandboxName('my-project', false);
 
       vi.spyOn(sandbox.client.ports, 'exposePort').mockResolvedValue({
+        success: true,
         port: 8080,
-        token: 'mock-token',
-        previewUrl: ''
+        url: '',
+        timestamp: '2023-01-01T00:00:00Z'
       });
 
       const result = await sandbox.exposePort(8080, {
@@ -779,9 +782,10 @@ describe('Sandbox - Automatic Session Management', () => {
       await sandbox.setSandboxName('myproject-123', true);
 
       vi.spyOn(sandbox.client.ports, 'exposePort').mockResolvedValue({
+        success: true,
         port: 4000,
-        token: 'mock-token',
-        previewUrl: ''
+        url: '',
+        timestamp: '2023-01-01T00:00:00Z'
       });
 
       const result = await sandbox.exposePort(4000, { hostname: 'my-app.dev' });
@@ -796,9 +800,10 @@ describe('Sandbox - Automatic Session Management', () => {
       await sandbox.setSandboxName('test-sandbox', false);
 
       vi.spyOn(sandbox.client.ports, 'exposePort').mockResolvedValue({
+        success: true,
         port: 8080,
-        token: 'mock-token',
-        previewUrl: ''
+        url: '',
+        timestamp: '2023-01-01T00:00:00Z'
       });
 
       const result = await sandbox.exposePort(8080, {
@@ -814,9 +819,10 @@ describe('Sandbox - Automatic Session Management', () => {
       await sandbox.setSandboxName('MyProject-ABC', false);
 
       vi.spyOn(sandbox.client.ports, 'exposePort').mockResolvedValue({
+        success: true,
         port: 8080,
-        token: 'test-token-1234',
-        previewUrl: ''
+        url: '',
+        timestamp: '2023-01-01T00:00:00Z'
       });
 
       await expect(

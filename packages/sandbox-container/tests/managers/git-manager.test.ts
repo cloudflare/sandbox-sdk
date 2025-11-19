@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
-import { GitManager } from '@sandbox-container/managers/git-manager.ts';
+import { GitManager } from '@sandbox-container/managers/git-manager';
 
 describe('GitManager', () => {
   let manager: GitManager;

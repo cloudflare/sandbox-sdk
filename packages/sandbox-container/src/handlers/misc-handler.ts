@@ -5,6 +5,12 @@ import { ErrorCode } from '@repo/shared/errors';
 import type { RequestContext } from '../core/types';
 import { BaseHandler } from './base-handler';
 
+export interface VersionResult {
+  success: boolean;
+  version: string;
+  timestamp: string;
+}
+
 export class MiscHandler extends BaseHandler<Request, Response> {
   async handle(request: Request, context: RequestContext): Promise<Response> {
     const url = new URL(request.url);
@@ -74,7 +80,7 @@ export class MiscHandler extends BaseHandler<Request, Response> {
   ): Promise<Response> {
     const version = process.env.SANDBOX_VERSION || 'unknown';
 
-    const response = {
+    const response: VersionResult = {
       success: true,
       version,
       timestamp: new Date().toISOString()

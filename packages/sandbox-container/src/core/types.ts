@@ -183,6 +183,7 @@ export interface PortNotFoundResponse {
 export interface ProxyErrorResponse {
   error: string;
   message: string;
+  port: number;
 }
 
 export interface Middleware {
