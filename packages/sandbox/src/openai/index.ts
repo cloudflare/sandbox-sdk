@@ -403,8 +403,16 @@ export class Editor implements OpenAIEeditor {
   }
 
   private resolve(relativePath: string): string {
+    // If the path already starts with the root, strip it to get the relative part
+    let pathToProcess = relativePath;
+    if (relativePath.startsWith(this.root)) {
+      pathToProcess = relativePath.slice(this.root.length);
+      // Remove leading slash if present after stripping root
+      pathToProcess = pathToProcess.replace(/^\//, '');
+    }
+
     // Remove leading ./ or / if present, then join with root
-    const normalized = relativePath.replace(/^\.\//, '').replace(/^\//, '');
+    const normalized = pathToProcess.replace(/^\.\//, '').replace(/^\//, '');
     const resolved = normalized ? `${this.root}/${normalized}` : this.root;
 
     // Normalize path separators first

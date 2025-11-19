@@ -403,5 +403,32 @@ describe('Editor', () => {
       );
       expect(mockSandbox.writeFile).not.toHaveBeenCalled();
     });
+
+    it('should handle absolute paths within workspace', async () => {
+      applyDiffMock.mockReturnValueOnce('content');
+
+      const mockSandbox: MockSandbox = {
+        mkdir: vi.fn().mockResolvedValue(undefined),
+        writeFile: vi.fn().mockResolvedValue(undefined)
+      };
+
+      const editor = new Editor(
+        mockSandbox as unknown as Sandbox,
+        '/workspace'
+      );
+      const operation = {
+        type: 'create_file',
+        path: '/workspace/file.txt',
+        diff: 'content'
+      } as Extract<ApplyPatchOperation, { type: 'create_file' }>;
+
+      await editor.createFile(operation);
+
+      expect(mockSandbox.writeFile).toHaveBeenCalledWith(
+        '/workspace/file.txt', // Not /workspace/workspace/file.txt
+        'content',
+        { encoding: 'utf-8' }
+      );
+    });
   });
 });
