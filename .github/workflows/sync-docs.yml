@@ -114,7 +114,7 @@ jobs:
           4. Ensure content follows cloudflare-docs conventions
 
           5. **CRITICAL - Commit changes:**
-             Run exactly: `cd cloudflare-docs && git add . && git commit -m "Sync docs from cloudflare/agents#${PR_NUMBER}: ${PR_TITLE}"`
+             Run exactly: `cd cloudflare-docs && git add . && git commit -m "Sync docs from cloudflare/sandbox-sdk#${PR_NUMBER}: ${PR_TITLE}"`
 
           6. **CRITICAL - Push to remote:**
              Run exactly: `cd cloudflare-docs && git push origin sync-docs-pr-${PR_NUMBER}`
@@ -133,8 +133,8 @@ jobs:
              EXISTING_PR=$(gh pr list --repo cloudflare/cloudflare-docs --head sync-docs-pr-${PR_NUMBER} --json number --jq '.[0].number')
 
              # Create PR title and body
-             PR_TITLE_TEXT="📚 Sync docs from cloudflare/agents#${PR_NUMBER}: ${PR_TITLE}"
-             PR_BODY_TEXT="Syncs documentation changes from [cloudflare/agents#${PR_NUMBER}](${PR_URL}): **${PR_TITLE}**"
+             PR_TITLE_TEXT="📚 Sync docs from cloudflare/sandbox-sdk#${PR_NUMBER}: ${PR_TITLE}"
+             PR_BODY_TEXT="Syncs documentation changes from [cloudflare/sandbox-sdk#${PR_NUMBER}](${PR_URL}): **${PR_TITLE}**"
 
              if [ -n "$EXISTING_PR" ] && [ "$EXISTING_PR" != "null" ]; then
                # Update existing PR
@@ -187,7 +187,7 @@ jobs:
           - Do not use HTML for ordered lists
 
           **Links:**
-          - Use full relative links (\`/agents/configuration/\`) instead of full URLs, local dev links, or dot notation
+          - Use full relative links (\`/sandbox-sdk/configuration/\`) instead of full URLs, local dev links, or dot notation
           - Always use trailing slashes for links without anchors
           - Use meaningful link words (page titles) - avoid "here", "this page", "read more"
           - Add cross-links to relevant documentation pages where appropriate
