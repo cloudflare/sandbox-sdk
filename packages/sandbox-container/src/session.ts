@@ -680,8 +680,8 @@ export class Session {
         setupLines.push('  fi');
         setupLines.push(`  export ${key}='${escapedValue}'`);
 
-        cleanupLines.push(`  if [ "${hasVar}" = "1" ]; then`);
-        cleanupLines.push(`    export ${key}="\${${prevVar}}"`);
+        cleanupLines.push(`  if [ "$${hasVar}" = "1" ]; then`);
+        cleanupLines.push(`    export ${key}="$${prevVar}"`);
         cleanupLines.push('  else');
         cleanupLines.push(`    unset ${key}`);
         cleanupLines.push('  fi');
@@ -692,17 +692,27 @@ export class Session {
       envCleanupBlock = cleanupLines.join('\n');
     }
 
+    const hasScopedEnv = env && Object.keys(env).length > 0;
+
     const buildCommandBlock = (exitVar: string): string => {
       const lines: string[] = [];
-      if (envSetupBlock) {
+      if (hasScopedEnv && envSetupBlock) {
         lines.push(envSetupBlock);
       }
       lines.push(`  ${command}`);
       lines.push(`  ${exitVar}=$?`);
-      if (envCleanupBlock) {
+      if (hasScopedEnv && envCleanupBlock) {
         lines.push(envCleanupBlock);
       }
       return lines.join('\n');
+    };
+
+    const buildCommandSection = (exitVar: string, indent: number): string => {
+      if (hasScopedEnv) {
+        return `${indentLines(buildCommandBlock(exitVar), indent)}\n`;
+      }
+      const padding = ' '.repeat(indent);
+      return `${padding}${command}\n${padding}${exitVar}=$?\n`;
     };
 
     // Build the FIFO script
