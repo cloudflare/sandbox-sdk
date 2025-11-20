@@ -13,12 +13,7 @@ import {
   createTestHeaders,
   cleanupSandbox
 } from './helpers/test-fixtures';
-import type {
-  ExecResult,
-  ProcessStartResult,
-  ProcessInfoResult,
-  ReadFileResult
-} from '@repo/shared';
+import type { Process, ExecResult, ReadFileResult } from '@repo/shared';
 
 /**
  * KeepAlive Workflow Integration Tests
@@ -121,9 +116,9 @@ describe('KeepAlive Workflow', () => {
       });
 
       expect(startResponse.status).toBe(200);
-      const startData = (await startResponse.json()) as ProcessStartResult;
-      expect(startData.success).toBe(true);
-      const processId = startData.processId;
+      const startData = (await startResponse.json()) as Process;
+      expect(startData.id).toBeTruthy();
+      const processId = startData.id;
 
       // Wait 20 seconds (longer than normal activity timeout)
       await new Promise((resolve) => setTimeout(resolve, 20000));
@@ -138,8 +133,8 @@ describe('KeepAlive Workflow', () => {
       );
 
       expect(statusResponse.status).toBe(200);
-      const statusData = (await statusResponse.json()) as ProcessInfoResult;
-      expect(statusData.process.status).toBe('running');
+      const statusData = (await statusResponse.json()) as Process;
+      expect(statusData.status).toBe('running');
 
       // Cleanup - kill the process
       await fetch(`${workerUrl}/api/process/${processId}`, {

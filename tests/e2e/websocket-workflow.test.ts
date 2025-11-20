@@ -16,7 +16,7 @@ import {
   createTestHeaders,
   cleanupSandbox
 } from './helpers/test-fixtures';
-import type { ProcessStartResult, PortExposeResult } from '@repo/shared';
+import type { Process, PortExposeResult } from '@repo/shared';
 
 // Port exposure tests require custom domain with wildcard DNS routing
 // Skip these tests when running against workers.dev deployment (no wildcard support)
@@ -100,9 +100,9 @@ describe('WebSocket Workflow', () => {
       });
 
       expect(startResponse.status).toBe(200);
-      const processData = (await startResponse.json()) as ProcessStartResult;
-      const processId = processData.processId;
-      expect(processData.success).toBe(true);
+      const processData = (await startResponse.json()) as Process;
+      const processId = processData.id;
+      expect(processData.id).toBeTruthy();
 
       // Wait for server to be ready (generous timeout for first startup)
       await new Promise((resolve) => setTimeout(resolve, 2000));

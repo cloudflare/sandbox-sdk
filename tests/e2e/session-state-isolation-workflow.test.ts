@@ -14,13 +14,12 @@ import {
   cleanupSandbox
 } from './helpers/test-fixtures';
 import type {
+  Process,
   SessionCreateResult,
   SessionDeleteResult,
   ReadFileResult,
   WriteFileResult,
   ExecResult,
-  ProcessStartResult,
-  ProcessListResult,
   ProcessInfoResult
 } from '@repo/shared';
 
@@ -441,8 +440,8 @@ describe('Session State Isolation Workflow', () => {
       });
 
       expect(startResponse.status).toBe(200);
-      const startData = (await startResponse.json()) as ProcessStartResult;
-      const processId = startData.processId;
+      const startData = (await startResponse.json()) as Process;
+      const processId = startData.id;
 
       // Wait for process to be registered
       await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -454,8 +453,8 @@ describe('Session State Isolation Workflow', () => {
       });
 
       expect(listResponse.status).toBe(200);
-      const listData = (await listResponse.json()) as ProcessListResult;
-      const processes = listData.processes;
+      const listData = (await listResponse.json()) as Process[];
+      const processes = listData;
       expect(Array.isArray(processes)).toBe(true);
 
       // Find our process in the list
@@ -487,8 +486,8 @@ describe('Session State Isolation Workflow', () => {
         }
       );
 
-      const verifyData = (await verifyResponse.json()) as ProcessInfoResult;
-      expect(verifyData.process.status).not.toBe('running');
+      const verifyData = (await verifyResponse.json()) as Process;
+      expect(verifyData.status).not.toBe('running');
     }, 90000);
 
     test('should share file system between sessions (by design)', async () => {

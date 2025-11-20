@@ -17,7 +17,7 @@ import type {
   EnvSetResult,
   ExecResult,
   WriteFileResult,
-  ProcessStartResult,
+  Process,
   ProcessLogsResult
 } from '@repo/shared';
 
@@ -221,9 +221,9 @@ describe('Environment Variables Workflow', () => {
       });
 
       expect(startResponse.status).toBe(200);
-      const startData = (await startResponse.json()) as ProcessStartResult;
-      expect(startData.processId).toBeTruthy();
-      const processId = startData.processId;
+      const startData = (await startResponse.json()) as Process;
+      expect(startData.id).toBeTruthy();
+      const processId = startData.id;
 
       // Step 4: Wait for process to complete and get logs (same sandbox)
       await new Promise((resolve) => setTimeout(resolve, 2000));
