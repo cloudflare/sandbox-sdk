@@ -676,12 +676,12 @@ export class Session {
         setupLines.push(`  ${hasVar}=0`);
         setupLines.push(`  if [ "\${${key}+x}" = "x" ]; then`);
         setupLines.push(`    ${hasVar}=1`);
-        setupLines.push(`    ${prevVar}="\${${key}}"`);
+        setupLines.push(`    ${prevVar}=$(printf '%q' "\${${key}}")`);
         setupLines.push('  fi');
         setupLines.push(`  export ${key}='${escapedValue}'`);
 
         cleanupLines.push(`  if [ "$${hasVar}" = "1" ]; then`);
-        cleanupLines.push(`    export ${key}="$${prevVar}"`);
+        cleanupLines.push(`    eval "export ${key}=$${prevVar}"`);
         cleanupLines.push('  else');
         cleanupLines.push(`    unset ${key}`);
         cleanupLines.push('  fi');

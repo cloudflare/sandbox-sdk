@@ -47,7 +47,9 @@ export class ProcessClient extends BaseHttpClient {
       const data: StartProcessRequest = {
         command,
         sessionId,
-        ...(options?.processId && { processId: options.processId }),
+        ...(options?.processId !== undefined && {
+          processId: options.processId
+        }),
         ...(options?.timeoutMs !== undefined && {
           timeoutMs: options.timeoutMs
         }),
