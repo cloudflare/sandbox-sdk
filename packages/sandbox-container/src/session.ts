@@ -656,6 +656,9 @@ export class Session {
     if (env && Object.keys(env).length > 0) {
       const envAssignments = Object.entries(env)
         .map(([key, value]) => {
+          if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+            throw new Error(`Invalid environment variable name: ${key}`);
+          }
           const escapedValue = value.replace(/'/g, "'\\''");
           return `${key}='${escapedValue}'`;
         })

@@ -1048,14 +1048,22 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         );
       } else {
         // Regular execution with session
+        const commandOptions =
+          options &&
+          (options.timeout !== undefined ||
+            options.env !== undefined ||
+            options.cwd !== undefined)
+            ? {
+                timeoutMs: options.timeout,
+                env: options.env,
+                cwd: options.cwd
+              }
+            : undefined;
+
         const response = await this.client.commands.execute(
           command,
           sessionId,
-          {
-            timeoutMs: options?.timeout,
-            env: options?.env,
-            cwd: options?.cwd
-          }
+          commandOptions
         );
 
         const duration = Date.now() - startTime;

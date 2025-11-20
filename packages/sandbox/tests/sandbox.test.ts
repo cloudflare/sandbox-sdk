@@ -148,9 +148,25 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(sandbox.client.commands.execute).toHaveBeenCalledWith(
         'echo test',
         expect.stringMatching(/^sandbox-/),
-        undefined,
-        undefined,
         undefined
+      );
+    });
+
+    it('should forward exec options to the command client', async () => {
+      await sandbox.exec('echo $OPTION', {
+        env: { OPTION: 'value' },
+        cwd: '/workspace/project',
+        timeout: 5000
+      });
+
+      expect(sandbox.client.commands.execute).toHaveBeenCalledWith(
+        'echo $OPTION',
+        expect.stringMatching(/^sandbox-/),
+        {
+          timeoutMs: 5000,
+          env: { OPTION: 'value' },
+          cwd: '/workspace/project'
+        }
       );
     });
 
@@ -294,8 +310,6 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(sandbox.client.commands.execute).toHaveBeenCalledWith(
         'echo test',
         'isolated-session',
-        undefined,
-        undefined,
         undefined
       );
     });
@@ -400,8 +414,6 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(sandbox.client.commands.execute).toHaveBeenCalledWith(
         'pwd',
         'test-session',
-        undefined,
-        undefined,
         undefined
       );
     });

@@ -151,6 +151,26 @@ describe('Session', () => {
       expect(result2.stdout.trim()).toContain('subdir');
     });
 
+    it('should scope per-command environment variables', async () => {
+      const result = await session.exec('printenv TEMP_CMD_VAR', {
+        env: { TEMP_CMD_VAR: 'scoped-value' }
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout.trim()).toBe('scoped-value');
+
+      const verify = await session.exec('printenv TEMP_CMD_VAR');
+      expect(verify.exitCode).not.toBe(0);
+    });
+
+    it('should reject invalid per-command environment variable names', async () => {
+      await expect(
+        session.exec('pwd', {
+          env: { 'INVALID-NAME': 'value' }
+        })
+      ).rejects.toThrow(/Invalid environment variable name/);
+    });
+
     it('should override cwd temporarily when option provided', async () => {
       // Create a subdirectory
       await session.exec('mkdir -p tempdir');
