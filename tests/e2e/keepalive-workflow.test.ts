@@ -13,6 +13,12 @@ import {
   createTestHeaders,
   cleanupSandbox
 } from './helpers/test-fixtures';
+import type {
+  ExecResult,
+  ProcessStartResult,
+  ProcessInfoResult,
+  ReadFileResult
+} from '@repo/shared';
 
 /**
  * KeepAlive Workflow Integration Tests
@@ -75,7 +81,7 @@ describe('KeepAlive Workflow', () => {
       });
 
       expect(initResponse.status).toBe(200);
-      const initData = await initResponse.json();
+      const initData = (await initResponse.json()) as ExecResult;
       expect(initData.stdout).toContain('Container initialized with keepAlive');
 
       // Step 2: Wait longer than normal activity timeout would allow (15 seconds)
@@ -92,7 +98,7 @@ describe('KeepAlive Workflow', () => {
       });
 
       expect(verifyResponse.status).toBe(200);
-      const verifyData = await verifyResponse.json();
+      const verifyData = (await verifyResponse.json()) as ExecResult;
       expect(verifyData.stdout).toContain('Still alive after timeout period');
     }, 120000);
 
@@ -115,9 +121,9 @@ describe('KeepAlive Workflow', () => {
       });
 
       expect(startResponse.status).toBe(200);
-      const startData = await startResponse.json();
-      expect(startData.status).toBe('running');
-      const processId = startData.id;
+      const startData = (await startResponse.json()) as ProcessStartResult;
+      expect(startData.success).toBe(true);
+      const processId = startData.processId;
 
       // Wait 20 seconds (longer than normal activity timeout)
       await new Promise((resolve) => setTimeout(resolve, 20000));
@@ -132,8 +138,8 @@ describe('KeepAlive Workflow', () => {
       );
 
       expect(statusResponse.status).toBe(200);
-      const statusData = await statusResponse.json();
-      expect(statusData.status).toBe('running');
+      const statusData = (await statusResponse.json()) as ProcessInfoResult;
+      expect(statusData.process.status).toBe('running');
 
       // Cleanup - kill the process
       await fetch(`${workerUrl}/api/process/${processId}`, {
@@ -220,7 +226,7 @@ describe('KeepAlive Workflow', () => {
         });
 
         expect(response.status).toBe(200);
-        const data = await response.json();
+        const data = (await response.json()) as ExecResult;
         expect(data.stdout).toContain(`Command ${i}`);
       }
     }, 120000);
@@ -269,7 +275,7 @@ describe('KeepAlive Workflow', () => {
       });
 
       expect(readResponse.status).toBe(200);
-      const readData = await readResponse.json();
+      const readData = (await readResponse.json()) as ReadFileResult;
       expect(readData.content).toContain('Updated content after keepAlive');
     }, 120000);
   });

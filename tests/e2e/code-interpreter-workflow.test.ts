@@ -29,6 +29,13 @@ import {
   createTestHeaders,
   cleanupSandbox
 } from './helpers/test-fixtures';
+import type {
+  ContextCreateResult,
+  ContextListResult,
+  ContextDeleteResult,
+  ExecutionResult
+} from '@repo/shared';
+import type { ErrorResponse } from './test-worker/types';
 
 describe('Code Interpreter Workflow (E2E)', () => {
   let runner: WranglerDevRunner | null;
@@ -73,8 +80,8 @@ describe('Code Interpreter Workflow (E2E)', () => {
     );
 
     expect(pythonCtxResponse.status).toBe(200);
-    const pythonCtx = await pythonCtxResponse.json();
-    expect(pythonCtx.id).toBeTruthy();
+    const pythonCtx = (await pythonCtxResponse.json()) as ContextCreateResult;
+    expect(pythonCtx.contextId).toBeTruthy();
     expect(pythonCtx.language).toBe('python');
 
     // Create JavaScript context
@@ -85,10 +92,10 @@ describe('Code Interpreter Workflow (E2E)', () => {
     });
 
     expect(jsCtxResponse.status).toBe(200);
-    const jsCtx = await jsCtxResponse.json();
-    expect(jsCtx.id).toBeTruthy();
+    const jsCtx = (await jsCtxResponse.json()) as ContextCreateResult;
+    expect(jsCtx.contextId).toBeTruthy();
     expect(jsCtx.language).toBe('javascript');
-    expect(jsCtx.id).not.toBe(pythonCtx.id); // Different contexts
+    expect(jsCtx.contextId).not.toBe(pythonCtx.contextId); // Different contexts
 
     // List all contexts
     const listResponse = await fetch(`${workerUrl}/api/code/context/list`, {
@@ -97,13 +104,13 @@ describe('Code Interpreter Workflow (E2E)', () => {
     });
 
     expect(listResponse.status).toBe(200);
-    const contexts = await listResponse.json();
-    expect(Array.isArray(contexts)).toBe(true);
-    expect(contexts.length).toBeGreaterThanOrEqual(2);
+    const contexts = (await listResponse.json()) as ContextListResult;
+    expect(Array.isArray(contexts.contexts)).toBe(true);
+    expect(contexts.contexts.length).toBeGreaterThanOrEqual(2);
 
-    const contextIds = contexts.map((ctx: any) => ctx.id);
-    expect(contextIds).toContain(pythonCtx.id);
-    expect(contextIds).toContain(jsCtx.id);
+    const contextIds = contexts.contexts.map((ctx) => ctx.id);
+    expect(contextIds).toContain(pythonCtx.contextId);
+    expect(contextIds).toContain(jsCtx.contextId);
   }, 120000);
 
   test('should delete code context', async () => {
@@ -117,8 +124,8 @@ describe('Code Interpreter Workflow (E2E)', () => {
       body: JSON.stringify({ language: 'python' })
     });
 
-    const context = await createResponse.json();
-    const contextId = context.id;
+    const context = (await createResponse.json()) as ContextCreateResult;
+    const contextId = context.contextId;
 
     // Delete context
     const deleteResponse = await fetch(
@@ -130,7 +137,7 @@ describe('Code Interpreter Workflow (E2E)', () => {
     );
 
     expect(deleteResponse.status).toBe(200);
-    const deleteData = await deleteResponse.json();
+    const deleteData = (await deleteResponse.json()) as ContextDeleteResult;
     expect(deleteData.success).toBe(true);
     expect(deleteData.contextId).toBe(contextId);
 
@@ -140,8 +147,8 @@ describe('Code Interpreter Workflow (E2E)', () => {
       headers
     });
 
-    const contexts = await listResponse.json();
-    const contextIds = contexts.map((ctx: any) => ctx.id);
+    const contexts = (await listResponse.json()) as ContextListResult;
+    const contextIds = contexts.contexts.map((ctx) => ctx.id);
     expect(contextIds).not.toContain(contextId);
   }, 120000);
 
@@ -173,7 +180,7 @@ describe('Code Interpreter Workflow (E2E)', () => {
     });
 
     expect(execResponse.status).toBe(200);
-    const execution = await execResponse.json();
+    const execution = (await execResponse.json()) as ExecutionResult;
 
     expect(execution.code).toBe('print("Hello from Python!")');
     expect(execution.logs.stdout.join('')).toContain('Hello from Python!');
@@ -204,7 +211,7 @@ describe('Code Interpreter Workflow (E2E)', () => {
     });
 
     expect(exec1Response.status).toBe(200);
-    const execution1 = await exec1Response.json();
+    const execution1 = (await exec1Response.json()) as ExecutionResult;
     expect(execution1.error).toBeUndefined();
 
     // Use variable in second execution
@@ -218,7 +225,7 @@ describe('Code Interpreter Workflow (E2E)', () => {
     });
 
     expect(exec2Response.status).toBe(200);
-    const execution2 = await exec2Response.json();
+    const execution2 = (await exec2Response.json()) as ExecutionResult;
     expect(execution2.logs.stdout.join('')).toContain('52');
     expect(execution2.error).toBeUndefined();
   }, 120000);
@@ -247,9 +254,11 @@ describe('Code Interpreter Workflow (E2E)', () => {
     });
 
     expect(execResponse.status).toBe(200);
-    const execution = await execResponse.json();
+    const execution = (await execResponse.json()) as ExecutionResult;
 
     expect(execution.error).toBeDefined();
+    if (!execution.error) throw new Error('Expected error to be defined');
+
     expect(execution.error.name).toContain('Error');
     expect(execution.error.message || execution.error.traceback).toContain(
       'division'
@@ -284,7 +293,7 @@ describe('Code Interpreter Workflow (E2E)', () => {
     });
 
     expect(execResponse.status).toBe(200);
-    const execution = await execResponse.json();
+    const execution = (await execResponse.json()) as ExecutionResult;
 
     expect(execution.logs.stdout.join('')).toContain('Hello from JavaScript!');
     expect(execution.error).toBeUndefined();
@@ -326,7 +335,7 @@ describe('Code Interpreter Workflow (E2E)', () => {
     });
 
     expect(exec2Response.status).toBe(200);
-    const execution2 = await exec2Response.json();
+    const execution2 = (await exec2Response.json()) as ExecutionResult;
     expect(execution2.logs.stdout.join('')).toContain('1');
   }, 120000);
 
@@ -354,9 +363,11 @@ describe('Code Interpreter Workflow (E2E)', () => {
     });
 
     expect(execResponse.status).toBe(200);
-    const execution = await execResponse.json();
+    const execution = (await execResponse.json()) as ExecutionResult;
 
     expect(execution.error).toBeDefined();
+    if (!execution.error) throw new Error('Expected error to be defined');
+
     expect(execution.error.name || execution.error.message).toMatch(
       /Error|undefined/i
     );
@@ -462,7 +473,7 @@ for i in range(3):
       }
     );
 
-    const pythonCtx = await pythonCtxResponse.json();
+    const pythonCtx = (await pythonCtxResponse.json()) as ContextCreateResult;
 
     // Generate data in Python and save to file
     const pythonExecResponse = await fetch(`${workerUrl}/api/code/execute`, {
@@ -481,7 +492,7 @@ print("Data saved")
     });
 
     expect(pythonExecResponse.status).toBe(200);
-    const pythonExec = await pythonExecResponse.json();
+    const pythonExec = (await pythonExecResponse.json()) as ExecutionResult;
     expect(pythonExec.error).toBeUndefined();
     expect(pythonExec.logs.stdout.join('')).toContain('Data saved');
 
@@ -492,7 +503,7 @@ print("Data saved")
       body: JSON.stringify({ language: 'javascript' })
     });
 
-    const jsCtx = await jsCtxResponse.json();
+    const jsCtx = (await jsCtxResponse.json()) as ContextCreateResult;
 
     // Read and process data in JavaScript
     const jsExecResponse = await fetch(`${workerUrl}/api/code/execute`, {
@@ -510,7 +521,7 @@ console.log('Sum:', sum);
     });
 
     expect(jsExecResponse.status).toBe(200);
-    const jsExec = await jsExecResponse.json();
+    const jsExec = (await jsExecResponse.json()) as ExecutionResult;
     expect(jsExec.error).toBeUndefined();
     expect(jsExec.logs.stdout.join('')).toContain('Sum: 15');
   }, 120000);
@@ -563,10 +574,12 @@ console.log('Sum:', sum);
     });
 
     expect(exec2Response.status).toBe(200);
-    const execution2 = await exec2Response.json();
+    const execution2 = (await exec2Response.json()) as ExecutionResult;
 
     // Should have error about undefined variable
     expect(execution2.error).toBeDefined();
+    if (!execution2.error) throw new Error('Expected error to be defined');
+
     expect(execution2.error.name || execution2.error.message).toMatch(
       /NameError|not defined/i
     );
@@ -589,8 +602,8 @@ console.log('Sum:', sum);
 
     // Should return error
     expect(ctxResponse.status).toBeGreaterThanOrEqual(400);
-    const errorData = await ctxResponse.json();
-    expect(errorData.error || errorData.message).toBeTruthy();
+    const errorData = (await ctxResponse.json()) as ErrorResponse;
+    expect(errorData.error).toBeTruthy();
   }, 120000);
 
   test('should return error for non-existent context', async () => {
@@ -611,8 +624,8 @@ console.log('Sum:', sum);
 
     // Should return error
     expect(execResponse.status).toBeGreaterThanOrEqual(400);
-    const errorData = await execResponse.json();
-    expect(errorData.error || errorData.message).toBeTruthy();
+    const errorData = (await execResponse.json()) as ErrorResponse;
+    expect(errorData.error).toBeTruthy();
   }, 120000);
 
   test('should return error when deleting non-existent context', async () => {
@@ -637,7 +650,7 @@ console.log('Sum:', sum);
 
     // Should return error
     expect(deleteResponse.status).toBeGreaterThanOrEqual(400);
-    const errorData = await deleteResponse.json();
-    expect(errorData.error || errorData.message).toBeTruthy();
+    const errorData = (await deleteResponse.json()) as ErrorResponse;
+    expect(errorData.error).toBeTruthy();
   }, 120000);
 });
