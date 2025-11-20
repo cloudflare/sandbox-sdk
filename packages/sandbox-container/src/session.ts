@@ -652,33 +652,15 @@ export class Session {
         .join('\n');
     };
 
-    const sanitizeIdentifier = (value: string) =>
-      value.replace(/[^a-zA-Z0-9_]/g, '_');
-
     let commandWithEnv = command;
-    let envCleanupCommand = '';
-
     if (env && Object.keys(env).length > 0) {
-      const envFunctionName = `__SANDBOX_ENV_${sanitizeIdentifier(cmdId)}`;
-      const envLines = Object.entries(env)
+      const envAssignments = Object.entries(env)
         .map(([key, value]) => {
           const escapedValue = value.replace(/'/g, "'\\''");
-          return [`  local ${key}='${escapedValue}'`, `  export ${key}`].join(
-            '\n'
-          );
+          return `${key}='${escapedValue}'`;
         })
-        .join('\n');
-
-      const commandBody = indentLines(command, 2);
-      const functionSections = [envLines, commandBody].filter(
-        (section) => section && section.trim().length > 0
-      );
-
-      const functionBody =
-        functionSections.length > 0 ? functionSections.join('\n') : '';
-
-      commandWithEnv = `${envFunctionName}() {\n${functionBody}\n}\n${envFunctionName}`;
-      envCleanupCommand = `unset -f ${envFunctionName}`;
+        .join(' ');
+      commandWithEnv = `${envAssignments} ${command}`;
     }
 
     // Build the FIFO script
@@ -719,12 +701,6 @@ export class Session {
       script += `  # The subshell writing to >"$sp" 2>"$ep" controls EOF; after it exits,\n`;
       script += `  # we wait for labelers and then remove the FIFOs.\n`;
       script += `  \n`;
-      const appendEnvCleanup = (indent: number) => {
-        if (envCleanupCommand) {
-          script += `${' '.repeat(indent)}${envCleanupCommand}\n`;
-        }
-      };
-
       if (cwd) {
         const safeCwd = this.escapeShellPath(cwd);
         script += `  # Save and change directory\n`;
@@ -734,7 +710,6 @@ export class Session {
         script += `    {\n`;
         script += `${indentLines(commandWithEnv, 6)}\n`;
         script += `      CMD_EXIT=$?\n`;
-        appendEnvCleanup(6);
         script += `      # Write exit code\n`;
         script += `      echo "$CMD_EXIT" > ${safeExitCodeFile}.tmp\n`;
         script += `      mv ${safeExitCodeFile}.tmp ${safeExitCodeFile}\n`;
@@ -759,7 +734,6 @@ export class Session {
         script += `  {\n`;
         script += `${indentLines(commandWithEnv, 4)}\n`;
         script += `    CMD_EXIT=$?\n`;
-        appendEnvCleanup(4);
         script += `    # Write exit code\n`;
         script += `    echo "$CMD_EXIT" > ${safeExitCodeFile}.tmp\n`;
         script += `    mv ${safeExitCodeFile}.tmp ${safeExitCodeFile}\n`;
@@ -792,9 +766,6 @@ export class Session {
         script += `${indentLines(commandWithEnv, 6)}\n`;
         script += `    } < /dev/null > "$log.stdout" 2> "$log.stderr"\n`;
         script += `    EXIT_CODE=$?\n`;
-        if (envCleanupCommand) {
-          script += `    ${envCleanupCommand}\n`;
-        }
         script += `    # Restore directory\n`;
         script += `    cd "$PREV_DIR"\n`;
         script += `  else\n`;
@@ -807,9 +778,6 @@ export class Session {
         script += `${indentLines(commandWithEnv, 4)}\n`;
         script += `  } < /dev/null > "$log.stdout" 2> "$log.stderr"\n`;
         script += `  EXIT_CODE=$?\n`;
-        if (envCleanupCommand) {
-          script += `  ${envCleanupCommand}\n`;
-        }
       }
 
       script += `  \n`;
