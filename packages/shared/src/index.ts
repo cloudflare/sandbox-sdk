@@ -3,6 +3,8 @@
  * Used by both client SDK and container runtime
  */
 
+// Export environment utilities
+export { getEnvString } from './env.js';
 // Export git utilities
 export { GitLogger, redactCredentials, sanitizeGitData } from './git.js';
 // Export all interpreter types
@@ -22,9 +24,7 @@ export type { LogContext, Logger, LogLevel } from './logger/index.js';
 export {
   createLogger,
   createNoOpLogger,
-  getLogger,
   LogLevelEnum,
-  runWithLogger,
   TraceContext
 } from './logger/index.js';
 // Export all request types (enforce contract between client and container)
@@ -43,9 +43,14 @@ export type {
   StartProcessRequest,
   WriteFileRequest
 } from './request-types.js';
+// Export shell utilities
+export { shellEscape } from './shell-escape.js';
 // Export all types from types.ts
 export type {
   BaseExecOptions,
+  // Bucket mounting types
+  BucketCredentials,
+  BucketProvider,
   ContextCreateResult,
   ContextDeleteResult,
   ContextListResult,
@@ -71,6 +76,7 @@ export type {
   ListFilesResult,
   LogEvent,
   MkdirResult,
+  MountBucketOptions,
   MoveFileResult,
   PortCloseResult,
   // Port management result types

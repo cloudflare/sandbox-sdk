@@ -9,6 +9,11 @@ export { Sandbox };
 
 interface Env {
   Sandbox: DurableObjectNamespace<Sandbox>;
+  TEST_BUCKET: R2Bucket;
+  // R2 credentials for bucket mounting tests
+  CLOUDFLARE_ACCOUNT_ID?: string;
+  AWS_ACCESS_KEY_ID?: string;
+  AWS_SECRET_ACCESS_KEY?: string;
 }
 
 async function parseBody(request: Request): Promise<any> {
@@ -307,6 +312,83 @@ console.log('Terminal server on port ' + port);
           targetDir: body.targetDir
         });
         return new Response(JSON.stringify({ success: true }), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      // Bucket mount
+      if (url.pathname === '/api/bucket/mount' && request.method === 'POST') {
+        // Pass R2 credentials from worker env to sandbox env
+        const sandboxEnvVars: Record<string, string> = {};
+        if (env.CLOUDFLARE_ACCOUNT_ID) {
+          sandboxEnvVars.CLOUDFLARE_ACCOUNT_ID = env.CLOUDFLARE_ACCOUNT_ID;
+        }
+        if (env.AWS_ACCESS_KEY_ID) {
+          sandboxEnvVars.AWS_ACCESS_KEY_ID = env.AWS_ACCESS_KEY_ID;
+        }
+        if (env.AWS_SECRET_ACCESS_KEY) {
+          sandboxEnvVars.AWS_SECRET_ACCESS_KEY = env.AWS_SECRET_ACCESS_KEY;
+        }
+
+        if (Object.keys(sandboxEnvVars).length > 0) {
+          await sandbox.setEnvVars(sandboxEnvVars);
+        }
+
+        await sandbox.mountBucket(body.bucket, body.mountPath, body.options);
+        return new Response(JSON.stringify({ success: true }), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      // R2 bucket put
+      if (url.pathname === '/api/bucket/put' && request.method === 'POST') {
+        await env.TEST_BUCKET.put(body.key, body.content, {
+          httpMetadata: body.contentType
+            ? { contentType: body.contentType }
+            : undefined
+        });
+        return new Response(JSON.stringify({ success: true, key: body.key }), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      // R2 bucket get
+      if (url.pathname === '/api/bucket/get' && request.method === 'GET') {
+        const key = url.searchParams.get('key');
+        if (!key) {
+          return new Response(
+            JSON.stringify({ error: 'Key parameter required' }),
+            {
+              status: 400,
+              headers: { 'Content-Type': 'application/json' }
+            }
+          );
+        }
+        const object = await env.TEST_BUCKET.get(key);
+        if (!object) {
+          return new Response(JSON.stringify({ error: 'Object not found' }), {
+            status: 404,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+        return new Response(
+          JSON.stringify({
+            success: true,
+            key,
+            content: await object.text(),
+            contentType: object.httpMetadata?.contentType,
+            size: object.size
+          }),
+          {
+            headers: { 'Content-Type': 'application/json' }
+          }
+        );
+      }
+
+      // R2 bucket delete
+      if (url.pathname === '/api/bucket/delete' && request.method === 'POST') {
+        await env.TEST_BUCKET.delete(body.key);
+        return new Response(JSON.stringify({ success: true, key: body.key }), {
           headers: { 'Content-Type': 'application/json' }
         });
       }

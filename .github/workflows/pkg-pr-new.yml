@@ -12,8 +12,13 @@ on:
       - '!**/*.md'
       - '!.changeset/**'
 
+concurrency:
+  group: pkg-pr-new-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   publish-preview:
+    if: ${{ !contains(github.event.pull_request.title, 'Version Packages') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
 

@@ -1,5 +1,63 @@
 # @cloudflare/sandbox
 
+## 0.5.1
+
+### Patch Changes
+
+- [#190](https://github.com/cloudflare/sandbox-sdk/pull/190) [`57d764c`](https://github.com/cloudflare/sandbox-sdk/commit/57d764c2f01ca3ed93fd3d3244a50e8262405e1b) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Add S3-compatible bucket mounting
+
+  Enable mounting S3-compatible buckets (R2, S3, GCS, MinIO, etc.) as local filesystem paths using s3fs-fuse. Supports automatic credential detection from environment variables and intelligent provider detection from endpoint URLs.
+
+- [#223](https://github.com/cloudflare/sandbox-sdk/pull/223) [`b1a86c8`](https://github.com/cloudflare/sandbox-sdk/commit/b1a86c89285ebcae36ee9bb2f68f7765265e4504) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Improve container startup resiliency
+
+  SDK now retries both 503 (provisioning) and 500 (startup failure) errors automatically. Container timeouts increased to 30s instance + 90s ports (was 8s + 20s).
+
+- [#219](https://github.com/cloudflare/sandbox-sdk/pull/219) [`94e53f8`](https://github.com/cloudflare/sandbox-sdk/commit/94e53f80daf746148b7c0c83b27e256637b935c2) Thanks [@threepointone](https://github.com/threepointone)! - Update dependencies
+
+## 0.5.0
+
+### Minor Changes
+
+- [#213](https://github.com/cloudflare/sandbox-sdk/pull/213) [`8503265`](https://github.com/cloudflare/sandbox-sdk/commit/8503265d2491a1f8e1fc1ab2f9cf7f9f0baef34b) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Add opt-in `normalizeId` option to `getSandbox()` for preview URL compatibility.
+
+  Sandbox IDs with uppercase letters cause preview URL requests to route to different Durable Object instances (hostnames are case-insensitive). Use `{ normalizeId: true }` to lowercase IDs for preview URL support:
+
+  ```typescript
+  getSandbox(ns, 'MyProject-123', { normalizeId: true }); // Creates DO with key "myproject-123"
+  ```
+
+  **Important:** Different `normalizeId` values create different DO instances. If you have an existing sandbox with uppercase letters, create a new one with `normalizeId: true`.
+
+  **Deprecation warning:** IDs with uppercase letters will trigger a warning. In a future version, `normalizeId` will default to `true`.
+
+## 0.4.21
+
+### Patch Changes
+
+- [#214](https://github.com/cloudflare/sandbox-sdk/pull/214) [`102fc4f`](https://github.com/cloudflare/sandbox-sdk/commit/102fc4fdfddac98189610334de6ca096153e2fe8) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Fix Docker build failures caused by turbo prune lockfile mismatch
+
+  Remove @cloudflare/vite-plugin from root devDependencies to avoid turbo prune bug with nested optionalDependencies. The vite-plugin is only used by examples which are excluded from Docker builds and already have it in their own package.json.
+
+## 0.4.20
+
+### Patch Changes
+
+- [#208](https://github.com/cloudflare/sandbox-sdk/pull/208) [`d4bb3b7`](https://github.com/cloudflare/sandbox-sdk/commit/d4bb3b782db458f81c2c0b9148ac4b4fb65eca9f) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Add Apache License 2.0
+
+  Formalizes project licensing under Apache 2.0 for consistency with Cloudflare's platform projects. Previous versions (0.1.0-0.4.18) had ambiguous licensing (ISC in package.json, MIT referenced in README, no LICENSE file).
+
+## 0.4.19
+
+### Patch Changes
+
+- [#203](https://github.com/cloudflare/sandbox-sdk/pull/203) [`63b07c0`](https://github.com/cloudflare/sandbox-sdk/commit/63b07c0895f3cb9bf44fc84df1b5671b27391152) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - Fix listFiles to work in hidden directories without includeHidden flag
+
+## 0.4.18
+
+### Patch Changes
+
+- [`228ef5b`](https://github.com/cloudflare/sandbox-sdk/commit/228ef5b6e57fa3c38dc8d90e006ae58d0815aaec) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Fix encoding parameter handling in file operations to enable MIME auto-detection. Previously, SDK and container handlers added default 'utf8' encoding, preventing MIME-based detection of binary files. Now encoding parameter is passed through as-is, allowing automatic detection when not explicitly specified.
+
 ## 0.4.17
 
 ### Patch Changes

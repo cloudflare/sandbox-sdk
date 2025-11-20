@@ -1,0 +1,33 @@
+{
+  "name": "@cloudflare/sandbox-typescript-validator-example",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "description": "An example demonstrating Sandbox SDK + Dynamic Worker Loaders through TypeScript validation",
+  "scripts": {
+    "dev": "vite dev",
+    "build": "vite build",
+    "preview": "vite preview",
+    "deploy": "npm run build && wrangler deploy",
+    "start": "vite dev",
+    "cf-typegen": "wrangler types",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@cloudflare/sandbox": "*",
+    "prism-react-renderer": "^2.4.1",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.15.0",
+    "@tailwindcss/vite": "^4.1.17",
+    "@types/node": "^24.10.1",
+    "@vitejs/plugin-react": "^5.1.1",
+    "typescript": "^5.9.3",
+    "vite": "^7.2.2",
+    "wrangler": "^4.49.0"
+  },
+  "author": "",
+  "license": "MIT"
+}

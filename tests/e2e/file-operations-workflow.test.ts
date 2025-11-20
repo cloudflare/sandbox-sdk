@@ -20,11 +20,11 @@ import {
   test,
   vi
 } from 'vitest';
+import type { FileInfo } from '@repo/shared';
 import { getTestWorkerUrl, WranglerDevRunner } from './helpers/wrangler-runner';
 import {
   createSandboxId,
   createTestHeaders,
-  fetchWithStartup,
   cleanupSandbox
 } from './helpers/test-fixtures';
 
@@ -59,19 +59,15 @@ describe('File Operations Workflow (E2E)', () => {
     const headers = createTestHeaders(currentSandboxId);
 
     // Create nested directory structure
-    const mkdirResponse = await vi.waitFor(
-      async () =>
-        fetchWithStartup(`${workerUrl}/api/file/mkdir`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            path: '/workspace/project/src/components',
+    const mkdirResponse = await fetch(`${workerUrl}/api/file/mkdir`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        path: '/workspace/project/src/components',
 
-            recursive: true
-          })
-        }),
-      { timeout: 90000, interval: 2000 }
-    );
+        recursive: true
+      })
+    });
 
     const mkdirData = await mkdirResponse.json();
     expect(mkdirData.success).toBe(true);
@@ -96,19 +92,15 @@ describe('File Operations Workflow (E2E)', () => {
     const headers = createTestHeaders(currentSandboxId);
 
     // Create directory structure
-    await vi.waitFor(
-      async () =>
-        fetchWithStartup(`${workerUrl}/api/file/mkdir`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            path: '/workspace/app/config',
+    await fetch(`${workerUrl}/api/file/mkdir`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        path: '/workspace/app/config',
 
-            recursive: true
-          })
-        }),
-      { timeout: 90000, interval: 2000 }
-    );
+        recursive: true
+      })
+    });
 
     // Write file in subdirectory
     const writeResponse = await fetch(`${workerUrl}/api/file/write`, {
@@ -142,19 +134,15 @@ describe('File Operations Workflow (E2E)', () => {
     const headers = createTestHeaders(currentSandboxId);
 
     // Create directory and write file
-    await vi.waitFor(
-      async () =>
-        fetchWithStartup(`${workerUrl}/api/file/mkdir`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            path: '/workspace/docs',
+    await fetch(`${workerUrl}/api/file/mkdir`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        path: '/workspace/docs',
 
-            recursive: true
-          })
-        }),
-      { timeout: 90000, interval: 2000 }
-    );
+        recursive: true
+      })
+    });
 
     await fetch(`${workerUrl}/api/file/write`, {
       method: 'POST',
@@ -207,30 +195,25 @@ describe('File Operations Workflow (E2E)', () => {
     const headers = createTestHeaders(currentSandboxId);
 
     // Create two directories
-    await vi.waitFor(
-      async () => {
-        await fetchWithStartup(`${workerUrl}/api/file/mkdir`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            path: '/workspace/source',
+    await fetch(`${workerUrl}/api/file/mkdir`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        path: '/workspace/source',
 
-            recursive: true
-          })
-        });
+        recursive: true
+      })
+    });
 
-        return fetch(`${workerUrl}/api/file/mkdir`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            path: '/workspace/destination',
+    await fetch(`${workerUrl}/api/file/mkdir`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        path: '/workspace/destination',
 
-            recursive: true
-          })
-        });
-      },
-      { timeout: 90000, interval: 2000 }
-    );
+        recursive: true
+      })
+    });
 
     // Write file in source directory
     await fetch(`${workerUrl}/api/file/write`, {
@@ -284,19 +267,15 @@ describe('File Operations Workflow (E2E)', () => {
     const headers = createTestHeaders(currentSandboxId);
 
     // Create directory and file
-    await vi.waitFor(
-      async () =>
-        fetchWithStartup(`${workerUrl}/api/file/mkdir`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            path: '/workspace/temp',
+    await fetch(`${workerUrl}/api/file/mkdir`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        path: '/workspace/temp',
 
-            recursive: true
-          })
-        }),
-      { timeout: 90000, interval: 2000 }
-    );
+        recursive: true
+      })
+    });
 
     await fetch(`${workerUrl}/api/file/write`, {
       method: 'POST',
@@ -346,19 +325,15 @@ describe('File Operations Workflow (E2E)', () => {
     const headers = createTestHeaders(currentSandboxId);
 
     // Create a directory
-    await vi.waitFor(
-      async () =>
-        fetchWithStartup(`${workerUrl}/api/file/mkdir`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            path: '/workspace/test-dir',
+    await fetch(`${workerUrl}/api/file/mkdir`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        path: '/workspace/test-dir',
 
-            recursive: true
-          })
-        }),
-      { timeout: 90000, interval: 2000 }
-    );
+        recursive: true
+      })
+    });
 
     // Try to delete directory with deleteFile - should fail
     const deleteResponse = await fetch(`${workerUrl}/api/file/delete`, {
@@ -404,19 +379,15 @@ describe('File Operations Workflow (E2E)', () => {
     const headers = createTestHeaders(currentSandboxId);
 
     // Create nested directory structure with files
-    await vi.waitFor(
-      async () =>
-        fetchWithStartup(`${workerUrl}/api/file/mkdir`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            path: '/workspace/cleanup/nested/deep',
+    await fetch(`${workerUrl}/api/file/mkdir`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        path: '/workspace/cleanup/nested/deep',
 
-            recursive: true
-          })
-        }),
-      { timeout: 90000, interval: 2000 }
-    );
+        recursive: true
+      })
+    });
 
     // Write files in different levels
     await fetch(`${workerUrl}/api/file/write`, {
@@ -469,41 +440,36 @@ describe('File Operations Workflow (E2E)', () => {
     const headers = createTestHeaders(currentSandboxId);
 
     // Step 1: Create project directory structure
-    await vi.waitFor(
-      async () => {
-        // Create main project directories
-        await fetchWithStartup(`${workerUrl}/api/file/mkdir`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            path: '/workspace/myapp/src',
+    // Create main project directories
+    await fetch(`${workerUrl}/api/file/mkdir`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        path: '/workspace/myapp/src',
 
-            recursive: true
-          })
-        });
+        recursive: true
+      })
+    });
 
-        await fetch(`${workerUrl}/api/file/mkdir`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            path: '/workspace/myapp/tests',
+    await fetch(`${workerUrl}/api/file/mkdir`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        path: '/workspace/myapp/tests',
 
-            recursive: true
-          })
-        });
+        recursive: true
+      })
+    });
 
-        return fetch(`${workerUrl}/api/file/mkdir`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            path: '/workspace/myapp/config',
+    await fetch(`${workerUrl}/api/file/mkdir`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        path: '/workspace/myapp/config',
 
-            recursive: true
-          })
-        });
-      },
-      { timeout: 90000, interval: 2000 }
-    );
+        recursive: true
+      })
+    });
 
     // Step 2: Write initial files
     await fetch(`${workerUrl}/api/file/write`, {
@@ -639,18 +605,14 @@ describe('File Operations Workflow (E2E)', () => {
     // This test verifies we don't artificially restrict paths
 
     // Try to write to /tmp (should work - users control their sandbox)
-    const writeResponse = await vi.waitFor(
-      async () =>
-        fetchWithStartup(`${workerUrl}/api/file/write`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            path: '/tmp/test-no-restrictions.txt',
-            content: 'Users control their sandbox!'
-          })
-        }),
-      { timeout: 90000, interval: 2000 }
-    );
+    const writeResponse = await fetch(`${workerUrl}/api/file/write`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        path: '/tmp/test-no-restrictions.txt',
+        content: 'Users control their sandbox!'
+      })
+    });
 
     expect(writeResponse.status).toBe(200);
     const writeData = await writeResponse.json();
@@ -675,18 +637,14 @@ describe('File Operations Workflow (E2E)', () => {
     const headers = createTestHeaders(currentSandboxId);
 
     // Create a text file
-    await vi.waitFor(
-      async () =>
-        fetchWithStartup(`${workerUrl}/api/file/write`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            path: '/workspace/test.txt',
-            content: 'Hello, World! This is a test.'
-          })
-        }),
-      { timeout: 90000, interval: 2000 }
-    );
+    await fetch(`${workerUrl}/api/file/write`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        path: '/workspace/test.txt',
+        content: 'Hello, World! This is a test.'
+      })
+    });
 
     // Read the file and check metadata
     const readResponse = await fetch(`${workerUrl}/api/file/read`, {
@@ -717,17 +675,13 @@ describe('File Operations Workflow (E2E)', () => {
       'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChAI9jYlkKQAAAABJRU5ErkJggg==';
 
     // First create the file using exec with base64 decode
-    await vi.waitFor(
-      async () =>
-        fetchWithStartup(`${workerUrl}/api/execute`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            command: `echo '${pngBase64}' | base64 -d > /workspace/test.png`
-          })
-        }),
-      { timeout: 90000, interval: 2000 }
-    );
+    await fetch(`${workerUrl}/api/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        command: `echo '${pngBase64}' | base64 -d > /workspace/test.png`
+      })
+    });
 
     // Read the binary file
     const readResponse = await fetch(`${workerUrl}/api/file/read`, {
@@ -759,18 +713,14 @@ describe('File Operations Workflow (E2E)', () => {
     const jsonContent = JSON.stringify({ key: 'value', number: 42 });
 
     // Write JSON file
-    await vi.waitFor(
-      async () =>
-        fetchWithStartup(`${workerUrl}/api/file/write`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            path: '/workspace/config.json',
-            content: jsonContent
-          })
-        }),
-      { timeout: 90000, interval: 2000 }
-    );
+    await fetch(`${workerUrl}/api/file/write`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        path: '/workspace/config.json',
+        content: jsonContent
+      })
+    });
 
     // Read and verify metadata
     const readResponse = await fetch(`${workerUrl}/api/file/read`, {
@@ -798,18 +748,14 @@ describe('File Operations Workflow (E2E)', () => {
     // Create a larger text file
     const largeContent = 'Line content\n'.repeat(1000); // 13KB file
 
-    await vi.waitFor(
-      async () =>
-        fetchWithStartup(`${workerUrl}/api/file/write`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            path: '/workspace/large.txt',
-            content: largeContent
-          })
-        }),
-      { timeout: 90000, interval: 2000 }
-    );
+    await fetch(`${workerUrl}/api/file/write`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        path: '/workspace/large.txt',
+        content: largeContent
+      })
+    });
 
     // Stream the file
     const streamResponse = await fetch(`${workerUrl}/api/read/stream`, {
@@ -881,21 +827,13 @@ describe('File Operations Workflow (E2E)', () => {
     const headers = createTestHeaders(currentSandboxId);
 
     // Try to delete a file that doesn't exist
-    const deleteResponse = await vi.waitFor(
-      async () =>
-        fetchWithStartup(
-          `${workerUrl}/api/file/delete`,
-          {
-            method: 'DELETE',
-            headers,
-            body: JSON.stringify({
-              path: '/workspace/this-file-does-not-exist.txt'
-            })
-          },
-          { expectSuccess: false }
-        ), // Don't throw on error - we expect this to fail
-      { timeout: 90000, interval: 2000 }
-    );
+    const deleteResponse = await fetch(`${workerUrl}/api/file/delete`, {
+      method: 'DELETE',
+      headers,
+      body: JSON.stringify({
+        path: '/workspace/this-file-does-not-exist.txt'
+      })
+    });
 
     // Should return error with FILE_NOT_FOUND
     expect(deleteResponse.status).toBe(500);
@@ -909,18 +847,14 @@ describe('File Operations Workflow (E2E)', () => {
     const headers = createTestHeaders(currentSandboxId);
 
     // Create directory with files including executable script
-    await vi.waitFor(
-      async () =>
-        fetchWithStartup(`${workerUrl}/api/file/mkdir`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            path: '/workspace/project',
-            recursive: true
-          })
-        }),
-      { timeout: 90000, interval: 2000 }
-    );
+    await fetch(`${workerUrl}/api/file/mkdir`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        path: '/workspace/project',
+        recursive: true
+      })
+    });
 
     await fetch(`${workerUrl}/api/file/write`, {
       method: 'POST',
@@ -958,7 +892,9 @@ describe('File Operations Workflow (E2E)', () => {
     expect(listData.count).toBeGreaterThan(0);
 
     // Verify file has correct metadata and permissions
-    const dataFile = listData.files.find((f: any) => f.name === 'data.txt');
+    const dataFile = listData.files.find(
+      (f: FileInfo) => f.name === 'data.txt'
+    );
     expect(dataFile).toBeDefined();
     expect(dataFile.type).toBe('file');
     expect(dataFile.absolutePath).toBe('/workspace/project/data.txt');
@@ -970,7 +906,9 @@ describe('File Operations Workflow (E2E)', () => {
     expect(dataFile.permissions.executable).toBe(false);
 
     // Verify executable script has correct permissions
-    const scriptFile = listData.files.find((f: any) => f.name === 'script.sh');
+    const scriptFile = listData.files.find(
+      (f: FileInfo) => f.name === 'script.sh'
+    );
     expect(scriptFile).toBeDefined();
     expect(scriptFile.permissions.executable).toBe(true);
   }, 90000);
@@ -980,18 +918,14 @@ describe('File Operations Workflow (E2E)', () => {
     const headers = createTestHeaders(currentSandboxId);
 
     // Create nested directory structure
-    await vi.waitFor(
-      async () =>
-        fetchWithStartup(`${workerUrl}/api/file/mkdir`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            path: '/workspace/tree/level1/level2',
-            recursive: true
-          })
-        }),
-      { timeout: 90000, interval: 2000 }
-    );
+    await fetch(`${workerUrl}/api/file/mkdir`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        path: '/workspace/tree/level1/level2',
+        recursive: true
+      })
+    });
 
     await fetch(`${workerUrl}/api/file/write`, {
       method: 'POST',
@@ -1026,10 +960,14 @@ describe('File Operations Workflow (E2E)', () => {
     expect(listData.success).toBe(true);
 
     // Verify relative paths are correct
-    const rootFile = listData.files.find((f: any) => f.name === 'root.txt');
+    const rootFile = listData.files.find(
+      (f: FileInfo) => f.name === 'root.txt'
+    );
     expect(rootFile?.relativePath).toBe('root.txt');
 
-    const deepFile = listData.files.find((f: any) => f.name === 'deep.txt');
+    const deepFile = listData.files.find(
+      (f: FileInfo) => f.name === 'deep.txt'
+    );
     expect(deepFile?.relativePath).toBe('level1/level2/deep.txt');
   }, 90000);
 
@@ -1038,21 +976,13 @@ describe('File Operations Workflow (E2E)', () => {
     const headers = createTestHeaders(currentSandboxId);
 
     // Test non-existent directory
-    const notFoundResponse = await vi.waitFor(
-      async () =>
-        fetchWithStartup(
-          `${workerUrl}/api/list-files`,
-          {
-            method: 'POST',
-            headers,
-            body: JSON.stringify({
-              path: '/workspace/does-not-exist'
-            })
-          },
-          { expectSuccess: false }
-        ),
-      { timeout: 90000, interval: 2000 }
-    );
+    const notFoundResponse = await fetch(`${workerUrl}/api/list-files`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        path: '/workspace/does-not-exist'
+      })
+    });
 
     expect(notFoundResponse.status).toBe(500);
     const notFoundData = await notFoundResponse.json();
@@ -1087,18 +1017,14 @@ describe('File Operations Workflow (E2E)', () => {
     const headers = createTestHeaders(currentSandboxId);
 
     // Create a file and directory for testing
-    await vi.waitFor(
-      async () =>
-        fetchWithStartup(`${workerUrl}/api/file/mkdir`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            path: '/workspace/testdir',
-            recursive: true
-          })
-        }),
-      { timeout: 90000, interval: 2000 }
-    );
+    await fetch(`${workerUrl}/api/file/mkdir`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        path: '/workspace/testdir',
+        recursive: true
+      })
+    });
 
     await fetch(`${workerUrl}/api/file/write`, {
       method: 'POST',
@@ -1150,5 +1076,107 @@ describe('File Operations Workflow (E2E)', () => {
     const notExistsData = await notExistsResponse.json();
     expect(notExistsData.success).toBe(true);
     expect(notExistsData.exists).toBe(false);
+  }, 90000);
+
+  test('should list files in hidden directories without includeHidden flag', async () => {
+    currentSandboxId = createSandboxId();
+    const headers = createTestHeaders(currentSandboxId);
+
+    // Create hidden directory structure with non-hidden files
+    await fetch(`${workerUrl}/api/file/mkdir`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        path: '/workspace/.hidden/foo/bar',
+        recursive: true
+      })
+    });
+
+    // Write visible files in hidden directory
+    await fetch(`${workerUrl}/api/file/write`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        path: '/workspace/.hidden/foo/visible1.txt',
+        content: 'Visible file 1'
+      })
+    });
+
+    await fetch(`${workerUrl}/api/file/write`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        path: '/workspace/.hidden/foo/visible2.txt',
+        content: 'Visible file 2'
+      })
+    });
+
+    // Write hidden file in hidden directory
+    await fetch(`${workerUrl}/api/file/write`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        path: '/workspace/.hidden/foo/.hiddenfile.txt',
+        content: 'Hidden file'
+      })
+    });
+
+    // List files WITHOUT includeHidden flag - should show visible files only
+    const listResponse = await fetch(`${workerUrl}/api/list-files`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        path: '/workspace/.hidden/foo'
+      })
+    });
+
+    expect(listResponse.status).toBe(200);
+    const listData = await listResponse.json();
+
+    expect(listData.success).toBe(true);
+    expect(listData.files).toBeInstanceOf(Array);
+
+    // Should contain visible files
+    const visibleFiles = listData.files.filter(
+      (f: FileInfo) => !f.name.startsWith('.')
+    );
+    expect(visibleFiles.length).toBe(3); // visible1.txt, visible2.txt, bar/
+
+    const visible1 = listData.files.find(
+      (f: FileInfo) => f.name === 'visible1.txt'
+    );
+    expect(visible1).toBeDefined();
+
+    const visible2 = listData.files.find(
+      (f: FileInfo) => f.name === 'visible2.txt'
+    );
+    expect(visible2).toBeDefined();
+
+    // Should NOT contain hidden file
+    const hiddenFile = listData.files.find(
+      (f: FileInfo) => f.name === '.hiddenfile.txt'
+    );
+    expect(hiddenFile).toBeUndefined();
+
+    // List files WITH includeHidden flag - should show all files
+    const listWithHiddenResponse = await fetch(`${workerUrl}/api/list-files`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        path: '/workspace/.hidden/foo',
+        options: { includeHidden: true }
+      })
+    });
+
+    expect(listWithHiddenResponse.status).toBe(200);
+    const listWithHiddenData = await listWithHiddenResponse.json();
+
+    expect(listWithHiddenData.success).toBe(true);
+    expect(listWithHiddenData.files.length).toBe(4); // visible1.txt, visible2.txt, bar/, .hiddenfile.txt
+
+    const hiddenFileWithFlag = listWithHiddenData.files.find(
+      (f: FileInfo) => f.name === '.hiddenfile.txt'
+    );
+    expect(hiddenFileWithFlag).toBeDefined();
   }, 90000);
 });

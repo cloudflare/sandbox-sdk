@@ -1,6 +1,7 @@
-import type { DurableObject } from 'cloudflare:workers';
 import { Container, getContainer, switchPort } from '@cloudflare/containers';
 import type {
+  BucketCredentials,
+  BucketProvider,
   CodeContext,
   CreateContextOptions,
   ExecEvent,
@@ -9,6 +10,7 @@ import type {
   ExecutionResult,
   ExecutionSession,
   ISandbox,
+  MountBucketOptions,
   Process,
   ProcessOptions,
   ProcessStatus,
@@ -19,8 +21,9 @@ import type {
 } from '@repo/shared';
 import {
   createLogger,
-  runWithLogger,
+  getEnvString,
   type SessionDeleteResult,
+  shellEscape,
   TraceContext
 } from '@repo/shared';
 import { type ExecuteResponse, SandboxClient } from './clients';
@@ -30,6 +33,16 @@ import { CodeInterpreter } from './interpreter';
 import { isLocalhostPattern } from './request-handler';
 import { SecurityError, sanitizeSandboxId, validatePort } from './security';
 import { parseSSEStream } from './sse-parser';
+import {
+  detectCredentials,
+  detectProviderFromUrl,
+  resolveS3fsOptions
+} from './storage-mount';
+import {
+  InvalidMountConfigError,
+  S3FSMountError
+} from './storage-mount/errors';
+import type { MountInfo } from './storage-mount/types';
 import { SDK_VERSION } from './version';
 
 export function getSandbox(
@@ -37,10 +50,24 @@ export function getSandbox(
   id: string,
   options?: SandboxOptions
 ): Sandbox {
-  const stub = getContainer(ns, id) as unknown as Sandbox;
+  const sanitizedId = sanitizeSandboxId(id);
+  const effectiveId = options?.normalizeId
+    ? sanitizedId.toLowerCase()
+    : sanitizedId;
 
-  // Store the name on first access
-  stub.setSandboxName?.(id);
+  const hasUppercase = /[A-Z]/.test(sanitizedId);
+  if (!options?.normalizeId && hasUppercase) {
+    const logger = createLogger({ component: 'sandbox-do' });
+    logger.warn(
+      `Sandbox ID "${sanitizedId}" contains uppercase letters, which causes issues with preview URLs (hostnames are case-insensitive). ` +
+        `normalizeId will default to true in a future version to prevent this. ` +
+        `Use lowercase IDs or pass { normalizeId: true } to prepare.`
+    );
+  }
+
+  const stub = getContainer(ns, effectiveId) as unknown as Sandbox;
+
+  stub.setSandboxName?.(effectiveId, options?.normalizeId);
 
   if (options?.baseUrl) {
     stub.setBaseUrl(options.baseUrl);
@@ -54,6 +81,10 @@ export function getSandbox(
     stub.setKeepAlive(options.keepAlive);
   }
 
+  if (options?.containerTimeouts) {
+    stub.setContainerTimeouts(options.containerTimeouts);
+  }
+
   return Object.assign(stub, {
     wsConnect: connect(stub)
   });
@@ -63,7 +94,6 @@ export function connect(stub: {
   fetch: (request: Request) => Promise<Response>;
 }) {
   return async (request: Request, port: number) => {
-    // Validate port before routing
     if (!validatePort(port)) {
       throw new SecurityError(
         `Invalid or restricted port: ${port}. Ports must be in range 1024-65535 and not reserved.`
@@ -81,24 +111,53 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   client: SandboxClient;
   private codeInterpreter: CodeInterpreter;
   private sandboxName: string | null = null;
+  private normalizeId: boolean = false;
   private baseUrl: string | null = null;
   private portTokens: Map<number, string> = new Map();
   private defaultSession: string | null = null;
   envVars: Record<string, string> = {};
   private logger: ReturnType<typeof createLogger>;
   private keepAliveEnabled: boolean = false;
+  private activeMounts: Map<string, MountInfo> = new Map();
+
+  /**
+   * Default container startup timeouts (conservative for production)
+   * Based on Cloudflare docs: "Containers take several minutes to provision"
+   */
+  private readonly DEFAULT_CONTAINER_TIMEOUTS = {
+    // Time to get container instance and launch VM
+    // @cloudflare/containers default: 8s (too short for cold starts)
+    instanceGetTimeoutMS: 30_000, // 30 seconds
+
+    // Time for application to start and ports to be ready
+    // @cloudflare/containers default: 20s
+    portReadyTimeoutMS: 90_000, // 90 seconds (allows for heavy containers)
+
+    // Polling interval for checking container readiness
+    // @cloudflare/containers default: 300ms (too aggressive)
+    waitIntervalMS: 1000 // 1 second (reduces load)
+  };
+
+  /**
+   * Active container timeout configuration
+   * Can be set via options, env vars, or defaults
+   */
+  private containerTimeouts = { ...this.DEFAULT_CONTAINER_TIMEOUTS };
 
   constructor(ctx: DurableObjectState<{}>, env: Env) {
     super(ctx, env);
 
-    const envObj = env as any;
+    const envObj = env as Record<string, unknown>;
     // Set sandbox environment variables from env object
     const sandboxEnvKeys = ['SANDBOX_LOG_LEVEL', 'SANDBOX_LOG_FORMAT'] as const;
     sandboxEnvKeys.forEach((key) => {
       if (envObj?.[key]) {
-        this.envVars[key] = envObj[key];
+        this.envVars[key] = String(envObj[key]);
       }
     });
+
+    // Initialize timeouts with env var fallbacks
+    this.containerTimeouts = this.getDefaultTimeouts(envObj);
 
     this.logger = createLogger({
       component: 'sandbox-do',
@@ -115,10 +174,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     // The CodeInterpreter extracts client.interpreter from the sandbox
     this.codeInterpreter = new CodeInterpreter(this);
 
-    // Load the sandbox name, port tokens, and default session from storage on initialization
     this.ctx.blockConcurrencyWhile(async () => {
       this.sandboxName =
         (await this.ctx.storage.get<string>('sandboxName')) || null;
+      this.normalizeId =
+        (await this.ctx.storage.get<boolean>('normalizeId')) || false;
       this.defaultSession =
         (await this.ctx.storage.get<string>('defaultSession')) || null;
       const storedTokens =
@@ -130,14 +190,27 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       for (const [portStr, token] of Object.entries(storedTokens)) {
         this.portTokens.set(parseInt(portStr, 10), token);
       }
+
+      // Load saved timeout configuration (highest priority)
+      const storedTimeouts =
+        await this.ctx.storage.get<
+          NonNullable<SandboxOptions['containerTimeouts']>
+        >('containerTimeouts');
+      if (storedTimeouts) {
+        this.containerTimeouts = {
+          ...this.containerTimeouts,
+          ...storedTimeouts
+        };
+      }
     });
   }
 
-  // RPC method to set the sandbox name
-  async setSandboxName(name: string): Promise<void> {
+  async setSandboxName(name: string, normalizeId?: boolean): Promise<void> {
     if (!this.sandboxName) {
       this.sandboxName = name;
+      this.normalizeId = normalizeId || false;
       await this.ctx.storage.put('sandboxName', name);
+      await this.ctx.storage.put('normalizeId', this.normalizeId);
     }
   }
 
@@ -201,10 +274,426 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   /**
+   * RPC method to configure container startup timeouts
+   */
+  async setContainerTimeouts(
+    timeouts: NonNullable<SandboxOptions['containerTimeouts']>
+  ): Promise<void> {
+    const validated = { ...this.containerTimeouts };
+
+    // Validate each timeout if provided
+    if (timeouts.instanceGetTimeoutMS !== undefined) {
+      validated.instanceGetTimeoutMS = this.validateTimeout(
+        timeouts.instanceGetTimeoutMS,
+        'instanceGetTimeoutMS',
+        5_000,
+        300_000
+      );
+    }
+
+    if (timeouts.portReadyTimeoutMS !== undefined) {
+      validated.portReadyTimeoutMS = this.validateTimeout(
+        timeouts.portReadyTimeoutMS,
+        'portReadyTimeoutMS',
+        10_000,
+        600_000
+      );
+    }
+
+    if (timeouts.waitIntervalMS !== undefined) {
+      validated.waitIntervalMS = this.validateTimeout(
+        timeouts.waitIntervalMS,
+        'waitIntervalMS',
+        100,
+        5_000
+      );
+    }
+
+    this.containerTimeouts = validated;
+
+    // Persist to storage
+    await this.ctx.storage.put('containerTimeouts', this.containerTimeouts);
+
+    this.logger.debug('Container timeouts updated', this.containerTimeouts);
+  }
+
+  /**
+   * Validate a timeout value is within acceptable range
+   * Throws error if invalid - used for user-provided values
+   */
+  private validateTimeout(
+    value: number,
+    name: string,
+    min: number,
+    max: number
+  ): number {
+    if (
+      typeof value !== 'number' ||
+      Number.isNaN(value) ||
+      !Number.isFinite(value)
+    ) {
+      throw new Error(`${name} must be a valid finite number, got ${value}`);
+    }
+
+    if (value < min || value > max) {
+      throw new Error(
+        `${name} must be between ${min}-${max}ms, got ${value}ms`
+      );
+    }
+
+    return value;
+  }
+
+  /**
+   * Get default timeouts with env var fallbacks and validation
+   * Precedence: SDK defaults < Env vars < User config
+   */
+  private getDefaultTimeouts(
+    env: Record<string, unknown>
+  ): typeof this.DEFAULT_CONTAINER_TIMEOUTS {
+    const parseAndValidate = (
+      envVar: string | undefined,
+      name: keyof typeof this.DEFAULT_CONTAINER_TIMEOUTS,
+      min: number,
+      max: number
+    ): number => {
+      const defaultValue = this.DEFAULT_CONTAINER_TIMEOUTS[name];
+
+      if (envVar === undefined) {
+        return defaultValue;
+      }
+
+      const parsed = parseInt(envVar, 10);
+
+      if (Number.isNaN(parsed)) {
+        this.logger.warn(
+          `Invalid ${name}: "${envVar}" is not a number. Using default: ${defaultValue}ms`
+        );
+        return defaultValue;
+      }
+
+      if (parsed < min || parsed > max) {
+        this.logger.warn(
+          `Invalid ${name}: ${parsed}ms. Must be ${min}-${max}ms. Using default: ${defaultValue}ms`
+        );
+        return defaultValue;
+      }
+
+      return parsed;
+    };
+
+    return {
+      instanceGetTimeoutMS: parseAndValidate(
+        getEnvString(env, 'SANDBOX_INSTANCE_TIMEOUT_MS'),
+        'instanceGetTimeoutMS',
+        5_000, // Min 5s
+        300_000 // Max 5min
+      ),
+      portReadyTimeoutMS: parseAndValidate(
+        getEnvString(env, 'SANDBOX_PORT_TIMEOUT_MS'),
+        'portReadyTimeoutMS',
+        10_000, // Min 10s
+        600_000 // Max 10min
+      ),
+      waitIntervalMS: parseAndValidate(
+        getEnvString(env, 'SANDBOX_POLL_INTERVAL_MS'),
+        'waitIntervalMS',
+        100, // Min 100ms
+        5_000 // Max 5s
+      )
+    };
+  }
+
+  /*
+   * Mount an S3-compatible bucket as a local directory using S3FS-FUSE
+   *
+   * Requires explicit endpoint URL. Credentials are auto-detected from environment
+   * variables or can be provided explicitly.
+   *
+   * @param bucket - Bucket name
+   * @param mountPath - Absolute path in container to mount at
+   * @param options - Configuration options with required endpoint
+   * @throws MissingCredentialsError if no credentials found in environment
+   * @throws S3FSMountError if S3FS mount command fails
+   * @throws InvalidMountConfigError if bucket name, mount path, or endpoint is invalid
+   */
+  async mountBucket(
+    bucket: string,
+    mountPath: string,
+    options: MountBucketOptions
+  ): Promise<void> {
+    this.logger.info(`Mounting bucket ${bucket} to ${mountPath}`);
+
+    // Validate options
+    this.validateMountOptions(bucket, mountPath, options);
+
+    // Detect provider from explicit option or URL pattern
+    const provider: BucketProvider | null =
+      options.provider || detectProviderFromUrl(options.endpoint);
+
+    this.logger.debug(`Detected provider: ${provider || 'unknown'}`, {
+      explicitProvider: options.provider
+    });
+
+    // Detect credentials
+    const credentials = detectCredentials(options, this.envVars);
+
+    // Generate unique password file path
+    const passwordFilePath = this.generatePasswordFilePath();
+
+    // Reserve mount path immediately to prevent race conditions
+    // (two concurrent mount calls would both pass validation otherwise)
+    this.activeMounts.set(mountPath, {
+      bucket,
+      mountPath,
+      endpoint: options.endpoint,
+      provider,
+      passwordFilePath,
+      mounted: false
+    });
+
+    try {
+      // Create password file with credentials
+      await this.createPasswordFile(passwordFilePath, bucket, credentials);
+
+      // Create mount directory
+      await this.exec(`mkdir -p ${shellEscape(mountPath)}`);
+
+      // Execute S3FS mount with password file
+      await this.executeS3FSMount(
+        bucket,
+        mountPath,
+        options,
+        provider,
+        passwordFilePath
+      );
+
+      // Mark as successfully mounted
+      this.activeMounts.set(mountPath, {
+        bucket,
+        mountPath,
+        endpoint: options.endpoint,
+        provider,
+        passwordFilePath,
+        mounted: true
+      });
+
+      this.logger.info(`Successfully mounted bucket ${bucket} to ${mountPath}`);
+    } catch (error) {
+      // Clean up password file on failure
+      await this.deletePasswordFile(passwordFilePath);
+
+      // Clean up reservation on failure
+      this.activeMounts.delete(mountPath);
+      throw error;
+    }
+  }
+
+  /**
+   * Manually unmount a bucket filesystem
+   *
+   * @param mountPath - Absolute path where the bucket is mounted
+   * @throws InvalidMountConfigError if mount path doesn't exist or isn't mounted
+   */
+  async unmountBucket(mountPath: string): Promise<void> {
+    this.logger.info(`Unmounting bucket from ${mountPath}`);
+
+    // Look up mount by path
+    const mountInfo = this.activeMounts.get(mountPath);
+
+    // Throw error if mount doesn't exist
+    if (!mountInfo) {
+      throw new InvalidMountConfigError(
+        `No active mount found at path: ${mountPath}`
+      );
+    }
+
+    // Unmount the filesystem
+    try {
+      await this.exec(`fusermount -u ${shellEscape(mountPath)}`);
+      mountInfo.mounted = false;
+
+      // Only remove from tracking if unmount succeeded
+      this.activeMounts.delete(mountPath);
+    } finally {
+      // Always cleanup password file, even if unmount fails
+      await this.deletePasswordFile(mountInfo.passwordFilePath);
+    }
+
+    this.logger.info(`Successfully unmounted bucket from ${mountPath}`);
+  }
+
+  /**
+   * Validate mount options
+   */
+  private validateMountOptions(
+    bucket: string,
+    mountPath: string,
+    options: MountBucketOptions
+  ): void {
+    // Require endpoint field
+    if (!options.endpoint) {
+      throw new InvalidMountConfigError(
+        'Endpoint is required. Provide the full S3-compatible endpoint URL.'
+      );
+    }
+
+    // Basic URL validation
+    try {
+      new URL(options.endpoint);
+    } catch (error) {
+      throw new InvalidMountConfigError(
+        `Invalid endpoint URL: "${options.endpoint}". Must be a valid HTTP(S) URL.`
+      );
+    }
+
+    // Validate bucket name (S3-compatible naming rules)
+    const bucketNameRegex = /^[a-z0-9]([a-z0-9.-]{0,61}[a-z0-9])?$/;
+    if (!bucketNameRegex.test(bucket)) {
+      throw new InvalidMountConfigError(
+        `Invalid bucket name: "${bucket}". Bucket names must be 3-63 characters, ` +
+          `lowercase alphanumeric, dots, or hyphens, and cannot start/end with dots or hyphens.`
+      );
+    }
+
+    // Validate mount path is absolute
+    if (!mountPath.startsWith('/')) {
+      throw new InvalidMountConfigError(
+        `Mount path must be absolute (start with /): "${mountPath}"`
+      );
+    }
+
+    // Check for duplicate mount path
+    if (this.activeMounts.has(mountPath)) {
+      const existingMount = this.activeMounts.get(mountPath);
+      throw new InvalidMountConfigError(
+        `Mount path "${mountPath}" is already in use by bucket "${existingMount?.bucket}". ` +
+          `Unmount the existing bucket first or use a different mount path.`
+      );
+    }
+  }
+
+  /**
+   * Generate unique password file path for s3fs credentials
+   */
+  private generatePasswordFilePath(): string {
+    const uuid = crypto.randomUUID();
+    return `/tmp/.passwd-s3fs-${uuid}`;
+  }
+
+  /**
+   * Create password file with s3fs credentials
+   * Format: bucket:accessKeyId:secretAccessKey
+   */
+  private async createPasswordFile(
+    passwordFilePath: string,
+    bucket: string,
+    credentials: BucketCredentials
+  ): Promise<void> {
+    const content = `${bucket}:${credentials.accessKeyId}:${credentials.secretAccessKey}`;
+
+    await this.writeFile(passwordFilePath, content);
+
+    await this.exec(`chmod 0600 ${shellEscape(passwordFilePath)}`);
+
+    this.logger.debug(`Created password file: ${passwordFilePath}`);
+  }
+
+  /**
+   * Delete password file
+   */
+  private async deletePasswordFile(passwordFilePath: string): Promise<void> {
+    try {
+      await this.exec(`rm -f ${shellEscape(passwordFilePath)}`);
+      this.logger.debug(`Deleted password file: ${passwordFilePath}`);
+    } catch (error) {
+      this.logger.warn(`Failed to delete password file ${passwordFilePath}`, {
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  /**
+   * Execute S3FS mount command
+   */
+  private async executeS3FSMount(
+    bucket: string,
+    mountPath: string,
+    options: MountBucketOptions,
+    provider: BucketProvider | null,
+    passwordFilePath: string
+  ): Promise<void> {
+    // Resolve s3fs options (provider defaults + user overrides)
+    const resolvedOptions = resolveS3fsOptions(provider, options.s3fsOptions);
+
+    // Build s3fs mount command
+    const s3fsArgs: string[] = [];
+
+    // Add password file option FIRST
+    s3fsArgs.push(`passwd_file=${passwordFilePath}`);
+
+    // Add resolved provider-specific and user options
+    s3fsArgs.push(...resolvedOptions);
+
+    // Add read-only flag if requested
+    if (options.readOnly) {
+      s3fsArgs.push('ro');
+    }
+
+    // Add endpoint URL
+    s3fsArgs.push(`url=${options.endpoint}`);
+
+    // Build final command with escaped options
+    const optionsStr = shellEscape(s3fsArgs.join(','));
+    const mountCmd = `s3fs ${shellEscape(bucket)} ${shellEscape(mountPath)} -o ${optionsStr}`;
+
+    this.logger.debug('Executing s3fs mount', {
+      bucket,
+      mountPath,
+      provider,
+      resolvedOptions
+    });
+
+    // Execute mount command
+    const result = await this.exec(mountCmd);
+
+    if (result.exitCode !== 0) {
+      throw new S3FSMountError(
+        `S3FS mount failed: ${result.stderr || result.stdout || 'Unknown error'}`
+      );
+    }
+
+    this.logger.debug('Mount command executed successfully');
+  }
+
+  /**
    * Cleanup and destroy the sandbox container
    */
   override async destroy(): Promise<void> {
     this.logger.info('Destroying sandbox container');
+
+    // Unmount all mounted buckets and cleanup password files
+    for (const [mountPath, mountInfo] of this.activeMounts.entries()) {
+      if (mountInfo.mounted) {
+        try {
+          this.logger.info(
+            `Unmounting bucket ${mountInfo.bucket} from ${mountPath}`
+          );
+          await this.exec(`fusermount -u ${shellEscape(mountPath)}`);
+          mountInfo.mounted = false;
+        } catch (error) {
+          const errorMsg =
+            error instanceof Error ? error.message : String(error);
+          this.logger.warn(
+            `Failed to unmount bucket ${mountInfo.bucket} from ${mountPath}: ${errorMsg}`
+          );
+        }
+      }
+
+      // Always cleanup password file
+      await this.deletePasswordFile(mountInfo.passwordFilePath);
+    }
+
     await super.destroy();
   }
 
@@ -279,6 +768,117 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   /**
+   * Override Container.containerFetch to use production-friendly timeouts
+   * Automatically starts container with longer timeouts if not running
+   */
+  override async containerFetch(
+    requestOrUrl: Request | string | URL,
+    portOrInit?: number | RequestInit,
+    portParam?: number
+  ): Promise<Response> {
+    // Parse arguments to extract request and port
+    const { request, port } = this.parseContainerFetchArgs(
+      requestOrUrl,
+      portOrInit,
+      portParam
+    );
+
+    const state = await this.getState();
+
+    // If container not healthy, start it with production timeouts
+    if (state.status !== 'healthy') {
+      try {
+        this.logger.debug('Starting container with configured timeouts', {
+          instanceTimeout: this.containerTimeouts.instanceGetTimeoutMS,
+          portTimeout: this.containerTimeouts.portReadyTimeoutMS
+        });
+
+        await this.startAndWaitForPorts({
+          ports: port,
+          cancellationOptions: {
+            instanceGetTimeoutMS: this.containerTimeouts.instanceGetTimeoutMS,
+            portReadyTimeoutMS: this.containerTimeouts.portReadyTimeoutMS,
+            waitInterval: this.containerTimeouts.waitIntervalMS,
+            abort: request.signal
+          }
+        });
+      } catch (e) {
+        // Handle provisioning vs startup errors
+        if (this.isNoInstanceError(e)) {
+          return new Response(
+            'Container is currently provisioning. This can take several minutes on first deployment. Please retry in a moment.',
+            {
+              status: 503,
+              headers: { 'Retry-After': '10' } // Suggest 10s retry
+            }
+          );
+        }
+
+        // Other startup errors
+        this.logger.error(
+          'Container startup failed',
+          e instanceof Error ? e : new Error(String(e))
+        );
+        return new Response(
+          `Failed to start container: ${e instanceof Error ? e.message : String(e)}`,
+          { status: 500 }
+        );
+      }
+    }
+
+    // Delegate to parent for the actual fetch (handles TCP port access internally)
+    return await super.containerFetch(requestOrUrl, portOrInit, portParam);
+  }
+
+  /**
+   * Helper: Check if error is "no container instance available"
+   */
+  private isNoInstanceError(error: unknown): boolean {
+    return (
+      error instanceof Error &&
+      error.message.toLowerCase().includes('no container instance')
+    );
+  }
+
+  /**
+   * Helper: Parse containerFetch arguments (supports multiple signatures)
+   */
+  private parseContainerFetchArgs(
+    requestOrUrl: Request | string | URL,
+    portOrInit?: number | RequestInit,
+    portParam?: number
+  ): { request: Request; port: number } {
+    let request: Request;
+    let port: number | undefined;
+
+    if (requestOrUrl instanceof Request) {
+      request = requestOrUrl;
+      port = typeof portOrInit === 'number' ? portOrInit : undefined;
+    } else {
+      const url =
+        typeof requestOrUrl === 'string'
+          ? requestOrUrl
+          : requestOrUrl.toString();
+      const init = typeof portOrInit === 'number' ? {} : portOrInit || {};
+      port =
+        typeof portOrInit === 'number'
+          ? portOrInit
+          : typeof portParam === 'number'
+            ? portParam
+            : undefined;
+      request = new Request(url, init);
+    }
+
+    port ??= this.defaultPort;
+
+    if (port === undefined) {
+      throw new Error('No port specified for container fetch');
+    }
+
+    return { request, port };
+  }
+
+  /**
    * Override onActivityExpired to prevent automatic shutdown when keepAlive is enabled
    * When keepAlive is disabled, calls parent implementation which stops the container
    */
@@ -304,48 +904,46 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     // Create request-specific logger with trace ID
     const requestLogger = this.logger.child({ traceId, operation: 'fetch' });
 
-    return await runWithLogger(requestLogger, async () => {
-      const url = new URL(request.url);
+    const url = new URL(request.url);
 
-      // Capture and store the sandbox name from the header if present
-      if (!this.sandboxName && request.headers.has('X-Sandbox-Name')) {
-        const name = request.headers.get('X-Sandbox-Name')!;
-        this.sandboxName = name;
-        await this.ctx.storage.put('sandboxName', name);
+    // Capture and store the sandbox name from the header if present
+    if (!this.sandboxName && request.headers.has('X-Sandbox-Name')) {
+      const name = request.headers.get('X-Sandbox-Name')!;
+      this.sandboxName = name;
+      await this.ctx.storage.put('sandboxName', name);
+    }
+
+    // Detect WebSocket upgrade request (RFC 6455 compliant)
+    const upgradeHeader = request.headers.get('Upgrade');
+    const connectionHeader = request.headers.get('Connection');
+    const isWebSocket =
+      upgradeHeader?.toLowerCase() === 'websocket' &&
+      connectionHeader?.toLowerCase().includes('upgrade');
+
+    if (isWebSocket) {
+      // WebSocket path: Let parent Container class handle WebSocket proxying
+      // This bypasses containerFetch() which uses JSRPC and cannot handle WebSocket upgrades
+      try {
+        requestLogger.debug('WebSocket upgrade requested', {
+          path: url.pathname,
+          port: this.determinePort(url)
+        });
+        return await super.fetch(request);
+      } catch (error) {
+        requestLogger.error(
+          'WebSocket connection failed',
+          error instanceof Error ? error : new Error(String(error)),
+          { path: url.pathname }
+        );
+        throw error;
       }
+    }
 
-      // Detect WebSocket upgrade request (RFC 6455 compliant)
-      const upgradeHeader = request.headers.get('Upgrade');
-      const connectionHeader = request.headers.get('Connection');
-      const isWebSocket =
-        upgradeHeader?.toLowerCase() === 'websocket' &&
-        connectionHeader?.toLowerCase().includes('upgrade');
+    // Non-WebSocket: Use existing port determination and HTTP routing logic
+    const port = this.determinePort(url);
 
-      if (isWebSocket) {
-        // WebSocket path: Let parent Container class handle WebSocket proxying
-        // This bypasses containerFetch() which uses JSRPC and cannot handle WebSocket upgrades
-        try {
-          requestLogger.debug('WebSocket upgrade requested', {
-            path: url.pathname,
-            port: this.determinePort(url)
-          });
-          return await super.fetch(request);
-        } catch (error) {
-          requestLogger.error(
-            'WebSocket connection failed',
-            error instanceof Error ? error : new Error(String(error)),
-            { path: url.pathname }
-          );
-          throw error;
-        }
-      }
-
-      // Non-WebSocket: Use existing port determination and HTTP routing logic
-      const port = this.determinePort(url);
-
-      // Route to the appropriate port
-      return await this.containerFetch(request, port);
-    });
+    // Route to the appropriate port
+    return await this.containerFetch(request, port);
   }
 
   wsConnect(request: Request, port: number): Promise<Response> {
@@ -389,9 +987,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         // Persist to storage so it survives hot reloads
         await this.ctx.storage.put('defaultSession', sessionId);
         this.logger.debug('Default session initialized', { sessionId });
-      } catch (error: any) {
+      } catch (error: unknown) {
         // If session already exists (e.g., after hot reload), reuse it
-        if (error?.message?.includes('already exists')) {
+        if (
+          error instanceof Error &&
+          error.message.includes('already exists')
+        ) {
           this.logger.debug('Reusing existing session after reload', {
             sessionId
           });
@@ -1059,20 +1660,29 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       );
     }
 
-    // Validate sandbox ID (will throw SecurityError if invalid)
-    const sanitizedSandboxId = sanitizeSandboxId(sandboxId);
+    // Hostnames are case-insensitive, routing requests to wrong DO instance when keys contain uppercase letters
+    const effectiveId = this.sandboxName || sandboxId;
+    const hasUppercase = /[A-Z]/.test(effectiveId);
+    if (!this.normalizeId && hasUppercase) {
+      throw new SecurityError(
+        `Preview URLs require lowercase sandbox IDs. Your ID "${effectiveId}" contains uppercase letters.\n\n` +
+          `To fix this:\n` +
+          `1. Create a new sandbox with: getSandbox(ns, "${effectiveId}", { normalizeId: true })\n` +
+          `2. This will create a sandbox with ID: "${effectiveId.toLowerCase()}"\n\n` +
+          `Note: Due to DNS case-insensitivity, IDs with uppercase letters cannot be used with preview URLs.`
+      );
+    }
+
+    const sanitizedSandboxId = sanitizeSandboxId(sandboxId).toLowerCase();
 
     const isLocalhost = isLocalhostPattern(hostname);
 
     if (isLocalhost) {
-      // Unified subdomain approach for localhost (RFC 6761)
       const [host, portStr] = hostname.split(':');
       const mainPort = portStr || '80';
 
-      // Use URL constructor for safe URL building
       try {
         const baseUrl = new URL(`http://${host}:${mainPort}`);
-        // Construct subdomain safely with mandatory token
         const subdomainHost = `${port}-${sanitizedSandboxId}-${token}.${host}`;
         baseUrl.hostname = subdomainHost;
 
@@ -1086,13 +1696,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       }
     }
 
-    // Production subdomain logic - enforce HTTPS
     try {
-      // Always use HTTPS for production (non-localhost)
-      const protocol = 'https';
-      const baseUrl = new URL(`${protocol}://${hostname}`);
-
-      // Construct subdomain safely with mandatory token
+      const baseUrl = new URL(`https://${hostname}`);
       const subdomainHost = `${port}-${sanitizedSandboxId}-${token}.${hostname}`;
       baseUrl.hostname = subdomainHost;
 
@@ -1264,7 +1869,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         this.codeInterpreter.runCodeStream(code, options),
       listCodeContexts: () => this.codeInterpreter.listCodeContexts(),
       deleteCodeContext: (contextId) =>
-        this.codeInterpreter.deleteCodeContext(contextId)
+        this.codeInterpreter.deleteCodeContext(contextId),
+
+      // Bucket mounting - sandbox-level operations
+      mountBucket: (bucket, mountPath, options) =>
+        this.mountBucket(bucket, mountPath, options),
+      unmountBucket: (mountPath) => this.unmountBucket(mountPath)
     };
   }
 

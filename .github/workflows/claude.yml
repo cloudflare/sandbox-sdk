@@ -17,11 +17,12 @@ jobs:
       (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
       (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
       (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
+    timeout-minutes: 30
     runs-on: ubuntu-latest
     permissions:
-      contents: read
-      pull-requests: read
-      issues: read
+      contents: write
+      pull-requests: write
+      issues: write
       id-token: write
       actions: read # Required for Claude to read CI results on PRs
     steps:
@@ -41,17 +42,60 @@ jobs:
           additional_permissions: |
             actions: read
 
-          # Custom prompt that ensures Claude reads CLAUDE.md first
           prompt: |
             REPO: ${{ github.repository }}
             ISSUE/PR: #${{ github.event.issue.number || github.event.pull_request.number }}
 
-            IMPORTANT: Before starting any work, read the CLAUDE.md file at the root of this repository. It contains critical project conventions, architecture patterns, and development guidelines that you must follow.
+            ## Task Context
 
-            After reading CLAUDE.md, proceed with the following task:
             ${{ github.event.comment.body || github.event.issue.body || github.event.review.body }}
 
-          # Optional: Add claude_args to customize behavior and configuration
+            ## Workflow Instructions
+
+            **STEP 1: Read project conventions**
+            Read CLAUDE.md at the root of this repository. It contains critical project conventions, architecture patterns, and development guidelines.
+
+            **STEP 2: Assess task complexity**
+            Determine if this task requires planning:
+            - **Needs planning**: New features, architectural changes, significant refactoring, adding major functionality
+            - **Direct execution**: Bug fixes, test fixes, investigations, documentation updates, simple one-line changes
+
+            **STEP 3: Execute appropriate workflow**
+
+            **For tasks needing planning:**
+            1. Use the brainstorming skill (`superpowers:brainstorming`) to:
+               - **IMPORTANT**: You are working autonomously (no user to answer questions)
+               - Use Socratic method on yourself: ask questions, explore answers, consider trade-offs
+               - The task context above contains all available information
+               - Explore 2-3 different approaches with pros/cons
+               - Design the solution covering: architecture, components, data flow, error handling, testing
+               - Save design to `${{ runner.temp }}/design.md` (temporary, not committed)
+
+            2. Use the writing-plans skill (`superpowers:writing-plans`) to:
+               - Create detailed, bite-sized implementation plan
+               - Include exact file paths, complete code examples, verification steps
+               - Save plan to `${{ runner.temp }}/implementation.md` (temporary, not committed)
+
+            3. Execute the complete implementation:
+               - Follow TDD for all code changes (write test first, watch fail, implement, verify pass)
+               - Complete the entire implementation
+               - Run all tests and verification steps
+               - **After completion**: Use requesting-code-review skill to review your own work
+               - Fix any issues found in self-review
+               - Commit changes following CLAUDE.md git guidelines
+
+            **For direct execution tasks:**
+            - Use test-driven-development for code changes
+            - Use systematic-debugging for investigations
+            - Use verification-before-completion before claiming done
+            - Follow CLAUDE.md conventions
+
+            **REMEMBER:**
+            - If a superpowers skill applies to your task, you MUST use it (not optional)
+            - Write tests before code (TDD iron law)
+            - Verify with evidence before claiming completion
+            - Create commits following CLAUDE.md git guidelines
+
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://docs.claude.com/en/docs/claude-code/cli-reference for available options
-          # claude_args: '--allowed-tools Bash(gh pr:*)'
+          claude_args: '--allowedTools "Task,Skill,Read,Write,Edit,Glob,Grep,TodoWrite,mcp__cloudflare-docs__search_cloudflare_documentation,mcp__exa__get_code_context_exa,mcp__exa__web_search_exa,Bash(npm test:*),Bash(npm run *),Bash(npm install:*),Bash(npm ls:*),Bash(npm view:*),Bash(docker:*),Bash(git status),Bash(git log:*),Bash(git diff:*),Bash(git rev-parse:*),Bash(git fetch:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git branch:*),Bash(git checkout:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr checks:*),Bash(gh pr create:*),Bash(gh issue view:*),Bash(gh issue create:*),Bash(gh issue comment:*),Bash(gh repo view:*),Bash(gh api:*),Bash(find:*),Bash(tree:*),Bash(ls:*),Bash(jq:*)"'

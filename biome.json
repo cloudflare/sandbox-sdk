@@ -1,5 +1,5 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.3.2/schema.json",
+  "$schema": "https://biomejs.dev/schemas/2.3.5/schema.json",
   "assist": {
     "actions": {
       "source": {
@@ -12,8 +12,11 @@
     "ignoreUnknown": false,
     "includes": [
       "packages/**",
+      "examples/**",
+      "sites/**",
       "!node_modules",
       "!**/node_modules",
+      "!**/worker-configuration.d.ts",
       "!package.json",
       "!**/package.json",
       "!dist",
@@ -54,6 +57,11 @@
       "suspicious": {
         "noExplicitAny": "off"
       }
+    }
+  },
+  "css": {
+    "parser": {
+      "tailwindDirectives": true
     }
   },
   "vcs": {

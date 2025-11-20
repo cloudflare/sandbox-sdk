@@ -10,15 +10,20 @@ on:
     #   - "src/**/*.js"
     #   - "src/**/*.jsx"
 
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   claude-review:
     # Skip review for automated "Version Packages" PRs created by changesets
     if: github.event.pull_request.title != 'Version Packages'
 
+    timeout-minutes: 30
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: read
+      pull-requests: write
       issues: read
       id-token: write
 
@@ -34,7 +39,7 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           plugin_marketplaces: |
-            obra/superpowers-marketplace
+            https://github.com/obra/superpowers-marketplace.git
           plugins: |
             superpowers@superpowers-marketplace
           prompt: |
@@ -92,17 +97,65 @@ jobs:
             d. What tests are needed?
             e. Does this need documentation updates?
 
-            ### 6. Execute Review
+            ### 6. Fetch Existing Review Threads
+
+            Before creating your review, fetch existing Claude review threads to enable thread continuity:
+
+            ```bash
+            # Get PR owner and repo name
+            OWNER=$(gh repo view --json owner --jq '.owner.login')
+            REPO=$(gh repo view --json name --jq '.name')
+
+            # Fetch all review threads
+            gh api graphql -f query='
+            query($owner: String!, $name: String!, $pr: Int!) {
+              repository(owner: $owner, name: $name) {
+                pullRequest(number: $pr) {
+                  reviewThreads(first: 100) {
+                    nodes {
+                      id
+                      isResolved
+                      path
+                      line
+                      comments(first: 10) {
+                        nodes {
+                          id
+                          databaseId
+                          body
+                          author { login }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }' -f owner="$OWNER" -f name="$REPO" -F pr=${{ github.event.pull_request.number }}
+            ```
+
+            **Parse the response** - structure is:
+            ```
+            .data.repository.pullRequest.reviewThreads.nodes[]
+            ```
+
+            Filter for threads where `comments.nodes[0].author.login` is "claude" or "github-actions[bot]". These are your previous review comments.
+
+            **Important notes:**
+            - `line` can be `null` for file-level comments (not line-specific)
+            - Use `id` (format: PRRT_xxx) for resolveReviewThread mutations
+            - Use `databaseId` (format: 2518555173) for comment replies
+
+            ### 7. Execute Review
 
             Launch superpowers:code-reviewer subagent (Task tool) with the context gathered above:
             - Full PR diff from step 3
             - Relevant architecture patterns from CLAUDE.md
             - Documentation requirements from step 4
             - Previous review feedback (if incremental update from step 2)
+            - Existing review threads from step 6
 
             The code-reviewer will analyze correctness, architecture, testing, and code quality.
 
-            ### 7. Post Review
+            ### 8. Post Review
 
             **Writing style**:
             - Be direct. One clear point per issue.
@@ -111,7 +164,7 @@ jobs:
             - If issues found: State the issue, reference location, explain why it matters. Move on.
 
             **Format**:
-            - **Inline comments** (using `mcp__github_inline_comment__create_inline_comment`): Use for specific line-by-line code issues
+            - **Inline comments**: Use for specific line-by-line code issues (file path, line number, comment)
             - **Main comment**: Summary only - overall assessment, architectural concerns, testing strategy, verdict. Do NOT duplicate inline comments here.
 
             **Main comment - write naturally:**
@@ -121,14 +174,65 @@ jobs:
             - New concerns: "New issue: error handling in container.ts doesn't cover..."
             - Overall verdict: "Looks good" or "Needs fixes before merge"
 
-            **Post inline comments** for specific code issues using `mcp__github_inline_comment__create_inline_comment`
+            **Handle existing threads before submitting new review:**
 
-            **Post your main comment:**
+            For each thread from step 6, compare with your new findings:
+            - **Issue is fixed:** Mark for resolution (save thread ID)
+            - **Issue persists but needs update:** Mark for reply (save comment database ID)
+            - **Issue no longer relevant:** Mark for resolution
+
+            **Submit review as a single cohesive unit:**
+
+            1. Get the latest commit SHA:
             ```bash
-            gh pr comment ${{ github.event.pull_request.number }} --body "YOUR_REVIEW_HERE" --repo ${{ github.repository }}
+            COMMIT_SHA=$(gh pr view ${{ github.event.pull_request.number }} --json headRefOid --jq '.headRefOid')
             ```
+
+            2. Create review.json with ONLY NEW issues (don't duplicate existing thread issues):
+            ```json
+            {
+              "body": "## Claude Code Review\n\nYour overall assessment here...",
+              "event": "COMMENT",
+              "commit_id": "COMMIT_SHA_HERE",
+              "comments": [
+                {
+                  "path": "path/to/file.ts",
+                  "line": 42,
+                  "body": "Your inline comment here"
+                }
+              ]
+            }
+            ```
+
+            3. Post the unified review:
+            ```bash
+            gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews \
+              --method POST \
+              --input review.json
+            ```
+
+            4. **Manage existing threads (after review submission):**
+
+            Resolve fixed issues:
+            ```bash
+            gh api graphql -f query='
+            mutation($threadId: ID!) {
+              resolveReviewThread(input: {threadId: $threadId}) {
+                thread { id isResolved }
+              }
+            }' -f threadId="THREAD_ID_FROM_STEP_6"
+            ```
+
+            Reply to threads that need updates:
+            ```bash
+            gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments/COMMENT_DATABASE_ID/replies \
+              --method POST \
+              -f body="Update: Issue has been partially addressed but..."
+            ```
+
+            **Important**: This workflow maintains conversation continuity - resolved issues show as "Resolved", ongoing issues have threaded replies, and only new issues create new comment threads.
 
             Always post a NEW comment - never update previous ones. Natural conversation flow.
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://docs.claude.com/en/docs/claude-code/cli-reference for available options
-          claude_args: '--allowedTools "Task,Skill,mcp__github_inline_comment__create_inline_comment,mcp__cloudflare-docs__search_cloudflare_documentation,mcp__exa__get_code_context_exa,mcp__exa__web_search_exa,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh api:*),Bash(git *)"'
+          claude_args: '--allowedTools "Task,Skill,Read,Glob,Grep,Write,TodoWrite,mcp__cloudflare-docs__search_cloudflare_documentation,mcp__exa__get_code_context_exa,mcp__exa__web_search_exa,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh repo view:*),Bash(gh api:*),Bash(git log:*),Bash(git cat-file:*),Bash(git rev-parse:*),Bash(jq:*)"'

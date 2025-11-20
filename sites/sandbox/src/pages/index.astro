@@ -1,0 +1,70 @@
+---
+import Header from '../components/Header';
+import { TextShadow } from '../components/text-shadow';
+import Layout from '../layouts/Layout.astro';
+import { Examples } from '../sections/example';
+import { Features } from '../sections/features';
+import { Footer } from '../sections/footer';
+import { Hero } from '../sections/hero';
+import { Testimonials } from '../sections/testimonials';
+
+const LINES = 7;
+---
+
+<Layout>
+  <div class="min-h-screen">
+    <div class="fixed top-6 bottom-6 left-6 hidden lg:flex flex-col items-center justify-between">
+      <div class="top-0 bottom-0 absolute border-r border-current" />
+      {Array.from({ length: LINES }).map((_, _index) => (
+        <div class="border-t w-3"></div>
+      ))}
+    </div>
+    <div class="fixed top-6 bottom-6 right-6 hidden lg:flex flex-col items-center justify-between">
+      <div class="top-0 bottom-0 absolute border-r border-current" />
+      {Array.from({ length: LINES }).map((_, _index) => (
+        <div class="border-t w-3"></div>
+      ))}
+    </div>
+    <div class="px-4 sm:px-8 lg:px-16">
+      <main class="pt-4 pb-6 max-w-[1400px] mx-auto lg:border-x border-dashed">
+        <h1 class="title mx-auto w-fit font-medium relative z-30 text-[70px] sm:text-[120px] md:text-[160px] lg:text-[260px] leading-none">
+          <TextShadow text="sandbox" count={10} client:load />
+        </h1>
+        <div class="h-6 bg-background sticky top-0 z-20 -mt-6 sm:-mt-10 lg:-mt-14" />
+        <div class="w-full lg:w-[calc(100%+2px)] lg:-mx-px">
+          <Header client:load />
+          <Hero />
+          <div class="h-4 sm:h-6 border border-t-0 relative bg-neutral-200" />
+          <Features client:load />
+          <div class="h-4 sm:h-6 border border-t-0 relative bg-neutral-200" />
+          <Examples client:load />
+          <div class="h-4 sm:h-6 border border-t-0 relative bg-neutral-200" />
+          <Testimonials />
+          <div class="h-4 sm:h-6 border border-t-0 relative bg-neutral-200" />
+          <Footer client:load />
+        </div>
+      </main>
+    </div>
+  </div>
+</Layout>
+
+<script>
+  // Set font CSS variables
+  if (typeof document !== 'undefined') {
+    document.documentElement.style.setProperty(
+      '--font-sans',
+      'Inter, system-ui, sans-serif'
+    );
+    document.documentElement.style.setProperty(
+      '--font-mono',
+      'IBM Plex Mono, monospace'
+    );
+  }
+</script>
+
+<style>
+  .title {
+    letter-spacing: -0.05em;
+  }
+</style>
+

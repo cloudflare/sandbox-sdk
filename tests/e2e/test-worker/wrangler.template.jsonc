@@ -5,7 +5,7 @@
   "compatibility_flags": ["nodejs_compat"],
   "account_id": "b8afc92c7a87f699592038b756153d22",
 
-  "env": {
+  "vars": {
     "SANDBOX_LOG_LEVEL": "debug",
     "SANDBOX_LOG_FORMAT": "pretty"
   },
@@ -34,6 +34,14 @@
     {
       "new_sqlite_classes": ["Sandbox"],
       "tag": "v1"
+    }
+  ],
+
+  "r2_buckets": [
+    {
+      "binding": "TEST_BUCKET",
+      "bucket_name": "sandbox-e2e-test",
+      "preview_bucket_name": "sandbox-e2e-test"
     }
   ]
 }

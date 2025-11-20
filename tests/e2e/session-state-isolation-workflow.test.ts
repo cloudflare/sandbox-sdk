@@ -11,7 +11,6 @@ import { getTestWorkerUrl, WranglerDevRunner } from './helpers/wrangler-runner';
 import {
   createSandboxId,
   createTestHeaders,
-  fetchWithStartup,
   cleanupSandbox
 } from './helpers/test-fixtures';
 
@@ -63,21 +62,17 @@ describe('Session State Isolation Workflow', () => {
       currentSandboxId = createSandboxId();
 
       // Create session1 with production environment
-      const session1Response = await vi.waitFor(
-        async () =>
-          fetchWithStartup(`${workerUrl}/api/session/create`, {
-            method: 'POST',
-            headers: createTestHeaders(currentSandboxId!),
-            body: JSON.stringify({
-              env: {
-                NODE_ENV: 'production',
-                API_KEY: 'prod-key-123',
-                DB_HOST: 'prod.example.com'
-              }
-            })
-          }),
-        { timeout: 90000, interval: 2000 }
-      );
+      const session1Response = await fetch(`${workerUrl}/api/session/create`, {
+        method: 'POST',
+        headers: createTestHeaders(currentSandboxId!),
+        body: JSON.stringify({
+          env: {
+            NODE_ENV: 'production',
+            API_KEY: 'prod-key-123',
+            DB_HOST: 'prod.example.com'
+          }
+        })
+      });
 
       expect(session1Response.status).toBe(200);
       const session1Data = await session1Response.json();
@@ -175,18 +170,14 @@ describe('Session State Isolation Workflow', () => {
       currentSandboxId = createSandboxId();
 
       // Create directory structure first (using default session)
-      await vi.waitFor(
-        async () =>
-          fetchWithStartup(`${workerUrl}/api/file/mkdir`, {
-            method: 'POST',
-            headers: createTestHeaders(currentSandboxId!),
-            body: JSON.stringify({
-              path: '/workspace/app',
-              recursive: true
-            })
-          }),
-        { timeout: 90000, interval: 2000 }
-      );
+      await fetch(`${workerUrl}/api/file/mkdir`, {
+        method: 'POST',
+        headers: createTestHeaders(currentSandboxId!),
+        body: JSON.stringify({
+          path: '/workspace/app',
+          recursive: true
+        })
+      });
 
       await fetch(`${workerUrl}/api/file/mkdir`, {
         method: 'POST',
@@ -310,15 +301,11 @@ describe('Session State Isolation Workflow', () => {
       currentSandboxId = createSandboxId();
 
       // Create two sessions
-      const session1Response = await vi.waitFor(
-        async () =>
-          fetchWithStartup(`${workerUrl}/api/session/create`, {
-            method: 'POST',
-            headers: createTestHeaders(currentSandboxId!),
-            body: JSON.stringify({})
-          }),
-        { timeout: 90000, interval: 2000 }
-      );
+      const session1Response = await fetch(`${workerUrl}/api/session/create`, {
+        method: 'POST',
+        headers: createTestHeaders(currentSandboxId!),
+        body: JSON.stringify({})
+      });
 
       const session1Data = await session1Response.json();
       const session1Id = session1Data.sessionId;
@@ -408,15 +395,11 @@ describe('Session State Isolation Workflow', () => {
       currentSandboxId = createSandboxId();
 
       // Create two sessions
-      const session1Response = await vi.waitFor(
-        async () =>
-          fetchWithStartup(`${workerUrl}/api/session/create`, {
-            method: 'POST',
-            headers: createTestHeaders(currentSandboxId!),
-            body: JSON.stringify({})
-          }),
-        { timeout: 90000, interval: 2000 }
-      );
+      const session1Response = await fetch(`${workerUrl}/api/session/create`, {
+        method: 'POST',
+        headers: createTestHeaders(currentSandboxId!),
+        body: JSON.stringify({})
+      });
 
       const session1Data = await session1Response.json();
       const session1Id = session1Data.sessionId;
@@ -491,15 +474,11 @@ describe('Session State Isolation Workflow', () => {
       currentSandboxId = createSandboxId();
 
       // Create two sessions
-      const session1Response = await vi.waitFor(
-        async () =>
-          fetchWithStartup(`${workerUrl}/api/session/create`, {
-            method: 'POST',
-            headers: createTestHeaders(currentSandboxId!),
-            body: JSON.stringify({})
-          }),
-        { timeout: 90000, interval: 2000 }
-      );
+      const session1Response = await fetch(`${workerUrl}/api/session/create`, {
+        method: 'POST',
+        headers: createTestHeaders(currentSandboxId!),
+        body: JSON.stringify({})
+      });
 
       const session1Data = await session1Response.json();
       const session1Id = session1Data.sessionId;
@@ -576,17 +555,13 @@ describe('Session State Isolation Workflow', () => {
       currentSandboxId = createSandboxId();
 
       // Create two sessions
-      const session1Response = await vi.waitFor(
-        async () =>
-          fetchWithStartup(`${workerUrl}/api/session/create`, {
-            method: 'POST',
-            headers: createTestHeaders(currentSandboxId!),
-            body: JSON.stringify({
-              env: { SESSION_NAME: 'session1' }
-            })
-          }),
-        { timeout: 90000, interval: 2000 }
-      );
+      const session1Response = await fetch(`${workerUrl}/api/session/create`, {
+        method: 'POST',
+        headers: createTestHeaders(currentSandboxId!),
+        body: JSON.stringify({
+          env: { SESSION_NAME: 'session1' }
+        })
+      });
 
       const session1Data = await session1Response.json();
       const session1Id = session1Data.sessionId;
@@ -644,17 +619,13 @@ describe('Session State Isolation Workflow', () => {
       currentSandboxId = createSandboxId();
 
       // Create a session with custom environment variable
-      const sessionResponse = await vi.waitFor(
-        async () =>
-          fetchWithStartup(`${workerUrl}/api/session/create`, {
-            method: 'POST',
-            headers: createTestHeaders(currentSandboxId!),
-            body: JSON.stringify({
-              env: { SESSION_VAR: 'test-value' }
-            })
-          }),
-        { timeout: 90000, interval: 2000 }
-      );
+      const sessionResponse = await fetch(`${workerUrl}/api/session/create`, {
+        method: 'POST',
+        headers: createTestHeaders(currentSandboxId!),
+        body: JSON.stringify({
+          env: { SESSION_VAR: 'test-value' }
+        })
+      });
 
       expect(sessionResponse.status).toBe(200);
       const sessionData = await sessionResponse.json();

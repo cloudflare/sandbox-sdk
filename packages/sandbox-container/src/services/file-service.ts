@@ -1,4 +1,5 @@
 import type { FileInfo, ListFilesOptions, Logger } from '@repo/shared';
+import { shellEscape } from '@repo/shared';
 import type {
   FileNotFoundContext,
   FileSystemContext,
@@ -69,17 +70,6 @@ export class FileService implements FileSystemOperations {
     this.manager = new FileManager();
   }
 
-  /**
-   * Escape path for safe shell usage
-   * Uses single quotes to prevent variable expansion and command substitution
-   */
-  private escapePath(path: string): string {
-    // Single quotes prevent all expansion ($VAR, `cmd`, etc.)
-    // To include a literal single quote, we end the quoted string, add an escaped quote, and start a new quoted string
-    // Example: path="it's" becomes 'it'\''s'
-    return `'${path.replace(/'/g, "'\\''")}'`;
-  }
-
   async read(
     path: string,
     options: ReadOptions = {},
@@ -131,7 +121,7 @@ export class FileService implements FileSystemOperations {
       }
 
       // 3. Get file size using stat
-      const escapedPath = this.escapePath(path);
+      const escapedPath = shellEscape(path);
       const statCommand = `stat -c '%s' ${escapedPath} 2>/dev/null`;
       const statResult = await this.sessionManager.executeInSession(
         sessionId,
@@ -374,7 +364,7 @@ export class FileService implements FileSystemOperations {
       }
 
       // 2. Write file using SessionManager with proper encoding handling
-      const escapedPath = this.escapePath(path);
+      const escapedPath = shellEscape(path);
       const encoding = options.encoding || 'utf-8';
 
       let command: string;
@@ -528,7 +518,7 @@ export class FileService implements FileSystemOperations {
       }
 
       // 4. Delete file using SessionManager with rm command
-      const escapedPath = this.escapePath(path);
+      const escapedPath = shellEscape(path);
       const command = `rm ${escapedPath}`;
 
       const execResult = await this.sessionManager.executeInSession(
@@ -630,8 +620,8 @@ export class FileService implements FileSystemOperations {
       }
 
       // 3. Rename file using SessionManager with mv command
-      const escapedOldPath = this.escapePath(oldPath);
-      const escapedNewPath = this.escapePath(newPath);
+      const escapedOldPath = shellEscape(oldPath);
+      const escapedNewPath = shellEscape(newPath);
       const command = `mv ${escapedOldPath} ${escapedNewPath}`;
 
       const execResult = await this.sessionManager.executeInSession(
@@ -732,8 +722,8 @@ export class FileService implements FileSystemOperations {
 
       // 3. Move file using SessionManager with mv command
       // mv is atomic on same filesystem, automatically handles cross-filesystem moves
-      const escapedSource = this.escapePath(sourcePath);
-      const escapedDest = this.escapePath(destinationPath);
+      const escapedSource = shellEscape(sourcePath);
+      const escapedDest = shellEscape(destinationPath);
       const command = `mv ${escapedSource} ${escapedDest}`;
 
       const execResult = await this.sessionManager.executeInSession(
@@ -821,7 +811,7 @@ export class FileService implements FileSystemOperations {
       const args = this.manager.buildMkdirArgs(path, options);
 
       // 3. Build command string from args (skip 'mkdir' at index 0)
-      const escapedPath = this.escapePath(path);
+      const escapedPath = shellEscape(path);
       let command = 'mkdir';
       if (options.recursive) {
         command += ' -p';
@@ -910,7 +900,7 @@ export class FileService implements FileSystemOperations {
       }
 
       // 2. Check if file/directory exists using SessionManager
-      const escapedPath = this.escapePath(path);
+      const escapedPath = shellEscape(path);
       const command = `test -e ${escapedPath}`;
 
       const execResult = await this.sessionManager.executeInSession(
@@ -1006,7 +996,7 @@ export class FileService implements FileSystemOperations {
       const statCmd = this.manager.buildStatArgs(path);
 
       // 4. Build command string (stat with format argument)
-      const escapedPath = this.escapePath(path);
+      const escapedPath = shellEscape(path);
       const command = `stat ${statCmd.args[0]} ${statCmd.args[1]} ${escapedPath}`;
 
       // 5. Get file stats using SessionManager
@@ -1208,7 +1198,7 @@ export class FileService implements FileSystemOperations {
       }
 
       // 4. Build find command to list files
-      const escapedPath = this.escapePath(path);
+      const escapedPath = shellEscape(path);
       const basePath = path.endsWith('/') ? path.slice(0, -1) : path;
 
       // Use find with appropriate flags
@@ -1220,8 +1210,9 @@ export class FileService implements FileSystemOperations {
       }
 
       // Filter hidden files unless includeHidden is true
+      // Use -name to filter by basename only, not full path
       if (!options.includeHidden) {
-        findCommand += ' -not -path "*/\\.*"';
+        findCommand += ' -not -name ".*"';
       }
 
       // Skip the base directory itself and format output
@@ -1385,7 +1376,7 @@ export class FileService implements FileSystemOperations {
     sessionId = 'default'
   ): Promise<ReadableStream<Uint8Array>> {
     const encoder = new TextEncoder();
-    const escapedPath = this.escapePath(path);
+    const escapedPath = shellEscape(path);
 
     return new ReadableStream({
       start: async (controller) => {
