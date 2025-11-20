@@ -278,7 +278,7 @@ describe('Logger Module', () => {
 
       // Should contain human-readable elements
       expect(output).toContain('INFO');
-      expect(output).toContain('[durable-object]');
+      expect(output).toContain('[sandbox-do]');
       expect(output).toContain('Test message');
       expect(output).toContain('tr_pretty123'); // Truncated trace ID (12 chars)
     });

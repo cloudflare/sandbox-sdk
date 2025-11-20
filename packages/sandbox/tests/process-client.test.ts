@@ -53,7 +53,6 @@ describe('ProcessClient', () => {
 
       expect(result.success).toBe(true);
       expect(result.command).toBe('npm run dev');
-      expect(result.processId).toBe('running');
       expect(result.pid).toBe(12345);
       expect(result.processId).toBe('proc-web-server');
     });
@@ -78,7 +77,6 @@ describe('ProcessClient', () => {
       expect(result.success).toBe(true);
       expect(result.processId).toBe('my-api-server');
       expect(result.command).toBe('python app.py');
-      expect(result.processId).toBe('running');
     });
 
     it('should handle long-running process startup', async () => {
@@ -109,7 +107,7 @@ describe('ProcessClient', () => {
       );
 
       expect(result.success).toBe(true);
-      expect(result.processId).toBe('running');
+      expect(result.processId).toBe('proc-database');
       expect(result.command).toBe('docker run postgres');
     });
 
