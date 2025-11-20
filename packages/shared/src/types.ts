@@ -871,6 +871,9 @@ export interface ISandbox {
     options?: { branch?: string; targetDir?: string }
   ): Promise<GitCheckoutResult>;
 
+  // Environment management
+  setEnvVars(envVars: Record<string, string>): Promise<void>;
+
   // Bucket mounting operations
   mountBucket(
     bucket: string,

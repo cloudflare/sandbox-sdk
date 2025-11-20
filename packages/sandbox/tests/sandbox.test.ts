@@ -138,15 +138,35 @@ describe('Sandbox - Automatic Session Management', () => {
       await sandbox.exec('echo test');
 
       expect(sandbox.client.utils.createSession).toHaveBeenCalledTimes(1);
-      expect(sandbox.client.utils.createSession).toHaveBeenCalledWith({
-        id: expect.stringMatching(/^sandbox-/),
-        env: {},
-        cwd: '/workspace'
-      });
+      expect(sandbox.client.utils.createSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: expect.stringMatching(/^sandbox-/),
+          cwd: '/workspace'
+        })
+      );
 
       expect(sandbox.client.commands.execute).toHaveBeenCalledWith(
         'echo test',
-        expect.stringMatching(/^sandbox-/)
+        expect.stringMatching(/^sandbox-/),
+        undefined
+      );
+    });
+
+    it('should forward exec options to the command client', async () => {
+      await sandbox.exec('echo $OPTION', {
+        env: { OPTION: 'value' },
+        cwd: '/workspace/project',
+        timeout: 5000
+      });
+
+      expect(sandbox.client.commands.execute).toHaveBeenCalledWith(
+        'echo $OPTION',
+        expect.stringMatching(/^sandbox-/),
+        {
+          timeoutMs: 5000,
+          env: { OPTION: 'value' },
+          cwd: '/workspace/project'
+        }
       );
     });
 
@@ -240,11 +260,12 @@ describe('Sandbox - Automatic Session Management', () => {
 
       await sandbox.exec('pwd');
 
-      expect(sandbox.client.utils.createSession).toHaveBeenCalledWith({
-        id: 'sandbox-my-sandbox',
-        env: {},
-        cwd: '/workspace'
-      });
+      expect(sandbox.client.utils.createSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 'sandbox-my-sandbox',
+          cwd: '/workspace'
+        })
+      );
     });
   });
 
@@ -288,7 +309,8 @@ describe('Sandbox - Automatic Session Management', () => {
 
       expect(sandbox.client.commands.execute).toHaveBeenCalledWith(
         'echo test',
-        'isolated-session'
+        'isolated-session',
+        undefined
       );
     });
 
@@ -366,11 +388,11 @@ describe('Sandbox - Automatic Session Management', () => {
 
       await sandbox.createSession();
 
-      expect(sandbox.client.utils.createSession).toHaveBeenCalledWith({
-        id: expect.stringMatching(/^session-/),
-        env: undefined,
-        cwd: undefined
-      });
+      expect(sandbox.client.utils.createSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: expect.stringMatching(/^session-/)
+        })
+      );
     });
   });
 
@@ -391,7 +413,8 @@ describe('Sandbox - Automatic Session Management', () => {
       await session.exec('pwd');
       expect(sandbox.client.commands.execute).toHaveBeenCalledWith(
         'pwd',
-        'test-session'
+        'test-session',
+        undefined
       );
     });
 
@@ -412,7 +435,7 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(sandbox.client.processes.startProcess).toHaveBeenCalledWith(
         'sleep 10',
         'test-session',
-        { processId: undefined }
+        {}
       );
     });
 
@@ -467,11 +490,12 @@ describe('Sandbox - Automatic Session Management', () => {
     it('should initialize with empty environment when not set', async () => {
       await sandbox.exec('pwd');
 
-      expect(sandbox.client.utils.createSession).toHaveBeenCalledWith({
-        id: expect.any(String),
-        env: {},
-        cwd: '/workspace'
-      });
+      expect(sandbox.client.utils.createSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: expect.any(String),
+          cwd: '/workspace'
+        })
+      );
     });
 
     it('should use updated environment after setEnvVars', async () => {

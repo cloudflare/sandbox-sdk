@@ -289,5 +289,79 @@ describe('Environment Variables Workflow', () => {
       const grepData = await grepResponse.json();
       expect(grepData.success).toBe(true);
     }, 90000);
+
+    test('should support per-command env vars without mutating session env', async () => {
+      currentSandboxId = createSandboxId();
+      const headers = createTestHeaders(currentSandboxId);
+
+      const perCommandResponse = await fetch(`${workerUrl}/api/execute`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          command: 'echo "CMD=$CMD_ONLY"',
+          env: { CMD_ONLY: 'scoped-value' }
+        })
+      });
+
+      expect(perCommandResponse.status).toBe(200);
+      const perCommandData = await perCommandResponse.json();
+      expect(perCommandData.success).toBe(true);
+      expect(perCommandData.stdout.trim()).toBe('CMD=scoped-value');
+
+      const verifyResponse = await fetch(`${workerUrl}/api/execute`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          command: 'echo "CMD=$CMD_ONLY"'
+        })
+      });
+
+      expect(verifyResponse.status).toBe(200);
+      const verifyData = await verifyResponse.json();
+      expect(verifyData.success).toBe(true);
+      expect(verifyData.stdout.trim()).toBe('CMD=');
+    }, 90000);
+
+    test('should execute commands in custom cwd without affecting session state', async () => {
+      currentSandboxId = createSandboxId();
+      const headers = createTestHeaders(currentSandboxId);
+
+      const mkdirResponse = await fetch(`${workerUrl}/api/file/mkdir`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          path: '/workspace/custom-dir',
+          recursive: true
+        })
+      });
+      expect(mkdirResponse.status).toBe(200);
+
+      const cwdResponse = await fetch(`${workerUrl}/api/execute`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          command: 'pwd',
+          cwd: '/workspace/custom-dir'
+        })
+      });
+
+      expect(cwdResponse.status).toBe(200);
+      const cwdData = await cwdResponse.json();
+      expect(cwdData.success).toBe(true);
+      expect(cwdData.stdout.trim()).toBe('/workspace/custom-dir');
+
+      const defaultResponse = await fetch(`${workerUrl}/api/execute`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          command: 'pwd'
+        })
+      });
+
+      expect(defaultResponse.status).toBe(200);
+      const defaultData = await defaultResponse.json();
+      expect(defaultData.success).toBe(true);
+      expect(defaultData.stdout.trim()).toBe('/workspace');
+    }, 90000);
   });
 });
