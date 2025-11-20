@@ -40,17 +40,21 @@ export class CommandClient extends BaseHttpClient {
   async execute(
     command: string,
     sessionId: string,
-    timeoutMs?: number,
-    env?: Record<string, string>,
-    cwd?: string
+    options?: {
+      timeoutMs?: number;
+      env?: Record<string, string>;
+      cwd?: string;
+    }
   ): Promise<ExecuteResponse> {
     try {
       const data: ExecuteRequest = {
         command,
         sessionId,
-        ...(timeoutMs !== undefined && { timeoutMs }),
-        ...(env !== undefined && { env }),
-        ...(cwd !== undefined && { cwd })
+        ...(options?.timeoutMs !== undefined && {
+          timeoutMs: options.timeoutMs
+        }),
+        ...(options?.env !== undefined && { env: options.env }),
+        ...(options?.cwd !== undefined && { cwd: options.cwd })
       };
 
       const response = await this.post<ExecuteResponse>('/api/execute', data);
