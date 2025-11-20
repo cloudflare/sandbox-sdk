@@ -178,7 +178,7 @@ describe('ProcessService', () => {
         'session-123',
         'sleep 10',
         expect.any(Function), // event handler callback
-        '/tmp',
+        expect.objectContaining({ cwd: '/tmp' }),
         expect.any(String) // commandId (generated dynamically)
       );
 

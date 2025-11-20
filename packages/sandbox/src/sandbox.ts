@@ -494,7 +494,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     try {
       const stream = await this.client.commands.executeStream(
         command,
-        sessionId
+        sessionId,
+        {
+          timeoutMs: options.timeout,
+          env: options.env,
+          cwd: options.cwd
+        }
       );
 
       for await (const event of parseSSEStream<ExecEvent>(stream)) {
@@ -624,12 +629,21 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     // Use the new HttpClient method to start the process
     try {
       const session = sessionId ?? (await this.ensureDefaultSession());
+      const requestOptions = {
+        ...(options?.processId && { processId: options.processId }),
+        ...(options?.timeout !== undefined && { timeoutMs: options.timeout }),
+        ...(options?.env && { env: options.env }),
+        ...(options?.cwd && { cwd: options.cwd }),
+        ...(options?.encoding && { encoding: options.encoding }),
+        ...(options?.autoCleanup !== undefined && {
+          autoCleanup: options.autoCleanup
+        })
+      };
+
       const response = await this.client.processes.startProcess(
         command,
         session,
-        {
-          processId: options?.processId
-        }
+        requestOptions
       );
 
       const processObj = this.createProcessFromDTO(
@@ -749,7 +763,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     const session = await this.ensureDefaultSession();
     // Get the stream from CommandClient
-    return this.client.commands.executeStream(command, session);
+    return this.client.commands.executeStream(command, session, {
+      timeoutMs: options?.timeout,
+      env: options?.env,
+      cwd: options?.cwd
+    });
   }
 
   /**
@@ -765,7 +783,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       throw new Error('Operation was aborted');
     }
 
-    return this.client.commands.executeStream(command, sessionId);
+    return this.client.commands.executeStream(command, sessionId, {
+      timeoutMs: options?.timeout,
+      env: options?.env,
+      cwd: options?.cwd
+    });
   }
 
   /**
@@ -1095,11 +1117,18 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   async createSession(options?: SessionOptions): Promise<ExecutionSession> {
     const sessionId = options?.id || `session-${Date.now()}`;
 
+    const mergedEnv = {
+      ...this.envVars,
+      ...(options?.env ?? {})
+    };
+    const envPayload =
+      Object.keys(mergedEnv).length > 0 ? mergedEnv : undefined;
+
     // Create session in container
     await this.client.utils.createSession({
       id: sessionId,
-      env: options?.env,
-      cwd: options?.cwd
+      ...(envPayload && { env: envPayload }),
+      ...(options?.cwd && { cwd: options.cwd })
     });
 
     // Return wrapper that binds sessionId to all operations

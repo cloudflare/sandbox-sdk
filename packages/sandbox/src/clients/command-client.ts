@@ -87,13 +87,27 @@ export class CommandClient extends BaseHttpClient {
    * Execute a command and return a stream of events
    * @param command - The command to execute
    * @param sessionId - The session ID for this command execution
+   * @param options - Optional per-command execution settings
    */
   async executeStream(
     command: string,
-    sessionId: string
+    sessionId: string,
+    options?: {
+      timeoutMs?: number;
+      env?: Record<string, string>;
+      cwd?: string;
+    }
   ): Promise<ReadableStream<Uint8Array>> {
     try {
-      const data = { command, sessionId };
+      const data = {
+        command,
+        sessionId,
+        ...(options?.timeoutMs !== undefined && {
+          timeoutMs: options.timeoutMs
+        }),
+        ...(options?.env && { env: options.env }),
+        ...(options?.cwd && { cwd: options.cwd })
+      };
 
       const response = await this.doFetch('/api/execute/stream', {
         method: 'POST',

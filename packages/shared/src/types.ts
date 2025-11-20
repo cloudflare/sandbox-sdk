@@ -722,6 +722,9 @@ export interface ISandbox {
     options?: { branch?: string; targetDir?: string }
   ): Promise<GitCheckoutResult>;
 
+  // Environment management
+  setEnvVars(envVars: Record<string, string>): Promise<void>;
+
   // Session management
   createSession(options?: SessionOptions): Promise<ExecutionSession>;
   deleteSession(sessionId: string): Promise<SessionDeleteResult>;

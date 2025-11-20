@@ -241,7 +241,10 @@ export class ProcessService {
             );
           }
         },
-        options.cwd,
+        {
+          cwd: options.cwd,
+          env: options.env
+        },
         processRecordData.id // Pass process ID as commandId for tracking and killing
       );
 

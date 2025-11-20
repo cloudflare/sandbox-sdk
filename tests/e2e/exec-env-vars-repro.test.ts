@@ -15,7 +15,7 @@ import {
   cleanupSandbox
 } from './helpers/test-fixtures';
 
-describe('Issue #144: Exec with per-command env vars (REPRODUCTION)', () => {
+describe('Issue #144: Exec env + cwd regression coverage', () => {
   describe('local', () => {
     let runner: WranglerDevRunner | null;
     let workerUrl: string;
@@ -44,8 +44,6 @@ describe('Issue #144: Exec with per-command env vars (REPRODUCTION)', () => {
       currentSandboxId = createSandboxId();
       const headers = createTestHeaders(currentSandboxId);
 
-      // Execute command with env vars passed via options
-      // BUG: These env vars are currently IGNORED
       const execResponse = await vi.waitFor(
         async () =>
           fetchWithStartup(`${workerUrl}/api/execute`, {
@@ -63,8 +61,6 @@ describe('Issue #144: Exec with per-command env vars (REPRODUCTION)', () => {
       const execData = await execResponse.json();
       expect(execData.success).toBe(true);
 
-      // This assertion will FAIL with current implementation
-      // because env vars are not passed through
       expect(execData.stdout.trim()).toBe('from_exec_options');
     }, 90000);
 
@@ -86,8 +82,6 @@ describe('Issue #144: Exec with per-command env vars (REPRODUCTION)', () => {
         { timeout: 90000, interval: 2000 }
       );
 
-      // Execute command with cwd passed via options
-      // BUG: The cwd option is currently IGNORED
       const execResponse = await fetch(`${workerUrl}/api/execute`, {
         method: 'POST',
         headers,
@@ -101,8 +95,6 @@ describe('Issue #144: Exec with per-command env vars (REPRODUCTION)', () => {
       const execData = await execResponse.json();
       expect(execData.success).toBe(true);
 
-      // This assertion will FAIL with current implementation
-      // because cwd is not passed through
       expect(execData.stdout.trim()).toBe('/workspace/testdir');
     }, 90000);
 
@@ -123,8 +115,6 @@ describe('Issue #144: Exec with per-command env vars (REPRODUCTION)', () => {
         { timeout: 90000, interval: 2000 }
       );
 
-      // Execute command with per-command env var
-      // BUG: The per-command env var is currently IGNORED
       const execResponse = await fetch(`${workerUrl}/api/execute`, {
         method: 'POST',
         headers,
@@ -139,7 +129,6 @@ describe('Issue #144: Exec with per-command env vars (REPRODUCTION)', () => {
       expect(execData.success).toBe(true);
 
       // Should see both session var and command-specific var
-      // This assertion will FAIL because CMD_VAR is not set
       expect(execData.stdout.trim()).toBe(
         'SESSION=session_value CMD=cmd_value'
       );
@@ -165,8 +154,6 @@ describe('Issue #144: Exec with per-command env vars (REPRODUCTION)', () => {
       currentSandboxId = createSandboxId();
       const headers = createTestHeaders(currentSandboxId);
 
-      // Execute command with multiple env vars
-      // BUG: All env vars are currently IGNORED
       const execResponse = await vi.waitFor(
         async () =>
           fetchWithStartup(`${workerUrl}/api/execute`, {
@@ -188,7 +175,6 @@ describe('Issue #144: Exec with per-command env vars (REPRODUCTION)', () => {
       const execData = await execResponse.json();
       expect(execData.success).toBe(true);
 
-      // This assertion will FAIL because env vars are not passed
       expect(execData.stdout.trim()).toBe('A=value_a B=value_b C=value_c');
     }, 90000);
   });
