@@ -76,13 +76,6 @@ async function handleRunRequest(
     });
     const editor = new Editor(sandbox, '/workspace');
 
-    const commandComparator = (
-      a: { timestamp: number },
-      b: { timestamp: number }
-    ) => a.timestamp - b.timestamp;
-    type ShellResult = (typeof shell)['results'][number];
-    type EditorResult = (typeof editor)['results'][number];
-
     // Create agent with both shell and patch tools, auto-approval for web API
     console.debug('[openai-example]', 'Creating Agent', {
       name: 'Sandbox Studio',
@@ -115,15 +108,9 @@ async function handleRunRequest(
 
     // Combine and sort all results by timestamp for logging
     const allResults = [
-      ...shell.results.map((r: ShellResult) => ({
-        type: 'command' as const,
-        ...r
-      })),
-      ...editor.results.map((r: EditorResult) => ({
-        type: 'file' as const,
-        ...r
-      }))
-    ].sort(commandComparator);
+      ...shell.results.map((r) => ({ type: 'command' as const, ...r })),
+      ...editor.results.map((r) => ({ type: 'file' as const, ...r }))
+    ].sort((a, b) => a.timestamp - b.timestamp);
 
     console.debug('[openai-example]', 'Results collected', {
       commandResults: shell.results.length,
@@ -131,13 +118,11 @@ async function handleRunRequest(
       totalResults: allResults.length
     });
 
-    const commandResults = [...shell.results].sort(commandComparator);
-    const fileOperations = [...editor.results].sort(commandComparator);
-
+    // Format response with combined and sorted results
     const response = {
       naturalResponse: result.finalOutput || null,
-      commandResults,
-      fileOperations
+      commandResults: shell.results.sort((a, b) => a.timestamp - b.timestamp),
+      fileOperations: editor.results.sort((a, b) => a.timestamp - b.timestamp)
     };
 
     console.info('[openai-example]', 'Request completed successfully');

@@ -10,13 +10,6 @@
     "forceConsistentCasingInFileNames": true,
     "strict": true,
     "skipLibCheck": true,
-    "noEmit": true,
-    "baseUrl": ".",
-    "paths": {
-      "@cloudflare/sandbox": ["../../packages/sandbox/src/index.ts"],
-      "@cloudflare/sandbox/openai": [
-        "../../packages/sandbox/src/openai/index.ts"
-      ]
-    }
+    "noEmit": true
   }
 }

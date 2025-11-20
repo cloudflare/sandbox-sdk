@@ -472,11 +472,7 @@ console.log('Terminal server on port ' + port);
       // Process start
       if (url.pathname === '/api/process/start' && request.method === 'POST') {
         const process = await executor.startProcess(body.command, {
-          processId: body.processId,
-          env: body.env,
-          cwd: body.cwd,
-          timeout: body.timeout,
-          autoCleanup: body.autoCleanup
+          processId: body.processId
         });
         return new Response(JSON.stringify(process), {
           headers: { 'Content-Type': 'application/json' }
