@@ -171,6 +171,24 @@ describe('Session', () => {
       ).rejects.toThrow(/Invalid environment variable name/);
     });
 
+    it('should safely handle env values with shell special chars', async () => {
+      const result = await session.exec('echo "$SPECIAL"', {
+        env: { SPECIAL: '$(whoami) `date` $PATH' }
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout.trim()).toBe('$(whoami) `date` $PATH');
+    });
+
+    it('should handle env values with quotes', async () => {
+      const result = await session.exec('echo "$QUOTED"', {
+        env: { QUOTED: "it's got 'quotes'" }
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout.trim()).toBe("it's got 'quotes'");
+    });
+
     it('should override cwd temporarily when option provided', async () => {
       // Create a subdirectory
       await session.exec('mkdir -p tempdir');

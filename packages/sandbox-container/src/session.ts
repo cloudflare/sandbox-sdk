@@ -681,7 +681,7 @@ export class Session {
         setupLines.push(`  export ${key}='${escapedValue}'`);
 
         cleanupLines.push(`  if [ "${hasVar}" = "1" ]; then`);
-        cleanupLines.push(`    export ${key}="$${prevVar}"`);
+        cleanupLines.push(`    export ${key}="\${${prevVar}}"`);
         cleanupLines.push('  else');
         cleanupLines.push(`    unset ${key}`);
         cleanupLines.push('  fi');
