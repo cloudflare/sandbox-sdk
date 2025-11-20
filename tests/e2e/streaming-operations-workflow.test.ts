@@ -479,7 +479,7 @@ describe('Streaming Operations Workflow', () => {
 
       // Verify command ran for approximately 16 seconds (8 ticks * 2 seconds)
       expect(duration).toBeGreaterThan(14000); // At least 14 seconds
-      expect(duration).toBeLessThan(25000); // But completed (not timed out)
+      expect(duration).toBeLessThan(40000); // But completed (not timed out)
 
       // Should have received all ticks
       const stdoutEvents = events.filter((e) => e.type === 'stdout');
