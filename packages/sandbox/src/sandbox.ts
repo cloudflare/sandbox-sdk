@@ -22,7 +22,6 @@ import type {
 import {
   createLogger,
   getEnvString,
-  runWithLogger,
   type SessionDeleteResult,
   shellEscape,
   TraceContext
@@ -917,48 +916,46 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     // Create request-specific logger with trace ID
     const requestLogger = this.logger.child({ traceId, operation: 'fetch' });
 
-    return await runWithLogger(requestLogger, async () => {
-      const url = new URL(request.url);
+    const url = new URL(request.url);
 
-      // Capture and store the sandbox name from the header if present
-      if (!this.sandboxName && request.headers.has('X-Sandbox-Name')) {
-        const name = request.headers.get('X-Sandbox-Name')!;
-        this.sandboxName = name;
-        await this.ctx.storage.put('sandboxName', name);
+    // Capture and store the sandbox name from the header if present
+    if (!this.sandboxName && request.headers.has('X-Sandbox-Name')) {
+      const name = request.headers.get('X-Sandbox-Name')!;
+      this.sandboxName = name;
+      await this.ctx.storage.put('sandboxName', name);
+    }
+
+    // Detect WebSocket upgrade request (RFC 6455 compliant)
+    const upgradeHeader = request.headers.get('Upgrade');
+    const connectionHeader = request.headers.get('Connection');
+    const isWebSocket =
+      upgradeHeader?.toLowerCase() === 'websocket' &&
+      connectionHeader?.toLowerCase().includes('upgrade');
+
+    if (isWebSocket) {
+      // WebSocket path: Let parent Container class handle WebSocket proxying
+      // This bypasses containerFetch() which uses JSRPC and cannot handle WebSocket upgrades
+      try {
+        requestLogger.debug('WebSocket upgrade requested', {
+          path: url.pathname,
+          port: this.determinePort(url)
+        });
+        return await super.fetch(request);
+      } catch (error) {
+        requestLogger.error(
+          'WebSocket connection failed',
+          error instanceof Error ? error : new Error(String(error)),
+          { path: url.pathname }
+        );
+        throw error;
       }
+    }
 
-      // Detect WebSocket upgrade request (RFC 6455 compliant)
-      const upgradeHeader = request.headers.get('Upgrade');
-      const connectionHeader = request.headers.get('Connection');
-      const isWebSocket =
-        upgradeHeader?.toLowerCase() === 'websocket' &&
-        connectionHeader?.toLowerCase().includes('upgrade');
+    // Non-WebSocket: Use existing port determination and HTTP routing logic
+    const port = this.determinePort(url);
 
-      if (isWebSocket) {
-        // WebSocket path: Let parent Container class handle WebSocket proxying
-        // This bypasses containerFetch() which uses JSRPC and cannot handle WebSocket upgrades
-        try {
-          requestLogger.debug('WebSocket upgrade requested', {
-            path: url.pathname,
-            port: this.determinePort(url)
-          });
-          return await super.fetch(request);
-        } catch (error) {
-          requestLogger.error(
-            'WebSocket connection failed',
-            error instanceof Error ? error : new Error(String(error)),
-            { path: url.pathname }
-          );
-          throw error;
-        }
-      }
-
-      // Non-WebSocket: Use existing port determination and HTTP routing logic
-      const port = this.determinePort(url);
-
-      // Route to the appropriate port
-      return await this.containerFetch(request, port);
-    });
+    // Route to the appropriate port
+    return await this.containerFetch(request, port);
   }
 
   wsConnect(request: Request, port: number): Promise<Response> {

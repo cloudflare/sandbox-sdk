@@ -11,7 +11,16 @@
     "@cloudflare/containers": "^0.0.30"
   },
   "devDependencies": {
+    "@openai/agents": "^0.3.2",
     "@repo/shared": "*"
+  },
+  "peerDependencies": {
+    "@openai/agents": "^0.3.2"
+  },
+  "peerDependenciesMeta": {
+    "@openai/agents": {
+      "optional": true
+    }
   },
   "tags": [
     "sandbox",
@@ -36,6 +45,11 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "require": "./dist/index.js"
+    },
+    "./openai": {
+      "types": "./dist/openai/index.d.ts",
+      "import": "./dist/openai/index.js",
+      "require": "./dist/openai/index.js"
     }
   },
   "keywords": [],

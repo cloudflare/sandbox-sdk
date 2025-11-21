@@ -18,7 +18,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createLogger, getLogger, runWithLogger } from '../src/logger/index';
+import { createLogger } from '../src/logger/index';
 import { CloudflareLogger } from '../src/logger/logger';
 import { TraceContext } from '../src/logger/trace-context';
 import type { LogContext } from '../src/logger/types';
@@ -417,87 +417,6 @@ describe('Logger Module', () => {
 
       const output = JSON.parse(consoleLogSpy.mock.calls[0][0] as string);
       expect(output.traceId).toMatch(/^tr_[0-9a-f]{16}$/);
-    });
-  });
-
-  describe('AsyncLocalStorage Context', () => {
-    beforeEach(() => {
-      // Set NODE_ENV to production to force JSON output
-      process.env.NODE_ENV = 'production';
-    });
-
-    afterEach(() => {
-      // Clean up
-      delete process.env.NODE_ENV;
-    });
-
-    it('should store and retrieve logger from context', async () => {
-      const logger = createLogger({
-        component: 'sandbox-do',
-        traceId: 'tr_async'
-      });
-
-      await runWithLogger(logger, () => {
-        const retrievedLogger = getLogger();
-        retrievedLogger.info('From async context');
-      });
-
-      expect(consoleLogSpy).toHaveBeenCalledOnce();
-      const output = JSON.parse(consoleLogSpy.mock.calls[0][0] as string);
-      expect(output.traceId).toBe('tr_async');
-    });
-
-    it('should throw error when accessing logger outside context', () => {
-      expect(() => getLogger()).toThrow(
-        'Logger not initialized in async context'
-      );
-    });
-
-    it('should support nested runWithLogger calls', async () => {
-      const parentLogger = createLogger({
-        component: 'sandbox-do',
-        traceId: 'tr_parent'
-      });
-
-      await runWithLogger(parentLogger, async () => {
-        const childLogger = getLogger().child({ operation: 'exec' });
-
-        await runWithLogger(childLogger, () => {
-          const retrievedLogger = getLogger();
-          retrievedLogger.info('Nested context');
-        });
-      });
-
-      const output = JSON.parse(consoleLogSpy.mock.calls[0][0] as string);
-      expect(output).toMatchObject({
-        traceId: 'tr_parent',
-        operation: 'exec'
-      });
-    });
-
-    it('should isolate logger between async operations', async () => {
-      const logger1 = createLogger({ component: 'container', traceId: 'tr_1' });
-      const logger2 = createLogger({ component: 'container', traceId: 'tr_2' });
-
-      const promise1 = runWithLogger(logger1, async () => {
-        await new Promise((resolve) => setTimeout(resolve, 10));
-        getLogger().info('Logger 1');
-      });
-
-      const promise2 = runWithLogger(logger2, async () => {
-        getLogger().info('Logger 2');
-      });
-
-      await Promise.all([promise1, promise2]);
-
-      expect(consoleLogSpy).toHaveBeenCalledTimes(2);
-      const outputs = consoleLogSpy.mock.calls.map((call) =>
-        JSON.parse(call[0] as string)
-      );
-      const traceIds = outputs.map((o) => o.traceId);
-
-      expect(traceIds).toContain('tr_1');
-      expect(traceIds).toContain('tr_2');
     });
   });
 

@@ -13,6 +13,7 @@
     "includes": [
       "packages/**",
       "examples/**",
+      "sites/**",
       "!node_modules",
       "!**/node_modules",
       "!**/worker-configuration.d.ts",
