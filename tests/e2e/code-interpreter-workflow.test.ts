@@ -29,12 +29,7 @@ import {
   createTestHeaders,
   cleanupSandbox
 } from './helpers/test-fixtures';
-import type {
-  ContextCreateResult,
-  ContextListResult,
-  ContextDeleteResult,
-  ExecutionResult
-} from '@repo/shared';
+import type { CodeContext, ExecutionResult } from '@repo/shared';
 import type { ErrorResponse } from './test-worker/types';
 
 describe('Code Interpreter Workflow (E2E)', () => {
@@ -80,8 +75,8 @@ describe('Code Interpreter Workflow (E2E)', () => {
     );
 
     expect(pythonCtxResponse.status).toBe(200);
-    const pythonCtx = (await pythonCtxResponse.json()) as ContextCreateResult;
-    expect(pythonCtx.contextId).toBeTruthy();
+    const pythonCtx = (await pythonCtxResponse.json()) as CodeContext;
+    expect(pythonCtx.id).toBeTruthy();
     expect(pythonCtx.language).toBe('python');
 
     // Create JavaScript context
@@ -92,10 +87,10 @@ describe('Code Interpreter Workflow (E2E)', () => {
     });
 
     expect(jsCtxResponse.status).toBe(200);
-    const jsCtx = (await jsCtxResponse.json()) as ContextCreateResult;
-    expect(jsCtx.contextId).toBeTruthy();
+    const jsCtx = (await jsCtxResponse.json()) as CodeContext;
+    expect(jsCtx.id).toBeTruthy();
     expect(jsCtx.language).toBe('javascript');
-    expect(jsCtx.contextId).not.toBe(pythonCtx.contextId); // Different contexts
+    expect(jsCtx.id).not.toBe(pythonCtx.id); // Different contexts
 
     // List all contexts
     const listResponse = await fetch(`${workerUrl}/api/code/context/list`, {
@@ -104,13 +99,13 @@ describe('Code Interpreter Workflow (E2E)', () => {
     });
 
     expect(listResponse.status).toBe(200);
-    const contexts = (await listResponse.json()) as ContextListResult;
-    expect(Array.isArray(contexts.contexts)).toBe(true);
-    expect(contexts.contexts.length).toBeGreaterThanOrEqual(2);
+    const contexts = (await listResponse.json()) as CodeContext[];
+    expect(Array.isArray(contexts)).toBe(true);
+    expect(contexts.length).toBeGreaterThanOrEqual(2);
 
-    const contextIds = contexts.contexts.map((ctx) => ctx.id);
-    expect(contextIds).toContain(pythonCtx.contextId);
-    expect(contextIds).toContain(jsCtx.contextId);
+    const contextIds = contexts.map((ctx) => ctx.id);
+    expect(contextIds).toContain(pythonCtx.id);
+    expect(contextIds).toContain(jsCtx.id);
   }, 120000);
 
   test('should delete code context', async () => {
@@ -124,8 +119,8 @@ describe('Code Interpreter Workflow (E2E)', () => {
       body: JSON.stringify({ language: 'python' })
     });
 
-    const context = (await createResponse.json()) as ContextCreateResult;
-    const contextId = context.contextId;
+    const context = (await createResponse.json()) as CodeContext;
+    const contextId = context.id;
 
     // Delete context
     const deleteResponse = await fetch(
@@ -137,9 +132,8 @@ describe('Code Interpreter Workflow (E2E)', () => {
     );
 
     expect(deleteResponse.status).toBe(200);
-    const deleteData = (await deleteResponse.json()) as ContextDeleteResult;
+    const deleteData = (await deleteResponse.json()) as { success: boolean };
     expect(deleteData.success).toBe(true);
-    expect(deleteData.contextId).toBe(contextId);
 
     // Verify context is removed from list
     const listResponse = await fetch(`${workerUrl}/api/code/context/list`, {
@@ -147,8 +141,8 @@ describe('Code Interpreter Workflow (E2E)', () => {
       headers
     });
 
-    const contexts = (await listResponse.json()) as ContextListResult;
-    const contextIds = contexts.contexts.map((ctx) => ctx.id);
+    const contexts = (await listResponse.json()) as CodeContext[];
+    const contextIds = contexts.map((ctx) => ctx.id);
     expect(contextIds).not.toContain(contextId);
   }, 120000);
 
@@ -473,7 +467,7 @@ for i in range(3):
       }
     );
 
-    const pythonCtx = (await pythonCtxResponse.json()) as ContextCreateResult;
+    const pythonCtx = (await pythonCtxResponse.json()) as CodeContext;
 
     // Generate data in Python and save to file
     const pythonExecResponse = await fetch(`${workerUrl}/api/code/execute`, {
@@ -503,7 +497,7 @@ print("Data saved")
       body: JSON.stringify({ language: 'javascript' })
     });
 
-    const jsCtx = (await jsCtxResponse.json()) as ContextCreateResult;
+    const jsCtx = (await jsCtxResponse.json()) as CodeContext;
 
     // Read and process data in JavaScript
     const jsExecResponse = await fetch(`${workerUrl}/api/code/execute`, {
