@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
-import { ErrorCode } from '@repo/shared/errors';
 import type { PortInfo } from '@sandbox-container/core/types';
 import { PortManager } from '@sandbox-container/managers/port-manager';
 
@@ -160,7 +159,7 @@ describe('PortManager', () => {
       ).toBe('PORT_UNEXPOSE_ERROR');
       expect(
         manager.determineErrorCode('list', new Error('Unknown error'))
-      ).toBe(ErrorCode.PORT_OPERATION_ERROR);
+      ).toBe('PORT_LIST_ERROR');
       expect(
         manager.determineErrorCode('get', new Error('Unknown error'))
       ).toBe('PORT_GET_ERROR');
