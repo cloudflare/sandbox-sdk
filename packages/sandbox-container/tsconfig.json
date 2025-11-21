@@ -1,7 +1,6 @@
 {
   "extends": "@repo/typescript-config/bun.json",
   "compilerOptions": {
-    "rootDir": ".",
     "outDir": "dist",
     "paths": {
       "@sandbox-container/*": ["./src/*"]
