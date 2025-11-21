@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
-import type { FileStats } from '@sandbox-container/core/types.ts';
-import { FileManager } from '@sandbox-container/managers/file-manager.ts';
+import type { FileStats } from '@sandbox-container/core/types';
+import { FileManager } from '@sandbox-container/managers/file-manager';
 
 describe('FileManager', () => {
   let manager: FileManager;

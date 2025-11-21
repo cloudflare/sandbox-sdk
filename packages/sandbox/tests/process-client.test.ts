@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
-  GetProcessLogsResponse,
-  GetProcessResponse,
-  KillAllProcessesResponse,
-  KillProcessResponse,
-  ListProcessesResponse,
-  StartProcessResponse
+  ProcessCleanupResult,
+  ProcessInfoResult,
+  ProcessKillResult,
+  ProcessListResult,
+  ProcessLogsResult,
+  ProcessStartResult
 } from '../src/clients';
 import { ProcessClient } from '../src/clients/process-client';
 import {
@@ -37,15 +37,11 @@ describe('ProcessClient', () => {
 
   describe('process lifecycle management', () => {
     it('should start background processes successfully', async () => {
-      const mockResponse: StartProcessResponse = {
+      const mockResponse: ProcessStartResult = {
         success: true,
-        process: {
-          id: 'proc-web-server',
-          command: 'npm run dev',
-          status: 'running',
-          pid: 12345,
-          startTime: '2023-01-01T00:00:00Z'
-        },
+        processId: 'proc-web-server',
+        command: 'npm run dev',
+        pid: 12345,
         timestamp: '2023-01-01T00:00:00Z'
       };
 
@@ -56,22 +52,17 @@ describe('ProcessClient', () => {
       const result = await client.startProcess('npm run dev', 'session-123');
 
       expect(result.success).toBe(true);
-      expect(result.process.command).toBe('npm run dev');
-      expect(result.process.status).toBe('running');
-      expect(result.process.pid).toBe(12345);
-      expect(result.process.id).toBe('proc-web-server');
+      expect(result.command).toBe('npm run dev');
+      expect(result.pid).toBe(12345);
+      expect(result.processId).toBe('proc-web-server');
     });
 
     it('should start processes with custom process IDs', async () => {
-      const mockResponse: StartProcessResponse = {
+      const mockResponse: ProcessStartResult = {
         success: true,
-        process: {
-          id: 'my-api-server',
-          command: 'python app.py',
-          status: 'running',
-          pid: 54321,
-          startTime: '2023-01-01T00:00:00Z'
-        },
+        processId: 'my-api-server',
+        command: 'python app.py',
+        pid: 54321,
         timestamp: '2023-01-01T00:00:00Z'
       };
 
@@ -84,21 +75,16 @@ describe('ProcessClient', () => {
       });
 
       expect(result.success).toBe(true);
-      expect(result.process.id).toBe('my-api-server');
-      expect(result.process.command).toBe('python app.py');
-      expect(result.process.status).toBe('running');
+      expect(result.processId).toBe('my-api-server');
+      expect(result.command).toBe('python app.py');
     });
 
     it('should handle long-running process startup', async () => {
-      const mockResponse: StartProcessResponse = {
+      const mockResponse: ProcessStartResult = {
         success: true,
-        process: {
-          id: 'proc-database',
-          command: 'docker run postgres',
-          status: 'running',
-          pid: 99999,
-          startTime: '2023-01-01T00:00:00Z'
-        },
+        processId: 'proc-database',
+        command: 'docker run postgres',
+        pid: 99999,
         timestamp: '2023-01-01T00:00:05Z'
       };
 
@@ -121,8 +107,8 @@ describe('ProcessClient', () => {
       );
 
       expect(result.success).toBe(true);
-      expect(result.process.status).toBe('running');
-      expect(result.process.command).toBe('docker run postgres');
+      expect(result.processId).toBe('proc-database');
+      expect(result.command).toBe('docker run postgres');
     });
 
     it('should handle command not found errors', async () => {
@@ -158,7 +144,7 @@ describe('ProcessClient', () => {
 
   describe('process monitoring and inspection', () => {
     it('should list running processes', async () => {
-      const mockResponse: ListProcessesResponse = {
+      const mockResponse: ProcessListResult = {
         success: true,
         processes: [
           {
@@ -185,7 +171,6 @@ describe('ProcessClient', () => {
             endTime: '2023-01-01T00:05:00Z'
           }
         ],
-        count: 3,
         timestamp: '2023-01-01T00:05:30Z'
       };
 
@@ -193,10 +178,9 @@ describe('ProcessClient', () => {
         new Response(JSON.stringify(mockResponse), { status: 200 })
       );
 
-      const result = await client.listProcesses('session-list');
+      const result = await client.listProcesses();
 
       expect(result.success).toBe(true);
-      expect(result.count).toBe(3);
       expect(result.processes).toHaveLength(3);
 
       const runningProcesses = result.processes.filter(
@@ -214,7 +198,7 @@ describe('ProcessClient', () => {
     });
 
     it('should get specific process details', async () => {
-      const mockResponse: GetProcessResponse = {
+      const mockResponse: ProcessInfoResult = {
         success: true,
         process: {
           id: 'proc-analytics',
@@ -230,7 +214,7 @@ describe('ProcessClient', () => {
         new Response(JSON.stringify(mockResponse), { status: 200 })
       );
 
-      const result = await client.getProcess('proc-analytics', 'session-get');
+      const result = await client.getProcess('proc-analytics');
 
       expect(result.success).toBe(true);
       expect(result.process.id).toBe('proc-analytics');
@@ -249,16 +233,15 @@ describe('ProcessClient', () => {
         new Response(JSON.stringify(errorResponse), { status: 404 })
       );
 
-      await expect(
-        client.getProcess('nonexistent-proc', 'session-err')
-      ).rejects.toThrow(ProcessNotFoundError);
+      await expect(client.getProcess('nonexistent-proc')).rejects.toThrow(
+        ProcessNotFoundError
+      );
     });
 
     it('should handle empty process list', async () => {
-      const mockResponse: ListProcessesResponse = {
+      const mockResponse: ProcessListResult = {
         success: true,
         processes: [],
-        count: 0,
         timestamp: '2023-01-01T00:00:00Z'
       };
 
@@ -266,19 +249,18 @@ describe('ProcessClient', () => {
         new Response(JSON.stringify(mockResponse), { status: 200 })
       );
 
-      const result = await client.listProcesses('session-list');
+      const result = await client.listProcesses();
 
       expect(result.success).toBe(true);
-      expect(result.count).toBe(0);
       expect(result.processes).toHaveLength(0);
     });
   });
 
   describe('process termination', () => {
     it('should kill individual processes', async () => {
-      const mockResponse: KillProcessResponse = {
+      const mockResponse: ProcessKillResult = {
         success: true,
-        message: 'Process proc-web killed successfully',
+        processId: 'test-process',
         timestamp: '2023-01-01T00:10:00Z'
       };
 
@@ -286,11 +268,9 @@ describe('ProcessClient', () => {
         new Response(JSON.stringify(mockResponse), { status: 200 })
       );
 
-      const result = await client.killProcess('proc-web', 'session-kill');
+      const result = await client.killProcess('proc-web');
 
       expect(result.success).toBe(true);
-      expect(result.message).toContain('killed successfully');
-      expect(result.message).toContain('proc-web');
     });
 
     it('should handle kill non-existent process', async () => {
@@ -303,16 +283,15 @@ describe('ProcessClient', () => {
         new Response(JSON.stringify(errorResponse), { status: 404 })
       );
 
-      await expect(
-        client.killProcess('already-dead-proc', 'session-err')
-      ).rejects.toThrow(ProcessNotFoundError);
+      await expect(client.killProcess('already-dead-proc')).rejects.toThrow(
+        ProcessNotFoundError
+      );
     });
 
     it('should kill all processes at once', async () => {
-      const mockResponse: KillAllProcessesResponse = {
+      const mockResponse: ProcessCleanupResult = {
         success: true,
-        killedCount: 5,
-        message: 'All 5 processes killed successfully',
+        cleanedCount: 0,
         timestamp: '2023-01-01T00:15:00Z'
       };
 
@@ -320,18 +299,15 @@ describe('ProcessClient', () => {
         new Response(JSON.stringify(mockResponse), { status: 200 })
       );
 
-      const result = await client.killAllProcesses('session-killall');
+      const result = await client.killAllProcesses();
 
       expect(result.success).toBe(true);
-      expect(result.killedCount).toBe(5);
-      expect(result.message).toContain('All 5 processes killed');
     });
 
     it('should handle kill all when no processes running', async () => {
-      const mockResponse: KillAllProcessesResponse = {
+      const mockResponse: ProcessCleanupResult = {
         success: true,
-        killedCount: 0,
-        message: 'No processes to kill',
+        cleanedCount: 0,
         timestamp: '2023-01-01T00:00:00Z'
       };
 
@@ -339,11 +315,9 @@ describe('ProcessClient', () => {
         new Response(JSON.stringify(mockResponse), { status: 200 })
       );
 
-      const result = await client.killAllProcesses('session-killall');
+      const result = await client.killAllProcesses();
 
       expect(result.success).toBe(true);
-      expect(result.killedCount).toBe(0);
-      expect(result.message).toContain('No processes to kill');
     });
 
     it('should handle kill failures', async () => {
@@ -356,15 +330,15 @@ describe('ProcessClient', () => {
         new Response(JSON.stringify(errorResponse), { status: 500 })
       );
 
-      await expect(
-        client.killProcess('protected-proc', 'session-err')
-      ).rejects.toThrow(ProcessError);
+      await expect(client.killProcess('protected-proc')).rejects.toThrow(
+        ProcessError
+      );
     });
   });
 
   describe('process log management', () => {
     it('should retrieve process logs', async () => {
-      const mockResponse: GetProcessLogsResponse = {
+      const mockResponse: ProcessLogsResult = {
         success: true,
         processId: 'proc-server',
         stdout: `Server starting...
@@ -382,7 +356,7 @@ describe('ProcessClient', () => {
         new Response(JSON.stringify(mockResponse), { status: 200 })
       );
 
-      const result = await client.getProcessLogs('proc-server', 'session-logs');
+      const result = await client.getProcessLogs('proc-server');
 
       expect(result.success).toBe(true);
       expect(result.processId).toBe('proc-server');
@@ -402,16 +376,16 @@ describe('ProcessClient', () => {
         new Response(JSON.stringify(errorResponse), { status: 404 })
       );
 
-      await expect(
-        client.getProcessLogs('missing-proc', 'session-err')
-      ).rejects.toThrow(ProcessNotFoundError);
+      await expect(client.getProcessLogs('missing-proc')).rejects.toThrow(
+        ProcessNotFoundError
+      );
     });
 
     it('should retrieve logs for processes with large output', async () => {
       const largeStdout = 'Log entry with details\n'.repeat(10000);
       const largeStderr = 'Error trace line\n'.repeat(1000);
 
-      const mockResponse: GetProcessLogsResponse = {
+      const mockResponse: ProcessLogsResult = {
         success: true,
         processId: 'proc-batch',
         stdout: largeStdout,
@@ -423,7 +397,7 @@ describe('ProcessClient', () => {
         new Response(JSON.stringify(mockResponse), { status: 200 })
       );
 
-      const result = await client.getProcessLogs('proc-batch', 'session-logs');
+      const result = await client.getProcessLogs('proc-batch');
 
       expect(result.success).toBe(true);
       expect(result.stdout.length).toBeGreaterThan(200000);
@@ -433,7 +407,7 @@ describe('ProcessClient', () => {
     });
 
     it('should handle empty process logs', async () => {
-      const mockResponse: GetProcessLogsResponse = {
+      const mockResponse: ProcessLogsResult = {
         success: true,
         processId: 'proc-silent',
         stdout: '',
@@ -445,7 +419,7 @@ describe('ProcessClient', () => {
         new Response(JSON.stringify(mockResponse), { status: 200 })
       );
 
-      const result = await client.getProcessLogs('proc-silent', 'session-logs');
+      const result = await client.getProcessLogs('proc-silent');
 
       expect(result.success).toBe(true);
       expect(result.stdout).toBe('');
@@ -480,10 +454,7 @@ data: {"type":"stdout","data":"Server ready on port 3000\\n","timestamp":"2023-0
         })
       );
 
-      const stream = await client.streamProcessLogs(
-        'proc-realtime',
-        'session-stream'
-      );
+      const stream = await client.streamProcessLogs('proc-realtime');
 
       expect(stream).toBeInstanceOf(ReadableStream);
 
@@ -517,9 +488,9 @@ data: {"type":"stdout","data":"Server ready on port 3000\\n","timestamp":"2023-0
         new Response(JSON.stringify(errorResponse), { status: 404 })
       );
 
-      await expect(
-        client.streamProcessLogs('stream-missing', 'session-err')
-      ).rejects.toThrow(ProcessNotFoundError);
+      await expect(client.streamProcessLogs('stream-missing')).rejects.toThrow(
+        ProcessNotFoundError
+      );
     });
 
     it('should handle streaming setup failures', async () => {
@@ -532,9 +503,9 @@ data: {"type":"stdout","data":"Server ready on port 3000\\n","timestamp":"2023-0
         new Response(JSON.stringify(errorResponse), { status: 500 })
       );
 
-      await expect(
-        client.streamProcessLogs('proc-no-logs', 'session-err')
-      ).rejects.toThrow(ProcessError);
+      await expect(client.streamProcessLogs('proc-no-logs')).rejects.toThrow(
+        ProcessError
+      );
     });
 
     it('should handle missing stream body', async () => {
@@ -546,22 +517,18 @@ data: {"type":"stdout","data":"Server ready on port 3000\\n","timestamp":"2023-0
       );
 
       await expect(
-        client.streamProcessLogs('proc-empty-stream', 'session-err')
+        client.streamProcessLogs('proc-empty-stream')
       ).rejects.toThrow('No response body for streaming');
     });
   });
 
   describe('session integration', () => {
     it('should include session in process operations', async () => {
-      const mockResponse: StartProcessResponse = {
+      const mockResponse: ProcessStartResult = {
         success: true,
-        process: {
-          id: 'proc-session-test',
-          command: 'echo session-test',
-          status: 'running',
-          pid: 11111,
-          startTime: '2023-01-01T00:00:00Z'
-        },
+        processId: 'proc-session-test',
+        command: 'echo session-test',
+        pid: 11111,
         timestamp: '2023-01-01T00:00:00Z'
       };
 
@@ -608,7 +575,6 @@ data: {"type":"stdout","data":"Server ready on port 3000\\n","timestamp":"2023-0
               JSON.stringify({
                 success: true,
                 processes: [],
-                count: 0,
                 timestamp: new Date().toISOString()
               })
             )
@@ -632,8 +598,8 @@ data: {"type":"stdout","data":"Server ready on port 3000\\n","timestamp":"2023-0
       const operations = await Promise.all([
         client.startProcess('npm run dev', 'session-concurrent'),
         client.startProcess('python api.py', 'session-concurrent'),
-        client.listProcesses('session-concurrent'),
-        client.getProcessLogs('existing-proc', 'session-concurrent'),
+        client.listProcesses(),
+        client.getProcessLogs('existing-proc'),
         client.startProcess('node worker.js', 'session-concurrent')
       ]);
 
@@ -650,7 +616,7 @@ data: {"type":"stdout","data":"Server ready on port 3000\\n","timestamp":"2023-0
     it('should handle network failures gracefully', async () => {
       mockFetch.mockRejectedValue(new Error('Network connection failed'));
 
-      await expect(client.listProcesses('session-err')).rejects.toThrow(
+      await expect(client.listProcesses()).rejects.toThrow(
         'Network connection failed'
       );
     });

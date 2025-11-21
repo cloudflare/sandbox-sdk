@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'bun:test';
 import type {
   DeleteFileResult,
   FileExistsResult,
+  Logger,
   MkdirResult,
   MoveFileResult,
   ReadFileResult,
@@ -9,7 +10,7 @@ import type {
   WriteFileResult
 } from '@repo/shared';
 import type { ErrorResponse } from '@repo/shared/errors';
-import type { Logger, RequestContext } from '@sandbox-container/core/types';
+import type { RequestContext } from '@sandbox-container/core/types';
 import { FileHandler } from '@sandbox-container/handlers/file-handler';
 import type { FileService } from '@sandbox-container/services/file-service';
 
@@ -33,12 +34,14 @@ const mockFileService = {
   // Remove private properties to avoid type conflicts
 } as unknown as FileService;
 
-const mockLogger: Logger = {
+const mockLogger = {
   info: vi.fn(),
   error: vi.fn(),
   warn: vi.fn(),
-  debug: vi.fn()
-};
+  debug: vi.fn(),
+  child: vi.fn()
+} as Logger;
+mockLogger.child = vi.fn(() => mockLogger);
 
 // Mock request context
 const mockContext: RequestContext = {

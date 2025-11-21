@@ -1,5 +1,5 @@
+import type { GitCheckoutResult } from '@repo/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { GitCheckoutResponse } from '../src/clients';
 import { GitClient } from '../src/clients/git-client';
 import {
   GitAuthenticationError,
@@ -35,12 +35,8 @@ describe('GitClient', () => {
 
   describe('repository cloning', () => {
     it('should clone public repositories successfully', async () => {
-      const mockResponse: GitCheckoutResponse = {
+      const mockResponse: GitCheckoutResult = {
         success: true,
-        stdout:
-          "Cloning into 'react'...\nReceiving objects: 100% (1284/1284), done.",
-        stderr: '',
-        exitCode: 0,
         repoUrl: 'https://github.com/facebook/react.git',
         branch: 'main',
         targetDir: 'react',
@@ -59,15 +55,11 @@ describe('GitClient', () => {
       expect(result.success).toBe(true);
       expect(result.repoUrl).toBe('https://github.com/facebook/react.git');
       expect(result.branch).toBe('main');
-      expect(result.exitCode).toBe(0);
     });
 
     it('should clone repositories to specific branches', async () => {
-      const mockResponse: GitCheckoutResponse = {
+      const mockResponse: GitCheckoutResult = {
         success: true,
-        stdout: "Cloning into 'project'...\nSwitching to branch 'development'",
-        stderr: '',
-        exitCode: 0,
         repoUrl: 'https://github.com/company/project.git',
         branch: 'development',
         targetDir: 'project',
@@ -89,11 +81,8 @@ describe('GitClient', () => {
     });
 
     it('should clone repositories to custom directories', async () => {
-      const mockResponse: GitCheckoutResponse = {
+      const mockResponse: GitCheckoutResult = {
         success: true,
-        stdout: "Cloning into 'workspace/my-app'...\nDone.",
-        stderr: '',
-        exitCode: 0,
         repoUrl: 'https://github.com/user/my-app.git',
         branch: 'main',
         targetDir: 'workspace/my-app',
@@ -115,12 +104,8 @@ describe('GitClient', () => {
     });
 
     it('should handle large repository clones with warnings', async () => {
-      const mockResponse: GitCheckoutResponse = {
+      const mockResponse: GitCheckoutResult = {
         success: true,
-        stdout:
-          "Cloning into 'linux'...\nReceiving objects: 100% (8125432/8125432), 2.34 GiB, done.",
-        stderr: 'warning: filtering not recognized by server',
-        exitCode: 0,
         repoUrl: 'https://github.com/torvalds/linux.git',
         branch: 'master',
         targetDir: 'linux',
@@ -137,15 +122,11 @@ describe('GitClient', () => {
       );
 
       expect(result.success).toBe(true);
-      expect(result.stderr).toContain('warning:');
     });
 
     it('should handle SSH repository URLs', async () => {
-      const mockResponse: GitCheckoutResponse = {
+      const mockResponse: GitCheckoutResult = {
         success: true,
-        stdout: "Cloning into 'private-project'...\nDone.",
-        stderr: '',
-        exitCode: 0,
         repoUrl: 'git@github.com:company/private-project.git',
         branch: 'main',
         targetDir: 'private-project',
@@ -175,8 +156,6 @@ describe('GitClient', () => {
             JSON.stringify({
               success: true,
               stdout: `Cloning into '${repoName}'...\nDone.`,
-              stderr: '',
-              exitCode: 0,
               repoUrl: body.repoUrl,
               branch: body.branch || 'main',
               targetDir: body.targetDir || repoName,
@@ -320,11 +299,8 @@ describe('GitClient', () => {
     });
 
     it('should handle partial clone failures', async () => {
-      const mockResponse: GitCheckoutResponse = {
+      const mockResponse: GitCheckoutResult = {
         success: false,
-        stdout: "Cloning into 'repo'...\nReceiving objects:  45% (450/1000)",
-        stderr: 'error: RPC failed\nfatal: early EOF',
-        exitCode: 128,
         repoUrl: 'https://github.com/problematic/repo.git',
         branch: 'main',
         targetDir: 'repo',
@@ -341,8 +317,6 @@ describe('GitClient', () => {
       );
 
       expect(result.success).toBe(false);
-      expect(result.exitCode).toBe(128);
-      expect(result.stderr).toContain('RPC failed');
     });
   });
 
@@ -434,9 +408,6 @@ describe('GitClient', () => {
         new Response(
           JSON.stringify({
             success: true,
-            stdout: "Cloning into 'private-repo'...\nDone.",
-            stderr: '',
-            exitCode: 0,
             repoUrl:
               'https://oauth2:ghp_token123@github.com/user/private-repo.git',
             branch: 'main',
@@ -463,9 +434,6 @@ describe('GitClient', () => {
         new Response(
           JSON.stringify({
             success: true,
-            stdout: "Cloning into 'react'...\nDone.",
-            stderr: '',
-            exitCode: 0,
             repoUrl: 'https://github.com/facebook/react.git',
             branch: 'main',
             targetDir: '/workspace/react',

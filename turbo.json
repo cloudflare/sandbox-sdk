@@ -31,7 +31,12 @@
     "typecheck": {
       "dependsOn": ["^build"],
       "outputs": [],
-      "inputs": ["src/**/*.ts", "tsconfig.json", "tsconfig.*.json"]
+      "inputs": [
+        "src/**/*.ts",
+        "tests/**/*.ts",
+        "tsconfig.json",
+        "tsconfig.*.json"
+      ]
     },
     "check": {
       "dependsOn": ["typecheck"],
