@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'bun:test';
+import type { Logger, SessionDeleteResult } from '@repo/shared';
 import type { ErrorResponse } from '@repo/shared/errors';
-import type { Logger, RequestContext } from '@sandbox-container/core/types';
+import { ErrorCode } from '@repo/shared/errors';
+import type { RequestContext } from '@sandbox-container/core/types';
 import { SessionHandler } from '@sandbox-container/handlers/session-handler';
 import type { SessionManager } from '@sandbox-container/services/session-manager';
 import type { Session } from '@sandbox-container/session';
@@ -28,12 +30,14 @@ const mockSessionManager = {
   destroy: vi.fn()
 } as unknown as SessionManager;
 
-const mockLogger: Logger = {
+const mockLogger = {
   info: vi.fn(),
   error: vi.fn(),
   warn: vi.fn(),
-  debug: vi.fn()
-};
+  debug: vi.fn(),
+  child: vi.fn()
+} as Logger;
+mockLogger.child = vi.fn(() => mockLogger);
 
 // Mock request context
 const mockContext: RequestContext = {
@@ -92,7 +96,7 @@ describe('SessionHandler', () => {
         success: false,
         error: {
           message: 'Failed to create session',
-          code: 'SESSION_CREATE_ERROR',
+          code: ErrorCode.UNKNOWN_ERROR,
           details: { originalError: 'Store connection failed' }
         }
       });
@@ -106,7 +110,7 @@ describe('SessionHandler', () => {
 
       expect(response.status).toBe(500);
       const responseData = (await response.json()) as ErrorResponse;
-      expect(responseData.code).toBe('SESSION_CREATE_ERROR');
+      expect(responseData.code).toBe(ErrorCode.UNKNOWN_ERROR);
       expect(responseData.message).toBe('Failed to create session');
       expect(responseData.context).toEqual({
         originalError: 'Store connection failed'
@@ -165,7 +169,7 @@ describe('SessionHandler', () => {
       const response = await sessionHandler.handle(request, mockContext);
 
       expect(response.status).toBe(200);
-      const responseBody = await response.json();
+      const responseBody = (await response.json()) as SessionDeleteResult;
       expect(responseBody.success).toBe(true);
       expect(responseBody.sessionId).toBe('test-session-123');
       expect(responseBody.timestamp).toBeDefined();
@@ -356,7 +360,7 @@ describe('SessionHandler', () => {
         success: false,
         error: {
           message: 'Failed to list sessions',
-          code: 'SESSION_LIST_ERROR',
+          code: ErrorCode.UNKNOWN_ERROR,
           details: { originalError: 'Database connection lost' }
         }
       });
@@ -369,7 +373,7 @@ describe('SessionHandler', () => {
 
       expect(response.status).toBe(500);
       const responseData = (await response.json()) as ErrorResponse;
-      expect(responseData.code).toBe('SESSION_LIST_ERROR');
+      expect(responseData.code).toBe(ErrorCode.UNKNOWN_ERROR);
       expect(responseData.message).toBe('Failed to list sessions');
       expect(responseData.context).toEqual({
         originalError: 'Database connection lost'

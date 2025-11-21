@@ -1,7 +1,7 @@
 import type { ApplyPatchOperation } from '@openai/agents';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { Editor, Shell } from '../src/openai/index.ts';
-import type { Sandbox } from '../src/sandbox.ts';
+import { Editor, Shell } from '../src/openai/index';
+import type { Sandbox } from '../src/sandbox';
 
 interface MockSandbox {
   exec?: ReturnType<typeof vi.fn>;

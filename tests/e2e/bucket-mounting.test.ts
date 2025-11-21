@@ -8,6 +8,8 @@ import {
   getTestWorkerUrl,
   type WranglerDevRunner
 } from './helpers/wrangler-runner';
+import type { ExecResult } from '@repo/shared';
+import type { SuccessResponse, BucketGetResponse } from './test-worker/types';
 
 /**
  * E2E test for S3-compatible bucket mounting
@@ -107,7 +109,7 @@ describe('Bucket Mounting E2E', () => {
           })
         });
         expect(mountResponse.ok).toBe(true);
-        const mountResult = await mountResponse.json();
+        const mountResult = (await mountResponse.json()) as SuccessResponse;
         expect(mountResult.success).toBe(true);
 
         // 3. Verify pre-existing R2 file appears in mount (R2 → Mount)
@@ -121,7 +123,8 @@ describe('Bucket Mounting E2E', () => {
             })
           }
         );
-        const readPreExistingResult = await readPreExistingResponse.json();
+        const readPreExistingResult =
+          (await readPreExistingResponse.json()) as ExecResult;
         expect(readPreExistingResult.exitCode).toBe(0);
         expect(readPreExistingResult.stdout?.trim()).toBe(PRE_EXISTING_CONTENT);
 
@@ -133,7 +136,7 @@ describe('Bucket Mounting E2E', () => {
             command: `echo "${TEST_CONTENT}" > ${MOUNT_PATH}/${TEST_FILE}`
           })
         });
-        const writeResult = await writeResponse.json();
+        const writeResult = (await writeResponse.json()) as ExecResult;
         expect(writeResult.exitCode).toBe(0);
 
         // 5. Verify new file appears in R2 via binding (Mount → R2)
@@ -145,7 +148,7 @@ describe('Bucket Mounting E2E', () => {
           }
         );
         expect(getResponse.ok).toBe(true);
-        const getResult = await getResponse.json();
+        const getResult = (await getResponse.json()) as BucketGetResponse;
         expect(getResult.success).toBe(true);
         expect(getResult.content.trim()).toBe(TEST_CONTENT);
 

@@ -5,6 +5,19 @@
  * Supports both default sessions (implicit) and explicit sessions via X-Session-Id header.
  */
 import { Sandbox, getSandbox, proxyToSandbox } from '@cloudflare/sandbox';
+import type {
+  HealthResponse,
+  SessionCreateResponse,
+  SuccessResponse,
+  SuccessWithMessageResponse,
+  BucketPutResponse,
+  BucketGetResponse,
+  BucketDeleteResponse,
+  PortUnexposeResponse,
+  CodeContextDeleteResponse,
+  WebSocketInitResponse,
+  ErrorResponse
+} from './types';
 export { Sandbox };
 
 interface Env {
@@ -202,27 +215,25 @@ console.log('Terminal server on port ' + port);
           (r) => r.status === 'fulfilled'
         ).length;
 
-        return new Response(
-          JSON.stringify({
-            success: failedCount === 0,
-            serversStarted: succeededCount,
-            serversFailed: failedCount,
-            errors:
-              failedCount > 0
-                ? results
-                    .filter((r) => r.status === 'rejected')
-                    .map(
-                      (r) =>
-                        (r as PromiseRejectedResult).reason?.message ||
-                        String((r as PromiseRejectedResult).reason)
-                    )
-                : undefined
-          }),
-          {
-            headers: { 'Content-Type': 'application/json' },
-            status: failedCount > 0 ? 500 : 200
-          }
-        );
+        const response: WebSocketInitResponse = {
+          success: failedCount === 0,
+          serversStarted: succeededCount,
+          serversFailed: failedCount,
+          errors:
+            failedCount > 0
+              ? results
+                  .filter((r) => r.status === 'rejected')
+                  .map(
+                    (r) =>
+                      (r as PromiseRejectedResult).reason?.message ||
+                      String((r as PromiseRejectedResult).reason)
+                  )
+              : undefined
+        };
+        return new Response(JSON.stringify(response), {
+          headers: { 'Content-Type': 'application/json' },
+          status: failedCount > 0 ? 500 : 200
+        });
       }
 
       // WebSocket endpoints
@@ -241,7 +252,8 @@ console.log('Terminal server on port ' + port);
 
       // Health check
       if (url.pathname === '/health') {
-        return new Response(JSON.stringify({ status: 'ok' }), {
+        const response: HealthResponse = { status: 'ok' };
+        return new Response(JSON.stringify(response), {
           headers: { 'Content-Type': 'application/json' }
         });
       }
@@ -250,12 +262,13 @@ console.log('Terminal server on port ' + port);
       if (url.pathname === '/api/session/create' && request.method === 'POST') {
         const session = await sandbox.createSession(body);
         // Note: We don't store the session - it will be retrieved fresh via getSession() on each request
-        return new Response(
-          JSON.stringify({ success: true, sessionId: session.id }),
-          {
-            headers: { 'Content-Type': 'application/json' }
-          }
-        );
+        const response: SessionCreateResponse = {
+          success: true,
+          sessionId: session.id
+        };
+        return new Response(JSON.stringify(response), {
+          headers: { 'Content-Type': 'application/json' }
+        });
       }
 
       if (url.pathname === '/api/session/delete' && request.method === 'POST') {
@@ -303,7 +316,8 @@ console.log('Terminal server on port ' + port);
           branch: body.branch,
           targetDir: body.targetDir
         });
-        return new Response(JSON.stringify({ success: true }), {
+        const response: SuccessResponse = { success: true };
+        return new Response(JSON.stringify(response), {
           headers: { 'Content-Type': 'application/json' }
         });
       }
@@ -327,7 +341,8 @@ console.log('Terminal server on port ' + port);
         }
 
         await sandbox.mountBucket(body.bucket, body.mountPath, body.options);
-        return new Response(JSON.stringify({ success: true }), {
+        const response: SuccessResponse = { success: true };
+        return new Response(JSON.stringify(response), {
           headers: { 'Content-Type': 'application/json' }
         });
       }
@@ -339,7 +354,8 @@ console.log('Terminal server on port ' + port);
             ? { contentType: body.contentType }
             : undefined
         });
-        return new Response(JSON.stringify({ success: true, key: body.key }), {
+        const response: BucketPutResponse = { success: true, key: body.key };
+        return new Response(JSON.stringify(response), {
           headers: { 'Content-Type': 'application/json' }
         });
       }
@@ -348,39 +364,39 @@ console.log('Terminal server on port ' + port);
       if (url.pathname === '/api/bucket/get' && request.method === 'GET') {
         const key = url.searchParams.get('key');
         if (!key) {
-          return new Response(
-            JSON.stringify({ error: 'Key parameter required' }),
-            {
-              status: 400,
-              headers: { 'Content-Type': 'application/json' }
-            }
-          );
+          const errorResponse: ErrorResponse = {
+            error: 'Key parameter required'
+          };
+          return new Response(JSON.stringify(errorResponse), {
+            status: 400,
+            headers: { 'Content-Type': 'application/json' }
+          });
         }
         const object = await env.TEST_BUCKET.get(key);
         if (!object) {
-          return new Response(JSON.stringify({ error: 'Object not found' }), {
+          const errorResponse: ErrorResponse = { error: 'Object not found' };
+          return new Response(JSON.stringify(errorResponse), {
             status: 404,
             headers: { 'Content-Type': 'application/json' }
           });
         }
-        return new Response(
-          JSON.stringify({
-            success: true,
-            key,
-            content: await object.text(),
-            contentType: object.httpMetadata?.contentType,
-            size: object.size
-          }),
-          {
-            headers: { 'Content-Type': 'application/json' }
-          }
-        );
+        const response: BucketGetResponse = {
+          success: true,
+          key,
+          content: await object.text(),
+          contentType: object.httpMetadata?.contentType,
+          size: object.size
+        };
+        return new Response(JSON.stringify(response), {
+          headers: { 'Content-Type': 'application/json' }
+        });
       }
 
       // R2 bucket delete
       if (url.pathname === '/api/bucket/delete' && request.method === 'POST') {
         await env.TEST_BUCKET.delete(body.key);
-        return new Response(JSON.stringify({ success: true, key: body.key }), {
+        const response: BucketDeleteResponse = { success: true, key: body.key };
+        return new Response(JSON.stringify(response), {
           headers: { 'Content-Type': 'application/json' }
         });
       }
@@ -678,12 +694,13 @@ console.log('Terminal server on port ' + port);
       // This is used by E2E tests to explicitly clean up after each test
       if (url.pathname === '/cleanup' && request.method === 'POST') {
         await sandbox.destroy();
-        return new Response(
-          JSON.stringify({ success: true, message: 'Sandbox destroyed' }),
-          {
-            headers: { 'Content-Type': 'application/json' }
-          }
-        );
+        const response: SuccessWithMessageResponse = {
+          success: true,
+          message: 'Sandbox destroyed'
+        };
+        return new Response(JSON.stringify(response), {
+          headers: { 'Content-Type': 'application/json' }
+        });
       }
 
       return new Response('Not found', { status: 404 });

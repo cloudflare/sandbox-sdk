@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
-import type { ProcessOptions } from '@sandbox-container/core/types.ts';
-import { ProcessManager } from '@sandbox-container/managers/process-manager.ts';
+import type { ProcessOptions } from '@sandbox-container/core/types';
+import { ProcessManager } from '@sandbox-container/managers/process-manager';
 
 describe('ProcessManager', () => {
   let manager: ProcessManager;

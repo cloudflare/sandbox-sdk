@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
-import type { PortInfo } from '@sandbox-container/core/types.ts';
-import { PortManager } from '@sandbox-container/managers/port-manager.ts';
+import type { PortInfo } from '@sandbox-container/core/types';
+import { PortManager } from '@sandbox-container/managers/port-manager';
 
 describe('PortManager', () => {
   let manager: PortManager;

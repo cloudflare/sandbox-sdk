@@ -1,17 +1,26 @@
 import { beforeEach, describe, expect, it, vi } from 'bun:test';
 import type {
+  Logger,
   PortCloseResult,
   PortExposeResult,
   PortListResult
 } from '@repo/shared';
 import type { ErrorResponse } from '@repo/shared/errors';
+import { ErrorCode } from '@repo/shared/errors';
 import type {
-  Logger,
   PortInfo,
+  ProxyErrorResponse,
   RequestContext
 } from '@sandbox-container/core/types';
 import { PortHandler } from '@sandbox-container/handlers/port-handler';
 import type { PortService } from '@sandbox-container/services/port-service';
+
+// Test-specific type for mock proxy response
+// The proxy handler passes through responses from the target service unchanged,
+// so the shape depends on what the target returns. This type represents our test mock.
+interface MockProxySuccessResponse {
+  success: boolean;
+}
 
 // Mock the dependencies - use partial mock to avoid private property issues
 const mockPortService = {
@@ -25,12 +34,14 @@ const mockPortService = {
   destroy: vi.fn()
 } as unknown as PortService;
 
-const mockLogger: Logger = {
+const mockLogger = {
   info: vi.fn(),
   error: vi.fn(),
   warn: vi.fn(),
-  debug: vi.fn()
-};
+  debug: vi.fn(),
+  child: vi.fn()
+} as Logger;
+mockLogger.child = vi.fn(() => mockLogger);
 
 // Mock request context
 const mockContext: RequestContext = {
@@ -341,7 +352,7 @@ describe('PortHandler', () => {
         success: false,
         error: {
           message: 'Database error',
-          code: 'PORT_LIST_ERROR'
+          code: ErrorCode.PORT_OPERATION_ERROR
         }
       });
 
@@ -353,7 +364,7 @@ describe('PortHandler', () => {
 
       expect(response.status).toBe(500);
       const responseData = (await response.json()) as ErrorResponse;
-      expect(responseData.code).toBe('PORT_LIST_ERROR');
+      expect(responseData.code).toBe(ErrorCode.PORT_OPERATION_ERROR);
       expect(responseData.message).toBe('Database error');
       expect(responseData.httpStatus).toBe(500);
       expect(responseData.timestamp).toBeDefined();
@@ -409,7 +420,7 @@ describe('PortHandler', () => {
       const response = await portHandler.handle(request, mockContext);
 
       expect(response.status).toBe(201);
-      const responseData = await response.json();
+      const responseData = (await response.json()) as MockProxySuccessResponse;
       expect(responseData.success).toBe(true);
 
       expect(mockPortService.proxyRequest).toHaveBeenCalledWith(3000, request);
@@ -432,7 +443,7 @@ describe('PortHandler', () => {
       const response = await portHandler.handle(request, mockContext);
 
       expect(response.status).toBe(404);
-      const responseData = await response.json();
+      const responseData = (await response.json()) as ProxyErrorResponse;
       expect(responseData.error).toBe('Port not found');
     });
 

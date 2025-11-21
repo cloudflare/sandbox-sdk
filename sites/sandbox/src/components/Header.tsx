@@ -15,41 +15,8 @@ export default function Header() {
   }, []);
 
   const handleCopy = async () => {
-    const copyCommand = async () => {
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(command);
-        return true;
-      }
-
-      const textarea = document.createElement('textarea');
-      textarea.value = command;
-      textarea.setAttribute('readonly', '');
-      textarea.style.position = 'absolute';
-      textarea.style.opacity = '0';
-      document.body.appendChild(textarea);
-
-      const selection = document.getSelection();
-      const originalRange =
-        selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
-
-      textarea.select();
-      const succeeded = document.execCommand('copy');
-      document.body.removeChild(textarea);
-
-      if (originalRange && selection) {
-        selection.removeAllRanges();
-        selection.addRange(originalRange);
-      }
-
-      return succeeded;
-    };
-
     try {
-      const didCopy = await copyCommand();
-
-      if (!didCopy) {
-        throw new Error('Copy command failed');
-      }
+      await navigator.clipboard.writeText(command);
 
       setCopied(true);
 

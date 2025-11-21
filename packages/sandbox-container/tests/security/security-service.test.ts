@@ -8,14 +8,16 @@
  */
 
 import { beforeEach, describe, expect, test } from 'bun:test';
-import type { Logger } from '@sandbox-container/core/types';
+import type { Logger } from '@repo/shared';
 import { SecurityService } from '@sandbox-container/security/security-service';
 
 // Mock logger
 const mockLogger: Logger = {
   info: () => {},
   warn: () => {},
-  error: () => {}
+  error: () => {},
+  debug: () => {},
+  child: () => mockLogger
 };
 
 describe('SecurityService - Simplified Security Model', () => {
@@ -232,7 +234,9 @@ describe('SecurityService - Simplified Security Model', () => {
       const testLogger: Logger = {
         info: () => {},
         warn: (msg, data) => logs.push({ msg, data }),
-        error: () => {}
+        error: () => {},
+        debug: () => {},
+        child: () => testLogger
       };
 
       const testService = new SecurityService(testLogger);

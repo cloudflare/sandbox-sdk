@@ -186,7 +186,7 @@ export class SessionManager {
   async executeStreamInSession(
     sessionId: string,
     command: string,
-    onEvent: (event: ExecEvent) => void,
+    onEvent: (event: ExecEvent) => Promise<void>,
     cwd: string | undefined,
     commandId: string
   ): Promise<ServiceResult<{ continueStreaming: Promise<void> }>> {
@@ -222,14 +222,14 @@ export class SessionManager {
       const firstResult = await generator.next();
 
       if (!firstResult.done) {
-        onEvent(firstResult.value);
+        await onEvent(firstResult.value);
       }
 
       // Create background task for remaining events
       const continueStreaming = (async () => {
         try {
           for await (const event of generator) {
-            onEvent(event);
+            await onEvent(event);
           }
         } catch (error) {
           const errorMessage =

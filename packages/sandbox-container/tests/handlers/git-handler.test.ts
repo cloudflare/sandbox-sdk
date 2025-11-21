@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'bun:test';
-import type { GitCheckoutResult } from '@repo/shared';
+import type { GitCheckoutResult, Logger } from '@repo/shared';
 import type { ErrorResponse } from '@repo/shared/errors';
-import type { Logger, RequestContext } from '@sandbox-container/core/types.ts';
+import type { RequestContext } from '@sandbox-container/core/types';
 import { GitHandler } from '@sandbox-container/handlers/git-handler';
 import type { GitService } from '@sandbox-container/services/git-service';
 
@@ -13,12 +13,14 @@ const mockGitService = {
   listBranches: vi.fn()
 } as unknown as GitService;
 
-const mockLogger: Logger = {
+const mockLogger = {
   info: vi.fn(),
   error: vi.fn(),
   warn: vi.fn(),
-  debug: vi.fn()
-};
+  debug: vi.fn(),
+  child: vi.fn()
+} as Logger;
+mockLogger.child = vi.fn(() => mockLogger);
 
 // Mock request context
 const mockContext: RequestContext = {

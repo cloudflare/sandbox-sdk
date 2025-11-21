@@ -1,38 +1,41 @@
 import { beforeEach, describe, expect, it, vi } from 'bun:test';
-import type { Logger, ServiceResult } from '@sandbox-container/core/types';
+import type { Logger } from '@repo/shared';
+import type { ServiceResult } from '@sandbox-container/core/types';
 import {
   FileService,
   type SecurityService
 } from '@sandbox-container/services/file-service';
-import type {
-  RawExecResult,
-  SessionManager
-} from '@sandbox-container/services/session-manager';
+import type { SessionManager } from '@sandbox-container/services/session-manager';
+import type { RawExecResult } from '@sandbox-container/session';
 import { mocked } from '../test-utils';
 
 // Mock SecurityService with proper typing
 const mockSecurityService: SecurityService = {
-  validatePath: vi.fn(),
-  sanitizePath: vi.fn()
+  validatePath: vi.fn()
 };
 
 // Mock Logger with proper typing
-const mockLogger: Logger = {
+const mockLogger = {
   info: vi.fn(),
   error: vi.fn(),
   warn: vi.fn(),
-  debug: vi.fn()
-};
+  debug: vi.fn(),
+  child: vi.fn()
+} as Logger;
+mockLogger.child = vi.fn(() => mockLogger);
 
 // Mock SessionManager with proper typing
-const mockSessionManager: Partial<SessionManager> = {
+const mockSessionManager = {
   executeInSession: vi.fn(),
   executeStreamInSession: vi.fn(),
   killCommand: vi.fn(),
   setEnvVars: vi.fn(),
   getSession: vi.fn(),
-  createSession: vi.fn()
-};
+  createSession: vi.fn(),
+  deleteSession: vi.fn(),
+  listSessions: vi.fn(),
+  destroy: vi.fn()
+} as unknown as SessionManager;
 
 describe('FileService', () => {
   let fileService: FileService;
@@ -51,7 +54,7 @@ describe('FileService', () => {
     fileService = new FileService(
       mockSecurityService,
       mockLogger,
-      mockSessionManager as SessionManager
+      mockSessionManager
     );
   });
 
@@ -445,6 +448,7 @@ describe('FileService', () => {
       );
 
       expect(aliasResult.success).toBe(true);
+      if (!aliasResult.success) throw new Error('Expected success');
       expect(aliasResult.metadata?.encoding).toBe('utf-8');
     });
 
@@ -583,7 +587,8 @@ describe('FileService', () => {
         );
 
         expect(result.success).toBe(false);
-        expect(result.error?.code).toBe('VALIDATION_FAILED');
+        if (result.success) throw new Error('Expected failure');
+        expect(result.error.code).toBe('VALIDATION_FAILED');
         expect(mockSessionManager.executeInSession).not.toHaveBeenCalled();
       }
     });

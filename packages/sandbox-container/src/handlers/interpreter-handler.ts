@@ -99,21 +99,15 @@ export class InterpreterHandler extends BaseHandler<Request, Response> {
     } else {
       // Special handling for interpreter not ready - return 503 with Retry-After header
       if (result.error.code === 'INTERPRETER_NOT_READY') {
-        return new Response(
-          JSON.stringify({
-            success: false,
-            error: result.error,
-            timestamp: new Date().toISOString()
-          }),
-          {
-            status: 503,
-            headers: {
-              'Content-Type': 'application/json',
-              'Retry-After': String(result.error.details?.retryAfter || 5),
-              ...context.corsHeaders
-            }
+        const errorResponse = this.enrichServiceError(result.error);
+        return new Response(JSON.stringify(errorResponse), {
+          status: 503,
+          headers: {
+            'Content-Type': 'application/json',
+            'Retry-After': String(result.error.details?.retryAfter || 5),
+            ...context.corsHeaders
           }
-        );
+        });
       }
 
       return this.createErrorResponse(result.error, context);

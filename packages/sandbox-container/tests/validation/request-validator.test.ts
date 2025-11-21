@@ -9,6 +9,10 @@
 
 import { describe, expect, test } from 'bun:test';
 import { RequestValidator } from '@sandbox-container/validation/request-validator';
+import type {
+  ReadFileRequest,
+  WriteFileRequest
+} from '@sandbox-container/validation/schemas';
 
 describe('RequestValidator - Structure Validation Only', () => {
   const validator = new RequestValidator();
@@ -75,7 +79,7 @@ describe('RequestValidator - Structure Validation Only', () => {
 
   describe('validateFileRequest', () => {
     test('should validate read file request', () => {
-      const result = validator.validateFileRequest(
+      const result = validator.validateFileRequest<ReadFileRequest>(
         { path: '/workspace/file.txt', sessionId: 'session-123' },
         'read'
       );
@@ -85,7 +89,7 @@ describe('RequestValidator - Structure Validation Only', () => {
     });
 
     test('should validate write file request', () => {
-      const result = validator.validateFileRequest(
+      const result = validator.validateFileRequest<WriteFileRequest>(
         { path: '/workspace/file.txt', content: 'hello world' },
         'write'
       );
@@ -105,7 +109,10 @@ describe('RequestValidator - Structure Validation Only', () => {
       ];
 
       for (const path of paths) {
-        const result = validator.validateFileRequest({ path }, 'read');
+        const result = validator.validateFileRequest<ReadFileRequest>(
+          { path },
+          'read'
+        );
         expect(result.isValid).toBe(true);
         expect(result.data?.path).toBe(path);
       }

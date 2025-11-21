@@ -1,16 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from 'bun:test';
-import type { HealthCheckResult, ShutdownResult } from '@repo/shared';
+import type { HealthCheckResult, Logger, ShutdownResult } from '@repo/shared';
 import type { ErrorResponse } from '@repo/shared/errors';
-import type { Logger, RequestContext } from '@sandbox-container/core/types';
-import { MiscHandler } from '@sandbox-container/handlers/misc-handler';
+import type { RequestContext } from '@sandbox-container/core/types';
+import {
+  MiscHandler,
+  type VersionResult
+} from '@sandbox-container/handlers/misc-handler';
 
 // Mock the dependencies
-const mockLogger: Logger = {
+const mockLogger = {
   info: vi.fn(),
   error: vi.fn(),
   warn: vi.fn(),
-  debug: vi.fn()
-};
+  debug: vi.fn(),
+  child: vi.fn()
+} as Logger;
+mockLogger.child = vi.fn(() => mockLogger);
 
 // Mock request context
 const mockContext: RequestContext = {
@@ -176,7 +181,7 @@ describe('MiscHandler', () => {
       expect(response.status).toBe(200);
       expect(response.headers.get('Content-Type')).toBe('application/json');
 
-      const responseData = await response.json();
+      const responseData = (await response.json()) as VersionResult;
       expect(responseData.success).toBe(true);
       expect(responseData.version).toBe('1.2.3');
       expect(responseData.timestamp).toBeDefined();
@@ -196,7 +201,7 @@ describe('MiscHandler', () => {
       const response = await miscHandler.handle(request, mockContext);
 
       expect(response.status).toBe(200);
-      const responseData = await response.json();
+      const responseData = (await response.json()) as VersionResult;
       expect(responseData.version).toBe('unknown');
     });
 
@@ -431,12 +436,14 @@ describe('MiscHandler', () => {
   describe('no service dependencies', () => {
     it('should work without any service dependencies', async () => {
       // MiscHandler only requires logger, no other services
-      const simpleLogger: Logger = {
+      const simpleLogger = {
         info: vi.fn(),
         error: vi.fn(),
         warn: vi.fn(),
-        debug: vi.fn()
-      };
+        debug: vi.fn(),
+        child: vi.fn()
+      } as Logger;
+      simpleLogger.child = vi.fn(() => simpleLogger);
 
       const independentHandler = new MiscHandler(simpleLogger);
 

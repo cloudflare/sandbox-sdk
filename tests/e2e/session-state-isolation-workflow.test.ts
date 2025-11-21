@@ -13,6 +13,15 @@ import {
   createTestHeaders,
   cleanupSandbox
 } from './helpers/test-fixtures';
+import type {
+  Process,
+  SessionCreateResult,
+  SessionDeleteResult,
+  ReadFileResult,
+  WriteFileResult,
+  ExecResult,
+  ProcessInfoResult
+} from '@repo/shared';
 
 /**
  * Session State Isolation Workflow Integration Tests
@@ -75,7 +84,8 @@ describe('Session State Isolation Workflow', () => {
       });
 
       expect(session1Response.status).toBe(200);
-      const session1Data = await session1Response.json();
+      const session1Data =
+        (await session1Response.json()) as SessionCreateResult;
       expect(session1Data.success).toBe(true);
       expect(session1Data.sessionId).toBeTruthy();
       const session1Id = session1Data.sessionId;
@@ -94,7 +104,8 @@ describe('Session State Isolation Workflow', () => {
       });
 
       expect(session2Response.status).toBe(200);
-      const session2Data = await session2Response.json();
+      const session2Data =
+        (await session2Response.json()) as SessionCreateResult;
       expect(session2Data.sessionId).toBeTruthy();
       const session2Id = session2Data.sessionId;
 
@@ -108,7 +119,7 @@ describe('Session State Isolation Workflow', () => {
       });
 
       expect(exec1Response.status).toBe(200);
-      const exec1Data = await exec1Response.json();
+      const exec1Data = (await exec1Response.json()) as ExecResult;
       expect(exec1Data.success).toBe(true);
       expect(exec1Data.stdout.trim()).toBe(
         'production|prod-key-123|prod.example.com'
@@ -124,7 +135,7 @@ describe('Session State Isolation Workflow', () => {
       });
 
       expect(exec2Response.status).toBe(200);
-      const exec2Data = await exec2Response.json();
+      const exec2Data = (await exec2Response.json()) as ExecResult;
       expect(exec2Data.success).toBe(true);
       expect(exec2Data.stdout.trim()).toBe(
         'test|test-key-456|test.example.com'
@@ -150,7 +161,7 @@ describe('Session State Isolation Workflow', () => {
         })
       });
 
-      const check1Data = await check1Response.json();
+      const check1Data = (await check1Response.json()) as ExecResult;
       expect(check1Data.stdout.trim()).toBe('session1-only');
 
       // Verify NEW_VAR does NOT leak to session2
@@ -162,7 +173,7 @@ describe('Session State Isolation Workflow', () => {
         })
       });
 
-      const check2Data = await check2Response.json();
+      const check2Data = (await check2Response.json()) as ExecResult;
       expect(check2Data.stdout.trim()).toBe('VALUE::END'); // NEW_VAR should be empty
     }, 90000);
 
@@ -215,7 +226,8 @@ describe('Session State Isolation Workflow', () => {
         })
       });
 
-      const session1Data = await session1Response.json();
+      const session1Data =
+        (await session1Response.json()) as SessionCreateResult;
       const session1Id = session1Data.sessionId;
 
       // Create session2 with cwd: /workspace/test
@@ -227,7 +239,8 @@ describe('Session State Isolation Workflow', () => {
         })
       });
 
-      const session2Data = await session2Response.json();
+      const session2Data =
+        (await session2Response.json()) as SessionCreateResult;
       const session2Id = session2Data.sessionId;
 
       // Verify session1 starts in /workspace/app
@@ -239,7 +252,7 @@ describe('Session State Isolation Workflow', () => {
         })
       });
 
-      const pwd1Data = await pwd1Response.json();
+      const pwd1Data = (await pwd1Response.json()) as ExecResult;
       expect(pwd1Data.stdout.trim()).toBe('/workspace/app');
 
       // Verify session2 starts in /workspace/test
@@ -251,7 +264,7 @@ describe('Session State Isolation Workflow', () => {
         })
       });
 
-      const pwd2Data = await pwd2Response.json();
+      const pwd2Data = (await pwd2Response.json()) as ExecResult;
       expect(pwd2Data.stdout.trim()).toBe('/workspace/test');
 
       // Change directory in session1
@@ -281,7 +294,7 @@ describe('Session State Isolation Workflow', () => {
         })
       });
 
-      const newPwd1Data = await newPwd1Response.json();
+      const newPwd1Data = (await newPwd1Response.json()) as ExecResult;
       expect(newPwd1Data.stdout.trim()).toBe('/workspace/app/src');
 
       // Verify session2 is in /workspace/test/unit
@@ -293,7 +306,7 @@ describe('Session State Isolation Workflow', () => {
         })
       });
 
-      const newPwd2Data = await newPwd2Response.json();
+      const newPwd2Data = (await newPwd2Response.json()) as ExecResult;
       expect(newPwd2Data.stdout.trim()).toBe('/workspace/test/unit');
     }, 90000);
 
@@ -307,7 +320,8 @@ describe('Session State Isolation Workflow', () => {
         body: JSON.stringify({})
       });
 
-      const session1Data = await session1Response.json();
+      const session1Data =
+        (await session1Response.json()) as SessionCreateResult;
       const session1Id = session1Data.sessionId;
 
       const session2Response = await fetch(`${workerUrl}/api/session/create`, {
@@ -316,7 +330,8 @@ describe('Session State Isolation Workflow', () => {
         body: JSON.stringify({})
       });
 
-      const session2Data = await session2Response.json();
+      const session2Data =
+        (await session2Response.json()) as SessionCreateResult;
       const session2Id = session2Data.sessionId;
 
       // Define greet() function in session1
@@ -339,7 +354,7 @@ describe('Session State Isolation Workflow', () => {
         })
       });
 
-      const call1Data = await call1Response.json();
+      const call1Data = (await call1Response.json()) as ExecResult;
       expect(call1Data.success).toBe(true);
       expect(call1Data.stdout.trim()).toBe('Hello from Production');
 
@@ -352,7 +367,7 @@ describe('Session State Isolation Workflow', () => {
         })
       });
 
-      const call2Data = await call2Response.json();
+      const call2Data = (await call2Response.json()) as ExecResult;
       expect(call2Data.success).toBe(false); // Function not found
       expect(call2Data.exitCode).not.toBe(0);
 
@@ -374,7 +389,7 @@ describe('Session State Isolation Workflow', () => {
         })
       });
 
-      const call3Data = await call3Response.json();
+      const call3Data = (await call3Response.json()) as ExecResult;
       expect(call3Data.success).toBe(true);
       expect(call3Data.stdout.trim()).toBe('Hello from Test');
 
@@ -387,7 +402,7 @@ describe('Session State Isolation Workflow', () => {
         })
       });
 
-      const call4Data = await call4Response.json();
+      const call4Data = (await call4Response.json()) as ExecResult;
       expect(call4Data.stdout.trim()).toBe('Hello from Production');
     }, 90000);
 
@@ -401,7 +416,8 @@ describe('Session State Isolation Workflow', () => {
         body: JSON.stringify({})
       });
 
-      const session1Data = await session1Response.json();
+      const session1Data =
+        (await session1Response.json()) as SessionCreateResult;
       const session1Id = session1Data.sessionId;
 
       const session2Response = await fetch(`${workerUrl}/api/session/create`, {
@@ -410,7 +426,8 @@ describe('Session State Isolation Workflow', () => {
         body: JSON.stringify({})
       });
 
-      const session2Data = await session2Response.json();
+      const session2Data =
+        (await session2Response.json()) as SessionCreateResult;
       const session2Id = session2Data.sessionId;
 
       // Start a long-running process in session1
@@ -423,7 +440,7 @@ describe('Session State Isolation Workflow', () => {
       });
 
       expect(startResponse.status).toBe(200);
-      const startData = await startResponse.json();
+      const startData = (await startResponse.json()) as Process;
       const processId = startData.id;
 
       // Wait for process to be registered
@@ -436,12 +453,15 @@ describe('Session State Isolation Workflow', () => {
       });
 
       expect(listResponse.status).toBe(200);
-      const processes = await listResponse.json();
+      const listData = (await listResponse.json()) as Process[];
+      const processes = listData;
       expect(Array.isArray(processes)).toBe(true);
 
       // Find our process in the list
-      const ourProcess = processes.find((p: any) => p.id === processId);
+      const ourProcess = processes.find((p) => p.id === processId);
       expect(ourProcess).toBeTruthy();
+      if (!ourProcess) throw new Error('Process not found');
+
       expect(ourProcess.status).toBe('running');
 
       // Kill the process from session2 - should work (shared process table)
@@ -466,7 +486,7 @@ describe('Session State Isolation Workflow', () => {
         }
       );
 
-      const verifyData = await verifyResponse.json();
+      const verifyData = (await verifyResponse.json()) as Process;
       expect(verifyData.status).not.toBe('running');
     }, 90000);
 
@@ -480,7 +500,8 @@ describe('Session State Isolation Workflow', () => {
         body: JSON.stringify({})
       });
 
-      const session1Data = await session1Response.json();
+      const session1Data =
+        (await session1Response.json()) as SessionCreateResult;
       const session1Id = session1Data.sessionId;
 
       const session2Response = await fetch(`${workerUrl}/api/session/create`, {
@@ -489,7 +510,8 @@ describe('Session State Isolation Workflow', () => {
         body: JSON.stringify({})
       });
 
-      const session2Data = await session2Response.json();
+      const session2Data =
+        (await session2Response.json()) as SessionCreateResult;
       const session2Id = session2Data.sessionId;
 
       // Write a file from session1
@@ -514,7 +536,7 @@ describe('Session State Isolation Workflow', () => {
       });
 
       expect(readResponse.status).toBe(200);
-      const readData = await readResponse.json();
+      const readData = (await readResponse.json()) as ReadFileResult;
       expect(readData.content).toBe('Written by session1');
 
       // Modify the file from session2
@@ -538,7 +560,7 @@ describe('Session State Isolation Workflow', () => {
         })
       });
 
-      const verifyData = await verifyResponse.json();
+      const verifyData = (await verifyResponse.json()) as ReadFileResult;
       expect(verifyData.content).toBe('Modified by session2');
 
       // Cleanup
@@ -563,7 +585,8 @@ describe('Session State Isolation Workflow', () => {
         })
       });
 
-      const session1Data = await session1Response.json();
+      const session1Data =
+        (await session1Response.json()) as SessionCreateResult;
       const session1Id = session1Data.sessionId;
 
       const session2Response = await fetch(`${workerUrl}/api/session/create`, {
@@ -574,7 +597,8 @@ describe('Session State Isolation Workflow', () => {
         })
       });
 
-      const session2Data = await session2Response.json();
+      const session2Data =
+        (await session2Response.json()) as SessionCreateResult;
       const session2Id = session2Data.sessionId;
 
       // Execute commands simultaneously
@@ -604,8 +628,8 @@ describe('Session State Isolation Workflow', () => {
       expect(exec1Response.status).toBe(200);
       expect(exec2Response.status).toBe(200);
 
-      const exec1Data = await exec1Response.json();
-      const exec2Data = await exec2Response.json();
+      const exec1Data = (await exec1Response.json()) as ExecResult;
+      const exec2Data = (await exec2Response.json()) as ExecResult;
 
       // Verify correct output (no mixing)
       expect(exec1Data.success).toBe(true);
@@ -628,7 +652,7 @@ describe('Session State Isolation Workflow', () => {
       });
 
       expect(sessionResponse.status).toBe(200);
-      const sessionData = await sessionResponse.json();
+      const sessionData = (await sessionResponse.json()) as SessionCreateResult;
       const sessionId = sessionData.sessionId;
 
       // Verify session works before deletion
@@ -641,7 +665,7 @@ describe('Session State Isolation Workflow', () => {
       });
 
       expect(execBeforeResponse.status).toBe(200);
-      const execBeforeData = await execBeforeResponse.json();
+      const execBeforeData = (await execBeforeResponse.json()) as ExecResult;
       expect(execBeforeData.stdout.trim()).toBe('test-value');
 
       // Delete the session
@@ -654,7 +678,7 @@ describe('Session State Isolation Workflow', () => {
       });
 
       expect(deleteResponse.status).toBe(200);
-      const deleteData = await deleteResponse.json();
+      const deleteData = (await deleteResponse.json()) as SessionDeleteResult;
       expect(deleteData.success).toBe(true);
       expect(deleteData.sessionId).toBe(sessionId);
       expect(deleteData.timestamp).toBeTruthy();
@@ -674,7 +698,8 @@ describe('Session State Isolation Workflow', () => {
       );
 
       expect(useDeletedSessionResponse.status).toBe(200);
-      const recreatedSessionData = await useDeletedSessionResponse.json();
+      const recreatedSessionData =
+        (await useDeletedSessionResponse.json()) as ExecResult;
       expect(recreatedSessionData.success).toBe(true);
       // Session state should be gone - SESSION_VAR should be empty (fresh session)
       expect(recreatedSessionData.stdout.trim()).toBe('');
@@ -692,7 +717,8 @@ describe('Session State Isolation Workflow', () => {
       );
 
       expect(sandboxStillAliveResponse.status).toBe(200);
-      const sandboxAliveData = await sandboxStillAliveResponse.json();
+      const sandboxAliveData =
+        (await sandboxStillAliveResponse.json()) as ExecResult;
       expect(sandboxAliveData.success).toBe(true);
       expect(sandboxAliveData.stdout.trim()).toBe('sandbox-alive');
     }, 90000);

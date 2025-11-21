@@ -5,7 +5,7 @@
   "description": "Container runtime for Cloudflare Sandbox SDK",
   "type": "module",
   "scripts": {
-    "build": "tsc --project tsconfig.json",
+    "build": "tsc --project tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test": "bun test tests",
     "test:watch": "bun test --watch tests",

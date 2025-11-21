@@ -13,6 +13,12 @@ import {
   createTestHeaders,
   cleanupSandbox
 } from './helpers/test-fixtures';
+import type {
+  GitCheckoutResult,
+  ReadFileResult,
+  ExecResult
+} from '@repo/shared';
+import type { ErrorResponse } from './test-worker/types';
 
 /**
  * Git Clone Workflow Integration Tests
@@ -75,7 +81,7 @@ describe('Git Clone Workflow', () => {
       });
 
       expect(cloneResponse.status).toBe(200);
-      const cloneData = await cloneResponse.json();
+      const cloneData = (await cloneResponse.json()) as GitCheckoutResult;
       expect(cloneData.success).toBe(true);
 
       // Verify the repository was cloned by checking for README
@@ -88,7 +94,7 @@ describe('Git Clone Workflow', () => {
       });
 
       expect(fileCheckResponse.status).toBe(200);
-      const fileData = await fileCheckResponse.json();
+      const fileData = (await fileCheckResponse.json()) as ReadFileResult;
       expect(fileData.content).toBeTruthy();
       expect(fileData.content).toContain('Hello'); // Verify README content
     });
@@ -109,7 +115,7 @@ describe('Git Clone Workflow', () => {
       });
 
       expect(cloneResponse.status).toBe(200);
-      const cloneData = await cloneResponse.json();
+      const cloneData = (await cloneResponse.json()) as GitCheckoutResult;
       expect(cloneData.success).toBe(true);
 
       // Verify we're on the correct branch by checking git branch
@@ -122,7 +128,7 @@ describe('Git Clone Workflow', () => {
       });
 
       expect(branchCheckResponse.status).toBe(200);
-      const branchData = await branchCheckResponse.json();
+      const branchData = (await branchCheckResponse.json()) as ExecResult;
       expect(branchData.stdout.trim()).toBe('master');
     });
 
@@ -152,7 +158,7 @@ describe('Git Clone Workflow', () => {
       });
 
       expect(listResponse.status).toBe(200);
-      const listData = await listResponse.json();
+      const listData = (await listResponse.json()) as ExecResult;
       expect(listData.exitCode).toBe(0);
       expect(listData.stdout).toContain('README'); // Verify README exists
       expect(listData.stdout).toContain('.git'); // Verify .git directory exists
@@ -167,7 +173,7 @@ describe('Git Clone Workflow', () => {
       });
 
       expect(readmeResponse.status).toBe(200);
-      const readmeData = await readmeResponse.json();
+      const readmeData = (await readmeResponse.json()) as ReadFileResult;
       expect(readmeData.content).toBeTruthy();
 
       // Step 4: Run a git command to verify repo is functional
@@ -180,7 +186,7 @@ describe('Git Clone Workflow', () => {
       });
 
       expect(gitLogResponse.status).toBe(200);
-      const gitLogData = await gitLogResponse.json();
+      const gitLogData = (await gitLogResponse.json()) as ExecResult;
       expect(gitLogData.exitCode).toBe(0);
       expect(gitLogData.stdout).toBeTruthy(); // Should have at least one commit
     });
@@ -199,7 +205,7 @@ describe('Git Clone Workflow', () => {
       });
 
       expect(cloneResponse.status).toBe(200);
-      const cloneData = await cloneResponse.json();
+      const cloneData = (await cloneResponse.json()) as GitCheckoutResult;
       expect(cloneData.success).toBe(true);
 
       // The SDK should extract 'Hello-World' from the URL and clone there
@@ -213,7 +219,7 @@ describe('Git Clone Workflow', () => {
       });
 
       expect(dirCheckResponse.status).toBe(200);
-      const dirData = await dirCheckResponse.json();
+      const dirData = (await dirCheckResponse.json()) as ExecResult;
       expect(dirData.stdout).toContain('Hello-World');
     });
 
@@ -233,7 +239,7 @@ describe('Git Clone Workflow', () => {
 
       // Git clone should fail with appropriate error
       expect(cloneResponse.status).toBe(500);
-      const errorData = await cloneResponse.json();
+      const errorData = (await cloneResponse.json()) as ErrorResponse;
       expect(errorData.error).toBeTruthy();
       // Should mention repository not found or doesn't exist
       expect(errorData.error).toMatch(
@@ -258,7 +264,7 @@ describe('Git Clone Workflow', () => {
 
       // Should fail with authentication error
       expect(cloneResponse.status).toBe(500);
-      const errorData = await cloneResponse.json();
+      const errorData = (await cloneResponse.json()) as ErrorResponse;
       expect(errorData.error).toBeTruthy();
       // Should mention authentication, permission, or access denied
       expect(errorData.error).toMatch(
@@ -304,7 +310,7 @@ describe('Git Clone Workflow', () => {
       });
 
       expect(listResponse.status).toBe(200);
-      const listData = await listResponse.json();
+      const listData = (await listResponse.json()) as ExecResult;
       expect(listData.stdout).toContain('README'); // From cloned repo
       expect(listData.stdout).toContain('test-marker.txt'); // Our new file
     });
