@@ -5,6 +5,8 @@ import {
   createTestHeaders,
   cleanupSandbox
 } from './helpers/test-fixtures';
+import type { ExecResult, WriteFileResult, ReadFileResult } from '@repo/shared';
+import type { ErrorResponse } from './test-worker/types';
 
 /**
  * Build and Test Workflow Integration Tests
@@ -56,7 +58,7 @@ describe('Build and Test Workflow', () => {
       });
 
       expect(echoResponse.status).toBe(200);
-      const echoData = await echoResponse.json();
+      const echoData = (await echoResponse.json()) as ExecResult;
       expect(echoData.exitCode).toBe(0);
       expect(echoData.stdout).toContain('Hello from sandbox');
 
@@ -71,7 +73,7 @@ describe('Build and Test Workflow', () => {
       });
 
       expect(writeResponse.status).toBe(200);
-      const writeData = await writeResponse.json();
+      const writeData = (await writeResponse.json()) as WriteFileResult;
       expect(writeData.success).toBe(true);
 
       // Step 3: Read the file back to verify persistence
@@ -84,7 +86,7 @@ describe('Build and Test Workflow', () => {
       });
 
       expect(readResponse.status).toBe(200);
-      const readData = await readResponse.json();
+      const readData = (await readResponse.json()) as ReadFileResult;
       expect(readData.content).toBe('Integration test content');
 
       // Step 4: Verify pwd to understand working directory
@@ -97,7 +99,7 @@ describe('Build and Test Workflow', () => {
       });
 
       expect(pwdResponse.status).toBe(200);
-      const pwdData = await pwdResponse.json();
+      const pwdData = (await pwdResponse.json()) as ExecResult;
       expect(pwdData.stdout).toMatch(/\/workspace/);
     });
 
@@ -114,7 +116,7 @@ describe('Build and Test Workflow', () => {
 
       // Should return 500 error since shell terminated unexpectedly
       expect(response.status).toBe(500);
-      const data = await response.json();
+      const data = (await response.json()) as ErrorResponse;
 
       // Should have an error object (500 responses may not have success field)
       expect(data.error).toBeDefined();

@@ -1,14 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'bun:test';
-import type { ExecResult, ProcessStartResult } from '@repo/shared';
+import type { ExecResult, Logger, ProcessStartResult } from '@repo/shared';
 import type { ErrorResponse } from '@repo/shared/errors';
 import type {
   ExecuteRequest,
-  Logger,
   RequestContext,
   ServiceResult
-} from '@sandbox-container/core/types.ts';
+} from '@sandbox-container/core/types';
 import { ExecuteHandler } from '@sandbox-container/handlers/execute-handler.js';
-import type { ProcessService } from '@sandbox-container/services/process-service.ts';
+import type { ProcessService } from '@sandbox-container/services/process-service';
 import { mocked } from '../test-utils';
 
 // Mock the service dependencies
@@ -21,12 +20,14 @@ const mockProcessService = {
   streamProcessLogs: vi.fn()
 } as unknown as ProcessService;
 
-const mockLogger: Logger = {
+const mockLogger = {
   info: vi.fn(),
   error: vi.fn(),
   warn: vi.fn(),
-  debug: vi.fn()
-};
+  debug: vi.fn(),
+  child: vi.fn()
+} as Logger;
+mockLogger.child = vi.fn(() => mockLogger);
 
 // Mock request context
 const mockContext: RequestContext = {

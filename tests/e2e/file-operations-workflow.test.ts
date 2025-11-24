@@ -20,7 +20,17 @@ import {
   test,
   vi
 } from 'vitest';
-import type { FileInfo } from '@repo/shared';
+import type {
+  FileInfo,
+  WriteFileResult,
+  ReadFileResult,
+  DeleteFileResult,
+  MkdirResult,
+  ListFilesResult,
+  ExecResult,
+  FileExistsResult
+} from '@repo/shared';
+import type { ErrorResponse } from './test-worker/types';
 import { getTestWorkerUrl, WranglerDevRunner } from './helpers/wrangler-runner';
 import {
   createSandboxId,
@@ -69,7 +79,7 @@ describe('File Operations Workflow (E2E)', () => {
       })
     });
 
-    const mkdirData = await mkdirResponse.json();
+    const mkdirData = (await mkdirResponse.json()) as MkdirResult;
     expect(mkdirData.success).toBe(true);
 
     // Verify directory exists by listing it
@@ -81,7 +91,7 @@ describe('File Operations Workflow (E2E)', () => {
       })
     });
 
-    const lsData = await lsResponse.json();
+    const lsData = (await lsResponse.json()) as ReadFileResult;
     expect(lsResponse.status).toBe(200);
     expect(lsData.success).toBe(true);
     // Directory should exist (ls succeeds)
@@ -123,7 +133,7 @@ describe('File Operations Workflow (E2E)', () => {
       })
     });
 
-    const readData = await readResponse.json();
+    const readData = (await readResponse.json()) as ReadFileResult;
     expect(readResponse.status).toBe(200);
     expect(readData.content).toContain('debug');
     expect(readData.content).toContain('3000');
@@ -174,7 +184,7 @@ describe('File Operations Workflow (E2E)', () => {
       })
     });
 
-    const readNewData = await readNewResponse.json();
+    const readNewData = (await readNewResponse.json()) as ReadFileResult;
     expect(readNewResponse.status).toBe(200);
     expect(readNewData.content).toContain('Project Documentation');
 
@@ -246,7 +256,7 @@ describe('File Operations Workflow (E2E)', () => {
       })
     });
 
-    const readDestData = await readDestResponse.json();
+    const readDestData = (await readDestResponse.json()) as ReadFileResult;
     expect(readDestResponse.status).toBe(200);
     expect(readDestData.content).toContain('test');
 
@@ -347,7 +357,7 @@ describe('File Operations Workflow (E2E)', () => {
     // Should return error
     expect(deleteResponse.status).toBe(500);
 
-    const deleteData = await deleteResponse.json();
+    const deleteData = (await deleteResponse.json()) as ErrorResponse;
     expect(deleteData.error).toContain('Cannot delete directory');
     expect(deleteData.error).toContain('deleteFile()');
 
@@ -360,7 +370,7 @@ describe('File Operations Workflow (E2E)', () => {
       })
     });
 
-    const lsData = await lsResponse.json();
+    const lsData = (await lsResponse.json()) as ReadFileResult;
     expect(lsResponse.status).toBe(200);
     expect(lsData.success).toBe(true); // Directory should still exist
 
@@ -417,7 +427,7 @@ describe('File Operations Workflow (E2E)', () => {
       })
     });
 
-    const deleteData = await deleteResponse.json();
+    const deleteData = (await deleteResponse.json()) as DeleteFileResult;
     expect(deleteResponse.status).toBe(200);
     expect(deleteData.success).toBe(true);
 
@@ -430,7 +440,7 @@ describe('File Operations Workflow (E2E)', () => {
       })
     });
 
-    const lsData = await lsResponse.json();
+    const lsData = (await lsResponse.json()) as ReadFileResult;
     // ls should fail or show empty result
     expect(lsData.success).toBe(false);
   }, 90000);
@@ -542,7 +552,7 @@ describe('File Operations Workflow (E2E)', () => {
       })
     });
 
-    const packageData = await readPackageResponse.json();
+    const packageData = (await readPackageResponse.json()) as ReadFileResult;
     expect(readPackageResponse.status).toBe(200);
     expect(packageData.content).toContain('myapp');
 
@@ -554,7 +564,7 @@ describe('File Operations Workflow (E2E)', () => {
       })
     });
 
-    const configData = await readConfigResponse.json();
+    const configData = (await readConfigResponse.json()) as ReadFileResult;
     expect(readConfigResponse.status).toBe(200);
     expect(configData.content).toContain('development');
 
@@ -566,7 +576,7 @@ describe('File Operations Workflow (E2E)', () => {
       })
     });
 
-    const indexData = await readIndexResponse.json();
+    const indexData = (await readIndexResponse.json()) as ReadFileResult;
     expect(readIndexResponse.status).toBe(200);
     expect(indexData.content).toContain('Hello World');
 
@@ -579,7 +589,7 @@ describe('File Operations Workflow (E2E)', () => {
       })
     });
 
-    const deleteData = await deleteResponse.json();
+    const deleteData = (await deleteResponse.json()) as DeleteFileResult;
     expect(deleteResponse.status).toBe(200);
     expect(deleteData.success).toBe(true);
 
@@ -592,7 +602,7 @@ describe('File Operations Workflow (E2E)', () => {
       })
     });
 
-    const lsData = await lsResponse.json();
+    const lsData = (await lsResponse.json()) as ReadFileResult;
     expect(lsData.success).toBe(false); // Directory should not exist
   }, 90000);
 
@@ -615,7 +625,7 @@ describe('File Operations Workflow (E2E)', () => {
     });
 
     expect(writeResponse.status).toBe(200);
-    const writeData = await writeResponse.json();
+    const writeData = (await writeResponse.json()) as WriteFileResult;
     expect(writeData.success).toBe(true);
 
     // Verify we can read it back
@@ -628,7 +638,7 @@ describe('File Operations Workflow (E2E)', () => {
     });
 
     expect(readResponse.status).toBe(200);
-    const readData = await readResponse.json();
+    const readData = (await readResponse.json()) as ReadFileResult;
     expect(readData.content).toBe('Users control their sandbox!');
   }, 90000);
 
@@ -656,7 +666,7 @@ describe('File Operations Workflow (E2E)', () => {
     });
 
     expect(readResponse.status).toBe(200);
-    const readData = await readResponse.json();
+    const readData = (await readResponse.json()) as ReadFileResult;
 
     expect(readData.success).toBe(true);
     expect(readData.content).toBe('Hello, World! This is a test.');
@@ -693,7 +703,7 @@ describe('File Operations Workflow (E2E)', () => {
     });
 
     expect(readResponse.status).toBe(200);
-    const readData = await readResponse.json();
+    const readData = (await readResponse.json()) as ReadFileResult;
 
     expect(readData.success).toBe(true);
     expect(readData.encoding).toBe('base64');
@@ -732,7 +742,7 @@ describe('File Operations Workflow (E2E)', () => {
     });
 
     expect(readResponse.status).toBe(200);
-    const readData = await readResponse.json();
+    const readData = (await readResponse.json()) as ReadFileResult;
 
     expect(readData.success).toBe(true);
     expect(readData.content).toBe(jsonContent);
@@ -837,7 +847,7 @@ describe('File Operations Workflow (E2E)', () => {
 
     // Should return error with FILE_NOT_FOUND
     expect(deleteResponse.status).toBe(500);
-    const errorData = await deleteResponse.json();
+    const errorData = (await deleteResponse.json()) as ErrorResponse;
     expect(errorData.error).toBeTruthy();
     expect(errorData.error).toMatch(/not found|does not exist|no such file/i);
   }, 90000);
@@ -884,7 +894,7 @@ describe('File Operations Workflow (E2E)', () => {
     });
 
     expect(listResponse.status).toBe(200);
-    const listData = await listResponse.json();
+    const listData = (await listResponse.json()) as ListFilesResult;
 
     expect(listData.success).toBe(true);
     expect(listData.path).toBe('/workspace/project');
@@ -896,6 +906,8 @@ describe('File Operations Workflow (E2E)', () => {
       (f: FileInfo) => f.name === 'data.txt'
     );
     expect(dataFile).toBeDefined();
+    if (!dataFile) throw new Error('dataFile not found');
+
     expect(dataFile.type).toBe('file');
     expect(dataFile.absolutePath).toBe('/workspace/project/data.txt');
     expect(dataFile.relativePath).toBe('data.txt');
@@ -910,6 +922,8 @@ describe('File Operations Workflow (E2E)', () => {
       (f: FileInfo) => f.name === 'script.sh'
     );
     expect(scriptFile).toBeDefined();
+    if (!scriptFile) throw new Error('scriptFile not found');
+
     expect(scriptFile.permissions.executable).toBe(true);
   }, 90000);
 
@@ -955,7 +969,7 @@ describe('File Operations Workflow (E2E)', () => {
     });
 
     expect(listResponse.status).toBe(200);
-    const listData = await listResponse.json();
+    const listData = (await listResponse.json()) as ListFilesResult;
 
     expect(listData.success).toBe(true);
 
@@ -985,7 +999,7 @@ describe('File Operations Workflow (E2E)', () => {
     });
 
     expect(notFoundResponse.status).toBe(500);
-    const notFoundData = await notFoundResponse.json();
+    const notFoundData = (await notFoundResponse.json()) as ErrorResponse;
     expect(notFoundData.error).toBeTruthy();
     expect(notFoundData.error).toMatch(/not found|does not exist/i);
 
@@ -1008,7 +1022,7 @@ describe('File Operations Workflow (E2E)', () => {
     });
 
     expect(wrongTypeResponse.status).toBe(500);
-    const wrongTypeData = await wrongTypeResponse.json();
+    const wrongTypeData = (await wrongTypeResponse.json()) as ErrorResponse;
     expect(wrongTypeData.error).toMatch(/not a directory/i);
   }, 90000);
 
@@ -1045,7 +1059,8 @@ describe('File Operations Workflow (E2E)', () => {
     });
 
     expect(fileExistsResponse.status).toBe(200);
-    const fileExistsData = await fileExistsResponse.json();
+    const fileExistsData =
+      (await fileExistsResponse.json()) as FileExistsResult;
     expect(fileExistsData.success).toBe(true);
     expect(fileExistsData.exists).toBe(true);
 
@@ -1059,7 +1074,7 @@ describe('File Operations Workflow (E2E)', () => {
     });
 
     expect(dirExistsResponse.status).toBe(200);
-    const dirExistsData = await dirExistsResponse.json();
+    const dirExistsData = (await dirExistsResponse.json()) as FileExistsResult;
     expect(dirExistsData.success).toBe(true);
     expect(dirExistsData.exists).toBe(true);
 
@@ -1073,7 +1088,7 @@ describe('File Operations Workflow (E2E)', () => {
     });
 
     expect(notExistsResponse.status).toBe(200);
-    const notExistsData = await notExistsResponse.json();
+    const notExistsData = (await notExistsResponse.json()) as FileExistsResult;
     expect(notExistsData.success).toBe(true);
     expect(notExistsData.exists).toBe(false);
   }, 90000);
@@ -1131,7 +1146,7 @@ describe('File Operations Workflow (E2E)', () => {
     });
 
     expect(listResponse.status).toBe(200);
-    const listData = await listResponse.json();
+    const listData = (await listResponse.json()) as ListFilesResult;
 
     expect(listData.success).toBe(true);
     expect(listData.files).toBeInstanceOf(Array);
@@ -1169,7 +1184,8 @@ describe('File Operations Workflow (E2E)', () => {
     });
 
     expect(listWithHiddenResponse.status).toBe(200);
-    const listWithHiddenData = await listWithHiddenResponse.json();
+    const listWithHiddenData =
+      (await listWithHiddenResponse.json()) as ListFilesResult;
 
     expect(listWithHiddenData.success).toBe(true);
     expect(listWithHiddenData.files.length).toBe(4); // visible1.txt, visible2.txt, bar/, .hiddenfile.txt

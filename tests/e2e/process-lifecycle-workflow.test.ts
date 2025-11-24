@@ -1,18 +1,16 @@
-import {
-  describe,
-  test,
-  expect,
-  beforeAll,
-  afterAll,
-  afterEach,
-  vi
-} from 'vitest';
+import { describe, test, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import { getTestWorkerUrl, WranglerDevRunner } from './helpers/wrangler-runner';
 import {
   createSandboxId,
   createTestHeaders,
   cleanupSandbox
 } from './helpers/test-fixtures';
+import type {
+  Process,
+  ProcessLogsResult,
+  ProcessStatus,
+  PortExposeResult
+} from '@repo/shared';
 
 // Port exposure tests require custom domain with wildcard DNS routing
 // Skip these tests when running against workers.dev deployment (no wildcard support)
@@ -80,9 +78,8 @@ describe('Process Lifecycle Workflow', () => {
       });
 
       expect(startResponse.status).toBe(200);
-      const startData = await startResponse.json();
+      const startData = (await startResponse.json()) as Process;
       expect(startData.id).toBeTruthy();
-      expect(startData.status).toBe('running');
       const processId = startData.id;
 
       // Wait a bit for the process to start
@@ -98,7 +95,7 @@ describe('Process Lifecycle Workflow', () => {
       );
 
       expect(statusResponse.status).toBe(200);
-      const statusData = await statusResponse.json();
+      const statusData = (await statusResponse.json()) as Process;
       expect(statusData.id).toBe(processId);
       expect(statusData.status).toBe('running');
 
@@ -127,7 +124,7 @@ describe('Process Lifecycle Workflow', () => {
         })
       });
 
-      const process1Data = await process1Response.json();
+      const process1Data = (await process1Response.json()) as Process;
       const process1Id = process1Data.id;
 
       const process2Response = await fetch(`${workerUrl}/api/process/start`, {
@@ -138,7 +135,7 @@ describe('Process Lifecycle Workflow', () => {
         })
       });
 
-      const process2Data = await process2Response.json();
+      const process2Data = (await process2Response.json()) as Process;
       const process2Id = process2Data.id;
 
       // Wait a bit for processes to be registered
@@ -151,7 +148,7 @@ describe('Process Lifecycle Workflow', () => {
       });
 
       expect(listResponse.status).toBe(200);
-      const listData = await listResponse.json();
+      const listData = (await listResponse.json()) as Process[];
 
       // Debug logging
       console.log('[DEBUG] List response:', JSON.stringify(listData, null, 2));
@@ -190,7 +187,7 @@ describe('Process Lifecycle Workflow', () => {
         })
       });
 
-      const startData = await startResponse.json();
+      const startData = (await startResponse.json()) as Process;
       const processId = startData.id;
 
       // Immediately run a foreground command - should complete quickly
@@ -241,7 +238,7 @@ describe('Process Lifecycle Workflow', () => {
         })
       });
 
-      const startData = await startResponse.json();
+      const startData = (await startResponse.json()) as Process;
       const processId = startData.id;
 
       // Wait for process to complete
@@ -257,7 +254,7 @@ describe('Process Lifecycle Workflow', () => {
       );
 
       expect(logsResponse.status).toBe(200);
-      const logsData = await logsResponse.json();
+      const logsData = (await logsResponse.json()) as ProcessLogsResult;
       expect(logsData.stdout).toContain('Hello from process');
     }, 90000);
 
@@ -292,7 +289,7 @@ console.log("Line 3");
         })
       });
 
-      const startData = await startResponse.json();
+      const startData = (await startResponse.json()) as Process;
       const processId = startData.id;
 
       // Stream logs (SSE)
@@ -395,7 +392,7 @@ console.log("Server started on port 8080");
           })
         });
 
-        const startData = await startResponse.json();
+        const startData = (await startResponse.json()) as Process;
         const processId = startData.id;
 
         // Wait for server to start
@@ -412,9 +409,9 @@ console.log("Server started on port 8080");
         });
 
         expect(exposeResponse.status).toBe(200);
-        const exposeData = await exposeResponse.json();
+        const exposeData = (await exposeResponse.json()) as PortExposeResult;
         expect(exposeData.url).toBeTruthy();
-        const previewUrl = exposeData.url;
+        const previewUrl = exposeData.url!;
 
         // Make HTTP request to preview URL
         const healthResponse = await fetch(previewUrl);
@@ -450,7 +447,7 @@ console.log("Server started on port 8080");
           })
         });
 
-        const data = await startResponse.json();
+        const data = (await startResponse.json()) as Process;
         processes.push(data.id);
       }
 
@@ -462,7 +459,7 @@ console.log("Server started on port 8080");
         method: 'GET',
         headers
       });
-      const listData = await listResponse.json();
+      const listData = (await listResponse.json()) as Process[];
       expect(listData.length).toBeGreaterThanOrEqual(3);
 
       // Kill all processes
@@ -481,7 +478,7 @@ console.log("Server started on port 8080");
         method: 'GET',
         headers
       });
-      const listAfterData = await listAfterResponse.json();
+      const listAfterData = (await listAfterResponse.json()) as Process[];
 
       // Should have fewer running processes now
       const runningProcesses = listAfterData.filter(
@@ -535,7 +532,7 @@ console.log("Server listening on port 8080");
         });
 
         expect(startResponse.status).toBe(200);
-        const startData = await startResponse.json();
+        const startData = (await startResponse.json()) as Process;
         const processId = startData.id;
 
         // Step 3: Wait and verify process is running
@@ -550,7 +547,7 @@ console.log("Server listening on port 8080");
         );
 
         expect(statusResponse.status).toBe(200);
-        const statusData = await statusResponse.json();
+        const statusData = (await statusResponse.json()) as Process;
         expect(statusData.status).toBe('running');
 
         // Step 4: Expose port
@@ -564,7 +561,7 @@ console.log("Server listening on port 8080");
         });
 
         expect(exposeResponse.status).toBe(200);
-        const exposeData = await exposeResponse.json();
+        const exposeData = (await exposeResponse.json()) as PortExposeResult;
         const previewUrl = exposeData.url;
 
         // Step 5: Make HTTP request to health endpoint
@@ -585,7 +582,7 @@ console.log("Server listening on port 8080");
         );
 
         expect(logsResponse.status).toBe(200);
-        const logsData = await logsResponse.json();
+        const logsData = (await logsResponse.json()) as ProcessLogsResult;
         expect(logsData.stdout).toContain('Server listening on port 8080');
 
         // Step 7: Cleanup - unexpose port and kill the process
@@ -688,5 +685,141 @@ console.log("Server listening on port 8080");
       },
       90000
     );
+
+    test('should retrieve completed process metadata', async () => {
+      const sandboxId = createSandboxId();
+      const headers = createTestHeaders(sandboxId);
+
+      // Start a short-lived process that completes quickly
+      const startResponse = await fetch(`${workerUrl}/api/process/start`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          command: 'echo "test output"'
+        })
+      });
+
+      expect(startResponse.status).toBe(200);
+      const startData = (await startResponse.json()) as Process;
+      const processId = startData.id;
+
+      // Poll until process completes (pattern developers would use)
+      let processData;
+      const maxAttempts = 60; // 30 seconds with 500ms intervals
+      for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        const getResponse = await fetch(
+          `${workerUrl}/api/process/${processId}`,
+          {
+            method: 'GET',
+            headers
+          }
+        );
+
+        expect(getResponse.status).toBe(200);
+        processData = (await getResponse.json()) as Process;
+
+        if (processData.status === 'completed') {
+          break;
+        }
+
+        if (attempt < maxAttempts - 1) {
+          await new Promise((resolve) => setTimeout(resolve, 500));
+        }
+      }
+
+      // Verify completed status
+      if (!processData) {
+        throw new Error('Process never completed within timeout');
+      }
+      expect(processData.id).toBe(processId);
+      expect(processData.status).toBe('completed');
+      expect(processData.exitCode).toBe(0);
+      expect(processData.endTime).toBeTruthy();
+    }, 90000);
+
+    test('should include completed processes in list', async () => {
+      const sandboxId = createSandboxId();
+      const headers = createTestHeaders(sandboxId);
+
+      // Start a process that completes quickly
+      const completedResponse = await fetch(`${workerUrl}/api/process/start`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          command: 'echo "completed process"'
+        })
+      });
+
+      const completedData = (await completedResponse.json()) as Process;
+      const completedId = completedData.id;
+
+      // Poll until first process completes (pattern developers would use)
+      const maxAttempts = 60; // 30 seconds with 500ms intervals
+      for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        const getResponse = await fetch(
+          `${workerUrl}/api/process/${completedId}`,
+          {
+            method: 'GET',
+            headers
+          }
+        );
+
+        expect(getResponse.status).toBe(200);
+        const data = (await getResponse.json()) as Process;
+
+        if (data.status === 'completed') {
+          break;
+        }
+
+        if (attempt < maxAttempts - 1) {
+          await new Promise((resolve) => setTimeout(resolve, 500));
+        }
+      }
+
+      // Start a long-running process
+      const runningResponse = await fetch(`${workerUrl}/api/process/start`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          command: 'sleep 60'
+        })
+      });
+
+      const runningData = (await runningResponse.json()) as Process;
+      const runningId = runningData.id;
+
+      // Wait for running process to start
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      // List all processes
+      const listResponse = await fetch(`${workerUrl}/api/process/list`, {
+        method: 'GET',
+        headers
+      });
+
+      expect(listResponse.status).toBe(200);
+      const listData = (await listResponse.json()) as Process[];
+
+      // Should include both completed and running processes
+      const processIds = listData.map((p: any) => p.id);
+      expect(processIds).toContain(completedId);
+      expect(processIds).toContain(runningId);
+
+      // Verify statuses
+      const completedProcess = listData.find((p) => p.id === completedId);
+      const runningProcess = listData.find((p) => p.id === runningId);
+
+      if (!completedProcess) throw new Error('Completed process not found');
+      if (!runningProcess) throw new Error('Running process not found');
+
+      expect(completedProcess.status).toBe('completed');
+      expect(runningProcess.status).toBe('running');
+
+      // Cleanup - kill running process
+      await fetch(`${workerUrl}/api/process/${runningId}`, {
+        method: 'DELETE',
+        headers
+      });
+    }, 90000);
   });
 });

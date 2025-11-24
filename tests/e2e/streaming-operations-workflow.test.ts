@@ -14,7 +14,7 @@ import {
   cleanupSandbox
 } from './helpers/test-fixtures';
 import { parseSSEStream } from '../../packages/sandbox/src/sse-parser';
-import type { ExecEvent } from '@repo/shared';
+import type { ExecEvent, SessionCreateResult } from '@repo/shared';
 
 /**
  * Streaming Operations Workflow Integration Tests
@@ -424,7 +424,7 @@ describe('Streaming Operations Workflow', () => {
         })
       });
 
-      const sessionData = await sessionResponse.json();
+      const sessionData = (await sessionResponse.json()) as SessionCreateResult;
       const sessionId = sessionData.sessionId;
       if (!sessionId) {
         throw new Error('Session ID not returned from API');
