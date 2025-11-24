@@ -96,6 +96,7 @@ export class ProcessStore {
 
     // Start with active processes in memory
     let processes = Array.from(this.processes.values());
+    const seenIds = new Set(processes.map((p) => p.id));
 
     // Include completed processes from disk
     try {
@@ -105,9 +106,12 @@ export class ProcessStore {
 
       for (const file of files) {
         const processId = file.replace('.json', '');
-        const process = await this.readProcessFile(processId);
-        if (process) {
-          processes.push(process);
+        if (!seenIds.has(processId)) {
+          // Skip if already in memory
+          const process = await this.readProcessFile(processId);
+          if (process) {
+            processes.push(process);
+          }
         }
       }
     } catch (error) {
