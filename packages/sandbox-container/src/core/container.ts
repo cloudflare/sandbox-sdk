@@ -16,10 +16,8 @@ import { FileService } from '../services/file-service';
 import { GitService } from '../services/git-service';
 import { InterpreterService } from '../services/interpreter-service';
 import { InMemoryPortStore, PortService } from '../services/port-service';
-import {
-  InMemoryProcessStore,
-  ProcessService
-} from '../services/process-service';
+import { ProcessService } from '../services/process-service';
+import { ProcessStore } from '../services/process-store';
 import { SessionManager } from '../services/session-manager';
 import { RequestValidator } from '../validation/request-validator';
 
@@ -90,7 +88,7 @@ export class Container {
     const validator = new RequestValidator();
 
     // Initialize stores
-    const processStore = new InMemoryProcessStore();
+    const processStore = new ProcessStore(logger);
     const portStore = new InMemoryPortStore();
 
     // Initialize SessionManager

@@ -1,6 +1,7 @@
 import { describe, test, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import { getTestWorkerUrl, WranglerDevRunner } from './helpers/wrangler-runner';
 import { createSandboxId, cleanupSandbox } from './helpers/test-fixtures';
+import type { HealthResponse } from './test-worker/types';
 
 /**
  * Smoke test to verify integration test infrastructure
@@ -44,7 +45,7 @@ describe('Integration Infrastructure Smoke Test', () => {
       const response = await fetch(`${workerUrl}/health`);
       expect(response.status).toBe(200);
 
-      const data = await response.json();
+      const data = (await response.json()) as HealthResponse;
       expect(data.status).toBe('ok');
 
       // In local mode, verify stdout captured wrangler startup

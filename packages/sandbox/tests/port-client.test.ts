@@ -1,9 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
-  ExposePortResponse,
-  GetExposedPortsResponse,
-  UnexposePortResponse
-} from '../src/clients';
+  PortCloseResult,
+  PortExposeResult,
+  PortListResult
+} from '@repo/shared';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PortClient } from '../src/clients/port-client';
 import {
   InvalidPortError,
@@ -37,11 +37,10 @@ describe('PortClient', () => {
 
   describe('service exposure', () => {
     it('should expose web services successfully', async () => {
-      const mockResponse: ExposePortResponse = {
+      const mockResponse: PortExposeResult = {
         success: true,
         port: 3001,
-        exposedAt: 'https://preview-abc123.workers.dev',
-        name: 'web-server',
+        url: 'https://preview-abc123.workers.dev',
         timestamp: '2023-01-01T00:00:00Z'
       };
 
@@ -53,17 +52,15 @@ describe('PortClient', () => {
 
       expect(result.success).toBe(true);
       expect(result.port).toBe(3001);
-      expect(result.exposedAt).toBe('https://preview-abc123.workers.dev');
-      expect(result.name).toBe('web-server');
-      expect(result.exposedAt.startsWith('https://')).toBe(true);
+      expect(result.url).toBe('https://preview-abc123.workers.dev');
+      expect(result.url.startsWith('https://')).toBe(true);
     });
 
     it('should expose API services on different ports', async () => {
-      const mockResponse: ExposePortResponse = {
+      const mockResponse: PortExposeResult = {
         success: true,
         port: 8080,
-        exposedAt: 'https://api-def456.workers.dev',
-        name: 'api-server',
+        url: 'https://api-def456.workers.dev',
         timestamp: '2023-01-01T00:00:00Z'
       };
 
@@ -75,15 +72,14 @@ describe('PortClient', () => {
 
       expect(result.success).toBe(true);
       expect(result.port).toBe(8080);
-      expect(result.name).toBe('api-server');
-      expect(result.exposedAt).toContain('api-');
+      expect(result.url).toContain('api-');
     });
 
     it('should expose services without explicit names', async () => {
-      const mockResponse: ExposePortResponse = {
+      const mockResponse: PortExposeResult = {
         success: true,
         port: 5000,
-        exposedAt: 'https://service-ghi789.workers.dev',
+        url: 'https://service-ghi789.workers.dev',
         timestamp: '2023-01-01T00:00:00Z'
       };
 
@@ -95,33 +91,31 @@ describe('PortClient', () => {
 
       expect(result.success).toBe(true);
       expect(result.port).toBe(5000);
-      expect(result.name).toBeUndefined();
-      expect(result.exposedAt).toBeDefined();
+      expect(result.url).toBeDefined();
     });
   });
 
   describe('service management', () => {
     it('should list all exposed services', async () => {
-      const mockResponse: GetExposedPortsResponse = {
+      const mockResponse: PortListResult = {
         success: true,
         ports: [
           {
             port: 3000,
-            exposedAt: 'https://frontend-abc123.workers.dev',
-            name: 'frontend'
+            url: 'https://frontend-abc123.workers.dev',
+            status: 'active'
           },
           {
             port: 4000,
-            exposedAt: 'https://api-def456.workers.dev',
-            name: 'api'
+            url: 'https://api-def456.workers.dev',
+            status: 'active'
           },
           {
             port: 5432,
-            exposedAt: 'https://db-ghi789.workers.dev',
-            name: 'database'
+            url: 'https://db-ghi789.workers.dev',
+            status: 'active'
           }
         ],
-        count: 3,
         timestamp: '2023-01-01T00:10:00Z'
       };
 
@@ -132,21 +126,18 @@ describe('PortClient', () => {
       const result = await client.getExposedPorts('session-list');
 
       expect(result.success).toBe(true);
-      expect(result.count).toBe(3);
       expect(result.ports).toHaveLength(3);
 
       result.ports.forEach((service) => {
-        expect(service.exposedAt).toContain('.workers.dev');
+        expect(service.url).toContain('.workers.dev');
         expect(service.port).toBeGreaterThan(0);
-        expect(service.name).toBeDefined();
       });
     });
 
     it('should handle empty exposed ports list', async () => {
-      const mockResponse: GetExposedPortsResponse = {
+      const mockResponse: PortListResult = {
         success: true,
         ports: [],
-        count: 0,
         timestamp: '2023-01-01T00:00:00Z'
       };
 
@@ -157,12 +148,11 @@ describe('PortClient', () => {
       const result = await client.getExposedPorts('session-empty');
 
       expect(result.success).toBe(true);
-      expect(result.count).toBe(0);
       expect(result.ports).toHaveLength(0);
     });
 
     it('should unexpose services cleanly', async () => {
-      const mockResponse: UnexposePortResponse = {
+      const mockResponse: PortCloseResult = {
         success: true,
         port: 3001,
         timestamp: '2023-01-01T00:15:00Z'

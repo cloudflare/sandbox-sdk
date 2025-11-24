@@ -1,42 +1,45 @@
 import { beforeEach, describe, expect, it, vi } from 'bun:test';
+import type { Logger } from '@repo/shared';
+import type { ValidationFailedContext } from '@repo/shared/errors';
 import type {
   CloneOptions,
-  Logger,
   ServiceResult
 } from '@sandbox-container/core/types';
 import {
   GitService,
   type SecurityService
 } from '@sandbox-container/services/git-service';
-import type {
-  RawExecResult,
-  SessionManager
-} from '@sandbox-container/services/session-manager';
+import type { SessionManager } from '@sandbox-container/services/session-manager';
+import type { RawExecResult } from '@sandbox-container/session';
 import { mocked } from '../test-utils';
 
 // Properly typed mock dependencies
 const mockSecurityService: SecurityService = {
   validateGitUrl: vi.fn(),
-  validatePath: vi.fn(),
-  sanitizePath: vi.fn()
+  validatePath: vi.fn()
 };
 
-const mockLogger: Logger = {
+const mockLogger = {
   info: vi.fn(),
   error: vi.fn(),
   warn: vi.fn(),
-  debug: vi.fn()
-};
+  debug: vi.fn(),
+  child: vi.fn()
+} as Logger;
+mockLogger.child = vi.fn(() => mockLogger);
 
 // Properly typed mock SessionManager
-const mockSessionManager: Partial<SessionManager> = {
+const mockSessionManager = {
   executeInSession: vi.fn(),
   executeStreamInSession: vi.fn(),
   killCommand: vi.fn(),
   setEnvVars: vi.fn(),
   getSession: vi.fn(),
-  createSession: vi.fn()
-};
+  createSession: vi.fn(),
+  deleteSession: vi.fn(),
+  listSessions: vi.fn(),
+  destroy: vi.fn()
+} as unknown as SessionManager;
 
 describe('GitService', () => {
   let gitService: GitService;
@@ -58,7 +61,7 @@ describe('GitService', () => {
     gitService = new GitService(
       mockSecurityService,
       mockLogger,
-      mockSessionManager as SessionManager
+      mockSessionManager
     );
   });
 
@@ -172,14 +175,15 @@ describe('GitService', () => {
       );
 
       expect(result.success).toBe(false);
-      if (!result.success) {
-        expect(result.error.code).toBe('INVALID_GIT_URL');
-        expect(result.error.message).toContain('Invalid URL scheme');
-        expect(result.error.details?.validationErrors).toBeDefined();
-        expect(result.error.details?.validationErrors?.[0]?.message).toContain(
-          'Invalid URL scheme'
-        );
-      }
+      if (result.success) throw new Error('Expected failure');
+      expect(result.error.code).toBe('INVALID_GIT_URL');
+      expect(result.error.message).toContain('Invalid URL scheme');
+      const details = result.error
+        .details as unknown as ValidationFailedContext;
+      expect(details.validationErrors).toBeDefined();
+      expect(details.validationErrors[0]?.message).toContain(
+        'Invalid URL scheme'
+      );
 
       // Should not attempt git clone
       expect(mockSessionManager.executeInSession).not.toHaveBeenCalled();
@@ -197,13 +201,14 @@ describe('GitService', () => {
       );
 
       expect(result.success).toBe(false);
-      if (!result.success) {
-        expect(result.error.code).toBe('VALIDATION_FAILED');
-        expect(result.error.details?.validationErrors).toBeDefined();
-        expect(result.error.details?.validationErrors?.[0]?.message).toContain(
-          'Path outside sandbox'
-        );
-      }
+      if (result.success) throw new Error('Expected failure');
+      expect(result.error.code).toBe('VALIDATION_FAILED');
+      const details = result.error
+        .details as unknown as ValidationFailedContext;
+      expect(details.validationErrors).toBeDefined();
+      expect(details.validationErrors[0]?.message).toContain(
+        'Path outside sandbox'
+      );
 
       // Should not attempt git clone
       expect(mockSessionManager.executeInSession).not.toHaveBeenCalled();

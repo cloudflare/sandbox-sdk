@@ -1,5 +1,17 @@
 # @cloudflare/sandbox
 
+## 0.5.2
+
+### Patch Changes
+
+- [#234](https://github.com/cloudflare/sandbox-sdk/pull/234) [`d4cee5e`](https://github.com/cloudflare/sandbox-sdk/commit/d4cee5e4617db205c9c1ca714e25493de7ea24ce) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Remove unused logging infrastructure (getLogger, runWithLogger) that was never called
+
+- [#224](https://github.com/cloudflare/sandbox-sdk/pull/224) [`71e86f4`](https://github.com/cloudflare/sandbox-sdk/commit/71e86f42c3b98424db79c268d55f2d5be5e495b3) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Fix memory leaks from listener accumulation, unbounded process storage, and stale DO state
+
+- [#221](https://github.com/cloudflare/sandbox-sdk/pull/221) [`3aba9e8`](https://github.com/cloudflare/sandbox-sdk/commit/3aba9e8da6e2e6acd7b40076cc0920a69cb02775) Thanks [@threepointone](https://github.com/threepointone)! - Add OpenAI Agents adapters
+
+  Add OpenAI Agents adapters (`Shell` and `Editor`) that integrate Cloudflare Sandbox with the OpenAI Agents SDK. These adapters enable AI agents to execute shell commands and perform file operations (create, update, delete) inside sandboxed environments. Both adapters automatically collect and timestamp results from operations, making it easy to track command execution and file modifications during agent sessions. The adapters are exported from `@cloudflare/sandbox/openai` and implement the OpenAI Agents `Shell` and `Editor` interfaces.
+
 ## 0.5.1
 
 ### Patch Changes

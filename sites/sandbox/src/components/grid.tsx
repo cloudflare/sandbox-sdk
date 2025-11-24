@@ -131,7 +131,7 @@ export function CodeBlock({ children }: { children: string }) {
       </button>
 
       <div
-        className="h-full w-full border bg-background flex items-center justify-center p-3 sm:p-4 min-w-0 min-h-0"
+        className="h-full w-full border bg-background pl-6 sm:pl-8 pr-3 sm:pr-4 pt-8 sm:pt-12 pb-3 sm:pb-4 overflow-auto"
         // biome-ignore lint/security/noDangerouslySetInnerHtml: children is safe
         dangerouslySetInnerHTML={{ __html: children }}
         style={

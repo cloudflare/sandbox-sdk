@@ -13,58 +13,15 @@ import type {
   ServiceResult
 } from '../core/types';
 import { ProcessManager } from '../managers/process-manager';
+import type { ProcessStore } from './process-store';
 import type { SessionManager } from './session-manager';
 
-export interface ProcessStore {
-  create(process: ProcessRecord): Promise<void>;
-  get(id: string): Promise<ProcessRecord | null>;
-  update(id: string, data: Partial<ProcessRecord>): Promise<void>;
-  delete(id: string): Promise<void>;
-  list(filters?: ProcessFilters): Promise<ProcessRecord[]>;
-}
+// Re-export types for use by ProcessStore implementations
+export type { ProcessRecord, ProcessStatus } from '../core/types';
+export type { ProcessStore } from './process-store';
 
 export interface ProcessFilters {
   status?: ProcessStatus;
-}
-
-export class InMemoryProcessStore implements ProcessStore {
-  private processes = new Map<string, ProcessRecord>();
-
-  async create(process: ProcessRecord): Promise<void> {
-    this.processes.set(process.id, process);
-  }
-
-  async get(id: string): Promise<ProcessRecord | null> {
-    return this.processes.get(id) || null;
-  }
-
-  async update(id: string, data: Partial<ProcessRecord>): Promise<void> {
-    const existing = this.processes.get(id);
-    if (!existing) {
-      throw new Error(`Process ${id} not found`);
-    }
-
-    const updated = { ...existing, ...data };
-    this.processes.set(id, updated);
-  }
-
-  async delete(id: string): Promise<void> {
-    // Note: ProcessService is responsible for killing processes via SessionManager
-    // This method only removes the record from storage
-    this.processes.delete(id);
-  }
-
-  async list(filters?: ProcessFilters): Promise<ProcessRecord[]> {
-    let processes = Array.from(this.processes.values());
-
-    // Processes are sandbox-scoped, not session-scoped
-    // Filter by status only (like filtering 'ps' output by state)
-    if (filters?.status) {
-      processes = processes.filter((p) => p.status === filters.status);
-    }
-
-    return processes;
-  }
 }
 
 export class ProcessService {
@@ -191,7 +148,7 @@ export class ProcessService {
       const streamResult = await this.sessionManager.executeStreamInSession(
         sessionId,
         command,
-        (event) => {
+        async (event) => {
           // Route events to process record listeners
           if (event.type === 'stdout' && event.data) {
             processRecord.stdout += event.data;
@@ -216,17 +173,22 @@ export class ProcessService {
               listener(status);
             });
 
-            this.store
-              .update(processRecord.id, {
+            // Await store update to ensure consistency before next event
+            try {
+              await this.store.update(processRecord.id, {
                 status,
                 endTime,
                 exitCode
-              })
-              .catch((error) => {
-                this.logger.error('Failed to update process status', error, {
-                  processId: processRecord.id
-                });
               });
+            } catch (error) {
+              this.logger.error(
+                'Failed to update process status',
+                error instanceof Error ? error : undefined,
+                {
+                  processId: processRecord.id
+                }
+              );
+            }
           } else if (event.type === 'error') {
             processRecord.status = 'error';
             processRecord.endTime = new Date();
@@ -482,6 +444,22 @@ export class ProcessService {
       }
 
       // All processes use SessionManager - create stream from listeners and buffered output
+      let outputListener:
+        | ((stream: 'stdout' | 'stderr', data: string) => void)
+        | null = null;
+      let statusListener: ((status: string) => void) | null = null;
+
+      const cleanup = () => {
+        if (outputListener) {
+          process.outputListeners.delete(outputListener);
+          outputListener = null;
+        }
+        if (statusListener) {
+          process.statusListeners.delete(statusListener);
+          statusListener = null;
+        }
+      };
+
       const stream = new ReadableStream({
         start(controller) {
           const encoder = new TextEncoder();
@@ -495,15 +473,13 @@ export class ProcessService {
           }
 
           // Set up listener for future output
-          const outputListener = (
-            stream: 'stdout' | 'stderr',
-            data: string
-          ) => {
+          outputListener = (stream: 'stdout' | 'stderr', data: string) => {
             controller.enqueue(encoder.encode(data));
           };
 
-          const statusListener = (status: string) => {
+          statusListener = (status: string) => {
             if (['completed', 'failed', 'killed', 'error'].includes(status)) {
+              cleanup();
               controller.close();
             }
           };
@@ -515,8 +491,12 @@ export class ProcessService {
           if (
             ['completed', 'failed', 'killed', 'error'].includes(process.status)
           ) {
+            cleanup();
             controller.close();
           }
+        },
+        cancel() {
+          cleanup();
         }
       });
 

@@ -3,9 +3,10 @@
   "version": "0.0.0",
   "description": "an api for computers",
   "scripts": {
-    "typecheck": "turbo run typecheck",
+    "typecheck": "turbo run typecheck && npm run typecheck:e2e",
+    "typecheck:e2e": "tsc --noEmit --project tests/e2e/tsconfig.json",
     "format": "prettier --write .",
-    "check": "sherif && biome check && turbo run typecheck",
+    "check": "sherif && biome check && turbo run typecheck && npm run typecheck:e2e",
     "fix": "biome check --fix && turbo run typecheck",
     "build": "turbo run build",
     "build:clean": "turbo run build --force",

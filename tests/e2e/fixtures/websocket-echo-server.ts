@@ -7,11 +7,13 @@
  * Usage: bun run websocket-echo-server.ts <port>
  */
 
+import type { Server, ServerWebSocket } from 'bun';
+
 const port = parseInt(process.argv[2] || '8080', 10);
 
-Bun.serve({
+Bun.serve<undefined>({
   port,
-  fetch(req, server) {
+  fetch(req: Request, server: Server<undefined>) {
     // Upgrade HTTP request to WebSocket
     if (server.upgrade(req)) {
       return; // Successfully upgraded
@@ -19,14 +21,14 @@ Bun.serve({
     return new Response('Expected WebSocket', { status: 400 });
   },
   websocket: {
-    message(ws, message) {
+    message(ws: ServerWebSocket<undefined>, message: string | Buffer) {
       // Echo the message back
       ws.send(message);
     },
-    open(ws) {
+    open(ws: ServerWebSocket<undefined>) {
       console.log('WebSocket client connected');
     },
-    close(ws) {
+    close(ws: ServerWebSocket<undefined>) {
       console.log('WebSocket client disconnected');
     }
   }

@@ -1,46 +1,49 @@
 import { beforeEach, describe, expect, it, vi } from 'bun:test';
+import type { Logger } from '@repo/shared';
 import type {
-  Logger,
   ProcessRecord,
   ServiceResult
-} from '@sandbox-container/core/types.ts';
+} from '@sandbox-container/core/types';
 import {
   type ProcessFilters,
   ProcessService,
   type ProcessStore
 } from '@sandbox-container/services/process-service.js';
-import type {
-  RawExecResult,
-  SessionManager
-} from '@sandbox-container/services/session-manager';
+import type { SessionManager } from '@sandbox-container/services/session-manager';
+import type { RawExecResult } from '@sandbox-container/session';
 import { mocked } from '../test-utils';
 
 // Mock the dependencies with proper typing
-const mockProcessStore: ProcessStore = {
+const mockProcessStore = {
   create: vi.fn(),
   get: vi.fn(),
   update: vi.fn(),
   delete: vi.fn(),
   list: vi.fn(),
   cleanup: vi.fn()
-};
+} as unknown as ProcessStore;
 
-const mockLogger: Logger = {
+const mockLogger = {
   info: vi.fn(),
   error: vi.fn(),
   warn: vi.fn(),
-  debug: vi.fn()
-};
+  debug: vi.fn(),
+  child: vi.fn()
+} as Logger;
+mockLogger.child = vi.fn(() => mockLogger);
 
 // Mock SessionManager with proper typing
-const mockSessionManager: Partial<SessionManager> = {
+const mockSessionManager = {
   executeInSession: vi.fn(),
   executeStreamInSession: vi.fn(),
   killCommand: vi.fn(),
   setEnvVars: vi.fn(),
   getSession: vi.fn(),
-  createSession: vi.fn()
-};
+  createSession: vi.fn(),
+  deleteSession: vi.fn(),
+  listSessions: vi.fn(),
+  destroy: vi.fn()
+} as unknown as SessionManager;
 
 // Mock factory functions
 const createMockProcess = (
@@ -72,7 +75,7 @@ describe('ProcessService', () => {
     processService = new ProcessService(
       mockProcessStore,
       mockLogger,
-      mockSessionManager as SessionManager
+      mockSessionManager
     );
   });
 

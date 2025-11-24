@@ -13,6 +13,13 @@ import {
   createTestHeaders,
   cleanupSandbox
 } from './helpers/test-fixtures';
+import type {
+  EnvSetResult,
+  ExecResult,
+  WriteFileResult,
+  Process,
+  ProcessLogsResult
+} from '@repo/shared';
 
 describe('Environment Variables Workflow', () => {
   describe('local', () => {
@@ -55,7 +62,7 @@ describe('Environment Variables Workflow', () => {
       });
 
       expect(setEnvResponse.status).toBe(200);
-      const setEnvData = await setEnvResponse.json();
+      const setEnvData = (await setEnvResponse.json()) as EnvSetResult;
       expect(setEnvData.success).toBe(true);
 
       // Step 2: Verify environment variable with echo command (same sandbox)
@@ -68,7 +75,7 @@ describe('Environment Variables Workflow', () => {
       });
 
       expect(execResponse.status).toBe(200);
-      const execData = await execResponse.json();
+      const execData = (await execResponse.json()) as ExecResult;
       expect(execData.success).toBe(true);
       expect(execData.stdout.trim()).toBe('hello_world');
     }, 90000);
@@ -91,7 +98,7 @@ describe('Environment Variables Workflow', () => {
       });
 
       expect(setEnvResponse.status).toBe(200);
-      const setEnvData = await setEnvResponse.json();
+      const setEnvData = (await setEnvResponse.json()) as EnvSetResult;
       expect(setEnvData.success).toBe(true);
 
       // Step 2: Verify all environment variables (same sandbox)
@@ -104,7 +111,7 @@ describe('Environment Variables Workflow', () => {
       });
 
       expect(execResponse.status).toBe(200);
-      const execData = await execResponse.json();
+      const execData = (await execResponse.json()) as ExecResult;
       expect(execData.success).toBe(true);
       expect(execData.stdout.trim()).toBe('secret123|localhost|3000');
     }, 90000);
@@ -134,7 +141,7 @@ describe('Environment Variables Workflow', () => {
       });
 
       expect(exec1Response.status).toBe(200);
-      const exec1Data = await exec1Response.json();
+      const exec1Data = (await exec1Response.json()) as ExecResult;
       expect(exec1Data.success).toBe(true);
       expect(exec1Data.stdout.trim()).toBe('still_here');
 
@@ -148,7 +155,7 @@ describe('Environment Variables Workflow', () => {
       });
 
       expect(exec2Response.status).toBe(200);
-      const exec2Data = await exec2Response.json();
+      const exec2Data = (await exec2Response.json()) as ExecResult;
       expect(exec2Data.success).toBe(true);
       expect(exec2Data.stdout.trim()).toBe('still_here');
 
@@ -162,7 +169,7 @@ describe('Environment Variables Workflow', () => {
       });
 
       expect(exec3Response.status).toBe(200);
-      const exec3Data = await exec3Response.json();
+      const exec3Data = (await exec3Response.json()) as ExecResult;
       expect(exec3Data.success).toBe(true);
       expect(exec3Data.stdout.trim()).toBe('still_here');
     }, 90000);
@@ -214,7 +221,7 @@ describe('Environment Variables Workflow', () => {
       });
 
       expect(startResponse.status).toBe(200);
-      const startData = await startResponse.json();
+      const startData = (await startResponse.json()) as Process;
       expect(startData.id).toBeTruthy();
       const processId = startData.id;
 
@@ -230,7 +237,7 @@ describe('Environment Variables Workflow', () => {
       );
 
       expect(logsResponse.status).toBe(200);
-      const logsData = await logsResponse.json();
+      const logsData = (await logsResponse.json()) as ProcessLogsResult;
       expect(logsData.stdout).toContain('ENV_VALUE=from_env');
 
       // Cleanup (same sandbox)
@@ -257,7 +264,7 @@ describe('Environment Variables Workflow', () => {
       });
 
       expect(catResponse.status).toBe(200);
-      const catData = await catResponse.json();
+      const catData = (await catResponse.json()) as ExecResult;
       // cat with no input should exit with code 0 and produce no output
       expect(catData.success).toBe(true);
       expect(catData.stdout).toBe('');
@@ -272,7 +279,7 @@ describe('Environment Variables Workflow', () => {
       });
 
       expect(readResponse.status).toBe(200);
-      const readData = await readResponse.json();
+      const readData = (await readResponse.json()) as ExecResult;
       expect(readData.success).toBe(true);
       expect(readData.stdout).toContain('read returned');
 
@@ -286,7 +293,7 @@ describe('Environment Variables Workflow', () => {
       });
 
       expect(grepResponse.status).toBe(200);
-      const grepData = await grepResponse.json();
+      const grepData = (await grepResponse.json()) as ExecResult;
       expect(grepData.success).toBe(true);
     }, 90000);
 

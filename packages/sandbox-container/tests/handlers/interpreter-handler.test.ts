@@ -3,19 +3,22 @@ import type {
   ContextCreateResult,
   ContextDeleteResult,
   ContextListResult,
-  InterpreterHealthResult
+  InterpreterHealthResult,
+  Logger
 } from '@repo/shared';
 import type { ErrorResponse } from '@repo/shared/errors';
+import { ErrorCode } from '@repo/shared/errors';
 import type {
-  Logger,
   RequestContext,
   ServiceResult
-} from '@sandbox-container/core/types.ts';
+} from '@sandbox-container/core/types';
 import { InterpreterHandler } from '@sandbox-container/handlers/interpreter-handler.js';
 import type {
+  Context,
   CreateContextRequest,
-  InterpreterService
-} from '@sandbox-container/services/interpreter-service.ts';
+  HealthStatus
+} from '@sandbox-container/interpreter-service';
+import type { InterpreterService } from '@sandbox-container/services/interpreter-service';
 import { mocked } from '../test-utils';
 
 // Mock the service dependencies
@@ -27,12 +30,14 @@ const mockInterpreterService = {
   executeCode: vi.fn()
 } as unknown as InterpreterService;
 
-const mockLogger: Logger = {
+const mockLogger = {
   info: vi.fn(),
   error: vi.fn(),
   warn: vi.fn(),
-  debug: vi.fn()
-};
+  debug: vi.fn(),
+  child: vi.fn()
+} as Logger;
+mockLogger.child = vi.fn(() => mockLogger);
 
 // Mock request context
 const mockContext: RequestContext = {
@@ -65,11 +70,11 @@ describe('InterpreterHandler', () => {
       const mockHealthResult = {
         success: true,
         data: {
-          status: 'healthy',
           ready: true,
-          version: '1.0.0'
+          initializing: false,
+          progress: 1.0
         }
-      } as ServiceResult<{ status: string; ready: boolean; version: string }>;
+      } as ServiceResult<HealthStatus>;
 
       mocked(mockInterpreterService.getHealthStatus).mockResolvedValue(
         mockHealthResult
@@ -139,14 +144,10 @@ describe('InterpreterHandler', () => {
           id: 'ctx-123',
           language: 'python',
           cwd: '/workspace',
-          createdAt: new Date()
+          createdAt: '2023-01-01T00:00:00Z',
+          lastUsed: '2023-01-01T00:00:00Z'
         }
-      } as ServiceResult<{
-        id: string;
-        language: string;
-        cwd: string;
-        createdAt: Date;
-      }>;
+      } as ServiceResult<Context>;
 
       mocked(mockInterpreterService.createContext).mockResolvedValue(
         mockContextResult
@@ -186,7 +187,7 @@ describe('InterpreterHandler', () => {
         success: false,
         error: {
           message: 'Invalid language specified',
-          code: 'VALIDATION_ERROR',
+          code: ErrorCode.VALIDATION_FAILED,
           details: { language: 'invalid-lang' }
         }
       } as ServiceResult<never>;
@@ -211,7 +212,7 @@ describe('InterpreterHandler', () => {
       // Verify error response: {code, message, context, httpStatus, timestamp}
       expect(response.status).toBeGreaterThanOrEqual(400);
       const responseData = (await response.json()) as ErrorResponse;
-      expect(responseData.code).toBe('VALIDATION_ERROR');
+      expect(responseData.code).toBe(ErrorCode.VALIDATION_FAILED);
       expect(responseData.message).toBe('Invalid language specified');
       expect(responseData.context).toMatchObject({ language: 'invalid-lang' });
       expect(responseData.httpStatus).toBeDefined();
@@ -250,9 +251,8 @@ describe('InterpreterHandler', () => {
       expect(response.status).toBe(503);
       expect(response.headers.get('Retry-After')).toBe('10');
 
-      const responseData = await response.json();
-      expect(responseData.success).toBe(false);
-      expect(responseData.error.code).toBe('INTERPRETER_NOT_READY');
+      const responseData = (await response.json()) as ErrorResponse;
+      expect(responseData.code).toBe('INTERPRETER_NOT_READY');
       expect(responseData.timestamp).toBeDefined();
     });
   });
@@ -263,10 +263,22 @@ describe('InterpreterHandler', () => {
       const mockContexts = {
         success: true,
         data: [
-          { id: 'ctx-1', language: 'python', cwd: '/workspace1' },
-          { id: 'ctx-2', language: 'javascript', cwd: '/workspace2' }
+          {
+            id: 'ctx-1',
+            language: 'python',
+            cwd: '/workspace1',
+            createdAt: '2023-01-01T00:00:00Z',
+            lastUsed: '2023-01-01T00:00:00Z'
+          },
+          {
+            id: 'ctx-2',
+            language: 'javascript',
+            cwd: '/workspace2',
+            createdAt: '2023-01-01T00:00:00Z',
+            lastUsed: '2023-01-01T00:00:00Z'
+          }
         ]
-      } as ServiceResult<Array<{ id: string; language: string; cwd: string }>>;
+      } as ServiceResult<Context[]>;
 
       mocked(mockInterpreterService.listContexts).mockResolvedValue(
         mockContexts
@@ -363,7 +375,7 @@ describe('InterpreterHandler', () => {
         success: false,
         error: {
           message: 'Context not found',
-          code: 'RESOURCE_NOT_FOUND',
+          code: ErrorCode.CONTEXT_NOT_FOUND,
           details: { contextId: 'ctx-999' }
         }
       } as ServiceResult<never>;
@@ -384,7 +396,7 @@ describe('InterpreterHandler', () => {
       // Verify error response: {code, message, context, httpStatus, timestamp}
       expect(response.status).toBeGreaterThanOrEqual(400);
       const responseData = (await response.json()) as ErrorResponse;
-      expect(responseData.code).toBe('RESOURCE_NOT_FOUND');
+      expect(responseData.code).toBe(ErrorCode.CONTEXT_NOT_FOUND);
       expect(responseData.message).toBe('Context not found');
       expect(responseData.context).toMatchObject({ contextId: 'ctx-999' });
       expect(responseData.httpStatus).toBeDefined();
@@ -454,7 +466,7 @@ describe('InterpreterHandler', () => {
       // Mock error response from service
       const mockErrorResponse = new Response(
         JSON.stringify({
-          code: 'RESOURCE_NOT_FOUND',
+          code: ErrorCode.CONTEXT_NOT_FOUND,
           message: 'Context not found',
           context: { contextId: 'ctx-invalid' },
           httpStatus: 404,
@@ -487,7 +499,7 @@ describe('InterpreterHandler', () => {
       // Verify error response: {code, message, context, httpStatus, timestamp}
       expect(response.status).toBe(404);
       const responseData = (await response.json()) as ErrorResponse;
-      expect(responseData.code).toBe('RESOURCE_NOT_FOUND');
+      expect(responseData.code).toBe(ErrorCode.CONTEXT_NOT_FOUND);
       expect(responseData.message).toBe('Context not found');
       expect(responseData.context).toMatchObject({ contextId: 'ctx-invalid' });
       expect(responseData.httpStatus).toBe(404);

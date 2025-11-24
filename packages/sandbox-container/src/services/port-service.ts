@@ -8,7 +8,11 @@ import type {
   PortNotExposedContext
 } from '@repo/shared/errors';
 import { ErrorCode } from '@repo/shared/errors';
-import type { PortInfo, ServiceResult } from '../core/types';
+import type {
+  PortInfo,
+  ProxyErrorResponse,
+  ServiceResult
+} from '../core/types';
 import { PortManager } from '../managers/port-manager';
 
 export interface SecurityService {
@@ -281,17 +285,15 @@ export class PortService {
       // Check if port is exposed
       const portInfo = await this.store.get(port);
       if (!portInfo) {
-        return new Response(
-          JSON.stringify({
-            error: 'Port not found',
-            message: `Port ${port} is not exposed`,
-            port
-          }),
-          {
-            status: 404,
-            headers: { 'Content-Type': 'application/json' }
-          }
-        );
+        const errorResponse: ProxyErrorResponse = {
+          error: 'Port not found',
+          message: `Port ${port} is not exposed`,
+          port
+        };
+        return new Response(JSON.stringify(errorResponse), {
+          status: 404,
+          headers: { 'Content-Type': 'application/json' }
+        });
       }
 
       // Parse proxy path using manager
@@ -323,17 +325,15 @@ export class PortService {
         { port }
       );
 
-      return new Response(
-        JSON.stringify({
-          error: 'Proxy error',
-          message: `Failed to proxy request to port ${port}: ${errorMessage}`,
-          port
-        }),
-        {
-          status: 502,
-          headers: { 'Content-Type': 'application/json' }
-        }
-      );
+      const errorResponse: ProxyErrorResponse = {
+        error: 'Proxy error',
+        message: `Failed to proxy request to port ${port}: ${errorMessage}`,
+        port
+      };
+      return new Response(JSON.stringify(errorResponse), {
+        status: 502,
+        headers: { 'Content-Type': 'application/json' }
+      });
     }
   }
 
