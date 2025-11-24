@@ -1,19 +1,11 @@
+import type { ExecuteRequest } from '@repo/shared';
 import { BaseHttpClient } from './base-client';
-import type {
-  BaseApiResponse,
-  HttpClientOptions,
-  SessionRequest
-} from './types';
+import type { BaseApiResponse } from './types';
 
 /**
  * Request interface for command execution
  */
-export interface ExecuteRequest extends SessionRequest {
-  command: string;
-  timeoutMs?: number;
-  env?: Record<string, string>;
-  cwd?: string;
-}
+export type { ExecuteRequest };
 
 /**
  * Response interface for command execution
@@ -109,8 +101,8 @@ export class CommandClient extends BaseHttpClient {
         ...(options?.timeoutMs !== undefined && {
           timeoutMs: options.timeoutMs
         }),
-        ...(options?.env && { env: options.env }),
-        ...(options?.cwd && { cwd: options.cwd })
+        ...(options?.env !== undefined && { env: options.env }),
+        ...(options?.cwd !== undefined && { cwd: options.cwd })
       };
 
       const response = await this.doFetch('/api/execute/stream', {

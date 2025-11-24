@@ -53,9 +53,9 @@ export class ProcessClient extends BaseHttpClient {
         ...(options?.timeoutMs !== undefined && {
           timeoutMs: options.timeoutMs
         }),
-        ...(options?.env && { env: options.env }),
-        ...(options?.cwd && { cwd: options.cwd }),
-        ...(options?.encoding && { encoding: options.encoding }),
+        ...(options?.env !== undefined && { env: options.env }),
+        ...(options?.cwd !== undefined && { cwd: options.cwd }),
+        ...(options?.encoding !== undefined && { encoding: options.encoding }),
         ...(options?.autoCleanup !== undefined && {
           autoCleanup: options.autoCleanup
         })

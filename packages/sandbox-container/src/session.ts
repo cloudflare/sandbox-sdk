@@ -652,67 +652,22 @@ export class Session {
         .join('\n');
     };
 
-    const sanitizeIdentifier = (value: string) =>
-      value.replace(/[^A-Za-z0-9_]/g, '_');
+    const { setup: envSetupBlock, cleanup: envCleanupBlock } =
+      this.buildScopedEnvBlocks(env, cmdId, { restore: !isBackground });
 
-    let envSetupBlock = '';
-    let envCleanupBlock = '';
+    const hasScopedEnv = envSetupBlock.length > 0;
 
-    if (env && Object.keys(env).length > 0) {
-      const setupLines: string[] = [];
-      const cleanupLines: string[] = [];
-      const cmdSuffix = sanitizeIdentifier(cmdId);
-
-      Object.entries(env).forEach(([key, value], index) => {
-        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
-          throw new Error(`Invalid environment variable name: ${key}`);
-        }
-
-        const escapedValue = value.replace(/'/g, "'\\''");
-        const stateSuffix = `${cmdSuffix}_${index}`;
-        const hasVar = `__SANDBOX_HAS_${stateSuffix}`;
-        const prevVar = `__SANDBOX_PREV_${stateSuffix}`;
-
-        setupLines.push(`  ${hasVar}=0`);
-        setupLines.push(`  if [ "\${${key}+x}" = "x" ]; then`);
-        setupLines.push(`    ${hasVar}=1`);
-        setupLines.push(`    ${prevVar}=$(printf '%q' "\${${key}}")`);
-        setupLines.push('  fi');
-        setupLines.push(`  export ${key}='${escapedValue}'`);
-
-        cleanupLines.push(`  if [ "$${hasVar}" = "1" ]; then`);
-        cleanupLines.push(`    eval "export ${key}=$${prevVar}"`);
-        cleanupLines.push('  else');
-        cleanupLines.push(`    unset ${key}`);
-        cleanupLines.push('  fi');
-        cleanupLines.push(`  unset ${hasVar} ${prevVar}`);
-      });
-
-      envSetupBlock = setupLines.join('\n');
-      envCleanupBlock = cleanupLines.join('\n');
-    }
-
-    const hasScopedEnv = env && Object.keys(env).length > 0;
-
-    const buildCommandBlock = (exitVar: string): string => {
+    const buildCommandBlock = (exitVar: string, indent: number): string => {
       const lines: string[] = [];
-      if (hasScopedEnv && envSetupBlock) {
+      if (hasScopedEnv) {
         lines.push(envSetupBlock);
       }
       lines.push(`  ${command}`);
       lines.push(`  ${exitVar}=$?`);
-      if (hasScopedEnv && envCleanupBlock) {
+      if (envCleanupBlock) {
         lines.push(envCleanupBlock);
       }
-      return lines.join('\n');
-    };
-
-    const buildCommandSection = (exitVar: string, indent: number): string => {
-      if (hasScopedEnv) {
-        return `${indentLines(buildCommandBlock(exitVar), indent)}\n`;
-      }
-      const padding = ' '.repeat(indent);
-      return `${padding}${command}\n${padding}${exitVar}=$?\n`;
+      return indentLines(lines.join('\n'), indent);
     };
 
     // Build the FIFO script
@@ -760,7 +715,7 @@ export class Session {
         script += `  if cd ${safeCwd}; then\n`;
         script += `    # Execute command in BACKGROUND (runs in subshell, enables concurrency)\n`;
         script += `    {\n`;
-        script += `${indentLines(buildCommandBlock('CMD_EXIT'), 6)}\n`;
+        script += `${buildCommandBlock('CMD_EXIT', 6)}\n`;
         script += `      # Write exit code\n`;
         script += `      echo "$CMD_EXIT" > ${safeExitCodeFile}.tmp\n`;
         script += `      mv ${safeExitCodeFile}.tmp ${safeExitCodeFile}\n`;
@@ -783,7 +738,7 @@ export class Session {
       } else {
         script += `  # Execute command in BACKGROUND (runs in subshell, enables concurrency)\n`;
         script += `  {\n`;
-        script += `${indentLines(buildCommandBlock('CMD_EXIT'), 4)}\n`;
+        script += `${buildCommandBlock('CMD_EXIT', 4)}\n`;
         script += `    # Write exit code\n`;
         script += `    echo "$CMD_EXIT" > ${safeExitCodeFile}.tmp\n`;
         script += `    mv ${safeExitCodeFile}.tmp ${safeExitCodeFile}\n`;
@@ -813,7 +768,7 @@ export class Session {
         script += `  if cd ${safeCwd}; then\n`;
         script += `    # Execute command, redirect to temp files\n`;
         script += `    {\n`;
-        script += `${indentLines(buildCommandBlock('EXIT_CODE'), 6)}\n`;
+        script += `${buildCommandBlock('EXIT_CODE', 6)}\n`;
         script += `    } < /dev/null > "$log.stdout" 2> "$log.stderr"\n`;
         script += `    # Restore directory\n`;
         script += `    cd "$PREV_DIR"\n`;
@@ -824,7 +779,7 @@ export class Session {
       } else {
         script += `  # Execute command, redirect to temp files\n`;
         script += `  {\n`;
-        script += `${indentLines(buildCommandBlock('EXIT_CODE'), 4)}\n`;
+        script += `${buildCommandBlock('EXIT_CODE', 4)}\n`;
         script += `  } < /dev/null > "$log.stdout" 2> "$log.stderr"\n`;
       }
 
@@ -849,6 +804,58 @@ export class Session {
     script += `}`;
 
     return script;
+  }
+
+  private buildScopedEnvBlocks(
+    env: Record<string, string> | undefined,
+    cmdId: string,
+    options: { restore: boolean }
+  ): { setup: string; cleanup: string } {
+    if (!env || Object.keys(env).length === 0) {
+      return { setup: '', cleanup: '' };
+    }
+
+    const sanitizeIdentifier = (value: string) =>
+      value.replace(/[^A-Za-z0-9_]/g, '_');
+
+    const setupLines: string[] = [];
+    const cleanupLines: string[] = [];
+    const cmdSuffix = sanitizeIdentifier(cmdId);
+
+    Object.entries(env).forEach(([key, value], index) => {
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+        throw new Error(`Invalid environment variable name: ${key}`);
+      }
+
+      const escapedValue = value.replace(/'/g, "'\\''");
+
+      if (options.restore) {
+        const stateSuffix = `${cmdSuffix}_${index}`;
+        const hasVar = `__SANDBOX_HAS_${stateSuffix}`;
+        const prevVar = `__SANDBOX_PREV_${stateSuffix}`;
+
+        setupLines.push(`  ${hasVar}=0`);
+        setupLines.push(`  if [ "\${${key}+x}" = "x" ]; then`);
+        setupLines.push(`    ${hasVar}=1`);
+        setupLines.push(`    ${prevVar}=$(printf '%q' "\${${key}}")`);
+        setupLines.push('  fi');
+        setupLines.push(`  export ${key}='${escapedValue}'`);
+
+        cleanupLines.push(`  if [ "$${hasVar}" = "1" ]; then`);
+        cleanupLines.push(`    eval "export ${key}=$${prevVar}"`);
+        cleanupLines.push('  else');
+        cleanupLines.push(`    unset ${key}`);
+        cleanupLines.push('  fi');
+        cleanupLines.push(`  unset ${hasVar} ${prevVar}`);
+      } else {
+        setupLines.push(`  export ${key}='${escapedValue}'`);
+      }
+    });
+
+    return {
+      setup: setupLines.join('\n'),
+      cleanup: options.restore ? cleanupLines.join('\n') : ''
+    };
   }
 
   /**

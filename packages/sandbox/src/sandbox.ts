@@ -1253,11 +1253,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     try {
       const session = sessionId ?? (await this.ensureDefaultSession());
       const requestOptions = {
-        ...(options?.processId && { processId: options.processId }),
+        ...(options?.processId !== undefined && {
+          processId: options.processId
+        }),
         ...(options?.timeout !== undefined && { timeoutMs: options.timeout }),
-        ...(options?.env && { env: options.env }),
-        ...(options?.cwd && { cwd: options.cwd }),
-        ...(options?.encoding && { encoding: options.encoding }),
+        ...(options?.env !== undefined && { env: options.env }),
+        ...(options?.cwd !== undefined && { cwd: options.cwd }),
+        ...(options?.encoding !== undefined && { encoding: options.encoding }),
         ...(options?.autoCleanup !== undefined && {
           autoCleanup: options.autoCleanup
         })
