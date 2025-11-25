@@ -1064,6 +1064,9 @@ export class FileService implements FileSystemOperations {
 
   /**
    * Get file metadata
+   * Optimized for scenarios where you need file characteristics
+   * (size, type, encoding) before processing, without the overhead
+   * of reading potentially large files. Used by readFileStreamOperation.
    */
   async getFileMetadata(
     path: string,

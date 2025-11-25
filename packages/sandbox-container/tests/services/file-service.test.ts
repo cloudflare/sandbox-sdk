@@ -1144,4 +1144,222 @@ describe('FileService', () => {
       }
     });
   });
+
+  describe('readFileStreamOperation', () => {
+    it('should stream file using getFileMetadata without reading entire content upfront', async () => {
+      const testPath = '/tmp/large-file.txt';
+      const fileSize = 100000; // 100KB file
+      const chunkSize = 65535;
+      const chunkContent = 'A'.repeat(chunkSize);
+
+      // Mock exists check (from getFileMetadata)
+      mocked(mockSessionManager.executeInSession).mockResolvedValueOnce({
+        success: true,
+        data: { exitCode: 0, stdout: '', stderr: '' }
+      } as ServiceResult<RawExecResult>);
+
+      // Mock stat command (from getFileMetadata)
+      mocked(mockSessionManager.executeInSession).mockResolvedValueOnce({
+        success: true,
+        data: { exitCode: 0, stdout: fileSize.toString(), stderr: '' }
+      } as ServiceResult<RawExecResult>);
+
+      // Mock MIME type detection (from getFileMetadata)
+      mocked(mockSessionManager.executeInSession).mockResolvedValueOnce({
+        success: true,
+        data: { exitCode: 0, stdout: 'text/plain', stderr: '' }
+      } as ServiceResult<RawExecResult>);
+
+      // Mock dd chunk reads (2 chunks for 100KB file with 65KB chunk size)
+      // First chunk
+      mocked(mockSessionManager.executeInSession).mockResolvedValueOnce({
+        success: true,
+        data: { exitCode: 0, stdout: chunkContent, stderr: '' }
+      } as ServiceResult<RawExecResult>);
+
+      // Second chunk (remaining ~35KB)
+      const secondChunkContent = 'B'.repeat(fileSize - chunkSize);
+      mocked(mockSessionManager.executeInSession).mockResolvedValueOnce({
+        success: true,
+        data: { exitCode: 0, stdout: secondChunkContent, stderr: '' }
+      } as ServiceResult<RawExecResult>);
+
+      // Get the stream
+      const stream = await fileService.readFileStreamOperation(
+        testPath,
+        'session-123'
+      );
+
+      // Read all stream data
+      const reader = stream.getReader();
+      const decoder = new TextDecoder();
+      const events: string[] = [];
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        events.push(decoder.decode(value));
+      }
+
+      // Parse SSE events
+      const allData = events.join('');
+      const sseEvents = allData
+        .split('\n\n')
+        .filter((e) => e.startsWith('data: '))
+        .map((e) => JSON.parse(e.replace('data: ', '')));
+
+      // Verify metadata event was sent first
+      expect(sseEvents[0]).toEqual({
+        type: 'metadata',
+        mimeType: 'text/plain',
+        size: fileSize,
+        isBinary: false,
+        encoding: 'utf-8'
+      });
+
+      // Verify chunk events
+      expect(sseEvents[1]).toEqual({
+        type: 'chunk',
+        data: chunkContent
+      });
+      expect(sseEvents[2]).toEqual({
+        type: 'chunk',
+        data: secondChunkContent
+      });
+
+      // Verify complete event
+      expect(sseEvents[sseEvents.length - 1]).toEqual({
+        type: 'complete',
+        bytesRead: fileSize
+      });
+
+      // CRITICAL: Verify the commands that were called
+      // Should be: exists, stat, mime, dd chunk 1, dd chunk 2
+      // NO cat or base64 full-file read!
+      const calls = mocked(mockSessionManager.executeInSession).mock.calls;
+      expect(calls.length).toBe(5);
+
+      // Verify metadata calls (no full file read)
+      expect(calls[0][1]).toBe("test -e '/tmp/large-file.txt'");
+      expect(calls[1][1]).toBe(
+        "stat -c '%s' '/tmp/large-file.txt' 2>/dev/null"
+      );
+      expect(calls[2][1]).toBe("file --mime-type -b '/tmp/large-file.txt'");
+
+      // Verify dd chunk commands (NOT cat or base64 full file read)
+      expect(calls[3][1]).toContain('dd if=');
+      expect(calls[3][1]).toContain('skip=0');
+      expect(calls[4][1]).toContain('dd if=');
+      expect(calls[4][1]).toContain('skip=1');
+
+      // Explicitly verify NO full file read commands were called
+      const allCommands = calls.map((c) => c[1]);
+      expect(
+        allCommands.some((cmd) => cmd === "cat '/tmp/large-file.txt'")
+      ).toBe(false);
+      expect(
+        allCommands.some((cmd) => cmd === "base64 -w 0 < '/tmp/large-file.txt'")
+      ).toBe(false);
+    });
+
+    it('should stream binary files with base64 chunk encoding', async () => {
+      const testPath = '/tmp/image.png';
+      const fileSize = 1024;
+      const base64Chunk = 'iVBORw0KGgoAAAANSUhEUg=='; // Sample base64
+
+      // Mock exists check
+      mocked(mockSessionManager.executeInSession).mockResolvedValueOnce({
+        success: true,
+        data: { exitCode: 0, stdout: '', stderr: '' }
+      } as ServiceResult<RawExecResult>);
+
+      // Mock stat command
+      mocked(mockSessionManager.executeInSession).mockResolvedValueOnce({
+        success: true,
+        data: { exitCode: 0, stdout: fileSize.toString(), stderr: '' }
+      } as ServiceResult<RawExecResult>);
+
+      // Mock MIME type detection - binary
+      mocked(mockSessionManager.executeInSession).mockResolvedValueOnce({
+        success: true,
+        data: { exitCode: 0, stdout: 'image/png', stderr: '' }
+      } as ServiceResult<RawExecResult>);
+
+      // Mock dd chunk read with base64
+      mocked(mockSessionManager.executeInSession).mockResolvedValueOnce({
+        success: true,
+        data: { exitCode: 0, stdout: base64Chunk, stderr: '' }
+      } as ServiceResult<RawExecResult>);
+
+      const stream = await fileService.readFileStreamOperation(
+        testPath,
+        'session-123'
+      );
+
+      // Read stream
+      const reader = stream.getReader();
+      const decoder = new TextDecoder();
+      const events: string[] = [];
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        events.push(decoder.decode(value));
+      }
+
+      const allData = events.join('');
+      const sseEvents = allData
+        .split('\n\n')
+        .filter((e) => e.startsWith('data: '))
+        .map((e) => JSON.parse(e.replace('data: ', '')));
+
+      // Verify metadata indicates binary
+      expect(sseEvents[0]).toEqual({
+        type: 'metadata',
+        mimeType: 'image/png',
+        size: fileSize,
+        isBinary: true,
+        encoding: 'base64'
+      });
+
+      // Verify dd command uses base64 pipe for binary files
+      const calls = mocked(mockSessionManager.executeInSession).mock.calls;
+      expect(calls[3][1]).toContain('dd if=');
+      expect(calls[3][1]).toContain('| base64 -w 0');
+    });
+
+    it('should return error event when file does not exist', async () => {
+      // Mock exists check returning false
+      mocked(mockSessionManager.executeInSession).mockResolvedValueOnce({
+        success: true,
+        data: { exitCode: 1, stdout: '', stderr: '' }
+      } as ServiceResult<RawExecResult>);
+
+      const stream = await fileService.readFileStreamOperation(
+        '/tmp/nonexistent.txt',
+        'session-123'
+      );
+
+      // Read stream
+      const reader = stream.getReader();
+      const decoder = new TextDecoder();
+      const events: string[] = [];
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        events.push(decoder.decode(value));
+      }
+
+      const allData = events.join('');
+      const sseEvents = allData
+        .split('\n\n')
+        .filter((e) => e.startsWith('data: '))
+        .map((e) => JSON.parse(e.replace('data: ', '')));
+
+      // Should have error event
+      expect(sseEvents[0].type).toBe('error');
+      expect(sseEvents[0].error).toContain('File not found');
+    });
+  });
 });
