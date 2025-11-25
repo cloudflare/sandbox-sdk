@@ -12,7 +12,7 @@ export interface InterpreterProcess {
   process: ChildProcess;
   sessionId?: string;
   lastUsed: Date;
-  isAvailable: boolean;
+  executionPromise?: Promise<ExecutionResult>;
   exitHandler?: (code: number | null, signal: NodeJS.Signals | null) => void;
 }
 
@@ -174,15 +174,28 @@ export class ProcessPoolManager {
         );
       }
 
-      // Prevent concurrent execution on same context
-      if (!contextExecutor.isAvailable) {
+      // Prevent concurrent execution on same context using promise-based locking
+      if (contextExecutor.executionPromise) {
         throw new Error(
           `Context ${sessionId} is currently executing code. Wait for completion or use a different context.`
         );
       }
-      contextExecutor.isAvailable = false;
 
-      process = contextExecutor;
+      // Create and store execution promise (atomic lock acquisition)
+      const executionPromise = this.executeInProcess(
+        contextExecutor,
+        code,
+        totalStartTime,
+        timeout
+      );
+      contextExecutor.executionPromise = executionPromise;
+
+      try {
+        return await executionPromise;
+      } finally {
+        // Release lock
+        contextExecutor.executionPromise = undefined;
+      }
     } else {
       // No context - use unassigned executor from available pool
       const available = this.availableExecutors.get(language) || [];
@@ -199,40 +212,39 @@ export class ProcessPoolManager {
         this.availableExecutors.set(language, available);
       }
 
-      // Mark executor as available=true since it goes back to pool after execution
-      process.isAvailable = true;
+      // Execute directly without locking (transient executor)
+      return this.executeInProcess(process, code, totalStartTime, timeout);
     }
+  }
 
+  private async executeInProcess(
+    process: InterpreterProcess,
+    code: string,
+    totalStartTime: number,
+    timeout?: number
+  ): Promise<ExecutionResult> {
     const processAcquireTime = Date.now() - totalStartTime;
     const executionId = randomUUID();
 
-    // Mark as busy
-    process.isAvailable = false;
+    const execStartTime = Date.now();
+    const effectiveTimeout = timeout ?? CONFIG.INTERPRETER_EXECUTION_TIMEOUT_MS;
+    const result = await this.executeCode(
+      process,
+      code,
+      executionId,
+      effectiveTimeout
+    );
+    const execTime = Date.now() - execStartTime;
+    const totalTime = Date.now() - totalStartTime;
 
-    try {
-      const execStartTime = Date.now();
-      const effectiveTimeout =
-        timeout ?? CONFIG.INTERPRETER_EXECUTION_TIMEOUT_MS;
-      const result = await this.executeCode(
-        process,
-        code,
-        executionId,
-        effectiveTimeout
-      );
-      const execTime = Date.now() - execStartTime;
-      const totalTime = Date.now() - totalStartTime;
+    this.logger.debug('Code execution complete', {
+      processAcquireTime,
+      execTime,
+      totalTime,
+      language: process.language
+    });
 
-      this.logger.debug('Code execution complete', {
-        processAcquireTime,
-        execTime,
-        totalTime,
-        language
-      });
-      return result;
-    } finally {
-      // Mark as available again (still owned by context if sessionId)
-      process.isAvailable = true;
-    }
+    return result;
   }
 
   private async createProcess(
@@ -300,8 +312,7 @@ export class ProcessPoolManager {
       language,
       process: childProcess,
       sessionId,
-      lastUsed: new Date(),
-      isAvailable: false
+      lastUsed: new Date()
     };
 
     // Register exit handler for cleanup (prevents memory leaks)
@@ -500,7 +511,6 @@ export class ProcessPoolManager {
 
     // Assign executor to context
     executor.sessionId = contextId;
-    executor.isAvailable = true; // Available for execution, but owned by context
 
     // Track in contextExecutors map
     this.contextExecutors.set(contextId, executor);
@@ -671,7 +681,6 @@ export class ProcessPoolManager {
     language: InterpreterLanguage
   ): Promise<void> {
     const executor = await this.createProcess(language, undefined);
-    executor.isAvailable = true;
 
     // Add to available pool
     const available = this.availableExecutors.get(language) || [];
