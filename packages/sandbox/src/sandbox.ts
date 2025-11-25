@@ -1679,14 +1679,21 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       .toLowerCase();
 
     // Ensure token doesn't end with hyphen (RFC 952/1123 requirement)
-    // Replace trailing hyphens with alphanumeric chars from the token
-    while (token.endsWith('-')) {
-      token = token.slice(0, -1) + token.charAt(Math.floor(Math.random() * (token.length - 1)));
+    // Replace trailing/leading hyphens with alphanumeric chars only
+    const alphanumericChars = token.replace(/-/g, '').split('');
+    if (alphanumericChars.length === 0) {
+      // Edge case: token is all hyphens, regenerate
+      return this.generatePortToken();
     }
 
-    // Ensure token doesn't start with hyphen
+    while (token.endsWith('-')) {
+      const randomChar = alphanumericChars[Math.floor(Math.random() * alphanumericChars.length)];
+      token = token.slice(0, -1) + randomChar;
+    }
+
     while (token.startsWith('-')) {
-      token = token.charAt(Math.floor(Math.random() * (token.length - 1))) + token.slice(1);
+      const randomChar = alphanumericChars[Math.floor(Math.random() * alphanumericChars.length)];
+      token = randomChar + token.slice(1);
     }
 
     return token;
