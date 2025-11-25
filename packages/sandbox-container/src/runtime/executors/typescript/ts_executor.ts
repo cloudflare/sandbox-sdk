@@ -95,6 +95,15 @@ rl.on('line', async (line: string) => {
       }
 
       result = vm.runInContext(jsCode, context, options);
+
+      // If result is a Promise (thenable), await it
+      if (
+        result &&
+        typeof result === 'object' &&
+        typeof (result as any).then === 'function'
+      ) {
+        result = await (result as Promise<unknown>);
+      }
     } catch (error: unknown) {
       const err = error as Error;
       if (err.message?.includes('Transform failed')) {
