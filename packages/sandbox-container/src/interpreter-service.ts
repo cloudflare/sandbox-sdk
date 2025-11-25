@@ -66,6 +66,13 @@ export class InterpreterService {
     };
 
     this.contexts.set(id, context);
+
+    // Reserve dedicated executor for this context
+    await processPool.reserveExecutorForContext(
+      id,
+      language as InterpreterLanguage
+    );
+
     return context;
   }
 
@@ -74,9 +81,16 @@ export class InterpreterService {
   }
 
   async deleteContext(contextId: string): Promise<void> {
-    if (!this.contexts.has(contextId)) {
+    const context = this.contexts.get(contextId);
+    if (!context) {
       throw new Error(`Context ${contextId} not found`);
     }
+
+    // Release executor and terminate process
+    await processPool.releaseExecutorForContext(
+      contextId,
+      context.language as InterpreterLanguage
+    );
 
     this.contexts.delete(contextId);
   }

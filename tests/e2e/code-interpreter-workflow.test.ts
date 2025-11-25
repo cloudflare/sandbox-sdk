@@ -579,6 +579,45 @@ console.log('Sum:', sum);
     );
   }, 120000);
 
+  test('should maintain isolation across many contexts (12+)', async () => {
+    currentSandboxId = createSandboxId();
+    const headers = createTestHeaders(currentSandboxId);
+
+    // Create 12 contexts and execute same code that declares a variable
+    for (let i = 0; i < 12; i++) {
+      const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ language: 'javascript' })
+      });
+
+      expect(ctxResponse.status).toBe(200);
+      const context = (await ctxResponse.json()) as CodeContext;
+
+      const execResponse = await fetch(`${workerUrl}/api/code/execute`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          code: 'const value = 2;',
+          options: { context }
+        })
+      });
+
+      expect(execResponse.status).toBe(200);
+      const execution = (await execResponse.json()) as ExecutionResult;
+      expect(
+        execution.error,
+        `Context ${i + 1} should not have error`
+      ).toBeUndefined();
+
+      // Clean up immediately
+      await fetch(`${workerUrl}/api/code/context/${context.id}`, {
+        method: 'DELETE',
+        headers
+      });
+    }
+  }, 120000);
+
   // ============================================================================
   // Error Handling
   // ============================================================================
