@@ -368,6 +368,190 @@ describe('Code Interpreter Workflow (E2E)', () => {
   }, 120000);
 
   // ============================================================================
+  // Async/Await Promise Handling (Issue #206)
+  // ============================================================================
+
+  test('should resolve async IIFE and return the value', async () => {
+    currentSandboxId = createSandboxId();
+    const headers = createTestHeaders(currentSandboxId);
+
+    // Create JavaScript context
+    const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ language: 'javascript' })
+    });
+
+    const context = await ctxResponse.json();
+
+    // Execute async IIFE that returns a value
+    const execResponse = await fetch(`${workerUrl}/api/code/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        code: '(async () => { return 42; })()',
+        options: { context }
+      })
+    });
+
+    expect(execResponse.status).toBe(200);
+    const execution = (await execResponse.json()) as ExecutionResult;
+
+    expect(execution.error).toBeUndefined();
+    expect(execution.results).toBeDefined();
+    expect(execution.results.length).toBeGreaterThan(0);
+    // The result should be 42, not an empty object {}
+    const resultData = execution.results[0];
+    expect(resultData.json).toBe(42);
+  }, 120000);
+
+  test('should resolve Promise.resolve() and return the value', async () => {
+    currentSandboxId = createSandboxId();
+    const headers = createTestHeaders(currentSandboxId);
+
+    // Create JavaScript context
+    const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ language: 'javascript' })
+    });
+
+    const context = await ctxResponse.json();
+
+    // Execute Promise.resolve
+    const execResponse = await fetch(`${workerUrl}/api/code/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        code: 'Promise.resolve({ status: "success", value: 123 })',
+        options: { context }
+      })
+    });
+
+    expect(execResponse.status).toBe(200);
+    const execution = (await execResponse.json()) as ExecutionResult;
+
+    expect(execution.error).toBeUndefined();
+    expect(execution.results).toBeDefined();
+    expect(execution.results.length).toBeGreaterThan(0);
+    // The result should be the resolved object, not {}
+    const resultData = execution.results[0];
+    expect(resultData.json).toEqual({ status: 'success', value: 123 });
+  }, 120000);
+
+  test('should handle nested async operations', async () => {
+    currentSandboxId = createSandboxId();
+    const headers = createTestHeaders(currentSandboxId);
+
+    // Create JavaScript context
+    const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ language: 'javascript' })
+    });
+
+    const context = await ctxResponse.json();
+
+    // Execute nested async code
+    const execResponse = await fetch(`${workerUrl}/api/code/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        code: `
+(async () => {
+  const a = await Promise.resolve(10);
+  const b = await Promise.resolve(20);
+  return a + b;
+})()
+`.trim(),
+        options: { context }
+      })
+    });
+
+    expect(execResponse.status).toBe(200);
+    const execution = (await execResponse.json()) as ExecutionResult;
+
+    expect(execution.error).toBeUndefined();
+    expect(execution.results).toBeDefined();
+    expect(execution.results.length).toBeGreaterThan(0);
+    // The result should be 30
+    const resultData = execution.results[0];
+    expect(resultData.json).toBe(30);
+  }, 120000);
+
+  test('should still handle synchronous code correctly', async () => {
+    currentSandboxId = createSandboxId();
+    const headers = createTestHeaders(currentSandboxId);
+
+    // Create JavaScript context
+    const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ language: 'javascript' })
+    });
+
+    const context = await ctxResponse.json();
+
+    // Execute synchronous code
+    const execResponse = await fetch(`${workerUrl}/api/code/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        code: '({ sum: 1 + 2 + 3, product: 2 * 3 * 4 })',
+        options: { context }
+      })
+    });
+
+    expect(execResponse.status).toBe(200);
+    const execution = (await execResponse.json()) as ExecutionResult;
+
+    expect(execution.error).toBeUndefined();
+    expect(execution.results).toBeDefined();
+    expect(execution.results.length).toBeGreaterThan(0);
+    const resultData = execution.results[0];
+    expect(resultData.json).toEqual({ sum: 6, product: 24 });
+  }, 120000);
+
+  test('should resolve TypeScript async code', async () => {
+    currentSandboxId = createSandboxId();
+    const headers = createTestHeaders(currentSandboxId);
+
+    // Create TypeScript context
+    const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ language: 'typescript' })
+    });
+
+    const context = await ctxResponse.json();
+
+    // Execute TypeScript async code
+    const execResponse = await fetch(`${workerUrl}/api/code/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        code: `
+(async (): Promise<number> => {
+  const value: number = await Promise.resolve(100);
+  return value * 2;
+})()
+`.trim(),
+        options: { context }
+      })
+    });
+
+    expect(execResponse.status).toBe(200);
+    const execution = (await execResponse.json()) as ExecutionResult;
+
+    expect(execution.error).toBeUndefined();
+    expect(execution.results).toBeDefined();
+    expect(execution.results.length).toBeGreaterThan(0);
+    // The result should be 200
+    const resultData = execution.results[0];
+    expect(resultData.json).toBe(200);
+  }, 120000);
+
+  // ============================================================================
   // Streaming Execution
   // ============================================================================
 
