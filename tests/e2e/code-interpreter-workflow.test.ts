@@ -632,13 +632,24 @@ console.log('Sum:', sum);
     expect(ctxResponse.status).toBe(200);
     const context = (await ctxResponse.json()) as CodeContext;
 
-    // Launch 3 concurrent executions on the same context
+    // Set up initial state with a counter variable
+    const setupResponse = await fetch(`${workerUrl}/api/code/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        code: 'let counter = 0;',
+        options: { context }
+      })
+    });
+    expect(setupResponse.status).toBe(200);
+
+    // Launch 3 concurrent executions that all try to increment the counter
     const results = await Promise.allSettled([
       fetch(`${workerUrl}/api/code/execute`, {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          code: 'let x = 1; for(let i = 0; i < 1000000; i++) { x += i; } x;',
+          code: 'counter++; for(let i = 0; i < 1000000; i++) {} counter;',
           options: { context }
         })
       }).then((r) => r.json()),
@@ -646,7 +657,7 @@ console.log('Sum:', sum);
         method: 'POST',
         headers,
         body: JSON.stringify({
-          code: 'let y = 2; for(let i = 0; i < 1000000; i++) { y += i; } y;',
+          code: 'counter++; for(let i = 0; i < 1000000; i++) {} counter;',
           options: { context }
         })
       }).then((r) => r.json()),
@@ -654,15 +665,16 @@ console.log('Sum:', sum);
         method: 'POST',
         headers,
         body: JSON.stringify({
-          code: 'let z = 3; for(let i = 0; i < 1000000; i++) { z += i; } z;',
+          code: 'counter++; for(let i = 0; i < 1000000; i++) {} counter;',
           options: { context }
         })
       }).then((r) => r.json())
     ]);
 
-    // Count successful vs failed executions
+    // Analyze results
     let successCount = 0;
     let concurrentErrorCount = 0;
+    let successfulResult: number | null = null;
 
     for (const result of results) {
       if (result.status === 'fulfilled') {
@@ -676,13 +688,25 @@ console.log('Sum:', sum);
           }
         } else {
           successCount++;
+          // Extract the counter value from successful execution results
+          if (execution.results && execution.results.length > 0) {
+            const resultText = execution.results[0].text;
+            if (resultText) {
+              const match = resultText.match(/\d+/);
+              if (match) successfulResult = parseInt(match[0], 10);
+            }
+          }
         }
       }
     }
 
-    // Exactly one should succeed, others should fail with concurrent execution error
+    // Verify: exactly 1 succeeded, 2 failed with concurrent execution error
     expect(successCount).toBe(1);
     expect(concurrentErrorCount).toBe(2);
+
+    // Verify state isolation: counter should be 1 (only one increment)
+    // If all 3 ran concurrently, we'd see 2 or 3, proving state corruption
+    expect(successfulResult).toBe(1);
 
     // Clean up
     await fetch(`${workerUrl}/api/code/context/${context.id}`, {

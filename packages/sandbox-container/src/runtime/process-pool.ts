@@ -174,14 +174,12 @@ export class ProcessPoolManager {
         );
       }
 
-      // Prevent concurrent execution on same context (atomic check-and-set)
+      // Prevent concurrent execution on same context
       if (!contextExecutor.isAvailable) {
         throw new Error(
           `Context ${sessionId} is currently executing code. Wait for completion or use a different context.`
         );
       }
-
-      // Immediately mark as busy to prevent race conditions
       contextExecutor.isAvailable = false;
 
       process = contextExecutor;
