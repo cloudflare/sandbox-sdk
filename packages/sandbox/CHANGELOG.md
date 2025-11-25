@@ -1,5 +1,11 @@
 # @cloudflare/sandbox
 
+## 0.5.4
+
+### Patch Changes
+
+- [#243](https://github.com/cloudflare/sandbox-sdk/pull/243) [`32a0dab`](https://github.com/cloudflare/sandbox-sdk/commit/32a0dab89375aa238a97b9d213234236fd364195) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - add getFileMetadata method in FileService to get only metadata
+
 ## 0.5.3
 
 ### Patch Changes
