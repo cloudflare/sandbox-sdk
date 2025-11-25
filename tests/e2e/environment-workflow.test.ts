@@ -311,7 +311,7 @@ describe('Environment Variables Workflow', () => {
       });
 
       expect(perCommandResponse.status).toBe(200);
-      const perCommandData = await perCommandResponse.json();
+      const perCommandData = (await perCommandResponse.json()) as ExecResult;
       expect(perCommandData.success).toBe(true);
       expect(perCommandData.stdout.trim()).toBe('CMD=scoped-value');
 
@@ -324,7 +324,7 @@ describe('Environment Variables Workflow', () => {
       });
 
       expect(verifyResponse.status).toBe(200);
-      const verifyData = await verifyResponse.json();
+      const verifyData = (await verifyResponse.json()) as ExecResult;
       expect(verifyData.success).toBe(true);
       expect(verifyData.stdout.trim()).toBe('CMD=');
     }, 90000);
@@ -353,7 +353,7 @@ describe('Environment Variables Workflow', () => {
       });
 
       expect(cwdResponse.status).toBe(200);
-      const cwdData = await cwdResponse.json();
+      const cwdData = (await cwdResponse.json()) as ExecResult;
       expect(cwdData.success).toBe(true);
       expect(cwdData.stdout.trim()).toBe('/workspace/custom-dir');
 
@@ -366,7 +366,7 @@ describe('Environment Variables Workflow', () => {
       });
 
       expect(defaultResponse.status).toBe(200);
-      const defaultData = await defaultResponse.json();
+      const defaultData = (await defaultResponse.json()) as ExecResult;
       expect(defaultData.success).toBe(true);
       expect(defaultData.stdout.trim()).toBe('/workspace');
     }, 90000);
