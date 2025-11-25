@@ -643,24 +643,10 @@ console.log('Sum:', sum);
     });
     expect(setupResponse.status).toBe(200);
 
-    // Launch 3 concurrent executions that all try to increment the counter
-    const results = await Promise.allSettled([
-      fetch(`${workerUrl}/api/code/execute`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          code: 'counter++; for(let i = 0; i < 1000000; i++) {} counter;',
-          options: { context }
-        })
-      }).then((r) => r.json()),
-      fetch(`${workerUrl}/api/code/execute`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          code: 'counter++; for(let i = 0; i < 1000000; i++) {} counter;',
-          options: { context }
-        })
-      }).then((r) => r.json()),
+    // Launch 20 concurrent executions that all try to increment the counter
+    // This stress tests the locking mechanism under high concurrency
+    const concurrentRequests = 20;
+    const requests = Array.from({ length: concurrentRequests }, () =>
       fetch(`${workerUrl}/api/code/execute`, {
         method: 'POST',
         headers,
@@ -669,7 +655,9 @@ console.log('Sum:', sum);
           options: { context }
         })
       }).then((r) => r.json())
-    ]);
+    );
+
+    const results = await Promise.allSettled(requests);
 
     // Analyze results
     let successCount = 0;
@@ -700,12 +688,12 @@ console.log('Sum:', sum);
       }
     }
 
-    // Verify: exactly 1 succeeded, 2 failed with concurrent execution error
+    // Verify: exactly 1 succeeded, all others failed with concurrent execution error
     expect(successCount).toBe(1);
-    expect(concurrentErrorCount).toBe(2);
+    expect(concurrentErrorCount).toBe(concurrentRequests - 1);
 
     // Verify state isolation: counter should be 1 (only one increment)
-    // If all 3 ran concurrently, we'd see 2 or 3, proving state corruption
+    // If multiple ran concurrently, we'd see higher values, proving state corruption
     expect(successfulResult).toBe(1);
 
     // Clean up
