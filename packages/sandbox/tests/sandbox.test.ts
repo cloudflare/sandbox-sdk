@@ -797,7 +797,7 @@ describe('Sandbox - Automatic Session Management', () => {
       });
 
       expect(result.url).toMatch(
-        /^https:\/\/8080-my-project-[a-z0-9_-]{16}\.example\.com\/?$/
+        /^https:\/\/8080-my-project-[a-z0-9-]{16}\.example\.com\/?$/
       );
       expect(result.port).toBe(8080);
     });
@@ -815,7 +815,7 @@ describe('Sandbox - Automatic Session Management', () => {
       const result = await sandbox.exposePort(4000, { hostname: 'my-app.dev' });
 
       expect(result.url).toMatch(
-        /^https:\/\/4000-myproject-123-[a-z0-9_-]{16}\.my-app\.dev\/?$/
+        /^https:\/\/4000-myproject-123-[a-z0-9-]{16}\.my-app\.dev\/?$/
       );
       expect(result.port).toBe(4000);
     });
@@ -835,7 +835,7 @@ describe('Sandbox - Automatic Session Management', () => {
       });
 
       expect(result.url).toMatch(
-        /^http:\/\/8080-test-sandbox-[a-z0-9_-]{16}\.localhost:3000\/?$/
+        /^http:\/\/8080-test-sandbox-[a-z0-9-]{16}\.localhost:3000\/?$/
       );
     });
 
@@ -854,6 +854,39 @@ describe('Sandbox - Automatic Session Management', () => {
       ).rejects.toThrow(
         /getSandbox\(ns, "MyProject-ABC", \{ normalizeId: true \}\)/
       );
+    });
+
+    it('should generate DNS-valid tokens without underscores (RFC 952/1123)', async () => {
+      await sandbox.setSandboxName('test-sandbox', false);
+
+      vi.spyOn(sandbox.client.ports, 'exposePort').mockResolvedValue({
+        success: true,
+        port: 8080,
+        url: '',
+        timestamp: '2023-01-01T00:00:00Z'
+      });
+
+      // Generate multiple URLs to test token generation
+      const results = await Promise.all([
+        sandbox.exposePort(8080, { hostname: 'example.com' }),
+        sandbox.exposePort(8081, { hostname: 'example.com' }),
+        sandbox.exposePort(8082, { hostname: 'example.com' })
+      ]);
+
+      for (const result of results) {
+        const url = result.url;
+        const hostname = new URL(url).hostname;
+
+        // Extract token from hostname pattern: port-sandboxId-token.domain
+        const match = hostname.match(/^(\d{4,5})-([^.-][^.]*?[^.-]|[^.-])-([a-z0-9-]{16})\.(.+)$/);
+        expect(match).toBeTruthy();
+
+        const token = match![3];
+        // RFC 952/1123: hostnames can only contain alphanumeric and hyphens
+        expect(token).toMatch(/^[a-z0-9-]+$/);
+        expect(token).not.toContain('_');
+        expect(token.length).toBe(16);
+      }
     });
   });
 

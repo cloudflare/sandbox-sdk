@@ -1655,10 +1655,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     crypto.getRandomValues(array);
 
     // Convert to base64url format (URL-safe, no padding, lowercase)
+    // Use hyphen for both + and / to ensure DNS hostname compatibility (RFC 952/1123)
     const base64 = btoa(String.fromCharCode(...array));
     return base64
       .replace(/\+/g, '-')
-      .replace(/\//g, '_')
+      .replace(/\//g, '-')
       .replace(/=/g, '')
       .toLowerCase();
   }
