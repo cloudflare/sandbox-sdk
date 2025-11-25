@@ -1256,13 +1256,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         ...(options?.processId !== undefined && {
           processId: options.processId
         }),
-        ...(options?.timeout !== undefined && { timeoutMs: options.timeout }),
         ...(options?.env !== undefined && { env: options.env }),
-        ...(options?.cwd !== undefined && { cwd: options.cwd }),
-        ...(options?.encoding !== undefined && { encoding: options.encoding }),
-        ...(options?.autoCleanup !== undefined && {
-          autoCleanup: options.autoCleanup
-        })
+        ...(options?.cwd !== undefined && { cwd: options.cwd })
       };
 
       const response = await this.client.processes.startProcess(
@@ -1389,7 +1384,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     const session = await this.ensureDefaultSession();
     // Get the stream from CommandClient
     return this.client.commands.executeStream(command, session, {
-      timeoutMs: options?.timeout,
       env: options?.env,
       cwd: options?.cwd
     });

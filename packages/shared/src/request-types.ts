@@ -26,11 +26,8 @@ export interface StartProcessRequest {
   command: string;
   sessionId?: string;
   processId?: string;
-  timeoutMs?: number;
   env?: Record<string, string>;
   cwd?: string;
-  encoding?: string;
-  autoCleanup?: boolean;
 }
 
 /**

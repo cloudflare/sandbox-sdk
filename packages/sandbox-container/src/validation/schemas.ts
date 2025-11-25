@@ -5,11 +5,8 @@ import { z } from 'zod';
 export const ProcessOptionsSchema = z.object({
   sessionId: z.string().optional(),
   processId: z.string().optional(),
-  timeoutMs: z.number().positive().optional(),
   env: z.record(z.string()).optional(),
-  cwd: z.string().optional(),
-  encoding: z.string().optional(),
-  autoCleanup: z.boolean().optional()
+  cwd: z.string().optional()
 });
 
 // Execute request schema
@@ -76,11 +73,8 @@ export const StartProcessRequestSchema = z.object({
   command: z.string().min(1, 'Command cannot be empty'),
   sessionId: z.string().optional(),
   processId: z.string().optional(),
-  timeoutMs: z.number().positive().optional(),
   env: z.record(z.string()).optional(),
-  cwd: z.string().optional(),
-  encoding: z.string().optional(),
-  autoCleanup: z.boolean().optional()
+  cwd: z.string().optional()
 });
 
 // Port management schemas

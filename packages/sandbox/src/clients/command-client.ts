@@ -89,7 +89,6 @@ export class CommandClient extends BaseHttpClient {
     command: string,
     sessionId: string,
     options?: {
-      timeoutMs?: number;
       env?: Record<string, string>;
       cwd?: string;
     }
@@ -98,9 +97,6 @@ export class CommandClient extends BaseHttpClient {
       const data = {
         command,
         sessionId,
-        ...(options?.timeoutMs !== undefined && {
-          timeoutMs: options.timeoutMs
-        }),
         ...(options?.env !== undefined && { env: options.env }),
         ...(options?.cwd !== undefined && { cwd: options.cwd })
       };

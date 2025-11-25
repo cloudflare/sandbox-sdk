@@ -8,11 +8,6 @@ import type {
 // Base execution options shared across command types
 export interface BaseExecOptions {
   /**
-   * Maximum execution time in milliseconds
-   */
-  timeout?: number;
-
-  /**
    * Environment variables for this command invocation.
    * Values temporarily override session-level/container-level env for the
    * duration of the command but do not persist after it completes.
@@ -23,15 +18,15 @@ export interface BaseExecOptions {
    * Working directory for command execution
    */
   cwd?: string;
-
-  /**
-   * Text encoding for output (default: 'utf8')
-   */
-  encoding?: string;
 }
 
 // Command execution types
 export interface ExecOptions extends BaseExecOptions {
+  /**
+   * Maximum execution time in milliseconds
+   */
+  timeout?: number;
+
   /**
    * Enable real-time output streaming via callbacks
    */
@@ -107,11 +102,6 @@ export interface ProcessOptions extends BaseExecOptions {
    * If not provided, a UUID will be generated
    */
   processId?: string;
-
-  /**
-   * Automatically cleanup process record after exit (default: true)
-   */
-  autoCleanup?: boolean;
 
   /**
    * Callback when process exits
