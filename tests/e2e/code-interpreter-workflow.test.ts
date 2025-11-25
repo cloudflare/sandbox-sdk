@@ -384,12 +384,12 @@ describe('Code Interpreter Workflow (E2E)', () => {
 
     const context = await ctxResponse.json();
 
-    // Execute async IIFE that returns a value
+    // Execute async IIFE that returns a value (wrapped in object for json output)
     const execResponse = await fetch(`${workerUrl}/api/code/execute`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        code: '(async () => { return 42; })()',
+        code: '(async () => { return { value: 42 }; })()',
         options: { context }
       })
     });
@@ -400,9 +400,9 @@ describe('Code Interpreter Workflow (E2E)', () => {
     expect(execution.error).toBeUndefined();
     expect(execution.results).toBeDefined();
     expect(execution.results.length).toBeGreaterThan(0);
-    // The result should be 42, not an empty object {}
+    // The result should be { value: 42 }, not an empty object {}
     const resultData = execution.results[0];
-    expect(resultData.json).toBe(42);
+    expect(resultData.json).toEqual({ value: 42 });
   }, 120000);
 
   test('should resolve Promise.resolve() and return the value', async () => {
@@ -452,7 +452,7 @@ describe('Code Interpreter Workflow (E2E)', () => {
 
     const context = await ctxResponse.json();
 
-    // Execute nested async code
+    // Execute nested async code (wrapped in object for json output)
     const execResponse = await fetch(`${workerUrl}/api/code/execute`, {
       method: 'POST',
       headers,
@@ -461,7 +461,7 @@ describe('Code Interpreter Workflow (E2E)', () => {
 (async () => {
   const a = await Promise.resolve(10);
   const b = await Promise.resolve(20);
-  return a + b;
+  return { sum: a + b };
 })()
 `.trim(),
         options: { context }
@@ -474,9 +474,9 @@ describe('Code Interpreter Workflow (E2E)', () => {
     expect(execution.error).toBeUndefined();
     expect(execution.results).toBeDefined();
     expect(execution.results.length).toBeGreaterThan(0);
-    // The result should be 30
+    // The result should be { sum: 30 }
     const resultData = execution.results[0];
-    expect(resultData.json).toBe(30);
+    expect(resultData.json).toEqual({ sum: 30 });
   }, 120000);
 
   test('should still handle synchronous code correctly', async () => {
@@ -525,15 +525,15 @@ describe('Code Interpreter Workflow (E2E)', () => {
 
     const context = await ctxResponse.json();
 
-    // Execute TypeScript async code
+    // Execute TypeScript async code (wrapped in object for json output)
     const execResponse = await fetch(`${workerUrl}/api/code/execute`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
         code: `
-(async (): Promise<number> => {
+(async (): Promise<{ result: number }> => {
   const value: number = await Promise.resolve(100);
-  return value * 2;
+  return { result: value * 2 };
 })()
 `.trim(),
         options: { context }
@@ -546,9 +546,9 @@ describe('Code Interpreter Workflow (E2E)', () => {
     expect(execution.error).toBeUndefined();
     expect(execution.results).toBeDefined();
     expect(execution.results.length).toBeGreaterThan(0);
-    // The result should be 200
+    // The result should be { result: 200 }
     const resultData = execution.results[0];
-    expect(resultData.json).toBe(200);
+    expect(resultData.json).toEqual({ result: 200 });
   }, 120000);
 
   test('should handle Promise.reject() and report the error', async () => {
