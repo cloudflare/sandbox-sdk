@@ -618,6 +618,79 @@ console.log('Sum:', sum);
     }
   }, 120000);
 
+  test('should prevent concurrent execution on same context', async () => {
+    currentSandboxId = createSandboxId();
+    const headers = createTestHeaders(currentSandboxId);
+
+    // Create single context
+    const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ language: 'javascript' })
+    });
+
+    expect(ctxResponse.status).toBe(200);
+    const context = (await ctxResponse.json()) as CodeContext;
+
+    // Launch 3 concurrent executions on the same context
+    const results = await Promise.allSettled([
+      fetch(`${workerUrl}/api/code/execute`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          code: 'let x = 1; for(let i = 0; i < 1000000; i++) { x += i; } x;',
+          options: { context }
+        })
+      }).then((r) => r.json()),
+      fetch(`${workerUrl}/api/code/execute`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          code: 'let y = 2; for(let i = 0; i < 1000000; i++) { y += i; } y;',
+          options: { context }
+        })
+      }).then((r) => r.json()),
+      fetch(`${workerUrl}/api/code/execute`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          code: 'let z = 3; for(let i = 0; i < 1000000; i++) { z += i; } z;',
+          options: { context }
+        })
+      }).then((r) => r.json())
+    ]);
+
+    // Count successful vs failed executions
+    let successCount = 0;
+    let concurrentErrorCount = 0;
+
+    for (const result of results) {
+      if (result.status === 'fulfilled') {
+        const execution = result.value as ExecutionResult;
+        if (execution.error) {
+          if (
+            execution.error.message?.includes('currently executing') ||
+            execution.error.message?.includes('Context is currently executing')
+          ) {
+            concurrentErrorCount++;
+          }
+        } else {
+          successCount++;
+        }
+      }
+    }
+
+    // Exactly one should succeed, others should fail with concurrent execution error
+    expect(successCount).toBe(1);
+    expect(concurrentErrorCount).toBe(2);
+
+    // Clean up
+    await fetch(`${workerUrl}/api/code/context/${context.id}`, {
+      method: 'DELETE',
+      headers
+    });
+  }, 60000);
+
   // ============================================================================
   // Error Handling
   // ============================================================================

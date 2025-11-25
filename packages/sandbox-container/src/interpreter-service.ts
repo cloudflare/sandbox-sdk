@@ -65,15 +65,21 @@ export class InterpreterService {
       lastUsed: new Date().toISOString()
     };
 
-    this.contexts.set(id, context);
+    try {
+      // Reserve dedicated executor for this context
+      await processPool.reserveExecutorForContext(
+        id,
+        language as InterpreterLanguage
+      );
 
-    // Reserve dedicated executor for this context
-    await processPool.reserveExecutorForContext(
-      id,
-      language as InterpreterLanguage
-    );
+      // Only add to map after successful reservation
+      this.contexts.set(id, context);
 
-    return context;
+      return context;
+    } catch (error) {
+      // Executor reservation failed, don't add context to map
+      throw error;
+    }
   }
 
   async listContexts(): Promise<Context[]> {
@@ -86,11 +92,25 @@ export class InterpreterService {
       throw new Error(`Context ${contextId} not found`);
     }
 
-    // Release executor and terminate process
-    await processPool.releaseExecutorForContext(
-      contextId,
-      context.language as InterpreterLanguage
-    );
+    try {
+      // Release executor and terminate process
+      await processPool.releaseExecutorForContext(
+        contextId,
+        context.language as InterpreterLanguage
+      );
+    } catch (error) {
+      // Always remove context from map even if release fails
+      this.contexts.delete(contextId);
+      this.logger.error(
+        'Failed to release executor for context',
+        error as Error,
+        {
+          contextId,
+          language: context.language
+        }
+      );
+      throw error;
+    }
 
     this.contexts.delete(contextId);
   }

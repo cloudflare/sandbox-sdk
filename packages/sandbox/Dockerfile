@@ -172,7 +172,7 @@ COPY --from=prod-deps /app/node_modules ./node_modules
 COPY --from=prod-deps /app/packages/shared/dist ./packages/shared/dist
 COPY --from=prod-deps /app/packages/shared/package.json ./packages/shared/package.json
 
-# Configure process pool sizes (minimum only - no maximum)
+# Configure process pool sizes (minimum only)
 ENV PYTHON_POOL_MIN_SIZE=3
 ENV JAVASCRIPT_POOL_MIN_SIZE=3
 ENV TYPESCRIPT_POOL_MIN_SIZE=3

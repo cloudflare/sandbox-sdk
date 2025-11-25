@@ -13,6 +13,7 @@ export interface InterpreterProcess {
   sessionId?: string;
   lastUsed: Date;
   isAvailable: boolean;
+  exitHandler?: (code: number | null, signal: NodeJS.Signals | null) => void;
 }
 
 export interface ExecutionResult {
@@ -45,6 +46,7 @@ export interface RichOutput {
 }
 
 export interface PoolConfig {
+  maxProcesses?: number;
   idleTimeout: number; // milliseconds
   minSize: number;
 }
@@ -60,16 +62,19 @@ const DEFAULT_EXECUTOR_CONFIGS: Record<
   python: {
     executor: 'python',
     minSize: 3,
+    maxProcesses: undefined, // unlimited by default
     idleTimeout: 5 * 60 * 1000 // 5 minutes
   },
   javascript: {
     executor: 'javascript',
     minSize: 3,
+    maxProcesses: undefined, // unlimited by default
     idleTimeout: 5 * 60 * 1000
   },
   typescript: {
     executor: 'typescript',
     minSize: 3,
+    maxProcesses: undefined, // unlimited by default
     idleTimeout: 5 * 60 * 1000
   }
 };
@@ -102,6 +107,7 @@ export class ProcessPoolManager {
     for (const [executor, defaultConfig] of executorEntries) {
       const userConfig = customConfigs[executor] || {};
       const envMinSize = process.env[`${executor.toUpperCase()}_POOL_MIN_SIZE`];
+      const envMaxSize = process.env[`${executor.toUpperCase()}_POOL_MAX_SIZE`];
 
       const config: ExecutorPoolConfig = {
         ...defaultConfig,
@@ -109,7 +115,12 @@ export class ProcessPoolManager {
         // Environment variables override user config override defaults
         minSize: envMinSize
           ? parseInt(envMinSize, 10)
-          : userConfig.minSize || defaultConfig.minSize
+          : userConfig.minSize || defaultConfig.minSize,
+        maxProcesses: envMaxSize
+          ? parseInt(envMaxSize, 10)
+          : userConfig.maxProcesses !== undefined
+            ? userConfig.maxProcesses
+            : defaultConfig.maxProcesses
       };
 
       this.poolConfigs.set(executor, config);
@@ -156,12 +167,22 @@ export class ProcessPoolManager {
         );
       }
 
-      // Prevent concurrent execution on same context
+      // Validate language matches
+      if (contextExecutor.language !== language) {
+        throw new Error(
+          `Context ${sessionId} was created for ${contextExecutor.language}, cannot execute ${language} code`
+        );
+      }
+
+      // Prevent concurrent execution on same context (atomic check-and-set)
       if (!contextExecutor.isAvailable) {
         throw new Error(
           `Context ${sessionId} is currently executing code. Wait for completion or use a different context.`
         );
       }
+
+      // Immediately mark as busy to prevent race conditions
+      contextExecutor.isAvailable = false;
 
       process = contextExecutor;
     } else {
@@ -220,6 +241,19 @@ export class ProcessPoolManager {
     language: InterpreterLanguage,
     sessionId?: string
   ): Promise<InterpreterProcess> {
+    // Enforce per-language process limit if configured
+    const config = this.poolConfigs.get(language)!;
+    const pool = this.pools.get(language)!;
+
+    if (
+      config.maxProcesses !== undefined &&
+      pool.length >= config.maxProcesses
+    ) {
+      throw new Error(
+        `Maximum ${language} executor limit reached (${config.maxProcesses}). Cannot create new executor.`
+      );
+    }
+
     const startTime = Date.now();
     const id = randomUUID();
     let command: string;
@@ -273,7 +307,10 @@ export class ProcessPoolManager {
     };
 
     // Register exit handler for cleanup (prevents memory leaks)
-    childProcess.once('exit', (code, signal) => {
+    const exitHandler = (
+      code: number | null,
+      signal: NodeJS.Signals | null
+    ) => {
       this.logger.warn('Executor process exited unexpectedly', {
         language,
         processId: id,
@@ -298,7 +335,10 @@ export class ProcessPoolManager {
         const index = available.indexOf(interpreterProcess);
         if (index > -1) available.splice(index, 1);
       }
-    });
+    };
+
+    interpreterProcess.exitHandler = exitHandler;
+    childProcess.once('exit', exitHandler);
 
     return new Promise((resolve, reject) => {
       let readyBuffer = '';
@@ -488,6 +528,11 @@ export class ProcessPoolManager {
 
     // Remove from context ownership map
     this.contextExecutors.delete(contextId);
+
+    // Remove exit handler to prevent memory leak
+    if (executor.exitHandler) {
+      executor.process.removeListener('exit', executor.exitHandler);
+    }
 
     // Terminate the executor process immediately
     executor.process.kill();
