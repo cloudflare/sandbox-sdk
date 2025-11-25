@@ -34,13 +34,31 @@ export class ProcessClient extends BaseHttpClient {
   async startProcess(
     command: string,
     sessionId: string,
-    options?: { processId?: string }
+    options?: {
+      processId?: string;
+      timeoutMs?: number;
+      env?: Record<string, string>;
+      cwd?: string;
+      encoding?: string;
+      autoCleanup?: boolean;
+    }
   ): Promise<ProcessStartResult> {
     try {
       const data: StartProcessRequest = {
         command,
         sessionId,
-        processId: options?.processId
+        ...(options?.processId !== undefined && {
+          processId: options.processId
+        }),
+        ...(options?.timeoutMs !== undefined && {
+          timeoutMs: options.timeoutMs
+        }),
+        ...(options?.env !== undefined && { env: options.env }),
+        ...(options?.cwd !== undefined && { cwd: options.cwd }),
+        ...(options?.encoding !== undefined && { encoding: options.encoding }),
+        ...(options?.autoCleanup !== undefined && {
+          autoCleanup: options.autoCleanup
+        })
       };
 
       const response = await this.post<ProcessStartResult>(

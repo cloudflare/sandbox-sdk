@@ -280,7 +280,11 @@ console.log('Terminal server on port ' + port);
 
       // Command execution
       if (url.pathname === '/api/execute' && request.method === 'POST') {
-        const result = await executor.exec(body.command);
+        const result = await executor.exec(body.command, {
+          env: body.env,
+          cwd: body.cwd,
+          timeout: body.timeout
+        });
         return new Response(JSON.stringify(result), {
           headers: { 'Content-Type': 'application/json' }
         });
@@ -293,7 +297,11 @@ console.log('Terminal server on port ' + port);
           body.command
         );
         const startTime = Date.now();
-        const stream = await executor.execStream(body.command);
+        const stream = await executor.execStream(body.command, {
+          env: body.env,
+          cwd: body.cwd,
+          timeout: body.timeout
+        });
         console.log(
           '[TestWorker] Stream received in',
           Date.now() - startTime,
@@ -479,7 +487,9 @@ console.log('Terminal server on port ' + port);
 
       // Process start
       if (url.pathname === '/api/process/start' && request.method === 'POST') {
-        const process = await executor.startProcess(body.command);
+        const process = await executor.startProcess(body.command, {
+          processId: body.processId
+        });
         return new Response(JSON.stringify(process), {
           headers: { 'Content-Type': 'application/json' }
         });

@@ -14,6 +14,8 @@ export interface ExecuteRequest {
   sessionId?: string;
   background?: boolean;
   timeoutMs?: number;
+  env?: Record<string, string>;
+  cwd?: string;
 }
 
 /**

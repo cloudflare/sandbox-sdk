@@ -151,6 +151,82 @@ describe('Session', () => {
       expect(result2.stdout.trim()).toContain('subdir');
     });
 
+    it('should scope per-command environment variables', async () => {
+      const result = await session.exec('printenv TEMP_CMD_VAR', {
+        env: { TEMP_CMD_VAR: 'scoped-value' }
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout.trim()).toBe('scoped-value');
+
+      const verify = await session.exec('printenv TEMP_CMD_VAR');
+      expect(verify.exitCode).not.toBe(0);
+    });
+
+    it('should reject invalid per-command environment variable names', async () => {
+      await expect(
+        session.exec('pwd', {
+          env: { 'INVALID-NAME': 'value' }
+        })
+      ).rejects.toThrow(/Invalid environment variable name/);
+    });
+
+    it('should safely handle env values with shell special chars', async () => {
+      const result = await session.exec('echo "$SPECIAL"', {
+        env: { SPECIAL: '$(whoami) `date` $PATH' }
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout.trim()).toBe('$(whoami) `date` $PATH');
+    });
+
+    it('should handle env values with quotes', async () => {
+      const result = await session.exec('echo "$QUOTED"', {
+        env: { QUOTED: "it's got 'quotes'" }
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout.trim()).toBe("it's got 'quotes'");
+    });
+
+    it('should restore existing env vars with special characters', async () => {
+      await session.destroy();
+      session = new Session({
+        id: 'test-exec',
+        cwd: testDir,
+        env: { RESTORE_VAR: '$(whoami) $PATH' }
+      });
+      await session.initialize();
+
+      const initial = await session.exec('echo "$RESTORE_VAR"');
+      expect(initial.exitCode).toBe(0);
+      expect(initial.stdout.trim()).toBe('$(whoami) $PATH');
+
+      const overrideResult = await session.exec('echo "$RESTORE_VAR"', {
+        env: { RESTORE_VAR: 'temporary-value' }
+      });
+      expect(overrideResult.exitCode).toBe(0);
+      expect(overrideResult.stdout.trim()).toBe('temporary-value');
+
+      const restoredResult = await session.exec('echo "$RESTORE_VAR"');
+      expect(restoredResult.exitCode).toBe(0);
+      expect(restoredResult.stdout.trim()).toBe('$(whoami) $PATH');
+    });
+
+    it('should restore overridden environment variables', async () => {
+      await session.exec('export EXISTING="original"');
+
+      const overrideResult = await session.exec('echo "$EXISTING"', {
+        env: { EXISTING: 'temp' }
+      });
+      expect(overrideResult.exitCode).toBe(0);
+      expect(overrideResult.stdout.trim()).toBe('temp');
+
+      const restoredResult = await session.exec('echo "$EXISTING"');
+      expect(restoredResult.exitCode).toBe(0);
+      expect(restoredResult.stdout.trim()).toBe('original');
+    });
+
     it('should override cwd temporarily when option provided', async () => {
       // Create a subdirectory
       await session.exec('mkdir -p tempdir');

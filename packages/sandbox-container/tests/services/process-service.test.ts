@@ -108,7 +108,8 @@ describe('ProcessService', () => {
         'default', // sessionId
         'echo "hello world"',
         '/tmp', // cwd
-        undefined // timeoutMs (not provided in options)
+        undefined, // timeoutMs (not provided in options)
+        undefined // env (not provided in options)
       );
     });
 
@@ -180,7 +181,7 @@ describe('ProcessService', () => {
         'session-123',
         'sleep 10',
         expect.any(Function), // event handler callback
-        '/tmp',
+        expect.objectContaining({ cwd: '/tmp' }),
         expect.any(String) // commandId (generated dynamically)
       );
 

@@ -13,7 +13,9 @@ export interface BaseExecOptions {
   timeout?: number;
 
   /**
-   * Environment variables for the command
+   * Environment variables for this command invocation.
+   * Values temporarily override session-level/container-level env for the
+   * duration of the command but do not persist after it completes.
    */
   env?: Record<string, string>;
 
@@ -870,6 +872,9 @@ export interface ISandbox {
     repoUrl: string,
     options?: { branch?: string; targetDir?: string }
   ): Promise<GitCheckoutResult>;
+
+  // Environment management
+  setEnvVars(envVars: Record<string, string>): Promise<void>;
 
   // Bucket mounting operations
   mountBucket(

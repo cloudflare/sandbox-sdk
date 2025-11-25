@@ -1,17 +1,11 @@
+import type { ExecuteRequest } from '@repo/shared';
 import { BaseHttpClient } from './base-client';
-import type {
-  BaseApiResponse,
-  HttpClientOptions,
-  SessionRequest
-} from './types';
+import type { BaseApiResponse } from './types';
 
 /**
  * Request interface for command execution
  */
-export interface ExecuteRequest extends SessionRequest {
-  command: string;
-  timeoutMs?: number;
-}
+export type { ExecuteRequest };
 
 /**
  * Response interface for command execution
@@ -32,17 +26,27 @@ export class CommandClient extends BaseHttpClient {
    * @param command - The command to execute
    * @param sessionId - The session ID for this command execution
    * @param timeoutMs - Optional timeout in milliseconds (unlimited by default)
+   * @param env - Optional environment variables for this command
+   * @param cwd - Optional working directory for this command
    */
   async execute(
     command: string,
     sessionId: string,
-    timeoutMs?: number
+    options?: {
+      timeoutMs?: number;
+      env?: Record<string, string>;
+      cwd?: string;
+    }
   ): Promise<ExecuteResponse> {
     try {
       const data: ExecuteRequest = {
         command,
         sessionId,
-        ...(timeoutMs !== undefined && { timeoutMs })
+        ...(options?.timeoutMs !== undefined && {
+          timeoutMs: options.timeoutMs
+        }),
+        ...(options?.env !== undefined && { env: options.env }),
+        ...(options?.cwd !== undefined && { cwd: options.cwd })
       };
 
       const response = await this.post<ExecuteResponse>('/api/execute', data);
@@ -79,13 +83,27 @@ export class CommandClient extends BaseHttpClient {
    * Execute a command and return a stream of events
    * @param command - The command to execute
    * @param sessionId - The session ID for this command execution
+   * @param options - Optional per-command execution settings
    */
   async executeStream(
     command: string,
-    sessionId: string
+    sessionId: string,
+    options?: {
+      timeoutMs?: number;
+      env?: Record<string, string>;
+      cwd?: string;
+    }
   ): Promise<ReadableStream<Uint8Array>> {
     try {
-      const data = { command, sessionId };
+      const data = {
+        command,
+        sessionId,
+        ...(options?.timeoutMs !== undefined && {
+          timeoutMs: options.timeoutMs
+        }),
+        ...(options?.env !== undefined && { env: options.env }),
+        ...(options?.cwd !== undefined && { cwd: options.cwd })
+      };
 
       const response = await this.doFetch('/api/execute/stream', {
         method: 'POST',

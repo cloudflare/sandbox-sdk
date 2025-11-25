@@ -116,7 +116,8 @@ export class SessionManager {
     sessionId: string,
     command: string,
     cwd?: string,
-    timeoutMs?: number
+    timeoutMs?: number,
+    env?: Record<string, string>
   ): Promise<ServiceResult<RawExecResult>> {
     try {
       // Get or create session on demand
@@ -141,7 +142,10 @@ export class SessionManager {
 
       const session = sessionResult.data;
 
-      const result = await session.exec(command, cwd ? { cwd } : undefined);
+      const result = await session.exec(
+        command,
+        cwd || env ? { cwd, env } : undefined
+      );
 
       return {
         success: true,
@@ -187,10 +191,12 @@ export class SessionManager {
     sessionId: string,
     command: string,
     onEvent: (event: ExecEvent) => Promise<void>,
-    cwd: string | undefined,
+    options: { cwd?: string; env?: Record<string, string> } = {},
     commandId: string
   ): Promise<ServiceResult<{ continueStreaming: Promise<void> }>> {
     try {
+      const { cwd, env } = options;
+
       // Get or create session on demand
       let sessionResult = await this.getSession(sessionId);
 
@@ -215,7 +221,7 @@ export class SessionManager {
       const session = sessionResult.data;
 
       // Get async generator
-      const generator = session.execStream(command, { commandId, cwd });
+      const generator = session.execStream(command, { commandId, cwd, env });
 
       // CRITICAL: Await first event to ensure command is tracked before returning
       // This prevents race condition where killCommand() is called before trackCommand()

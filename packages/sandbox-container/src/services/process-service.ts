@@ -58,7 +58,8 @@ export class ProcessService {
         sessionId,
         command,
         options.cwd,
-        options.timeoutMs
+        options.timeoutMs,
+        options.env
       );
 
       if (!result.success) {
@@ -202,7 +203,10 @@ export class ProcessService {
             );
           }
         },
-        options.cwd,
+        {
+          cwd: options.cwd,
+          env: options.env
+        },
         processRecordData.id // Pass process ID as commandId for tracking and killing
       );
 
