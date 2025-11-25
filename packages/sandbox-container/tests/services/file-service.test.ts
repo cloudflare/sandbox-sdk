@@ -954,6 +954,128 @@ describe('FileService', () => {
     });
   });
 
+  describe('getFileMetadata', () => {
+    it('should return metadata without reading file content', async () => {
+      const testPath = '/tmp/large-file.bin';
+
+      // Mock exists check
+      mocked(mockSessionManager.executeInSession).mockResolvedValueOnce({
+        success: true,
+        data: { exitCode: 0, stdout: '', stderr: '' }
+      } as ServiceResult<RawExecResult>);
+
+      // Mock stat command (file size - simulating a large file)
+      mocked(mockSessionManager.executeInSession).mockResolvedValueOnce({
+        success: true,
+        data: { exitCode: 0, stdout: '50000000', stderr: '' } // 50MB file
+      } as ServiceResult<RawExecResult>);
+
+      // Mock MIME type detection
+      mocked(mockSessionManager.executeInSession).mockResolvedValueOnce({
+        success: true,
+        data: { exitCode: 0, stdout: 'application/octet-stream', stderr: '' }
+      } as ServiceResult<RawExecResult>);
+
+      const result = await fileService.getFileMetadata(testPath, 'session-123');
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.size).toBe(50000000);
+        expect(result.data.mimeType).toBe('application/octet-stream');
+        expect(result.data.isBinary).toBe(true);
+        expect(result.data.encoding).toBe('base64');
+      }
+
+      // CRITICAL: Verify only 3 calls were made (exists, stat, mime)
+      // NO cat or base64 command should be called
+      expect(mockSessionManager.executeInSession).toHaveBeenCalledTimes(3);
+
+      // Verify the commands that were called
+      expect(mockSessionManager.executeInSession).toHaveBeenNthCalledWith(
+        1,
+        'session-123',
+        "test -e '/tmp/large-file.bin'"
+      );
+      expect(mockSessionManager.executeInSession).toHaveBeenNthCalledWith(
+        2,
+        'session-123',
+        "stat -c '%s' '/tmp/large-file.bin' 2>/dev/null"
+      );
+      expect(mockSessionManager.executeInSession).toHaveBeenNthCalledWith(
+        3,
+        'session-123',
+        "file --mime-type -b '/tmp/large-file.bin'"
+      );
+    });
+
+    it('should detect text files correctly', async () => {
+      const testPath = '/tmp/document.json';
+
+      // Mock exists check
+      mocked(mockSessionManager.executeInSession).mockResolvedValueOnce({
+        success: true,
+        data: { exitCode: 0, stdout: '', stderr: '' }
+      } as ServiceResult<RawExecResult>);
+
+      // Mock stat command
+      mocked(mockSessionManager.executeInSession).mockResolvedValueOnce({
+        success: true,
+        data: { exitCode: 0, stdout: '1024', stderr: '' }
+      } as ServiceResult<RawExecResult>);
+
+      // Mock MIME type detection - JSON
+      mocked(mockSessionManager.executeInSession).mockResolvedValueOnce({
+        success: true,
+        data: { exitCode: 0, stdout: 'application/json', stderr: '' }
+      } as ServiceResult<RawExecResult>);
+
+      const result = await fileService.getFileMetadata(testPath, 'session-123');
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.size).toBe(1024);
+        expect(result.data.mimeType).toBe('application/json');
+        expect(result.data.isBinary).toBe(false);
+        expect(result.data.encoding).toBe('utf-8');
+      }
+
+      // Only 3 calls - no file content read
+      expect(mockSessionManager.executeInSession).toHaveBeenCalledTimes(3);
+    });
+
+    it('should return error when file does not exist', async () => {
+      // Mock exists check returning false
+      mocked(mockSessionManager.executeInSession).mockResolvedValue({
+        success: true,
+        data: { exitCode: 1, stdout: '', stderr: '' }
+      } as ServiceResult<RawExecResult>);
+
+      const result = await fileService.getFileMetadata('/tmp/nonexistent.txt');
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.code).toBe('FILE_NOT_FOUND');
+      }
+    });
+
+    it('should return error when security validation fails', async () => {
+      mocked(mockSecurityService.validatePath).mockReturnValue({
+        isValid: false,
+        errors: ['Path outside sandbox']
+      });
+
+      const result = await fileService.getFileMetadata('/etc/passwd');
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.code).toBe('VALIDATION_FAILED');
+      }
+
+      // Should not attempt any file operations
+      expect(mockSessionManager.executeInSession).not.toHaveBeenCalled();
+    });
+  });
+
   describe('stat', () => {
     it('should return file statistics successfully', async () => {
       const testPath = '/tmp/test.txt';

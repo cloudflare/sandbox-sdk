@@ -1062,6 +1062,176 @@ export class FileService implements FileSystemOperations {
     }
   }
 
+  /**
+   * Get file metadata
+   */
+  async getFileMetadata(
+    path: string,
+    sessionId = 'default'
+  ): Promise<ServiceResult<FileMetadata>> {
+    try {
+      // 1. Validate path for security
+      const validation = this.security.validatePath(path);
+      if (!validation.isValid) {
+        return {
+          success: false,
+          error: {
+            message: `Invalid path format for '${path}': ${validation.errors.join(', ')}`,
+            code: ErrorCode.VALIDATION_FAILED,
+            details: {
+              validationErrors: validation.errors.map((e) => ({
+                field: 'path',
+                message: e,
+                code: 'INVALID_PATH'
+              }))
+            } satisfies ValidationFailedContext
+          }
+        };
+      }
+
+      // 2. Check if file exists using session-aware check
+      const existsResult = await this.exists(path, sessionId);
+      if (!existsResult.success) {
+        return {
+          success: false,
+          error: existsResult.error
+        };
+      }
+
+      if (!existsResult.data) {
+        return {
+          success: false,
+          error: {
+            message: `File not found: ${path}`,
+            code: ErrorCode.FILE_NOT_FOUND,
+            details: {
+              path,
+              operation: Operation.FILE_READ
+            } satisfies FileNotFoundContext
+          }
+        };
+      }
+
+      // 3. Get file size using stat
+      const escapedPath = shellEscape(path);
+      const statCommand = `stat -c '%s' ${escapedPath} 2>/dev/null`;
+      const statResult = await this.sessionManager.executeInSession(
+        sessionId,
+        statCommand
+      );
+
+      if (!statResult.success) {
+        return {
+          success: false,
+          error: {
+            message: `Failed to get file size for '${path}'`,
+            code: ErrorCode.FILESYSTEM_ERROR,
+            details: {
+              path,
+              operation: Operation.FILE_READ,
+              stderr: 'Command execution failed'
+            } satisfies FileSystemContext
+          }
+        };
+      }
+
+      if (statResult.data.exitCode !== 0) {
+        return {
+          success: false,
+          error: {
+            message: `Failed to get file size for '${path}'`,
+            code: ErrorCode.FILESYSTEM_ERROR,
+            details: {
+              path,
+              operation: Operation.FILE_READ,
+              stderr: statResult.data.stderr
+            } satisfies FileSystemContext
+          }
+        };
+      }
+
+      const fileSize = parseInt(statResult.data.stdout.trim(), 10);
+
+      // 4. Detect MIME type using file command
+      const mimeCommand = `file --mime-type -b ${escapedPath}`;
+      const mimeResult = await this.sessionManager.executeInSession(
+        sessionId,
+        mimeCommand
+      );
+
+      if (!mimeResult.success) {
+        return {
+          success: false,
+          error: {
+            message: `Failed to detect MIME type for '${path}'`,
+            code: ErrorCode.FILESYSTEM_ERROR,
+            details: {
+              path,
+              operation: Operation.FILE_READ,
+              stderr: 'Command execution failed'
+            } satisfies FileSystemContext
+          }
+        };
+      }
+
+      if (mimeResult.data.exitCode !== 0) {
+        return {
+          success: false,
+          error: {
+            message: `Failed to detect MIME type for '${path}'`,
+            code: ErrorCode.FILESYSTEM_ERROR,
+            details: {
+              path,
+              operation: Operation.FILE_READ,
+              stderr: mimeResult.data.stderr
+            } satisfies FileSystemContext
+          }
+        };
+      }
+
+      const mimeType = mimeResult.data.stdout.trim();
+
+      // 5. Determine if file is binary based on MIME type
+      const isBinary =
+        !mimeType.startsWith('text/') &&
+        !mimeType.includes('json') &&
+        !mimeType.includes('xml') &&
+        !mimeType.includes('javascript') &&
+        !mimeType.includes('x-empty');
+
+      return {
+        success: true,
+        data: {
+          mimeType,
+          size: fileSize,
+          isBinary,
+          encoding: isBinary ? 'base64' : 'utf-8'
+        }
+      };
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error(
+        'Failed to get file metadata',
+        error instanceof Error ? error : undefined,
+        { path }
+      );
+
+      return {
+        success: false,
+        error: {
+          message: `Failed to get file metadata for '${path}': ${errorMessage}`,
+          code: ErrorCode.FILESYSTEM_ERROR,
+          details: {
+            path,
+            operation: Operation.FILE_READ,
+            stderr: errorMessage
+          } satisfies FileSystemContext
+        }
+      };
+    }
+  }
+
   // Convenience methods with ServiceResult wrapper for higher-level operations
 
   async readFile(
@@ -1382,7 +1552,7 @@ export class FileService implements FileSystemOperations {
       start: async (controller) => {
         try {
           // 1. Get file metadata
-          const metadataResult = await this.read(path, {}, sessionId);
+          const metadataResult = await this.getFileMetadata(path, sessionId);
 
           if (!metadataResult.success) {
             const errorEvent = {
@@ -1396,18 +1566,7 @@ export class FileService implements FileSystemOperations {
             return;
           }
 
-          const metadata = metadataResult.metadata;
-          if (!metadata) {
-            const errorEvent = {
-              type: 'error',
-              error: 'Failed to get file metadata'
-            };
-            controller.enqueue(
-              encoder.encode(`data: ${JSON.stringify(errorEvent)}\n\n`)
-            );
-            controller.close();
-            return;
-          }
+          const metadata = metadataResult.data;
 
           // 2. Send metadata event
           const metadataEvent = {

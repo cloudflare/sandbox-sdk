@@ -103,38 +103,7 @@ export class FileHandler extends BaseHandler<Request, Response> {
     const body = await this.parseRequestBody<ReadFileRequest>(request);
 
     try {
-      // Get file metadata first
-      const metadataResult = await this.fileService.readFile(body.path, {
-        encoding: 'utf-8'
-      });
-
-      if (!metadataResult.success) {
-        // Return error as SSE event
-        const encoder = new TextEncoder();
-        const errorEvent: FileStreamEvent = {
-          type: 'error',
-          error: metadataResult.error.message
-        };
-        const stream = new ReadableStream({
-          start(controller) {
-            controller.enqueue(
-              encoder.encode(`data: ${JSON.stringify(errorEvent)}\n\n`)
-            );
-            controller.close();
-          }
-        });
-
-        return new Response(stream, {
-          headers: {
-            'Content-Type': 'text/event-stream',
-            'Cache-Control': 'no-cache',
-            Connection: 'keep-alive',
-            ...context.corsHeaders
-          }
-        });
-      }
-
-      // Create SSE stream
+      // Create SSE stream (handles metadata fetching and errors internally)
       const stream = await this.fileService.readFileStreamOperation(
         body.path,
         body.sessionId
