@@ -98,6 +98,12 @@ export interface ExecResult {
 // Background process types
 export interface ProcessOptions extends BaseExecOptions {
   /**
+   * Maximum execution time in milliseconds
+   * Note: Only used by executeCommand (non-streaming exec), not by startProcess
+   */
+  timeout?: number;
+
+  /**
    * Custom process ID for later reference
    * If not provided, a UUID will be generated
    */

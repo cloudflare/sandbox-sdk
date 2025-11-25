@@ -1119,7 +1119,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         command,
         sessionId,
         {
-          timeoutMs: options.timeout,
           env: options.env,
           cwd: options.cwd
         }
@@ -1403,7 +1402,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
 
     return this.client.commands.executeStream(command, sessionId, {
-      timeoutMs: options?.timeout,
       env: options?.env,
       cwd: options?.cwd
     });

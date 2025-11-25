@@ -48,7 +48,6 @@ export class ExecuteHandler extends BaseHandler<Request, Response> {
         body.command,
         {
           sessionId,
-          timeoutMs: body.timeoutMs,
           env: body.env,
           cwd: body.cwd
         }

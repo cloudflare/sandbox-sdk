@@ -5,6 +5,7 @@ import { z } from 'zod';
 export const ProcessOptionsSchema = z.object({
   sessionId: z.string().optional(),
   processId: z.string().optional(),
+  timeoutMs: z.number().positive().optional(),
   env: z.record(z.string()).optional(),
   cwd: z.string().optional()
 });
