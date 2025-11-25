@@ -551,6 +551,125 @@ describe('Code Interpreter Workflow (E2E)', () => {
     expect(resultData.json).toBe(200);
   }, 120000);
 
+  test('should handle Promise.reject() and report the error', async () => {
+    currentSandboxId = createSandboxId();
+    const headers = createTestHeaders(currentSandboxId);
+
+    // Create JavaScript context
+    const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ language: 'javascript' })
+    });
+
+    const context = await ctxResponse.json();
+
+    // Execute Promise.reject
+    const execResponse = await fetch(`${workerUrl}/api/code/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        code: 'Promise.reject(new Error("Intentional rejection"))',
+        options: { context }
+      })
+    });
+
+    expect(execResponse.status).toBe(200);
+    const execution = (await execResponse.json()) as ExecutionResult;
+
+    // Should have an error from the rejected Promise
+    expect(execution.error).toBeDefined();
+    if (!execution.error) throw new Error('Expected error to be defined');
+
+    expect(
+      execution.error.message ||
+        execution.error.name ||
+        execution.logs.stderr.join('')
+    ).toMatch(/Intentional rejection|Error/i);
+  }, 120000);
+
+  test('should handle async function that throws an error', async () => {
+    currentSandboxId = createSandboxId();
+    const headers = createTestHeaders(currentSandboxId);
+
+    // Create JavaScript context
+    const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ language: 'javascript' })
+    });
+
+    const context = await ctxResponse.json();
+
+    // Execute async function that throws
+    const execResponse = await fetch(`${workerUrl}/api/code/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        code: `
+(async () => {
+  throw new Error("Async error thrown");
+})()
+`.trim(),
+        options: { context }
+      })
+    });
+
+    expect(execResponse.status).toBe(200);
+    const execution = (await execResponse.json()) as ExecutionResult;
+
+    // Should have an error from the thrown exception
+    expect(execution.error).toBeDefined();
+    if (!execution.error) throw new Error('Expected error to be defined');
+
+    expect(
+      execution.error.message ||
+        execution.error.name ||
+        execution.logs.stderr.join('')
+    ).toMatch(/Async error thrown|Error/i);
+  }, 120000);
+
+  test('should handle TypeScript async function that throws', async () => {
+    currentSandboxId = createSandboxId();
+    const headers = createTestHeaders(currentSandboxId);
+
+    // Create TypeScript context
+    const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ language: 'typescript' })
+    });
+
+    const context = await ctxResponse.json();
+
+    // Execute TypeScript async function that throws
+    const execResponse = await fetch(`${workerUrl}/api/code/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        code: `
+(async (): Promise<never> => {
+  throw new TypeError("TypeScript async error");
+})()
+`.trim(),
+        options: { context }
+      })
+    });
+
+    expect(execResponse.status).toBe(200);
+    const execution = (await execResponse.json()) as ExecutionResult;
+
+    // Should have an error from the thrown exception
+    expect(execution.error).toBeDefined();
+    if (!execution.error) throw new Error('Expected error to be defined');
+
+    expect(
+      execution.error.message ||
+        execution.error.name ||
+        execution.logs.stderr.join('')
+    ).toMatch(/TypeScript async error|TypeError|Error/i);
+  }, 120000);
+
   // ============================================================================
   // Streaming Execution
   // ============================================================================

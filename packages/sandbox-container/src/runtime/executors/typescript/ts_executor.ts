@@ -9,6 +9,22 @@ import * as vm from 'node:vm';
 import { transformSync } from 'esbuild';
 import type { RichOutput } from '../../process-pool';
 
+interface Thenable<T> {
+  then: (
+    onfulfilled?: (value: T) => unknown,
+    onrejected?: (reason: unknown) => unknown
+  ) => unknown;
+}
+
+function isThenable(value: unknown): value is Thenable<unknown> {
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    'then' in value &&
+    typeof (value as Thenable<unknown>).then === 'function'
+  );
+}
+
 // Create CommonJS-like globals for the sandbox
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -97,12 +113,8 @@ rl.on('line', async (line: string) => {
       result = vm.runInContext(jsCode, context, options);
 
       // If result is a Promise (thenable), await it
-      if (
-        result &&
-        typeof result === 'object' &&
-        typeof (result as any).then === 'function'
-      ) {
-        result = await (result as Promise<unknown>);
+      if (isThenable(result)) {
+        result = await result;
       }
     } catch (error: unknown) {
       const err = error as Error;
