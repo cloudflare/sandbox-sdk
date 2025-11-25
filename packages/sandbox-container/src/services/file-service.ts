@@ -160,6 +160,21 @@ export class FileService implements FileSystemOperations {
 
       const fileSize = parseInt(statResult.data.stdout.trim(), 10);
 
+      if (Number.isNaN(fileSize)) {
+        return {
+          success: false,
+          error: {
+            message: `Failed to parse file size for '${path}': invalid stat output`,
+            code: ErrorCode.FILESYSTEM_ERROR,
+            details: {
+              path,
+              operation: Operation.FILE_READ,
+              stderr: `Unexpected stat output: ${statResult.data.stdout}`
+            } satisfies FileSystemContext
+          }
+        };
+      }
+
       // 4. Detect MIME type using file command
       const mimeCommand = `file --mime-type -b ${escapedPath}`;
       const mimeResult = await this.sessionManager.executeInSession(
@@ -200,13 +215,7 @@ export class FileService implements FileSystemOperations {
       const mimeType = mimeResult.data.stdout.trim();
 
       // 5. Determine if file is binary based on MIME type
-      // Text MIME types: text/*, application/json, application/xml, application/javascript, etc.
-      const isBinary =
-        !mimeType.startsWith('text/') &&
-        !mimeType.includes('json') &&
-        !mimeType.includes('xml') &&
-        !mimeType.includes('javascript') &&
-        !mimeType.includes('x-empty');
+      const isBinary = this.isBinaryMimeType(mimeType);
 
       // 6. Read file with appropriate encoding
       // Respect user's encoding preference if provided, otherwise use MIME-based detection
@@ -1155,6 +1164,21 @@ export class FileService implements FileSystemOperations {
 
       const fileSize = parseInt(statResult.data.stdout.trim(), 10);
 
+      if (Number.isNaN(fileSize)) {
+        return {
+          success: false,
+          error: {
+            message: `Failed to parse file size for '${path}': invalid stat output`,
+            code: ErrorCode.FILESYSTEM_ERROR,
+            details: {
+              path,
+              operation: Operation.FILE_READ,
+              stderr: `Unexpected stat output: ${statResult.data.stdout}`
+            } satisfies FileSystemContext
+          }
+        };
+      }
+
       // 4. Detect MIME type using file command
       const mimeCommand = `file --mime-type -b ${escapedPath}`;
       const mimeResult = await this.sessionManager.executeInSession(
@@ -1195,12 +1219,7 @@ export class FileService implements FileSystemOperations {
       const mimeType = mimeResult.data.stdout.trim();
 
       // 5. Determine if file is binary based on MIME type
-      const isBinary =
-        !mimeType.startsWith('text/') &&
-        !mimeType.includes('json') &&
-        !mimeType.includes('xml') &&
-        !mimeType.includes('javascript') &&
-        !mimeType.includes('x-empty');
+      const isBinary = this.isBinaryMimeType(mimeType);
 
       return {
         success: true,
@@ -1537,6 +1556,20 @@ export class FileService implements FileSystemOperations {
       writable: (userPerms & 2) !== 0,
       executable: (userPerms & 1) !== 0
     };
+  }
+
+  /**
+   * Determine if a MIME type represents binary content.
+   * Text MIME types: text/*, application/json, application/xml, application/javascript, etc.
+   */
+  private isBinaryMimeType(mimeType: string): boolean {
+    return (
+      !mimeType.startsWith('text/') &&
+      !mimeType.includes('json') &&
+      !mimeType.includes('xml') &&
+      !mimeType.includes('javascript') &&
+      !mimeType.includes('x-empty')
+    );
   }
 
   /**
