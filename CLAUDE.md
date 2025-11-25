@@ -385,9 +385,10 @@ Note: Container isolation is handled at the Cloudflare platform level (VMs), not
 - **Beta releases**: Published automatically on every push to main (`@beta` tag on npm)
 - **Stable releases**: When changesets exist, the "Version Packages" PR is auto-created. Merging it triggers:
   1. Version bump in `package.json`
-  2. Docker image build and push to Docker Hub (multi-arch: amd64, arm64)
+  2. Docker image build and push to Docker Hub (linux/amd64 architecture only to match production)
   3. npm package publish with updated version
 - **Version synchronization**: Docker image version always matches npm package version (enforced via `ARG SANDBOX_VERSION` in Dockerfile)
+- **Architecture**: Images are built for linux/amd64 only, matching Cloudflare's production container runtime. ARM Mac users will automatically use emulation (Rosetta/QEMU) for local development, ensuring perfect dev/prod parity.
 
 **SDK version tracked in**: `packages/sandbox/src/version.ts`
 

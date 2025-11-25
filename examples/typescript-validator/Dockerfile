@@ -1,11 +1,6 @@
 # Use Cloudflare sandbox as base
 FROM docker.io/cloudflare/sandbox:0.5.3
 
-# On a mac, you might need to actively pick up the
-# arm64 build of the image.
-# FROM --platform=linux/arm64 cloudflare/sandbox-test:0.5.3
-
-
 # Install esbuild for TypeScript bundling
 RUN npm install -g esbuild
 
