@@ -877,6 +877,10 @@ describe('Sandbox - Automatic Session Management', () => {
         const url = result.url;
         const hostname = new URL(url).hostname;
 
+        // Validate full hostname RFC 952/1123 compliance
+        // Labels cannot start or end with hyphens
+        expect(hostname).toMatch(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/);
+
         // Extract token from hostname pattern: port-sandboxId-token.domain
         const match = hostname.match(/^(\d{4,5})-([^.-][^.]*?[^.-]|[^.-])-([a-z0-9-]{16})\.(.+)$/);
         expect(match).toBeTruthy();

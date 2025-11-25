@@ -191,6 +191,19 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         this.portTokens.set(parseInt(portStr, 10), token);
       }
 
+      // Migrate old tokens with underscores to DNS-compliant format
+      // Old tokens used underscores which violate RFC 952/1123 DNS hostname requirements
+      let needsMigration = false;
+      for (const [port, token] of this.portTokens.entries()) {
+        if (token.includes('_')) {
+          this.portTokens.set(port, this.generatePortToken());
+          needsMigration = true;
+        }
+      }
+      if (needsMigration) {
+        await this.persistPortTokens();
+      }
+
       // Load saved timeout configuration (highest priority)
       const storedTimeouts =
         await this.ctx.storage.get<
@@ -1656,12 +1669,27 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     // Convert to base64url format (URL-safe, no padding, lowercase)
     // Use hyphen for both + and / to ensure DNS hostname compatibility (RFC 952/1123)
+    // Note: This reduces the effective character set from 64 (base64url) to ~36 chars,
+    // reducing entropy from 96 bits to ~82 bits. Still cryptographically strong for token security.
     const base64 = btoa(String.fromCharCode(...array));
-    return base64
+    let token = base64
       .replace(/\+/g, '-')
       .replace(/\//g, '-')
       .replace(/=/g, '')
       .toLowerCase();
+
+    // Ensure token doesn't end with hyphen (RFC 952/1123 requirement)
+    // Replace trailing hyphens with alphanumeric chars from the token
+    while (token.endsWith('-')) {
+      token = token.slice(0, -1) + token.charAt(Math.floor(Math.random() * (token.length - 1)));
+    }
+
+    // Ensure token doesn't start with hyphen
+    while (token.startsWith('-')) {
+      token = token.charAt(Math.floor(Math.random() * (token.length - 1))) + token.slice(1);
+    }
+
+    return token;
   }
 
   private async persistPortTokens(): Promise<void> {
