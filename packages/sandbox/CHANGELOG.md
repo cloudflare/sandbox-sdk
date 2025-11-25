@@ -1,5 +1,11 @@
 # @cloudflare/sandbox
 
+## 0.5.3
+
+### Patch Changes
+
+- [#204](https://github.com/cloudflare/sandbox-sdk/pull/204) [`55981f8`](https://github.com/cloudflare/sandbox-sdk/commit/55981f8802b4e0d3b65b947ef8ba7ae2bae183d7) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - add environment variables and working directory support to command exec
+
 ## 0.5.2
 
 ### Patch Changes
