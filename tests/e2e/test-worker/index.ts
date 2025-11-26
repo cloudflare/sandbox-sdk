@@ -55,8 +55,13 @@ export default {
     const keepAliveHeader = request.headers.get('X-Sandbox-KeepAlive');
     const keepAlive = keepAliveHeader === 'true';
 
+    // Check if WebSocket transport is requested
+    const useWebSocketHeader = request.headers.get('X-Use-WebSocket');
+    const useWebSocket = useWebSocketHeader === 'true';
+
     const sandbox = getSandbox(env.Sandbox, sandboxId, {
-      keepAlive
+      keepAlive,
+      useWebSocket
     });
 
     // Get session ID from header (optional)
