@@ -57,7 +57,6 @@ export class Transport {
   private logger: Logger;
   private stub?: ContainerStub;
   private port?: number;
-  private options: TransportOptions;
 
   constructor(options: TransportOptions) {
     this.mode = options.mode;
@@ -65,7 +64,6 @@ export class Transport {
     this.logger = options.logger ?? createNoOpLogger();
     this.stub = options.stub;
     this.port = options.port;
-    this.options = options;
 
     if (this.mode === 'websocket' && options.wsUrl) {
       this.wsTransport = new WSTransport(options.wsUrl, {
