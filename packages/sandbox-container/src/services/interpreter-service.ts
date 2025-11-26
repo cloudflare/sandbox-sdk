@@ -294,6 +294,23 @@ export class InterpreterService {
 
       context.lastUsed = new Date().toISOString();
 
+      // Check if executor is healthy
+      if (!processPool.isContextExecutorHealthy(contextId)) {
+        return new Response(
+          JSON.stringify({
+            error: `Context executor has terminated. Please delete and recreate the context.`,
+            code: ErrorCode.INTERNAL_ERROR,
+            details: {
+              contextId
+            }
+          }),
+          {
+            status: 410,
+            headers: { 'Content-Type': 'application/json' }
+          }
+        );
+      }
+
       const execLanguage = this.mapLanguage(language || context.language);
 
       const mutex = this.getContextLock(contextId);

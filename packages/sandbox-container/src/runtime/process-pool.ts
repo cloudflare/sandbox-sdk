@@ -2,6 +2,7 @@ import { type ChildProcess, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import type { Logger } from '@repo/shared';
 import { createLogger } from '@repo/shared';
+import { Mutex } from 'async-mutex';
 import { CONFIG } from '../config';
 
 export type InterpreterLanguage = 'python' | 'javascript' | 'typescript';
@@ -91,6 +92,9 @@ export class ProcessPoolManager {
   private availableExecutors: Map<InterpreterLanguage, InterpreterProcess[]> =
     new Map();
 
+  // Per-language mutexes for atomic pool operations
+  private poolLocks: Map<InterpreterLanguage, Mutex> = new Map();
+
   constructor(
     customConfigs: Partial<
       Record<InterpreterLanguage, Partial<ExecutorPoolConfig>>
@@ -125,6 +129,7 @@ export class ProcessPoolManager {
       this.poolConfigs.set(executor, config);
       this.pools.set(executor, []);
       this.availableExecutors.set(executor, []);
+      this.poolLocks.set(executor, new Mutex());
     }
 
     const pythonConfig = this.poolConfigs.get('python');
@@ -464,40 +469,43 @@ export class ProcessPoolManager {
     contextId: string,
     language: InterpreterLanguage
   ): Promise<void> {
-    const available = this.availableExecutors.get(language) || [];
+    const mutex = this.poolLocks.get(language)!;
+    await mutex.runExclusive(async () => {
+      const available = this.availableExecutors.get(language) || [];
 
-    let executor: InterpreterProcess;
+      let executor: InterpreterProcess;
 
-    if (available.length > 0) {
-      // Use an available executor
-      executor = available.shift()!;
-      this.availableExecutors.set(language, available);
+      if (available.length > 0) {
+        // Use an available executor
+        executor = available.shift()!;
+        this.availableExecutors.set(language, available);
 
-      this.logger.debug('Assigned available executor to context', {
-        contextId,
-        language,
-        executorId: executor.id
-      });
-    } else {
-      // No available executors, create a new one
-      executor = await this.createProcess(language, contextId);
+        this.logger.debug('Assigned available executor to context', {
+          contextId,
+          language,
+          executorId: executor.id
+        });
+      } else {
+        // No available executors, create a new one
+        executor = await this.createProcess(language, contextId);
 
-      // Add to main pool for tracking
-      const pool = this.pools.get(language)!;
-      pool.push(executor);
+        // Add to main pool for tracking
+        const pool = this.pools.get(language)!;
+        pool.push(executor);
 
-      this.logger.debug('Created new executor for context', {
-        contextId,
-        language,
-        executorId: executor.id
-      });
-    }
+        this.logger.debug('Created new executor for context', {
+          contextId,
+          language,
+          executorId: executor.id
+        });
+      }
 
-    // Assign executor to context
-    executor.sessionId = contextId;
+      // Assign executor to context
+      executor.sessionId = contextId;
 
-    // Track in contextExecutors map
-    this.contextExecutors.set(contextId, executor);
+      // Track in contextExecutors map
+      this.contextExecutors.set(contextId, executor);
+    });
   }
 
   async releaseExecutorForContext(
@@ -540,6 +548,14 @@ export class ProcessPoolManager {
 
     // Ensure minimum pool is maintained
     await this.ensureMinimumPool(language);
+  }
+
+  isContextExecutorHealthy(contextId: string): boolean {
+    const executor = this.contextExecutors.get(contextId);
+    if (!executor) {
+      return false;
+    }
+    return !executor.process.killed && executor.process.exitCode === null;
   }
 
   private async startPreWarming(): Promise<void> {
