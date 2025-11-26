@@ -2,6 +2,7 @@ import { type ChildProcess, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import type { Logger } from '@repo/shared';
 import { createLogger } from '@repo/shared';
+import { Mutex } from 'async-mutex';
 import { CONFIG } from '../config';
 
 export type InterpreterLanguage = 'python' | 'javascript' | 'typescript';
@@ -12,7 +13,7 @@ export interface InterpreterProcess {
   process: ChildProcess;
   sessionId?: string;
   lastUsed: Date;
-  isAvailable: boolean;
+  exitHandler?: (code: number | null, signal: NodeJS.Signals | null) => void;
 }
 
 export interface ExecutionResult {
@@ -45,7 +46,7 @@ export interface RichOutput {
 }
 
 export interface PoolConfig {
-  maxProcesses: number;
+  maxProcesses?: number;
   idleTimeout: number; // milliseconds
   minSize: number;
 }
@@ -61,19 +62,19 @@ const DEFAULT_EXECUTOR_CONFIGS: Record<
   python: {
     executor: 'python',
     minSize: 3,
-    maxProcesses: 15,
+    maxProcesses: undefined, // unlimited by default
     idleTimeout: 5 * 60 * 1000 // 5 minutes
   },
   javascript: {
     executor: 'javascript',
     minSize: 3,
-    maxProcesses: 10,
+    maxProcesses: undefined, // unlimited by default
     idleTimeout: 5 * 60 * 1000
   },
   typescript: {
     executor: 'typescript',
     minSize: 3,
-    maxProcesses: 10,
+    maxProcesses: undefined, // unlimited by default
     idleTimeout: 5 * 60 * 1000
   }
 };
@@ -83,6 +84,19 @@ export class ProcessPoolManager {
   private poolConfigs: Map<InterpreterLanguage, ExecutorPoolConfig> = new Map();
   private cleanupInterval?: NodeJS.Timeout;
   private logger: Logger;
+
+  // Track which executor belongs to which context
+  private contextExecutors: Map<string, InterpreterProcess> = new Map();
+
+  // Track unassigned executors available for new contexts
+  private availableExecutors: Map<InterpreterLanguage, InterpreterProcess[]> =
+    new Map();
+
+  // Per-language mutexes for atomic pool operations
+  private poolLocks: Map<InterpreterLanguage, Mutex> = new Map();
+
+  // Per-executor mutexes for serializing execution
+  private executorLocks: Map<string, Mutex> = new Map();
 
   constructor(
     customConfigs: Partial<
@@ -110,11 +124,15 @@ export class ProcessPoolManager {
           : userConfig.minSize || defaultConfig.minSize,
         maxProcesses: envMaxSize
           ? parseInt(envMaxSize, 10)
-          : userConfig.maxProcesses || defaultConfig.maxProcesses
+          : userConfig.maxProcesses !== undefined
+            ? userConfig.maxProcesses
+            : defaultConfig.maxProcesses
       };
 
       this.poolConfigs.set(executor, config);
       this.pools.set(executor, []);
+      this.availableExecutors.set(executor, []);
+      this.poolLocks.set(executor, new Mutex());
     }
 
     const pythonConfig = this.poolConfigs.get('python');
@@ -132,6 +150,44 @@ export class ProcessPoolManager {
     });
   }
 
+  private getExecutorLock(executorId: string): Mutex {
+    let mutex = this.executorLocks.get(executorId);
+    if (!mutex) {
+      mutex = new Mutex();
+      this.executorLocks.set(executorId, mutex);
+    }
+    return mutex;
+  }
+
+  private async borrowExecutor(
+    language: InterpreterLanguage
+  ): Promise<InterpreterProcess> {
+    const mutex = this.poolLocks.get(language)!;
+    return await mutex.runExclusive(async () => {
+      const available = this.availableExecutors.get(language) || [];
+      if (available.length > 0) {
+        return available.shift()!;
+      }
+      // Create temporary executor if none available
+      const executor = await this.createProcess(language, undefined);
+      const pool = this.pools.get(language)!;
+      pool.push(executor);
+      return executor;
+    });
+  }
+
+  private async returnExecutor(
+    language: InterpreterLanguage,
+    executor: InterpreterProcess
+  ): Promise<void> {
+    const mutex = this.poolLocks.get(language)!;
+    await mutex.runExclusive(async () => {
+      const available = this.availableExecutors.get(language) || [];
+      available.push(executor);
+      this.availableExecutors.set(language, available);
+    });
+  }
+
   async execute(
     language: InterpreterLanguage,
     code: string,
@@ -139,89 +195,92 @@ export class ProcessPoolManager {
     timeout?: number
   ): Promise<ExecutionResult> {
     const totalStartTime = Date.now();
-    const process = await this.getProcess(language, sessionId);
-    const processAcquireTime = Date.now() - totalStartTime;
 
-    const executionId = randomUUID();
+    if (sessionId) {
+      // Context execution: Get dedicated executor and lock on it
+      const contextExecutor = this.contextExecutors.get(sessionId);
 
-    try {
-      const execStartTime = Date.now();
-      // Use provided timeout, or fall back to config (which may be undefined = unlimited)
-      const effectiveTimeout =
-        timeout ?? CONFIG.INTERPRETER_EXECUTION_TIMEOUT_MS;
-      const result = await this.executeCode(
-        process,
-        code,
-        executionId,
-        effectiveTimeout
+      if (!contextExecutor || contextExecutor.process.killed) {
+        if (contextExecutor) {
+          this.contextExecutors.delete(sessionId);
+        }
+        throw new Error(
+          `Context ${sessionId} not found or executor process terminated`
+        );
+      }
+
+      if (contextExecutor.language !== language) {
+        throw new Error(
+          `Context ${sessionId} was created for ${contextExecutor.language}, cannot execute ${language} code`
+        );
+      }
+
+      // Lock on the executor to serialize execution
+      const mutex = this.getExecutorLock(contextExecutor.id);
+      return await mutex.runExclusive(() =>
+        this.executeInProcess(contextExecutor, code, totalStartTime, timeout)
       );
-      const execTime = Date.now() - execStartTime;
-      const totalTime = Date.now() - totalStartTime;
-
-      this.logger.debug('Code execution complete', {
-        processAcquireTime,
-        execTime,
-        totalTime,
-        language
-      });
-      return result;
-    } finally {
-      this.releaseProcess(process, sessionId);
+    } else {
+      // Stateless execution: Borrow executor, execute, return
+      const executor = await this.borrowExecutor(language);
+      try {
+        const mutex = this.getExecutorLock(executor.id);
+        return await mutex.runExclusive(() =>
+          this.executeInProcess(executor, code, totalStartTime, timeout)
+        );
+      } finally {
+        await this.returnExecutor(language, executor);
+      }
     }
   }
 
-  private async getProcess(
-    language: InterpreterLanguage,
-    sessionId?: string
-  ): Promise<InterpreterProcess> {
-    const pool = this.pools.get(language)!;
+  private async executeInProcess(
+    process: InterpreterProcess,
+    code: string,
+    totalStartTime: number,
+    timeout?: number
+  ): Promise<ExecutionResult> {
+    const processAcquireTime = Date.now() - totalStartTime;
+    const executionId = randomUUID();
 
-    if (sessionId) {
-      const existingProcess = pool.find(
-        (p) => p.sessionId === sessionId && p.isAvailable
-      );
-      if (existingProcess) {
-        existingProcess.isAvailable = false;
-        existingProcess.lastUsed = new Date();
-        return existingProcess;
-      }
-    }
+    const execStartTime = Date.now();
+    const effectiveTimeout = timeout ?? CONFIG.INTERPRETER_EXECUTION_TIMEOUT_MS;
+    const result = await this.executeCode(
+      process,
+      code,
+      executionId,
+      effectiveTimeout
+    );
+    const execTime = Date.now() - execStartTime;
+    const totalTime = Date.now() - totalStartTime;
 
-    const availableProcess = pool.find((p) => p.isAvailable && !p.sessionId);
-    if (availableProcess) {
-      availableProcess.isAvailable = false;
-      availableProcess.sessionId = sessionId;
-      availableProcess.lastUsed = new Date();
-      return availableProcess;
-    }
-
-    const config = this.poolConfigs.get(language)!;
-    if (pool.length < config.maxProcesses) {
-      const newProcess = await this.createProcess(language, sessionId);
-      pool.push(newProcess);
-      return newProcess;
-    }
-
-    return new Promise((resolve) => {
-      const checkForAvailable = () => {
-        const available = pool.find((p) => p.isAvailable);
-        if (available) {
-          available.isAvailable = false;
-          available.sessionId = sessionId;
-          available.lastUsed = new Date();
-          resolve(available);
-        } else {
-          setTimeout(checkForAvailable, 100);
-        }
-      };
-      checkForAvailable();
+    this.logger.debug('Code execution complete', {
+      processAcquireTime,
+      execTime,
+      totalTime,
+      language: process.language
     });
+
+    return result;
   }
 
   private async createProcess(
     language: InterpreterLanguage,
     sessionId?: string
   ): Promise<InterpreterProcess> {
+    // Enforce per-language process limit if configured
+    const config = this.poolConfigs.get(language)!;
+    const pool = this.pools.get(language)!;
+
+    if (
+      config.maxProcesses !== undefined &&
+      pool.length >= config.maxProcesses
+    ) {
+      throw new Error(
+        `Maximum ${language} executor limit reached (${config.maxProcesses}). Cannot create new executor.`
+      );
+    }
+
     const startTime = Date.now();
     const id = randomUUID();
     let command: string;
@@ -270,9 +329,42 @@ export class ProcessPoolManager {
       language,
       process: childProcess,
       sessionId,
-      lastUsed: new Date(),
-      isAvailable: false
+      lastUsed: new Date()
     };
+
+    // Register exit handler for cleanup (prevents memory leaks)
+    const exitHandler = (
+      code: number | null,
+      signal: NodeJS.Signals | null
+    ) => {
+      this.logger.warn('Executor process exited unexpectedly', {
+        language,
+        processId: id,
+        sessionId,
+        exitCode: code,
+        signal
+      });
+
+      // Clean up from all tracking structures
+      if (sessionId) {
+        this.contextExecutors.delete(sessionId);
+      }
+
+      const pool = this.pools.get(language);
+      if (pool) {
+        const index = pool.indexOf(interpreterProcess);
+        if (index > -1) pool.splice(index, 1);
+      }
+
+      const available = this.availableExecutors.get(language);
+      if (available) {
+        const index = available.indexOf(interpreterProcess);
+        if (index > -1) available.splice(index, 1);
+      }
+    };
+
+    interpreterProcess.exitHandler = exitHandler;
+    childProcess.once('exit', exitHandler);
 
     return new Promise((resolve, reject) => {
       let readyBuffer = '';
@@ -401,16 +493,100 @@ export class ProcessPoolManager {
     });
   }
 
-  private releaseProcess(
-    process: InterpreterProcess,
-    sessionId?: string
-  ): void {
-    if (!sessionId) {
-      process.sessionId = undefined;
-      process.isAvailable = true;
-    } else {
-      process.isAvailable = true;
+  async reserveExecutorForContext(
+    contextId: string,
+    language: InterpreterLanguage
+  ): Promise<void> {
+    const mutex = this.poolLocks.get(language)!;
+    await mutex.runExclusive(async () => {
+      const available = this.availableExecutors.get(language) || [];
+
+      let executor: InterpreterProcess;
+
+      if (available.length > 0) {
+        // Use an available executor
+        executor = available.shift()!;
+        this.availableExecutors.set(language, available);
+
+        this.logger.debug('Assigned available executor to context', {
+          contextId,
+          language,
+          executorId: executor.id
+        });
+      } else {
+        // No available executors, create a new one
+        executor = await this.createProcess(language, contextId);
+
+        // Add to main pool for tracking
+        const pool = this.pools.get(language)!;
+        pool.push(executor);
+
+        this.logger.debug('Created new executor for context', {
+          contextId,
+          language,
+          executorId: executor.id
+        });
+      }
+
+      // Assign executor to context
+      executor.sessionId = contextId;
+
+      // Track in contextExecutors map
+      this.contextExecutors.set(contextId, executor);
+    });
+  }
+
+  async releaseExecutorForContext(
+    contextId: string,
+    language: InterpreterLanguage
+  ): Promise<void> {
+    const executor = this.contextExecutors.get(contextId);
+    if (!executor) {
+      this.logger.debug('Context already released or never existed', {
+        contextId
+      });
+      return;
     }
+
+    this.logger.debug('Releasing executor for context', {
+      contextId,
+      language,
+      executorId: executor.id
+    });
+
+    // Remove from context ownership map
+    this.contextExecutors.delete(contextId);
+
+    // Remove exit handler to prevent memory leak
+    if (executor.exitHandler) {
+      executor.process.removeListener('exit', executor.exitHandler);
+    }
+
+    // Clean up executor lock
+    this.executorLocks.delete(executor.id);
+
+    // Terminate the executor process immediately
+    executor.process.kill();
+
+    // Remove from main pool
+    const pool = this.pools.get(language);
+    if (pool) {
+      const index = pool.indexOf(executor);
+      if (index > -1) {
+        pool.splice(index, 1);
+      }
+    }
+
+    // Ensure minimum pool is maintained
+    await this.ensureMinimumPool(language);
+  }
+
+  isContextExecutorHealthy(contextId: string): boolean {
+    const executor = this.contextExecutors.get(contextId);
+    if (!executor) {
+      return false;
+    }
+    return !executor.process.killed && executor.process.exitCode === null;
   }
 
   private async startPreWarming(): Promise<void> {
@@ -448,20 +624,10 @@ export class ProcessPoolManager {
       targetCount: config.minSize
     });
 
-    const pool = this.pools.get(executor);
-    if (!pool) {
-      this.logger.debug('No pool found for executor', { executor });
-      return;
-    }
-
+    // Use the dedicated method for creating unassigned executors
     for (let i = 0; i < config.minSize; i++) {
       try {
-        const sessionId = `pre-warm-${executor}-${i}-${Date.now()}`;
-        const process = await this.createProcess(executor, sessionId);
-
-        process.isAvailable = true;
-        process.sessionId = undefined;
-        pool.push(process);
+        await this.createUnassignedExecutor(executor);
       } catch (error) {
         this.logger.debug('Failed to pre-warm process', {
           executor,
@@ -472,7 +638,7 @@ export class ProcessPoolManager {
     }
 
     const warmupTime = Date.now() - startTime;
-    const actualCount = pool.filter((p) => p.isAvailable).length;
+    const actualCount = this.availableExecutors.get(executor)?.length || 0;
     this.logger.debug('Pre-warming executor complete', {
       executor,
       actualCount,
@@ -484,34 +650,92 @@ export class ProcessPoolManager {
   private cleanupIdleProcesses(): void {
     const now = new Date();
 
-    const executors = Array.from(this.pools.keys());
-    for (const executor of executors) {
-      const pool = this.pools.get(executor);
-      const config = this.poolConfigs.get(executor);
+    // Only clean up unassigned executors from availableExecutors pool
+    for (const [language, available] of this.availableExecutors.entries()) {
+      const config = this.poolConfigs.get(language);
+      if (!config) continue;
 
-      if (!pool || !config) {
-        continue;
-      }
-
-      for (let i = pool.length - 1; i >= 0; i--) {
-        const process = pool[i];
+      // Iterate backwards to safely remove during iteration
+      for (let i = available.length - 1; i >= 0; i--) {
+        const process = available[i];
         const idleTime = now.getTime() - process.lastUsed.getTime();
 
-        // Only clean up excess processes beyond minimum pool size
+        // Keep minimum pool size, clean up idle executors beyond that
         if (
-          process.isAvailable &&
           idleTime > config.idleTimeout &&
-          pool.filter((p) => p.isAvailable).length > config.minSize
+          available.length > config.minSize
         ) {
           process.process.kill();
-          pool.splice(i, 1);
-          this.logger.debug('Cleaned up idle process', {
-            executor,
-            remainingCount: pool.length
+          available.splice(i, 1);
+
+          // Also remove from main pool
+          const pool = this.pools.get(language);
+          if (pool) {
+            const poolIndex = pool.indexOf(process);
+            if (poolIndex > -1) pool.splice(poolIndex, 1);
+          }
+
+          this.logger.debug('Cleaned up idle unassigned executor', {
+            language,
+            remainingAvailable: available.length
           });
         }
       }
     }
+  }
+
+  async ensureMinimumPool(language: InterpreterLanguage): Promise<void> {
+    const config = this.poolConfigs.get(language);
+    if (!config) return;
+
+    const available = this.availableExecutors.get(language) || [];
+    const currentAvailable = available.length;
+    const needed = config.minSize - currentAvailable;
+
+    if (needed > 0) {
+      this.logger.debug('Replenishing minimum pool', {
+        language,
+        currentAvailable,
+        needed,
+        targetMinimum: config.minSize
+      });
+
+      const spawnPromises = [];
+      for (let i = 0; i < needed; i++) {
+        spawnPromises.push(this.createUnassignedExecutor(language));
+      }
+      await Promise.all(spawnPromises);
+    }
+  }
+
+  private async createUnassignedExecutor(
+    language: InterpreterLanguage
+  ): Promise<void> {
+    const executor = await this.createProcess(language, undefined);
+
+    // Add to available pool
+    const available = this.availableExecutors.get(language) || [];
+    available.push(executor);
+    this.availableExecutors.set(language, available);
+
+    // Add to main pool for tracking
+    const pool = this.pools.get(language)!;
+    pool.push(executor);
+
+    this.logger.debug('Created unassigned executor', {
+      language,
+      executorId: executor.id
+    });
+  }
+
+  // For testing: get executor assigned to context
+  getExecutorForContext(contextId: string): InterpreterProcess | undefined {
+    return this.contextExecutors.get(contextId);
+  }
+
+  // For testing: get available executors for language
+  getAvailableExecutors(language: InterpreterLanguage): InterpreterProcess[] {
+    return this.availableExecutors.get(language) || [];
   }
 
   async shutdown(): Promise<void> {

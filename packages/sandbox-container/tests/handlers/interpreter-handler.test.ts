@@ -16,9 +16,9 @@ import { InterpreterHandler } from '@sandbox-container/handlers/interpreter-hand
 import type {
   Context,
   CreateContextRequest,
-  HealthStatus
-} from '@sandbox-container/interpreter-service';
-import type { InterpreterService } from '@sandbox-container/services/interpreter-service';
+  HealthStatus,
+  InterpreterService
+} from '@sandbox-container/services/interpreter-service';
 import { mocked } from '../test-utils';
 
 // Mock the service dependencies

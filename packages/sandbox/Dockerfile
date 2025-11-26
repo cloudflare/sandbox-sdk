@@ -172,13 +172,10 @@ COPY --from=prod-deps /app/node_modules ./node_modules
 COPY --from=prod-deps /app/packages/shared/dist ./packages/shared/dist
 COPY --from=prod-deps /app/packages/shared/package.json ./packages/shared/package.json
 
-# Configure process pool sizes (can be overridden at runtime)
+# Configure process pool sizes (minimum only)
 ENV PYTHON_POOL_MIN_SIZE=3
-ENV PYTHON_POOL_MAX_SIZE=15
 ENV JAVASCRIPT_POOL_MIN_SIZE=3
-ENV JAVASCRIPT_POOL_MAX_SIZE=10
 ENV TYPESCRIPT_POOL_MIN_SIZE=3
-ENV TYPESCRIPT_POOL_MAX_SIZE=10
 
 # Create clean workspace directory for user code
 RUN mkdir -p /workspace

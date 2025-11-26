@@ -579,6 +579,219 @@ console.log('Sum:', sum);
     );
   }, 120000);
 
+  test('should maintain isolation across many contexts (12+)', async () => {
+    currentSandboxId = createSandboxId();
+    const headers = createTestHeaders(currentSandboxId);
+
+    // Create 12 contexts and execute same code that declares a variable
+    for (let i = 0; i < 12; i++) {
+      const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ language: 'javascript' })
+      });
+
+      expect(ctxResponse.status).toBe(200);
+      const context = (await ctxResponse.json()) as CodeContext;
+
+      const execResponse = await fetch(`${workerUrl}/api/code/execute`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          code: 'const value = 2;',
+          options: { context }
+        })
+      });
+
+      expect(execResponse.status).toBe(200);
+      const execution = (await execResponse.json()) as ExecutionResult;
+      expect(
+        execution.error,
+        `Context ${i + 1} should not have error`
+      ).toBeUndefined();
+
+      // Clean up immediately
+      await fetch(`${workerUrl}/api/code/context/${context.id}`, {
+        method: 'DELETE',
+        headers
+      });
+    }
+  }, 120000);
+
+  test('should maintain state isolation with concurrent context execution', async () => {
+    currentSandboxId = createSandboxId();
+    const headers = createTestHeaders(currentSandboxId);
+
+    // Create contexts sequentially
+    const contexts: CodeContext[] = [];
+    for (let i = 0; i < 4; i++) {
+      const response = await fetch(`${workerUrl}/api/code/context/create`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ language: 'javascript' })
+      });
+      expect(response.status).toBe(200);
+      const context = (await response.json()) as CodeContext;
+      contexts.push(context);
+    }
+
+    // Execute different code in each context concurrently
+    // Each context sets its own unique value
+    const executionPromises = contexts.map((context, i) =>
+      fetch(`${workerUrl}/api/code/execute`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          code: `const value = ${i}; value;`,
+          options: { context }
+        })
+      }).then((r) => r.json())
+    );
+
+    const execResults = (await Promise.all(
+      executionPromises
+    )) as ExecutionResult[];
+
+    // Verify each execution succeeded and returned the correct value
+    for (let i = 0; i < contexts.length; i++) {
+      expect(
+        execResults[i].error,
+        `Context ${i} should not have error`
+      ).toBeUndefined();
+      expect(execResults[i].results).toBeDefined();
+      expect(execResults[i].results![0].text).toContain(String(i));
+    }
+
+    // Now verify each context maintained its isolated state by reading the value back
+    const verificationPromises = contexts.map((context) =>
+      fetch(`${workerUrl}/api/code/execute`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          code: 'value;',
+          options: { context }
+        })
+      }).then((r) => r.json())
+    );
+
+    const verifyResults = (await Promise.all(
+      verificationPromises
+    )) as ExecutionResult[];
+
+    // Each context should still have its own unique value
+    for (let i = 0; i < contexts.length; i++) {
+      expect(
+        verifyResults[i].error,
+        `Context ${i} verification should not have error`
+      ).toBeUndefined();
+      expect(verifyResults[i].results).toBeDefined();
+      expect(verifyResults[i].results![0].text).toContain(String(i));
+    }
+
+    // Clean up all contexts
+    await Promise.all(
+      contexts.map((context) =>
+        fetch(`${workerUrl}/api/code/context/${context.id}`, {
+          method: 'DELETE',
+          headers
+        })
+      )
+    );
+  }, 120000);
+
+  test('should prevent concurrent execution on same context', async () => {
+    currentSandboxId = createSandboxId();
+    const headers = createTestHeaders(currentSandboxId);
+
+    // Create single context
+    const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ language: 'javascript' })
+    });
+
+    expect(ctxResponse.status).toBe(200);
+    const context = (await ctxResponse.json()) as CodeContext;
+
+    // Set up initial state with a counter variable
+    const setupResponse = await fetch(`${workerUrl}/api/code/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        code: 'let counter = 0;',
+        options: { context }
+      })
+    });
+    expect(setupResponse.status).toBe(200);
+
+    // Launch 20 concurrent executions that all try to increment the counter
+    // The mutex will queue these requests and execute them serially
+    const concurrentRequests = 20;
+    const requests = Array.from({ length: concurrentRequests }, () =>
+      fetch(`${workerUrl}/api/code/execute`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          code: 'counter++; counter;',
+          options: { context }
+        })
+      }).then((r) => r.json())
+    );
+
+    const results = await Promise.allSettled(requests);
+
+    // Analyze results - collect all counter values
+    const counterValues: number[] = [];
+
+    for (const result of results) {
+      if (result.status === 'fulfilled') {
+        const execution = result.value as ExecutionResult;
+        expect(execution.error).toBeUndefined();
+
+        // Extract the counter value from successful execution results
+        if (execution.results && execution.results.length > 0) {
+          const resultText = execution.results[0].text;
+          if (resultText) {
+            const match = resultText.match(/\d+/);
+            if (match) {
+              counterValues.push(parseInt(match[0], 10));
+            }
+          }
+        }
+      }
+    }
+
+    // Verify: all 20 requests succeeded
+    expect(counterValues.length).toBe(concurrentRequests);
+
+    // Verify serial execution: counter values should be 1 through 20
+    // Sort to handle out-of-order responses (execution was still serial)
+    counterValues.sort((a, b) => a - b);
+    expect(counterValues).toEqual(Array.from({ length: 20 }, (_, i) => i + 1));
+
+    // Verify final state: counter should be 20 (proving all executed serially)
+    const finalCheck = await fetch(`${workerUrl}/api/code/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        code: 'counter;',
+        options: { context }
+      })
+    });
+    const finalResult = (await finalCheck.json()) as ExecutionResult;
+    const finalCounterText = finalResult.results?.[0]?.text;
+    const finalCounterValue = finalCounterText
+      ? parseInt(finalCounterText.match(/\d+/)?.[0] || '0', 10)
+      : 0;
+    expect(finalCounterValue).toBe(20);
+
+    // Clean up
+    await fetch(`${workerUrl}/api/code/context/${context.id}`, {
+      method: 'DELETE',
+      headers
+    });
+  }, 120000);
+
   // ============================================================================
   // Error Handling
   // ============================================================================
