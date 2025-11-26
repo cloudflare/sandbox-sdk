@@ -107,30 +107,47 @@ export class InterpreterService {
   async createContext(
     request: CreateContextRequest
   ): Promise<ServiceResult<Context>> {
+    let executorReserved = false;
+    let contextId: string | undefined;
+    let language: InterpreterLanguage | undefined;
+
     try {
-      const id = randomUUID();
-      const language = this.mapLanguage(request.language || 'python');
+      contextId = randomUUID();
+      language = this.mapLanguage(
+        request.language || 'python'
+      ) as InterpreterLanguage;
 
       const context: Context = {
-        id,
+        id: contextId,
         language,
         cwd: request.cwd || '/workspace',
         createdAt: new Date().toISOString(),
         lastUsed: new Date().toISOString()
       };
 
-      await processPool.reserveExecutorForContext(
-        id,
-        language as InterpreterLanguage
-      );
+      await processPool.reserveExecutorForContext(contextId, language);
+      executorReserved = true;
 
-      this.contexts.set(id, context);
+      this.contexts.set(contextId, context);
 
       return {
         success: true,
         data: context
       };
     } catch (error) {
+      // If executor was reserved but context creation failed, release it
+      if (executorReserved && contextId && language) {
+        try {
+          await processPool.releaseExecutorForContext(contextId, language);
+        } catch (releaseError) {
+          this.logger.error(
+            'Failed to release executor after context creation failure',
+            releaseError as Error,
+            { contextId, language }
+          );
+        }
+      }
+
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
       this.logger.error(

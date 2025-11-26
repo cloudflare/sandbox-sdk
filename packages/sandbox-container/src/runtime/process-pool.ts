@@ -186,23 +186,26 @@ export class ProcessPoolManager {
         timeout
       );
     } else {
-      // No context - use unassigned executor from available pool
-      const available = this.availableExecutors.get(language) || [];
+      // No context - serialize stateless execution to prevent race conditions
+      const mutex = this.poolLocks.get(language)!;
+      return await mutex.runExclusive(async () => {
+        const available = this.availableExecutors.get(language) || [];
+        let process: InterpreterProcess;
 
-      if (available.length > 0) {
-        // Temporarily use an available executor (won't be assigned to context)
-        process = available[0];
-      } else {
-        // Create temporary executor if none available
-        process = await this.createProcess(language, undefined);
-        const pool = this.pools.get(language)!;
-        pool.push(process);
-        available.push(process);
-        this.availableExecutors.set(language, available);
-      }
+        if (available.length > 0) {
+          // Temporarily use an available executor (won't be assigned to context)
+          process = available[0];
+        } else {
+          // Create temporary executor if none available
+          process = await this.createProcess(language, undefined);
+          const pool = this.pools.get(language)!;
+          pool.push(process);
+          available.push(process);
+          this.availableExecutors.set(language, available);
+        }
 
-      // Execute directly without locking (transient executor)
-      return this.executeInProcess(process, code, totalStartTime, timeout);
+        return this.executeInProcess(process, code, totalStartTime, timeout);
+      });
     }
   }
 
