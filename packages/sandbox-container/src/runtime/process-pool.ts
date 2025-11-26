@@ -151,10 +151,9 @@ export class ProcessPoolManager {
   }
 
   private getExecutorLock(executorId: string): Mutex {
-    let mutex = this.executorLocks.get(executorId);
+    const mutex = this.executorLocks.get(executorId);
     if (!mutex) {
-      mutex = new Mutex();
-      this.executorLocks.set(executorId, mutex);
+      throw new Error(`No mutex found for executor ${executorId}`);
     }
     return mutex;
   }
@@ -332,7 +331,9 @@ export class ProcessPoolManager {
       lastUsed: new Date()
     };
 
-    // Register exit handler for cleanup (prevents memory leaks)
+    this.executorLocks.set(id, new Mutex());
+
+    // Register exit handler for cleanup
     const exitHandler = (
       code: number | null,
       signal: NodeJS.Signals | null
@@ -361,6 +362,8 @@ export class ProcessPoolManager {
         const index = available.indexOf(interpreterProcess);
         if (index > -1) available.splice(index, 1);
       }
+
+      this.executorLocks.delete(id);
     };
 
     interpreterProcess.exitHandler = exitHandler;
