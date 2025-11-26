@@ -14,16 +14,16 @@
   "license": "ISC",
   "type": "module",
   "dependencies": {
-    "@openai/agents": "^0.3.2",
+    "@openai/agents": "^0.3.3",
     "nanoid": "^5.1.6",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },
   "devDependencies": {
-    "@cloudflare/vite-plugin": "^1.15.0",
-    "@types/react": "^19.2.6",
+    "@cloudflare/vite-plugin": "^1.15.2",
+    "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.1.1",
-    "vite": "^7.2.2"
+    "vite": "^7.2.4"
   }
 }

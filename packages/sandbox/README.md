@@ -15,7 +15,7 @@ Perfect for AI code execution, interactive development environments, data analys
 ### Prerequisites
 
 1. Install [Node.js](https://docs.npmjs.com/downloading-and-installing-node-js-and-npm) (version 16.17.0 or later)
-2. Ensure Docker is running locally
+2. Ensure Docker is running locally ([see setup guide](https://developers.cloudflare.com/sandbox/get-started/#ensure-docker-is-running-locally))
 3. For deploying to production, sign up for a [Cloudflare account](https://dash.cloudflare.com/sign-up/workers-and-pages)
 
 ### 1. Create a new project
