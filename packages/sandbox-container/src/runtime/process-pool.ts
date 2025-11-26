@@ -95,6 +95,9 @@ export class ProcessPoolManager {
   // Per-language mutexes for atomic pool operations
   private poolLocks: Map<InterpreterLanguage, Mutex> = new Map();
 
+  // Per-executor mutexes for serializing execution
+  private executorLocks: Map<string, Mutex> = new Map();
+
   constructor(
     customConfigs: Partial<
       Record<InterpreterLanguage, Partial<ExecutorPoolConfig>>
@@ -147,6 +150,44 @@ export class ProcessPoolManager {
     });
   }
 
+  private getExecutorLock(executorId: string): Mutex {
+    let mutex = this.executorLocks.get(executorId);
+    if (!mutex) {
+      mutex = new Mutex();
+      this.executorLocks.set(executorId, mutex);
+    }
+    return mutex;
+  }
+
+  private async borrowExecutor(
+    language: InterpreterLanguage
+  ): Promise<InterpreterProcess> {
+    const mutex = this.poolLocks.get(language)!;
+    return await mutex.runExclusive(async () => {
+      const available = this.availableExecutors.get(language) || [];
+      if (available.length > 0) {
+        return available.shift()!;
+      }
+      // Create temporary executor if none available
+      const executor = await this.createProcess(language, undefined);
+      const pool = this.pools.get(language)!;
+      pool.push(executor);
+      return executor;
+    });
+  }
+
+  private async returnExecutor(
+    language: InterpreterLanguage,
+    executor: InterpreterProcess
+  ): Promise<void> {
+    const mutex = this.poolLocks.get(language)!;
+    await mutex.runExclusive(async () => {
+      const available = this.availableExecutors.get(language) || [];
+      available.push(executor);
+      this.availableExecutors.set(language, available);
+    });
+  }
+
   async execute(
     language: InterpreterLanguage,
     code: string,
@@ -155,14 +196,11 @@ export class ProcessPoolManager {
   ): Promise<ExecutionResult> {
     const totalStartTime = Date.now();
 
-    let process: InterpreterProcess;
-
     if (sessionId) {
-      // Get dedicated executor for this context
+      // Context execution: Get dedicated executor and lock on it
       const contextExecutor = this.contextExecutors.get(sessionId);
 
       if (!contextExecutor || contextExecutor.process.killed) {
-        // Clean up if process is dead
         if (contextExecutor) {
           this.contextExecutors.delete(sessionId);
         }
@@ -171,41 +209,28 @@ export class ProcessPoolManager {
         );
       }
 
-      // Validate language matches
       if (contextExecutor.language !== language) {
         throw new Error(
           `Context ${sessionId} was created for ${contextExecutor.language}, cannot execute ${language} code`
         );
       }
 
-      // Execute in the dedicated context executor
-      return await this.executeInProcess(
-        contextExecutor,
-        code,
-        totalStartTime,
-        timeout
+      // Lock on the executor to serialize execution
+      const mutex = this.getExecutorLock(contextExecutor.id);
+      return await mutex.runExclusive(() =>
+        this.executeInProcess(contextExecutor, code, totalStartTime, timeout)
       );
     } else {
-      // No context - serialize stateless execution to prevent race conditions
-      const mutex = this.poolLocks.get(language)!;
-      return await mutex.runExclusive(async () => {
-        const available = this.availableExecutors.get(language) || [];
-        let process: InterpreterProcess;
-
-        if (available.length > 0) {
-          // Temporarily use an available executor (won't be assigned to context)
-          process = available[0];
-        } else {
-          // Create temporary executor if none available
-          process = await this.createProcess(language, undefined);
-          const pool = this.pools.get(language)!;
-          pool.push(process);
-          available.push(process);
-          this.availableExecutors.set(language, available);
-        }
-
-        return this.executeInProcess(process, code, totalStartTime, timeout);
-      });
+      // Stateless execution: Borrow executor, execute, return
+      const executor = await this.borrowExecutor(language);
+      try {
+        const mutex = this.getExecutorLock(executor.id);
+        return await mutex.runExclusive(() =>
+          this.executeInProcess(executor, code, totalStartTime, timeout)
+        );
+      } finally {
+        await this.returnExecutor(language, executor);
+      }
     }
   }
 
@@ -536,6 +561,9 @@ export class ProcessPoolManager {
     if (executor.exitHandler) {
       executor.process.removeListener('exit', executor.exitHandler);
     }
+
+    // Clean up executor lock
+    this.executorLocks.delete(executor.id);
 
     // Terminate the executor process immediately
     executor.process.kill();

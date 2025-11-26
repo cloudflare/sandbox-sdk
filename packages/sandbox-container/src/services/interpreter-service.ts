@@ -7,7 +7,6 @@ import type {
   InterpreterNotReadyContext
 } from '@repo/shared/errors';
 import { ErrorCode } from '@repo/shared/errors';
-import { Mutex } from 'async-mutex';
 import type { ServiceResult } from '../core/types';
 import {
   type InterpreterLanguage,
@@ -51,20 +50,10 @@ export class InterpreterNotReadyError extends Error {
  */
 export class InterpreterService {
   private contexts: Map<string, Context> = new Map();
-  private contextLocks: Map<string, Mutex> = new Map();
   private logger: Logger;
 
   constructor(logger: Logger) {
     this.logger = logger;
-  }
-
-  private getContextLock(contextId: string): Mutex {
-    let mutex = this.contextLocks.get(contextId);
-    if (!mutex) {
-      mutex = new Mutex();
-      this.contextLocks.set(contextId, mutex);
-    }
-    return mutex;
   }
 
   /**
@@ -252,8 +241,6 @@ export class InterpreterService {
       } finally {
         // Always remove context from map, even if release fails
         this.contexts.delete(contextId);
-        // Clean up mutex to prevent memory leak
-        this.contextLocks.delete(contextId);
       }
 
       return {
@@ -329,127 +316,122 @@ export class InterpreterService {
       }
 
       const execLanguage = this.mapLanguage(language || context.language);
-
-      const mutex = this.getContextLock(contextId);
       const self = this;
 
-      // Serialize execution per context - execute before creating stream to hold mutex during actual execution
-      return await mutex.runExclusive(async () => {
-        const result = await processPool.execute(
-          execLanguage,
-          code,
-          contextId,
-          undefined
-        );
+      const result = await processPool.execute(
+        execLanguage,
+        code,
+        contextId,
+        undefined
+      );
 
-        const stream = new ReadableStream({
-          start(controller) {
-            const encoder = new TextEncoder();
+      const stream = new ReadableStream({
+        start(controller) {
+          const encoder = new TextEncoder();
 
-            try {
-              if (result.stdout) {
+          try {
+            if (result.stdout) {
+              controller.enqueue(
+                encoder.encode(
+                  self.formatSSE({
+                    type: 'stdout',
+                    text: result.stdout
+                  })
+                )
+              );
+            }
+
+            if (result.stderr) {
+              controller.enqueue(
+                encoder.encode(
+                  self.formatSSE({
+                    type: 'stderr',
+                    text: result.stderr
+                  })
+                )
+              );
+            }
+
+            if (result.outputs && result.outputs.length > 0) {
+              for (const output of result.outputs) {
+                const outputData = self.formatOutputData(output);
                 controller.enqueue(
                   encoder.encode(
                     self.formatSSE({
-                      type: 'stdout',
-                      text: result.stdout
+                      type: 'result',
+                      ...outputData,
+                      metadata: output.metadata || {}
                     })
                   )
                 );
               }
+            }
 
-              if (result.stderr) {
-                controller.enqueue(
-                  encoder.encode(
-                    self.formatSSE({
-                      type: 'stderr',
-                      text: result.stderr
-                    })
-                  )
-                );
-              }
-
-              if (result.outputs && result.outputs.length > 0) {
-                for (const output of result.outputs) {
-                  const outputData = self.formatOutputData(output);
-                  controller.enqueue(
-                    encoder.encode(
-                      self.formatSSE({
-                        type: 'result',
-                        ...outputData,
-                        metadata: output.metadata || {}
-                      })
-                    )
-                  );
-                }
-              }
-
-              if (result.success) {
-                controller.enqueue(
-                  encoder.encode(
-                    self.formatSSE({
-                      type: 'execution_complete',
-                      execution_count: 1
-                    })
-                  )
-                );
-              } else if (result.error) {
-                controller.enqueue(
-                  encoder.encode(
-                    self.formatSSE({
-                      type: 'error',
-                      ename: result.error.type || 'ExecutionError',
-                      evalue: result.error.message || 'Code execution failed',
-                      traceback: result.error.traceback
-                        ? result.error.traceback.split('\n')
-                        : []
-                    })
-                  )
-                );
-              } else {
-                controller.enqueue(
-                  encoder.encode(
-                    self.formatSSE({
-                      type: 'error',
-                      ename: 'ExecutionError',
-                      evalue: result.stderr || 'Code execution failed',
-                      traceback: []
-                    })
-                  )
-                );
-              }
-
-              controller.close();
-            } catch (error) {
-              self.logger.error('Code execution failed', error as Error, {
-                contextId,
-                language: execLanguage
-              });
-
+            if (result.success) {
+              controller.enqueue(
+                encoder.encode(
+                  self.formatSSE({
+                    type: 'execution_complete',
+                    execution_count: 1
+                  })
+                )
+              );
+            } else if (result.error) {
               controller.enqueue(
                 encoder.encode(
                   self.formatSSE({
                     type: 'error',
-                    ename: 'InternalError',
-                    evalue:
-                      error instanceof Error ? error.message : String(error),
+                    ename: result.error.type || 'ExecutionError',
+                    evalue: result.error.message || 'Code execution failed',
+                    traceback: result.error.traceback
+                      ? result.error.traceback.split('\n')
+                      : []
+                  })
+                )
+              );
+            } else {
+              controller.enqueue(
+                encoder.encode(
+                  self.formatSSE({
+                    type: 'error',
+                    ename: 'ExecutionError',
+                    evalue: result.stderr || 'Code execution failed',
                     traceback: []
                   })
                 )
               );
-
-              controller.close();
             }
-          }
-        });
 
-        return new Response(stream, {
-          headers: {
-            'Content-Type': 'text/event-stream',
-            'Cache-Control': 'no-cache',
-            Connection: 'keep-alive'
+            controller.close();
+          } catch (error) {
+            self.logger.error('Code execution failed', error as Error, {
+              contextId,
+              language: execLanguage
+            });
+
+            controller.enqueue(
+              encoder.encode(
+                self.formatSSE({
+                  type: 'error',
+                  ename: 'InternalError',
+                  evalue:
+                    error instanceof Error ? error.message : String(error),
+                  traceback: []
+                })
+              )
+            );
+
+            controller.close();
           }
-        });
+        }
+      });
+
+      return new Response(stream, {
+        headers: {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive'
+        }
       });
     } catch (error) {
       const errorMessage =
