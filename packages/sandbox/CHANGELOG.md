@@ -1,5 +1,19 @@
 # @cloudflare/sandbox
 
+## 0.5.6
+
+### Patch Changes
+
+- [#249](https://github.com/cloudflare/sandbox-sdk/pull/249) [`e69dce5`](https://github.com/cloudflare/sandbox-sdk/commit/e69dce54e76b5e0597e0f4ebb798c933543349a7) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Fix code context isolation bug where contexts leaked state after 10 executions. Each code context now gets a dedicated executor process from creation to deletion, ensuring complete isolation between contexts. Removed maximum pool size limits to allow organic scaling.
+
+- [#258](https://github.com/cloudflare/sandbox-sdk/pull/258) [`34bfb81`](https://github.com/cloudflare/sandbox-sdk/commit/34bfb81e7d7f96d6e2f62bb43330a6e675c2c54c) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Fix executor mutex race condition and memory leak in code interpreter
+
+- [#256](https://github.com/cloudflare/sandbox-sdk/pull/256) [`088ee5f`](https://github.com/cloudflare/sandbox-sdk/commit/088ee5fceae50f2338011b5c7560e056bdf6e48a) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Remove output size limit for command execution
+
+  The 10MB output size limit that was intended to prevent OOM attacks has been removed. This limit was too restrictive for legitimate use cases like reading large media files. Developers are now trusted to manage their own resource usage and handle potential OOM situations.
+
+- [#254](https://github.com/cloudflare/sandbox-sdk/pull/254) [`8728890`](https://github.com/cloudflare/sandbox-sdk/commit/872889064f7ce59d49bc12bdf151df94cfe1efe4) Thanks [@deathbyknowledge](https://github.com/deathbyknowledge)! - close stream before releasing lock
+
 ## 0.5.5
 
 ### Patch Changes
