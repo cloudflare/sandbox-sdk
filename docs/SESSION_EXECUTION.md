@@ -73,7 +73,6 @@ mkfifo "$sp" "$ep"
 ## Error Handling and Limits
 
 - Invalid `cwd` (foreground): we write a prefixed stderr line (binary prefix) indicating the failure and return exit code `1`.
-- Output size limit: large logs are rejected during parsing to protect memory (`MAX_OUTPUT_SIZE_BYTES`).
 - Timeouts: foreground commands can be configured to time out; an error is raised if the exit file does not appear in time.
 
 ## Why Two Patterns?
@@ -83,7 +82,7 @@ mkfifo "$sp" "$ep"
 
 ## Testing Notes
 
-- Foreground tests cover silent commands (`cd`, variable assignment), error scenarios, multiline output, and size limits.
+- Foreground tests cover silent commands (`cd`, variable assignment), error scenarios, and multiline output.
 - Background/streaming tests cover concurrent output, stderr separation, and completion events.
 - The previous hang class was caused by FIFO open/close races in foreground on silent commands; process substitution removes this class entirely.
 

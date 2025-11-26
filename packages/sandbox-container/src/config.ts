@@ -38,18 +38,6 @@ const COMMAND_TIMEOUT_MS = (() => {
 })();
 
 /**
- * Maximum output size in bytes to prevent OOM attacks.
- * This is a security measure, not a timeout.
- *
- * Default: 10MB
- * Environment variable: MAX_OUTPUT_SIZE_BYTES
- */
-const MAX_OUTPUT_SIZE_BYTES = parseInt(
-  process.env.MAX_OUTPUT_SIZE_BYTES || String(10 * 1024 * 1024),
-  10
-);
-
-/**
  * Delay between chunks when streaming output.
  * This debounces file system watch events for better performance.
  *
@@ -68,7 +56,6 @@ export const CONFIG = {
   INTERPRETER_SPAWN_TIMEOUT_MS,
   INTERPRETER_EXECUTION_TIMEOUT_MS,
   COMMAND_TIMEOUT_MS,
-  MAX_OUTPUT_SIZE_BYTES,
   STREAM_CHUNK_DELAY_MS,
   DEFAULT_CWD
 } as const;

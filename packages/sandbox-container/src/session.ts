@@ -58,9 +58,6 @@ export interface SessionOptions {
   /** Command timeout in milliseconds (overrides CONFIG.COMMAND_TIMEOUT_MS) */
   commandTimeoutMs?: number;
 
-  /** Maximum output size in bytes (overrides CONFIG.MAX_OUTPUT_SIZE_BYTES) */
-  maxOutputSizeBytes?: number;
-
   /** Logger instance for structured logging (optional - uses no-op logger if not provided) */
   logger?: Logger;
 }
@@ -119,7 +116,6 @@ export class Session {
   private readonly id: string;
   private readonly options: SessionOptions;
   private readonly commandTimeoutMs: number | undefined;
-  private readonly maxOutputSizeBytes: number;
   private readonly logger: Logger;
   /** Map of running commands for tracking and killing */
   private runningCommands = new Map<string, CommandHandle>();
@@ -129,8 +125,6 @@ export class Session {
     this.options = options;
     this.commandTimeoutMs =
       options.commandTimeoutMs ?? CONFIG.COMMAND_TIMEOUT_MS;
-    this.maxOutputSizeBytes =
-      options.maxOutputSizeBytes ?? CONFIG.MAX_OUTPUT_SIZE_BYTES;
     // Use provided logger or create no-op logger (for backward compatibility/tests)
     this.logger = options.logger ?? createNoOpLogger();
   }
@@ -957,13 +951,6 @@ export class Session {
 
     if (!(await file.exists())) {
       return { stdout: '', stderr: '' };
-    }
-
-    // Safety check: prevent OOM attacks
-    if (file.size > this.maxOutputSizeBytes) {
-      throw new Error(
-        `Output too large: ${file.size} bytes (max: ${this.maxOutputSizeBytes})`
-      );
     }
 
     const content = await file.text();
