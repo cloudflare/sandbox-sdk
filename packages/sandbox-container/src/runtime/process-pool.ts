@@ -12,7 +12,6 @@ export interface InterpreterProcess {
   process: ChildProcess;
   sessionId?: string;
   lastUsed: Date;
-  executionPromise?: Promise<ExecutionResult>;
   exitHandler?: (code: number | null, signal: NodeJS.Signals | null) => void;
 }
 
@@ -174,28 +173,13 @@ export class ProcessPoolManager {
         );
       }
 
-      // Prevent concurrent execution on same context using promise-based locking
-      if (contextExecutor.executionPromise) {
-        throw new Error(
-          `Context ${sessionId} is currently executing code. Wait for completion or use a different context.`
-        );
-      }
-
-      // Create and store execution promise (atomic lock acquisition)
-      const executionPromise = this.executeInProcess(
+      // Execute in the dedicated context executor
+      return await this.executeInProcess(
         contextExecutor,
         code,
         totalStartTime,
         timeout
       );
-      contextExecutor.executionPromise = executionPromise;
-
-      try {
-        return await executionPromise;
-      } finally {
-        // Release lock
-        contextExecutor.executionPromise = undefined;
-      }
     } else {
       // No context - use unassigned executor from available pool
       const available = this.availableExecutors.get(language) || [];

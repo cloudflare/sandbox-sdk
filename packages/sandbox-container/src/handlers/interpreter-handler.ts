@@ -9,8 +9,10 @@ import type {
 import { ErrorCode } from '@repo/shared/errors';
 
 import type { RequestContext } from '../core/types';
-import type { CreateContextRequest } from '../interpreter-service';
-import type { InterpreterService } from '../services/interpreter-service';
+import type {
+  CreateContextRequest,
+  InterpreterService
+} from '../services/interpreter-service';
 import { BaseHandler } from './base-handler';
 
 export class InterpreterHandler extends BaseHandler<Request, Response> {

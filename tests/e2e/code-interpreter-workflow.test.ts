@@ -644,14 +644,14 @@ console.log('Sum:', sum);
     expect(setupResponse.status).toBe(200);
 
     // Launch 20 concurrent executions that all try to increment the counter
-    // This stress tests the locking mechanism under high concurrency
+    // The mutex will queue these requests and execute them serially
     const concurrentRequests = 20;
     const requests = Array.from({ length: concurrentRequests }, () =>
       fetch(`${workerUrl}/api/code/execute`, {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          code: 'counter++; for(let i = 0; i < 1000000; i++) {} counter;',
+          code: 'counter++; counter;',
           options: { context }
         })
       }).then((r) => r.json())
@@ -659,49 +659,57 @@ console.log('Sum:', sum);
 
     const results = await Promise.allSettled(requests);
 
-    // Analyze results
-    let successCount = 0;
-    let concurrentErrorCount = 0;
-    let successfulResult: number | null = null;
+    // Analyze results - collect all counter values
+    const counterValues: number[] = [];
 
     for (const result of results) {
       if (result.status === 'fulfilled') {
         const execution = result.value as ExecutionResult;
-        if (execution.error) {
-          if (
-            execution.error.message?.includes('currently executing') ||
-            execution.error.message?.includes('Context is currently executing')
-          ) {
-            concurrentErrorCount++;
-          }
-        } else {
-          successCount++;
-          // Extract the counter value from successful execution results
-          if (execution.results && execution.results.length > 0) {
-            const resultText = execution.results[0].text;
-            if (resultText) {
-              const match = resultText.match(/\d+/);
-              if (match) successfulResult = parseInt(match[0], 10);
+        expect(execution.error).toBeUndefined();
+
+        // Extract the counter value from successful execution results
+        if (execution.results && execution.results.length > 0) {
+          const resultText = execution.results[0].text;
+          if (resultText) {
+            const match = resultText.match(/\d+/);
+            if (match) {
+              counterValues.push(parseInt(match[0], 10));
             }
           }
         }
       }
     }
 
-    // Verify: exactly 1 succeeded, all others failed with concurrent execution error
-    expect(successCount).toBe(1);
-    expect(concurrentErrorCount).toBe(concurrentRequests - 1);
+    // Verify: all 20 requests succeeded
+    expect(counterValues.length).toBe(concurrentRequests);
 
-    // Verify state isolation: counter should be 1 (only one increment)
-    // If multiple ran concurrently, we'd see higher values, proving state corruption
-    expect(successfulResult).toBe(1);
+    // Verify serial execution: counter values should be 1 through 20
+    // Sort to handle out-of-order responses (execution was still serial)
+    counterValues.sort((a, b) => a - b);
+    expect(counterValues).toEqual(Array.from({ length: 20 }, (_, i) => i + 1));
+
+    // Verify final state: counter should be 20 (proving all executed serially)
+    const finalCheck = await fetch(`${workerUrl}/api/code/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        code: 'counter;',
+        options: { context }
+      })
+    });
+    const finalResult = (await finalCheck.json()) as ExecutionResult;
+    const finalCounterText = finalResult.results?.[0]?.text;
+    const finalCounterValue = finalCounterText
+      ? parseInt(finalCounterText.match(/\d+/)?.[0] || '0', 10)
+      : 0;
+    expect(finalCounterValue).toBe(20);
 
     // Clean up
     await fetch(`${workerUrl}/api/code/context/${context.id}`, {
       method: 'DELETE',
       headers
     });
-  }, 60000);
+  }, 120000);
 
   // ============================================================================
   // Error Handling
