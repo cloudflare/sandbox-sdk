@@ -267,8 +267,8 @@ describe('Session', () => {
       ).toHaveLength(100);
     });
 
-    it('should handle output within size limit', async () => {
-      // Generate ~5KB of output (well below the 10MB default)
+    it('should handle large output without size limits', async () => {
+      // Generate ~5KB of output (no longer limited)
       const result = await session.exec(
         'yes "test line with some text" | head -n 500'
       );
@@ -280,28 +280,17 @@ describe('Session', () => {
       expect(lines.length).toBe(500);
     });
 
-    it('should reject output that exceeds max size', async () => {
-      // Create session with 1KB limit
-      const smallSession = new Session({
-        id: 'small-output-session',
-        cwd: testDir,
-        maxOutputSizeBytes: 1024 // 1KB
-      });
-      await smallSession.initialize();
+    it('should handle very large output without errors', async () => {
+      // Generate >1KB of output (~12KB) - should work without issues
+      const result = await session.exec(
+        'yes "test line with text here" | head -n 1000'
+      );
 
-      try {
-        // Try to generate >1KB of output (~12KB)
-        await smallSession.exec(
-          'yes "test line with text here" | head -n 1000'
-        );
-        expect.unreachable('Should have thrown an error for oversized output');
-      } catch (error) {
-        expect(error).toBeInstanceOf(Error);
-        expect((error as Error).message).toContain('Output too large');
-        expect((error as Error).message).toContain('1024');
-      } finally {
-        await smallSession.destroy();
-      }
+      expect(result.exitCode).toBe(0);
+      const lines = result.stdout
+        .split('\n')
+        .filter((l) => l === 'test line with text here');
+      expect(lines.length).toBe(1000);
     });
 
     it('should handle commands with special characters', async () => {
