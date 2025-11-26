@@ -34,9 +34,9 @@
     "check": "biome check && npm run typecheck",
     "fix": "biome check --fix && npm run typecheck",
     "typecheck": "tsc --noEmit",
-    "docker:local": "cd ../.. && docker build -f packages/sandbox/Dockerfile --build-arg SANDBOX_VERSION=$npm_package_version -t cloudflare/sandbox-test:$npm_package_version .",
-    "docker:publish": "cd ../.. && docker buildx build --platform linux/amd64,linux/arm64 -f packages/sandbox/Dockerfile --build-arg SANDBOX_VERSION=$npm_package_version -t cloudflare/sandbox:$npm_package_version --push .",
-    "docker:publish:beta": "cd ../.. && docker buildx build --platform linux/amd64,linux/arm64 -f packages/sandbox/Dockerfile --build-arg SANDBOX_VERSION=$npm_package_version -t cloudflare/sandbox:$npm_package_version-beta --push .",
+    "docker:local": "cd ../.. && docker build -f packages/sandbox/Dockerfile --platform linux/amd64 --build-arg SANDBOX_VERSION=$npm_package_version -t cloudflare/sandbox-test:$npm_package_version .",
+    "docker:publish": "cd ../.. && docker buildx build --platform linux/amd64 -f packages/sandbox/Dockerfile --build-arg SANDBOX_VERSION=$npm_package_version -t cloudflare/sandbox:$npm_package_version --push .",
+    "docker:publish:beta": "cd ../.. && docker buildx build --platform linux/amd64 -f packages/sandbox/Dockerfile --build-arg SANDBOX_VERSION=$npm_package_version -t cloudflare/sandbox:$npm_package_version-beta --push .",
     "test": "vitest run --config vitest.config.ts \"$@\"",
     "test:e2e": "cd ../.. && vitest run --config vitest.e2e.config.ts \"$@\""
   },

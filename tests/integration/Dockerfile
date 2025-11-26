@@ -4,10 +4,6 @@
 # FROM docker.io/cloudflare/sandbox:0.5.4
 FROM cloudflare/sandbox-test:0.5.4
 
-# On a mac, you might need to actively pick up the
-# arm64 build of the image.
-# FROM --platform=linux/arm64 cloudflare/sandbox-test:0.5.4
-
 # Expose the ports you want to expose
 EXPOSE 8080
 EXPOSE 3001
