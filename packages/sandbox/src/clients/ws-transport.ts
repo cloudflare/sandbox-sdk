@@ -56,10 +56,18 @@ export class WSTransport {
   private options: WSTransportOptions;
   private url: string;
 
+  // Bound event handlers for proper add/remove
+  private boundHandleMessage: (event: MessageEvent) => void;
+  private boundHandleClose: (event: CloseEvent) => void;
+
   constructor(url: string, options: WSTransportOptions = {}) {
     this.url = url;
     this.options = options;
     this.logger = options.logger ?? createNoOpLogger();
+
+    // Bind handlers once in constructor
+    this.boundHandleMessage = this.handleMessage.bind(this);
+    this.boundHandleClose = this.handleClose.bind(this);
   }
 
   /**
@@ -95,34 +103,33 @@ export class WSTransport {
       try {
         this.ws = new WebSocket(this.url);
 
-        this.ws.addEventListener('open', () => {
+        // One-time open handler for connection
+        const onOpen = () => {
           clearTimeout(timeout);
+          this.ws?.removeEventListener('open', onOpen);
+          this.ws?.removeEventListener('error', onConnectError);
           this.state = 'connected';
           this.logger.debug('WebSocket connected', { url: this.url });
           resolve();
-        });
+        };
 
-        this.ws.addEventListener('error', (event) => {
+        // One-time error handler for connection
+        const onConnectError = () => {
           clearTimeout(timeout);
+          this.ws?.removeEventListener('open', onOpen);
+          this.ws?.removeEventListener('error', onConnectError);
           this.state = 'error';
           this.logger.error(
             'WebSocket error',
             new Error('WebSocket connection failed')
           );
           reject(new Error('WebSocket connection failed'));
-        });
+        };
 
-        this.ws.addEventListener('close', (event) => {
-          this.logger.debug('WebSocket closed', {
-            code: event.code,
-            reason: event.reason
-          });
-          this.handleClose(event);
-        });
-
-        this.ws.addEventListener('message', (event) => {
-          this.handleMessage(event);
-        });
+        this.ws.addEventListener('open', onOpen);
+        this.ws.addEventListener('error', onConnectError);
+        this.ws.addEventListener('close', this.boundHandleClose);
+        this.ws.addEventListener('message', this.boundHandleMessage);
       } catch (error) {
         clearTimeout(timeout);
         this.state = 'error';
@@ -400,10 +407,8 @@ export class WSTransport {
    */
   private cleanup(): void {
     if (this.ws) {
-      this.ws.onclose = null;
-      this.ws.onerror = null;
-      this.ws.onmessage = null;
-      this.ws.onopen = null;
+      this.ws.removeEventListener('close', this.boundHandleClose);
+      this.ws.removeEventListener('message', this.boundHandleMessage);
       this.ws.close();
       this.ws = null;
     }
