@@ -151,10 +151,9 @@ export class ProcessPoolManager {
   }
 
   private getExecutorLock(executorId: string): Mutex {
-    let mutex = this.executorLocks.get(executorId);
+    const mutex = this.executorLocks.get(executorId);
     if (!mutex) {
-      mutex = new Mutex();
-      this.executorLocks.set(executorId, mutex);
+      throw new Error(`No mutex found for executor ${executorId}`);
     }
     return mutex;
   }
@@ -332,7 +331,9 @@ export class ProcessPoolManager {
       lastUsed: new Date()
     };
 
-    // Register exit handler for cleanup (prevents memory leaks)
+    this.executorLocks.set(id, new Mutex());
+
+    // Register exit handler for cleanup
     const exitHandler = (
       code: number | null,
       signal: NodeJS.Signals | null
@@ -361,6 +362,8 @@ export class ProcessPoolManager {
         const index = available.indexOf(interpreterProcess);
         if (index > -1) available.splice(index, 1);
       }
+
+      this.executorLocks.delete(id);
     };
 
     interpreterProcess.exitHandler = exitHandler;
@@ -557,7 +560,7 @@ export class ProcessPoolManager {
     // Remove from context ownership map
     this.contextExecutors.delete(contextId);
 
-    // Remove exit handler to prevent memory leak
+    // Remove exit handler since we're doing manual cleanup
     if (executor.exitHandler) {
       executor.process.removeListener('exit', executor.exitHandler);
     }
@@ -668,6 +671,9 @@ export class ProcessPoolManager {
           process.process.kill();
           available.splice(i, 1);
 
+          // Clean up executor lock
+          this.executorLocks.delete(process.id);
+
           // Also remove from main pool
           const pool = this.pools.get(language);
           if (pool) {
@@ -754,6 +760,7 @@ export class ProcessPoolManager {
     }
 
     this.pools.clear();
+    this.executorLocks.clear();
   }
 }
 

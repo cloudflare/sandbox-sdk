@@ -583,7 +583,8 @@ console.log('Sum:', sum);
     currentSandboxId = createSandboxId();
     const headers = createTestHeaders(currentSandboxId);
 
-    // Create 12 contexts and execute same code that declares a variable
+    // Create 12 contexts
+    const contexts: CodeContext[] = [];
     for (let i = 0; i < 12; i++) {
       const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
         method: 'POST',
@@ -593,13 +594,17 @@ console.log('Sum:', sum);
 
       expect(ctxResponse.status).toBe(200);
       const context = (await ctxResponse.json()) as CodeContext;
+      contexts.push(context);
+    }
 
+    // Set unique state in each context using mutable global
+    for (let i = 0; i < contexts.length; i++) {
       const execResponse = await fetch(`${workerUrl}/api/code/execute`, {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          code: 'const value = 2;',
-          options: { context }
+          code: `globalThis.contextValue = ${i}; contextValue;`,
+          options: { context: contexts[i] }
         })
       });
 
@@ -607,10 +612,36 @@ console.log('Sum:', sum);
       const execution = (await execResponse.json()) as ExecutionResult;
       expect(
         execution.error,
-        `Context ${i + 1} should not have error`
+        `Context ${i} should not have error setting value`
       ).toBeUndefined();
+      expect(execution.results![0].text).toContain(String(i));
+    }
 
-      // Clean up immediately
+    // Verify each context still has its isolated state
+    for (let i = 0; i < contexts.length; i++) {
+      const execResponse = await fetch(`${workerUrl}/api/code/execute`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          code: 'contextValue;',
+          options: { context: contexts[i] }
+        })
+      });
+
+      expect(execResponse.status).toBe(200);
+      const execution = (await execResponse.json()) as ExecutionResult;
+      expect(
+        execution.error,
+        `Context ${i} should not have error reading value`
+      ).toBeUndefined();
+      expect(
+        execution.results![0].text,
+        `Context ${i} should have its unique value ${i}`
+      ).toContain(String(i));
+    }
+
+    // Clean up all contexts
+    for (const context of contexts) {
       await fetch(`${workerUrl}/api/code/context/${context.id}`, {
         method: 'DELETE',
         headers
