@@ -37,6 +37,12 @@ async function* parseSSE(
       }
     }
   } finally {
+    // Cancel the stream first to properly terminate HTTP connections when breaking early
+    try {
+      await reader.cancel();
+    } catch {
+      // Ignore cancel errors (stream may already be closed)
+    }
     reader.releaseLock();
   }
 }
