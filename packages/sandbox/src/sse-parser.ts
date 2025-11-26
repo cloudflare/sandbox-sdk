@@ -72,6 +72,9 @@ export async function* parseSSEStream<T>(
     }
   } finally {
     // Clean up resources
+    try {
+      await reader.cancel();
+    } catch {}
     reader.releaseLock();
   }
 }
