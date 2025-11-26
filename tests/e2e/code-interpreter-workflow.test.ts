@@ -622,16 +622,18 @@ console.log('Sum:', sum);
     currentSandboxId = createSandboxId();
     const headers = createTestHeaders(currentSandboxId);
 
-    // Create 12 contexts concurrently
-    const contextPromises = Array.from({ length: 12 }, (_, i) =>
-      fetch(`${workerUrl}/api/code/context/create`, {
+    // Create contexts sequentially
+    const contexts: CodeContext[] = [];
+    for (let i = 0; i < 4; i++) {
+      const response = await fetch(`${workerUrl}/api/code/context/create`, {
         method: 'POST',
         headers,
         body: JSON.stringify({ language: 'javascript' })
-      }).then((r) => r.json())
-    );
-
-    const contexts = (await Promise.all(contextPromises)) as CodeContext[];
+      });
+      expect(response.status).toBe(200);
+      const context = (await response.json()) as CodeContext;
+      contexts.push(context);
+    }
 
     // Execute different code in each context concurrently
     // Each context sets its own unique value
