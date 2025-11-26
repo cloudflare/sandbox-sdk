@@ -618,6 +618,85 @@ console.log('Sum:', sum);
     }
   }, 120000);
 
+  test('should maintain state isolation with concurrent context execution', async () => {
+    currentSandboxId = createSandboxId();
+    const headers = createTestHeaders(currentSandboxId);
+
+    // Create 12 contexts concurrently
+    const contextPromises = Array.from({ length: 12 }, (_, i) =>
+      fetch(`${workerUrl}/api/code/context/create`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ language: 'javascript' })
+      }).then((r) => r.json())
+    );
+
+    const contexts = (await Promise.all(contextPromises)) as CodeContext[];
+
+    // Execute different code in each context concurrently
+    // Each context sets its own unique value
+    const executionPromises = contexts.map((context, i) =>
+      fetch(`${workerUrl}/api/code/execute`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          code: `const value = ${i}; value;`,
+          options: { context }
+        })
+      }).then((r) => r.json())
+    );
+
+    const execResults = (await Promise.all(
+      executionPromises
+    )) as ExecutionResult[];
+
+    // Verify each execution succeeded and returned the correct value
+    for (let i = 0; i < contexts.length; i++) {
+      expect(
+        execResults[i].error,
+        `Context ${i} should not have error`
+      ).toBeUndefined();
+      expect(execResults[i].results).toBeDefined();
+      expect(execResults[i].results![0].text).toContain(String(i));
+    }
+
+    // Now verify each context maintained its isolated state by reading the value back
+    const verificationPromises = contexts.map((context) =>
+      fetch(`${workerUrl}/api/code/execute`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          code: 'value;',
+          options: { context }
+        })
+      }).then((r) => r.json())
+    );
+
+    const verifyResults = (await Promise.all(
+      verificationPromises
+    )) as ExecutionResult[];
+
+    // Each context should still have its own unique value
+    for (let i = 0; i < contexts.length; i++) {
+      expect(
+        verifyResults[i].error,
+        `Context ${i} verification should not have error`
+      ).toBeUndefined();
+      expect(verifyResults[i].results).toBeDefined();
+      expect(verifyResults[i].results![0].text).toContain(String(i));
+    }
+
+    // Clean up all contexts
+    await Promise.all(
+      contexts.map((context) =>
+        fetch(`${workerUrl}/api/code/context/${context.id}`, {
+          method: 'DELETE',
+          headers
+        })
+      )
+    );
+  }, 120000);
+
   test('should prevent concurrent execution on same context', async () => {
     currentSandboxId = createSandboxId();
     const headers = createTestHeaders(currentSandboxId);
