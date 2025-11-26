@@ -11,11 +11,11 @@
     "@cloudflare/containers": "^0.0.30"
   },
   "devDependencies": {
-    "@openai/agents": "^0.3.2",
+    "@openai/agents": "^0.3.3",
     "@repo/shared": "*"
   },
   "peerDependencies": {
-    "@openai/agents": "^0.3.2"
+    "@openai/agents": "^0.3.3"
   },
   "peerDependenciesMeta": {
     "@openai/agents": {
