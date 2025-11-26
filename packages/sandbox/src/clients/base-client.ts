@@ -4,6 +4,7 @@ import { getHttpStatus } from '@repo/shared/errors';
 import type { ErrorResponse as NewErrorResponse } from '../errors';
 import { createErrorFromResponse, ErrorCode } from '../errors';
 import type { SandboxError } from '../errors/classes';
+import { createTransport, type Transport } from './transport';
 import type { HttpClientOptions, ResponseHandler } from './types';
 
 // Container startup retry configuration
@@ -11,24 +12,105 @@ const TIMEOUT_MS = 120_000; // 2 minutes total retry budget
 const MIN_TIME_FOR_RETRY_MS = 15_000; // Need at least 15s remaining to retry (allows for longer container startups)
 
 /**
- * Abstract base class providing common HTTP functionality for all domain clients
+ * Abstract base class providing common HTTP/WebSocket functionality for all domain clients
+ *
+ * Supports two transport modes:
+ * - HTTP (default): Each request is a separate HTTP call
+ * - WebSocket: All requests multiplexed over a single connection
+ *
+ * WebSocket mode is useful when running inside Workers/Durable Objects
+ * where sub-request limits apply.
  */
 export abstract class BaseHttpClient {
   protected baseUrl: string;
   protected options: HttpClientOptions;
   protected logger: Logger;
+  protected transport: Transport | null = null;
 
   constructor(options: HttpClientOptions = {}) {
     this.options = options;
     this.logger = options.logger ?? createNoOpLogger();
     this.baseUrl = this.options.baseUrl!;
+
+    // Use provided transport or create one if WebSocket mode is enabled
+    if (options.transport) {
+      this.transport = options.transport;
+    } else if (options.transportMode === 'websocket' && options.wsUrl) {
+      this.transport = createTransport({
+        mode: 'websocket',
+        wsUrl: options.wsUrl,
+        logger: this.logger
+      });
+    }
+  }
+
+  /**
+   * Check if using WebSocket transport
+   */
+  protected isWebSocketMode(): boolean {
+    return this.transport?.getMode() === 'websocket';
   }
 
   /**
    * Core HTTP request method with automatic retry for container startup delays
    * Retries both 503 (provisioning) and 500 (startup failure) errors when they're container-related
+   *
+   * When WebSocket transport is enabled, this creates a Response-like object
+   * from the WebSocket response for compatibility with existing code.
    */
   protected async doFetch(
+    path: string,
+    options?: RequestInit
+  ): Promise<Response> {
+    // Use WebSocket transport if available
+    if (this.transport?.getMode() === 'websocket') {
+      return this.doWebSocketFetch(path, options);
+    }
+
+    // Fall back to HTTP transport
+    return this.doHttpFetch(path, options);
+  }
+
+  /**
+   * WebSocket-based fetch implementation
+   * Converts WebSocket request/response to Response object for compatibility
+   */
+  private async doWebSocketFetch(
+    path: string,
+    options?: RequestInit
+  ): Promise<Response> {
+    if (!this.transport) {
+      throw new Error('WebSocket transport not initialized');
+    }
+
+    const method = (options?.method || 'GET') as
+      | 'GET'
+      | 'POST'
+      | 'PUT'
+      | 'DELETE';
+    let body: unknown;
+
+    if (options?.body && typeof options.body === 'string') {
+      try {
+        body = JSON.parse(options.body);
+      } catch {
+        body = options.body;
+      }
+    }
+
+    const result = await this.transport.request(method, path, body);
+
+    // Create a Response-like object for compatibility
+    return new Response(JSON.stringify(result.body), {
+      status: result.status,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+
+  /**
+   * HTTP-based fetch implementation with retry logic
+   */
+  private async doHttpFetch(
     path: string,
     options?: RequestInit
   ): Promise<Response> {
@@ -199,6 +281,29 @@ export abstract class BaseHttpClient {
     }
 
     return response.body;
+  }
+
+  /**
+   * Stream request handler for WebSocket transport
+   * Returns a ReadableStream that receives data over WebSocket
+   */
+  protected async doStreamFetch(
+    path: string,
+    body?: unknown
+  ): Promise<ReadableStream<Uint8Array>> {
+    // Use WebSocket transport if available
+    if (this.transport?.getMode() === 'websocket') {
+      return this.transport.requestStream('POST', path, body);
+    }
+
+    // Fall back to HTTP streaming
+    const response = await this.doFetch(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: body ? JSON.stringify(body) : undefined
+    });
+
+    return this.handleStreamResponse(response);
   }
 
   /**

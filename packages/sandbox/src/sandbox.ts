@@ -95,6 +95,10 @@ export function getSandbox<T extends Sandbox<any>>(
     stub.setContainerTimeouts(options.containerTimeouts);
   }
 
+  if (options?.useWebSocket !== undefined) {
+    stub.setUseWebSocket(options.useWebSocket);
+  }
+
   return Object.assign(stub, {
     wsConnect: connect(stub)
   }) as T;
@@ -129,6 +133,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private logger: ReturnType<typeof createLogger>;
   private keepAliveEnabled: boolean = false;
   private activeMounts: Map<string, MountInfo> = new Map();
+  private useWebSocketTransport: boolean = false;
 
   /**
    * Default container startup timeouts (conservative for production)
@@ -212,6 +217,23 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           ...storedTimeouts
         };
       }
+
+      // Load WebSocket transport setting
+      const storedUseWebSocket =
+        (await this.ctx.storage.get<boolean>('useWebSocket')) || false;
+      if (storedUseWebSocket) {
+        this.useWebSocketTransport = true;
+        // Recreate client with WebSocket transport
+        this.client = new SandboxClient({
+          logger: this.logger,
+          port: 3000,
+          stub: this,
+          transportMode: 'websocket',
+          wsUrl: 'ws://localhost:3000/ws'
+        });
+        // Re-initialize code interpreter with new client
+        this.codeInterpreter = new CodeInterpreter(this);
+      }
     });
   }
 
@@ -255,6 +277,48 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         'KeepAlive mode disabled - container will timeout normally'
       );
     }
+  }
+
+  /**
+   * RPC method to enable WebSocket transport for control plane communication
+   *
+   * When enabled, all sandbox operations are multiplexed over a single WebSocket
+   * connection instead of individual HTTP requests, reducing sub-request count.
+   *
+   * Note: The WebSocket connection is established on the first request.
+   */
+  async setUseWebSocket(useWebSocket: boolean): Promise<void> {
+    if (this.useWebSocketTransport === useWebSocket) {
+      return; // No change needed
+    }
+
+    this.useWebSocketTransport = useWebSocket;
+    await this.ctx.storage.put('useWebSocket', useWebSocket);
+
+    if (useWebSocket) {
+      this.logger.info(
+        'WebSocket transport enabled - requests will be multiplexed over single connection'
+      );
+      // Recreate client with WebSocket transport
+      this.client = new SandboxClient({
+        logger: this.logger,
+        port: 3000,
+        stub: this,
+        transportMode: 'websocket',
+        wsUrl: 'ws://localhost:3000/ws'
+      });
+    } else {
+      this.logger.info('WebSocket transport disabled - using HTTP requests');
+      // Recreate client with HTTP transport
+      this.client = new SandboxClient({
+        logger: this.logger,
+        port: 3000,
+        stub: this
+      });
+    }
+
+    // Re-initialize code interpreter with new client
+    this.codeInterpreter = new CodeInterpreter(this);
   }
 
   // RPC method to set environment variables

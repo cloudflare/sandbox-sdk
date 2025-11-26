@@ -70,8 +70,13 @@ export default {
     const sandboxType = request.headers.get('X-Sandbox-Type');
     const sandboxNamespace =
       sandboxType === 'python' ? env.SandboxPython : env.Sandbox;
+
+    // Check if WebSocket transport is requested
+    const useWebSocket = request.headers.get('X-Use-WebSocket') === 'true';
+
     const sandbox = getSandbox(sandboxNamespace, sandboxId, {
-      keepAlive
+      keepAlive,
+      useWebSocket
     });
 
     // Get session ID from header (optional)
