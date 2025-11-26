@@ -1,5 +1,13 @@
 # @cloudflare/sandbox
 
+## 0.5.5
+
+### Patch Changes
+
+- [#245](https://github.com/cloudflare/sandbox-sdk/pull/245) [`ecaafa9`](https://github.com/cloudflare/sandbox-sdk/commit/ecaafa9c4e213bf955a464d0c977830956a77336) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Publish Docker images for linux/amd64 only to ensure dev/prod parity. ARM Mac users will automatically use emulation, matching production deployment behavior. This prevents architecture-specific bugs caused by Docker automatically selecting ARM64 variants on ARM hosts.
+
+- [#251](https://github.com/cloudflare/sandbox-sdk/pull/251) [`ba83581`](https://github.com/cloudflare/sandbox-sdk/commit/ba83581a9c8eff6f6bf5913baf2c9186729126a4) Thanks [@threepointone](https://github.com/threepointone)! - Update dependencies
+
 ## 0.5.4
 
 ### Patch Changes

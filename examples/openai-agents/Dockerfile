@@ -1,4 +1,4 @@
-FROM docker.io/cloudflare/sandbox:0.5.4
+FROM docker.io/cloudflare/sandbox:0.5.5
 
 # Required during local development to access exposed ports
 EXPOSE 8080
