@@ -5,6 +5,9 @@ import { createLogger } from '@repo/shared';
 import { Mutex } from 'async-mutex';
 import { CONFIG } from '../config';
 
+// Check if Python is available (set via environment variable in Dockerfile)
+const PYTHON_AVAILABLE = process.env.PYTHON_POOL_MIN_SIZE !== '0';
+
 export type InterpreterLanguage = 'python' | 'javascript' | 'typescript';
 
 export interface InterpreterProcess {
@@ -216,6 +219,22 @@ export class ProcessPoolManager {
           }
         };
       }
+    }
+
+    // Check if Python is available
+    if (language === 'python' && !PYTHON_AVAILABLE) {
+      return {
+        stdout: '',
+        stderr:
+          'Python interpreter not available. Use the cloudflare/sandbox:<version>-python image variant for Python code execution. See https://developers.cloudflare.com/sandbox/configuration/dockerfile/',
+        success: false,
+        executionId: randomUUID(),
+        outputs: [],
+        error: {
+          type: 'PythonNotAvailable',
+          message: 'Python interpreter not available in this image variant'
+        }
+      };
     }
 
     if (sessionId) {
