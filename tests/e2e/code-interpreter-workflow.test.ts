@@ -31,6 +31,7 @@ import {
   cleanupSandbox
 } from './helpers/test-fixtures';
 import type { CodeContext, ExecutionResult } from '@repo/shared';
+import type { ErrorResponse as SDKErrorResponse } from '@repo/shared/errors';
 import type { ErrorResponse } from './test-worker/types';
 
 describe('Code Interpreter Workflow (E2E)', () => {
@@ -904,11 +905,12 @@ console.log('Sum:', sum);
       body: JSON.stringify({ language: 'python' })
     });
 
-    expect(response.status).toBe(500);
-    const errorData = (await response.json()) as ErrorResponse;
+    // 501 Not Implemented - Python feature not available in this image variant
+    expect(response.status).toBe(501);
+    const errorData = (await response.json()) as SDKErrorResponse;
 
     // Error should guide users to the correct image variant
-    expect(errorData.error).toContain('Python interpreter not available');
-    expect(errorData.error).toContain('-python');
+    expect(errorData.message).toContain('Python interpreter not available');
+    expect(errorData.message).toContain('-python');
   }, 120000);
 });

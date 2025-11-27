@@ -47,6 +47,9 @@ export const ERROR_STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.SERVICE_NOT_RESPONDING]: 502,
   [ErrorCode.GIT_NETWORK_ERROR]: 502,
 
+  // 501 Not Implemented (feature not available in image variant)
+  [ErrorCode.PYTHON_NOT_AVAILABLE]: 501,
+
   // 503 Service Unavailable
   [ErrorCode.INTERPRETER_NOT_READY]: 503,
 

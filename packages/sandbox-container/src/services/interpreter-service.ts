@@ -159,6 +159,20 @@ export class InterpreterService {
         };
       }
 
+      // Check for Python not available error
+      if (errorMessage.includes('Python interpreter not available')) {
+        return {
+          success: false,
+          error: {
+            message: errorMessage,
+            code: ErrorCode.PYTHON_NOT_AVAILABLE,
+            details: {
+              originalError: errorMessage
+            } satisfies InternalErrorContext
+          }
+        };
+      }
+
       return {
         success: false,
         error: {

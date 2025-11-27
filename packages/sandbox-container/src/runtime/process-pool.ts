@@ -2,6 +2,7 @@ import { type ChildProcess, spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import type { Logger } from '@repo/shared';
 import { createLogger } from '@repo/shared';
+import { ErrorCode } from '@repo/shared/errors';
 import { Mutex } from 'async-mutex';
 import { CONFIG } from '../config';
 
@@ -238,7 +239,7 @@ export class ProcessPoolManager {
         executionId: randomUUID(),
         outputs: [],
         error: {
-          type: 'PythonNotAvailable',
+          type: ErrorCode.PYTHON_NOT_AVAILABLE,
           message: 'Python interpreter not available in this image variant'
         }
       };
@@ -773,7 +774,7 @@ export class ProcessPoolManager {
         targetMinimum: config.minSize
       });
 
-      const spawnPromises = [];
+      const spawnPromises: Promise<void>[] = [];
       for (let i = 0; i < needed; i++) {
         spawnPromises.push(this.createUnassignedExecutor(language));
       }
