@@ -35,8 +35,6 @@
     "fix": "biome check --fix && npm run typecheck",
     "typecheck": "tsc --noEmit",
     "docker:local": "cd ../.. && docker build -f packages/sandbox/Dockerfile --target default --platform linux/amd64 --build-arg SANDBOX_VERSION=$npm_package_version -t cloudflare/sandbox-test:$npm_package_version . && docker build -f packages/sandbox/Dockerfile --target python --platform linux/amd64 --build-arg SANDBOX_VERSION=$npm_package_version -t cloudflare/sandbox-test:$npm_package_version-python .",
-    "docker:publish": "cd ../.. && docker buildx build --platform linux/amd64 -f packages/sandbox/Dockerfile --target default --build-arg SANDBOX_VERSION=$npm_package_version -t cloudflare/sandbox:$npm_package_version --push . && docker buildx build --platform linux/amd64 -f packages/sandbox/Dockerfile --target python --build-arg SANDBOX_VERSION=$npm_package_version -t cloudflare/sandbox:$npm_package_version-python --push .",
-    "docker:publish:beta": "cd ../.. && docker buildx build --platform linux/amd64 -f packages/sandbox/Dockerfile --target default --build-arg SANDBOX_VERSION=$npm_package_version -t cloudflare/sandbox:$npm_package_version-beta --push . && docker buildx build --platform linux/amd64 -f packages/sandbox/Dockerfile --target python --build-arg SANDBOX_VERSION=$npm_package_version -t cloudflare/sandbox:$npm_package_version-python-beta --push .",
     "test": "vitest run --config vitest.config.ts \"$@\"",
     "test:e2e": "cd ../.. && vitest run --config vitest.e2e.config.ts \"$@\""
   },

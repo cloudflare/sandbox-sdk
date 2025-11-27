@@ -1,5 +1,6 @@
 # Integration test Dockerfile
-FROM docker.io/cloudflare/sandbox-test:0.5.6
+# Uses the -python variant because E2E tests include Python code execution tests
+FROM docker.io/cloudflare/sandbox-test:0.5.6-python
 
 # Expose ports used for testing
 EXPOSE 8080

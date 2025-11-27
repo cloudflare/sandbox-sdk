@@ -1,12 +1,19 @@
-import { type ChildProcess, spawn } from 'node:child_process';
+import { type ChildProcess, spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import type { Logger } from '@repo/shared';
 import { createLogger } from '@repo/shared';
 import { Mutex } from 'async-mutex';
 import { CONFIG } from '../config';
 
-// Check if Python is available (set via environment variable in Dockerfile)
-const PYTHON_AVAILABLE = process.env.PYTHON_POOL_MIN_SIZE !== '0';
+// Check if Python is available by trying to invoke the binary
+const PYTHON_AVAILABLE = (() => {
+  try {
+    const result = spawnSync('python3', ['--version'], { timeout: 5000 });
+    return result.status === 0;
+  } catch {
+    return false;
+  }
+})();
 
 export type InterpreterLanguage = 'python' | 'javascript' | 'typescript';
 

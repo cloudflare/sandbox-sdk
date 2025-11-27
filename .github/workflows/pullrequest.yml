@@ -121,9 +121,10 @@ jobs:
         with:
           context: .
           file: packages/sandbox/Dockerfile
+          target: python # E2E tests require Python for code interpreter tests
           platforms: linux/amd64 # Explicit single-arch for compatibility with release-amd64 cache
           load: true # Load into Docker daemon for local testing
-          tags: cloudflare/sandbox-test:${{ needs.unit-tests.outputs.version || '0.0.0' }}
+          tags: cloudflare/sandbox-test:${{ needs.unit-tests.outputs.version || '0.0.0' }}-python
           build-args: |
             SANDBOX_VERSION=${{ needs.unit-tests.outputs.version || '0.0.0' }}
 
