@@ -231,10 +231,10 @@ export class ProcessPoolManager {
 
     // Check if Python is available
     if (language === 'python' && !PYTHON_AVAILABLE) {
+      const version = process.env.SANDBOX_VERSION || '<version>';
       return {
         stdout: '',
-        stderr:
-          'Python interpreter not available. Use the cloudflare/sandbox:<version>-python image variant for Python code execution. See https://developers.cloudflare.com/sandbox/configuration/dockerfile/',
+        stderr: `Python interpreter not available. Use the cloudflare/sandbox:${version}-python image variant for Python code execution. See https://developers.cloudflare.com/sandbox/configuration/dockerfile/`,
         success: false,
         executionId: randomUUID(),
         outputs: [],
@@ -563,8 +563,9 @@ export class ProcessPoolManager {
   ): Promise<void> {
     // Check if Python is available before trying to create a context
     if (language === 'python' && !PYTHON_AVAILABLE) {
+      const version = process.env.SANDBOX_VERSION || '<version>';
       throw new Error(
-        'Python interpreter not available. Use the cloudflare/sandbox:<version>-python image variant for Python code execution. See https://developers.cloudflare.com/sandbox/configuration/dockerfile/'
+        `Python interpreter not available. Use the cloudflare/sandbox:${version}-python image variant for Python code execution. See https://developers.cloudflare.com/sandbox/configuration/dockerfile/`
       );
     }
 

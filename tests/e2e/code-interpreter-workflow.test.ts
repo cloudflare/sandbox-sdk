@@ -267,7 +267,7 @@ describe('Code Interpreter Workflow (E2E)', () => {
 
   test('should execute simple JavaScript code', async () => {
     currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
+    const headers = createBaseImageHeaders(currentSandboxId);
 
     // Create JavaScript context
     const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
@@ -297,7 +297,7 @@ describe('Code Interpreter Workflow (E2E)', () => {
 
   test('should maintain JavaScript state across executions', async () => {
     currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
+    const headers = createBaseImageHeaders(currentSandboxId);
 
     // Create context
     const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
@@ -337,7 +337,7 @@ describe('Code Interpreter Workflow (E2E)', () => {
 
   test('should handle JavaScript errors gracefully', async () => {
     currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
+    const headers = createBaseImageHeaders(currentSandboxId);
 
     // Create context
     const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
@@ -583,7 +583,7 @@ console.log('Sum:', sum);
 
   test('should maintain isolation across many contexts (12+)', async () => {
     currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
+    const headers = createBaseImageHeaders(currentSandboxId);
 
     // Create 12 contexts
     const contexts: CodeContext[] = [];
@@ -653,7 +653,7 @@ console.log('Sum:', sum);
 
   test('should maintain state isolation with concurrent context execution', async () => {
     currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
+    const headers = createBaseImageHeaders(currentSandboxId);
 
     // Create contexts sequentially
     const contexts: CodeContext[] = [];
@@ -734,7 +734,7 @@ console.log('Sum:', sum);
 
   test('should prevent concurrent execution on same context', async () => {
     currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
+    const headers = createBaseImageHeaders(currentSandboxId);
 
     // Create single context
     const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
@@ -911,6 +911,6 @@ console.log('Sum:', sum);
 
     // Error should guide users to the correct image variant
     expect(errorData.message).toContain('Python interpreter not available');
-    expect(errorData.message).toContain('-python');
+    expect(errorData.message).toMatch(/-python/);
   }, 120000);
 });

@@ -66,13 +66,14 @@ export function createTestHeaders(
  * The base image is smaller but only supports JavaScript/shell execution.
  *
  * @param sandboxId - Which container instance to use
+ * @param sessionId - (Optional) Which session within that container
  */
 export function createBaseImageHeaders(
-  sandboxId: string
+  sandboxId: string,
+  sessionId?: string
 ): Record<string, string> {
   return {
-    'Content-Type': 'application/json',
-    'X-Sandbox-Id': sandboxId,
+    ...createTestHeaders(sandboxId, sessionId),
     'X-Sandbox-Type': 'base'
   };
 }
