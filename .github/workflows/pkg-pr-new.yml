@@ -130,7 +130,7 @@ jobs:
 
             const botComment = comments.find(comment =>
               comment.user.type === 'Bot' &&
-              comment.body.includes('Docker Image Published')
+              comment.body.includes('Docker Images Published')
             );
 
             if (botComment) {
