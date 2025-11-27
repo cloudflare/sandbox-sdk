@@ -195,6 +195,29 @@ export class ProcessPoolManager {
   ): Promise<ExecutionResult> {
     const totalStartTime = Date.now();
 
+    // Transpile TypeScript to JavaScript using Bun's built-in transpiler
+    let codeToExecute = code;
+    if (language === 'typescript') {
+      try {
+        const transpiler = new Bun.Transpiler({ loader: 'ts', target: 'node' });
+        codeToExecute = transpiler.transformSync(code);
+      } catch (err) {
+        const error = err as Error;
+        return {
+          stdout: '',
+          stderr: `TypeScript compilation error: ${error.message}`,
+          success: false,
+          executionId: randomUUID(),
+          outputs: [],
+          error: {
+            type: 'TranspileError',
+            message: error.message,
+            traceback: error.stack
+          }
+        };
+      }
+    }
+
     if (sessionId) {
       // Context execution: Get dedicated executor and lock on it
       const contextExecutor = this.contextExecutors.get(sessionId);
@@ -217,7 +240,12 @@ export class ProcessPoolManager {
       // Lock on the executor to serialize execution
       const mutex = this.getExecutorLock(contextExecutor.id);
       return await mutex.runExclusive(() =>
-        this.executeInProcess(contextExecutor, code, totalStartTime, timeout)
+        this.executeInProcess(
+          contextExecutor,
+          codeToExecute,
+          totalStartTime,
+          timeout
+        )
       );
     } else {
       // Stateless execution: Borrow executor, execute, return
@@ -225,7 +253,12 @@ export class ProcessPoolManager {
       try {
         const mutex = this.getExecutorLock(executor.id);
         return await mutex.runExclusive(() =>
-          this.executeInProcess(executor, code, totalStartTime, timeout)
+          this.executeInProcess(
+            executor,
+            codeToExecute,
+            totalStartTime,
+            timeout
+          )
         );
       } finally {
         await this.returnExecutor(language, executor);
