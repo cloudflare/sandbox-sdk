@@ -58,18 +58,6 @@
         "packages/shared/src/**"
       ]
     },
-    "docker:publish": {
-      "dependsOn": ["^build"],
-      "cache": false,
-      "outputs": [],
-      "inputs": ["Dockerfile", "wrangler.jsonc"]
-    },
-    "docker:publish:beta": {
-      "dependsOn": ["^build"],
-      "cache": false,
-      "outputs": [],
-      "inputs": ["Dockerfile", "wrangler.jsonc"]
-    },
     "dev": {
       "cache": false,
       "persistent": true
