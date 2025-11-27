@@ -25,6 +25,9 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
+# Install Bun runtime (needed for sandbox-container build script)
+COPY --from=oven/bun:1-alpine /usr/local/bin/bun /usr/local/bin/bun
+
 # Copy pruned lockfile and package.json files (for Docker layer caching)
 COPY --from=pruner /app/out/json/ .
 COPY --from=pruner /app/out/package-lock.json ./package-lock.json
@@ -41,24 +44,7 @@ COPY --from=pruner /app/out/full/ .
 RUN npx turbo run build
 
 # ============================================================================
-# Stage 3: Install production-only dependencies
-# ============================================================================
-FROM node:20-alpine AS prod-deps
-
-WORKDIR /app
-
-# Copy package files from builder
-COPY --from=builder /app/package.json ./package.json
-COPY --from=builder /app/package-lock.json ./package-lock.json
-COPY --from=builder /app/packages ./packages
-COPY --from=builder /app/tooling ./tooling
-
-# Install ONLY production dependencies (excludes typescript, @types/*, etc.)
-RUN --mount=type=cache,target=/root/.npm \
-    CI=true npm ci --production
-
-# ============================================================================
-# Stage 4: Download pre-built Python 3.11.14
+# Stage 3: Download pre-built Python 3.11.14
 # ============================================================================
 FROM ubuntu:22.04 AS python-builder
 
@@ -100,7 +86,7 @@ RUN --mount=type=cache,target=/tmp/python-cache \
     rm -rf /tmp/cpython-*
 
 # ============================================================================
-# Stage 5: Runtime - Ubuntu 22.04 with only runtime dependencies
+# Stage 4: Runtime - Ubuntu 22.04 with only runtime dependencies
 # ============================================================================
 FROM ubuntu:22.04 AS runtime
 
@@ -157,20 +143,16 @@ COPY --from=oven/bun:1 /usr/local/bin/bun /usr/local/bin/bun
 # Set up runtime container server directory
 WORKDIR /container-server
 
-# Copy built sandbox-container package
-COPY --from=builder /app/packages/sandbox-container/dist ./dist
-COPY --from=builder /app/packages/sandbox-container/package.json ./package.json
+# Copy bundled container server (all dependencies inlined, no node_modules needed)
+COPY --from=builder /app/packages/sandbox-container/dist/index.js ./dist/
+COPY --from=builder /app/packages/sandbox-container/dist/index.js.map ./dist/
 
-# Copy Python executor to runtime location
+# Copy bundled JavaScript executor
+COPY --from=builder /app/packages/sandbox-container/dist/runtime/executors/javascript/node_executor.js ./dist/runtime/executors/javascript/
+COPY --from=builder /app/packages/sandbox-container/dist/runtime/executors/javascript/node_executor.js.map ./dist/runtime/executors/javascript/
+
+# Copy Python executor
 COPY --from=builder /app/packages/sandbox-container/src/runtime/executors/python/ipython_executor.py ./dist/runtime/executors/python/
-
-# Copy production-only node_modules (excludes typescript, @types/*, etc.)
-# Includes: @repo/shared, zod, esbuild (runtime dependencies)
-COPY --from=prod-deps /app/node_modules ./node_modules
-
-# Copy workspace packages
-COPY --from=prod-deps /app/packages/shared/dist ./packages/shared/dist
-COPY --from=prod-deps /app/packages/shared/package.json ./packages/shared/package.json
 
 # Configure process pool sizes (minimum only)
 ENV PYTHON_POOL_MIN_SIZE=3
