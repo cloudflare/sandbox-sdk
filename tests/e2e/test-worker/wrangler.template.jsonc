@@ -20,9 +20,9 @@
       "name": "{{CONTAINER_NAME}}"
     },
     {
-      "class_name": "SandboxBase",
-      "image": "./Dockerfile.base",
-      "name": "{{CONTAINER_NAME}}-base"
+      "class_name": "SandboxPython",
+      "image": "./Dockerfile.python",
+      "name": "{{CONTAINER_NAME}}-python"
     }
   ],
 
@@ -33,16 +33,16 @@
         "name": "Sandbox"
       },
       {
-        "class_name": "SandboxBase",
-        "name": "SandboxBase"
+        "class_name": "SandboxPython",
+        "name": "SandboxPython"
       }
     ]
   },
 
   "migrations": [
     {
-      "new_sqlite_classes": ["Sandbox", "SandboxBase"],
-      "tag": "v1"
+      "new_sqlite_classes": ["Sandbox", "SandboxPython"],
+      "tag": "v2"
     }
   ],
 

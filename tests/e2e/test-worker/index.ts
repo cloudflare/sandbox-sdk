@@ -5,10 +5,10 @@
  * Supports both default sessions (implicit) and explicit sessions via X-Session-Id header.
  *
  * Two sandbox types are available:
- * - Sandbox: Full image with Python (default)
- * - SandboxBase: Base image without Python (for testing Python-not-available errors)
+ * - Sandbox: Base image without Python (default, lean image)
+ * - SandboxPython: Full image with Python (for code interpreter tests)
  *
- * Use X-Sandbox-Type header to select: 'base' for SandboxBase, anything else for Sandbox
+ * Use X-Sandbox-Type header to select: 'python' for SandboxPython, anything else for Sandbox
  */
 import { Sandbox, getSandbox, proxyToSandbox } from '@cloudflare/sandbox';
 import type {
@@ -25,14 +25,14 @@ import type {
   ErrorResponse
 } from './types';
 
-// Export Sandbox twice - once as Sandbox (python image) and once as SandboxBase (base image)
+// Export Sandbox twice - once as Sandbox (base image) and once as SandboxPython (python image)
 // The actual image is determined by the container binding in wrangler.jsonc
 export { Sandbox };
-export { Sandbox as SandboxBase };
+export { Sandbox as SandboxPython };
 
 interface Env {
   Sandbox: DurableObjectNamespace<Sandbox>;
-  SandboxBase: DurableObjectNamespace<Sandbox>;
+  SandboxPython: DurableObjectNamespace<Sandbox>;
   TEST_BUCKET: R2Bucket;
   // R2 credentials for bucket mounting tests
   CLOUDFLARE_ACCOUNT_ID?: string;
@@ -66,10 +66,10 @@ export default {
     const keepAliveHeader = request.headers.get('X-Sandbox-KeepAlive');
     const keepAlive = keepAliveHeader === 'true';
 
-    // Select sandbox type: 'base' uses SandboxBase (no Python), anything else uses Sandbox (with Python)
+    // Select sandbox type: 'python' uses SandboxPython (with Python), anything else uses Sandbox (base, no Python)
     const sandboxType = request.headers.get('X-Sandbox-Type');
     const sandboxNamespace =
-      sandboxType === 'base' ? env.SandboxBase : env.Sandbox;
+      sandboxType === 'python' ? env.SandboxPython : env.Sandbox;
     const sandbox = getSandbox(sandboxNamespace, sandboxId, {
       keepAlive
     });

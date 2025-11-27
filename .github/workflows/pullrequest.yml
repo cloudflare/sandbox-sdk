@@ -160,16 +160,10 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
-      # Cleanup: Delete test worker and container (only for PR environments)
-      - name: Cleanup test deployment
-        if: always() && github.event_name == 'pull_request'
-        continue-on-error: true
-        run: |
-          cd tests/e2e/test-worker
-          ../../../scripts/cleanup-test-deployment.sh ${{ steps.env-name.outputs.worker_name }}
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      # Note: Resources are NOT cleaned up after each run to speed up subsequent CI runs.
+      # Cleanup happens via:
+      # - cleanup.yml: Triggered when PR is closed
+      # - cleanup-stale.yml: Daily cron job for orphaned/stale resources
 
   # Validate changesets don't contain internal packages
   validate-changesets:

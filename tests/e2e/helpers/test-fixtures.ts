@@ -60,21 +60,21 @@ export function createTestHeaders(
 }
 
 /**
- * Create headers for base image sandbox (without Python)
+ * Create headers for Python image sandbox (with Python)
  *
- * Use this for testing the lean image variant that doesn't include Python.
- * The base image is smaller but only supports JavaScript/shell execution.
+ * Use this for testing the full image variant that includes Python.
+ * The Python image is larger but supports Python code execution.
  *
  * @param sandboxId - Which container instance to use
  * @param sessionId - (Optional) Which session within that container
  */
-export function createBaseImageHeaders(
+export function createPythonImageHeaders(
   sandboxId: string,
   sessionId?: string
 ): Record<string, string> {
   return {
     ...createTestHeaders(sandboxId, sessionId),
-    'X-Sandbox-Type': 'base'
+    'X-Sandbox-Type': 'python'
   };
 }
 

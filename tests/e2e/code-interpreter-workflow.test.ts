@@ -27,7 +27,7 @@ import { getTestWorkerUrl, WranglerDevRunner } from './helpers/wrangler-runner';
 import {
   createSandboxId,
   createTestHeaders,
-  createBaseImageHeaders,
+  createPythonImageHeaders,
   cleanupSandbox
 } from './helpers/test-fixtures';
 import type { CodeContext, ExecutionResult } from '@repo/shared';
@@ -64,7 +64,7 @@ describe('Code Interpreter Workflow (E2E)', () => {
 
   test('should create and list code contexts', async () => {
     currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
+    const headers = createPythonImageHeaders(currentSandboxId);
 
     // Create Python context
     const pythonCtxResponse = await fetch(
@@ -112,7 +112,7 @@ describe('Code Interpreter Workflow (E2E)', () => {
 
   test('should delete code context', async () => {
     currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
+    const headers = createPythonImageHeaders(currentSandboxId);
 
     // Create context
     const createResponse = await fetch(`${workerUrl}/api/code/context/create`, {
@@ -154,7 +154,7 @@ describe('Code Interpreter Workflow (E2E)', () => {
 
   test('should execute simple Python code', async () => {
     currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
+    const headers = createPythonImageHeaders(currentSandboxId);
 
     // Create Python context
     const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
@@ -185,7 +185,7 @@ describe('Code Interpreter Workflow (E2E)', () => {
 
   test('should maintain Python state across executions', async () => {
     currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
+    const headers = createPythonImageHeaders(currentSandboxId);
 
     // Create context
     const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
@@ -228,7 +228,7 @@ describe('Code Interpreter Workflow (E2E)', () => {
 
   test('should handle Python errors gracefully', async () => {
     currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
+    const headers = createPythonImageHeaders(currentSandboxId);
 
     // Create context
     const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
@@ -267,7 +267,7 @@ describe('Code Interpreter Workflow (E2E)', () => {
 
   test('should execute simple JavaScript code', async () => {
     currentSandboxId = createSandboxId();
-    const headers = createBaseImageHeaders(currentSandboxId);
+    const headers = createTestHeaders(currentSandboxId);
 
     // Create JavaScript context
     const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
@@ -297,7 +297,7 @@ describe('Code Interpreter Workflow (E2E)', () => {
 
   test('should maintain JavaScript state across executions', async () => {
     currentSandboxId = createSandboxId();
-    const headers = createBaseImageHeaders(currentSandboxId);
+    const headers = createTestHeaders(currentSandboxId);
 
     // Create context
     const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
@@ -337,7 +337,7 @@ describe('Code Interpreter Workflow (E2E)', () => {
 
   test('should handle JavaScript errors gracefully', async () => {
     currentSandboxId = createSandboxId();
-    const headers = createBaseImageHeaders(currentSandboxId);
+    const headers = createTestHeaders(currentSandboxId);
 
     // Create context
     const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
@@ -375,7 +375,7 @@ describe('Code Interpreter Workflow (E2E)', () => {
 
   test('should stream Python execution output', async () => {
     currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
+    const headers = createPythonImageHeaders(currentSandboxId);
 
     // Create context
     const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
@@ -457,7 +457,7 @@ for i in range(3):
 
   test('should process data in Python and consume in JavaScript', async () => {
     currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
+    const headers = createPythonImageHeaders(currentSandboxId);
 
     // Create Python context
     const pythonCtxResponse = await fetch(
@@ -528,7 +528,7 @@ console.log('Sum:', sum);
 
   test('should isolate variables between contexts', async () => {
     currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
+    const headers = createPythonImageHeaders(currentSandboxId);
 
     // Create two Python contexts
     const ctx1Response = await fetch(`${workerUrl}/api/code/context/create`, {
@@ -583,7 +583,7 @@ console.log('Sum:', sum);
 
   test('should maintain isolation across many contexts (12+)', async () => {
     currentSandboxId = createSandboxId();
-    const headers = createBaseImageHeaders(currentSandboxId);
+    const headers = createTestHeaders(currentSandboxId);
 
     // Create 12 contexts
     const contexts: CodeContext[] = [];
@@ -653,7 +653,7 @@ console.log('Sum:', sum);
 
   test('should maintain state isolation with concurrent context execution', async () => {
     currentSandboxId = createSandboxId();
-    const headers = createBaseImageHeaders(currentSandboxId);
+    const headers = createTestHeaders(currentSandboxId);
 
     // Create contexts sequentially
     const contexts: CodeContext[] = [];
@@ -734,7 +734,7 @@ console.log('Sum:', sum);
 
   test('should prevent concurrent execution on same context', async () => {
     currentSandboxId = createSandboxId();
-    const headers = createBaseImageHeaders(currentSandboxId);
+    const headers = createTestHeaders(currentSandboxId);
 
     // Create single context
     const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
@@ -896,7 +896,8 @@ console.log('Sum:', sum);
 
   test('should return helpful error when Python unavailable on base image', async () => {
     currentSandboxId = createSandboxId();
-    const headers = createBaseImageHeaders(currentSandboxId);
+    // Use default headers (base image, no Python) to test Python-not-available error
+    const headers = createTestHeaders(currentSandboxId);
 
     // Try to create Python context on base image (no Python installed)
     const response = await fetch(`${workerUrl}/api/code/context/create`, {
