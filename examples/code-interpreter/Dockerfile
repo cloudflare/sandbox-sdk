@@ -1,1 +1,1 @@
-FROM docker.io/cloudflare/sandbox:0.5.5
+FROM docker.io/cloudflare/sandbox:0.5.6
