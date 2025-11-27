@@ -560,6 +560,13 @@ export class ProcessPoolManager {
     contextId: string,
     language: InterpreterLanguage
   ): Promise<void> {
+    // Check if Python is available before trying to create a context
+    if (language === 'python' && !PYTHON_AVAILABLE) {
+      throw new Error(
+        'Python interpreter not available. Use the cloudflare/sandbox:<version>-python image variant for Python code execution. See https://developers.cloudflare.com/sandbox/configuration/dockerfile/'
+      );
+    }
+
     const mutex = this.poolLocks.get(language)!;
     await mutex.runExclusive(async () => {
       const available = this.availableExecutors.get(language) || [];
