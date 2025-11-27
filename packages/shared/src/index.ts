@@ -106,3 +106,20 @@ export type {
   WriteFileResult
 } from './types.js';
 export { isExecResult, isProcess, isProcessStatus } from './types.js';
+// Export WebSocket protocol types
+export type {
+  WSClientMessage,
+  WSError,
+  WSMethod,
+  WSRequest,
+  WSResponse,
+  WSServerMessage,
+  WSStreamChunk
+} from './ws-types.js';
+export {
+  generateRequestId,
+  isWSError,
+  isWSRequest,
+  isWSResponse,
+  isWSStreamChunk
+} from './ws-types.js';
