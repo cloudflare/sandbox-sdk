@@ -5,11 +5,11 @@
   "description": "Container runtime for Cloudflare Sandbox SDK",
   "type": "module",
   "scripts": {
-    "build": "tsc --project tsconfig.build.json",
+    "build": "bun run build.ts",
     "typecheck": "tsc --noEmit",
     "test": "bun test tests",
     "test:watch": "bun test --watch tests",
-    "clean": "rm -rf dist *.js *.js.map src/**/*.js src/**/*.js.map"
+    "clean": "rm -rf dist"
   },
   "dependencies": {
     "@repo/shared": "*",
