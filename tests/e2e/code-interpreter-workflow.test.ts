@@ -27,6 +27,7 @@ import { getTestWorkerUrl, WranglerDevRunner } from './helpers/wrangler-runner';
 import {
   createSandboxId,
   createTestHeaders,
+  createBaseImageHeaders,
   cleanupSandbox
 } from './helpers/test-fixtures';
 import type { CodeContext, ExecutionResult } from '@repo/shared';
@@ -890,5 +891,24 @@ console.log('Sum:', sum);
     expect(deleteResponse.status).toBeGreaterThanOrEqual(400);
     const errorData = (await deleteResponse.json()) as ErrorResponse;
     expect(errorData.error).toBeTruthy();
+  }, 120000);
+
+  test('should return helpful error when Python unavailable on base image', async () => {
+    currentSandboxId = createSandboxId();
+    const headers = createBaseImageHeaders(currentSandboxId);
+
+    // Try to create Python context on base image (no Python installed)
+    const response = await fetch(`${workerUrl}/api/code/context/create`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ language: 'python' })
+    });
+
+    expect(response.status).toBe(500);
+    const errorData = (await response.json()) as ErrorResponse;
+
+    // Error should guide users to the correct image variant
+    expect(errorData.error).toContain('Python interpreter not available');
+    expect(errorData.error).toContain('-python');
   }, 120000);
 });

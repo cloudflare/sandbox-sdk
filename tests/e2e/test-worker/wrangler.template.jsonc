@@ -18,6 +18,11 @@
       "class_name": "Sandbox",
       "image": "./Dockerfile",
       "name": "{{CONTAINER_NAME}}"
+    },
+    {
+      "class_name": "SandboxBase",
+      "image": "./Dockerfile.base",
+      "name": "{{CONTAINER_NAME}}-base"
     }
   ],
 
@@ -26,13 +31,17 @@
       {
         "class_name": "Sandbox",
         "name": "Sandbox"
+      },
+      {
+        "class_name": "SandboxBase",
+        "name": "SandboxBase"
       }
     ]
   },
 
   "migrations": [
     {
-      "new_sqlite_classes": ["Sandbox"],
+      "new_sqlite_classes": ["Sandbox", "SandboxBase"],
       "tag": "v1"
     }
   ],

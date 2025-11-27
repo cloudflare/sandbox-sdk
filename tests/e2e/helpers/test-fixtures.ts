@@ -60,6 +60,24 @@ export function createTestHeaders(
 }
 
 /**
+ * Create headers for base image sandbox (without Python)
+ *
+ * Use this for testing the lean image variant that doesn't include Python.
+ * The base image is smaller but only supports JavaScript/shell execution.
+ *
+ * @param sandboxId - Which container instance to use
+ */
+export function createBaseImageHeaders(
+  sandboxId: string
+): Record<string, string> {
+  return {
+    'Content-Type': 'application/json',
+    'X-Sandbox-Id': sandboxId,
+    'X-Sandbox-Type': 'base'
+  };
+}
+
+/**
  * Fetch with timeout to prevent hanging tests
  *
  * Usage:
