@@ -333,9 +333,10 @@ export class ProcessPoolManager {
         ];
         break;
       case 'typescript':
+        // TypeScript is transpiled in execute(), so use the same JS executor
         command = 'node';
         args = [
-          '/container-server/dist/runtime/executors/typescript/ts_executor.js'
+          '/container-server/dist/runtime/executors/javascript/node_executor.js'
         ];
         break;
     }
