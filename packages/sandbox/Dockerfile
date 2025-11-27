@@ -86,9 +86,9 @@ RUN --mount=type=cache,target=/tmp/python-cache \
     rm -rf /tmp/cpython-*
 
 # ============================================================================
-# Stage 4: Runtime - Ubuntu 22.04 with only runtime dependencies
+# Stage 4: Runtime base - Ubuntu 22.04 with Node.js and Bun (no Python)
 # ============================================================================
-FROM ubuntu:22.04 AS runtime
+FROM ubuntu:22.04 AS runtime-base
 
 # Accept version as build argument (passed from npm_package_version)
 ARG SANDBOX_VERSION=unknown
@@ -114,23 +114,6 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 # Enable FUSE in container - allow non-root users to use FUSE
 RUN sed -i 's/#user_allow_other/user_allow_other/' /etc/fuse.conf
 
-# Copy pre-built Python from python-builder stage
-COPY --from=python-builder /usr/local/python /usr/local/python
-
-# Create symlinks and update shared library cache
-RUN ln -s /usr/local/python/bin/python3.11 /usr/local/bin/python3.11 && \
-    ln -s /usr/local/python/bin/python3 /usr/local/bin/python3 && \
-    ln -s /usr/local/python/bin/pip3 /usr/local/bin/pip3 && \
-    echo "/usr/local/python/lib" > /etc/ld.so.conf.d/python.conf && \
-    ldconfig
-
-# Set Python 3.11 as default python3
-RUN update-alternatives --install /usr/bin/python3 python3 /usr/local/bin/python3.11 1
-
-# Install Python packages
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip3 install --no-cache-dir matplotlib numpy pandas ipython
-
 # Install Node.js 20 LTS from official Node image
 COPY --from=node:20-slim /usr/local/bin/node /usr/local/bin/node
 COPY --from=node:20-slim /usr/local/lib/node_modules /usr/local/lib/node_modules
@@ -151,14 +134,6 @@ COPY --from=builder /app/packages/sandbox-container/dist/index.js.map ./dist/
 COPY --from=builder /app/packages/sandbox-container/dist/runtime/executors/javascript/node_executor.js ./dist/runtime/executors/javascript/
 COPY --from=builder /app/packages/sandbox-container/dist/runtime/executors/javascript/node_executor.js.map ./dist/runtime/executors/javascript/
 
-# Copy Python executor
-COPY --from=builder /app/packages/sandbox-container/src/runtime/executors/python/ipython_executor.py ./dist/runtime/executors/python/
-
-# Configure process pool sizes (minimum only)
-ENV PYTHON_POOL_MIN_SIZE=3
-ENV JAVASCRIPT_POOL_MIN_SIZE=3
-ENV TYPESCRIPT_POOL_MIN_SIZE=3
-
 # Create clean workspace directory for user code
 RUN mkdir -p /workspace
 
@@ -169,5 +144,46 @@ EXPOSE 3000
 COPY packages/sandbox/startup.sh ./
 RUN chmod +x startup.sh
 
-# Use startup script
+# ============================================================================
+# Stage 5a: Default image - lean, no Python
+# ============================================================================
+FROM runtime-base AS default
+
+# Disable Python pool (Python not available in this image)
+ENV PYTHON_POOL_MIN_SIZE=0
+ENV JAVASCRIPT_POOL_MIN_SIZE=3
+ENV TYPESCRIPT_POOL_MIN_SIZE=3
+
+CMD ["/container-server/startup.sh"]
+
+# ============================================================================
+# Stage 5b: Python image - full, with Python + data science packages
+# ============================================================================
+FROM runtime-base AS python
+
+# Copy pre-built Python from python-builder stage
+COPY --from=python-builder /usr/local/python /usr/local/python
+
+# Create symlinks and update shared library cache
+RUN ln -s /usr/local/python/bin/python3.11 /usr/local/bin/python3.11 && \
+    ln -s /usr/local/python/bin/python3 /usr/local/bin/python3 && \
+    ln -s /usr/local/python/bin/pip3 /usr/local/bin/pip3 && \
+    echo "/usr/local/python/lib" > /etc/ld.so.conf.d/python.conf && \
+    ldconfig
+
+# Set Python 3.11 as default python3
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/local/bin/python3.11 1
+
+# Install Python packages for data science and code interpreter
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip3 install --no-cache-dir matplotlib numpy pandas ipython
+
+# Copy Python executor
+COPY --from=builder /app/packages/sandbox-container/src/runtime/executors/python/ipython_executor.py ./dist/runtime/executors/python/
+
+# Enable all interpreter pools
+ENV PYTHON_POOL_MIN_SIZE=3
+ENV JAVASCRIPT_POOL_MIN_SIZE=3
+ENV TYPESCRIPT_POOL_MIN_SIZE=3
+
 CMD ["/container-server/startup.sh"]
