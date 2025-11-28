@@ -104,17 +104,15 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build test worker Docker image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: packages/sandbox/Dockerfile
-          target: python # E2E tests require Python for code interpreter tests
-          platforms: linux/amd64
-          load: true
-          tags: cloudflare/sandbox-test:${{ needs.unit-tests.outputs.version }}-python
-          build-args: |
-            SANDBOX_VERSION=${{ needs.unit-tests.outputs.version }}
+      - name: Build test worker Docker images (base + python)
+        run: |
+          VERSION=${{ needs.unit-tests.outputs.version }}
+          # Build base image (no Python) - used by Sandbox binding
+          docker build -f packages/sandbox/Dockerfile --target default --platform linux/amd64 \
+            --build-arg SANDBOX_VERSION=$VERSION -t cloudflare/sandbox-test:$VERSION .
+          # Build python image - used by SandboxPython binding
+          docker build -f packages/sandbox/Dockerfile --target python --platform linux/amd64 \
+            --build-arg SANDBOX_VERSION=$VERSION -t cloudflare/sandbox-test:$VERSION-python .
 
       - name: Deploy test worker
         uses: cloudflare/wrangler-action@v3
