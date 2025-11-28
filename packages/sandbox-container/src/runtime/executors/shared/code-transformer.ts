@@ -1,3 +1,4 @@
+import type { Node, Program } from 'acorn';
 import * as acorn from 'acorn';
 
 /**
@@ -11,18 +12,18 @@ export function transformForAsyncExecution(code: string): string {
   }
 
   try {
-    const ast = acorn.parse(trimmed, {
+    const ast: Program = acorn.parse(trimmed, {
       ecmaVersion: 'latest',
       sourceType: 'script',
       allowAwaitOutsideFunction: true
     });
 
-    const body = ast.body;
+    const body: Node[] = ast.body;
     if (body.length === 0) {
       return '(async () => {})()';
     }
 
-    const lastNode = body[body.length - 1];
+    const lastNode: Node = body[body.length - 1];
 
     // If the last statement is an ExpressionStatement, return its value
     if (lastNode.type === 'ExpressionStatement') {
