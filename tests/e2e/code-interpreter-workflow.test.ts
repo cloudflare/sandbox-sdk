@@ -369,6 +369,149 @@ describe('Code Interpreter Workflow (E2E)', () => {
   }, 120000);
 
   // ============================================================================
+  // Top-Level Await Support (JavaScript)
+  // ============================================================================
+
+  test('should execute top-level await without IIFE wrapper', async () => {
+    currentSandboxId = createSandboxId();
+    const headers = createTestHeaders(currentSandboxId);
+
+    // Create JavaScript context
+    const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ language: 'javascript' })
+    });
+
+    const context = await ctxResponse.json();
+
+    // Execute code with top-level await - no IIFE needed!
+    const execResponse = await fetch(`${workerUrl}/api/code/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        code: 'const result = await Promise.resolve(42);\nresult',
+        options: { context }
+      })
+    });
+
+    expect(execResponse.status).toBe(200);
+    const execution = (await execResponse.json()) as ExecutionResult;
+
+    expect(execution.error).toBeUndefined();
+    expect(execution.results).toBeDefined();
+    expect(execution.results![0].text).toContain('42');
+  }, 120000);
+
+  test('should return last expression value from async code', async () => {
+    currentSandboxId = createSandboxId();
+    const headers = createTestHeaders(currentSandboxId);
+
+    // Create JavaScript context
+    const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ language: 'javascript' })
+    });
+
+    const context = await ctxResponse.json();
+
+    // Execute multiple awaits, return last expression
+    const execResponse = await fetch(`${workerUrl}/api/code/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        code: `
+const a = await Promise.resolve(10);
+const b = await Promise.resolve(20);
+a + b
+`.trim(),
+        options: { context }
+      })
+    });
+
+    expect(execResponse.status).toBe(200);
+    const execution = (await execResponse.json()) as ExecutionResult;
+
+    expect(execution.error).toBeUndefined();
+    expect(execution.results).toBeDefined();
+    expect(execution.results![0].text).toContain('30');
+  }, 120000);
+
+  test('should handle async errors in top-level await', async () => {
+    currentSandboxId = createSandboxId();
+    const headers = createTestHeaders(currentSandboxId);
+
+    // Create JavaScript context
+    const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ language: 'javascript' })
+    });
+
+    const context = await ctxResponse.json();
+
+    // Execute code that rejects
+    const execResponse = await fetch(`${workerUrl}/api/code/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        code: 'await Promise.reject(new Error("async error"))',
+        options: { context }
+      })
+    });
+
+    expect(execResponse.status).toBe(200);
+    const execution = (await execResponse.json()) as ExecutionResult;
+
+    expect(execution.error).toBeDefined();
+    expect(
+      execution.error!.message || execution.logs.stderr.join('')
+    ).toContain('async error');
+  }, 120000);
+
+  test('should support LLM-generated fetch pattern with top-level await', async () => {
+    currentSandboxId = createSandboxId();
+    const headers = createTestHeaders(currentSandboxId);
+
+    // Create JavaScript context
+    const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ language: 'javascript' })
+    });
+
+    const context = await ctxResponse.json();
+
+    // Simulate typical LLM-generated code pattern using setTimeout as async operation
+    const execResponse = await fetch(`${workerUrl}/api/code/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        code: `
+const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+await delay(10);
+const data = { status: 'success', value: 123 };
+data
+`.trim(),
+        options: { context }
+      })
+    });
+
+    expect(execResponse.status).toBe(200);
+    const execution = (await execResponse.json()) as ExecutionResult;
+
+    expect(execution.error).toBeUndefined();
+    expect(execution.results).toBeDefined();
+    // Object results come back as JSON, not text
+    const result = execution.results![0];
+    const resultData = result.json ?? result.text;
+    expect(resultData).toBeDefined();
+    expect(JSON.stringify(resultData)).toContain('success');
+    expect(JSON.stringify(resultData)).toContain('123');
+  }, 120000);
+
+  // ============================================================================
   // Streaming Execution
   // ============================================================================
 
@@ -668,13 +811,13 @@ console.log('Sum:', sum);
     }
 
     // Execute different code in each context concurrently
-    // Each context sets its own unique value
+    // Each context sets its own unique value using globalThis for persistence
     const executionPromises = contexts.map((context, i) =>
       fetch(`${workerUrl}/api/code/execute`, {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          code: `const value = ${i}; value;`,
+          code: `globalThis.value = ${i}; globalThis.value;`,
           options: { context }
         })
       }).then((r) => r.json())
@@ -700,7 +843,7 @@ console.log('Sum:', sum);
         method: 'POST',
         headers,
         body: JSON.stringify({
-          code: 'value;',
+          code: 'globalThis.value;',
           options: { context }
         })
       }).then((r) => r.json())
@@ -745,12 +888,12 @@ console.log('Sum:', sum);
     expect(ctxResponse.status).toBe(200);
     const context = (await ctxResponse.json()) as CodeContext;
 
-    // Set up initial state with a counter variable
+    // Set up initial state with a counter variable using globalThis for persistence
     const setupResponse = await fetch(`${workerUrl}/api/code/execute`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        code: 'let counter = 0;',
+        code: 'globalThis.counter = 0;',
         options: { context }
       })
     });
@@ -764,7 +907,7 @@ console.log('Sum:', sum);
         method: 'POST',
         headers,
         body: JSON.stringify({
-          code: 'counter++; counter;',
+          code: 'globalThis.counter++; globalThis.counter;',
           options: { context }
         })
       }).then((r) => r.json())
@@ -806,7 +949,7 @@ console.log('Sum:', sum);
       method: 'POST',
       headers,
       body: JSON.stringify({
-        code: 'counter;',
+        code: 'globalThis.counter;',
         options: { context }
       })
     });
