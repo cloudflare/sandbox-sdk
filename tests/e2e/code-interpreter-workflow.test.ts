@@ -503,8 +503,12 @@ data
 
     expect(execution.error).toBeUndefined();
     expect(execution.results).toBeDefined();
-    expect(execution.results![0].text).toContain('success');
-    expect(execution.results![0].text).toContain('123');
+    // Object results come back as JSON, not text
+    const result = execution.results![0];
+    const resultData = result.json ?? result.text;
+    expect(resultData).toBeDefined();
+    expect(JSON.stringify(resultData)).toContain('success');
+    expect(JSON.stringify(resultData)).toContain('123');
   }, 120000);
 
   // ============================================================================
@@ -807,13 +811,13 @@ console.log('Sum:', sum);
     }
 
     // Execute different code in each context concurrently
-    // Each context sets its own unique value
+    // Each context sets its own unique value using globalThis for persistence
     const executionPromises = contexts.map((context, i) =>
       fetch(`${workerUrl}/api/code/execute`, {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          code: `const value = ${i}; value;`,
+          code: `globalThis.value = ${i}; globalThis.value;`,
           options: { context }
         })
       }).then((r) => r.json())
@@ -839,7 +843,7 @@ console.log('Sum:', sum);
         method: 'POST',
         headers,
         body: JSON.stringify({
-          code: 'value;',
+          code: 'globalThis.value;',
           options: { context }
         })
       }).then((r) => r.json())
@@ -884,12 +888,12 @@ console.log('Sum:', sum);
     expect(ctxResponse.status).toBe(200);
     const context = (await ctxResponse.json()) as CodeContext;
 
-    // Set up initial state with a counter variable
+    // Set up initial state with a counter variable using globalThis for persistence
     const setupResponse = await fetch(`${workerUrl}/api/code/execute`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        code: 'let counter = 0;',
+        code: 'globalThis.counter = 0;',
         options: { context }
       })
     });
@@ -903,7 +907,7 @@ console.log('Sum:', sum);
         method: 'POST',
         headers,
         body: JSON.stringify({
-          code: 'counter++; counter;',
+          code: 'globalThis.counter++; globalThis.counter;',
           options: { context }
         })
       }).then((r) => r.json())
@@ -945,7 +949,7 @@ console.log('Sum:', sum);
       method: 'POST',
       headers,
       body: JSON.stringify({
-        code: 'counter;',
+        code: 'globalThis.counter;',
         options: { context }
       })
     });
