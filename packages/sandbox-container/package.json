@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@repo/shared": "*",
+    "acorn": "^8.14.0",
     "esbuild": "^0.27.0",
     "zod": "^3.22.3"
   },

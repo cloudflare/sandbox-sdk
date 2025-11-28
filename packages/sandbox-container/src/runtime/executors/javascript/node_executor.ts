@@ -7,22 +7,8 @@ import { fileURLToPath } from 'node:url';
 import * as util from 'node:util';
 import * as vm from 'node:vm';
 import type { RichOutput } from '../../process-pool';
-
-interface Thenable<T> {
-  then: (
-    onfulfilled?: (value: T) => unknown,
-    onrejected?: (reason: unknown) => unknown
-  ) => unknown;
-}
-
-function isThenable(value: unknown): value is Thenable<unknown> {
-  return (
-    value !== null &&
-    typeof value === 'object' &&
-    'then' in value &&
-    typeof (value as Thenable<unknown>).then === 'function'
-  );
-}
+import { transformForAsyncExecution } from '../shared/code-transformer';
+import { isThenable } from '../shared/thenable';
 
 // Create CommonJS-like globals for the sandbox
 const __filename = fileURLToPath(import.meta.url);
@@ -99,9 +85,11 @@ rl.on('line', async (line: string) => {
         options.timeout = timeout;
       }
 
-      result = vm.runInContext(code, context, options);
+      // Transform code to support top-level await and capture last expression
+      const wrappedCode = transformForAsyncExecution(code);
+      result = vm.runInContext(wrappedCode, context, options);
 
-      // If result is a Promise (thenable), await it
+      // Result is always a Promise from async IIFE - await it
       if (isThenable(result)) {
         result = await result;
       }

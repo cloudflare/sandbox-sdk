@@ -671,6 +671,214 @@ describe('Code Interpreter Workflow (E2E)', () => {
   }, 120000);
 
   // ============================================================================
+  // Top-Level Await (without IIFE wrappers)
+  // ============================================================================
+
+  test('should support top-level await without IIFE wrapper', async () => {
+    currentSandboxId = createSandboxId();
+    const headers = createTestHeaders(currentSandboxId);
+
+    // Create JavaScript context
+    const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ language: 'javascript' })
+    });
+
+    const context = await ctxResponse.json();
+
+    // Execute top-level await WITHOUT IIFE wrapper
+    const execResponse = await fetch(`${workerUrl}/api/code/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        code: 'await Promise.resolve({ value: 42 })',
+        options: { context }
+      })
+    });
+
+    expect(execResponse.status).toBe(200);
+    const execution = (await execResponse.json()) as ExecutionResult;
+
+    expect(execution.error).toBeUndefined();
+    expect(execution.results).toBeDefined();
+    expect(execution.results.length).toBeGreaterThan(0);
+    const resultData = execution.results[0];
+    expect(resultData.json).toEqual({ value: 42 });
+  }, 120000);
+
+  test('should return last expression value with top-level await', async () => {
+    currentSandboxId = createSandboxId();
+    const headers = createTestHeaders(currentSandboxId);
+
+    // Create JavaScript context
+    const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ language: 'javascript' })
+    });
+
+    const context = await ctxResponse.json();
+
+    // Execute multi-statement code with top-level await
+    const execResponse = await fetch(`${workerUrl}/api/code/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        code: `const a = await Promise.resolve(10)
+const b = await Promise.resolve(20)
+({ sum: a + b })`,
+        options: { context }
+      })
+    });
+
+    expect(execResponse.status).toBe(200);
+    const execution = (await execResponse.json()) as ExecutionResult;
+
+    expect(execution.error).toBeUndefined();
+    expect(execution.results).toBeDefined();
+    expect(execution.results.length).toBeGreaterThan(0);
+    const resultData = execution.results[0];
+    expect(resultData.json).toEqual({ sum: 30 });
+  }, 120000);
+
+  test('should return undefined when last statement is declaration', async () => {
+    currentSandboxId = createSandboxId();
+    const headers = createTestHeaders(currentSandboxId);
+
+    // Create JavaScript context
+    const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ language: 'javascript' })
+    });
+
+    const context = await ctxResponse.json();
+
+    // Execute code ending with declaration (no return value)
+    const execResponse = await fetch(`${workerUrl}/api/code/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        code: 'const x = await Promise.resolve(42)',
+        options: { context }
+      })
+    });
+
+    expect(execResponse.status).toBe(200);
+    const execution = (await execResponse.json()) as ExecutionResult;
+
+    expect(execution.error).toBeUndefined();
+    // No results since result is undefined
+    expect(execution.results.length).toBe(0);
+  }, 120000);
+
+  test('should support TypeScript top-level await', async () => {
+    currentSandboxId = createSandboxId();
+    const headers = createTestHeaders(currentSandboxId);
+
+    // Create TypeScript context
+    const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ language: 'typescript' })
+    });
+
+    const context = await ctxResponse.json();
+
+    // Execute TypeScript with top-level await
+    const execResponse = await fetch(`${workerUrl}/api/code/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        code: `const value: number = await Promise.resolve(100)
+const doubled: number = value * 2
+({ result: doubled })`,
+        options: { context }
+      })
+    });
+
+    expect(execResponse.status).toBe(200);
+    const execution = (await execResponse.json()) as ExecutionResult;
+
+    expect(execution.error).toBeUndefined();
+    expect(execution.results).toBeDefined();
+    expect(execution.results.length).toBeGreaterThan(0);
+    const resultData = execution.results[0];
+    expect(resultData.json).toEqual({ result: 200 });
+  }, 120000);
+
+  test('should handle top-level await with rejected promise', async () => {
+    currentSandboxId = createSandboxId();
+    const headers = createTestHeaders(currentSandboxId);
+
+    // Create JavaScript context
+    const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ language: 'javascript' })
+    });
+
+    const context = await ctxResponse.json();
+
+    // Execute top-level await with rejection
+    const execResponse = await fetch(`${workerUrl}/api/code/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        code: 'await Promise.reject(new Error("TLA rejection test"))',
+        options: { context }
+      })
+    });
+
+    expect(execResponse.status).toBe(200);
+    const execution = (await execResponse.json()) as ExecutionResult;
+
+    expect(execution.error).toBeDefined();
+    if (!execution.error) throw new Error('Expected error to be defined');
+
+    expect(
+      execution.error.message ||
+        execution.error.name ||
+        execution.logs.stderr.join('')
+    ).toMatch(/TLA rejection test|Error/i);
+  }, 120000);
+
+  test('should return simple expression value without await', async () => {
+    currentSandboxId = createSandboxId();
+    const headers = createTestHeaders(currentSandboxId);
+
+    // Create JavaScript context
+    const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ language: 'javascript' })
+    });
+
+    const context = await ctxResponse.json();
+
+    // Execute simple expression (no async)
+    const execResponse = await fetch(`${workerUrl}/api/code/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        code: '1 + 2 + 3',
+        options: { context }
+      })
+    });
+
+    expect(execResponse.status).toBe(200);
+    const execution = (await execResponse.json()) as ExecutionResult;
+
+    expect(execution.error).toBeUndefined();
+    expect(execution.results).toBeDefined();
+    expect(execution.results.length).toBeGreaterThan(0);
+    // Simple number result
+    const resultData = execution.results[0];
+    expect(resultData.text).toBe('6');
+  }, 120000);
+
+  // ============================================================================
   // Streaming Execution
   // ============================================================================
 
