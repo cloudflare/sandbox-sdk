@@ -3,6 +3,12 @@
  *
  * Exposes SDK methods via HTTP endpoints for E2E testing.
  * Supports both default sessions (implicit) and explicit sessions via X-Session-Id header.
+ *
+ * Two sandbox types are available:
+ * - Sandbox: Base image without Python (default, lean image)
+ * - SandboxPython: Full image with Python (for code interpreter tests)
+ *
+ * Use X-Sandbox-Type header to select: 'python' for SandboxPython, anything else for Sandbox
  */
 import { Sandbox, getSandbox, proxyToSandbox } from '@cloudflare/sandbox';
 import type {
@@ -18,10 +24,15 @@ import type {
   WebSocketInitResponse,
   ErrorResponse
 } from './types';
+
+// Export Sandbox twice - once as Sandbox (base image) and once as SandboxPython (python image)
+// The actual image is determined by the container binding in wrangler.jsonc
 export { Sandbox };
+export { Sandbox as SandboxPython };
 
 interface Env {
   Sandbox: DurableObjectNamespace<Sandbox>;
+  SandboxPython: DurableObjectNamespace<Sandbox>;
   TEST_BUCKET: R2Bucket;
   // R2 credentials for bucket mounting tests
   CLOUDFLARE_ACCOUNT_ID?: string;
@@ -55,7 +66,11 @@ export default {
     const keepAliveHeader = request.headers.get('X-Sandbox-KeepAlive');
     const keepAlive = keepAliveHeader === 'true';
 
-    const sandbox = getSandbox(env.Sandbox, sandboxId, {
+    // Select sandbox type: 'python' uses SandboxPython (with Python), anything else uses Sandbox (base, no Python)
+    const sandboxType = request.headers.get('X-Sandbox-Type');
+    const sandboxNamespace =
+      sandboxType === 'python' ? env.SandboxPython : env.Sandbox;
+    const sandbox = getSandbox(sandboxNamespace, sandboxId, {
       keepAlive
     });
 

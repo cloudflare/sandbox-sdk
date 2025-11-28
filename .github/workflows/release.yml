@@ -109,9 +109,10 @@ jobs:
         with:
           context: .
           file: packages/sandbox/Dockerfile
+          target: python # E2E tests require Python for code interpreter tests
           platforms: linux/amd64
           load: true
-          tags: cloudflare/sandbox-test:${{ needs.unit-tests.outputs.version }}
+          tags: cloudflare/sandbox-test:${{ needs.unit-tests.outputs.version }}-python
           build-args: |
             SANDBOX_VERSION=${{ needs.unit-tests.outputs.version }}
 
@@ -177,16 +178,31 @@ jobs:
           username: ${{ secrets.DOCKER_HUB_USERNAME }}
           password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
 
-      - name: Build and push Docker image
+      - name: Build and push Docker image (default)
         uses: docker/build-push-action@v6
         with:
           context: .
           file: packages/sandbox/Dockerfile
+          target: default
           platforms: linux/amd64
           push: true
           tags: cloudflare/sandbox:${{ needs.unit-tests.outputs.version }}
-          cache-from: type=gha,scope=release
-          cache-to: type=gha,mode=max,scope=release
+          cache-from: type=gha,scope=release-default
+          cache-to: type=gha,mode=max,scope=release-default
+          build-args: |
+            SANDBOX_VERSION=${{ needs.unit-tests.outputs.version }}
+
+      - name: Build and push Docker image (python)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: packages/sandbox/Dockerfile
+          target: python
+          platforms: linux/amd64
+          push: true
+          tags: cloudflare/sandbox:${{ needs.unit-tests.outputs.version }}-python
+          cache-from: type=gha,scope=release-python
+          cache-to: type=gha,mode=max,scope=release-python
           build-args: |
             SANDBOX_VERSION=${{ needs.unit-tests.outputs.version }}
 

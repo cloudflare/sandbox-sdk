@@ -1,9 +1,20 @@
-import { type ChildProcess, spawn } from 'node:child_process';
+import { type ChildProcess, spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import type { Logger } from '@repo/shared';
 import { createLogger } from '@repo/shared';
+import { ErrorCode } from '@repo/shared/errors';
 import { Mutex } from 'async-mutex';
 import { CONFIG } from '../config';
+
+// Check if Python is available by trying to invoke the binary
+const PYTHON_AVAILABLE = (() => {
+  try {
+    const result = spawnSync('python3', ['--version'], { timeout: 5000 });
+    return result.status === 0;
+  } catch {
+    return false;
+  }
+})();
 
 export type InterpreterLanguage = 'python' | 'javascript' | 'typescript';
 
@@ -195,6 +206,45 @@ export class ProcessPoolManager {
   ): Promise<ExecutionResult> {
     const totalStartTime = Date.now();
 
+    // Transpile TypeScript to JavaScript using Bun's built-in transpiler
+    let codeToExecute = code;
+    if (language === 'typescript') {
+      try {
+        const transpiler = new Bun.Transpiler({ loader: 'ts', target: 'node' });
+        codeToExecute = transpiler.transformSync(code);
+      } catch (err) {
+        const error = err as Error;
+        return {
+          stdout: '',
+          stderr: `TypeScript compilation error: ${error.message}`,
+          success: false,
+          executionId: randomUUID(),
+          outputs: [],
+          error: {
+            type: 'TranspileError',
+            message: error.message,
+            traceback: error.stack
+          }
+        };
+      }
+    }
+
+    // Check if Python is available
+    if (language === 'python' && !PYTHON_AVAILABLE) {
+      const version = process.env.SANDBOX_VERSION || '<version>';
+      return {
+        stdout: '',
+        stderr: `Python interpreter not available. Use the cloudflare/sandbox:${version}-python image variant for Python code execution. See https://developers.cloudflare.com/sandbox/configuration/dockerfile/`,
+        success: false,
+        executionId: randomUUID(),
+        outputs: [],
+        error: {
+          type: ErrorCode.PYTHON_NOT_AVAILABLE,
+          message: 'Python interpreter not available in this image variant'
+        }
+      };
+    }
+
     if (sessionId) {
       // Context execution: Get dedicated executor and lock on it
       const contextExecutor = this.contextExecutors.get(sessionId);
@@ -217,7 +267,12 @@ export class ProcessPoolManager {
       // Lock on the executor to serialize execution
       const mutex = this.getExecutorLock(contextExecutor.id);
       return await mutex.runExclusive(() =>
-        this.executeInProcess(contextExecutor, code, totalStartTime, timeout)
+        this.executeInProcess(
+          contextExecutor,
+          codeToExecute,
+          totalStartTime,
+          timeout
+        )
       );
     } else {
       // Stateless execution: Borrow executor, execute, return
@@ -225,7 +280,12 @@ export class ProcessPoolManager {
       try {
         const mutex = this.getExecutorLock(executor.id);
         return await mutex.runExclusive(() =>
-          this.executeInProcess(executor, code, totalStartTime, timeout)
+          this.executeInProcess(
+            executor,
+            codeToExecute,
+            totalStartTime,
+            timeout
+          )
         );
       } finally {
         await this.returnExecutor(language, executor);
@@ -300,9 +360,10 @@ export class ProcessPoolManager {
         ];
         break;
       case 'typescript':
+        // TypeScript is transpiled in execute(), so use the same JS executor
         command = 'node';
         args = [
-          '/container-server/dist/runtime/executors/typescript/ts_executor.js'
+          '/container-server/dist/runtime/executors/javascript/node_executor.js'
         ];
         break;
     }
@@ -500,6 +561,14 @@ export class ProcessPoolManager {
     contextId: string,
     language: InterpreterLanguage
   ): Promise<void> {
+    // Check if Python is available before trying to create a context
+    if (language === 'python' && !PYTHON_AVAILABLE) {
+      const version = process.env.SANDBOX_VERSION || '<version>';
+      throw new Error(
+        `Python interpreter not available. Use the cloudflare/sandbox:${version}-python image variant for Python code execution. See https://developers.cloudflare.com/sandbox/configuration/dockerfile/`
+      );
+    }
+
     const mutex = this.poolLocks.get(language)!;
     await mutex.runExclusive(async () => {
       const available = this.availableExecutors.get(language) || [];
@@ -706,7 +775,7 @@ export class ProcessPoolManager {
         targetMinimum: config.minSize
       });
 
-      const spawnPromises = [];
+      const spawnPromises: Promise<void>[] = [];
       for (let i = 0; i < needed; i++) {
         spawnPromises.push(this.createUnassignedExecutor(language));
       }

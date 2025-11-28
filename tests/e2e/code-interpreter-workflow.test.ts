@@ -27,6 +27,7 @@ import { getTestWorkerUrl, WranglerDevRunner } from './helpers/wrangler-runner';
 import {
   createSandboxId,
   createTestHeaders,
+  createPythonImageHeaders,
   cleanupSandbox
 } from './helpers/test-fixtures';
 import type { CodeContext, ExecutionResult } from '@repo/shared';
@@ -62,7 +63,7 @@ describe('Code Interpreter Workflow (E2E)', () => {
 
   test('should create and list code contexts', async () => {
     currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
+    const headers = createPythonImageHeaders(currentSandboxId);
 
     // Create Python context
     const pythonCtxResponse = await fetch(
@@ -110,7 +111,7 @@ describe('Code Interpreter Workflow (E2E)', () => {
 
   test('should delete code context', async () => {
     currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
+    const headers = createPythonImageHeaders(currentSandboxId);
 
     // Create context
     const createResponse = await fetch(`${workerUrl}/api/code/context/create`, {
@@ -152,7 +153,7 @@ describe('Code Interpreter Workflow (E2E)', () => {
 
   test('should execute simple Python code', async () => {
     currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
+    const headers = createPythonImageHeaders(currentSandboxId);
 
     // Create Python context
     const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
@@ -183,7 +184,7 @@ describe('Code Interpreter Workflow (E2E)', () => {
 
   test('should maintain Python state across executions', async () => {
     currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
+    const headers = createPythonImageHeaders(currentSandboxId);
 
     // Create context
     const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
@@ -226,7 +227,7 @@ describe('Code Interpreter Workflow (E2E)', () => {
 
   test('should handle Python errors gracefully', async () => {
     currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
+    const headers = createPythonImageHeaders(currentSandboxId);
 
     // Create context
     const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
@@ -373,7 +374,7 @@ describe('Code Interpreter Workflow (E2E)', () => {
 
   test('should stream Python execution output', async () => {
     currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
+    const headers = createPythonImageHeaders(currentSandboxId);
 
     // Create context
     const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
@@ -455,7 +456,7 @@ for i in range(3):
 
   test('should process data in Python and consume in JavaScript', async () => {
     currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
+    const headers = createPythonImageHeaders(currentSandboxId);
 
     // Create Python context
     const pythonCtxResponse = await fetch(
@@ -526,7 +527,7 @@ console.log('Sum:', sum);
 
   test('should isolate variables between contexts', async () => {
     currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
+    const headers = createPythonImageHeaders(currentSandboxId);
 
     // Create two Python contexts
     const ctx1Response = await fetch(`${workerUrl}/api/code/context/create`, {
@@ -890,5 +891,26 @@ console.log('Sum:', sum);
     expect(deleteResponse.status).toBeGreaterThanOrEqual(400);
     const errorData = (await deleteResponse.json()) as ErrorResponse;
     expect(errorData.error).toBeTruthy();
+  }, 120000);
+
+  test('should return helpful error when Python unavailable on base image', async () => {
+    currentSandboxId = createSandboxId();
+    // Use default headers (base image, no Python) to test Python-not-available error
+    const headers = createTestHeaders(currentSandboxId);
+
+    // Try to create Python context on base image (no Python installed)
+    const response = await fetch(`${workerUrl}/api/code/context/create`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ language: 'python' })
+    });
+
+    // Should return error (test worker returns 500 for all errors)
+    expect(response.status).toBe(500);
+    const errorData = (await response.json()) as ErrorResponse;
+
+    // Error should guide users to the correct image variant
+    expect(errorData.error).toContain('Python interpreter not available');
+    expect(errorData.error).toMatch(/-python/);
   }, 120000);
 });

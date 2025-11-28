@@ -25,6 +25,9 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
+# Install Bun runtime (needed for sandbox-container build script)
+COPY --from=oven/bun:1-alpine /usr/local/bin/bun /usr/local/bin/bun
+
 # Copy pruned lockfile and package.json files (for Docker layer caching)
 COPY --from=pruner /app/out/json/ .
 COPY --from=pruner /app/out/package-lock.json ./package-lock.json
@@ -41,24 +44,7 @@ COPY --from=pruner /app/out/full/ .
 RUN npx turbo run build
 
 # ============================================================================
-# Stage 3: Install production-only dependencies
-# ============================================================================
-FROM node:20-alpine AS prod-deps
-
-WORKDIR /app
-
-# Copy package files from builder
-COPY --from=builder /app/package.json ./package.json
-COPY --from=builder /app/package-lock.json ./package-lock.json
-COPY --from=builder /app/packages ./packages
-COPY --from=builder /app/tooling ./tooling
-
-# Install ONLY production dependencies (excludes typescript, @types/*, etc.)
-RUN --mount=type=cache,target=/root/.npm \
-    CI=true npm ci --production
-
-# ============================================================================
-# Stage 4: Download pre-built Python 3.11.14
+# Stage 3: Download pre-built Python 3.11.14
 # ============================================================================
 FROM ubuntu:22.04 AS python-builder
 
@@ -100,9 +86,9 @@ RUN --mount=type=cache,target=/tmp/python-cache \
     rm -rf /tmp/cpython-*
 
 # ============================================================================
-# Stage 5: Runtime - Ubuntu 22.04 with only runtime dependencies
+# Stage 4: Runtime base - Ubuntu 22.04 with Node.js and Bun (no Python)
 # ============================================================================
-FROM ubuntu:22.04 AS runtime
+FROM ubuntu:22.04 AS runtime-base
 
 # Accept version as build argument (passed from npm_package_version)
 ARG SANDBOX_VERSION=unknown
@@ -128,6 +114,53 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 # Enable FUSE in container - allow non-root users to use FUSE
 RUN sed -i 's/#user_allow_other/user_allow_other/' /etc/fuse.conf
 
+# Install Node.js 20 LTS from official Node image
+COPY --from=node:20-slim /usr/local/bin/node /usr/local/bin/node
+COPY --from=node:20-slim /usr/local/lib/node_modules /usr/local/lib/node_modules
+RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm && \
+    ln -s /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
+
+# Install Bun runtime from official image
+COPY --from=oven/bun:1 /usr/local/bin/bun /usr/local/bin/bun
+
+# Set up runtime container server directory
+WORKDIR /container-server
+
+# Copy bundled container server (all dependencies inlined, no node_modules needed)
+COPY --from=builder /app/packages/sandbox-container/dist/index.js ./dist/
+COPY --from=builder /app/packages/sandbox-container/dist/index.js.map ./dist/
+
+# Copy bundled JavaScript executor
+COPY --from=builder /app/packages/sandbox-container/dist/runtime/executors/javascript/node_executor.js ./dist/runtime/executors/javascript/
+COPY --from=builder /app/packages/sandbox-container/dist/runtime/executors/javascript/node_executor.js.map ./dist/runtime/executors/javascript/
+
+# Create clean workspace directory for user code
+RUN mkdir -p /workspace
+
+# Expose the application port (3000 for control)
+EXPOSE 3000
+
+# Copy and make startup script executable
+COPY packages/sandbox/startup.sh ./
+RUN chmod +x startup.sh
+
+# ============================================================================
+# Stage 5a: Default image - lean, no Python
+# ============================================================================
+FROM runtime-base AS default
+
+# Disable Python pool (Python not available in this image)
+ENV PYTHON_POOL_MIN_SIZE=0
+ENV JAVASCRIPT_POOL_MIN_SIZE=3
+ENV TYPESCRIPT_POOL_MIN_SIZE=3
+
+CMD ["/container-server/startup.sh"]
+
+# ============================================================================
+# Stage 5b: Python image - full, with Python + data science packages
+# ============================================================================
+FROM runtime-base AS python
+
 # Copy pre-built Python from python-builder stage
 COPY --from=python-builder /usr/local/python /usr/local/python
 
@@ -141,51 +174,16 @@ RUN ln -s /usr/local/python/bin/python3.11 /usr/local/bin/python3.11 && \
 # Set Python 3.11 as default python3
 RUN update-alternatives --install /usr/bin/python3 python3 /usr/local/bin/python3.11 1
 
-# Install Python packages
+# Install Python packages for data science and code interpreter
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip3 install --no-cache-dir matplotlib numpy pandas ipython
 
-# Install Node.js 20 LTS from official Node image
-COPY --from=node:20-slim /usr/local/bin/node /usr/local/bin/node
-COPY --from=node:20-slim /usr/local/lib/node_modules /usr/local/lib/node_modules
-RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm && \
-    ln -s /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
-
-# Install Bun runtime from official image
-COPY --from=oven/bun:1 /usr/local/bin/bun /usr/local/bin/bun
-
-# Set up runtime container server directory
-WORKDIR /container-server
-
-# Copy built sandbox-container package
-COPY --from=builder /app/packages/sandbox-container/dist ./dist
-COPY --from=builder /app/packages/sandbox-container/package.json ./package.json
-
-# Copy Python executor to runtime location
+# Copy Python executor
 COPY --from=builder /app/packages/sandbox-container/src/runtime/executors/python/ipython_executor.py ./dist/runtime/executors/python/
 
-# Copy production-only node_modules (excludes typescript, @types/*, etc.)
-# Includes: @repo/shared, zod, esbuild (runtime dependencies)
-COPY --from=prod-deps /app/node_modules ./node_modules
-
-# Copy workspace packages
-COPY --from=prod-deps /app/packages/shared/dist ./packages/shared/dist
-COPY --from=prod-deps /app/packages/shared/package.json ./packages/shared/package.json
-
-# Configure process pool sizes (minimum only)
+# Enable all interpreter pools
 ENV PYTHON_POOL_MIN_SIZE=3
 ENV JAVASCRIPT_POOL_MIN_SIZE=3
 ENV TYPESCRIPT_POOL_MIN_SIZE=3
 
-# Create clean workspace directory for user code
-RUN mkdir -p /workspace
-
-# Expose the application port (3000 for control)
-EXPOSE 3000
-
-# Copy and make startup script executable
-COPY packages/sandbox/startup.sh ./
-RUN chmod +x startup.sh
-
-# Use startup script
 CMD ["/container-server/startup.sh"]

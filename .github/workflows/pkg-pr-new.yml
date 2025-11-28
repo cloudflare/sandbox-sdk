@@ -77,18 +77,35 @@ jobs:
           username: ${{ secrets.DOCKER_HUB_USERNAME }}
           password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
 
-      - name: Build and push Docker image (preview)
+      - name: Build and push Docker image (default)
         uses: docker/build-push-action@v6
         with:
           context: .
           file: packages/sandbox/Dockerfile
+          target: default
           platforms: linux/amd64
           push: true
           tags: cloudflare/sandbox:${{ steps.package-version.outputs.version }}
           cache-from: |
-            type=gha,scope=preview-pr-${{ github.event.pull_request.number }}
-            type=gha,scope=release
-          cache-to: type=gha,mode=max,scope=preview-pr-${{ github.event.pull_request.number }}
+            type=gha,scope=preview-pr-${{ github.event.pull_request.number }}-default
+            type=gha,scope=release-default
+          cache-to: type=gha,mode=max,scope=preview-pr-${{ github.event.pull_request.number }}-default
+          build-args: |
+            SANDBOX_VERSION=${{ steps.package-version.outputs.version }}
+
+      - name: Build and push Docker image (python)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: packages/sandbox/Dockerfile
+          target: python
+          platforms: linux/amd64
+          push: true
+          tags: cloudflare/sandbox:${{ steps.package-version.outputs.version }}-python
+          cache-from: |
+            type=gha,scope=preview-pr-${{ github.event.pull_request.number }}-python
+            type=gha,scope=release-python
+          cache-to: type=gha,mode=max,scope=preview-pr-${{ github.event.pull_request.number }}-python
           build-args: |
             SANDBOX_VERSION=${{ steps.package-version.outputs.version }}
 
@@ -100,8 +117,9 @@ jobs:
         with:
           script: |
             const version = '${{ steps.package-version.outputs.version }}';
-            const dockerTag = `cloudflare/sandbox:${version}`;
-            const body = `### 🐳 Docker Image Published\n\n\`\`\`dockerfile\nFROM ${dockerTag}\n\`\`\`\n\n**Version:** \`${version}\`\n\nYou can use this Docker image with the preview package from this PR.`;
+            const defaultTag = `cloudflare/sandbox:${version}`;
+            const pythonTag = `cloudflare/sandbox:${version}-python`;
+            const body = `### 🐳 Docker Images Published\n\n**Default (no Python):**\n\`\`\`dockerfile\nFROM ${defaultTag}\n\`\`\`\n\n**With Python:**\n\`\`\`dockerfile\nFROM ${pythonTag}\n\`\`\`\n\n**Version:** \`${version}\`\n\nUse the \`-python\` variant if you need Python code execution.`;
 
             // Find existing comment
             const { data: comments } = await github.rest.issues.listComments({
@@ -112,7 +130,7 @@ jobs:
 
             const botComment = comments.find(comment =>
               comment.user.type === 'Bot' &&
-              comment.body.includes('Docker Image Published')
+              comment.body.includes('Docker Images Published')
             );
 
             if (botComment) {

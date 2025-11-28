@@ -94,6 +94,9 @@ export const ErrorCode = {
   // Code Interpreter Errors (500)
   CODE_EXECUTION_ERROR: 'CODE_EXECUTION_ERROR',
 
+  // Code Interpreter Errors (501) - Feature not available in image variant
+  PYTHON_NOT_AVAILABLE: 'PYTHON_NOT_AVAILABLE',
+
   // Validation Errors (400)
   VALIDATION_FAILED: 'VALIDATION_FAILED',
 

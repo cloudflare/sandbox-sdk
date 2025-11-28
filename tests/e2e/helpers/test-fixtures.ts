@@ -60,6 +60,25 @@ export function createTestHeaders(
 }
 
 /**
+ * Create headers for Python image sandbox (with Python)
+ *
+ * Use this for testing the full image variant that includes Python.
+ * The Python image is larger but supports Python code execution.
+ *
+ * @param sandboxId - Which container instance to use
+ * @param sessionId - (Optional) Which session within that container
+ */
+export function createPythonImageHeaders(
+  sandboxId: string,
+  sessionId?: string
+): Record<string, string> {
+  return {
+    ...createTestHeaders(sandboxId, sessionId),
+    'X-Sandbox-Type': 'python'
+  };
+}
+
+/**
  * Fetch with timeout to prevent hanging tests
  *
  * Usage:

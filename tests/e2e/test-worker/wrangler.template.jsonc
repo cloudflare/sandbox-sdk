@@ -18,6 +18,11 @@
       "class_name": "Sandbox",
       "image": "./Dockerfile",
       "name": "{{CONTAINER_NAME}}"
+    },
+    {
+      "class_name": "SandboxPython",
+      "image": "./Dockerfile.python",
+      "name": "{{CONTAINER_NAME}}-python"
     }
   ],
 
@@ -26,14 +31,18 @@
       {
         "class_name": "Sandbox",
         "name": "Sandbox"
+      },
+      {
+        "class_name": "SandboxPython",
+        "name": "SandboxPython"
       }
     ]
   },
 
   "migrations": [
     {
-      "new_sqlite_classes": ["Sandbox"],
-      "tag": "v1"
+      "new_sqlite_classes": ["Sandbox", "SandboxPython"],
+      "tag": "v2"
     }
   ],
 
