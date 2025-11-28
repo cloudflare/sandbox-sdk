@@ -1,5 +1,27 @@
 # @cloudflare/sandbox
 
+## 0.6.0
+
+### Minor Changes
+
+- [#259](https://github.com/cloudflare/sandbox-sdk/pull/259) [`0a2cb93`](https://github.com/cloudflare/sandbox-sdk/commit/0a2cb931c7f02f119816478d972fe437092a2010) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Add lean and Python image variants to reduce Docker image size
+
+  **BREAKING CHANGE for Python users:** The default image no longer includes Python.
+  - `cloudflare/sandbox:<version>` - lean image without Python (~600-800MB)
+  - `cloudflare/sandbox:<version>-python` - full image with Python + data science packages (~1.3GB)
+
+  **Migration:** If using `CodeInterpreter.runCode()` with Python, update your Dockerfile:
+
+  ```dockerfile
+  # Before
+  FROM cloudflare/sandbox:0.6.0
+
+  # After
+  FROM cloudflare/sandbox:0.6.0-python
+  ```
+
+  Without this change, Python execution will fail with `PYTHON_NOT_AVAILABLE` error.
+
 ## 0.5.6
 
 ### Patch Changes
