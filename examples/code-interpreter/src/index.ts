@@ -43,7 +43,7 @@ async function callCloudflareAPI(
 
 async function executePythonCode(env: Env, code: string): Promise<string> {
   const sandboxId = env.Sandbox.idFromName('default');
-  const sandbox = getSandbox(env.Sandbox, sandboxId.toString());
+  const sandbox = getSandbox(env.Sandbox, sandboxId.toString().slice(0, 63));
   const pythonCtx = await sandbox.createCodeContext({ language: 'python' });
   const result = await sandbox.runCode(code, {
     context: pythonCtx
