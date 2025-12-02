@@ -369,6 +369,257 @@ describe('Code Interpreter Workflow (E2E)', () => {
   }, 120000);
 
   // ============================================================================
+  // Top-Level Await Support (JavaScript)
+  // ============================================================================
+
+  test('should execute top-level await without IIFE wrapper', async () => {
+    currentSandboxId = createSandboxId();
+    const headers = createTestHeaders(currentSandboxId);
+
+    // Create JavaScript context
+    const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ language: 'javascript' })
+    });
+
+    const context = await ctxResponse.json();
+
+    // Execute code with top-level await - no IIFE needed!
+    const execResponse = await fetch(`${workerUrl}/api/code/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        code: 'const result = await Promise.resolve(42);\nresult',
+        options: { context }
+      })
+    });
+
+    expect(execResponse.status).toBe(200);
+    const execution = (await execResponse.json()) as ExecutionResult;
+
+    expect(execution.error).toBeUndefined();
+    expect(execution.results).toBeDefined();
+    expect(execution.results![0].text).toContain('42');
+  }, 120000);
+
+  test('should return last expression value from async code', async () => {
+    currentSandboxId = createSandboxId();
+    const headers = createTestHeaders(currentSandboxId);
+
+    // Create JavaScript context
+    const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ language: 'javascript' })
+    });
+
+    const context = await ctxResponse.json();
+
+    // Execute multiple awaits, return last expression
+    const execResponse = await fetch(`${workerUrl}/api/code/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        code: `
+const a = await Promise.resolve(10);
+const b = await Promise.resolve(20);
+a + b
+`.trim(),
+        options: { context }
+      })
+    });
+
+    expect(execResponse.status).toBe(200);
+    const execution = (await execResponse.json()) as ExecutionResult;
+
+    expect(execution.error).toBeUndefined();
+    expect(execution.results).toBeDefined();
+    expect(execution.results![0].text).toContain('30');
+  }, 120000);
+
+  test('should handle async errors in top-level await', async () => {
+    currentSandboxId = createSandboxId();
+    const headers = createTestHeaders(currentSandboxId);
+
+    // Create JavaScript context
+    const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ language: 'javascript' })
+    });
+
+    const context = await ctxResponse.json();
+
+    // Execute code that rejects
+    const execResponse = await fetch(`${workerUrl}/api/code/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        code: 'await Promise.reject(new Error("async error"))',
+        options: { context }
+      })
+    });
+
+    expect(execResponse.status).toBe(200);
+    const execution = (await execResponse.json()) as ExecutionResult;
+
+    expect(execution.error).toBeDefined();
+    expect(
+      execution.error!.message || execution.logs.stderr.join('')
+    ).toContain('async error');
+  }, 120000);
+
+  test('should support LLM-generated fetch pattern with top-level await', async () => {
+    currentSandboxId = createSandboxId();
+    const headers = createTestHeaders(currentSandboxId);
+
+    // Create JavaScript context
+    const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ language: 'javascript' })
+    });
+
+    const context = await ctxResponse.json();
+
+    // Simulate typical LLM-generated code pattern using setTimeout as async operation
+    const execResponse = await fetch(`${workerUrl}/api/code/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        code: `
+const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+await delay(10);
+const data = { status: 'success', value: 123 };
+data
+`.trim(),
+        options: { context }
+      })
+    });
+
+    expect(execResponse.status).toBe(200);
+    const execution = (await execResponse.json()) as ExecutionResult;
+
+    expect(execution.error).toBeUndefined();
+    expect(execution.results).toBeDefined();
+    // Object results come back as JSON, not text
+    const result = execution.results![0];
+    const resultData = result.json ?? result.text;
+    expect(resultData).toBeDefined();
+    expect(JSON.stringify(resultData)).toContain('success');
+    expect(JSON.stringify(resultData)).toContain('123');
+  }, 120000);
+
+  test('should persist variables defined with await across executions', async () => {
+    currentSandboxId = createSandboxId();
+    const headers = createTestHeaders(currentSandboxId);
+
+    // Create JavaScript context
+    const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ language: 'javascript' })
+    });
+
+    const context = await ctxResponse.json();
+
+    // First execution: define variable with await
+    const exec1Response = await fetch(`${workerUrl}/api/code/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        code: 'const result = await Promise.resolve(42);',
+        options: { context }
+      })
+    });
+
+    expect(exec1Response.status).toBe(200);
+    const execution1 = (await exec1Response.json()) as ExecutionResult;
+    expect(execution1.error).toBeUndefined();
+
+    // Second execution: access the variable from previous execution
+    const exec2Response = await fetch(`${workerUrl}/api/code/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        code: 'result',
+        options: { context }
+      })
+    });
+
+    expect(exec2Response.status).toBe(200);
+    const execution2 = (await exec2Response.json()) as ExecutionResult;
+    expect(execution2.error).toBeUndefined();
+    expect(execution2.results).toBeDefined();
+    expect(execution2.results![0].text).toContain('42');
+  }, 120000);
+
+  test('should resolve Promise without await keyword', async () => {
+    currentSandboxId = createSandboxId();
+    const headers = createTestHeaders(currentSandboxId);
+
+    // Create JavaScript context
+    const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ language: 'javascript' })
+    });
+
+    const context = await ctxResponse.json();
+
+    // Execute a Promise expression - should resolve automatically
+    const execResponse = await fetch(`${workerUrl}/api/code/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        code: 'Promise.resolve(123)',
+        options: { context }
+      })
+    });
+
+    expect(execResponse.status).toBe(200);
+    const execution = (await execResponse.json()) as ExecutionResult;
+    expect(execution.error).toBeUndefined();
+    expect(execution.results).toBeDefined();
+    // The Promise should be automatically awaited and return 123
+    expect(execution.results![0].text).toContain('123');
+  }, 120000);
+
+  test('should support IIFE pattern for backward compatibility', async () => {
+    currentSandboxId = createSandboxId();
+    const headers = createTestHeaders(currentSandboxId);
+
+    // Create JavaScript context
+    const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ language: 'javascript' })
+    });
+
+    const context = await ctxResponse.json();
+
+    // Execute code with IIFE pattern
+    const execResponse = await fetch(`${workerUrl}/api/code/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        code: `(async () => {
+  const value = await Promise.resolve('hello');
+  return value + ' world';
+})()`,
+        options: { context }
+      })
+    });
+
+    expect(execResponse.status).toBe(200);
+    const execution = (await execResponse.json()) as ExecutionResult;
+    expect(execution.error).toBeUndefined();
+    expect(execution.results).toBeDefined();
+    expect(execution.results![0].text).toContain('hello world');
+  }, 120000);
+
+  // ============================================================================
   // Streaming Execution
   // ============================================================================
 
@@ -598,13 +849,14 @@ console.log('Sum:', sum);
       contexts.push(context);
     }
 
-    // Set unique state in each context using mutable global
+    // Set unique state in each context using normal variable declarations
+    // With variable hoisting, const/let declarations persist across executions
     for (let i = 0; i < contexts.length; i++) {
       const execResponse = await fetch(`${workerUrl}/api/code/execute`, {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          code: `globalThis.contextValue = ${i}; contextValue;`,
+          code: `const contextValue = ${i}; contextValue;`,
           options: { context: contexts[i] }
         })
       });
@@ -668,7 +920,8 @@ console.log('Sum:', sum);
     }
 
     // Execute different code in each context concurrently
-    // Each context sets its own unique value
+    // Each context sets its own unique value using normal variable declarations
+    // With variable hoisting, const/let declarations persist across executions
     const executionPromises = contexts.map((context, i) =>
       fetch(`${workerUrl}/api/code/execute`, {
         method: 'POST',
@@ -745,7 +998,8 @@ console.log('Sum:', sum);
     expect(ctxResponse.status).toBe(200);
     const context = (await ctxResponse.json()) as CodeContext;
 
-    // Set up initial state with a counter variable
+    // Set up initial state with a counter variable using normal declaration
+    // With variable hoisting, let/var declarations persist across executions
     const setupResponse = await fetch(`${workerUrl}/api/code/execute`, {
       method: 'POST',
       headers,

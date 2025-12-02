@@ -7,6 +7,8 @@ import { fileURLToPath } from 'node:url';
 import * as util from 'node:util';
 import * as vm from 'node:vm';
 import type { RichOutput } from '../../process-pool';
+import { transformForAsyncExecution } from '../shared/code-transformer';
+import { isThenable } from '../shared/thenable';
 
 // Create CommonJS-like globals for the sandbox
 const __filename = fileURLToPath(import.meta.url);
@@ -83,7 +85,27 @@ rl.on('line', async (line: string) => {
         options.timeout = timeout;
       }
 
-      result = vm.runInContext(code, context, options);
+      // Transform code to support top-level await
+      const transformedCode = transformForAsyncExecution(code);
+      result = vm.runInContext(transformedCode, context, options);
+
+      // Await the result if it's a Promise (from async IIFE)
+      // Apply timeout to async execution as well (vm.timeout only covers sync)
+      if (isThenable(result)) {
+        if (timeout !== undefined) {
+          result = await Promise.race([
+            result,
+            new Promise((_, reject) =>
+              setTimeout(
+                () => reject(new Error('Script execution timed out')),
+                timeout
+              )
+            )
+          ]);
+        } else {
+          result = await result;
+        }
+      }
     } catch (error: unknown) {
       const err = error as Error;
       stderr += err.stack || err.toString();
