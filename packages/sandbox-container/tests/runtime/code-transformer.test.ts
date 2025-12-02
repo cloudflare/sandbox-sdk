@@ -56,8 +56,8 @@ describe('transformForAsyncExecution', () => {
 
     it('hoists declaration without initializer', () => {
       const result = transformForAsyncExecution('let x;');
-      // No assignment, just hoisting
-      expect(result).toBe('let x;\n(async () => {\n;\n})()');
+      // No assignment, just hoisting - empty IIFE body
+      expect(result).toBe('let x;\n(async () => {})()');
     });
 
     it('hoists declaration followed by expression and returns expression', () => {
@@ -293,6 +293,87 @@ try {
 
       // Assignment should be inside the IIFE
       expect(result).toContain('result = await Promise.resolve(42)');
+    });
+  });
+
+  describe('integration: variables persist in vm.Context', () => {
+    // These tests verify the transformed code actually works in a real vm context
+    const vm = require('node:vm');
+
+    it('variables persist across multiple executions', async () => {
+      const context = vm.createContext({});
+
+      // First execution: declare and assign variable
+      const code1 = transformForAsyncExecution('const x = 42;');
+      await vm.runInContext(code1, context);
+
+      // Second execution: access the variable
+      const code2 = transformForAsyncExecution('x + 1');
+      const result = await vm.runInContext(code2, context);
+
+      expect(result).toBe(43);
+    });
+
+    it('variables with await persist across executions', async () => {
+      const context = vm.createContext({ Promise });
+
+      // First execution: declare variable with await
+      const code1 = transformForAsyncExecution(
+        'const result = await Promise.resolve(100);'
+      );
+      await vm.runInContext(code1, context);
+
+      // Second execution: access the variable
+      const code2 = transformForAsyncExecution('result * 2');
+      const result = await vm.runInContext(code2, context);
+
+      expect(result).toBe(200);
+    });
+
+    it('multiple variables persist independently', async () => {
+      const context = vm.createContext({ Promise });
+
+      // First execution: declare multiple variables
+      const code1 = transformForAsyncExecution('const a = 1; const b = 2;');
+      await vm.runInContext(code1, context);
+
+      // Second execution: use both variables
+      const code2 = transformForAsyncExecution('a + b');
+      const result = await vm.runInContext(code2, context);
+
+      expect(result).toBe(3);
+    });
+
+    it('function declarations persist and can be called', async () => {
+      const context = vm.createContext({});
+
+      // First execution: declare function
+      const code1 = transformForAsyncExecution(
+        'function add(a, b) { return a + b; }'
+      );
+      await vm.runInContext(code1, context);
+
+      // Second execution: call the function
+      const code2 = transformForAsyncExecution('add(10, 20)');
+      const result = await vm.runInContext(code2, context);
+
+      expect(result).toBe(30);
+    });
+
+    it('destructured variables persist', async () => {
+      const context = vm.createContext({});
+
+      // First execution: destructure object
+      const code1 = transformForAsyncExecution(
+        'const obj = { x: 1, y: 2 }; const { x, y } = obj;'
+      );
+      await vm.runInContext(code1, context);
+
+      // Second execution: access destructured variables
+      const code2 = transformForAsyncExecution('x + y');
+      const result = await vm.runInContext(code2, context);
+
+      expect(result).toBe(3);
     });
   });
 });

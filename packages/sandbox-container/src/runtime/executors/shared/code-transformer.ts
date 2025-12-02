@@ -133,6 +133,10 @@ function processFunctionDeclaration(
   decl: FunctionDeclaration,
   source: string
 ): HoistedDeclaration {
+  // Anonymous functions (e.g., export default function() {}) have no id
+  if (!decl.id) {
+    return { names: [], assignment: '' };
+  }
   const name = decl.id.name;
   const funcText = source.slice(decl.start, decl.end);
 
@@ -151,6 +155,10 @@ function processClassDeclaration(
   decl: ClassDeclaration,
   source: string
 ): HoistedDeclaration {
+  // Anonymous classes (e.g., export default class {}) have no id
+  if (!decl.id) {
+    return { names: [], assignment: '' };
+  }
   const name = decl.id.name;
   const classText = source.slice(decl.start, decl.end);
 
@@ -287,8 +295,13 @@ export function transformForAsyncExecution(code: string): string {
     }
 
     // Add the async IIFE with transformed body
-    const bodyCode = bodyParts.join(';\n');
-    parts.push(`(async () => {\n${bodyCode};\n})()`);
+    if (bodyParts.length > 0) {
+      const bodyCode = bodyParts.join(';\n');
+      parts.push(`(async () => {\n${bodyCode};\n})()`);
+    } else {
+      // No body statements (e.g., just "let x;") - empty IIFE
+      parts.push('(async () => {})()');
+    }
 
     return parts.join('\n');
   } catch {
