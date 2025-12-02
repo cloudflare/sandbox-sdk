@@ -1,5 +1,21 @@
 # @cloudflare/sandbox
 
+## 0.6.1
+
+### Patch Changes
+
+- [#261](https://github.com/cloudflare/sandbox-sdk/pull/261) [`b6cc244`](https://github.com/cloudflare/sandbox-sdk/commit/b6cc24456681932b76d17dd57b6e788c18813cc4) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - Add top-level await support for JavaScript code execution
+
+  JavaScript code can now use `await` at the top level without wrapping in an async IIFE. Variables declared with `const`, `let`, or `var` persist across executions, enabling multi-step workflows like:
+
+  ```javascript
+  // Execution 1
+  const data = await fetch('https://api.example.com').then((r) => r.json());
+
+  // Execution 2
+  console.log(data); // Works - data persists
+  ```
+
 ## 0.6.0
 
 ### Minor Changes
@@ -14,10 +30,10 @@
 
   ```dockerfile
   # Before
-  FROM cloudflare/sandbox:0.6.0
+  FROM cloudflare/sandbox:0.6.1
 
   # After
-  FROM cloudflare/sandbox:0.6.0-python
+  FROM cloudflare/sandbox:0.6.1-python
   ```
 
   Without this change, Python execution will fail with `PYTHON_NOT_AVAILABLE` error.
