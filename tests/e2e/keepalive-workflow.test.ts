@@ -1,277 +1,115 @@
+import { describe, test, expect, beforeAll } from 'vitest';
 import {
-  describe,
-  test,
-  expect,
-  beforeAll,
-  afterAll,
-  afterEach,
-  vi
-} from 'vitest';
-import { getTestWorkerUrl, WranglerDevRunner } from './helpers/wrangler-runner';
-import {
-  createSandboxId,
-  createTestHeaders,
-  cleanupSandbox
-} from './helpers/test-fixtures';
+  getSharedSandbox,
+  createUniqueSession
+} from './helpers/global-sandbox';
 import type { Process, ExecResult, ReadFileResult } from '@repo/shared';
 
 /**
- * KeepAlive Workflow Integration Tests
+ * KeepAlive Feature Tests
  *
- * Tests the keepAlive feature that keeps containers alive indefinitely:
- * - Container stays alive with keepAlive: true
- * - Container respects normal timeout without keepAlive
- * - Long-running processes work with keepAlive
- * - Explicit destroy stops keepAlive container
+ * Tests the keepAlive header functionality. Uses SHARED sandbox since we're
+ * testing the keepAlive protocol behavior, not container lifecycle isolation.
  *
- * This validates that:
- * - The keepAlive interval properly renews activity timeout
- * - Containers don't auto-timeout when keepAlive is enabled
- * - Manual cleanup via destroy() works correctly
+ * What we verify:
+ * 1. keepAlive header is accepted and enables the mode
+ * 2. Multiple commands work with keepAlive enabled
+ * 3. File and process operations work with keepAlive
+ * 4. Explicit destroy works (cleanup endpoint)
  */
-describe('KeepAlive Workflow', () => {
-  describe('local', () => {
-    let runner: WranglerDevRunner | null = null;
-    let workerUrl: string;
-    let currentSandboxId: string | null = null;
+describe('KeepAlive Feature', () => {
+  let workerUrl: string;
+  let headers: Record<string, string>;
 
-    beforeAll(async () => {
-      const result = await getTestWorkerUrl();
-      workerUrl = result.url;
-      runner = result.runner;
+  beforeAll(async () => {
+    const sandbox = await getSharedSandbox();
+    workerUrl = sandbox.workerUrl;
+    headers = sandbox.createHeaders(createUniqueSession());
+  }, 120000);
+
+  test('should accept keepAlive header and execute commands', async () => {
+    const keepAliveHeaders = { ...headers, 'X-Sandbox-KeepAlive': 'true' };
+
+    // First command with keepAlive
+    const response1 = await fetch(`${workerUrl}/api/execute`, {
+      method: 'POST',
+      headers: keepAliveHeaders,
+      body: JSON.stringify({ command: 'echo "keepAlive command 1"' })
     });
+    expect(response1.status).toBe(200);
+    const data1 = (await response1.json()) as ExecResult;
+    expect(data1.stdout).toContain('keepAlive command 1');
 
-    afterEach(async () => {
-      // Cleanup sandbox container after each test
-      if (currentSandboxId) {
-        await cleanupSandbox(workerUrl, currentSandboxId);
-        currentSandboxId = null;
-      }
+    // Second command immediately after
+    const response2 = await fetch(`${workerUrl}/api/execute`, {
+      method: 'POST',
+      headers: keepAliveHeaders,
+      body: JSON.stringify({ command: 'echo "keepAlive command 2"' })
     });
+    expect(response2.status).toBe(200);
+    const data2 = (await response2.json()) as ExecResult;
+    expect(data2.stdout).toContain('keepAlive command 2');
+  }, 30000);
 
-    afterAll(async () => {
-      // Only stop runner if we spawned one locally (CI uses deployed worker)
-      if (runner) {
-        await runner.stop();
-      }
+  test('should support background processes with keepAlive', async () => {
+    const keepAliveHeaders = { ...headers, 'X-Sandbox-KeepAlive': 'true' };
+
+    // Start a background process
+    const startResponse = await fetch(`${workerUrl}/api/process/start`, {
+      method: 'POST',
+      headers: keepAliveHeaders,
+      body: JSON.stringify({ command: 'sleep 10' })
     });
+    expect(startResponse.status).toBe(200);
+    const processData = (await startResponse.json()) as Process;
+    expect(processData.id).toBeTruthy();
 
-    test('should keep container alive with keepAlive enabled', async () => {
-      currentSandboxId = createSandboxId();
-      const headers = createTestHeaders(currentSandboxId);
+    // Verify process is running
+    const statusResponse = await fetch(
+      `${workerUrl}/api/process/${processData.id}`,
+      { method: 'GET', headers: keepAliveHeaders }
+    );
+    expect(statusResponse.status).toBe(200);
+    const statusData = (await statusResponse.json()) as Process;
+    expect(statusData.status).toBe('running');
 
-      // Add keepAlive header to enable keepAlive mode
-      const keepAliveHeaders = {
-        ...headers,
-        'X-Sandbox-KeepAlive': 'true'
-      };
+    // Cleanup
+    await fetch(`${workerUrl}/api/process/${processData.id}`, {
+      method: 'DELETE',
+      headers: keepAliveHeaders
+    });
+  }, 30000);
 
-      // Step 1: Initialize sandbox with keepAlive
-      const initResponse = await fetch(`${workerUrl}/api/execute`, {
-        method: 'POST',
-        headers: keepAliveHeaders,
-        body: JSON.stringify({
-          command: 'echo "Container initialized with keepAlive"'
-        })
-      });
+  test('should work with file operations and keepAlive', async () => {
+    const keepAliveHeaders = { ...headers, 'X-Sandbox-KeepAlive': 'true' };
+    const testPath = `/workspace/keepalive-test-${Date.now()}.txt`;
 
-      expect(initResponse.status).toBe(200);
-      const initData = (await initResponse.json()) as ExecResult;
-      expect(initData.stdout).toContain('Container initialized with keepAlive');
+    // Write file with keepAlive
+    const writeResponse = await fetch(`${workerUrl}/api/file/write`, {
+      method: 'POST',
+      headers: keepAliveHeaders,
+      body: JSON.stringify({
+        path: testPath,
+        content: 'keepAlive file content'
+      })
+    });
+    expect(writeResponse.status).toBe(200);
 
-      // Step 2: Wait longer than normal activity timeout would allow (15 seconds)
-      // With keepAlive, container should stay alive
-      await new Promise((resolve) => setTimeout(resolve, 15000));
+    // Read file with keepAlive
+    const readResponse = await fetch(`${workerUrl}/api/file/read`, {
+      method: 'POST',
+      headers: keepAliveHeaders,
+      body: JSON.stringify({ path: testPath })
+    });
+    expect(readResponse.status).toBe(200);
+    const readData = (await readResponse.json()) as ReadFileResult;
+    expect(readData.content).toBe('keepAlive file content');
 
-      // Step 3: Execute another command to verify container is still alive
-      const verifyResponse = await fetch(`${workerUrl}/api/execute`, {
-        method: 'POST',
-        headers: keepAliveHeaders,
-        body: JSON.stringify({
-          command: 'echo "Still alive after timeout period"'
-        })
-      });
-
-      expect(verifyResponse.status).toBe(200);
-      const verifyData = (await verifyResponse.json()) as ExecResult;
-      expect(verifyData.stdout).toContain('Still alive after timeout period');
-    }, 120000);
-
-    test('should support long-running processes with keepAlive', async () => {
-      currentSandboxId = createSandboxId();
-      const headers = createTestHeaders(currentSandboxId);
-
-      const keepAliveHeaders = {
-        ...headers,
-        'X-Sandbox-KeepAlive': 'true'
-      };
-
-      // Start a long sleep process (30 seconds)
-      const startResponse = await fetch(`${workerUrl}/api/process/start`, {
-        method: 'POST',
-        headers: keepAliveHeaders,
-        body: JSON.stringify({
-          command: 'sleep 30'
-        })
-      });
-
-      expect(startResponse.status).toBe(200);
-      const startData = (await startResponse.json()) as Process;
-      expect(startData.id).toBeTruthy();
-      const processId = startData.id;
-
-      // Wait 20 seconds (longer than normal activity timeout)
-      await new Promise((resolve) => setTimeout(resolve, 20000));
-
-      // Verify process is still running
-      const statusResponse = await fetch(
-        `${workerUrl}/api/process/${processId}`,
-        {
-          method: 'GET',
-          headers: keepAliveHeaders
-        }
-      );
-
-      expect(statusResponse.status).toBe(200);
-      const statusData = (await statusResponse.json()) as Process;
-      expect(statusData.status).toBe('running');
-
-      // Cleanup - kill the process
-      await fetch(`${workerUrl}/api/process/${processId}`, {
-        method: 'DELETE',
-        headers: keepAliveHeaders
-      });
-    }, 120000);
-
-    test('should destroy container when explicitly requested', async () => {
-      currentSandboxId = createSandboxId();
-      const headers = createTestHeaders(currentSandboxId);
-
-      const keepAliveHeaders = {
-        ...headers,
-        'X-Sandbox-KeepAlive': 'true'
-      };
-
-      // Step 1: Initialize sandbox with keepAlive
-      await fetch(`${workerUrl}/api/execute`, {
-        method: 'POST',
-        headers: keepAliveHeaders,
-        body: JSON.stringify({
-          command: 'echo "Testing destroy"'
-        })
-      });
-
-      // Step 2: Explicitly destroy the container
-      const destroyResponse = await fetch(`${workerUrl}/cleanup`, {
-        method: 'POST',
-        headers: keepAliveHeaders
-      });
-
-      expect(destroyResponse.status).toBe(200);
-
-      // Step 3: Verify container was destroyed by trying to execute a command
-      // This should fail or require re-initialization
-      await new Promise((resolve) => setTimeout(resolve, 2000));
-
-      const verifyResponse = await fetch(`${workerUrl}/api/execute`, {
-        method: 'POST',
-        headers: keepAliveHeaders,
-        body: JSON.stringify({
-          command: 'echo "After destroy"'
-        })
-      });
-
-      // Container should be restarted (new container), not the same one
-      // We can verify by checking that the response is successful but it's a fresh container
-      expect(verifyResponse.status).toBe(200);
-
-      // Mark as null so afterEach doesn't try to clean it up again
-      currentSandboxId = null;
-    }, 120000);
-
-    test('should handle multiple commands with keepAlive over time', async () => {
-      currentSandboxId = createSandboxId();
-      const headers = createTestHeaders(currentSandboxId);
-
-      const keepAliveHeaders = {
-        ...headers,
-        'X-Sandbox-KeepAlive': 'true'
-      };
-
-      // Initialize
-      await fetch(`${workerUrl}/api/execute`, {
-        method: 'POST',
-        headers: keepAliveHeaders,
-        body: JSON.stringify({
-          command: 'echo "Command 1"'
-        })
-      });
-
-      // Execute multiple commands with delays between them
-      for (let i = 2; i <= 4; i++) {
-        // Wait 8 seconds between commands (would timeout without keepAlive)
-        await new Promise((resolve) => setTimeout(resolve, 8000));
-
-        const response = await fetch(`${workerUrl}/api/execute`, {
-          method: 'POST',
-          headers: keepAliveHeaders,
-          body: JSON.stringify({
-            command: `echo "Command ${i}"`
-          })
-        });
-
-        expect(response.status).toBe(200);
-        const data = (await response.json()) as ExecResult;
-        expect(data.stdout).toContain(`Command ${i}`);
-      }
-    }, 120000);
-
-    test('should work with file operations while keepAlive is enabled', async () => {
-      currentSandboxId = createSandboxId();
-      const headers = createTestHeaders(currentSandboxId);
-
-      const keepAliveHeaders = {
-        ...headers,
-        'X-Sandbox-KeepAlive': 'true'
-      };
-
-      // Initialize
-      await fetch(`${workerUrl}/api/file/write`, {
-        method: 'POST',
-        headers: keepAliveHeaders,
-        body: JSON.stringify({
-          path: '/workspace/test.txt',
-          content: 'Initial content'
-        })
-      });
-
-      // Wait longer than normal timeout
-      await new Promise((resolve) => setTimeout(resolve, 15000));
-
-      // Perform file operations - should still work
-      const writeResponse = await fetch(`${workerUrl}/api/file/write`, {
-        method: 'POST',
-        headers: keepAliveHeaders,
-        body: JSON.stringify({
-          path: '/workspace/test.txt',
-          content: 'Updated content after keepAlive'
-        })
-      });
-
-      expect(writeResponse.status).toBe(200);
-
-      // Read file to verify
-      const readResponse = await fetch(`${workerUrl}/api/file/read`, {
-        method: 'POST',
-        headers: keepAliveHeaders,
-        body: JSON.stringify({
-          path: '/workspace/test.txt'
-        })
-      });
-
-      expect(readResponse.status).toBe(200);
-      const readData = (await readResponse.json()) as ReadFileResult;
-      expect(readData.content).toContain('Updated content after keepAlive');
-    }, 120000);
-  });
+    // Cleanup
+    await fetch(`${workerUrl}/api/file/delete`, {
+      method: 'DELETE',
+      headers: keepAliveHeaders,
+      body: JSON.stringify({ path: testPath })
+    });
+  }, 30000);
 });

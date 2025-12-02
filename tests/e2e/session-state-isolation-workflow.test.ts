@@ -1,13 +1,5 @@
-import {
-  describe,
-  test,
-  expect,
-  beforeAll,
-  afterAll,
-  afterEach,
-  vi
-} from 'vitest';
-import { getTestWorkerUrl, WranglerDevRunner } from './helpers/wrangler-runner';
+import { describe, test, expect, beforeAll, afterAll } from 'vitest';
+import { getSharedSandbox } from './helpers/global-sandbox';
 import {
   createSandboxId,
   createTestHeaders,
@@ -18,62 +10,54 @@ import type {
   SessionCreateResult,
   SessionDeleteResult,
   ReadFileResult,
-  WriteFileResult,
-  ExecResult,
-  ProcessInfoResult
+  ExecResult
 } from '@repo/shared';
 
 /**
  * Session State Isolation Workflow Integration Tests
  *
- * Tests session isolation features as described in README "Session Management" (lines 711-754).
+ * Tests session isolation features WITHIN a single container.
+ * Sessions provide isolated shell state (env, cwd, functions) but share
+ * file system and process space - that's by design!
  *
- * IMPORTANT: As of commit 645672aa, PID namespace isolation was removed.
- * Sessions now provide **state isolation** (env vars, cwd, shell state) for workflow organization,
- * NOT security isolation. All sessions share the same process table.
- *
- * This validates:
- * - Environment variable isolation between sessions
- * - Working directory isolation
- * - Shell state isolation (functions, aliases)
- * - Process space is SHARED (by design)
- * - File system is SHARED (by design)
- * - Concurrent execution without output mixing
+ * All tests share ONE container since we're testing session isolation,
+ * not container isolation.
  */
 describe('Session State Isolation Workflow', () => {
   describe('local', () => {
-    let runner: WranglerDevRunner | null;
     let workerUrl: string;
-    let currentSandboxId: string | null = null;
+    let sandboxId: string;
+    let baseHeaders: Record<string, string>;
 
     beforeAll(async () => {
-      // Get test worker URL (CI: uses deployed URL, Local: spawns wrangler dev)
-      const result = await getTestWorkerUrl();
-      workerUrl = result.url;
-      runner = result.runner;
-    });
+      // Create ONE sandbox for all session isolation tests
+      const sandbox = await getSharedSandbox();
+      workerUrl = sandbox.workerUrl;
+      sandboxId = createSandboxId();
+      baseHeaders = createTestHeaders(sandboxId);
 
-    afterEach(async () => {
-      // Cleanup sandbox container after each test
-      if (currentSandboxId) {
-        await cleanupSandbox(workerUrl, currentSandboxId);
-        currentSandboxId = null;
-      }
-    });
+      // Initialize the sandbox
+      await fetch(`${workerUrl}/api/execute`, {
+        method: 'POST',
+        headers: baseHeaders,
+        body: JSON.stringify({
+          command: 'echo "Session isolation sandbox ready"'
+        })
+      });
+    }, 120000);
 
     afterAll(async () => {
-      if (runner) {
-        await runner.stop();
+      // Cleanup the single sandbox after all tests
+      if (sandboxId) {
+        await cleanupSandbox(workerUrl, sandboxId);
       }
     });
 
     test('should isolate environment variables between sessions', async () => {
-      currentSandboxId = createSandboxId();
-
       // Create session1 with production environment
       const session1Response = await fetch(`${workerUrl}/api/session/create`, {
         method: 'POST',
-        headers: createTestHeaders(currentSandboxId!),
+        headers: createTestHeaders(sandboxId!),
         body: JSON.stringify({
           env: {
             NODE_ENV: 'production',
@@ -93,7 +77,7 @@ describe('Session State Isolation Workflow', () => {
       // Create session2 with test environment
       const session2Response = await fetch(`${workerUrl}/api/session/create`, {
         method: 'POST',
-        headers: createTestHeaders(currentSandboxId!),
+        headers: createTestHeaders(sandboxId!),
         body: JSON.stringify({
           env: {
             NODE_ENV: 'test',
@@ -112,7 +96,7 @@ describe('Session State Isolation Workflow', () => {
       // Verify session1 has production environment
       const exec1Response = await fetch(`${workerUrl}/api/execute`, {
         method: 'POST',
-        headers: createTestHeaders(currentSandboxId, session1Id),
+        headers: createTestHeaders(sandboxId, session1Id),
         body: JSON.stringify({
           command: 'echo "$NODE_ENV|$API_KEY|$DB_HOST"'
         })
@@ -128,7 +112,7 @@ describe('Session State Isolation Workflow', () => {
       // Verify session2 has test environment
       const exec2Response = await fetch(`${workerUrl}/api/execute`, {
         method: 'POST',
-        headers: createTestHeaders(currentSandboxId, session2Id),
+        headers: createTestHeaders(sandboxId, session2Id),
         body: JSON.stringify({
           command: 'echo "$NODE_ENV|$API_KEY|$DB_HOST"'
         })
@@ -144,7 +128,7 @@ describe('Session State Isolation Workflow', () => {
       // Set NEW_VAR in session1 dynamically
       const setEnv1Response = await fetch(`${workerUrl}/api/env/set`, {
         method: 'POST',
-        headers: createTestHeaders(currentSandboxId, session1Id),
+        headers: createTestHeaders(sandboxId, session1Id),
         body: JSON.stringify({
           envVars: { NEW_VAR: 'session1-only' }
         })
@@ -155,7 +139,7 @@ describe('Session State Isolation Workflow', () => {
       // Verify NEW_VAR exists in session1
       const check1Response = await fetch(`${workerUrl}/api/execute`, {
         method: 'POST',
-        headers: createTestHeaders(currentSandboxId, session1Id),
+        headers: createTestHeaders(sandboxId, session1Id),
         body: JSON.stringify({
           command: 'echo $NEW_VAR'
         })
@@ -167,7 +151,7 @@ describe('Session State Isolation Workflow', () => {
       // Verify NEW_VAR does NOT leak to session2
       const check2Response = await fetch(`${workerUrl}/api/execute`, {
         method: 'POST',
-        headers: createTestHeaders(currentSandboxId, session2Id),
+        headers: createTestHeaders(sandboxId, session2Id),
         body: JSON.stringify({
           command: 'echo "VALUE:$NEW_VAR:END"'
         })
@@ -178,12 +162,10 @@ describe('Session State Isolation Workflow', () => {
     }, 90000);
 
     test('should isolate working directories between sessions', async () => {
-      currentSandboxId = createSandboxId();
-
       // Create directory structure first (using default session)
       await fetch(`${workerUrl}/api/file/mkdir`, {
         method: 'POST',
-        headers: createTestHeaders(currentSandboxId!),
+        headers: createTestHeaders(sandboxId!),
         body: JSON.stringify({
           path: '/workspace/app',
           recursive: true
@@ -192,7 +174,7 @@ describe('Session State Isolation Workflow', () => {
 
       await fetch(`${workerUrl}/api/file/mkdir`, {
         method: 'POST',
-        headers: createTestHeaders(currentSandboxId!),
+        headers: createTestHeaders(sandboxId!),
         body: JSON.stringify({
           path: '/workspace/test',
           recursive: true
@@ -201,7 +183,7 @@ describe('Session State Isolation Workflow', () => {
 
       await fetch(`${workerUrl}/api/file/mkdir`, {
         method: 'POST',
-        headers: createTestHeaders(currentSandboxId!),
+        headers: createTestHeaders(sandboxId!),
         body: JSON.stringify({
           path: '/workspace/app/src',
           recursive: true
@@ -210,7 +192,7 @@ describe('Session State Isolation Workflow', () => {
 
       await fetch(`${workerUrl}/api/file/mkdir`, {
         method: 'POST',
-        headers: createTestHeaders(currentSandboxId!),
+        headers: createTestHeaders(sandboxId!),
         body: JSON.stringify({
           path: '/workspace/test/unit',
           recursive: true
@@ -220,7 +202,7 @@ describe('Session State Isolation Workflow', () => {
       // Create session1 with cwd: /workspace/app
       const session1Response = await fetch(`${workerUrl}/api/session/create`, {
         method: 'POST',
-        headers: createTestHeaders(currentSandboxId!),
+        headers: createTestHeaders(sandboxId!),
         body: JSON.stringify({
           cwd: '/workspace/app'
         })
@@ -233,7 +215,7 @@ describe('Session State Isolation Workflow', () => {
       // Create session2 with cwd: /workspace/test
       const session2Response = await fetch(`${workerUrl}/api/session/create`, {
         method: 'POST',
-        headers: createTestHeaders(currentSandboxId!),
+        headers: createTestHeaders(sandboxId!),
         body: JSON.stringify({
           cwd: '/workspace/test'
         })
@@ -246,7 +228,7 @@ describe('Session State Isolation Workflow', () => {
       // Verify session1 starts in /workspace/app
       const pwd1Response = await fetch(`${workerUrl}/api/execute`, {
         method: 'POST',
-        headers: createTestHeaders(currentSandboxId, session1Id),
+        headers: createTestHeaders(sandboxId, session1Id),
         body: JSON.stringify({
           command: 'pwd'
         })
@@ -258,7 +240,7 @@ describe('Session State Isolation Workflow', () => {
       // Verify session2 starts in /workspace/test
       const pwd2Response = await fetch(`${workerUrl}/api/execute`, {
         method: 'POST',
-        headers: createTestHeaders(currentSandboxId, session2Id),
+        headers: createTestHeaders(sandboxId, session2Id),
         body: JSON.stringify({
           command: 'pwd'
         })
@@ -270,7 +252,7 @@ describe('Session State Isolation Workflow', () => {
       // Change directory in session1
       await fetch(`${workerUrl}/api/execute`, {
         method: 'POST',
-        headers: createTestHeaders(currentSandboxId, session1Id),
+        headers: createTestHeaders(sandboxId, session1Id),
         body: JSON.stringify({
           command: 'cd src'
         })
@@ -279,7 +261,7 @@ describe('Session State Isolation Workflow', () => {
       // Change directory in session2
       await fetch(`${workerUrl}/api/execute`, {
         method: 'POST',
-        headers: createTestHeaders(currentSandboxId, session2Id),
+        headers: createTestHeaders(sandboxId, session2Id),
         body: JSON.stringify({
           command: 'cd unit'
         })
@@ -288,7 +270,7 @@ describe('Session State Isolation Workflow', () => {
       // Verify session1 is in /workspace/app/src
       const newPwd1Response = await fetch(`${workerUrl}/api/execute`, {
         method: 'POST',
-        headers: createTestHeaders(currentSandboxId, session1Id),
+        headers: createTestHeaders(sandboxId, session1Id),
         body: JSON.stringify({
           command: 'pwd'
         })
@@ -300,7 +282,7 @@ describe('Session State Isolation Workflow', () => {
       // Verify session2 is in /workspace/test/unit
       const newPwd2Response = await fetch(`${workerUrl}/api/execute`, {
         method: 'POST',
-        headers: createTestHeaders(currentSandboxId, session2Id),
+        headers: createTestHeaders(sandboxId, session2Id),
         body: JSON.stringify({
           command: 'pwd'
         })
@@ -311,12 +293,10 @@ describe('Session State Isolation Workflow', () => {
     }, 90000);
 
     test('should isolate shell state (functions and aliases) between sessions', async () => {
-      currentSandboxId = createSandboxId();
-
       // Create two sessions
       const session1Response = await fetch(`${workerUrl}/api/session/create`, {
         method: 'POST',
-        headers: createTestHeaders(currentSandboxId!),
+        headers: createTestHeaders(sandboxId!),
         body: JSON.stringify({})
       });
 
@@ -326,7 +306,7 @@ describe('Session State Isolation Workflow', () => {
 
       const session2Response = await fetch(`${workerUrl}/api/session/create`, {
         method: 'POST',
-        headers: createTestHeaders(currentSandboxId!),
+        headers: createTestHeaders(sandboxId!),
         body: JSON.stringify({})
       });
 
@@ -337,7 +317,7 @@ describe('Session State Isolation Workflow', () => {
       // Define greet() function in session1
       const defineFunc1Response = await fetch(`${workerUrl}/api/execute`, {
         method: 'POST',
-        headers: createTestHeaders(currentSandboxId, session1Id),
+        headers: createTestHeaders(sandboxId, session1Id),
         body: JSON.stringify({
           command: 'greet() { echo "Hello from Production"; }'
         })
@@ -348,7 +328,7 @@ describe('Session State Isolation Workflow', () => {
       // Call greet() in session1 - should work
       const call1Response = await fetch(`${workerUrl}/api/execute`, {
         method: 'POST',
-        headers: createTestHeaders(currentSandboxId, session1Id),
+        headers: createTestHeaders(sandboxId, session1Id),
         body: JSON.stringify({
           command: 'greet'
         })
@@ -361,7 +341,7 @@ describe('Session State Isolation Workflow', () => {
       // Try to call greet() in session2 - should fail
       const call2Response = await fetch(`${workerUrl}/api/execute`, {
         method: 'POST',
-        headers: createTestHeaders(currentSandboxId, session2Id),
+        headers: createTestHeaders(sandboxId, session2Id),
         body: JSON.stringify({
           command: 'greet'
         })
@@ -374,7 +354,7 @@ describe('Session State Isolation Workflow', () => {
       // Define different greet() function in session2
       await fetch(`${workerUrl}/api/execute`, {
         method: 'POST',
-        headers: createTestHeaders(currentSandboxId, session2Id),
+        headers: createTestHeaders(sandboxId, session2Id),
         body: JSON.stringify({
           command: 'greet() { echo "Hello from Test"; }'
         })
@@ -383,7 +363,7 @@ describe('Session State Isolation Workflow', () => {
       // Call greet() in session2 - should use session2's definition
       const call3Response = await fetch(`${workerUrl}/api/execute`, {
         method: 'POST',
-        headers: createTestHeaders(currentSandboxId, session2Id),
+        headers: createTestHeaders(sandboxId, session2Id),
         body: JSON.stringify({
           command: 'greet'
         })
@@ -396,7 +376,7 @@ describe('Session State Isolation Workflow', () => {
       // Verify session1's greet() is still unchanged
       const call4Response = await fetch(`${workerUrl}/api/execute`, {
         method: 'POST',
-        headers: createTestHeaders(currentSandboxId, session1Id),
+        headers: createTestHeaders(sandboxId, session1Id),
         body: JSON.stringify({
           command: 'greet'
         })
@@ -407,12 +387,10 @@ describe('Session State Isolation Workflow', () => {
     }, 90000);
 
     test('should share process space between sessions (by design)', async () => {
-      currentSandboxId = createSandboxId();
-
       // Create two sessions
       const session1Response = await fetch(`${workerUrl}/api/session/create`, {
         method: 'POST',
-        headers: createTestHeaders(currentSandboxId!),
+        headers: createTestHeaders(sandboxId!),
         body: JSON.stringify({})
       });
 
@@ -422,7 +400,7 @@ describe('Session State Isolation Workflow', () => {
 
       const session2Response = await fetch(`${workerUrl}/api/session/create`, {
         method: 'POST',
-        headers: createTestHeaders(currentSandboxId!),
+        headers: createTestHeaders(sandboxId!),
         body: JSON.stringify({})
       });
 
@@ -433,7 +411,7 @@ describe('Session State Isolation Workflow', () => {
       // Start a long-running process in session1
       const startResponse = await fetch(`${workerUrl}/api/process/start`, {
         method: 'POST',
-        headers: createTestHeaders(currentSandboxId, session1Id),
+        headers: createTestHeaders(sandboxId, session1Id),
         body: JSON.stringify({
           command: 'sleep 120'
         })
@@ -449,7 +427,7 @@ describe('Session State Isolation Workflow', () => {
       // List processes from session2 - should see session1's process (shared process table)
       const listResponse = await fetch(`${workerUrl}/api/process/list`, {
         method: 'GET',
-        headers: createTestHeaders(currentSandboxId, session2Id)
+        headers: createTestHeaders(sandboxId, session2Id)
       });
 
       expect(listResponse.status).toBe(200);
@@ -469,7 +447,7 @@ describe('Session State Isolation Workflow', () => {
         `${workerUrl}/api/process/${processId}`,
         {
           method: 'DELETE',
-          headers: createTestHeaders(currentSandboxId, session2Id)
+          headers: createTestHeaders(sandboxId, session2Id)
         }
       );
 
@@ -482,7 +460,7 @@ describe('Session State Isolation Workflow', () => {
         `${workerUrl}/api/process/${processId}`,
         {
           method: 'GET',
-          headers: createTestHeaders(currentSandboxId, session1Id)
+          headers: createTestHeaders(sandboxId, session1Id)
         }
       );
 
@@ -491,12 +469,10 @@ describe('Session State Isolation Workflow', () => {
     }, 90000);
 
     test('should share file system between sessions (by design)', async () => {
-      currentSandboxId = createSandboxId();
-
       // Create two sessions
       const session1Response = await fetch(`${workerUrl}/api/session/create`, {
         method: 'POST',
-        headers: createTestHeaders(currentSandboxId!),
+        headers: createTestHeaders(sandboxId!),
         body: JSON.stringify({})
       });
 
@@ -506,7 +482,7 @@ describe('Session State Isolation Workflow', () => {
 
       const session2Response = await fetch(`${workerUrl}/api/session/create`, {
         method: 'POST',
-        headers: createTestHeaders(currentSandboxId!),
+        headers: createTestHeaders(sandboxId!),
         body: JSON.stringify({})
       });
 
@@ -517,7 +493,7 @@ describe('Session State Isolation Workflow', () => {
       // Write a file from session1
       const writeResponse = await fetch(`${workerUrl}/api/file/write`, {
         method: 'POST',
-        headers: createTestHeaders(currentSandboxId, session1Id),
+        headers: createTestHeaders(sandboxId, session1Id),
         body: JSON.stringify({
           path: '/workspace/shared.txt',
           content: 'Written by session1'
@@ -529,7 +505,7 @@ describe('Session State Isolation Workflow', () => {
       // Read the file from session2 - should see session1's content
       const readResponse = await fetch(`${workerUrl}/api/file/read`, {
         method: 'POST',
-        headers: createTestHeaders(currentSandboxId, session2Id),
+        headers: createTestHeaders(sandboxId, session2Id),
         body: JSON.stringify({
           path: '/workspace/shared.txt'
         })
@@ -542,7 +518,7 @@ describe('Session State Isolation Workflow', () => {
       // Modify the file from session2
       const modifyResponse = await fetch(`${workerUrl}/api/file/write`, {
         method: 'POST',
-        headers: createTestHeaders(currentSandboxId, session2Id),
+        headers: createTestHeaders(sandboxId, session2Id),
         body: JSON.stringify({
           path: '/workspace/shared.txt',
           content: 'Modified by session2'
@@ -554,7 +530,7 @@ describe('Session State Isolation Workflow', () => {
       // Read from session1 - should see session2's modification
       const verifyResponse = await fetch(`${workerUrl}/api/file/read`, {
         method: 'POST',
-        headers: createTestHeaders(currentSandboxId, session1Id),
+        headers: createTestHeaders(sandboxId, session1Id),
         body: JSON.stringify({
           path: '/workspace/shared.txt'
         })
@@ -566,7 +542,7 @@ describe('Session State Isolation Workflow', () => {
       // Cleanup
       await fetch(`${workerUrl}/api/file/delete`, {
         method: 'DELETE',
-        headers: createTestHeaders(currentSandboxId, session1Id),
+        headers: createTestHeaders(sandboxId, session1Id),
         body: JSON.stringify({
           path: '/workspace/shared.txt'
         })
@@ -574,12 +550,10 @@ describe('Session State Isolation Workflow', () => {
     }, 90000);
 
     test('should support concurrent execution without output mixing', async () => {
-      currentSandboxId = createSandboxId();
-
       // Create two sessions
       const session1Response = await fetch(`${workerUrl}/api/session/create`, {
         method: 'POST',
-        headers: createTestHeaders(currentSandboxId!),
+        headers: createTestHeaders(sandboxId!),
         body: JSON.stringify({
           env: { SESSION_NAME: 'session1' }
         })
@@ -591,7 +565,7 @@ describe('Session State Isolation Workflow', () => {
 
       const session2Response = await fetch(`${workerUrl}/api/session/create`, {
         method: 'POST',
-        headers: createTestHeaders(currentSandboxId!),
+        headers: createTestHeaders(sandboxId!),
         body: JSON.stringify({
           env: { SESSION_NAME: 'session2' }
         })
@@ -604,7 +578,7 @@ describe('Session State Isolation Workflow', () => {
       // Execute commands simultaneously
       const exec1Promise = fetch(`${workerUrl}/api/execute`, {
         method: 'POST',
-        headers: createTestHeaders(currentSandboxId, session1Id),
+        headers: createTestHeaders(sandboxId, session1Id),
         body: JSON.stringify({
           command: 'sleep 2 && echo "Completed in $SESSION_NAME"'
         })
@@ -612,7 +586,7 @@ describe('Session State Isolation Workflow', () => {
 
       const exec2Promise = fetch(`${workerUrl}/api/execute`, {
         method: 'POST',
-        headers: createTestHeaders(currentSandboxId, session2Id),
+        headers: createTestHeaders(sandboxId, session2Id),
         body: JSON.stringify({
           command: 'sleep 2 && echo "Completed in $SESSION_NAME"'
         })
@@ -640,12 +614,10 @@ describe('Session State Isolation Workflow', () => {
     }, 90000);
 
     test('should properly cleanup session resources with deleteSession', async () => {
-      currentSandboxId = createSandboxId();
-
       // Create a session with custom environment variable
       const sessionResponse = await fetch(`${workerUrl}/api/session/create`, {
         method: 'POST',
-        headers: createTestHeaders(currentSandboxId!),
+        headers: createTestHeaders(sandboxId!),
         body: JSON.stringify({
           env: { SESSION_VAR: 'test-value' }
         })
@@ -658,7 +630,7 @@ describe('Session State Isolation Workflow', () => {
       // Verify session works before deletion
       const execBeforeResponse = await fetch(`${workerUrl}/api/execute`, {
         method: 'POST',
-        headers: createTestHeaders(currentSandboxId, sessionId),
+        headers: createTestHeaders(sandboxId, sessionId),
         body: JSON.stringify({
           command: 'echo $SESSION_VAR'
         })
@@ -671,7 +643,7 @@ describe('Session State Isolation Workflow', () => {
       // Delete the session
       const deleteResponse = await fetch(`${workerUrl}/api/session/delete`, {
         method: 'POST',
-        headers: createTestHeaders(currentSandboxId!),
+        headers: createTestHeaders(sandboxId!),
         body: JSON.stringify({
           sessionId: sessionId
         })
@@ -690,7 +662,7 @@ describe('Session State Isolation Workflow', () => {
         `${workerUrl}/api/execute`,
         {
           method: 'POST',
-          headers: createTestHeaders(currentSandboxId, sessionId), // Use same session ID
+          headers: createTestHeaders(sandboxId, sessionId), // Use same session ID
           body: JSON.stringify({
             command: 'echo $SESSION_VAR'
           })
@@ -709,7 +681,7 @@ describe('Session State Isolation Workflow', () => {
         `${workerUrl}/api/execute`,
         {
           method: 'POST',
-          headers: createTestHeaders(currentSandboxId!), // Use default session
+          headers: createTestHeaders(sandboxId!), // Use default session
           body: JSON.stringify({
             command: 'echo "sandbox-alive"'
           })

@@ -14,57 +14,30 @@
  * and ensure the code interpreter works end-to-end in a real container environment.
  */
 
+import { beforeAll, describe, expect, test } from 'vitest';
 import {
-  afterAll,
-  afterEach,
-  beforeAll,
-  describe,
-  expect,
-  test,
-  vi
-} from 'vitest';
-import { getTestWorkerUrl, WranglerDevRunner } from './helpers/wrangler-runner';
-import {
-  createSandboxId,
-  createTestHeaders,
-  createPythonImageHeaders,
-  cleanupSandbox
-} from './helpers/test-fixtures';
+  getSharedSandbox,
+  createUniqueSession
+} from './helpers/global-sandbox';
 import type { CodeContext, ExecutionResult } from '@repo/shared';
 import type { ErrorResponse } from './test-worker/types';
 
 describe('Code Interpreter Workflow (E2E)', () => {
-  let runner: WranglerDevRunner | null;
   let workerUrl: string;
-  let currentSandboxId: string | null = null;
+  let headers: Record<string, string>;
 
   beforeAll(async () => {
-    const result = await getTestWorkerUrl();
-    workerUrl = result.url;
-    runner = result.runner;
+    // Use the shared sandbox with a unique session
+    const sandbox = await getSharedSandbox();
+    workerUrl = sandbox.workerUrl;
+    headers = sandbox.createHeaders(createUniqueSession());
   }, 120000);
-
-  afterEach(async () => {
-    if (currentSandboxId) {
-      await cleanupSandbox(workerUrl, currentSandboxId);
-      currentSandboxId = null;
-    }
-  });
-
-  afterAll(async () => {
-    if (runner) {
-      await runner.stop();
-    }
-  });
 
   // ============================================================================
   // Context Management
   // ============================================================================
 
   test('should create and list code contexts', async () => {
-    currentSandboxId = createSandboxId();
-    const headers = createPythonImageHeaders(currentSandboxId);
-
     // Create Python context
     const pythonCtxResponse = await fetch(
       `${workerUrl}/api/code/context/create`,
@@ -110,9 +83,6 @@ describe('Code Interpreter Workflow (E2E)', () => {
   }, 120000);
 
   test('should delete code context', async () => {
-    currentSandboxId = createSandboxId();
-    const headers = createPythonImageHeaders(currentSandboxId);
-
     // Create context
     const createResponse = await fetch(`${workerUrl}/api/code/context/create`, {
       method: 'POST',
@@ -152,9 +122,6 @@ describe('Code Interpreter Workflow (E2E)', () => {
   // ============================================================================
 
   test('should execute simple Python code', async () => {
-    currentSandboxId = createSandboxId();
-    const headers = createPythonImageHeaders(currentSandboxId);
-
     // Create Python context
     const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
       method: 'POST',
@@ -183,9 +150,6 @@ describe('Code Interpreter Workflow (E2E)', () => {
   }, 120000);
 
   test('should maintain Python state across executions', async () => {
-    currentSandboxId = createSandboxId();
-    const headers = createPythonImageHeaders(currentSandboxId);
-
     // Create context
     const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
       method: 'POST',
@@ -226,9 +190,6 @@ describe('Code Interpreter Workflow (E2E)', () => {
   }, 120000);
 
   test('should handle Python errors gracefully', async () => {
-    currentSandboxId = createSandboxId();
-    const headers = createPythonImageHeaders(currentSandboxId);
-
     // Create context
     const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
       method: 'POST',
@@ -265,9 +226,6 @@ describe('Code Interpreter Workflow (E2E)', () => {
   // ============================================================================
 
   test('should execute simple JavaScript code', async () => {
-    currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
-
     // Create JavaScript context
     const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
       method: 'POST',
@@ -295,9 +253,6 @@ describe('Code Interpreter Workflow (E2E)', () => {
   }, 120000);
 
   test('should maintain JavaScript state across executions', async () => {
-    currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
-
     // Create context
     const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
       method: 'POST',
@@ -335,9 +290,6 @@ describe('Code Interpreter Workflow (E2E)', () => {
   }, 120000);
 
   test('should handle JavaScript errors gracefully', async () => {
-    currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
-
     // Create context
     const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
       method: 'POST',
@@ -624,9 +576,6 @@ data
   // ============================================================================
 
   test('should stream Python execution output', async () => {
-    currentSandboxId = createSandboxId();
-    const headers = createPythonImageHeaders(currentSandboxId);
-
     // Create context
     const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
       method: 'POST',
@@ -706,9 +655,6 @@ for i in range(3):
   // ============================================================================
 
   test('should process data in Python and consume in JavaScript', async () => {
-    currentSandboxId = createSandboxId();
-    const headers = createPythonImageHeaders(currentSandboxId);
-
     // Create Python context
     const pythonCtxResponse = await fetch(
       `${workerUrl}/api/code/context/create`,
@@ -777,9 +723,6 @@ console.log('Sum:', sum);
   // ============================================================================
 
   test('should isolate variables between contexts', async () => {
-    currentSandboxId = createSandboxId();
-    const headers = createPythonImageHeaders(currentSandboxId);
-
     // Create two Python contexts
     const ctx1Response = await fetch(`${workerUrl}/api/code/context/create`, {
       method: 'POST',
@@ -1083,9 +1026,6 @@ console.log('Sum:', sum);
   // ============================================================================
 
   test('should return error for invalid language', async () => {
-    currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
-
     // Try to create context with invalid language
     const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
       method: 'POST',
@@ -1100,9 +1040,6 @@ console.log('Sum:', sum);
   }, 120000);
 
   test('should return error for non-existent context', async () => {
-    currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
-
     // Try to execute with fake context
     const execResponse = await fetch(`${workerUrl}/api/code/execute`, {
       method: 'POST',
@@ -1122,9 +1059,6 @@ console.log('Sum:', sum);
   }, 120000);
 
   test('should return error when deleting non-existent context', async () => {
-    currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
-
     // Initialize sandbox
     await fetch(`${workerUrl}/api/execute`, {
       method: 'POST',
