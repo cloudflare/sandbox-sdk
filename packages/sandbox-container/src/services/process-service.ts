@@ -150,7 +150,9 @@ export class ProcessService {
         command,
         async (event) => {
           // Route events to process record listeners
-          if (event.type === 'stdout' && event.data) {
+          if (event.type === 'start' && event.pid !== undefined) {
+            await this.store.update(processRecord.id, { pid: event.pid });
+          } else if (event.type === 'stdout' && event.data) {
             processRecord.stdout += event.data;
             processRecord.outputListeners.forEach((listener) => {
               listener('stdout', event.data!);

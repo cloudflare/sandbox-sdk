@@ -310,6 +310,10 @@ export class Session {
     const logFile = join(this.sessionDir!, `${commandId}.log`);
     const exitCodeFile = join(this.sessionDir!, `${commandId}.exit`);
     const pidFile = join(this.sessionDir!, `${commandId}.pid`);
+    const labelersDoneFile = join(
+      this.sessionDir!,
+      `${commandId}.labelers.done`
+    );
 
     this.logger.info('Streaming command execution started', {
       sessionId: this.id,
@@ -340,10 +344,14 @@ export class Session {
         throw new Error('Shell stdin is not available');
       }
 
+      // Wait for PID file to be created (bash script writes it after starting command)
+      const pid = await this.waitForPidFile(pidFile);
+
       yield {
         type: 'start',
         timestamp: new Date().toISOString(),
-        command
+        command,
+        pid
       };
 
       // Hybrid approach: poll log file until exit code is written
@@ -400,14 +408,41 @@ export class Session {
         await Bun.sleep(CONFIG.STREAM_CHUNK_DELAY_MS);
       }
 
-      // Read final chunks
+      /*
+       * Wait for labelers done marker file.
+       * The exit code file is written by the command subshell, but labelers
+       * run in parallel background processes. The background monitor creates
+       * the labelers done file after waiting for labelers to finish.
+       */
+      const maxWaitMs = 5000;
+      const startWait = Date.now();
+      let labelersDone = false;
+      while (Date.now() - startWait < maxWaitMs) {
+        const doneFile = Bun.file(labelersDoneFile);
+        if (await doneFile.exists()) {
+          labelersDone = true;
+          break;
+        }
+        await Bun.sleep(CONFIG.STREAM_CHUNK_DELAY_MS);
+      }
+
+      if (!labelersDone) {
+        this.logger.warn('Output capture timeout - logs may be incomplete', {
+          commandId,
+          sessionId: this.id,
+          timeoutMs: maxWaitMs
+        });
+      }
+
+      // Read final chunks from log file after labelers are done
       const file = Bun.file(logFile);
       if (await file.exists()) {
-        const content = await file.text();
-        const newContent = content.slice(position);
+        const logContent = await file.text();
+        const finalContent = logContent.slice(position);
 
-        if (newContent) {
-          const lines = newContent.split('\n');
+        // Process final chunks
+        if (finalContent) {
+          const lines = finalContent.split('\n');
           for (const line of lines) {
             if (!line) continue;
 
@@ -426,6 +461,13 @@ export class Session {
             }
           }
         }
+      }
+
+      // Clean up labelers done file
+      try {
+        await rm(labelersDoneFile, { force: true });
+      } catch {
+        // Ignore cleanup errors
       }
 
       // Parse exit code (already read during polling loop)
@@ -629,6 +671,7 @@ export class Session {
     const stdoutPipe = join(this.sessionDir!, `${cmdId}.stdout.pipe`);
     const stderrPipe = join(this.sessionDir!, `${cmdId}.stderr.pipe`);
     const pidFile = join(this.sessionDir!, `${cmdId}.pid`);
+    const labelersDoneFile = join(this.sessionDir!, `${cmdId}.labelers.done`);
 
     // Escape paths for safe shell usage
     const safeStdoutPipe = this.escapeShellPath(stdoutPipe);
@@ -637,6 +680,7 @@ export class Session {
     const safeExitCodeFile = this.escapeShellPath(exitCodeFile);
     const safeSessionDir = this.escapeShellPath(this.sessionDir!);
     const safePidFile = this.escapeShellPath(pidFile);
+    const safeLabelersDoneFile = this.escapeShellPath(labelersDoneFile);
 
     const indentLines = (input: string, spaces: number) => {
       const prefix = ' '.repeat(spaces);
@@ -722,6 +766,7 @@ export class Session {
         script += `    (\n`;
         script += `      wait "$r1" "$r2" 2>/dev/null\n`;
         script += `      rm -f "$sp" "$ep"\n`;
+        script += `      touch ${safeLabelersDoneFile}\n`;
         script += `    ) &\n`;
         script += `    # Restore directory immediately\n`;
         script += `    cd "$PREV_DIR"\n`;
@@ -745,6 +790,7 @@ export class Session {
         script += `  (\n`;
         script += `    wait "$r1" "$r2" 2>/dev/null\n`;
         script += `    rm -f "$sp" "$ep"\n`;
+        script += `    touch ${safeLabelersDoneFile}\n`;
         script += `  ) &\n`;
       }
     } else {
@@ -1001,6 +1047,35 @@ export class Session {
     } catch (error) {
       // Ignore errors
     }
+  }
+
+  /**
+   * Wait for PID file to be created and return the PID
+   * Returns undefined if file doesn't appear within timeout
+   */
+  private async waitForPidFile(
+    pidFile: string,
+    timeoutMs: number = 1000
+  ): Promise<number | undefined> {
+    const startTime = Date.now();
+
+    while (Date.now() - startTime < timeoutMs) {
+      try {
+        const file = Bun.file(pidFile);
+        if (await file.exists()) {
+          const content = await file.text();
+          const pid = parseInt(content.trim(), 10);
+          if (!Number.isNaN(pid)) {
+            return pid;
+          }
+        }
+      } catch {
+        // Ignore errors, keep polling
+      }
+      await Bun.sleep(10); // Poll every 10ms
+    }
+
+    return undefined;
   }
 
   /**

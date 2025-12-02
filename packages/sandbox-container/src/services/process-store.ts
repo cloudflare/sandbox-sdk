@@ -61,16 +61,16 @@ export class ProcessStore {
       return;
     }
 
-    const updated = { ...existing, ...data };
-    this.processes.set(id, updated);
+    // Mutate in place to preserve reference held by ProcessService for event routing
+    Object.assign(existing, data);
 
     // Persist terminal states to disk and free memory
     const isTerminal = ['completed', 'failed', 'killed', 'error'].includes(
-      updated.status
+      existing.status
     );
     if (isTerminal) {
       try {
-        await this.writeProcessFile(id, updated);
+        await this.writeProcessFile(id, existing);
       } catch (error) {
         // Write failed, still delete to prevent memory leak
         // Explicit tradeoff: container stability > process history
