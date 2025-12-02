@@ -27,10 +27,10 @@ describe('Code Interpreter Workflow (E2E)', () => {
   let headers: Record<string, string>;
 
   beforeAll(async () => {
-    // Use the shared sandbox with a unique session
+    // Use the shared sandbox with Python
     const sandbox = await getSharedSandbox();
     workerUrl = sandbox.workerUrl;
-    headers = sandbox.createHeaders(createUniqueSession());
+    headers = sandbox.createPythonHeaders(createUniqueSession());
   }, 120000);
 
   // ============================================================================
@@ -775,9 +775,6 @@ console.log('Sum:', sum);
   }, 120000);
 
   test('should maintain isolation across many contexts (12+)', async () => {
-    currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
-
     // Create 12 contexts
     const contexts: CodeContext[] = [];
     for (let i = 0; i < 12; i++) {
@@ -846,9 +843,6 @@ console.log('Sum:', sum);
   }, 120000);
 
   test('should maintain state isolation with concurrent context execution', async () => {
-    currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
-
     // Create contexts sequentially
     const contexts: CodeContext[] = [];
     for (let i = 0; i < 4; i++) {
@@ -928,9 +922,6 @@ console.log('Sum:', sum);
   }, 120000);
 
   test('should prevent concurrent execution on same context', async () => {
-    currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
-
     // Create single context
     const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
       method: 'POST',
@@ -1082,18 +1073,18 @@ console.log('Sum:', sum);
   }, 120000);
 
   test('should return helpful error when Python unavailable on base image', async () => {
-    currentSandboxId = createSandboxId();
-    // Use default headers (base image, no Python) to test Python-not-available error
-    const headers = createTestHeaders(currentSandboxId);
+    // Use base image headers to test the error message
+    const sandbox = await getSharedSandbox();
+    const baseImageHeaders = sandbox.createHeaders(createUniqueSession());
 
     // Try to create Python context on base image (no Python installed)
     const response = await fetch(`${workerUrl}/api/code/context/create`, {
       method: 'POST',
-      headers,
+      headers: baseImageHeaders,
       body: JSON.stringify({ language: 'python' })
     });
 
-    // Should return error (test worker returns 500 for all errors)
+    // Should return error
     expect(response.status).toBe(500);
     const errorData = (await response.json()) as ErrorResponse;
 

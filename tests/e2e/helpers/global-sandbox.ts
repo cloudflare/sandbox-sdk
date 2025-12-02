@@ -44,8 +44,10 @@ export interface SharedSandbox {
   workerUrl: string;
   /** The shared sandbox ID */
   sandboxId: string;
-  /** Create headers for a specific session */
+  /** Create headers for a specific session (base image) */
   createHeaders: (sessionId?: string) => Record<string, string>;
+  /** Create headers for Python image sandbox (with Python) */
+  createPythonHeaders: (sessionId?: string) => Record<string, string>;
   /** Generate a unique file path prefix for test isolation */
   uniquePath: (prefix: string) => string;
 }
@@ -119,6 +121,16 @@ async function initializeSharedSandbox(): Promise<SharedSandbox> {
             }
             return headers;
           },
+          createPythonHeaders: (sessionId?: string) => {
+            const headers: Record<string, string> = {
+              ...baseHeaders,
+              'X-Sandbox-Type': 'python'
+            };
+            if (sessionId) {
+              headers['X-Session-Id'] = sessionId;
+            }
+            return headers;
+          },
           uniquePath: (prefix: string) =>
             `/workspace/test-${randomUUID().slice(0, 8)}/${prefix}`
         };
@@ -160,6 +172,16 @@ async function initializeSharedSandbox(): Promise<SharedSandbox> {
     sandboxId,
     createHeaders: (sessionId?: string) => {
       const headers = { ...baseHeaders };
+      if (sessionId) {
+        headers['X-Session-Id'] = sessionId;
+      }
+      return headers;
+    },
+    createPythonHeaders: (sessionId?: string) => {
+      const headers: Record<string, string> = {
+        ...baseHeaders,
+        'X-Sandbox-Type': 'python'
+      };
       if (sessionId) {
         headers['X-Session-Id'] = sessionId;
       }
