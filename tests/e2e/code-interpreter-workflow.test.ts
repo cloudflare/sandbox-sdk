@@ -511,6 +511,114 @@ data
     expect(JSON.stringify(resultData)).toContain('123');
   }, 120000);
 
+  test('should persist variables defined with await across executions', async () => {
+    currentSandboxId = createSandboxId();
+    const headers = createTestHeaders(currentSandboxId);
+
+    // Create JavaScript context
+    const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ language: 'javascript' })
+    });
+
+    const context = await ctxResponse.json();
+
+    // First execution: define variable with await
+    const exec1Response = await fetch(`${workerUrl}/api/code/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        code: 'const result = await Promise.resolve(42);',
+        options: { context }
+      })
+    });
+
+    expect(exec1Response.status).toBe(200);
+    const execution1 = (await exec1Response.json()) as ExecutionResult;
+    expect(execution1.error).toBeUndefined();
+
+    // Second execution: access the variable from previous execution
+    const exec2Response = await fetch(`${workerUrl}/api/code/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        code: 'result',
+        options: { context }
+      })
+    });
+
+    expect(exec2Response.status).toBe(200);
+    const execution2 = (await exec2Response.json()) as ExecutionResult;
+    expect(execution2.error).toBeUndefined();
+    expect(execution2.results).toBeDefined();
+    expect(execution2.results![0].text).toContain('42');
+  }, 120000);
+
+  test('should resolve Promise without await keyword', async () => {
+    currentSandboxId = createSandboxId();
+    const headers = createTestHeaders(currentSandboxId);
+
+    // Create JavaScript context
+    const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ language: 'javascript' })
+    });
+
+    const context = await ctxResponse.json();
+
+    // Execute a Promise expression - should resolve automatically
+    const execResponse = await fetch(`${workerUrl}/api/code/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        code: 'Promise.resolve(123)',
+        options: { context }
+      })
+    });
+
+    expect(execResponse.status).toBe(200);
+    const execution = (await execResponse.json()) as ExecutionResult;
+    expect(execution.error).toBeUndefined();
+    expect(execution.results).toBeDefined();
+    // The Promise should be automatically awaited and return 123
+    expect(execution.results![0].text).toContain('123');
+  }, 120000);
+
+  test('should support IIFE pattern for backward compatibility', async () => {
+    currentSandboxId = createSandboxId();
+    const headers = createTestHeaders(currentSandboxId);
+
+    // Create JavaScript context
+    const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ language: 'javascript' })
+    });
+
+    const context = await ctxResponse.json();
+
+    // Execute code with IIFE pattern
+    const execResponse = await fetch(`${workerUrl}/api/code/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        code: `(async () => {
+  const value = await Promise.resolve('hello');
+  return value + ' world';
+})()`,
+        options: { context }
+      })
+    });
+
+    expect(execResponse.status).toBe(200);
+    const execution = (await execResponse.json()) as ExecutionResult;
+    expect(execution.error).toBeUndefined();
+    expect(execution.results).toBeDefined();
+    expect(execution.results![0].text).toContain('hello world');
+  }, 120000);
+
   // ============================================================================
   // Streaming Execution
   // ============================================================================
@@ -741,13 +849,14 @@ console.log('Sum:', sum);
       contexts.push(context);
     }
 
-    // Set unique state in each context using mutable global
+    // Set unique state in each context using normal variable declarations
+    // With variable hoisting, const/let declarations persist across executions
     for (let i = 0; i < contexts.length; i++) {
       const execResponse = await fetch(`${workerUrl}/api/code/execute`, {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          code: `globalThis.contextValue = ${i}; contextValue;`,
+          code: `const contextValue = ${i}; contextValue;`,
           options: { context: contexts[i] }
         })
       });
@@ -811,13 +920,14 @@ console.log('Sum:', sum);
     }
 
     // Execute different code in each context concurrently
-    // Each context sets its own unique value using globalThis for persistence
+    // Each context sets its own unique value using normal variable declarations
+    // With variable hoisting, const/let declarations persist across executions
     const executionPromises = contexts.map((context, i) =>
       fetch(`${workerUrl}/api/code/execute`, {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          code: `globalThis.value = ${i}; globalThis.value;`,
+          code: `const value = ${i}; value;`,
           options: { context }
         })
       }).then((r) => r.json())
@@ -843,7 +953,7 @@ console.log('Sum:', sum);
         method: 'POST',
         headers,
         body: JSON.stringify({
-          code: 'globalThis.value;',
+          code: 'value;',
           options: { context }
         })
       }).then((r) => r.json())
@@ -888,12 +998,13 @@ console.log('Sum:', sum);
     expect(ctxResponse.status).toBe(200);
     const context = (await ctxResponse.json()) as CodeContext;
 
-    // Set up initial state with a counter variable using globalThis for persistence
+    // Set up initial state with a counter variable using normal declaration
+    // With variable hoisting, let/var declarations persist across executions
     const setupResponse = await fetch(`${workerUrl}/api/code/execute`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        code: 'globalThis.counter = 0;',
+        code: 'let counter = 0;',
         options: { context }
       })
     });
@@ -907,7 +1018,7 @@ console.log('Sum:', sum);
         method: 'POST',
         headers,
         body: JSON.stringify({
-          code: 'globalThis.counter++; globalThis.counter;',
+          code: 'counter++; counter;',
           options: { context }
         })
       }).then((r) => r.json())
@@ -949,7 +1060,7 @@ console.log('Sum:', sum);
       method: 'POST',
       headers,
       body: JSON.stringify({
-        code: 'globalThis.counter;',
+        code: 'counter;',
         options: { context }
       })
     });
