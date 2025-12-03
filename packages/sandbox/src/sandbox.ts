@@ -1412,35 +1412,53 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   ): Promise<WaitForResult> {
     const startTime = Date.now();
     const conditionStr = `port ${port}`;
-    const pollInterval = 500; // Check every 500ms
+    const targetInterval = 500; // Target interval between checks
+    const execTimeout = 1000; // Timeout for each nc check
+    let checkCount = 0;
 
-    while (Date.now() - startTime < timeout) {
-      // Check if process is still running
-      const processInfo = await this.getProcess(processId);
-      if (
-        !processInfo ||
-        processInfo.status === 'completed' ||
-        processInfo.status === 'failed' ||
-        processInfo.status === 'killed'
-      ) {
-        const logs = await this.getProcessLogs(processId).catch(() => ({
-          stdout: '',
-          stderr: ''
-        }));
-        throw this.createExitedBeforeReadyError(
-          processId,
-          command,
-          conditionStr,
-          processInfo?.exitCode ?? 1,
-          logs.stdout,
-          logs.stderr
-        );
+    while (true) {
+      const elapsed = Date.now() - startTime;
+      const remaining = timeout - elapsed;
+
+      // Exit if we've exceeded timeout
+      if (remaining <= 0) {
+        break;
+      }
+
+      // Skip check if remaining time is less than exec timeout
+      if (remaining < execTimeout) {
+        break;
+      }
+
+      // Check process status less frequently (every 3rd iteration) to reduce latency
+      if (checkCount % 3 === 0) {
+        const processInfo = await this.getProcess(processId);
+        if (
+          !processInfo ||
+          processInfo.status === 'completed' ||
+          processInfo.status === 'failed' ||
+          processInfo.status === 'killed'
+        ) {
+          const logs = await this.getProcessLogs(processId).catch(() => ({
+            stdout: '',
+            stderr: ''
+          }));
+          throw this.createExitedBeforeReadyError(
+            processId,
+            command,
+            conditionStr,
+            processInfo?.exitCode ?? 1,
+            logs.stdout,
+            logs.stderr
+          );
+        }
       }
 
       // Try to connect to the port using nc
+      const checkStart = Date.now();
       try {
         const result = await this.exec(`nc -z localhost ${port}`, {
-          timeout: 1000
+          timeout: Math.min(execTimeout, remaining)
         });
         if (result.exitCode === 0) {
           return {}; // Port is available
@@ -1449,8 +1467,16 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         // Port not ready yet, continue polling
       }
 
-      // Wait before next check
-      await new Promise((resolve) => setTimeout(resolve, pollInterval));
+      checkCount++;
+
+      // Calculate sleep time accounting for exec duration
+      const checkDuration = Date.now() - checkStart;
+      const sleepTime = Math.max(0, targetInterval - checkDuration);
+
+      // Only sleep if we have time remaining
+      if (sleepTime > 0 && Date.now() - startTime + sleepTime < timeout) {
+        await new Promise((resolve) => setTimeout(resolve, sleepTime));
+      }
     }
 
     // Timeout
@@ -1494,8 +1520,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         // Find the full line containing the match
         const lines = text.split('\n');
         for (const line of lines) {
-          if (pattern.test(line)) {
-            return { line, match: line.match(pattern) || undefined };
+          const lineMatch = line.match(pattern);
+          if (lineMatch) {
+            return { line, match: lineMatch };
           }
         }
         return { line: match[0], match };
