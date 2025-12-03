@@ -193,9 +193,7 @@ jobs:
           target: default
           platforms: linux/amd64
           push: true
-          tags: |
-            cloudflare/sandbox:${{ needs.unit-tests.outputs.version }}
-            cloudflare/sandbox:latest
+          tags: cloudflare/sandbox:${{ needs.unit-tests.outputs.version }}
           cache-from: type=gha,scope=release-default
           cache-to: type=gha,mode=max,scope=release-default
           build-args: |
@@ -209,9 +207,7 @@ jobs:
           target: python
           platforms: linux/amd64
           push: true
-          tags: |
-            cloudflare/sandbox:${{ needs.unit-tests.outputs.version }}-python
-            cloudflare/sandbox:latest-python
+          tags: cloudflare/sandbox:${{ needs.unit-tests.outputs.version }}-python
           cache-from: type=gha,scope=release-python
           cache-to: type=gha,mode=max,scope=release-python
           build-args: |
@@ -225,57 +221,3 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_CONFIG_PROVENANCE: true
-
-      # Beta release - publishes on every push to main
-      - name: Modify package.json version for beta
-        run: npx tsx .github/version-script.ts
-
-      - name: Resolve workspace dependencies
-        run: npx tsx .github/resolve-workspace-versions.ts
-
-      - name: Rebuild packages for beta
-        run: npm run build
-
-      - name: Get beta version
-        id: beta-version
-        run: |
-          VERSION=$(node -p "require('./packages/sandbox/package.json').version")
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-
-      - name: Build and push Docker image (default) - beta
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: packages/sandbox/Dockerfile
-          target: default
-          platforms: linux/amd64
-          push: true
-          tags: |
-            cloudflare/sandbox:${{ steps.beta-version.outputs.version }}
-            cloudflare/sandbox:beta
-          cache-from: type=gha,scope=beta-default
-          cache-to: type=gha,mode=max,scope=beta-default
-          build-args: |
-            SANDBOX_VERSION=${{ steps.beta-version.outputs.version }}
-
-      - name: Build and push Docker image (python) - beta
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: packages/sandbox/Dockerfile
-          target: python
-          platforms: linux/amd64
-          push: true
-          tags: |
-            cloudflare/sandbox:${{ steps.beta-version.outputs.version }}-python
-            cloudflare/sandbox:beta-python
-          cache-from: type=gha,scope=beta-python
-          cache-to: type=gha,mode=max,scope=beta-python
-          build-args: |
-            SANDBOX_VERSION=${{ steps.beta-version.outputs.version }}
-
-      - name: Publish npm package (beta)
-        run: npm publish --tag beta
-        env:
-          NPM_CONFIG_PROVENANCE: true
-        working-directory: packages/sandbox
