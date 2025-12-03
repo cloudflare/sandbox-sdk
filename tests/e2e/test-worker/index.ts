@@ -503,9 +503,70 @@ console.log('Terminal server on port ' + port);
       // Process start
       if (url.pathname === '/api/process/start' && request.method === 'POST') {
         const process = await executor.startProcess(body.command, {
-          processId: body.processId
+          processId: body.processId,
+          ready: body.ready,
+          readyTimeout: body.readyTimeout
         });
         return new Response(JSON.stringify(process), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      // Process waitFor - waits for a condition to be met
+      if (
+        url.pathname.startsWith('/api/process/') &&
+        url.pathname.endsWith('/waitFor') &&
+        request.method === 'POST'
+      ) {
+        const pathParts = url.pathname.split('/');
+        const processId = pathParts[3];
+        const process = await executor.getProcess(processId);
+        if (!process) {
+          return new Response(JSON.stringify({ error: 'Process not found' }), {
+            status: 404,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+        // condition can be string, regex pattern (as string starting with /), or number (port)
+        let condition = body.condition;
+        if (
+          typeof condition === 'string' &&
+          condition.startsWith('/') &&
+          condition.endsWith('/')
+        ) {
+          // Convert regex string to RegExp
+          condition = new RegExp(condition.slice(1, -1));
+        }
+        const result = await process.waitFor(condition, body.timeout);
+        return new Response(JSON.stringify(result), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      // Serve - starts a process, waits for readiness, and exposes port
+      if (url.pathname === '/api/serve' && request.method === 'POST') {
+        if (sessionId) {
+          return new Response(
+            JSON.stringify({
+              error:
+                'Serve not supported for explicit sessions. Use default sandbox.'
+            }),
+            {
+              status: 400,
+              headers: { 'Content-Type': 'application/json' }
+            }
+          );
+        }
+        const hostname = url.hostname + (url.port ? `:${url.port}` : '');
+        const result = await sandbox.serve(body.command, {
+          port: body.port,
+          hostname: hostname,
+          ready: body.ready,
+          timeout: body.timeout,
+          env: body.env,
+          cwd: body.cwd
+        });
+        return new Response(JSON.stringify(result), {
           headers: { 'Content-Type': 'application/json' }
         });
       }

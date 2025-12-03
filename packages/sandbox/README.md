@@ -92,10 +92,60 @@ export default {
       return Response.json({ content: file.content });
     }
 
-    return new Response('Try /run or /file');
+    // Start a server and wait for it to be ready
+    if (url.pathname === '/server') {
+      await sandbox.writeFile(
+        '/workspace/server.js',
+        `
+        const server = Bun.serve({
+          port: 8080,
+          fetch() { return new Response("Hello from sandbox!"); }
+        });
+        console.log("Server ready on port 8080");
+      `
+      );
+
+      const { url: previewUrl, process } = await sandbox.serve(
+        'bun run /workspace/server.js',
+        { port: 8080, hostname: url.hostname }
+      );
+
+      return Response.json({ previewUrl, processId: process.id });
+    }
+
+    return new Response('Try /run, /file, or /server');
   }
 };
 ```
+
+## Process Readiness
+
+Wait for processes to be ready before proceeding. Three patterns available:
+
+```typescript
+// Pattern 1: Inline readiness - blocks until pattern appears (recommended)
+const proc = await sandbox.startProcess('npm start', {
+  ready: 'Server listening on port 3000',
+  readyTimeout: 30000
+});
+
+// Pattern 2: Sequential waits - for multiple conditions
+const proc = await sandbox.startProcess('npm start');
+await proc.waitFor('Database connected');
+await proc.waitFor(3000); // Wait for port 3000 to be available
+
+// Pattern 3: Server shorthand - start, wait, and expose in one call
+const { url, process } = await sandbox.serve('npm start', {
+  port: 3000,
+  hostname: 'example.com'
+});
+```
+
+Conditions can be:
+
+- **String** - Waits for substring in stdout/stderr
+- **RegExp** - Waits for pattern match (returns capture groups)
+- **Number** - Waits for port to be available
 
 ## Documentation
 
@@ -113,6 +163,7 @@ export default {
 - **Code Interpreter** - Execute Python and JavaScript with rich outputs
 - **File System Access** - Read, write, and manage files
 - **Command Execution** - Run any command with streaming support
+- **Process Readiness** - Wait for processes to be ready before proceeding
 - **Preview URLs** - Expose services with public URLs
 - **Git Integration** - Clone repositories directly
 
