@@ -222,25 +222,10 @@ export class SessionManager {
 
       const generator = session.execStream(command, { commandId, cwd, env });
 
-      /*
-       * EVENT DRAINING STRATEGY
-       *
-       * We process the first 2 events synchronously before returning. Why 2?
-       *
-       * Event sequence for commands:
-       *   Fast command (echo 123):  start → stdout → complete
-       *   No-output command (true): start → complete
-       *   Long-running (sleep 10):  start → ... (events trickle in over time)
-       *
-       * - Event 1 is always 'start' (with PID) - must await to track the command
-       * - Event 2 is typically 'stdout' (first output) or 'complete' (no output)
-       *
-       * By processing 2 events, getLogs() returns correct data for fast commands
-       * like "echo 123" without blocking long-running commands unnecessarily.
-       * This is a heuristic - commands with multiple stdout chunks may have
-       * partial output if getLogs() is called immediately after startProcess().
-       */
-
+      // Process 'start' event synchronously to capture PID before returning
+      // All other events stream in background via continueStreaming promise
+      // getLogs() awaits continueStreaming for completed processes to ensure
+      // all output is captured (deterministic, no timing heuristics)
       const firstResult = await generator.next();
 
       if (firstResult.done) {
@@ -252,6 +237,7 @@ export class SessionManager {
 
       await onEvent(firstResult.value);
 
+      // If already complete/error, drain remaining events synchronously
       if (
         firstResult.value.type === 'complete' ||
         firstResult.value.type === 'error'
@@ -265,31 +251,7 @@ export class SessionManager {
         };
       }
 
-      const secondResult = await generator.next();
-
-      if (secondResult.done) {
-        return {
-          success: true,
-          data: { continueStreaming: Promise.resolve() }
-        };
-      }
-
-      await onEvent(secondResult.value);
-
-      if (
-        secondResult.value.type === 'complete' ||
-        secondResult.value.type === 'error'
-      ) {
-        for await (const event of generator) {
-          await onEvent(event);
-        }
-        return {
-          success: true,
-          data: { continueStreaming: Promise.resolve() }
-        };
-      }
-
-      // Process still running after 2 events - continue in background
+      // Continue streaming remaining events in background
       const continueStreaming = (async () => {
         try {
           for await (const event of generator) {

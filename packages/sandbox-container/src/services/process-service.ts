@@ -216,14 +216,15 @@ export class ProcessService {
         return streamResult as ServiceResult<ProcessRecord>;
       }
 
-      // Command is now tracked and first event processed - safe to return process record
-      // Continue streaming in background without blocking
-      streamResult.data.continueStreaming.catch((error) => {
-        this.logger.error('Failed to execute streaming command', error, {
-          processId: processRecord.id,
-          command
+      // Store streaming promise so getLogs() can await it for completed processes
+      // This ensures all output is captured before returning logs
+      processRecord.streamingComplete =
+        streamResult.data.continueStreaming.catch((error) => {
+          this.logger.error('Failed to execute streaming command', error, {
+            processId: processRecord.id,
+            command
+          });
         });
-      });
 
       return {
         success: true,
@@ -267,6 +268,40 @@ export class ProcessService {
             } satisfies ProcessNotFoundContext
           }
         };
+      }
+
+      // Wait for streaming to finish to ensure all output is captured
+      // We use three indicators to decide whether to wait:
+      // 1. Terminal status: command has finished, wait for streaming callbacks
+      // 2. PID check: if process is no longer alive, command finished, wait for streaming
+      // 3. No streamingComplete: process was read from disk, output is complete
+      //
+      // For long-running processes (servers), PID is alive and status is 'running',
+      // so we return current output without blocking.
+      if (process.streamingComplete) {
+        const isTerminal = ['completed', 'failed', 'killed', 'error'].includes(
+          process.status
+        );
+
+        // Check if the subprocess is still alive (deterministic check for fast commands)
+        // If PID is set and process is dead, the command has finished
+        let commandFinished = false;
+        if (process.pid !== undefined) {
+          try {
+            // Signal 0 doesn't actually send a signal, just checks if process exists
+            // Using global process object, not the ProcessRecord
+            global.process.kill(process.pid, 0);
+            // Process is still running
+          } catch {
+            // Process is not running (either finished or doesn't exist)
+            commandFinished = true;
+          }
+        }
+
+        // Wait if status is terminal OR command has finished (for fast commands)
+        if (isTerminal || commandFinished) {
+          await process.streamingComplete;
+        }
       }
 
       return {
