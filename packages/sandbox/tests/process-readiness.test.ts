@@ -180,6 +180,49 @@ describe('Process Readiness Feature', () => {
 
         expect(result.line).toBe('Server ready on port 3000');
       });
+
+      it('should find pattern that spans multiple SSE chunks', async () => {
+        vi.spyOn(sandbox.client.processes, 'startProcess').mockResolvedValue({
+          success: true,
+          processId: 'proc-server',
+          pid: 12345,
+          command: 'npm start',
+          timestamp: new Date().toISOString()
+        } as any);
+
+        // Mock empty historical logs
+        vi.spyOn(sandbox.client.processes, 'getProcessLogs').mockResolvedValue({
+          success: true,
+          processId: 'proc-server',
+          stdout: '',
+          stderr: '',
+          timestamp: new Date().toISOString()
+        } as any);
+
+        // Simulate pattern split across multiple SSE chunks:
+        // "Server listen" in chunk 1, "ing on port 3000" in chunk 2
+        const sseChunk1 = `data: {"type":"stdout","data":"Server listen","timestamp":"${new Date().toISOString()}"}\n\n`;
+        const sseChunk2 = `data: {"type":"stdout","data":"ing on port 3000\\n","timestamp":"${new Date().toISOString()}"}\n\n`;
+
+        const mockStream = new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode(sseChunk1));
+            controller.enqueue(new TextEncoder().encode(sseChunk2));
+            controller.close();
+          }
+        });
+
+        vi.spyOn(
+          sandbox.client.processes,
+          'streamProcessLogs'
+        ).mockResolvedValue(mockStream);
+
+        const proc = await sandbox.startProcess('npm start');
+        const result = await proc.waitFor('Server listening on port 3000');
+
+        // Should find the pattern even though it was split across chunks
+        expect(result.line).toBe('Server listening on port 3000');
+      });
     });
 
     describe('regex pattern matching', () => {
@@ -248,7 +291,7 @@ describe('Process Readiness Feature', () => {
           stdout: '',
           stderr: '',
           exitCode: 0,
-          command: 'nc -z localhost 3000',
+          command: "bash -c 'echo > /dev/tcp/localhost/3000' 2>/dev/null",
           timestamp: new Date().toISOString()
         } as any);
 
@@ -257,7 +300,7 @@ describe('Process Readiness Feature', () => {
 
         expect(result).toEqual({});
         expect(sandbox.client.commands.execute).toHaveBeenCalledWith(
-          'nc -z localhost 3000',
+          "bash -c 'echo > /dev/tcp/localhost/3000' 2>/dev/null",
           expect.any(String),
           expect.objectContaining({ timeoutMs: 1000 })
         );

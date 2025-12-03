@@ -1269,7 +1269,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     condition: ReadyCondition,
     timeout: number = 30_000
   ): Promise<WaitForResult> {
-    const startTime = Date.now();
     const conditionStr = this.conditionToString(condition);
 
     // For port-based waiting
@@ -1298,8 +1297,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     // First check existing logs
     try {
       const existingLogs = await this.getProcessLogs(processId);
+      // Ensure existing logs end with newline for proper line separation from streamed output
       collectedStdout = existingLogs.stdout;
+      if (collectedStdout && !collectedStdout.endsWith('\n')) {
+        collectedStdout += '\n';
+      }
       collectedStderr = existingLogs.stderr;
+      if (collectedStderr && !collectedStderr.endsWith('\n')) {
+        collectedStderr += '\n';
+      }
 
       // Check stdout
       const stdoutResult = this.matchPattern(existingLogs.stdout, pattern);
@@ -1362,14 +1368,18 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
             if (event.type === 'stdout') {
               collectedStdout += data;
+              // Check accumulated buffer for pattern (handles patterns split across chunks)
+              const result = this.matchPattern(collectedStdout, pattern);
+              if (result) {
+                return result;
+              }
             } else {
               collectedStderr += data;
-            }
-
-            // Check for pattern match
-            const result = this.matchPattern(data, pattern);
-            if (result) {
-              return result;
+              // Check accumulated buffer for pattern (handles patterns split across chunks)
+              const result = this.matchPattern(collectedStderr, pattern);
+              if (result) {
+                return result;
+              }
             }
           }
 
@@ -1458,12 +1468,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         }
       }
 
-      // Try to connect to the port using nc
+      // Try to connect to the port using bash's /dev/tcp
       const checkStart = Date.now();
       try {
-        const result = await this.exec(`nc -z localhost ${port}`, {
-          timeout: Math.min(execTimeout, remaining)
-        });
+        const result = await this.exec(
+          `bash -c 'echo > /dev/tcp/localhost/${port}' 2>/dev/null`,
+          {
+            timeout: Math.min(execTimeout, remaining)
+          }
+        );
         if (result.exitCode === 0) {
           return {}; // Port is available
         }

@@ -110,12 +110,15 @@ await Bun.sleep(60000); // Keep running
       // Write a Bun server that listens on a port
       const serverCode = `
 const server = Bun.serve({
+  hostname: "0.0.0.0",
   port: 9090,
   fetch(req) {
     return new Response("OK");
   },
 });
-console.log("Server started");
+console.log("Server started on " + server.hostname + ":" + server.port);
+// Keep process alive
+await Bun.sleep(60000);
       `.trim();
 
       await fetch(`${workerUrl}/api/file/write`, {
