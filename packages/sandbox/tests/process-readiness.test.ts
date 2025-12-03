@@ -597,8 +597,11 @@ data: {"type":"exit","exitCode":127,"timestamp":"${new Date().toISOString()}"}
         hostname: 'example.com'
       });
 
-      expect(result.process.id).toBe('proc-server');
-      expect(result.url).toContain('example.com');
+      // When hostname is provided, serve() returns { url, process }
+      expect(typeof result).toBe('object');
+      const serveResult = result as { url: string; process: { id: string } };
+      expect(serveResult.process.id).toBe('proc-server');
+      expect(serveResult.url).toContain('example.com');
       expect(sandbox.client.processes.startProcess).toHaveBeenCalled();
       expect(sandbox.client.ports.exposePort).toHaveBeenCalled();
     });
@@ -649,7 +652,10 @@ data: {"type":"exit","exitCode":127,"timestamp":"${new Date().toISOString()}"}
         ready: 'Custom ready message'
       });
 
-      expect(result.process.id).toBe('proc-server');
+      // When hostname is provided, serve() returns { url, process }
+      expect(typeof result).toBe('object');
+      const serveResult = result as { url: string; process: { id: string } };
+      expect(serveResult.process.id).toBe('proc-server');
       expect(sandbox.client.processes.getProcessLogs).toHaveBeenCalled();
     });
 
