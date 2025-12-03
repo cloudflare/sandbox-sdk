@@ -1688,22 +1688,16 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     const { port, hostname, ready, timeout = 60_000, env, cwd } = options;
 
-    // Start the process with port-based readiness by default
-    // If a ready pattern is also provided, we'll check both
+    // Start the process, optionally waiting for a log pattern first
     const processOptions: ProcessOptions = {
-      ready: ready ?? port, // Default to port check if no pattern specified
+      ready, // Only pattern - port check happens below
       readyTimeout: timeout,
       env,
       cwd
     };
 
     const proc = await this.startProcess(command, processOptions);
-
-    // If both ready pattern AND port were specified, also wait for port
-    if (ready !== undefined && typeof ready !== 'number') {
-      // Pattern was specified, now also check port
-      await proc.waitFor(port, timeout);
-    }
+    await proc.waitFor(port, timeout);
 
     // If hostname is provided, expose the port and return full object
     if (hostname) {
