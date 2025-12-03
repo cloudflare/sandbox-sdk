@@ -1320,63 +1320,73 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       });
     }
 
-    // Stream new logs and check for pattern
+    // Stream new logs and check for pattern with timeout
     const stream = await this.streamProcessLogs(processId);
 
-    try {
-      for await (const event of parseSSEStream<LogEvent>(stream)) {
-        // Check timeout
-        if (Date.now() - startTime > timeout) {
-          throw this.createReadyTimeoutError(
+    // Create a timeout promise that rejects after remaining time
+    const remainingTime = timeout - (Date.now() - startTime);
+    if (remainingTime <= 0) {
+      throw this.createReadyTimeoutError(
+        processId,
+        command,
+        conditionStr,
+        timeout,
+        collectedStdout,
+        collectedStderr
+      );
+    }
+
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutId = setTimeout(() => {
+        reject(
+          this.createReadyTimeoutError(
             processId,
             command,
             conditionStr,
             timeout,
             collectedStdout,
             collectedStderr
-          );
-        }
+          )
+        );
+      }, remainingTime);
+    });
 
-        // Handle different event types
-        if (event.type === 'stdout' || event.type === 'stderr') {
-          const data = event.data || '';
+    try {
+      // Process stream with timeout
+      const streamProcessor = async (): Promise<WaitForResult> => {
+        for await (const event of parseSSEStream<LogEvent>(stream)) {
+          // Handle different event types
+          if (event.type === 'stdout' || event.type === 'stderr') {
+            const data = event.data || '';
 
-          if (event.type === 'stdout') {
-            collectedStdout += data;
-          } else {
-            collectedStderr += data;
+            if (event.type === 'stdout') {
+              collectedStdout += data;
+            } else {
+              collectedStderr += data;
+            }
+
+            // Check for pattern match
+            const result = this.matchPattern(data, pattern);
+            if (result) {
+              return result;
+            }
           }
 
-          // Check for pattern match
-          const result = this.matchPattern(data, pattern);
-          if (result) {
-            return result;
+          // Process exited
+          if (event.type === 'exit') {
+            throw this.createExitedBeforeReadyError(
+              processId,
+              command,
+              conditionStr,
+              event.exitCode ?? 1,
+              collectedStdout,
+              collectedStderr
+            );
           }
         }
 
-        // Process exited
-        if (event.type === 'exit') {
-          throw this.createExitedBeforeReadyError(
-            processId,
-            command,
-            conditionStr,
-            event.exitCode ?? 1,
-            collectedStdout,
-            collectedStderr
-          );
-        }
-      }
-    } catch (error) {
-      // Re-throw our custom errors
-      if (
-        error instanceof ProcessReadyTimeoutError ||
-        error instanceof ProcessExitedBeforeReadyError
-      ) {
-        throw error;
-      }
-
-      // Check if it's a timeout
-      if (Date.now() - startTime > timeout) {
+        // Stream ended without finding pattern
         throw this.createReadyTimeoutError(
           processId,
           command,
@@ -1385,20 +1395,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           collectedStdout,
           collectedStderr
         );
+      };
+
+      return await Promise.race([streamProcessor(), timeoutPromise]);
+    } finally {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
       }
-
-      throw error;
     }
-
-    // Stream ended without finding pattern
-    throw this.createReadyTimeoutError(
-      processId,
-      command,
-      conditionStr,
-      timeout,
-      collectedStdout,
-      collectedStderr
-    );
   }
 
   /**
