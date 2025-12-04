@@ -110,4 +110,9 @@ export type {
   WaitForPortOptions,
   WriteFileResult
 } from './types.js';
-export { isExecResult, isProcess, isProcessStatus } from './types.js';
+export {
+  isExecResult,
+  isProcess,
+  isProcessStatus,
+  isTerminalStatus
+} from './types.js';

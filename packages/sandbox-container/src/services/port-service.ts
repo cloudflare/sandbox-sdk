@@ -435,8 +435,17 @@ export class PortService {
   }
 
   private async checkTcpReady(port: number): Promise<PortCheckResponse> {
+    const TCP_TIMEOUT_MS = 5000; // 5 second timeout matching HTTP check
+
     try {
-      const socket = await Bun.connect({
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(
+          () => reject(new Error('TCP connection timeout')),
+          TCP_TIMEOUT_MS
+        );
+      });
+
+      const connectPromise = Bun.connect({
         hostname: 'localhost',
         port,
         socket: {
@@ -448,6 +457,8 @@ export class PortService {
           close() {}
         }
       });
+
+      const socket = await Promise.race([connectPromise, timeoutPromise]);
       // Connection succeeded
       socket.end();
       return { ready: true };

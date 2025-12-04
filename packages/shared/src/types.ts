@@ -213,6 +213,18 @@ export type ProcessStatus =
   | 'killed' // Process was terminated by signal
   | 'error'; // Process failed to start or encountered error
 
+/**
+ * Check if a process status indicates the process has terminated
+ */
+export function isTerminalStatus(status: ProcessStatus): boolean {
+  return (
+    status === 'completed' ||
+    status === 'failed' ||
+    status === 'killed' ||
+    status === 'error'
+  );
+}
+
 export interface Process {
   /**
    * Unique process identifier

@@ -26,6 +26,7 @@ import type {
 import {
   createLogger,
   getEnvString,
+  isTerminalStatus,
   type SessionDeleteResult,
   shellEscape,
   TraceContext
@@ -1347,7 +1348,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     try {
       // Process stream
       const streamProcessor = async (): Promise<WaitForLogResult> => {
-        const DEBOUNCE_MS = 100;
+        const DEBOUNCE_MS = 50;
         let lastCheckTime = 0;
         let pendingCheck = false;
 
@@ -1372,7 +1373,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
             }
             pendingCheck = true;
 
-            // Debounce pattern matching - check at most every 100ms
+            // Debounce pattern matching - check at most every 50ms
             const now = Date.now();
             if (now - lastCheckTime >= DEBOUNCE_MS) {
               lastCheckTime = now;
@@ -1476,15 +1477,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         }
       }
 
+      // Track total operation time for accurate sleep calculation
+      const iterationStart = Date.now();
+
       // Check process status less frequently (every 3rd iteration) to reduce latency
       if (checkCount % 3 === 0) {
         const processInfo = await this.getProcess(processId);
-        if (
-          !processInfo ||
-          processInfo.status === 'completed' ||
-          processInfo.status === 'failed' ||
-          processInfo.status === 'killed'
-        ) {
+        if (!processInfo || isTerminalStatus(processInfo.status)) {
           throw this.createExitedBeforeReadyError(
             processId,
             command,
@@ -1495,7 +1494,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       }
 
       // Check port readiness via container endpoint
-      const checkStart = Date.now();
       try {
         const result = await this.client.ports.checkPortReady(checkRequest);
         if (result.ready) {
@@ -1507,9 +1505,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
       checkCount++;
 
-      // Calculate sleep time accounting for check duration
-      const checkDuration = Date.now() - checkStart;
-      const sleepTime = Math.max(0, targetInterval - checkDuration);
+      // Calculate sleep time accounting for total iteration duration (process check + port check)
+      const iterationDuration = Date.now() - iterationStart;
+      const sleepTime = Math.max(0, targetInterval - iterationDuration);
 
       // Sleep between checks (skip if timeout would be exceeded)
       if (sleepTime > 0) {
@@ -1543,13 +1541,16 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         return { line: pattern };
       }
     } else {
-      // Regex match
-      const match = text.match(pattern);
+      const safePattern = new RegExp(
+        pattern.source,
+        pattern.flags.replace('g', '')
+      );
+      const match = text.match(safePattern);
       if (match) {
         // Find the full line containing the match
         const lines = text.split('\n');
         for (const line of lines) {
-          const lineMatch = line.match(pattern);
+          const lineMatch = line.match(safePattern);
           if (lineMatch) {
             return { line, match: lineMatch };
           }
