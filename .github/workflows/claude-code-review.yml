@@ -33,6 +33,115 @@ jobs:
         with:
           fetch-depth: 1
 
+      - name: Fetch review threads
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Pre-fetch review threads so Claude doesn't have to execute GraphQL
+          gh api graphql -f query='
+            query($owner: String!, $name: String!, $pr: Int!) {
+              repository(owner: $owner, name: $name) {
+                pullRequest(number: $pr) {
+                  reviewThreads(first: 100) {
+                    nodes {
+                      id
+                      isResolved
+                      path
+                      line
+                      comments(first: 10) {
+                        nodes {
+                          id
+                          databaseId
+                          body
+                          author { login }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }' \
+            -f owner="${{ github.repository_owner }}" \
+            -f name="${{ github.event.repository.name }}" \
+            -F pr=${{ github.event.pull_request.number }} \
+          | jq '[.data.repository.pullRequest.reviewThreads.nodes[] |
+              select(.comments.nodes[0].author.login == "claude" or .comments.nodes[0].author.login == "github-actions[bot]") |
+              {
+                threadId: .id,
+                isResolved: .isResolved,
+                path: .path,
+                line: .line,
+                firstCommentId: .comments.nodes[0].databaseId,
+                firstCommentBody: .comments.nodes[0].body,
+                allComments: [.comments.nodes[] | {author: .author.login, body: .body}]
+              }]' > /tmp/review-threads.json
+
+          echo "Found $(jq length /tmp/review-threads.json) Claude review threads"
+          cat /tmp/review-threads.json
+
+      - name: Fetch previous review context
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Pre-fetch previous Claude comments
+          gh pr view ${{ github.event.pull_request.number }} --json comments \
+            --jq '[.comments[] | select(.author.login == "claude" or .author.login == "github-actions[bot]") | {author: .author.login, body: .body, createdAt: .createdAt}]' \
+            > /tmp/previous-comments.json
+
+          # Get commits since last push (for incremental reviews)
+          BEFORE="${{ github.event.before }}"
+          AFTER="${{ github.event.after }}"
+
+          # Check if this is the first push (before will be all zeros)
+          if [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+            echo '{"isFirstPush": true, "commits": [], "historyRewritten": false}' > /tmp/review-context.json
+          else
+            # Check if history was rewritten (before commit no longer exists)
+            if git cat-file -t "$BEFORE" 2>/dev/null; then
+              HISTORY_REWRITTEN="false"
+              COMMITS=$(git log --oneline "$BEFORE".."$AFTER" 2>/dev/null | head -20 | jq -R -s 'split("\n") | map(select(length > 0))')
+            else
+              HISTORY_REWRITTEN="true"
+              COMMITS="[]"
+            fi
+
+            jq -n \
+              --argjson historyRewritten "$HISTORY_REWRITTEN" \
+              --argjson commits "$COMMITS" \
+              '{isFirstPush: false, commits: $commits, historyRewritten: $historyRewritten}' \
+              > /tmp/review-context.json
+          fi
+
+          echo "Previous comments: $(jq length /tmp/previous-comments.json)"
+          echo "Review context:"
+          cat /tmp/review-context.json
+
+      - name: Fetch PR metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Pre-fetch PR metadata so Claude doesn't need to query it
+          gh pr view ${{ github.event.pull_request.number }} \
+            --json title,body,baseRefName,headRefName,author \
+            --jq '{
+              title: .title,
+              body: .body,
+              baseBranch: .baseRefName,
+              headBranch: .headRefName,
+              author: .author.login
+            }' > /tmp/pr-metadata.json
+
+          echo "PR metadata:"
+          cat /tmp/pr-metadata.json
+
+      - name: Fetch PR diff
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Pre-fetch the full PR diff
+          gh pr diff ${{ github.event.pull_request.number }} > /tmp/pr-diff.patch
+          echo "PR diff: $(wc -l < /tmp/pr-diff.patch) lines"
+
       - name: Run Claude Code Review
         id: claude-review
         uses: anthropics/claude-code-action@v1
@@ -63,22 +172,35 @@ jobs:
 
             ### 2. Check for Previous Review (Internal Context Only)
 
-            Check if you've reviewed this PR before:
+            Your previous feedback has been pre-fetched in two places:
+
+            **Top-level review comments** (your main "## Claude Code Review" posts):
             ```bash
-            gh pr view ${{ github.event.pull_request.number }} --json comments --jq '.comments[] | select(.author.login == "claude[bot]" or .author.login == "github-actions[bot]")'
+            cat /tmp/previous-comments.json
             ```
 
-            If previous review exists:
-            - Read it to understand what you said before
-            - Note what commits have been added since: `git log --oneline ${{ github.event.before }}..${{ github.event.after }}`
-            - Check if history was rewritten: `git cat-file -t ${{ github.event.before }} 2>/dev/null`
-            - Use this context internally when writing your review
+            **Inline code comments** (your comments on specific lines - also in step 6):
+            ```bash
+            cat /tmp/review-threads.json
+            ```
 
-            **Don't announce "Update N" or link to previous reviews** - just write naturally.
+            **What changed since your last review:**
+            ```bash
+            cat /tmp/review-context.json
+            ```
+
+            Read all three to understand what you've already said and what's changed.
+            **Don't announce "Update N"** - just write naturally, like continuing a conversation.
 
             ### 3. Gather Context
-            - Use `gh pr view ${{ github.event.pull_request.number }}` for PR description
-            - Use `gh pr diff ${{ github.event.pull_request.number }}` for FULL diff (not just incremental)
+
+            PR metadata and diff have been pre-fetched. Read these files:
+            ```bash
+            cat /tmp/pr-metadata.json   # title, body, baseBranch, headBranch, author
+            cat /tmp/pr-diff.patch      # Full PR diff
+            ```
+
+            Also:
             - Read CLAUDE.md for repo-specific conventions and architecture patterns
             - Use Read tool to examine key changed files
 
@@ -97,52 +219,15 @@ jobs:
             d. What tests are needed?
             e. Does this need documentation updates?
 
-            ### 6. Fetch Existing Review Threads
+            ### 6. Decide What to Do With Your Previous Inline Comments
 
-            Before creating your review, fetch existing Claude review threads to enable thread continuity:
+            You already read `/tmp/review-threads.json` in step 2. Now decide for each thread: was it fixed, or does it need follow-up?
 
-            ```bash
-            # Get PR owner and repo name
-            OWNER=$(gh repo view --json owner --jq '.owner.login')
-            REPO=$(gh repo view --json name --jq '.name')
+            This decision informs your new review - mention progress naturally:
+            - "The encoding issue is fixed, thanks!"
+            - "Still seeing the over-mocking - I'll follow up on that thread."
 
-            # Fetch all review threads
-            gh api graphql -f query='
-            query($owner: String!, $name: String!, $pr: Int!) {
-              repository(owner: $owner, name: $name) {
-                pullRequest(number: $pr) {
-                  reviewThreads(first: 100) {
-                    nodes {
-                      id
-                      isResolved
-                      path
-                      line
-                      comments(first: 10) {
-                        nodes {
-                          id
-                          databaseId
-                          body
-                          author { login }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }' -f owner="$OWNER" -f name="$REPO" -F pr=${{ github.event.pull_request.number }}
-            ```
-
-            **Parse the response** - structure is:
-            ```
-            .data.repository.pullRequest.reviewThreads.nodes[]
-            ```
-
-            Filter for threads where `comments.nodes[0].author.login` is "claude" or "github-actions[bot]". These are your previous review comments.
-
-            **Important notes:**
-            - `line` can be `null` for file-level comments (not line-specific)
-            - Use `id` (format: PRRT_xxx) for resolveReviewThread mutations
-            - Use `databaseId` (format: 2518555173) for comment replies
+            Don't duplicate thread content in your new review. Reference it instead.
 
             ### 7. Execute Review
 
@@ -167,75 +252,100 @@ jobs:
             - **Inline comments**: Use for specific line-by-line code issues (file path, line number, comment)
             - **Main comment**: Summary only - overall assessment, architectural concerns, testing strategy, verdict. Do NOT duplicate inline comments here.
 
-            **Main comment - write naturally:**
+            **Main comment - write like a human reviewer:**
             - Start with "## Claude Code Review"
-            - If previous review exists, write conversationally: "The encoding issue is fixed. Tests look better too."
-            - Mention what still needs work: "I still see the over-mocking in file-service.test.ts:45"
-            - New concerns: "New issue: error handling in container.ts doesn't cover..."
-            - Overall verdict: "Looks good" or "Needs fixes before merge"
+            - Acknowledge progress on previous feedback: "The encoding issue is fixed, nice!"
+            - Reference ongoing threads: "Still discussing the mocking approach in that thread."
+            - Raise new concerns: "New issue: error handling in container.ts doesn't cover..."
+            - Give a clear verdict: "Looks good to merge" or "A few things to address first"
 
-            **Handle existing threads before submitting new review:**
+            **Step 1: Submit your new review**
 
-            For each thread from step 6, compare with your new findings:
-            - **Issue is fixed:** Mark for resolution (save thread ID)
-            - **Issue persists but needs update:** Mark for reply (save comment database ID)
-            - **Issue no longer relevant:** Mark for resolution
-
-            **Submit review as a single cohesive unit:**
-
-            1. Get the latest commit SHA:
-            ```bash
-            COMMIT_SHA=$(gh pr view ${{ github.event.pull_request.number }} --json headRefOid --jq '.headRefOid')
-            ```
-
-            2. Create review.json with ONLY NEW issues (don't duplicate existing thread issues):
+            Create review.json with your main comment and any NEW inline comments (don't re-comment on existing threads):
             ```json
             {
-              "body": "## Claude Code Review\n\nYour overall assessment here...",
+              "body": "## Claude Code Review\n\nYour overall assessment...",
               "event": "COMMENT",
-              "commit_id": "COMMIT_SHA_HERE",
+              "commit_id": "${{ github.event.pull_request.head.sha }}",
               "comments": [
-                {
-                  "path": "path/to/file.ts",
-                  "line": 42,
-                  "body": "Your inline comment here"
-                }
+                {"path": "path/to/file.ts", "line": 42, "body": "New issue here"}
               ]
             }
             ```
 
-            3. Post the unified review:
+            Post it:
             ```bash
             gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews \
               --method POST \
               --input review.json
             ```
 
-            4. **Manage existing threads (after review submission):**
+            **Step 2: Handle your existing inline threads**
 
-            Resolve fixed issues:
+            For each thread from step 6, decide: is the issue fixed or does it need follow-up?
+
+            **If fixed** → resolve it (write thread ID to file):
             ```bash
-            gh api graphql -f query='
-            mutation($threadId: ID!) {
-              resolveReviewThread(input: {threadId: $threadId}) {
-                thread { id isResolved }
-              }
-            }' -f threadId="THREAD_ID_FROM_STEP_6"
+            echo "PRRT_xxx" >> /tmp/threads-to-resolve.txt
             ```
 
-            Reply to threads that need updates:
+            **If needs follow-up** → reply to continue the conversation (write to JSON):
             ```bash
-            gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments/COMMENT_DATABASE_ID/replies \
-              --method POST \
-              -f body="Update: Issue has been partially addressed but..."
+            echo '[{"commentId": 123456789, "body": "Still seeing this issue because..."}]' > /tmp/thread-replies.json
             ```
 
-            **Important**: This workflow maintains conversation continuity - resolved issues show as "Resolved", ongoing issues have threaded replies, and only new issues create new comment threads.
-
-            Always post a NEW comment - never update previous ones. Natural conversation flow.
+            You can also reply AND resolve (e.g., "Fixed, thanks!" then resolve).
+            Subsequent workflow steps will submit these automatically.
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://docs.claude.com/en/docs/claude-code/cli-reference for available options
-          claude_args: '--allowedTools "Task,Skill,Read,Glob,Grep,Write,TodoWrite,mcp__cloudflare-docs__search_cloudflare_documentation,mcp__exa__get_code_context_exa,mcp__exa__web_search_exa,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh repo view:*),Bash(gh api:*),Bash(git log:*),Bash(git cat-file:*),Bash(git rev-parse:*),Bash(jq:*)"'
+          claude_args: '--allowedTools "Task,Skill,Read,Glob,Grep,Write,TodoWrite,mcp__cloudflare-docs__search_cloudflare_documentation,mcp__exa__get_code_context_exa,mcp__exa__web_search_exa,Bash(gh api:*),Bash(gh pr checks:*),Bash(gh issue view:*),Bash(git log:*),Bash(git show:*),Bash(git blame:*),Bash(jq:*),Bash(echo:*),Bash(cat:*),Bash(mv:*)"'
+
+      - name: Resolve review threads
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Resolve threads that Claude marked for resolution
+          if [ -f /tmp/threads-to-resolve.txt ]; then
+            while read -r thread_id; do
+              if [ -n "$thread_id" ]; then
+                echo "Resolving thread: $thread_id"
+                gh api graphql -f query='
+                  mutation($threadId: ID!) {
+                    resolveReviewThread(input: {threadId: $threadId}) {
+                      thread { id isResolved }
+                    }
+                  }' -f threadId="$thread_id" || echo "Failed to resolve $thread_id (may already be resolved)"
+              fi
+            done < /tmp/threads-to-resolve.txt
+            echo "Done resolving $(wc -l < /tmp/threads-to-resolve.txt | tr -d ' ') threads"
+          else
+            echo "No threads to resolve"
+          fi
+
+      - name: Submit thread replies
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Submit replies that Claude wrote to thread-replies.json
+          if [ -f /tmp/thread-replies.json ]; then
+            REPLY_COUNT=$(jq length /tmp/thread-replies.json)
+            if [ "$REPLY_COUNT" -gt 0 ]; then
+              echo "Submitting $REPLY_COUNT thread replies"
+              jq -c '.[]' /tmp/thread-replies.json | while read -r reply; do
+                COMMENT_ID=$(echo "$reply" | jq -r '.commentId')
+                BODY=$(echo "$reply" | jq -r '.body')
+                echo "Replying to comment $COMMENT_ID"
+                gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments/"$COMMENT_ID"/replies \
+                  --method POST \
+                  -f body="$BODY" || echo "Failed to reply to $COMMENT_ID"
+              done
+              echo "Done submitting replies"
+            else
+              echo "No replies to submit"
+            fi
+          else
+            echo "No thread replies file found"
+          fi
 
       - name: Minimize outdated reviews
         env:
