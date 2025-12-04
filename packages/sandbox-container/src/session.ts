@@ -347,6 +347,14 @@ export class Session {
       // Wait for PID file to be created (bash script writes it after starting command)
       const pid = await this.waitForPidFile(pidFile);
 
+      if (pid === undefined) {
+        this.logger.warn('PID file not created within timeout', {
+          sessionId: this.id,
+          commandId,
+          pidFile
+        });
+      }
+
       yield {
         type: 'start',
         timestamp: new Date().toISOString(),

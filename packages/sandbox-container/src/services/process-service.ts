@@ -255,9 +255,9 @@ export class ProcessService {
 
   async getProcess(id: string): Promise<ServiceResult<ProcessRecord>> {
     try {
-      const process = await this.store.get(id);
+      const processRecord = await this.store.get(id);
 
-      if (!process) {
+      if (!processRecord) {
         return {
           success: false,
           error: {
@@ -278,35 +278,34 @@ export class ProcessService {
       //
       // For long-running processes (servers), PID is alive and status is 'running',
       // so we return current output without blocking.
-      if (process.streamingComplete) {
+      if (processRecord.streamingComplete) {
         const isTerminal = ['completed', 'failed', 'killed', 'error'].includes(
-          process.status
+          processRecord.status
         );
 
         // Check if the subprocess is still alive (deterministic check for fast commands)
-        // If PID is set and process is dead, the command has finished
+        // If PID is set and subprocess is dead, the command has finished
         let commandFinished = false;
-        if (process.pid !== undefined) {
+        if (processRecord.pid !== undefined) {
           try {
             // Signal 0 doesn't actually send a signal, just checks if process exists
-            // Using global process object, not the ProcessRecord
-            global.process.kill(process.pid, 0);
-            // Process is still running
+            process.kill(processRecord.pid, 0);
+            // Subprocess is still running
           } catch {
-            // Process is not running (either finished or doesn't exist)
+            // Subprocess is not running (either finished or doesn't exist)
             commandFinished = true;
           }
         }
 
         // Wait if status is terminal OR command has finished (for fast commands)
         if (isTerminal || commandFinished) {
-          await process.streamingComplete;
+          await processRecord.streamingComplete;
         }
       }
 
       return {
         success: true,
-        data: process
+        data: processRecord
       };
     } catch (error) {
       const errorMessage =
