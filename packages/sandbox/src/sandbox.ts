@@ -45,11 +45,11 @@ import {
 import type { MountInfo } from './storage-mount/types';
 import { SDK_VERSION } from './version';
 
-export function getSandbox(
-  ns: DurableObjectNamespace<Sandbox>,
+export function getSandbox<T extends Sandbox<any>>(
+  ns: DurableObjectNamespace<T>,
   id: string,
   options?: SandboxOptions
-): Sandbox {
+): T {
   const sanitizedId = sanitizeSandboxId(id);
   const effectiveId = options?.normalizeId
     ? sanitizedId.toLowerCase()
@@ -65,7 +65,7 @@ export function getSandbox(
     );
   }
 
-  const stub = getContainer(ns, effectiveId) as unknown as Sandbox;
+  const stub = getContainer(ns, effectiveId);
 
   stub.setSandboxName?.(effectiveId, options?.normalizeId);
 
@@ -87,7 +87,7 @@ export function getSandbox(
 
   return Object.assign(stub, {
     wsConnect: connect(stub)
-  });
+  }) as T;
 }
 
 export function connect(stub: {
