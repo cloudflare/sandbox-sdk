@@ -5,9 +5,8 @@ import WebSocket from 'ws';
 import { getSharedSandbox } from './helpers/global-sandbox';
 import type { Process, PortExposeResult } from '@repo/shared';
 
-// Skip - port exposure requires exclusive port access which conflicts with parallel test execution
-// This test can be run standalone if needed: npm run test:e2e:shared -- websocket-workflow
-const skipWebSocketTests = true;
+// Dedicated port for websocket tests - not used by any other test file
+const WEBSOCKET_TEST_PORT = 9999;
 
 /**
  * WebSocket Port Exposure Tests
@@ -15,7 +14,7 @@ const skipWebSocketTests = true;
  * Tests WebSocket via exposed ports. Uses SHARED sandbox with unique session.
  */
 describe('WebSocket Port Exposure', () => {
-  describe.skipIf(skipWebSocketTests)('local', () => {
+  describe('local', () => {
     let workerUrl: string;
     let headers: Record<string, string>;
     let sandboxId: string;
@@ -46,8 +45,8 @@ describe('WebSocket Port Exposure', () => {
         })
       });
 
-      // Start server
-      const port = 8080 + Math.floor(Math.random() * 1000); // Random port to avoid conflicts
+      // Start server on dedicated port
+      const port = WEBSOCKET_TEST_PORT;
       const startResponse = await fetch(`${workerUrl}/api/process/start`, {
         method: 'POST',
         headers,
