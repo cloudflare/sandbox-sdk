@@ -5,7 +5,7 @@ import {
   createTestHeaders,
   cleanupSandbox
 } from './helpers/test-fixtures';
-import type { Process, WaitForResult, PortExposeResult } from '@repo/shared';
+import type { Process, WaitForLogResult, PortExposeResult } from '@repo/shared';
 
 // Port exposure tests require custom domain with wildcard DNS routing
 const skipPortExposureTests =
@@ -15,10 +15,8 @@ const skipPortExposureTests =
  * Process Readiness Workflow Integration Tests
  *
  * Tests the process readiness feature including:
- * - waitFor() method with string patterns
- * - waitFor() method with port checking
- * - startProcess() with ready option
- * - serve() method for server processes
+ * - waitForLog() method with string and regex patterns
+ * - waitForPort() method for port checking
  */
 describe('Process Readiness Workflow', () => {
   describe('local', () => {
@@ -79,21 +77,21 @@ await Bun.sleep(60000); // Keep running
       const startData = (await startResponse.json()) as Process;
       const processId = startData.id;
 
-      // Wait for the pattern
+      // Wait for the log pattern
       const waitResponse = await fetch(
-        `${workerUrl}/api/process/${processId}/waitFor`,
+        `${workerUrl}/api/process/${processId}/waitForLog`,
         {
           method: 'POST',
           headers,
           body: JSON.stringify({
-            condition: 'Server ready on port 8080',
+            pattern: 'Server ready on port 8080',
             timeout: 10000
           })
         }
       );
 
       expect(waitResponse.status).toBe(200);
-      const waitData = (await waitResponse.json()) as WaitForResult;
+      const waitData = (await waitResponse.json()) as WaitForLogResult;
       expect(waitData.line).toContain('Server ready on port 8080');
 
       // Cleanup
@@ -145,12 +143,12 @@ await Bun.sleep(60000);
 
       // Wait for port 9090 to be available
       const waitResponse = await fetch(
-        `${workerUrl}/api/process/${processId}/waitFor`,
+        `${workerUrl}/api/process/${processId}/waitForPort`,
         {
           method: 'POST',
           headers,
           body: JSON.stringify({
-            condition: 9090,
+            port: 9090,
             timeout: 15000
           })
         }
@@ -177,16 +175,21 @@ await Bun.sleep(60000);
       });
     }, 60000);
 
-    test('should start process with ready option and block until ready', async () => {
+    test('should chain waitForLog and waitForPort for multiple conditions', async () => {
       currentSandboxId = createSandboxId();
       const headers = createTestHeaders(currentSandboxId);
 
-      // Write a script with delayed ready message
+      // Write a script with delayed ready message and a server
       const scriptCode = `
 console.log("Initializing...");
-await Bun.sleep(1000);
+await Bun.sleep(500);
 console.log("Database connected");
 await Bun.sleep(500);
+const server = Bun.serve({
+  hostname: "0.0.0.0",
+  port: 9091,
+  fetch(req) { return new Response("Ready"); },
+});
 console.log("Ready to serve requests");
 await Bun.sleep(60000);
       `.trim();
@@ -200,30 +203,49 @@ await Bun.sleep(60000);
         })
       });
 
-      // Start process with ready option - should block until pattern appears
-      const startTime = Date.now();
+      // Start the process
       const startResponse = await fetch(`${workerUrl}/api/process/start`, {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: 'bun run /workspace/app.js',
-          ready: 'Ready to serve requests',
-          readyTimeout: 10000
+          command: 'bun run /workspace/app.js'
         })
       });
-      const duration = Date.now() - startTime;
 
       expect(startResponse.status).toBe(200);
       const startData = (await startResponse.json()) as Process;
+      const processId = startData.id;
 
-      // Should have waited at least 1.5 seconds for the delayed output
-      expect(duration).toBeGreaterThan(1000);
+      // Wait for log pattern first
+      const waitLogResponse = await fetch(
+        `${workerUrl}/api/process/${processId}/waitForLog`,
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            pattern: 'Database connected',
+            timeout: 10000
+          })
+        }
+      );
+      expect(waitLogResponse.status).toBe(200);
 
-      // Process should be running
-      expect(startData.status).toBe('running');
+      // Then wait for port
+      const waitPortResponse = await fetch(
+        `${workerUrl}/api/process/${processId}/waitForPort`,
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            port: 9091,
+            timeout: 10000
+          })
+        }
+      );
+      expect(waitPortResponse.status).toBe(200);
 
       // Cleanup
-      await fetch(`${workerUrl}/api/process/${startData.id}`, {
+      await fetch(`${workerUrl}/api/process/${processId}`, {
         method: 'DELETE',
         headers
       });
@@ -249,24 +271,45 @@ await Bun.sleep(60000);
         })
       });
 
-      // Start process with short timeout
+      // Start the process
       const startResponse = await fetch(`${workerUrl}/api/process/start`, {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: 'bun run /workspace/slow.js',
-          ready: 'Server ready',
-          readyTimeout: 2000
+          command: 'bun run /workspace/slow.js'
         })
       });
 
+      expect(startResponse.status).toBe(200);
+      const startData = (await startResponse.json()) as Process;
+      const processId = startData.id;
+
+      // Wait for pattern with short timeout - should fail
+      const waitResponse = await fetch(
+        `${workerUrl}/api/process/${processId}/waitForLog`,
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            pattern: 'Server ready',
+            timeout: 2000
+          })
+        }
+      );
+
       // Should fail with timeout
-      expect(startResponse.status).toBe(500);
-      const errorData = (await startResponse.json()) as { error: string };
+      expect(waitResponse.status).toBe(500);
+      const errorData = (await waitResponse.json()) as { error: string };
       expect(errorData.error).toMatch(/timeout|did not become ready/i);
+
+      // Cleanup
+      await fetch(`${workerUrl}/api/process/${processId}`, {
+        method: 'DELETE',
+        headers
+      });
     }, 60000);
 
-    test('should fail with error if process exits before becoming ready', async () => {
+    test('should fail with error if process exits before pattern appears', async () => {
       currentSandboxId = createSandboxId();
       const headers = createTestHeaders(currentSandboxId);
 
@@ -275,147 +318,34 @@ await Bun.sleep(60000);
         method: 'POST',
         headers,
         body: JSON.stringify({
-          command: 'echo "quick exit"',
-          ready: 'Server ready',
-          readyTimeout: 10000
+          command: 'echo "quick exit"'
         })
       });
 
+      expect(startResponse.status).toBe(200);
+      const startData = (await startResponse.json()) as Process;
+      const processId = startData.id;
+
+      // Wait for pattern - should fail because process exits
+      const waitResponse = await fetch(
+        `${workerUrl}/api/process/${processId}/waitForLog`,
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            pattern: 'Server ready',
+            timeout: 10000
+          })
+        }
+      );
+
       // Should fail because process exits before pattern appears
-      expect(startResponse.status).toBe(500);
-      const errorData = (await startResponse.json()) as { error: string };
+      expect(waitResponse.status).toBe(500);
+      const errorData = (await waitResponse.json()) as { error: string };
       expect(errorData.error).toMatch(
         /exited|exit|timeout|did not become ready/i
       );
     }, 60000);
-
-    test.skipIf(skipPortExposureTests)(
-      'should serve a process and expose port automatically',
-      async () => {
-        currentSandboxId = createSandboxId();
-        const headers = createTestHeaders(currentSandboxId);
-
-        // Write a simple HTTP server
-        const serverCode = `
-const server = Bun.serve({
-  port: 8080,
-  fetch(req) {
-    return new Response(JSON.stringify({ message: "Hello!" }), {
-      headers: { "Content-Type": "application/json" }
-    });
-  },
-});
-console.log("Server listening on port 8080");
-        `.trim();
-
-        await fetch(`${workerUrl}/api/file/write`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            path: '/workspace/http-server.js',
-            content: serverCode
-          })
-        });
-
-        // Use serve() to start, wait, and expose
-        const serveResponse = await fetch(`${workerUrl}/api/serve`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            command: 'bun run /workspace/http-server.js',
-            port: 8080,
-            timeout: 30000
-          })
-        });
-
-        expect(serveResponse.status).toBe(200);
-        const serveData = (await serveResponse.json()) as {
-          url: string;
-          process: Process;
-        };
-
-        expect(serveData.url).toBeTruthy();
-        expect(serveData.process.id).toBeTruthy();
-        expect(serveData.process.status).toBe('running');
-
-        // Make a request to the exposed URL
-        const apiResponse = await fetch(serveData.url);
-        expect(apiResponse.status).toBe(200);
-        const apiData = (await apiResponse.json()) as { message: string };
-        expect(apiData.message).toBe('Hello!');
-
-        // Cleanup
-        await fetch(`${workerUrl}/api/exposed-ports/8080`, {
-          method: 'DELETE'
-        });
-        await fetch(`${workerUrl}/api/process/${serveData.process.id}`, {
-          method: 'DELETE',
-          headers
-        });
-      },
-      90000
-    );
-
-    test.skipIf(skipPortExposureTests)(
-      'should serve with custom ready pattern',
-      async () => {
-        currentSandboxId = createSandboxId();
-        const headers = createTestHeaders(currentSandboxId);
-
-        // Write a server with a custom ready message
-        const serverCode = `
-console.log("Connecting to database...");
-await Bun.sleep(500);
-console.log("Database connected successfully!");
-const server = Bun.serve({
-  port: 8080,
-  fetch(req) {
-    return new Response("OK");
-  },
-});
-console.log("Server running");
-        `.trim();
-
-        await fetch(`${workerUrl}/api/file/write`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            path: '/workspace/custom-ready.js',
-            content: serverCode
-          })
-        });
-
-        // Use serve() with custom ready pattern
-        const serveResponse = await fetch(`${workerUrl}/api/serve`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            command: 'bun run /workspace/custom-ready.js',
-            port: 8080,
-            ready: 'Database connected successfully!',
-            timeout: 30000
-          })
-        });
-
-        expect(serveResponse.status).toBe(200);
-        const serveData = (await serveResponse.json()) as {
-          url: string;
-          process: Process;
-        };
-
-        expect(serveData.url).toBeTruthy();
-
-        // Cleanup
-        await fetch(`${workerUrl}/api/exposed-ports/8080`, {
-          method: 'DELETE'
-        });
-        await fetch(`${workerUrl}/api/process/${serveData.process.id}`, {
-          method: 'DELETE',
-          headers
-        });
-      },
-      90000
-    );
 
     test('should detect pattern in stderr as well as stdout', async () => {
       currentSandboxId = createSandboxId();
@@ -453,19 +383,19 @@ await Bun.sleep(60000);
 
       // Wait for the pattern (which appears in stderr)
       const waitResponse = await fetch(
-        `${workerUrl}/api/process/${processId}/waitFor`,
+        `${workerUrl}/api/process/${processId}/waitForLog`,
         {
           method: 'POST',
           headers,
           body: JSON.stringify({
-            condition: 'Ready (stderr)',
+            pattern: 'Ready (stderr)',
             timeout: 10000
           })
         }
       );
 
       expect(waitResponse.status).toBe(200);
-      const waitData = (await waitResponse.json()) as WaitForResult;
+      const waitData = (await waitResponse.json()) as WaitForLogResult;
       expect(waitData.line).toContain('Ready (stderr)');
 
       // Cleanup
@@ -474,5 +404,91 @@ await Bun.sleep(60000);
         headers
       });
     }, 60000);
+
+    test.skipIf(skipPortExposureTests)(
+      'should start server, wait for port, and expose it',
+      async () => {
+        currentSandboxId = createSandboxId();
+        const headers = createTestHeaders(currentSandboxId);
+
+        // Write a simple HTTP server
+        const serverCode = `
+const server = Bun.serve({
+  port: 8080,
+  fetch(req) {
+    return new Response(JSON.stringify({ message: "Hello!" }), {
+      headers: { "Content-Type": "application/json" }
+    });
+  },
+});
+console.log("Server listening on port 8080");
+        `.trim();
+
+        await fetch(`${workerUrl}/api/file/write`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            path: '/workspace/http-server.js',
+            content: serverCode
+          })
+        });
+
+        // Start the process
+        const startResponse = await fetch(`${workerUrl}/api/process/start`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            command: 'bun run /workspace/http-server.js'
+          })
+        });
+
+        expect(startResponse.status).toBe(200);
+        const startData = (await startResponse.json()) as Process;
+        const processId = startData.id;
+
+        // Wait for port
+        const waitPortResponse = await fetch(
+          `${workerUrl}/api/process/${processId}/waitForPort`,
+          {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              port: 8080,
+              timeout: 30000
+            })
+          }
+        );
+        expect(waitPortResponse.status).toBe(200);
+
+        // Expose the port
+        const exposeResponse = await fetch(`${workerUrl}/api/port/expose`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            port: 8080
+          })
+        });
+
+        expect(exposeResponse.status).toBe(200);
+        const exposeData = (await exposeResponse.json()) as PortExposeResult;
+        expect(exposeData.url).toBeTruthy();
+
+        // Make a request to the exposed URL
+        const apiResponse = await fetch(exposeData.url);
+        expect(apiResponse.status).toBe(200);
+        const apiData = (await apiResponse.json()) as { message: string };
+        expect(apiData.message).toBe('Hello!');
+
+        // Cleanup
+        await fetch(`${workerUrl}/api/exposed-ports/8080`, {
+          method: 'DELETE'
+        });
+        await fetch(`${workerUrl}/api/process/${processId}`, {
+          method: 'DELETE',
+          headers
+        });
+      },
+      90000
+    );
   });
 });

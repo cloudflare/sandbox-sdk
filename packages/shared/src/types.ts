@@ -101,47 +101,13 @@ export interface ExecResult {
 }
 
 /**
- * Condition to wait for before considering a process "ready"
- * - string: Wait for this substring in logs
- * - RegExp: Wait for this pattern in logs
- * - number: Wait for this port to accept connections
+ * Result from waiting for a log pattern
  */
-export type ReadyCondition = string | RegExp | number;
-
-/**
- * Result from waiting for a condition
- */
-export interface WaitForResult {
-  /** The log line that matched (for string/regex conditions) */
-  line?: string;
+export interface WaitForLogResult {
+  /** The log line that matched */
+  line: string;
   /** Regex capture groups (if condition was a RegExp) */
   match?: RegExpMatchArray;
-}
-
-/**
- * Options for the serve() method
- */
-export interface ServeOptions {
-  /** Port to wait for and optionally expose */
-  port: number;
-
-  /** Hostname for preview URL (required for URL generation) */
-  hostname?: string;
-
-  /**
-   * Additional ready condition (log pattern)
-   * If specified, waits for BOTH the log pattern AND the port
-   */
-  ready?: string | RegExp;
-
-  /** Timeout in milliseconds (default: 60000) */
-  timeout?: number;
-
-  /** Environment variables for the process */
-  env?: Record<string, string>;
-
-  /** Working directory for the process */
-  cwd?: string;
 }
 
 // Background process types
@@ -176,30 +142,6 @@ export interface ProcessOptions extends BaseExecOptions {
    * Callback for process errors
    */
   onError?: (error: Error) => void;
-
-  /**
-   * Wait for process to be "ready" before resolving
-   * - string: Wait for this substring in logs
-   * - RegExp: Wait for this pattern in logs
-   * - number: Wait for this port to accept connections
-   *
-   * @example
-   * // Wait for log message
-   * await sandbox.startProcess("npm run dev", { ready: "listening" });
-   *
-   * // Wait for regex pattern
-   * await sandbox.startProcess("npm run dev", { ready: /port (\d+)/ });
-   *
-   * // Wait for port
-   * await sandbox.startProcess("npm run dev", { ready: 3000 });
-   */
-  ready?: ReadyCondition;
-
-  /**
-   * Timeout for readiness check in milliseconds (default: 30000)
-   * Only used when `ready` option is specified
-   */
-  readyTimeout?: number;
 }
 
 export type ProcessStatus =
@@ -267,18 +209,26 @@ export interface Process {
   getLogs(): Promise<{ stdout: string; stderr: string }>;
 
   /**
-   * Wait for a condition to be met
-   * - string: Wait for this substring in logs
-   * - RegExp: Wait for this pattern in logs
-   * - number: Wait for this port to accept connections
+   * Wait for a log pattern to appear in process output
    *
    * @example
    * const proc = await sandbox.startProcess("python train.py");
-   * await proc.waitFor("Epoch 1 complete");
-   * await proc.waitFor(/Epoch (\d+) complete/);
-   * await proc.waitFor(8080); // Wait for port
+   * await proc.waitForLog("Epoch 1 complete");
+   * await proc.waitForLog(/Epoch (\d+) complete/);
    */
-  waitFor(condition: ReadyCondition, timeout?: number): Promise<WaitForResult>;
+  waitForLog(
+    pattern: string | RegExp,
+    timeout?: number
+  ): Promise<WaitForLogResult>;
+
+  /**
+   * Wait for a port to accept connections
+   *
+   * @example
+   * const proc = await sandbox.startProcess("npm run dev");
+   * await proc.waitForPort(3000);
+   */
+  waitForPort(port: number, timeout?: number): Promise<void>;
 }
 
 // Streaming event types

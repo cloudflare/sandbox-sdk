@@ -15,13 +15,11 @@ import type {
   Process,
   ProcessOptions,
   ProcessStatus,
-  ReadyCondition,
   RunCodeOptions,
   SandboxOptions,
-  ServeOptions,
   SessionOptions,
   StreamOptions,
-  WaitForResult
+  WaitForLogResult
 } from '@repo/shared';
 import {
   createLogger,
@@ -1250,45 +1248,33 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         return { stdout: logs.stdout, stderr: logs.stderr };
       },
 
-      waitFor: async (
-        condition: ReadyCondition,
+      waitForLog: async (
+        pattern: string | RegExp,
         timeout?: number
-      ): Promise<WaitForResult> => {
-        return this.waitForCondition(data.id, data.command, condition, timeout);
+      ): Promise<WaitForLogResult> => {
+        return this.waitForLogPattern(data.id, data.command, pattern, timeout);
+      },
+
+      waitForPort: async (port: number, timeout?: number): Promise<void> => {
+        await this.waitForPortReady(
+          data.id,
+          data.command,
+          port,
+          timeout ?? 30_000
+        );
       }
     };
   }
 
   /**
-   * Wait for a condition to be met for a process
-   * Supports log patterns (string/regex) and port availability
-   */
-  private async waitForCondition(
-    processId: string,
-    command: string,
-    condition: ReadyCondition,
-    timeout: number = 30_000
-  ): Promise<WaitForResult> {
-    const conditionStr = this.conditionToString(condition);
-
-    // For port-based waiting
-    if (typeof condition === 'number') {
-      return this.waitForPortReady(processId, command, condition, timeout);
-    }
-
-    // For log-based waiting (string or regex)
-    return this.waitForLog(processId, command, condition, timeout);
-  }
-
-  /**
    * Wait for a log pattern to appear in process output
    */
-  private async waitForLog(
+  private async waitForLogPattern(
     processId: string,
     command: string,
     pattern: string | RegExp,
-    timeout: number
-  ): Promise<WaitForResult> {
+    timeout: number = 30_000
+  ): Promise<WaitForLogResult> {
     const startTime = Date.now();
     const conditionStr = this.conditionToString(pattern);
     let collectedStdout = '';
@@ -1360,7 +1346,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     try {
       // Process stream with timeout
-      const streamProcessor = async (): Promise<WaitForResult> => {
+      const streamProcessor = async (): Promise<WaitForLogResult> => {
         for await (const event of parseSSEStream<LogEvent>(stream)) {
           // Handle different event types
           if (event.type === 'stdout' || event.type === 'stderr') {
@@ -1423,7 +1409,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     command: string,
     port: number,
     timeout: number
-  ): Promise<WaitForResult> {
+  ): Promise<void> {
     const startTime = Date.now();
     const conditionStr = `port ${port}`;
     const targetInterval = 500; // Target interval between checks
@@ -1478,7 +1464,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           }
         );
         if (result.exitCode === 0) {
-          return {}; // Port is available
+          return; // Port is available
         }
       } catch {
         // Port not ready yet, continue polling
@@ -1517,7 +1503,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private matchPattern(
     text: string,
     pattern: string | RegExp
-  ): WaitForResult | null {
+  ): WaitForLogResult | null {
     if (typeof pattern === 'string') {
       // Simple substring match
       if (text.includes(pattern)) {
@@ -1549,16 +1535,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   /**
-   * Convert a condition to a human-readable string
+   * Convert a log pattern to a human-readable string
    */
-  private conditionToString(condition: ReadyCondition): string {
-    if (typeof condition === 'string') {
-      return `"${condition}"`;
-    } else if (typeof condition === 'number') {
-      return `port ${condition}`;
-    } else {
-      return condition.toString();
+  private conditionToString(pattern: string | RegExp): string {
+    if (typeof pattern === 'string') {
+      return `"${pattern}"`;
     }
+    return pattern.toString();
   }
 
   /**
@@ -1585,7 +1568,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       },
       httpStatus: 408,
       timestamp: new Date().toISOString(),
-      suggestion: `Check if your process outputs ${condition}. You can increase the timeout with { readyTimeout: ${timeout * 2} }`
+      suggestion: `Check if your process outputs ${condition}. You can increase the timeout parameter.`
     });
   }
 
@@ -1663,12 +1646,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         options.onStart(processObj);
       }
 
-      // If ready condition is specified, wait for it before returning
-      if (options?.ready !== undefined) {
-        const readyTimeout = options.readyTimeout ?? 30_000;
-        await processObj.waitFor(options.ready, readyTimeout);
-      }
-
       return processObj;
     } catch (error) {
       if (options?.onError && error instanceof Error) {
@@ -1677,54 +1654,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
       throw error;
     }
-  }
-
-  /**
-   * Start a server process and wait for it to be ready
-   * Returns the preview URL directly for simple cases
-   *
-   * @example
-   * // Simple usage - get URL directly
-   * const url = await sandbox.serve("npm run dev", 3000);
-   *
-   * // With options - get full service object
-   * const { url, process } = await sandbox.serve("npm run dev", {
-   *   port: 3000,
-   *   hostname: "app.example.com",
-   *   ready: /listening/
-   * });
-   */
-  async serve(
-    command: string,
-    portOrOptions: number | ServeOptions
-  ): Promise<string | { url: string; process: Process }> {
-    const options: ServeOptions =
-      typeof portOrOptions === 'number'
-        ? { port: portOrOptions }
-        : portOrOptions;
-
-    const { port, hostname, ready, timeout = 60_000, env, cwd } = options;
-
-    // Start the process, optionally waiting for a log pattern first
-    const processOptions: ProcessOptions = {
-      ready, // Only pattern - port check happens below
-      readyTimeout: timeout,
-      env,
-      cwd
-    };
-
-    const proc = await this.startProcess(command, processOptions);
-    await proc.waitFor(port, timeout);
-
-    // If hostname is provided, expose the port and return full object
-    if (hostname) {
-      const { url } = await this.exposePort(port, { hostname });
-      return { url, process: proc };
-    }
-
-    // No hostname - just return a placeholder URL indicating port is ready
-    // The user would need to call exposePort separately for a real URL
-    return `http://localhost:${port}`;
   }
 
   async listProcesses(sessionId?: string): Promise<Process[]> {

@@ -37,14 +37,12 @@ export type {
   Process,
   ProcessOptions,
   ProcessStatus,
-  // Process readiness types
-  ReadyCondition,
   RunCodeOptions,
   SandboxOptions,
-  ServeOptions,
   SessionOptions,
   StreamOptions,
-  WaitForResult
+  // Process readiness types
+  WaitForLogResult
 } from '@repo/shared';
 // Export type guards for runtime validation
 export { isExecResult, isProcess, isProcessStatus } from '@repo/shared';

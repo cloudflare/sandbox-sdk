@@ -105,12 +105,13 @@ export default {
       `
       );
 
-      const { url: previewUrl, process } = await sandbox.serve(
-        'bun run /workspace/server.js',
-        { port: 8080, hostname: url.hostname }
-      );
+      const proc = await sandbox.startProcess('bun run /workspace/server.js');
+      await proc.waitForPort(8080);
+      const { url: previewUrl } = await sandbox.exposePort(8080, {
+        hostname: url.hostname
+      });
 
-      return Response.json({ previewUrl, processId: process.id });
+      return Response.json({ previewUrl, processId: proc.id });
     }
 
     return new Response('Try /run, /file, or /server');
@@ -120,32 +121,31 @@ export default {
 
 ## Process Readiness
 
-Wait for processes to be ready before proceeding. Three patterns available:
+Wait for processes to be ready before proceeding:
 
 ```typescript
-// Pattern 1: Inline readiness - blocks until pattern appears (recommended)
-const proc = await sandbox.startProcess('npm start', {
-  ready: 'Server listening on port 3000',
-  readyTimeout: 30000
-});
-
-// Pattern 2: Sequential waits - for multiple conditions
 const proc = await sandbox.startProcess('npm start');
-await proc.waitFor('Database connected');
-await proc.waitFor(3000); // Wait for port 3000 to be available
 
-// Pattern 3: Server shorthand - start, wait, and expose in one call
-const { url, process } = await sandbox.serve('npm start', {
-  port: 3000,
-  hostname: 'example.com'
-});
+// Wait for a log message
+await proc.waitForLog('Database connected');
+
+// Wait for a regex pattern (returns match info)
+const result = await proc.waitForLog(/listening on port (\d+)/);
+console.log(result.match[1]); // Access captured groups
+
+// Wait for a port to be available
+await proc.waitForPort(3000);
+
+// Chain multiple conditions
+await proc.waitForLog('DB ready');
+await setupConnectionPool();
+await proc.waitForPort(3000);
 ```
 
-Conditions can be:
+Methods:
 
-- **String** - Waits for substring in stdout/stderr
-- **RegExp** - Waits for pattern match (returns capture groups)
-- **Number** - Waits for port to be available
+- **`waitForLog(pattern, timeout?)`** - Waits for string or RegExp in stdout/stderr
+- **`waitForPort(port, timeout?)`** - Waits for port to accept connections
 
 ## Documentation
 

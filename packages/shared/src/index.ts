@@ -94,20 +94,17 @@ export type {
   ProcessStartResult,
   ProcessStatus,
   ReadFileResult,
-  // Process readiness types
-  ReadyCondition,
   RenameFileResult,
   // Sandbox configuration options
   SandboxOptions,
-  // Serve options
-  ServeOptions,
   // Session management result types
   SessionCreateResult,
   SessionDeleteResult,
   SessionOptions,
   ShutdownResult,
   StreamOptions,
-  WaitForResult,
+  // Process readiness types
+  WaitForLogResult,
   WriteFileResult
 } from './types.js';
 export { isExecResult, isProcess, isProcessStatus } from './types.js';
