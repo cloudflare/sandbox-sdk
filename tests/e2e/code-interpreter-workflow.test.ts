@@ -325,9 +325,6 @@ describe('Code Interpreter Workflow (E2E)', () => {
   // ============================================================================
 
   test('should execute top-level await without IIFE wrapper', async () => {
-    currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
-
     // Create JavaScript context
     const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
       method: 'POST',
@@ -356,9 +353,6 @@ describe('Code Interpreter Workflow (E2E)', () => {
   }, 120000);
 
   test('should return last expression value from async code', async () => {
-    currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
-
     // Create JavaScript context
     const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
       method: 'POST',
@@ -391,9 +385,6 @@ a + b
   }, 120000);
 
   test('should handle async errors in top-level await', async () => {
-    currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
-
     // Create JavaScript context
     const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
       method: 'POST',
@@ -423,9 +414,6 @@ a + b
   }, 120000);
 
   test('should support LLM-generated fetch pattern with top-level await', async () => {
-    currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
-
     // Create JavaScript context
     const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
       method: 'POST',
@@ -464,9 +452,6 @@ data
   }, 120000);
 
   test('should persist variables defined with await across executions', async () => {
-    currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
-
     // Create JavaScript context
     const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
       method: 'POST',
@@ -508,9 +493,6 @@ data
   }, 120000);
 
   test('should resolve Promise without await keyword', async () => {
-    currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
-
     // Create JavaScript context
     const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
       method: 'POST',
@@ -539,9 +521,6 @@ data
   }, 120000);
 
   test('should support IIFE pattern for backward compatibility', async () => {
-    currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
-
     // Create JavaScript context
     const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
       method: 'POST',
