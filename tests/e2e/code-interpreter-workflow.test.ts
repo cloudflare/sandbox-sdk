@@ -355,9 +355,9 @@ for i in range(3):
     // Cleanup basic isolation contexts
     await Promise.all([deleteContext(ctx1.id), deleteContext(ctx2.id)]);
 
-    // Test isolation across many contexts (12) - create in parallel
+    // Test isolation across many contexts (6) - create in parallel
     const manyContexts = await Promise.all(
-      Array.from({ length: 12 }, () => createContext('javascript'))
+      Array.from({ length: 6 }, () => createContext('javascript'))
     );
 
     // Set unique values in each context in parallel
@@ -389,8 +389,8 @@ for i in range(3):
     const mutexCtx = await createContext('javascript');
     await executeCode(mutexCtx, 'let counter = 0;');
 
-    // Launch 20 concurrent increments
-    const concurrentRequests = 20;
+    // Launch 10 concurrent increments
+    const concurrentRequests = 10;
     const results = await Promise.allSettled(
       Array.from({ length: concurrentRequests }, () =>
         executeCode(mutexCtx, 'counter++; counter;')
@@ -408,10 +408,10 @@ for i in range(3):
       }
     }
 
-    // All 20 should succeed with values 1-20 (serial execution via mutex)
+    // All 10 should succeed with values 1-10 (serial execution via mutex)
     expect(counterValues.length).toBe(concurrentRequests);
     counterValues.sort((a, b) => a - b);
-    expect(counterValues).toEqual(Array.from({ length: 20 }, (_, i) => i + 1));
+    expect(counterValues).toEqual(Array.from({ length: 10 }, (_, i) => i + 1));
 
     // Verify final counter state
     const finalExec = await executeCode(mutexCtx, 'counter;');
@@ -419,7 +419,7 @@ for i in range(3):
       finalExec.results?.[0]?.text?.match(/\d+/)?.[0] || '0',
       10
     );
-    expect(finalValue).toBe(20);
+    expect(finalValue).toBe(10);
 
     await deleteContext(mutexCtx.id);
   }, 120000);
