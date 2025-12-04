@@ -7,6 +7,8 @@ import type { Process } from '@repo/shared';
 
 // Dedicated port for this test file's port exposure error tests
 const PORT_LIFECYCLE_TEST_PORT = 9998;
+const skipPortExposureTests =
+  process.env.TEST_WORKER_URL?.endsWith('.workers.dev') ?? false;
 
 /**
  * Process Lifecycle Error Handling Tests
@@ -429,38 +431,46 @@ console.log("Server started on port 8080");
     );
   }, 90000);
 
-  test('should reject exposing reserved ports', async () => {
-    const exposeResponse = await fetch(`${workerUrl}/api/port/expose`, {
-      method: 'POST',
-      headers: portHeaders,
-      body: JSON.stringify({
-        port: 22,
-        name: 'ssh-server'
-      })
-    });
+  test.skipIf(skipPortExposureTests)(
+    'should reject exposing reserved ports',
+    async () => {
+      const exposeResponse = await fetch(`${workerUrl}/api/port/expose`, {
+        method: 'POST',
+        headers: portHeaders,
+        body: JSON.stringify({
+          port: 22,
+          name: 'ssh-server'
+        })
+      });
 
-    expect(exposeResponse.status).toBeGreaterThanOrEqual(400);
-    const errorData = (await exposeResponse.json()) as { error: string };
-    expect(errorData.error).toBeTruthy();
-    expect(errorData.error).toMatch(
-      /reserved|not allowed|forbidden|invalid port/i
-    );
-  }, 90000);
+      expect(exposeResponse.status).toBeGreaterThanOrEqual(400);
+      const errorData = (await exposeResponse.json()) as { error: string };
+      expect(errorData.error).toBeTruthy();
+      expect(errorData.error).toMatch(
+        /reserved|not allowed|forbidden|invalid port/i
+      );
+    },
+    90000
+  );
 
-  test('should return error when unexposing non-exposed port', async () => {
-    const unexposeResponse = await fetch(
-      `${workerUrl}/api/exposed-ports/${PORT_LIFECYCLE_TEST_PORT}`,
-      {
-        method: 'DELETE',
-        headers: portHeaders
-      }
-    );
+  test.skipIf(skipPortExposureTests)(
+    'should return error when unexposing non-exposed port',
+    async () => {
+      const unexposeResponse = await fetch(
+        `${workerUrl}/api/exposed-ports/${PORT_LIFECYCLE_TEST_PORT}`,
+        {
+          method: 'DELETE',
+          headers: portHeaders
+        }
+      );
 
-    expect(unexposeResponse.status).toBe(500);
-    const errorData = (await unexposeResponse.json()) as { error: string };
-    expect(errorData.error).toBeTruthy();
-    expect(errorData.error).toMatch(/not found|not exposed|does not exist/i);
-  }, 90000);
+      expect(unexposeResponse.status).toBe(500);
+      const errorData = (await unexposeResponse.json()) as { error: string };
+      expect(errorData.error).toBeTruthy();
+      expect(errorData.error).toMatch(/not found|not exposed|does not exist/i);
+    },
+    90000
+  );
 
   test('should not block foreground operations when background processes are running', async () => {
     // Start a long-running background process

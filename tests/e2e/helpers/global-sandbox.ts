@@ -136,7 +136,7 @@ async function initializeSharedSandbox(): Promise<SharedSandbox> {
         };
         return sharedSandbox;
       }
-    } catch (e) {
+    } catch {
       console.warn(
         '[SharedSandbox] Failed to read state file, creating new sandbox'
       );
@@ -200,7 +200,6 @@ async function initializeSharedSandbox(): Promise<SharedSandbox> {
   const handleSignal = async (signal: string) => {
     console.log(`\n[SharedSandbox] Received ${signal}, cleaning up...`);
     await cleanupSharedSandbox();
-    process.exit(0);
   };
   process.on('SIGTERM', () => handleSignal('SIGTERM'));
   process.on('SIGINT', () => handleSignal('SIGINT'));

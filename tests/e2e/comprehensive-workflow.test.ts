@@ -21,7 +21,8 @@
 import { describe, test, expect, beforeAll } from 'vitest';
 import {
   getSharedSandbox,
-  createUniqueSession
+  createUniqueSession,
+  uniqueTestPath
 } from './helpers/global-sandbox';
 import { parseSSEStream } from '../../packages/sandbox/src/sse-parser';
 import type {
@@ -65,13 +66,14 @@ describe('Comprehensive Workflow', () => {
     // ========================================
     // Phase 1: Clone a repository
     // ========================================
+    const testDir = uniqueTestPath('hello-world');
     const cloneResponse = await fetch(`${workerUrl}/api/git/clone`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
         repoUrl: 'https://github.com/octocat/Hello-World',
         branch: 'master',
-        targetDir: '/workspace/hello-world'
+        targetDir: testDir
       })
     });
 
@@ -83,7 +85,7 @@ describe('Comprehensive Workflow', () => {
     const listResponse = await fetch(`${workerUrl}/api/list-files`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ path: '/workspace/hello-world' })
+      body: JSON.stringify({ path: testDir })
     });
 
     expect(listResponse.status).toBe(200);
@@ -132,7 +134,7 @@ describe('Comprehensive Workflow', () => {
     const readReadmeResponse = await fetch(`${workerUrl}/api/file/read`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ path: '/workspace/hello-world/README' })
+      body: JSON.stringify({ path: `${testDir}/README` })
     });
 
     expect(readReadmeResponse.status).toBe(200);
@@ -144,7 +146,7 @@ describe('Comprehensive Workflow', () => {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        path: '/workspace/hello-world/src/utils',
+        path: `${testDir}/src/utils`,
         recursive: true
       })
     });
@@ -166,7 +168,7 @@ describe('Comprehensive Workflow', () => {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        path: '/workspace/hello-world/config.json',
+        path: `${testDir}/config.json`,
         content: configContent
       })
     });
@@ -185,7 +187,7 @@ export function greet(name) {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        path: '/workspace/hello-world/src/utils/greet.js',
+        path: `${testDir}/src/utils/greet.js`,
         content: sourceCode
       })
     });
@@ -195,8 +197,8 @@ export function greet(name) {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        oldPath: '/workspace/hello-world/src/utils/greet.js',
-        newPath: '/workspace/hello-world/src/utils/greeter.js'
+        oldPath: `${testDir}/src/utils/greet.js`,
+        newPath: `${testDir}/src/utils/greeter.js`
       })
     });
 
@@ -207,7 +209,7 @@ export function greet(name) {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        path: '/workspace/hello-world/src/utils/greeter.js'
+        path: `${testDir}/src/utils/greeter.js`
       })
     });
 
@@ -224,9 +226,8 @@ export function greet(name) {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        command:
-          'echo "Building $PROJECT_NAME in $BUILD_ENV mode" && ls -la /workspace/hello-world/src',
-        cwd: '/workspace/hello-world'
+        command: `echo "Building $PROJECT_NAME in $BUILD_ENV mode" && ls -la ${testDir}/src`,
+        cwd: testDir
       })
     });
 
@@ -241,7 +242,7 @@ export function greet(name) {
       headers,
       body: JSON.stringify({
         command: 'git status --porcelain',
-        cwd: '/workspace/hello-world'
+        cwd: testDir
       })
     });
 
@@ -278,7 +279,7 @@ const interval = setInterval(() => {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        path: '/workspace/hello-world/server.js',
+        path: `${testDir}/server.js`,
         content: serverScript
       })
     });
@@ -288,7 +289,7 @@ const interval = setInterval(() => {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        command: 'bun run /workspace/hello-world/server.js'
+        command: `bun run ${testDir}/server.js`
       })
     });
 
@@ -327,7 +328,7 @@ const interval = setInterval(() => {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        path: '/workspace/hello-world/backup',
+        path: `${testDir}/backup`,
         recursive: true
       })
     });
@@ -336,8 +337,8 @@ const interval = setInterval(() => {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        sourcePath: '/workspace/hello-world/config.json',
-        destinationPath: '/workspace/hello-world/backup/config.json'
+        sourcePath: `${testDir}/config.json`,
+        destinationPath: `${testDir}/backup/config.json`
       })
     });
 
@@ -348,7 +349,7 @@ const interval = setInterval(() => {
       method: 'DELETE',
       headers,
       body: JSON.stringify({
-        path: '/workspace/hello-world/server.js'
+        path: `${testDir}/server.js`
       })
     });
 
@@ -359,7 +360,7 @@ const interval = setInterval(() => {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        path: '/workspace/hello-world',
+        path: testDir,
         options: { recursive: true }
       })
     });

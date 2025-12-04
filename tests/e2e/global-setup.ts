@@ -27,6 +27,11 @@ export async function setup() {
     '\n[GlobalSetup] Starting wrangler and creating shared sandbox...'
   );
 
+  // Clean up stale state from crashed runs
+  if (existsSync(SHARED_STATE_FILE)) {
+    unlinkSync(SHARED_STATE_FILE);
+  }
+
   const result = await getTestWorkerUrl();
   runner = result.runner;
   workerUrl = result.url;

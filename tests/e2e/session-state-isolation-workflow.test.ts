@@ -1,5 +1,8 @@
 import { describe, test, expect, beforeAll, afterAll } from 'vitest';
-import { getSharedSandbox } from './helpers/global-sandbox';
+import {
+  createUniqueSession,
+  getSharedSandbox
+} from './helpers/global-sandbox';
 import {
   createSandboxId,
   createTestHeaders,
@@ -33,8 +36,8 @@ describe('Session State Isolation Workflow', () => {
       // Create ONE sandbox for all session isolation tests
       const sandbox = await getSharedSandbox();
       workerUrl = sandbox.workerUrl;
-      sandboxId = createSandboxId();
-      baseHeaders = createTestHeaders(sandboxId);
+      sandboxId = sandbox.sandboxId;
+      baseHeaders = createTestHeaders(createUniqueSession());
 
       // Initialize the sandbox
       await fetch(`${workerUrl}/api/execute`, {
@@ -45,13 +48,6 @@ describe('Session State Isolation Workflow', () => {
         })
       });
     }, 120000);
-
-    afterAll(async () => {
-      // Cleanup the single sandbox after all tests
-      if (sandboxId) {
-        await cleanupSandbox(workerUrl, sandboxId);
-      }
-    });
 
     test('should isolate environment variables between sessions', async () => {
       // Create session1 with production environment
