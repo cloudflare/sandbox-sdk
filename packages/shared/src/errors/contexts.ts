@@ -56,8 +56,6 @@ export interface ProcessReadyTimeoutContext {
   command: string;
   condition: string;
   timeout: number;
-  stdout?: string;
-  stderr?: string;
 }
 
 export interface ProcessExitedBeforeReadyContext {
@@ -65,8 +63,6 @@ export interface ProcessExitedBeforeReadyContext {
   command: string;
   condition: string;
   exitCode: number;
-  stdout?: string;
-  stderr?: string;
 }
 
 /**

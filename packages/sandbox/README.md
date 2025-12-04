@@ -92,60 +92,10 @@ export default {
       return Response.json({ content: file.content });
     }
 
-    // Start a server and wait for it to be ready
-    if (url.pathname === '/server') {
-      await sandbox.writeFile(
-        '/workspace/server.js',
-        `
-        const server = Bun.serve({
-          port: 8080,
-          fetch() { return new Response("Hello from sandbox!"); }
-        });
-        console.log("Server ready on port 8080");
-      `
-      );
-
-      const proc = await sandbox.startProcess('bun run /workspace/server.js');
-      await proc.waitForPort(8080);
-      const { url: previewUrl } = await sandbox.exposePort(8080, {
-        hostname: url.hostname
-      });
-
-      return Response.json({ previewUrl, processId: proc.id });
-    }
-
-    return new Response('Try /run, /file, or /server');
+    return new Response('Try /run or /file');
   }
 };
 ```
-
-## Process Readiness
-
-Wait for processes to be ready before proceeding:
-
-```typescript
-const proc = await sandbox.startProcess('npm start');
-
-// Wait for a log message
-await proc.waitForLog('Database connected');
-
-// Wait for a regex pattern (returns match info)
-const result = await proc.waitForLog(/listening on port (\d+)/);
-console.log(result.match[1]); // Access captured groups
-
-// Wait for a port to be available
-await proc.waitForPort(3000);
-
-// Chain multiple conditions
-await proc.waitForLog('DB ready');
-await setupConnectionPool();
-await proc.waitForPort(3000);
-```
-
-Methods:
-
-- **`waitForLog(pattern, timeout?)`** - Waits for string or RegExp in stdout/stderr
-- **`waitForPort(port, timeout?)`** - Waits for port to accept connections
 
 ## Documentation
 
@@ -163,7 +113,6 @@ Methods:
 - **Code Interpreter** - Execute Python and JavaScript with rich outputs
 - **File System Access** - Read, write, and manage files
 - **Command Execution** - Run any command with streaming support
-- **Process Readiness** - Wait for processes to be ready before proceeding
 - **Preview URLs** - Expose services with public URLs
 - **Git Integration** - Clone repositories directly
 

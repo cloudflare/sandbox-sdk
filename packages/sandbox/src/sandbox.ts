@@ -1256,12 +1256,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       },
 
       waitForPort: async (port: number, timeout?: number): Promise<void> => {
-        await this.waitForPortReady(
-          data.id,
-          data.command,
-          port,
-          timeout ?? 30_000
-        );
+        await this.waitForPortReady(data.id, data.command, port, timeout);
       }
     };
   }
@@ -1273,7 +1268,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     processId: string,
     command: string,
     pattern: string | RegExp,
-    timeout: number = 30_000
+    timeout?: number
   ): Promise<WaitForLogResult> {
     const startTime = Date.now();
     const conditionStr = this.conditionToString(pattern);
@@ -1312,41 +1307,54 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       });
     }
 
-    // Stream new logs and check for pattern with timeout
+    // Stream new logs and check for pattern
     const stream = await this.streamProcessLogs(processId);
 
-    // Create a timeout promise that rejects after remaining time
-    const remainingTime = timeout - (Date.now() - startTime);
-    if (remainingTime <= 0) {
-      throw this.createReadyTimeoutError(
-        processId,
-        command,
-        conditionStr,
-        timeout,
-        collectedStdout,
-        collectedStderr
-      );
+    // Set up timeout if specified
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    let timeoutPromise: Promise<never> | undefined;
+
+    if (timeout !== undefined) {
+      const remainingTime = timeout - (Date.now() - startTime);
+      if (remainingTime <= 0) {
+        throw this.createReadyTimeoutError(
+          processId,
+          command,
+          conditionStr,
+          timeout
+        );
+      }
+
+      timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => {
+          reject(
+            this.createReadyTimeoutError(
+              processId,
+              command,
+              conditionStr,
+              timeout
+            )
+          );
+        }, remainingTime);
+      });
     }
 
-    let timeoutId: ReturnType<typeof setTimeout> | undefined;
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      timeoutId = setTimeout(() => {
-        reject(
-          this.createReadyTimeoutError(
-            processId,
-            command,
-            conditionStr,
-            timeout,
-            collectedStdout,
-            collectedStderr
-          )
-        );
-      }, remainingTime);
-    });
-
     try {
-      // Process stream with timeout
+      // Process stream
       const streamProcessor = async (): Promise<WaitForLogResult> => {
+        const DEBOUNCE_MS = 100;
+        let lastCheckTime = 0;
+        let pendingCheck = false;
+
+        const checkPattern = (): WaitForLogResult | null => {
+          // Check both stdout and stderr buffers
+          const stdoutResult = this.matchPattern(collectedStdout, pattern);
+          if (stdoutResult) return stdoutResult;
+          const stderrResult = this.matchPattern(collectedStderr, pattern);
+          if (stderrResult) return stderrResult;
+          return null;
+        };
+
         for await (const event of parseSSEStream<LogEvent>(stream)) {
           // Handle different event types
           if (event.type === 'stdout' || event.type === 'stderr') {
@@ -1354,46 +1362,55 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
             if (event.type === 'stdout') {
               collectedStdout += data;
-              // Check accumulated buffer for pattern (handles patterns split across chunks)
-              const result = this.matchPattern(collectedStdout, pattern);
-              if (result) {
-                return result;
-              }
             } else {
               collectedStderr += data;
-              // Check accumulated buffer for pattern (handles patterns split across chunks)
-              const result = this.matchPattern(collectedStderr, pattern);
-              if (result) {
-                return result;
-              }
+            }
+            pendingCheck = true;
+
+            // Debounce pattern matching - check at most every 100ms
+            const now = Date.now();
+            if (now - lastCheckTime >= DEBOUNCE_MS) {
+              lastCheckTime = now;
+              pendingCheck = false;
+              const result = checkPattern();
+              if (result) return result;
             }
           }
 
-          // Process exited
+          // Process exited - do final check before throwing
           if (event.type === 'exit') {
+            if (pendingCheck) {
+              const result = checkPattern();
+              if (result) return result;
+            }
             throw this.createExitedBeforeReadyError(
               processId,
               command,
               conditionStr,
-              event.exitCode ?? 1,
-              collectedStdout,
-              collectedStderr
+              event.exitCode ?? 1
             );
           }
         }
 
-        // Stream ended without finding pattern
-        throw this.createReadyTimeoutError(
+        // Stream ended - do final check before throwing
+        if (pendingCheck) {
+          const result = checkPattern();
+          if (result) return result;
+        }
+        // Stream ended without finding pattern - this indicates process exited
+        throw this.createExitedBeforeReadyError(
           processId,
           command,
           conditionStr,
-          timeout,
-          collectedStdout,
-          collectedStderr
+          0
         );
       };
 
-      return await Promise.race([streamProcessor(), timeoutPromise]);
+      // Race with timeout if specified, otherwise just run stream processor
+      if (timeoutPromise) {
+        return await Promise.race([streamProcessor(), timeoutPromise]);
+      }
+      return await streamProcessor();
     } finally {
       if (timeoutId) {
         clearTimeout(timeoutId);
@@ -1408,26 +1425,39 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     processId: string,
     command: string,
     port: number,
-    timeout: number
+    timeout?: number
   ): Promise<void> {
     const startTime = Date.now();
     const conditionStr = `port ${port}`;
     const targetInterval = 500; // Target interval between checks
-    const execTimeout = 1000; // Timeout for each nc check
+    const execTimeout = 1000; // Timeout for each port check
     let checkCount = 0;
 
     while (true) {
-      const elapsed = Date.now() - startTime;
-      const remaining = timeout - elapsed;
+      // Check timeout if specified
+      if (timeout !== undefined) {
+        const elapsed = Date.now() - startTime;
+        const remaining = timeout - elapsed;
 
-      // Exit if we've exceeded timeout
-      if (remaining <= 0) {
-        break;
-      }
+        // Exit if we've exceeded timeout
+        if (remaining <= 0) {
+          throw this.createReadyTimeoutError(
+            processId,
+            command,
+            conditionStr,
+            timeout
+          );
+        }
 
-      // Skip check if remaining time is less than exec timeout
-      if (remaining < execTimeout) {
-        break;
+        // Skip check if remaining time is less than exec timeout
+        if (remaining < execTimeout) {
+          throw this.createReadyTimeoutError(
+            processId,
+            command,
+            conditionStr,
+            timeout
+          );
+        }
       }
 
       // Check process status less frequently (every 3rd iteration) to reduce latency
@@ -1439,17 +1469,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           processInfo.status === 'failed' ||
           processInfo.status === 'killed'
         ) {
-          const logs = await this.getProcessLogs(processId).catch(() => ({
-            stdout: '',
-            stderr: ''
-          }));
           throw this.createExitedBeforeReadyError(
             processId,
             command,
             conditionStr,
-            processInfo?.exitCode ?? 1,
-            logs.stdout,
-            logs.stderr
+            processInfo?.exitCode ?? 1
           );
         }
       }
@@ -1457,11 +1481,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       // Try to connect to the port using bash's /dev/tcp
       const checkStart = Date.now();
       try {
+        const execTimeoutMs =
+          timeout !== undefined
+            ? Math.min(execTimeout, timeout - (Date.now() - startTime))
+            : execTimeout;
+
         const result = await this.exec(
           `bash -c 'echo > /dev/tcp/localhost/${port}' 2>/dev/null`,
-          {
-            timeout: Math.min(execTimeout, remaining)
-          }
+          { timeout: execTimeoutMs }
         );
         if (result.exitCode === 0) {
           return; // Port is available
@@ -1476,25 +1503,16 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       const checkDuration = Date.now() - checkStart;
       const sleepTime = Math.max(0, targetInterval - checkDuration);
 
-      // Only sleep if we have time remaining
-      if (sleepTime > 0 && Date.now() - startTime + sleepTime < timeout) {
-        await new Promise((resolve) => setTimeout(resolve, sleepTime));
+      // Sleep between checks (skip if timeout would be exceeded)
+      if (sleepTime > 0) {
+        if (
+          timeout === undefined ||
+          Date.now() - startTime + sleepTime < timeout
+        ) {
+          await new Promise((resolve) => setTimeout(resolve, sleepTime));
+        }
       }
     }
-
-    // Timeout
-    const logs = await this.getProcessLogs(processId).catch(() => ({
-      stdout: '',
-      stderr: ''
-    }));
-    throw this.createReadyTimeoutError(
-      processId,
-      command,
-      conditionStr,
-      timeout,
-      logs.stdout,
-      logs.stderr
-    );
   }
 
   /**
@@ -1551,9 +1569,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     processId: string,
     command: string,
     condition: string,
-    timeout: number,
-    stdout: string,
-    stderr: string
+    timeout: number
   ): ProcessReadyTimeoutError {
     return new ProcessReadyTimeoutError({
       code: ErrorCode.PROCESS_READY_TIMEOUT,
@@ -1562,9 +1578,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         processId,
         command,
         condition,
-        timeout,
-        stdout: stdout.slice(-2000), // Last 2000 chars
-        stderr: stderr.slice(-2000)
+        timeout
       },
       httpStatus: 408,
       timestamp: new Date().toISOString(),
@@ -1579,9 +1593,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     processId: string,
     command: string,
     condition: string,
-    exitCode: number,
-    stdout: string,
-    stderr: string
+    exitCode: number
   ): ProcessExitedBeforeReadyError {
     return new ProcessExitedBeforeReadyError({
       code: ErrorCode.PROCESS_EXITED_BEFORE_READY,
@@ -1590,13 +1602,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         processId,
         command,
         condition,
-        exitCode,
-        stdout: stdout.slice(-2000),
-        stderr: stderr.slice(-2000)
+        exitCode
       },
       httpStatus: 500,
       timestamp: new Date().toISOString(),
-      suggestion: 'Check the process output above for error messages'
+      suggestion: 'Check process logs with getLogs() for error messages'
     });
   }
 

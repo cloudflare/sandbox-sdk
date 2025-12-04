@@ -621,12 +621,6 @@ export class ProcessReadyTimeoutError extends SandboxError<ProcessReadyTimeoutCo
   get timeout() {
     return this.context.timeout;
   }
-  get stdout() {
-    return this.context.stdout;
-  }
-  get stderr() {
-    return this.context.stderr;
-  }
 }
 
 /**
@@ -650,11 +644,5 @@ export class ProcessExitedBeforeReadyError extends SandboxError<ProcessExitedBef
   }
   get exitCode() {
     return this.context.exitCode;
-  }
-  get stdout() {
-    return this.context.stdout;
-  }
-  get stderr() {
-    return this.context.stderr;
   }
 }
