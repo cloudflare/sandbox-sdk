@@ -236,3 +236,95 @@ jobs:
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://docs.claude.com/en/docs/claude-code/cli-reference for available options
           claude_args: '--allowedTools "Task,Skill,Read,Glob,Grep,Write,TodoWrite,mcp__cloudflare-docs__search_cloudflare_documentation,mcp__exa__get_code_context_exa,mcp__exa__web_search_exa,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh repo view:*),Bash(gh api:*),Bash(git log:*),Bash(git cat-file:*),Bash(git rev-parse:*),Bash(jq:*)"'
+
+      - name: Minimize outdated reviews
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Minimize reviews that are outdated:
+          # 1. Reviews where ALL inline threads are resolved
+          # 2. Older reviews with NO threads (keep only the latest threadless review)
+
+          QUERY='query($owner: String!, $name: String!, $pr: Int!) {
+            repository(owner: $owner, name: $name) {
+              pullRequest(number: $pr) {
+                reviews(first: 100) {
+                  nodes {
+                    id
+                    isMinimized
+                    createdAt
+                    author { login }
+                  }
+                }
+                reviewThreads(first: 100) {
+                  nodes {
+                    isResolved
+                    comments(first: 1) {
+                      nodes {
+                        pullRequestReview { id }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }'
+
+          # Fetch data
+          DATA=$(gh api graphql \
+            -F owner="${{ github.repository_owner }}" \
+            -F name="${{ github.event.repository.name }}" \
+            -F pr=${{ github.event.pull_request.number }} \
+            -f query="$QUERY")
+
+          # Write jq filter to file to avoid escaping issues
+          cat > /tmp/minimize-filter.jq << 'JQEOF'
+          .data.repository.pullRequest as $pr |
+          # Only consider reviews from Claude bot
+          ($pr.reviews.nodes | map(select(.author.login == "claude"))) as $claudeReviews |
+          # Build set of review IDs that have threads
+          ($pr.reviewThreads.nodes | map(
+            select(.comments.nodes[0].pullRequestReview != null) |
+            .comments.nodes[0].pullRequestReview.id
+          ) | unique) as $reviewsWithThreads |
+          # Build map of review_id -> { allResolved: bool }
+          ($pr.reviewThreads.nodes | map(
+            select(.comments.nodes[0].pullRequestReview != null) |
+            {
+              reviewId: .comments.nodes[0].pullRequestReview.id,
+              isResolved: .isResolved
+            }
+          ) | group_by(.reviewId) | map({
+            key: .[0].reviewId,
+            value: { allResolved: (map(.isResolved) | all) }
+          }) | from_entries) as $threadStatusByReview |
+          # Find the latest Claude review (by createdAt) that has no threads
+          (($claudeReviews | map(select(. as $r | $reviewsWithThreads | any(. == $r.id) | not)) | sort_by(.createdAt) | last) // null) as $latestThreadless |
+          ($latestThreadless | if . then .id else null end) as $latestThreadlessId |
+          # Select Claude reviews to minimize
+          $claudeReviews[] |
+          select(.isMinimized == false) |
+          . as $review |
+          select(
+            # Case 1: Has threads and all are resolved
+            ($threadStatusByReview[$review.id] != null and $threadStatusByReview[$review.id].allResolved == true) or
+            # Case 2: No threads and not the latest threadless review
+            (($reviewsWithThreads | any(. == $review.id) | not) and $review.id != $latestThreadlessId)
+          ) |
+          .id
+          JQEOF
+
+          # Minimize each review
+          echo "$DATA" | jq -r -f /tmp/minimize-filter.jq | while read -r id; do
+            if [ -n "$id" ]; then
+              echo "Minimizing review: $id"
+              gh api graphql -f query='
+                mutation($id: ID!) {
+                  minimizeComment(input: {subjectId: $id, classifier: OUTDATED}) {
+                    minimizedComment { isMinimized }
+                  }
+                }' -f id="$id" || true
+            fi
+          done
+
+          echo "Done minimizing outdated reviews"
