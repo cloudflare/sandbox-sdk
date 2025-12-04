@@ -21,6 +21,8 @@ export class MiscHandler extends BaseHandler<Request, Response> {
         return await this.handleRoot(request, context);
       case '/api/health':
         return await this.handleHealth(request, context);
+      case '/api/ping':
+        return await this.handleHealth(request, context);
       case '/api/shutdown':
         return await this.handleShutdown(request, context);
       case '/api/version':
