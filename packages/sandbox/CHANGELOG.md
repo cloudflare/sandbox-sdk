@@ -1,5 +1,15 @@
 # @cloudflare/sandbox
 
+## 0.6.2
+
+### Patch Changes
+
+- [#267](https://github.com/cloudflare/sandbox-sdk/pull/267) [`204f9ac`](https://github.com/cloudflare/sandbox-sdk/commit/204f9ac301c983ed04589eb9d72418a0b06ec8a3) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Fix process callbacks, PID capture, and getLogs race condition for fast commands
+
+- [#264](https://github.com/cloudflare/sandbox-sdk/pull/264) [`8601b5c`](https://github.com/cloudflare/sandbox-sdk/commit/8601b5c4fcb3a822aeefd870f26b3618c59e3212) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Fix type error when extending Sandbox class by making getSandbox and SandboxEnv generic
+
+- [#263](https://github.com/cloudflare/sandbox-sdk/pull/263) [`059963e`](https://github.com/cloudflare/sandbox-sdk/commit/059963e80ff7d7d9696e8d9770339d3e849fcfdf) Thanks [@PavanKalisetti](https://github.com/PavanKalisetti)! - Fix a bug where the /api/ping endpoint was not handled, causing a 500 error
+
 ## 0.6.1
 
 ### Patch Changes
@@ -30,10 +40,10 @@
 
   ```dockerfile
   # Before
-  FROM cloudflare/sandbox:0.6.1
+  FROM cloudflare/sandbox:0.6.2
 
   # After
-  FROM cloudflare/sandbox:0.6.1-python
+  FROM cloudflare/sandbox:0.6.2-python
   ```
 
   Without this change, Python execution will fail with `PYTHON_NOT_AVAILABLE` error.
