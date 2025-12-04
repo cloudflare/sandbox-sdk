@@ -12,6 +12,7 @@ import type {
   ISandbox,
   LogEvent,
   MountBucketOptions,
+  PortCheckRequest,
   Process,
   ProcessOptions,
   ProcessStatus,
@@ -19,7 +20,8 @@ import type {
   SandboxOptions,
   SessionOptions,
   StreamOptions,
-  WaitForLogResult
+  WaitForLogResult,
+  WaitForPortOptions
 } from '@repo/shared';
 import {
   createLogger,
@@ -1255,8 +1257,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         return this.waitForLogPattern(data.id, data.command, pattern, timeout);
       },
 
-      waitForPort: async (port: number, timeout?: number): Promise<void> => {
-        await this.waitForPortReady(data.id, data.command, port, timeout);
+      waitForPort: async (
+        port: number,
+        options?: WaitForPortOptions
+      ): Promise<void> => {
+        await this.waitForPortReady(data.id, data.command, port, options);
       }
     };
   }
@@ -1425,13 +1430,34 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     processId: string,
     command: string,
     port: number,
-    timeout?: number
+    options?: WaitForPortOptions
   ): Promise<void> {
+    const {
+      mode = 'http',
+      path = '/',
+      status = { min: 200, max: 399 },
+      timeout,
+      interval = 500
+    } = options ?? {};
+
     const startTime = Date.now();
-    const conditionStr = `port ${port}`;
-    const targetInterval = 500; // Target interval between checks
-    const execTimeout = 1000; // Timeout for each port check
+    const conditionStr =
+      mode === 'http' ? `port ${port} (HTTP ${path})` : `port ${port} (TCP)`;
+    const targetInterval = interval;
     let checkCount = 0;
+
+    // Normalize status to min/max
+    const statusMin = typeof status === 'number' ? status : status.min;
+    const statusMax = typeof status === 'number' ? status : status.max;
+
+    // Build the port check request
+    const checkRequest: PortCheckRequest = {
+      port,
+      mode,
+      path,
+      statusMin,
+      statusMax
+    };
 
     while (true) {
       // Check timeout if specified
@@ -1441,16 +1467,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
         // Exit if we've exceeded timeout
         if (remaining <= 0) {
-          throw this.createReadyTimeoutError(
-            processId,
-            command,
-            conditionStr,
-            timeout
-          );
-        }
-
-        // Skip check if remaining time is less than exec timeout
-        if (remaining < execTimeout) {
           throw this.createReadyTimeoutError(
             processId,
             command,
@@ -1478,20 +1494,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         }
       }
 
-      // Try to connect to the port using bash's /dev/tcp
+      // Check port readiness via container endpoint
       const checkStart = Date.now();
       try {
-        const execTimeoutMs =
-          timeout !== undefined
-            ? Math.min(execTimeout, timeout - (Date.now() - startTime))
-            : execTimeout;
-
-        const result = await this.exec(
-          `bash -c 'echo > /dev/tcp/localhost/${port}' 2>/dev/null`,
-          { timeout: execTimeoutMs }
-        );
-        if (result.exitCode === 0) {
-          return; // Port is available
+        const result = await this.client.ports.checkPortReady(checkRequest);
+        if (result.ready) {
+          return; // Port is ready
         }
       } catch {
         // Port not ready yet, continue polling
@@ -1499,7 +1507,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
       checkCount++;
 
-      // Calculate sleep time accounting for exec duration
+      // Calculate sleep time accounting for check duration
       const checkDuration = Date.now() - checkStart;
       const sleepTime = Math.max(0, targetInterval - checkDuration);
 

@@ -464,7 +464,7 @@ data: {"type":"exit","exitCode":127,"timestamp":"${new Date().toISOString()}"}
   });
 
   describe('waitForPort() method', () => {
-    it('should wait for port to become available', async () => {
+    it('should wait for port to become available with HTTP mode (default)', async () => {
       vi.spyOn(sandbox.client.processes, 'startProcess').mockResolvedValue({
         success: true,
         processId: 'proc-server',
@@ -485,23 +485,96 @@ data: {"type":"exit","exitCode":127,"timestamp":"${new Date().toISOString()}"}
         timestamp: new Date().toISOString()
       } as any);
 
-      vi.spyOn(sandbox.client.commands, 'execute').mockResolvedValue({
-        success: true,
-        stdout: '',
-        stderr: '',
-        exitCode: 0,
-        command: "bash -c 'echo > /dev/tcp/localhost/3000' 2>/dev/null",
-        timestamp: new Date().toISOString()
-      } as any);
+      vi.spyOn(sandbox.client.ports, 'checkPortReady').mockResolvedValue({
+        ready: true,
+        statusCode: 200
+      });
 
       const proc = await sandbox.startProcess('npm start');
       await proc.waitForPort(3000);
 
-      expect(sandbox.client.commands.execute).toHaveBeenCalledWith(
-        "bash -c 'echo > /dev/tcp/localhost/3000' 2>/dev/null",
-        expect.any(String),
-        expect.objectContaining({ timeoutMs: 1000 })
-      );
+      expect(sandbox.client.ports.checkPortReady).toHaveBeenCalledWith({
+        port: 3000,
+        mode: 'http',
+        path: '/',
+        statusMin: 200,
+        statusMax: 399
+      });
+    });
+
+    it('should support TCP mode for non-HTTP services', async () => {
+      vi.spyOn(sandbox.client.processes, 'startProcess').mockResolvedValue({
+        success: true,
+        processId: 'proc-db',
+        pid: 12345,
+        command: 'postgres',
+        timestamp: new Date().toISOString()
+      } as any);
+
+      vi.spyOn(sandbox.client.processes, 'getProcess').mockResolvedValue({
+        success: true,
+        process: {
+          id: 'proc-db',
+          pid: 12345,
+          command: 'postgres',
+          status: 'running',
+          startTime: new Date().toISOString()
+        },
+        timestamp: new Date().toISOString()
+      } as any);
+
+      vi.spyOn(sandbox.client.ports, 'checkPortReady').mockResolvedValue({
+        ready: true
+      });
+
+      const proc = await sandbox.startProcess('postgres');
+      await proc.waitForPort(5432, { mode: 'tcp' });
+
+      expect(sandbox.client.ports.checkPortReady).toHaveBeenCalledWith({
+        port: 5432,
+        mode: 'tcp',
+        path: '/',
+        statusMin: 200,
+        statusMax: 399
+      });
+    });
+
+    it('should support custom health check path', async () => {
+      vi.spyOn(sandbox.client.processes, 'startProcess').mockResolvedValue({
+        success: true,
+        processId: 'proc-server',
+        pid: 12345,
+        command: 'npm start',
+        timestamp: new Date().toISOString()
+      } as any);
+
+      vi.spyOn(sandbox.client.processes, 'getProcess').mockResolvedValue({
+        success: true,
+        process: {
+          id: 'proc-server',
+          pid: 12345,
+          command: 'npm start',
+          status: 'running',
+          startTime: new Date().toISOString()
+        },
+        timestamp: new Date().toISOString()
+      } as any);
+
+      vi.spyOn(sandbox.client.ports, 'checkPortReady').mockResolvedValue({
+        ready: true,
+        statusCode: 200
+      });
+
+      const proc = await sandbox.startProcess('npm start');
+      await proc.waitForPort(3000, { path: '/health', status: 200 });
+
+      expect(sandbox.client.ports.checkPortReady).toHaveBeenCalledWith({
+        port: 3000,
+        mode: 'http',
+        path: '/health',
+        statusMin: 200,
+        statusMax: 200
+      });
     });
 
     it('should throw ProcessExitedBeforeReadyError when process exits before port is ready', async () => {
@@ -542,7 +615,47 @@ data: {"type":"exit","exitCode":127,"timestamp":"${new Date().toISOString()}"}
       } catch (error) {
         expect(error).toBeInstanceOf(ProcessExitedBeforeReadyError);
         const exitError = error as ProcessExitedBeforeReadyError;
-        expect(exitError.condition).toBe('port 3000');
+        expect(exitError.condition).toBe('port 3000 (HTTP /)');
+      }
+    });
+
+    it('should throw ProcessReadyTimeoutError when port does not become ready', async () => {
+      vi.spyOn(sandbox.client.processes, 'startProcess').mockResolvedValue({
+        success: true,
+        processId: 'proc-server',
+        pid: 12345,
+        command: 'npm start',
+        timestamp: new Date().toISOString()
+      } as any);
+
+      vi.spyOn(sandbox.client.processes, 'getProcess').mockResolvedValue({
+        success: true,
+        process: {
+          id: 'proc-server',
+          pid: 12345,
+          command: 'npm start',
+          status: 'running',
+          startTime: new Date().toISOString()
+        },
+        timestamp: new Date().toISOString()
+      } as any);
+
+      // Port never becomes ready
+      vi.spyOn(sandbox.client.ports, 'checkPortReady').mockResolvedValue({
+        ready: false,
+        error: 'Connection refused'
+      });
+
+      const proc = await sandbox.startProcess('npm start');
+
+      try {
+        await proc.waitForPort(3000, { timeout: 100, interval: 50 });
+        expect.fail('Should have thrown');
+      } catch (error) {
+        expect(error).toBeInstanceOf(ProcessReadyTimeoutError);
+        const timeoutError = error as ProcessReadyTimeoutError;
+        expect(timeoutError.processId).toBe('proc-server');
+        expect(timeoutError.condition).toBe('port 3000 (HTTP /)');
       }
     });
   });

@@ -42,7 +42,8 @@ export type {
   SessionOptions,
   StreamOptions,
   // Process readiness types
-  WaitForLogResult
+  WaitForLogResult,
+  WaitForPortOptions
 } from '@repo/shared';
 // Export type guards for runtime validation
 export { isExecResult, isProcess, isProcessStatus } from '@repo/shared';
@@ -98,10 +99,6 @@ export type {
   ExecutionCallbacks,
   InterpreterClient
 } from './clients/interpreter-client.js';
-export type {
-  ProcessExitedBeforeReadyContext,
-  ProcessReadyTimeoutContext
-} from './errors';
 // Export process readiness errors
 export {
   ProcessExitedBeforeReadyError,

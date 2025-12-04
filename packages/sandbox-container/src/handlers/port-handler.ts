@@ -1,6 +1,7 @@
 // Port Handler
 import type {
   Logger,
+  PortCheckRequest,
   PortCloseResult,
   PortExposeResult,
   PortListResult
@@ -25,6 +26,8 @@ export class PortHandler extends BaseHandler<Request, Response> {
 
     if (pathname === '/api/expose-port') {
       return await this.handleExpose(request, context);
+    } else if (pathname === '/api/port-check') {
+      return await this.handlePortCheck(request, context);
     } else if (pathname === '/api/exposed-ports') {
       return await this.handleList(request, context);
     } else if (pathname.startsWith('/api/exposed-ports/')) {
@@ -49,6 +52,23 @@ export class PortHandler extends BaseHandler<Request, Response> {
       },
       context
     );
+  }
+
+  private async handlePortCheck(
+    request: Request,
+    context: RequestContext
+  ): Promise<Response> {
+    const body = await this.parseRequestBody<PortCheckRequest>(request);
+
+    const result = await this.portService.checkPortReady(body);
+
+    return new Response(JSON.stringify(result), {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/json',
+        ...context.corsHeaders
+      }
+    });
   }
 
   private async handleExpose(

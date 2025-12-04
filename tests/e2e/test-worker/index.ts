@@ -556,7 +556,14 @@ console.log('Terminal server on port ' + port);
             headers: { 'Content-Type': 'application/json' }
           });
         }
-        await process.waitForPort(body.port, body.timeout);
+        // Build WaitForPortOptions from request body
+        await process.waitForPort(body.port, {
+          mode: body.mode,
+          path: body.path,
+          status: body.status,
+          timeout: body.timeout,
+          interval: body.interval
+        });
         return new Response(JSON.stringify({ success: true }), {
           headers: { 'Content-Type': 'application/json' }
         });
