@@ -341,99 +341,60 @@ for i in range(3):
   // ============================================================================
 
   test('context isolation and concurrency: isolation, many contexts, mutex', async () => {
-    console.log('[isolation] Starting test');
-
     // Test basic isolation between two contexts
-    console.log('[isolation] Creating ctx1 (python)');
     const ctx1 = await createContext('python');
-    console.log('[isolation] Created ctx1:', ctx1.id);
-
-    console.log('[isolation] Creating ctx2 (python)');
     const ctx2 = await createContext('python');
-    console.log('[isolation] Created ctx2:', ctx2.id);
 
-    console.log('[isolation] Executing secret assignment in ctx1');
     await executeCode(ctx1, 'secret = "context1"');
-    console.log('[isolation] Checking isolation in ctx2');
     const isolationCheck = await executeCode(ctx2, 'print(secret)');
-    console.log(
-      '[isolation] Isolation check result:',
-      isolationCheck.error?.name
-    );
     expect(isolationCheck.error).toBeDefined();
     expect(isolationCheck.error!.name || isolationCheck.error!.message).toMatch(
       /NameError|not defined/i
     );
 
-    // Cleanup basic isolation contexts - SEQUENTIAL to avoid hanging
-    console.log('[isolation] Deleting ctx1');
+    // Cleanup basic isolation contexts sequentially
     await deleteContext(ctx1.id);
-    console.log('[isolation] Deleting ctx2');
     await deleteContext(ctx2.id);
-    console.log('[isolation] Cleanup done');
 
-    // Test isolation across 3 contexts - create sequentially
-    console.log('[isolation] Creating 3 JS contexts');
+    // Test isolation across 3 contexts
     const manyContexts: CodeContext[] = [];
     for (let i = 0; i < 3; i++) {
-      console.log(`[isolation] Creating context ${i}`);
-      const ctx = await createContext('javascript');
-      console.log(`[isolation] Created context ${i}:`, ctx.id);
-      manyContexts.push(ctx);
+      manyContexts.push(await createContext('javascript'));
     }
 
-    // Set unique values in each context sequentially
-    console.log('[isolation] Setting values in 3 contexts');
+    // Set unique values in each context
     for (let i = 0; i < manyContexts.length; i++) {
-      console.log(`[isolation] Setting value in context ${i}`);
       const exec = await executeCode(
         manyContexts[i],
         `const contextValue = ${i}; contextValue;`
       );
-      console.log(`[isolation] Context ${i} set complete`);
       expect(exec.error, `Context ${i} set error`).toBeUndefined();
       expect(exec.results![0].text).toContain(String(i));
     }
-    console.log('[isolation] All values set');
 
-    // Verify isolated state sequentially
-    console.log('[isolation] Verifying isolated state');
+    // Verify isolated state
     for (let i = 0; i < manyContexts.length; i++) {
-      console.log(`[isolation] Reading context ${i}`);
       const exec = await executeCode(manyContexts[i], 'contextValue;');
-      console.log(`[isolation] Context ${i} read complete`);
       expect(exec.error, `Context ${i} read error`).toBeUndefined();
       expect(exec.results![0].text).toContain(String(i));
     }
-    console.log('[isolation] Verification done');
 
-    // Cleanup many contexts
-    console.log('[isolation] Cleaning up 3 contexts');
-    for (let i = 0; i < manyContexts.length; i++) {
-      console.log(`[isolation] Deleting context ${i}:`, manyContexts[i].id);
-      await deleteContext(manyContexts[i].id);
-      console.log(`[isolation] Deleted context ${i}`);
+    // Cleanup contexts sequentially
+    for (const ctx of manyContexts) {
+      await deleteContext(ctx.id);
     }
-    console.log('[isolation] Cleanup done');
 
     // Test concurrent execution on same context (mutex test)
-    console.log('[isolation] Creating mutex context');
     const mutexCtx = await createContext('javascript');
-    console.log('[isolation] Mutex context created:', mutexCtx.id);
-
-    console.log('[isolation] Initializing counter');
     await executeCode(mutexCtx, 'let counter = 0;');
-    console.log('[isolation] Counter initialized');
 
     // Launch 5 concurrent increments
-    console.log('[isolation] Launching 5 concurrent increments');
     const concurrentRequests = 5;
     const results = await Promise.allSettled(
       Array.from({ length: concurrentRequests }, () =>
         executeCode(mutexCtx, 'counter++; counter;')
       )
     );
-    console.log('[isolation] Concurrent increments done');
 
     // Collect counter values
     const counterValues: number[] = [];
@@ -445,7 +406,6 @@ for i in range(3):
         if (match) counterValues.push(parseInt(match[0], 10));
       }
     }
-    console.log('[isolation] Counter values:', counterValues);
 
     // All 5 should succeed with values 1-5 (serial execution via mutex)
     expect(counterValues.length).toBe(concurrentRequests);
@@ -453,18 +413,14 @@ for i in range(3):
     expect(counterValues).toEqual(Array.from({ length: 5 }, (_, i) => i + 1));
 
     // Verify final counter state
-    console.log('[isolation] Verifying final counter');
     const finalExec = await executeCode(mutexCtx, 'counter;');
     const finalValue = parseInt(
       finalExec.results?.[0]?.text?.match(/\d+/)?.[0] || '0',
       10
     );
-    console.log('[isolation] Final counter value:', finalValue);
     expect(finalValue).toBe(5);
 
-    console.log('[isolation] Cleaning up mutex context');
     await deleteContext(mutexCtx.id);
-    console.log('[isolation] Test complete');
   }, 30000);
 
   // ============================================================================
@@ -472,10 +428,7 @@ for i in range(3):
   // ============================================================================
 
   test('error handling: invalid language, non-existent context, Python unavailable', async () => {
-    console.log('[errors] Starting test');
-
     // Invalid language
-    console.log('[errors] Testing invalid language');
     const invalidLangResponse = await fetch(
       `${workerUrl}/api/code/context/create`,
       {
@@ -484,17 +437,12 @@ for i in range(3):
         body: JSON.stringify({ language: 'invalid-lang' })
       }
     );
-    console.log(
-      '[errors] Invalid language response:',
-      invalidLangResponse.status
-    );
     expect(invalidLangResponse.status).toBeGreaterThanOrEqual(400);
     const invalidLangError =
       (await invalidLangResponse.json()) as ErrorResponse;
     expect(invalidLangError.error).toBeTruthy();
 
     // Non-existent context execution
-    console.log('[errors] Testing non-existent context execution');
     const fakeContextExec = await fetch(`${workerUrl}/api/code/execute`, {
       method: 'POST',
       headers,
@@ -505,34 +453,27 @@ for i in range(3):
         }
       })
     });
-    console.log('[errors] Fake context exec response:', fakeContextExec.status);
     expect(fakeContextExec.status).toBeGreaterThanOrEqual(400);
     const fakeContextError = (await fakeContextExec.json()) as ErrorResponse;
     expect(fakeContextError.error).toBeTruthy();
 
     // Delete non-existent context
-    console.log('[errors] Testing delete non-existent context');
     await fetch(`${workerUrl}/api/execute`, {
       method: 'POST',
       headers,
       body: JSON.stringify({ command: 'echo "init"' })
     });
-    console.log('[errors] Init command done');
     const deleteFakeResponse = await fetch(
       `${workerUrl}/api/code/context/fake-id-99999`,
       { method: 'DELETE', headers }
     );
-    console.log('[errors] Delete fake response:', deleteFakeResponse.status);
     expect(deleteFakeResponse.status).toBeGreaterThanOrEqual(400);
     const deleteFakeError = (await deleteFakeResponse.json()) as ErrorResponse;
     expect(deleteFakeError.error).toBeTruthy();
 
     // Python unavailable on base image
-    console.log('[errors] Testing Python unavailable on base image');
     const sandbox = await getSharedSandbox();
-    console.log('[errors] Got sandbox');
     const baseImageHeaders = sandbox.createHeaders(createUniqueSession());
-    console.log('[errors] Created base image headers');
     const pythonUnavailableResponse = await fetch(
       `${workerUrl}/api/code/context/create`,
       {
@@ -541,10 +482,6 @@ for i in range(3):
         body: JSON.stringify({ language: 'python' })
       }
     );
-    console.log(
-      '[errors] Python unavailable response:',
-      pythonUnavailableResponse.status
-    );
     expect(pythonUnavailableResponse.status).toBe(500);
     const pythonUnavailableError =
       (await pythonUnavailableResponse.json()) as ErrorResponse;
@@ -552,6 +489,5 @@ for i in range(3):
       'Python interpreter not available'
     );
     expect(pythonUnavailableError.error).toMatch(/-python/);
-    console.log('[errors] Test complete');
   }, 30000);
 });
