@@ -246,6 +246,8 @@ export interface ProcessRecord {
     sessionId: string;
     commandId: string;
   };
+  // Promise that resolves when all streaming events have been processed
+  streamingComplete?: Promise<void>;
   // For isolation layer (file-based IPC)
   stdoutFile?: string;
   stderrFile?: string;

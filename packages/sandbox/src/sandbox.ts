@@ -45,11 +45,11 @@ import {
 import type { MountInfo } from './storage-mount/types';
 import { SDK_VERSION } from './version';
 
-export function getSandbox(
-  ns: DurableObjectNamespace<Sandbox>,
+export function getSandbox<T extends Sandbox<any>>(
+  ns: DurableObjectNamespace<T>,
   id: string,
   options?: SandboxOptions
-): Sandbox {
+): T {
   const sanitizedId = sanitizeSandboxId(id);
   const effectiveId = options?.normalizeId
     ? sanitizedId.toLowerCase()
@@ -65,7 +65,7 @@ export function getSandbox(
     );
   }
 
-  const stub = getContainer(ns, effectiveId) as unknown as Sandbox;
+  const stub = getContainer(ns, effectiveId);
 
   stub.setSandboxName?.(effectiveId, options?.normalizeId);
 
@@ -87,7 +87,7 @@ export function getSandbox(
 
   return Object.assign(stub, {
     wsConnect: connect(stub)
-  });
+  }) as T;
 }
 
 export function connect(stub: {
@@ -1289,6 +1289,16 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         options.onStart(processObj);
       }
 
+      // Start background streaming if output/exit callbacks are provided
+      if (options?.onOutput || options?.onExit) {
+        // Fire and forget - don't await, let it run in background
+        this.startProcessCallbackStream(response.processId, options).catch(
+          () => {
+            // Error already handled in startProcessCallbackStream
+          }
+        );
+      }
+
       return processObj;
     } catch (error) {
       if (options?.onError && error instanceof Error) {
@@ -1296,6 +1306,56 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       }
 
       throw error;
+    }
+  }
+
+  /**
+   * Start background streaming for process callbacks
+   * Opens SSE stream to container and routes events to callbacks
+   */
+  private async startProcessCallbackStream(
+    processId: string,
+    options: ProcessOptions
+  ): Promise<void> {
+    try {
+      const stream = await this.client.processes.streamProcessLogs(processId);
+
+      for await (const event of parseSSEStream<{
+        type: string;
+        data?: string;
+        exitCode?: number;
+        processId?: string;
+      }>(stream)) {
+        switch (event.type) {
+          case 'stdout':
+            if (event.data && options.onOutput) {
+              options.onOutput('stdout', event.data);
+            }
+            break;
+          case 'stderr':
+            if (event.data && options.onOutput) {
+              options.onOutput('stderr', event.data);
+            }
+            break;
+          case 'exit':
+          case 'complete':
+            if (options.onExit) {
+              options.onExit(event.exitCode ?? null);
+            }
+            return; // Stream complete
+        }
+      }
+    } catch (error) {
+      // Call onError if streaming fails
+      if (options.onError && error instanceof Error) {
+        options.onError(error);
+      }
+      // Don't rethrow - background streaming failure shouldn't crash the caller
+      this.logger.error(
+        'Background process streaming failed',
+        error instanceof Error ? error : new Error(String(error)),
+        { processId }
+      );
     }
   }
 

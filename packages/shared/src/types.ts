@@ -209,6 +209,7 @@ export interface ExecEvent {
   result?: ExecResult;
   error?: string;
   sessionId?: string;
+  pid?: number; // Present on 'start' event
 }
 
 export interface LogEvent {

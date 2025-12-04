@@ -225,11 +225,10 @@ describe('Process Lifecycle Workflow', () => {
       });
     }, 90000);
 
-    test('should get process logs after execution', async () => {
+    test('should capture PID and logs immediately for fast commands', async () => {
       const sandboxId = createSandboxId();
       const headers = createTestHeaders(sandboxId);
 
-      // Start a process that outputs to stdout
       const startResponse = await fetch(`${workerUrl}/api/process/start`, {
         method: 'POST',
         headers,
@@ -238,13 +237,15 @@ describe('Process Lifecycle Workflow', () => {
         })
       });
 
+      expect(startResponse.status).toBe(200);
       const startData = (await startResponse.json()) as Process;
       const processId = startData.id;
 
-      // Wait for process to complete
-      await new Promise((resolve) => setTimeout(resolve, 2000));
+      // PID should be available immediately
+      expect(startData.pid).toBeDefined();
+      expect(typeof startData.pid).toBe('number');
 
-      // Get process logs
+      // Logs should be available immediately for fast commands
       const logsResponse = await fetch(
         `${workerUrl}/api/process/${processId}/logs`,
         {
