@@ -12,6 +12,7 @@
  *
  * These tests validate the README "Data Analysis with Code Interpreter" examples
  * and ensure the code interpreter works end-to-end in a real container environment.
+ *
  */
 
 import { beforeAll, describe, expect, test } from 'vitest';
@@ -27,544 +28,254 @@ describe('Code Interpreter Workflow (E2E)', () => {
   let headers: Record<string, string>;
 
   beforeAll(async () => {
-    // Use the shared sandbox with Python
     const sandbox = await getSharedSandbox();
     workerUrl = sandbox.workerUrl;
     headers = sandbox.createPythonHeaders(createUniqueSession());
   }, 120000);
 
+  // Helper to create context
+  async function createContext(language: 'python' | 'javascript') {
+    const res = await fetch(`${workerUrl}/api/code/context/create`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ language })
+    });
+    expect(res.status).toBe(200);
+    return (await res.json()) as CodeContext;
+  }
+
+  // Helper to execute code
+  async function executeCode(context: CodeContext, code: string) {
+    const res = await fetch(`${workerUrl}/api/code/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ code, options: { context } })
+    });
+    expect(res.status).toBe(200);
+    return (await res.json()) as ExecutionResult;
+  }
+
+  // Helper to delete context
+  async function deleteContext(contextId: string) {
+    return fetch(`${workerUrl}/api/code/context/${contextId}`, {
+      method: 'DELETE',
+      headers
+    });
+  }
+
   // ============================================================================
-  // Context Management
+  // Test 1: Context Lifecycle (create, list, delete)
   // ============================================================================
 
-  test('should create and list code contexts', async () => {
+  test('context lifecycle: create, list, and delete contexts', async () => {
     // Create Python context
-    const pythonCtxResponse = await fetch(
-      `${workerUrl}/api/code/context/create`,
-      {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ language: 'python' })
-      }
-    );
-
-    expect(pythonCtxResponse.status).toBe(200);
-    const pythonCtx = (await pythonCtxResponse.json()) as CodeContext;
+    const pythonCtx = await createContext('python');
     expect(pythonCtx.id).toBeTruthy();
     expect(pythonCtx.language).toBe('python');
 
     // Create JavaScript context
-    const jsCtxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ language: 'javascript' })
-    });
-
-    expect(jsCtxResponse.status).toBe(200);
-    const jsCtx = (await jsCtxResponse.json()) as CodeContext;
+    const jsCtx = await createContext('javascript');
     expect(jsCtx.id).toBeTruthy();
     expect(jsCtx.language).toBe('javascript');
-    expect(jsCtx.id).not.toBe(pythonCtx.id); // Different contexts
+    expect(jsCtx.id).not.toBe(pythonCtx.id);
 
-    // List all contexts
+    // List all contexts - should contain both
     const listResponse = await fetch(`${workerUrl}/api/code/context/list`, {
       method: 'GET',
       headers
     });
-
     expect(listResponse.status).toBe(200);
     const contexts = (await listResponse.json()) as CodeContext[];
-    expect(Array.isArray(contexts)).toBe(true);
     expect(contexts.length).toBeGreaterThanOrEqual(2);
-
     const contextIds = contexts.map((ctx) => ctx.id);
     expect(contextIds).toContain(pythonCtx.id);
     expect(contextIds).toContain(jsCtx.id);
-  }, 120000);
 
-  test('should delete code context', async () => {
-    // Create context
-    const createResponse = await fetch(`${workerUrl}/api/code/context/create`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ language: 'python' })
-    });
-
-    const context = (await createResponse.json()) as CodeContext;
-    const contextId = context.id;
-
-    // Delete context
-    const deleteResponse = await fetch(
-      `${workerUrl}/api/code/context/${contextId}`,
-      {
-        method: 'DELETE',
-        headers
-      }
-    );
-
+    // Delete Python context
+    const deleteResponse = await deleteContext(pythonCtx.id);
     expect(deleteResponse.status).toBe(200);
     const deleteData = (await deleteResponse.json()) as { success: boolean };
     expect(deleteData.success).toBe(true);
 
     // Verify context is removed from list
-    const listResponse = await fetch(`${workerUrl}/api/code/context/list`, {
+    const listAfterDelete = await fetch(`${workerUrl}/api/code/context/list`, {
       method: 'GET',
       headers
     });
+    const contextsAfter = (await listAfterDelete.json()) as CodeContext[];
+    expect(contextsAfter.map((c) => c.id)).not.toContain(pythonCtx.id);
+    expect(contextsAfter.map((c) => c.id)).toContain(jsCtx.id);
 
-    const contexts = (await listResponse.json()) as CodeContext[];
-    const contextIds = contexts.map((ctx) => ctx.id);
-    expect(contextIds).not.toContain(contextId);
+    // Cleanup
+    await deleteContext(jsCtx.id);
   }, 120000);
 
   // ============================================================================
-  // Python Code Execution
+  // Test 2: Python Workflow (execute, state persistence, errors)
   // ============================================================================
 
-  test('should execute simple Python code', async () => {
-    // Create Python context
-    const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ language: 'python' })
-    });
+  test('Python workflow: execute, maintain state, handle errors', async () => {
+    const ctx = await createContext('python');
 
-    const context = await ctxResponse.json();
+    // Simple execution
+    const exec1 = await executeCode(ctx, 'print("Hello from Python!")');
+    expect(exec1.code).toBe('print("Hello from Python!")');
+    expect(exec1.logs.stdout.join('')).toContain('Hello from Python!');
+    expect(exec1.error).toBeUndefined();
 
-    // Execute Python code
-    const execResponse = await fetch(`${workerUrl}/api/code/execute`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        code: 'print("Hello from Python!")',
-        options: { context }
-      })
-    });
+    // Set variables for state persistence
+    const exec2 = await executeCode(ctx, 'x = 42\ny = 10');
+    expect(exec2.error).toBeUndefined();
 
-    expect(execResponse.status).toBe(200);
-    const execution = (await execResponse.json()) as ExecutionResult;
+    // Verify state persists across executions
+    const exec3 = await executeCode(ctx, 'result = x + y\nprint(result)');
+    expect(exec3.logs.stdout.join('')).toContain('52');
+    expect(exec3.error).toBeUndefined();
 
-    expect(execution.code).toBe('print("Hello from Python!")');
-    expect(execution.logs.stdout.join('')).toContain('Hello from Python!');
-    expect(execution.error).toBeUndefined();
-  }, 120000);
-
-  test('should maintain Python state across executions', async () => {
-    // Create context
-    const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ language: 'python' })
-    });
-
-    const context = await ctxResponse.json();
-
-    // Set variable in first execution
-    const exec1Response = await fetch(`${workerUrl}/api/code/execute`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        code: 'x = 42\ny = 10',
-        options: { context }
-      })
-    });
-
-    expect(exec1Response.status).toBe(200);
-    const execution1 = (await exec1Response.json()) as ExecutionResult;
-    expect(execution1.error).toBeUndefined();
-
-    // Use variable in second execution
-    const exec2Response = await fetch(`${workerUrl}/api/code/execute`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        code: 'result = x + y\nprint(result)',
-        options: { context }
-      })
-    });
-
-    expect(exec2Response.status).toBe(200);
-    const execution2 = (await exec2Response.json()) as ExecutionResult;
-    expect(execution2.logs.stdout.join('')).toContain('52');
-    expect(execution2.error).toBeUndefined();
-  }, 120000);
-
-  test('should handle Python errors gracefully', async () => {
-    // Create context
-    const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ language: 'python' })
-    });
-
-    const context = await ctxResponse.json();
-
-    // Execute code with division by zero error
-    const execResponse = await fetch(`${workerUrl}/api/code/execute`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        code: 'x = 1 / 0',
-        options: { context }
-      })
-    });
-
-    expect(execResponse.status).toBe(200);
-    const execution = (await execResponse.json()) as ExecutionResult;
-
-    expect(execution.error).toBeDefined();
-    if (!execution.error) throw new Error('Expected error to be defined');
-
-    expect(execution.error.name).toContain('Error');
-    expect(execution.error.message || execution.error.traceback).toContain(
+    // Error handling - division by zero
+    const exec4 = await executeCode(ctx, 'x = 1 / 0');
+    expect(exec4.error).toBeDefined();
+    expect(exec4.error!.name).toContain('Error');
+    expect(exec4.error!.message || exec4.error!.traceback).toContain(
       'division'
     );
+
+    // Cleanup
+    await deleteContext(ctx.id);
   }, 120000);
 
   // ============================================================================
-  // JavaScript Code Execution
+  // Test 3: JavaScript Workflow (execute, state, top-level await, IIFE, errors)
   // ============================================================================
 
-  test('should execute simple JavaScript code', async () => {
-    // Create JavaScript context
-    const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ language: 'javascript' })
-    });
+  test('JavaScript workflow: execute, state, top-level await, IIFE, errors', async () => {
+    const ctx = await createContext('javascript');
 
-    const context = await ctxResponse.json();
-
-    // Execute JavaScript code
-    const execResponse = await fetch(`${workerUrl}/api/code/execute`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        code: 'console.log("Hello from JavaScript!");',
-        options: { context }
-      })
-    });
-
-    expect(execResponse.status).toBe(200);
-    const execution = (await execResponse.json()) as ExecutionResult;
-
-    expect(execution.logs.stdout.join('')).toContain('Hello from JavaScript!');
-    expect(execution.error).toBeUndefined();
-  }, 120000);
-
-  test('should maintain JavaScript state across executions', async () => {
-    // Create context
-    const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ language: 'javascript' })
-    });
-
-    const context = await ctxResponse.json();
-
-    // Set global variable
-    const exec1Response = await fetch(`${workerUrl}/api/code/execute`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        code: 'global.counter = 0;',
-        options: { context }
-      })
-    });
-
-    expect(exec1Response.status).toBe(200);
-
-    // Increment and read variable
-    const exec2Response = await fetch(`${workerUrl}/api/code/execute`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        code: 'console.log(++global.counter);',
-        options: { context }
-      })
-    });
-
-    expect(exec2Response.status).toBe(200);
-    const execution2 = (await exec2Response.json()) as ExecutionResult;
-    expect(execution2.logs.stdout.join('')).toContain('1');
-  }, 120000);
-
-  test('should handle JavaScript errors gracefully', async () => {
-    // Create context
-    const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ language: 'javascript' })
-    });
-
-    const context = await ctxResponse.json();
-
-    // Execute code with reference error
-    const execResponse = await fetch(`${workerUrl}/api/code/execute`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        code: 'console.log(undefinedVariable);',
-        options: { context }
-      })
-    });
-
-    expect(execResponse.status).toBe(200);
-    const execution = (await execResponse.json()) as ExecutionResult;
-
-    expect(execution.error).toBeDefined();
-    if (!execution.error) throw new Error('Expected error to be defined');
-
-    expect(execution.error.name || execution.error.message).toMatch(
-      /Error|undefined/i
+    // Simple execution
+    const exec1 = await executeCode(
+      ctx,
+      'console.log("Hello from JavaScript!");'
     );
-  }, 120000);
+    expect(exec1.logs.stdout.join('')).toContain('Hello from JavaScript!');
+    expect(exec1.error).toBeUndefined();
 
-  // ============================================================================
-  // Top-Level Await Support (JavaScript)
-  // ============================================================================
+    // State persistence with global
+    await executeCode(ctx, 'global.counter = 0;');
+    const exec2 = await executeCode(ctx, 'console.log(++global.counter);');
+    expect(exec2.logs.stdout.join('')).toContain('1');
 
-  test('should execute top-level await without IIFE wrapper', async () => {
-    // Create JavaScript context
-    const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ language: 'javascript' })
-    });
+    // Top-level await - basic
+    const exec3 = await executeCode(
+      ctx,
+      'const result = await Promise.resolve(42);\nresult'
+    );
+    expect(exec3.error).toBeUndefined();
+    expect(exec3.results![0].text).toContain('42');
 
-    const context = await ctxResponse.json();
-
-    // Execute code with top-level await - no IIFE needed!
-    const execResponse = await fetch(`${workerUrl}/api/code/execute`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        code: 'const result = await Promise.resolve(42);\nresult',
-        options: { context }
-      })
-    });
-
-    expect(execResponse.status).toBe(200);
-    const execution = (await execResponse.json()) as ExecutionResult;
-
-    expect(execution.error).toBeUndefined();
-    expect(execution.results).toBeDefined();
-    expect(execution.results![0].text).toContain('42');
-  }, 120000);
-
-  test('should return last expression value from async code', async () => {
-    // Create JavaScript context
-    const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ language: 'javascript' })
-    });
-
-    const context = await ctxResponse.json();
-
-    // Execute multiple awaits, return last expression
-    const execResponse = await fetch(`${workerUrl}/api/code/execute`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        code: `
+    // Top-level await - multiple awaits returning last expression
+    const exec4 = await executeCode(
+      ctx,
+      `
 const a = await Promise.resolve(10);
 const b = await Promise.resolve(20);
 a + b
-`.trim(),
-        options: { context }
-      })
-    });
+`.trim()
+    );
+    expect(exec4.error).toBeUndefined();
+    expect(exec4.results![0].text).toContain('30');
 
-    expect(execResponse.status).toBe(200);
-    const execution = (await execResponse.json()) as ExecutionResult;
+    // Top-level await - async error handling
+    const exec5 = await executeCode(
+      ctx,
+      'await Promise.reject(new Error("async error"))'
+    );
+    expect(exec5.error).toBeDefined();
+    expect(exec5.error!.message || exec5.logs.stderr.join('')).toContain(
+      'async error'
+    );
 
-    expect(execution.error).toBeUndefined();
-    expect(execution.results).toBeDefined();
-    expect(execution.results![0].text).toContain('30');
-  }, 120000);
-
-  test('should handle async errors in top-level await', async () => {
-    // Create JavaScript context
-    const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ language: 'javascript' })
-    });
-
-    const context = await ctxResponse.json();
-
-    // Execute code that rejects
-    const execResponse = await fetch(`${workerUrl}/api/code/execute`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        code: 'await Promise.reject(new Error("async error"))',
-        options: { context }
-      })
-    });
-
-    expect(execResponse.status).toBe(200);
-    const execution = (await execResponse.json()) as ExecutionResult;
-
-    expect(execution.error).toBeDefined();
-    expect(
-      execution.error!.message || execution.logs.stderr.join('')
-    ).toContain('async error');
-  }, 120000);
-
-  test('should support LLM-generated fetch pattern with top-level await', async () => {
-    // Create JavaScript context
-    const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ language: 'javascript' })
-    });
-
-    const context = await ctxResponse.json();
-
-    // Simulate typical LLM-generated code pattern using setTimeout as async operation
-    const execResponse = await fetch(`${workerUrl}/api/code/execute`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        code: `
+    // Top-level await - LLM-generated pattern with delay
+    const exec6 = await executeCode(
+      ctx,
+      `
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 await delay(10);
 const data = { status: 'success', value: 123 };
 data
-`.trim(),
-        options: { context }
-      })
-    });
-
-    expect(execResponse.status).toBe(200);
-    const execution = (await execResponse.json()) as ExecutionResult;
-
-    expect(execution.error).toBeUndefined();
-    expect(execution.results).toBeDefined();
-    // Object results come back as JSON, not text
-    const result = execution.results![0];
-    const resultData = result.json ?? result.text;
-    expect(resultData).toBeDefined();
+`.trim()
+    );
+    expect(exec6.error).toBeUndefined();
+    const resultData = exec6.results![0].json ?? exec6.results![0].text;
     expect(JSON.stringify(resultData)).toContain('success');
-    expect(JSON.stringify(resultData)).toContain('123');
-  }, 120000);
 
-  test('should persist variables defined with await across executions', async () => {
-    // Create JavaScript context
-    const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ language: 'javascript' })
-    });
+    // Variable persistence with await across executions
+    await executeCode(ctx, 'const persistedValue = await Promise.resolve(99);');
+    const exec7 = await executeCode(ctx, 'persistedValue');
+    expect(exec7.results![0].text).toContain('99');
 
-    const context = await ctxResponse.json();
+    // Promise auto-resolution without await keyword
+    const exec8 = await executeCode(ctx, 'Promise.resolve(123)');
+    expect(exec8.error).toBeUndefined();
+    expect(exec8.results![0].text).toContain('123');
 
-    // First execution: define variable with await
-    const exec1Response = await fetch(`${workerUrl}/api/code/execute`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        code: 'const result = await Promise.resolve(42);',
-        options: { context }
-      })
-    });
-
-    expect(exec1Response.status).toBe(200);
-    const execution1 = (await exec1Response.json()) as ExecutionResult;
-    expect(execution1.error).toBeUndefined();
-
-    // Second execution: access the variable from previous execution
-    const exec2Response = await fetch(`${workerUrl}/api/code/execute`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        code: 'result',
-        options: { context }
-      })
-    });
-
-    expect(exec2Response.status).toBe(200);
-    const execution2 = (await exec2Response.json()) as ExecutionResult;
-    expect(execution2.error).toBeUndefined();
-    expect(execution2.results).toBeDefined();
-    expect(execution2.results![0].text).toContain('42');
-  }, 120000);
-
-  test('should resolve Promise without await keyword', async () => {
-    // Create JavaScript context
-    const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ language: 'javascript' })
-    });
-
-    const context = await ctxResponse.json();
-
-    // Execute a Promise expression - should resolve automatically
-    const execResponse = await fetch(`${workerUrl}/api/code/execute`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        code: 'Promise.resolve(123)',
-        options: { context }
-      })
-    });
-
-    expect(execResponse.status).toBe(200);
-    const execution = (await execResponse.json()) as ExecutionResult;
-    expect(execution.error).toBeUndefined();
-    expect(execution.results).toBeDefined();
-    // The Promise should be automatically awaited and return 123
-    expect(execution.results![0].text).toContain('123');
-  }, 120000);
-
-  test('should support IIFE pattern for backward compatibility', async () => {
-    // Create JavaScript context
-    const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ language: 'javascript' })
-    });
-
-    const context = await ctxResponse.json();
-
-    // Execute code with IIFE pattern
-    const execResponse = await fetch(`${workerUrl}/api/code/execute`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        code: `(async () => {
+    // IIFE pattern for backward compatibility
+    const exec9 = await executeCode(
+      ctx,
+      `(async () => {
   const value = await Promise.resolve('hello');
   return value + ' world';
-})()`,
-        options: { context }
-      })
-    });
+})()`
+    );
+    expect(exec9.error).toBeUndefined();
+    expect(exec9.results![0].text).toContain('hello world');
 
-    expect(execResponse.status).toBe(200);
-    const execution = (await execResponse.json()) as ExecutionResult;
-    expect(execution.error).toBeUndefined();
-    expect(execution.results).toBeDefined();
-    expect(execution.results![0].text).toContain('hello world');
+    // Error handling - reference error
+    const exec10 = await executeCode(ctx, 'console.log(undefinedVariable);');
+    expect(exec10.error).toBeDefined();
+    expect(exec10.error!.name || exec10.error!.message).toMatch(
+      /Error|undefined/i
+    );
+
+    // Cleanup
+    await deleteContext(ctx.id);
   }, 120000);
 
   // ============================================================================
-  // Streaming Execution
+  // Test 4: Multi-language Workflow + Streaming
   // ============================================================================
 
-  test('should stream Python execution output', async () => {
-    // Create context
-    const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ language: 'python' })
-    });
+  test('multi-language workflow: Python→JS data sharing + streaming', async () => {
+    // Create Python context and generate data
+    const pythonCtx = await createContext('python');
+    const pythonExec = await executeCode(
+      pythonCtx,
+      `
+import json
+data = {'values': [1, 2, 3, 4, 5]}
+with open('/tmp/shared_data.json', 'w') as f:
+    json.dump(data, f)
+print("Data saved")
+`.trim()
+    );
+    expect(pythonExec.error).toBeUndefined();
+    expect(pythonExec.logs.stdout.join('')).toContain('Data saved');
 
-    const context = await ctxResponse.json();
+    // Create JavaScript context and consume data
+    const jsCtx = await createContext('javascript');
+    const jsExec = await executeCode(
+      jsCtx,
+      `
+const fs = require('fs');
+const data = JSON.parse(fs.readFileSync('/tmp/shared_data.json', 'utf8'));
+const sum = data.values.reduce((a, b) => a + b, 0);
+console.log('Sum:', sum);
+`.trim()
+    );
+    expect(jsExec.error).toBeUndefined();
+    expect(jsExec.logs.stdout.join('')).toContain('Sum: 15');
 
-    // Execute code with streaming
+    // Test streaming execution
+    const streamCtx = await createContext('python');
     const streamResponse = await fetch(`${workerUrl}/api/code/execute/stream`, {
       method: 'POST',
       headers,
@@ -575,7 +286,7 @@ for i in range(3):
     print(f"Step {i}")
     time.sleep(0.1)
 `.trim(),
-        options: { context }
+        options: { context: streamCtx }
       })
     });
 
@@ -588,430 +299,152 @@ for i in range(3):
     const reader = streamResponse.body?.getReader();
     expect(reader).toBeDefined();
 
-    if (!reader) return;
-
     const decoder = new TextDecoder();
     const events: any[] = [];
     let buffer = '';
 
-    // Read entire stream
     while (true) {
-      const { done, value } = await reader.read();
+      const { done, value } = await reader!.read();
       if (done) break;
-
       buffer += decoder.decode(value, { stream: true });
     }
 
     // Parse SSE events
-    const lines = buffer.split('\n');
-    for (const line of lines) {
+    for (const line of buffer.split('\n')) {
       if (line.startsWith('data: ')) {
         try {
-          const event = JSON.parse(line.slice(6));
-          events.push(event);
-        } catch (e) {
+          events.push(JSON.parse(line.slice(6)));
+        } catch {
           // Ignore parse errors
         }
       }
     }
 
-    // Verify we received output events
-    expect(events.length).toBeGreaterThan(0);
-
-    // Check for stdout events
+    // Verify streaming output
     const stdoutEvents = events.filter((e) => e.type === 'stdout');
     expect(stdoutEvents.length).toBeGreaterThan(0);
-
-    // Verify output content
     const allOutput = stdoutEvents.map((e) => e.text).join('');
     expect(allOutput).toContain('Step 0');
     expect(allOutput).toContain('Step 1');
     expect(allOutput).toContain('Step 2');
+
+    // Cleanup all contexts in parallel
+    await Promise.all([
+      deleteContext(pythonCtx.id),
+      deleteContext(jsCtx.id),
+      deleteContext(streamCtx.id)
+    ]);
   }, 120000);
 
   // ============================================================================
-  // Multi-Language Workflow
+  // Test 5: Context Isolation + Concurrency
   // ============================================================================
 
-  test('should process data in Python and consume in JavaScript', async () => {
-    // Create Python context
-    const pythonCtxResponse = await fetch(
+  test('context isolation and concurrency: isolation, many contexts, mutex', async () => {
+    // Test basic isolation between two contexts
+    const ctx1 = await createContext('python');
+    const ctx2 = await createContext('python');
+
+    await executeCode(ctx1, 'secret = "context1"');
+    const isolationCheck = await executeCode(ctx2, 'print(secret)');
+    expect(isolationCheck.error).toBeDefined();
+    expect(isolationCheck.error!.name || isolationCheck.error!.message).toMatch(
+      /NameError|not defined/i
+    );
+
+    // Cleanup basic isolation contexts
+    await Promise.all([deleteContext(ctx1.id), deleteContext(ctx2.id)]);
+
+    // Test isolation across many contexts (12) - create in parallel
+    const manyContexts = await Promise.all(
+      Array.from({ length: 12 }, () => createContext('javascript'))
+    );
+
+    // Set unique values in each context in parallel
+    await Promise.all(
+      manyContexts.map((context, i) =>
+        executeCode(context, `const contextValue = ${i}; contextValue;`).then(
+          (exec) => {
+            expect(exec.error, `Context ${i} set error`).toBeUndefined();
+            expect(exec.results![0].text).toContain(String(i));
+          }
+        )
+      )
+    );
+
+    // Verify isolated state in parallel
+    await Promise.all(
+      manyContexts.map((context, i) =>
+        executeCode(context, 'contextValue;').then((exec) => {
+          expect(exec.error, `Context ${i} read error`).toBeUndefined();
+          expect(exec.results![0].text).toContain(String(i));
+        })
+      )
+    );
+
+    // Cleanup many contexts in parallel
+    await Promise.all(manyContexts.map((c) => deleteContext(c.id)));
+
+    // Test concurrent execution on same context (mutex test)
+    const mutexCtx = await createContext('javascript');
+    await executeCode(mutexCtx, 'let counter = 0;');
+
+    // Launch 20 concurrent increments
+    const concurrentRequests = 20;
+    const results = await Promise.allSettled(
+      Array.from({ length: concurrentRequests }, () =>
+        executeCode(mutexCtx, 'counter++; counter;')
+      )
+    );
+
+    // Collect counter values
+    const counterValues: number[] = [];
+    for (const result of results) {
+      if (result.status === 'fulfilled') {
+        const exec = result.value;
+        expect(exec.error).toBeUndefined();
+        const match = exec.results?.[0]?.text?.match(/\d+/);
+        if (match) counterValues.push(parseInt(match[0], 10));
+      }
+    }
+
+    // All 20 should succeed with values 1-20 (serial execution via mutex)
+    expect(counterValues.length).toBe(concurrentRequests);
+    counterValues.sort((a, b) => a - b);
+    expect(counterValues).toEqual(Array.from({ length: 20 }, (_, i) => i + 1));
+
+    // Verify final counter state
+    const finalExec = await executeCode(mutexCtx, 'counter;');
+    const finalValue = parseInt(
+      finalExec.results?.[0]?.text?.match(/\d+/)?.[0] || '0',
+      10
+    );
+    expect(finalValue).toBe(20);
+
+    await deleteContext(mutexCtx.id);
+  }, 120000);
+
+  // ============================================================================
+  // Test 6: Error Handling
+  // ============================================================================
+
+  test('error handling: invalid language, non-existent context, Python unavailable', async () => {
+    // Invalid language
+    const invalidLangResponse = await fetch(
       `${workerUrl}/api/code/context/create`,
       {
         method: 'POST',
         headers,
-        body: JSON.stringify({ language: 'python' })
+        body: JSON.stringify({ language: 'invalid-lang' })
       }
     );
+    expect(invalidLangResponse.status).toBeGreaterThanOrEqual(400);
+    const invalidLangError =
+      (await invalidLangResponse.json()) as ErrorResponse;
+    expect(invalidLangError.error).toBeTruthy();
 
-    const pythonCtx = (await pythonCtxResponse.json()) as CodeContext;
-
-    // Generate data in Python and save to file
-    const pythonExecResponse = await fetch(`${workerUrl}/api/code/execute`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        code: `
-import json
-data = {'values': [1, 2, 3, 4, 5]}
-with open('/tmp/shared_data.json', 'w') as f:
-    json.dump(data, f)
-print("Data saved")
-`.trim(),
-        options: { context: pythonCtx }
-      })
-    });
-
-    expect(pythonExecResponse.status).toBe(200);
-    const pythonExec = (await pythonExecResponse.json()) as ExecutionResult;
-    expect(pythonExec.error).toBeUndefined();
-    expect(pythonExec.logs.stdout.join('')).toContain('Data saved');
-
-    // Create JavaScript context
-    const jsCtxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ language: 'javascript' })
-    });
-
-    const jsCtx = (await jsCtxResponse.json()) as CodeContext;
-
-    // Read and process data in JavaScript
-    const jsExecResponse = await fetch(`${workerUrl}/api/code/execute`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        code: `
-const fs = require('fs');
-const data = JSON.parse(fs.readFileSync('/tmp/shared_data.json', 'utf8'));
-const sum = data.values.reduce((a, b) => a + b, 0);
-console.log('Sum:', sum);
-`.trim(),
-        options: { context: jsCtx }
-      })
-    });
-
-    expect(jsExecResponse.status).toBe(200);
-    const jsExec = (await jsExecResponse.json()) as ExecutionResult;
-    expect(jsExec.error).toBeUndefined();
-    expect(jsExec.logs.stdout.join('')).toContain('Sum: 15');
-  }, 120000);
-
-  // ============================================================================
-  // Context Isolation
-  // ============================================================================
-
-  test('should isolate variables between contexts', async () => {
-    // Create two Python contexts
-    const ctx1Response = await fetch(`${workerUrl}/api/code/context/create`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ language: 'python' })
-    });
-
-    const context1 = await ctx1Response.json();
-
-    const ctx2Response = await fetch(`${workerUrl}/api/code/context/create`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ language: 'python' })
-    });
-
-    const context2 = await ctx2Response.json();
-
-    // Set variable in context 1
-    const exec1Response = await fetch(`${workerUrl}/api/code/execute`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        code: 'secret = "context1"',
-        options: { context: context1 }
-      })
-    });
-
-    expect(exec1Response.status).toBe(200);
-
-    // Try to access variable in context 2 - should fail
-    const exec2Response = await fetch(`${workerUrl}/api/code/execute`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        code: 'print(secret)',
-        options: { context: context2 }
-      })
-    });
-
-    expect(exec2Response.status).toBe(200);
-    const execution2 = (await exec2Response.json()) as ExecutionResult;
-
-    // Should have error about undefined variable
-    expect(execution2.error).toBeDefined();
-    if (!execution2.error) throw new Error('Expected error to be defined');
-
-    expect(execution2.error.name || execution2.error.message).toMatch(
-      /NameError|not defined/i
-    );
-  }, 120000);
-
-  test('should maintain isolation across many contexts (12+)', async () => {
-    // Create 12 contexts
-    const contexts: CodeContext[] = [];
-    for (let i = 0; i < 12; i++) {
-      const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ language: 'javascript' })
-      });
-
-      expect(ctxResponse.status).toBe(200);
-      const context = (await ctxResponse.json()) as CodeContext;
-      contexts.push(context);
-    }
-
-    // Set unique state in each context using normal variable declarations
-    // With variable hoisting, const/let declarations persist across executions
-    for (let i = 0; i < contexts.length; i++) {
-      const execResponse = await fetch(`${workerUrl}/api/code/execute`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          code: `const contextValue = ${i}; contextValue;`,
-          options: { context: contexts[i] }
-        })
-      });
-
-      expect(execResponse.status).toBe(200);
-      const execution = (await execResponse.json()) as ExecutionResult;
-      expect(
-        execution.error,
-        `Context ${i} should not have error setting value`
-      ).toBeUndefined();
-      expect(execution.results![0].text).toContain(String(i));
-    }
-
-    // Verify each context still has its isolated state
-    for (let i = 0; i < contexts.length; i++) {
-      const execResponse = await fetch(`${workerUrl}/api/code/execute`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          code: 'contextValue;',
-          options: { context: contexts[i] }
-        })
-      });
-
-      expect(execResponse.status).toBe(200);
-      const execution = (await execResponse.json()) as ExecutionResult;
-      expect(
-        execution.error,
-        `Context ${i} should not have error reading value`
-      ).toBeUndefined();
-      expect(
-        execution.results![0].text,
-        `Context ${i} should have its unique value ${i}`
-      ).toContain(String(i));
-    }
-
-    // Clean up all contexts
-    for (const context of contexts) {
-      await fetch(`${workerUrl}/api/code/context/${context.id}`, {
-        method: 'DELETE',
-        headers
-      });
-    }
-  }, 120000);
-
-  test('should maintain state isolation with concurrent context execution', async () => {
-    // Create contexts sequentially
-    const contexts: CodeContext[] = [];
-    for (let i = 0; i < 4; i++) {
-      const response = await fetch(`${workerUrl}/api/code/context/create`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ language: 'javascript' })
-      });
-      expect(response.status).toBe(200);
-      const context = (await response.json()) as CodeContext;
-      contexts.push(context);
-    }
-
-    // Execute different code in each context concurrently
-    // Each context sets its own unique value using normal variable declarations
-    // With variable hoisting, const/let declarations persist across executions
-    const executionPromises = contexts.map((context, i) =>
-      fetch(`${workerUrl}/api/code/execute`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          code: `const value = ${i}; value;`,
-          options: { context }
-        })
-      }).then((r) => r.json())
-    );
-
-    const execResults = (await Promise.all(
-      executionPromises
-    )) as ExecutionResult[];
-
-    // Verify each execution succeeded and returned the correct value
-    for (let i = 0; i < contexts.length; i++) {
-      expect(
-        execResults[i].error,
-        `Context ${i} should not have error`
-      ).toBeUndefined();
-      expect(execResults[i].results).toBeDefined();
-      expect(execResults[i].results![0].text).toContain(String(i));
-    }
-
-    // Now verify each context maintained its isolated state by reading the value back
-    const verificationPromises = contexts.map((context) =>
-      fetch(`${workerUrl}/api/code/execute`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          code: 'value;',
-          options: { context }
-        })
-      }).then((r) => r.json())
-    );
-
-    const verifyResults = (await Promise.all(
-      verificationPromises
-    )) as ExecutionResult[];
-
-    // Each context should still have its own unique value
-    for (let i = 0; i < contexts.length; i++) {
-      expect(
-        verifyResults[i].error,
-        `Context ${i} verification should not have error`
-      ).toBeUndefined();
-      expect(verifyResults[i].results).toBeDefined();
-      expect(verifyResults[i].results![0].text).toContain(String(i));
-    }
-
-    // Clean up all contexts
-    await Promise.all(
-      contexts.map((context) =>
-        fetch(`${workerUrl}/api/code/context/${context.id}`, {
-          method: 'DELETE',
-          headers
-        })
-      )
-    );
-  }, 120000);
-
-  test('should prevent concurrent execution on same context', async () => {
-    // Create single context
-    const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ language: 'javascript' })
-    });
-
-    expect(ctxResponse.status).toBe(200);
-    const context = (await ctxResponse.json()) as CodeContext;
-
-    // Set up initial state with a counter variable using normal declaration
-    // With variable hoisting, let/var declarations persist across executions
-    const setupResponse = await fetch(`${workerUrl}/api/code/execute`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        code: 'let counter = 0;',
-        options: { context }
-      })
-    });
-    expect(setupResponse.status).toBe(200);
-
-    // Launch 20 concurrent executions that all try to increment the counter
-    // The mutex will queue these requests and execute them serially
-    const concurrentRequests = 20;
-    const requests = Array.from({ length: concurrentRequests }, () =>
-      fetch(`${workerUrl}/api/code/execute`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          code: 'counter++; counter;',
-          options: { context }
-        })
-      }).then((r) => r.json())
-    );
-
-    const results = await Promise.allSettled(requests);
-
-    // Analyze results - collect all counter values
-    const counterValues: number[] = [];
-
-    for (const result of results) {
-      if (result.status === 'fulfilled') {
-        const execution = result.value as ExecutionResult;
-        expect(execution.error).toBeUndefined();
-
-        // Extract the counter value from successful execution results
-        if (execution.results && execution.results.length > 0) {
-          const resultText = execution.results[0].text;
-          if (resultText) {
-            const match = resultText.match(/\d+/);
-            if (match) {
-              counterValues.push(parseInt(match[0], 10));
-            }
-          }
-        }
-      }
-    }
-
-    // Verify: all 20 requests succeeded
-    expect(counterValues.length).toBe(concurrentRequests);
-
-    // Verify serial execution: counter values should be 1 through 20
-    // Sort to handle out-of-order responses (execution was still serial)
-    counterValues.sort((a, b) => a - b);
-    expect(counterValues).toEqual(Array.from({ length: 20 }, (_, i) => i + 1));
-
-    // Verify final state: counter should be 20 (proving all executed serially)
-    const finalCheck = await fetch(`${workerUrl}/api/code/execute`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        code: 'counter;',
-        options: { context }
-      })
-    });
-    const finalResult = (await finalCheck.json()) as ExecutionResult;
-    const finalCounterText = finalResult.results?.[0]?.text;
-    const finalCounterValue = finalCounterText
-      ? parseInt(finalCounterText.match(/\d+/)?.[0] || '0', 10)
-      : 0;
-    expect(finalCounterValue).toBe(20);
-
-    // Clean up
-    await fetch(`${workerUrl}/api/code/context/${context.id}`, {
-      method: 'DELETE',
-      headers
-    });
-  }, 120000);
-
-  // ============================================================================
-  // Error Handling
-  // ============================================================================
-
-  test('should return error for invalid language', async () => {
-    // Try to create context with invalid language
-    const ctxResponse = await fetch(`${workerUrl}/api/code/context/create`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ language: 'invalid-lang' })
-    });
-
-    // Should return error
-    expect(ctxResponse.status).toBeGreaterThanOrEqual(400);
-    const errorData = (await ctxResponse.json()) as ErrorResponse;
-    expect(errorData.error).toBeTruthy();
-  }, 120000);
-
-  test('should return error for non-existent context', async () => {
-    // Try to execute with fake context
-    const execResponse = await fetch(`${workerUrl}/api/code/execute`, {
+    // Non-existent context execution
+    const fakeContextExec = await fetch(`${workerUrl}/api/code/execute`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
@@ -1021,54 +454,41 @@ console.log('Sum:', sum);
         }
       })
     });
+    expect(fakeContextExec.status).toBeGreaterThanOrEqual(400);
+    const fakeContextError = (await fakeContextExec.json()) as ErrorResponse;
+    expect(fakeContextError.error).toBeTruthy();
 
-    // Should return error
-    expect(execResponse.status).toBeGreaterThanOrEqual(400);
-    const errorData = (await execResponse.json()) as ErrorResponse;
-    expect(errorData.error).toBeTruthy();
-  }, 120000);
-
-  test('should return error when deleting non-existent context', async () => {
-    // Initialize sandbox
+    // Delete non-existent context
     await fetch(`${workerUrl}/api/execute`, {
       method: 'POST',
       headers,
       body: JSON.stringify({ command: 'echo "init"' })
     });
-
-    // Try to delete non-existent context
-    const deleteResponse = await fetch(
+    const deleteFakeResponse = await fetch(
       `${workerUrl}/api/code/context/fake-id-99999`,
-      {
-        method: 'DELETE',
-        headers
-      }
+      { method: 'DELETE', headers }
     );
+    expect(deleteFakeResponse.status).toBeGreaterThanOrEqual(400);
+    const deleteFakeError = (await deleteFakeResponse.json()) as ErrorResponse;
+    expect(deleteFakeError.error).toBeTruthy();
 
-    // Should return error
-    expect(deleteResponse.status).toBeGreaterThanOrEqual(400);
-    const errorData = (await deleteResponse.json()) as ErrorResponse;
-    expect(errorData.error).toBeTruthy();
-  }, 120000);
-
-  test('should return helpful error when Python unavailable on base image', async () => {
-    // Use base image headers to test the error message
+    // Python unavailable on base image
     const sandbox = await getSharedSandbox();
     const baseImageHeaders = sandbox.createHeaders(createUniqueSession());
-
-    // Try to create Python context on base image (no Python installed)
-    const response = await fetch(`${workerUrl}/api/code/context/create`, {
-      method: 'POST',
-      headers: baseImageHeaders,
-      body: JSON.stringify({ language: 'python' })
-    });
-
-    // Should return error
-    expect(response.status).toBe(500);
-    const errorData = (await response.json()) as ErrorResponse;
-
-    // Error should guide users to the correct image variant
-    expect(errorData.error).toContain('Python interpreter not available');
-    expect(errorData.error).toMatch(/-python/);
+    const pythonUnavailableResponse = await fetch(
+      `${workerUrl}/api/code/context/create`,
+      {
+        method: 'POST',
+        headers: baseImageHeaders,
+        body: JSON.stringify({ language: 'python' })
+      }
+    );
+    expect(pythonUnavailableResponse.status).toBe(500);
+    const pythonUnavailableError =
+      (await pythonUnavailableResponse.json()) as ErrorResponse;
+    expect(pythonUnavailableError.error).toContain(
+      'Python interpreter not available'
+    );
+    expect(pythonUnavailableError.error).toMatch(/-python/);
   }, 120000);
 });
