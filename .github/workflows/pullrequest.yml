@@ -152,7 +152,7 @@ jobs:
 
       # Run E2E tests against deployed worker
       - name: Run E2E tests
-        run: npx vitest run --config vitest.e2e.shared.config.ts && npx vitest run --config vitest.e2e.isolated.config.ts
+        run: npx vitest run --config vitest.e2e.config.ts
         env:
           TEST_WORKER_URL: ${{ steps.get-url.outputs.worker_url }}
           CI: true
