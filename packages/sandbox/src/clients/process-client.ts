@@ -181,11 +181,8 @@ export class ProcessClient extends BaseHttpClient {
   ): Promise<ReadableStream<Uint8Array>> {
     try {
       const url = `/api/process/${processId}/stream`;
-      const response = await this.doFetch(url, {
-        method: 'GET'
-      });
-
-      const stream = await this.handleStreamResponse(response);
+      // Use doStreamFetch with GET method (process log streaming is GET)
+      const stream = await this.doStreamFetch(url, undefined, 'GET');
 
       this.logSuccess('Process log stream started', `ID: ${processId}`);
 

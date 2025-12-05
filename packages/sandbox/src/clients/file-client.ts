@@ -158,15 +158,8 @@ export class FileClient extends BaseHttpClient {
         sessionId
       };
 
-      const response = await this.doFetch('/api/read/stream', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(data)
-      });
-
-      const stream = await this.handleStreamResponse(response);
+      // Use doStreamFetch which handles both WebSocket and HTTP streaming
+      const stream = await this.doStreamFetch('/api/read/stream', data);
       this.logSuccess('File stream started', path);
       return stream;
     } catch (error) {

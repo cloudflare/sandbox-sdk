@@ -473,6 +473,22 @@ export interface SandboxOptions {
      */
     waitIntervalMS?: number;
   };
+
+  /**
+   * Use WebSocket transport for control plane communication
+   *
+   * When enabled, all sandbox operations (file I/O, command execution, etc.)
+   * are multiplexed over a single WebSocket connection instead of individual
+   * HTTP requests. This significantly reduces sub-request count when running
+   * inside Workers or Durable Objects.
+   *
+   * **Use cases:**
+   * - Agent loops with many file operations inside a Worker/DO
+   * - Any scenario where sub-request limits are a concern
+   *
+   * @default false
+   */
+  useWebSocket?: boolean;
 }
 
 /**

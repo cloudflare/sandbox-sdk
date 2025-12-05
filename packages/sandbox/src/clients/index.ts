@@ -41,6 +41,13 @@ export type {
 } from './process-client';
 export { ProcessClient } from './process-client';
 export { SandboxClient } from './sandbox-client';
+// Transport layer
+export type {
+  TransportMode,
+  TransportOptions,
+  TransportResponse
+} from './transport';
+export { createTransport, Transport } from './transport';
 // Types and interfaces
 export type {
   BaseApiResponse,
@@ -62,3 +69,4 @@ export type {
   VersionResponse
 } from './utility-client';
 export { UtilityClient } from './utility-client';
+export { WSTransport } from './ws-transport';

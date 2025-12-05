@@ -16,6 +16,8 @@
  * 3. Catch integration issues between features
  *
  * Individual edge cases and error handling remain in dedicated test files.
+ *
+ * Tests run TWICE: once with HTTP transport (default) and once with WebSocket transport.
  */
 
 import { describe, test, expect, beforeAll } from 'vitest';
@@ -39,225 +41,238 @@ import type {
   ExecEvent
 } from '@repo/shared';
 
-describe('Comprehensive Workflow', () => {
-  let workerUrl: string;
-  let headers: Record<string, string>;
+// Transport modes to test - runs all tests with both HTTP and WebSocket
+const transportModes = [
+  { name: 'HTTP', useWebSocket: false },
+  { name: 'WebSocket', useWebSocket: true }
+];
 
-  beforeAll(async () => {
-    // Use the shared sandbox with a unique session for this test file
-    const sandbox = await getSharedSandbox();
-    workerUrl = sandbox.workerUrl;
-    headers = sandbox.createHeaders(createUniqueSession());
-  }, 120000);
+describe.each(transportModes)(
+  'Comprehensive Workflow ($name transport)',
+  ({ useWebSocket }) => {
+    let workerUrl: string;
+    let headers: Record<string, string>;
 
-  /**
-   * Test 1: Complete Developer Workflow
-   *
-   * Simulates a realistic workflow:
-   * 1. Clone a repository
-   * 2. Set up environment variables
-   * 3. Explore and modify files
-   * 4. Run commands with environment
-   * 5. Start a background process
-   * 6. Monitor via streaming
-   * 7. Clean up
-   */
-  test('should execute complete developer workflow: clone → env → files → process', async () => {
-    // ========================================
-    // Phase 1: Clone a repository
-    // ========================================
-    const testDir = uniqueTestPath('hello-world');
-    const cloneResponse = await fetch(`${workerUrl}/api/git/clone`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        repoUrl: 'https://github.com/octocat/Hello-World',
-        branch: 'master',
-        targetDir: testDir
-      })
-    });
+    beforeAll(async () => {
+      // Use the shared sandbox with a unique session for this test file
+      const sandbox = await getSharedSandbox();
+      workerUrl = sandbox.workerUrl;
+      // Create unique session per transport mode to avoid state conflicts
+      const baseHeaders = sandbox.createHeaders(createUniqueSession());
+      // Add WebSocket transport header if enabled
+      headers = useWebSocket
+        ? { ...baseHeaders, 'X-Use-WebSocket': 'true' }
+        : baseHeaders;
+    }, 120000);
 
-    expect(cloneResponse.status).toBe(200);
-    const cloneData = (await cloneResponse.json()) as GitCheckoutResult;
-    expect(cloneData.success).toBe(true);
+    /**
+     * Test 1: Complete Developer Workflow
+     *
+     * Simulates a realistic workflow:
+     * 1. Clone a repository
+     * 2. Set up environment variables
+     * 3. Explore and modify files
+     * 4. Run commands with environment
+     * 5. Start a background process
+     * 6. Monitor via streaming
+     * 7. Clean up
+     */
+    test('should execute complete developer workflow: clone → env → files → process', async () => {
+      // ========================================
+      // Phase 1: Clone a repository
+      // ========================================
+      const testDir = uniqueTestPath('hello-world');
+      const cloneResponse = await fetch(`${workerUrl}/api/git/clone`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          repoUrl: 'https://github.com/octocat/Hello-World',
+          branch: 'master',
+          targetDir: testDir
+        })
+      });
 
-    // Verify repo structure using listFiles
-    const listResponse = await fetch(`${workerUrl}/api/list-files`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ path: testDir })
-    });
+      expect(cloneResponse.status).toBe(200);
+      const cloneData = (await cloneResponse.json()) as GitCheckoutResult;
+      expect(cloneData.success).toBe(true);
 
-    expect(listResponse.status).toBe(200);
-    const listData = (await listResponse.json()) as ListFilesResult;
-    expect(listData.files.some((f: FileInfo) => f.name === 'README')).toBe(
-      true
-    );
+      // Verify repo structure using listFiles
+      const listResponse = await fetch(`${workerUrl}/api/list-files`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ path: testDir })
+      });
 
-    // ========================================
-    // Phase 2: Set up environment variables
-    // ========================================
-    const setEnvResponse = await fetch(`${workerUrl}/api/env/set`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        envVars: {
-          PROJECT_NAME: 'hello-world',
-          BUILD_ENV: 'test',
-          API_KEY: 'test-key-123'
-        }
-      })
-    });
+      expect(listResponse.status).toBe(200);
+      const listData = (await listResponse.json()) as ListFilesResult;
+      expect(listData.files.some((f: FileInfo) => f.name === 'README')).toBe(
+        true
+      );
 
-    expect(setEnvResponse.status).toBe(200);
-    const envData = (await setEnvResponse.json()) as EnvSetResult;
-    expect(envData.success).toBe(true);
+      // ========================================
+      // Phase 2: Set up environment variables
+      // ========================================
+      const setEnvResponse = await fetch(`${workerUrl}/api/env/set`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          envVars: {
+            PROJECT_NAME: 'hello-world',
+            BUILD_ENV: 'test',
+            API_KEY: 'test-key-123'
+          }
+        })
+      });
 
-    // Verify env vars are available
-    const envCheckResponse = await fetch(`${workerUrl}/api/execute`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        command: 'echo "$PROJECT_NAME|$BUILD_ENV|$API_KEY"'
-      })
-    });
+      expect(setEnvResponse.status).toBe(200);
+      const envData = (await setEnvResponse.json()) as EnvSetResult;
+      expect(envData.success).toBe(true);
 
-    expect(envCheckResponse.status).toBe(200);
-    const envCheckData = (await envCheckResponse.json()) as ExecResult;
-    expect(envCheckData.stdout.trim()).toBe('hello-world|test|test-key-123');
+      // Verify env vars are available
+      const envCheckResponse = await fetch(`${workerUrl}/api/execute`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          command: 'echo "$PROJECT_NAME|$BUILD_ENV|$API_KEY"'
+        })
+      });
 
-    // ========================================
-    // Phase 3: File operations on cloned repo
-    // ========================================
+      expect(envCheckResponse.status).toBe(200);
+      const envCheckData = (await envCheckResponse.json()) as ExecResult;
+      expect(envCheckData.stdout.trim()).toBe('hello-world|test|test-key-123');
 
-    // Read the README from cloned repo
-    const readReadmeResponse = await fetch(`${workerUrl}/api/file/read`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ path: `${testDir}/README` })
-    });
+      // ========================================
+      // Phase 3: File operations on cloned repo
+      // ========================================
 
-    expect(readReadmeResponse.status).toBe(200);
-    const readmeData = (await readReadmeResponse.json()) as ReadFileResult;
-    expect(readmeData.content).toContain('Hello');
+      // Read the README from cloned repo
+      const readReadmeResponse = await fetch(`${workerUrl}/api/file/read`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ path: `${testDir}/README` })
+      });
 
-    // Create a new directory structure
-    const mkdirResponse = await fetch(`${workerUrl}/api/file/mkdir`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: `${testDir}/src/utils`,
-        recursive: true
-      })
-    });
+      expect(readReadmeResponse.status).toBe(200);
+      const readmeData = (await readReadmeResponse.json()) as ReadFileResult;
+      expect(readmeData.content).toContain('Hello');
 
-    expect(mkdirResponse.status).toBe(200);
+      // Create a new directory structure
+      const mkdirResponse = await fetch(`${workerUrl}/api/file/mkdir`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          path: `${testDir}/src/utils`,
+          recursive: true
+        })
+      });
 
-    // Write a config file using env vars in filename generation
-    const configContent = JSON.stringify(
-      {
-        name: 'hello-world',
-        env: 'test',
-        version: '1.0.0'
-      },
-      null,
-      2
-    );
+      expect(mkdirResponse.status).toBe(200);
 
-    const writeConfigResponse = await fetch(`${workerUrl}/api/file/write`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: `${testDir}/config.json`,
-        content: configContent
-      })
-    });
+      // Write a config file using env vars in filename generation
+      const configContent = JSON.stringify(
+        {
+          name: 'hello-world',
+          env: 'test',
+          version: '1.0.0'
+        },
+        null,
+        2
+      );
 
-    expect(writeConfigResponse.status).toBe(200);
+      const writeConfigResponse = await fetch(`${workerUrl}/api/file/write`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          path: `${testDir}/config.json`,
+          content: configContent
+        })
+      });
 
-    // Write a source file
-    const sourceCode = `
+      expect(writeConfigResponse.status).toBe(200);
+
+      // Write a source file
+      const sourceCode = `
 // Generated file using env: $BUILD_ENV
 export function greet(name) {
   return \`Hello, \${name}!\`;
 }
 `.trim();
 
-    await fetch(`${workerUrl}/api/file/write`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: `${testDir}/src/utils/greet.js`,
-        content: sourceCode
-      })
-    });
+      await fetch(`${workerUrl}/api/file/write`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          path: `${testDir}/src/utils/greet.js`,
+          content: sourceCode
+        })
+      });
 
-    // Rename the file
-    const renameResponse = await fetch(`${workerUrl}/api/file/rename`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        oldPath: `${testDir}/src/utils/greet.js`,
-        newPath: `${testDir}/src/utils/greeter.js`
-      })
-    });
+      // Rename the file
+      const renameResponse = await fetch(`${workerUrl}/api/file/rename`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          oldPath: `${testDir}/src/utils/greet.js`,
+          newPath: `${testDir}/src/utils/greeter.js`
+        })
+      });
 
-    expect(renameResponse.status).toBe(200);
+      expect(renameResponse.status).toBe(200);
 
-    // Verify rename worked by reading new path
-    const readRenamedResponse = await fetch(`${workerUrl}/api/file/read`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: `${testDir}/src/utils/greeter.js`
-      })
-    });
+      // Verify rename worked by reading new path
+      const readRenamedResponse = await fetch(`${workerUrl}/api/file/read`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          path: `${testDir}/src/utils/greeter.js`
+        })
+      });
 
-    expect(readRenamedResponse.status).toBe(200);
-    const renamedData = (await readRenamedResponse.json()) as ReadFileResult;
-    expect(renamedData.content).toContain('greet');
+      expect(readRenamedResponse.status).toBe(200);
+      const renamedData = (await readRenamedResponse.json()) as ReadFileResult;
+      expect(renamedData.content).toContain('greet');
 
-    // ========================================
-    // Phase 4: Run commands with environment
-    // ========================================
+      // ========================================
+      // Phase 4: Run commands with environment
+      // ========================================
 
-    // Use env vars in a command
-    const buildResponse = await fetch(`${workerUrl}/api/execute`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        command: `echo "Building $PROJECT_NAME in $BUILD_ENV mode" && ls -la ${testDir}/src`,
-        cwd: testDir
-      })
-    });
+      // Use env vars in a command
+      const buildResponse = await fetch(`${workerUrl}/api/execute`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          command: `echo "Building $PROJECT_NAME in $BUILD_ENV mode" && ls -la ${testDir}/src`,
+          cwd: testDir
+        })
+      });
 
-    expect(buildResponse.status).toBe(200);
-    const buildData = (await buildResponse.json()) as ExecResult;
-    expect(buildData.stdout).toContain('Building hello-world in test mode');
-    expect(buildData.stdout).toContain('utils');
+      expect(buildResponse.status).toBe(200);
+      const buildData = (await buildResponse.json()) as ExecResult;
+      expect(buildData.stdout).toContain('Building hello-world in test mode');
+      expect(buildData.stdout).toContain('utils');
 
-    // Run git status to verify we're in a git repo
-    const gitStatusResponse = await fetch(`${workerUrl}/api/execute`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        command: 'git status --porcelain',
-        cwd: testDir
-      })
-    });
+      // Run git status to verify we're in a git repo
+      const gitStatusResponse = await fetch(`${workerUrl}/api/execute`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          command: 'git status --porcelain',
+          cwd: testDir
+        })
+      });
 
-    expect(gitStatusResponse.status).toBe(200);
-    const gitStatusData = (await gitStatusResponse.json()) as ExecResult;
-    // Should show our new files as untracked
-    expect(gitStatusData.stdout).toContain('config.json');
-    expect(gitStatusData.stdout).toContain('src/');
+      expect(gitStatusResponse.status).toBe(200);
+      const gitStatusData = (await gitStatusResponse.json()) as ExecResult;
+      // Should show our new files as untracked
+      expect(gitStatusData.stdout).toContain('config.json');
+      expect(gitStatusData.stdout).toContain('src/');
 
-    // ========================================
-    // Phase 5: Background process with streaming
-    // ========================================
+      // ========================================
+      // Phase 5: Background process with streaming
+      // ========================================
 
-    // Write a simple server script that uses env vars
-    const serverScript = `
+      // Write a simple server script that uses env vars
+      const serverScript = `
 const port = 8888;
 console.log(\`[Server] Starting on port \${port}\`);
 console.log(\`[Server] PROJECT_NAME = \${process.env.PROJECT_NAME}\`);
@@ -275,352 +290,355 @@ const interval = setInterval(() => {
 }, 500);
 `.trim();
 
-    await fetch(`${workerUrl}/api/file/write`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: `${testDir}/server.js`,
-        content: serverScript
-      })
-    });
+      await fetch(`${workerUrl}/api/file/write`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          path: `${testDir}/server.js`,
+          content: serverScript
+        })
+      });
 
-    // Start the background process
-    const startResponse = await fetch(`${workerUrl}/api/process/start`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        command: `bun run ${testDir}/server.js`
-      })
-    });
+      // Start the background process
+      const startResponse = await fetch(`${workerUrl}/api/process/start`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          command: `bun run ${testDir}/server.js`
+        })
+      });
 
-    expect(startResponse.status).toBe(200);
-    const processData = (await startResponse.json()) as Process;
-    expect(processData.id).toBeTruthy();
-    const processId = processData.id;
+      expect(startResponse.status).toBe(200);
+      const processData = (await startResponse.json()) as Process;
+      expect(processData.id).toBeTruthy();
+      const processId = processData.id;
 
-    // Wait for process to complete
-    await new Promise((resolve) => setTimeout(resolve, 3000));
+      // Wait for process to complete
+      await new Promise((resolve) => setTimeout(resolve, 3000));
 
-    // Get process logs
-    const logsResponse = await fetch(
-      `${workerUrl}/api/process/${processId}/logs`,
-      {
-        method: 'GET',
-        headers
-      }
-    );
+      // Get process logs
+      const logsResponse = await fetch(
+        `${workerUrl}/api/process/${processId}/logs`,
+        {
+          method: 'GET',
+          headers
+        }
+      );
 
-    expect(logsResponse.status).toBe(200);
-    const logsData = (await logsResponse.json()) as ProcessLogsResult;
+      expect(logsResponse.status).toBe(200);
+      const logsData = (await logsResponse.json()) as ProcessLogsResult;
 
-    // Verify env vars were available to the process
-    expect(logsData.stdout).toContain('PROJECT_NAME = hello-world');
-    expect(logsData.stdout).toContain('BUILD_ENV = test');
-    expect(logsData.stdout).toContain('Heartbeat 3');
-    expect(logsData.stdout).toContain('Done');
+      // Verify env vars were available to the process
+      expect(logsData.stdout).toContain('PROJECT_NAME = hello-world');
+      expect(logsData.stdout).toContain('BUILD_ENV = test');
+      expect(logsData.stdout).toContain('Heartbeat 3');
+      expect(logsData.stdout).toContain('Done');
 
-    // ========================================
-    // Phase 6: Cleanup - move and delete files
-    // ========================================
+      // ========================================
+      // Phase 6: Cleanup - move and delete files
+      // ========================================
 
-    // Move config to a backup location
-    await fetch(`${workerUrl}/api/file/mkdir`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: `${testDir}/backup`,
-        recursive: true
-      })
-    });
+      // Move config to a backup location
+      await fetch(`${workerUrl}/api/file/mkdir`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          path: `${testDir}/backup`,
+          recursive: true
+        })
+      });
 
-    const moveResponse = await fetch(`${workerUrl}/api/file/move`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        sourcePath: `${testDir}/config.json`,
-        destinationPath: `${testDir}/backup/config.json`
-      })
-    });
+      const moveResponse = await fetch(`${workerUrl}/api/file/move`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          sourcePath: `${testDir}/config.json`,
+          destinationPath: `${testDir}/backup/config.json`
+        })
+      });
 
-    expect(moveResponse.status).toBe(200);
+      expect(moveResponse.status).toBe(200);
 
-    // Delete the server script
-    const deleteResponse = await fetch(`${workerUrl}/api/file/delete`, {
-      method: 'DELETE',
-      headers,
-      body: JSON.stringify({
-        path: `${testDir}/server.js`
-      })
-    });
+      // Delete the server script
+      const deleteResponse = await fetch(`${workerUrl}/api/file/delete`, {
+        method: 'DELETE',
+        headers,
+        body: JSON.stringify({
+          path: `${testDir}/server.js`
+        })
+      });
 
-    expect(deleteResponse.status).toBe(200);
+      expect(deleteResponse.status).toBe(200);
 
-    // Verify final state
-    const finalListResponse = await fetch(`${workerUrl}/api/list-files`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: testDir,
-        options: { recursive: true }
-      })
-    });
+      // Verify final state
+      const finalListResponse = await fetch(`${workerUrl}/api/list-files`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          path: testDir,
+          options: { recursive: true }
+        })
+      });
 
-    expect(finalListResponse.status).toBe(200);
-    const finalListData = (await finalListResponse.json()) as ListFilesResult;
+      expect(finalListResponse.status).toBe(200);
+      const finalListData = (await finalListResponse.json()) as ListFilesResult;
 
-    // Should have backup/config.json but not server.js at root
-    const fileNames = finalListData.files.map((f: FileInfo) => f.relativePath);
-    expect(fileNames).toContain('backup/config.json');
-    expect(fileNames).not.toContain('server.js');
-    expect(fileNames).toContain('src/utils/greeter.js');
-  }, 180000);
+      // Should have backup/config.json but not server.js at root
+      const fileNames = finalListData.files.map(
+        (f: FileInfo) => f.relativePath
+      );
+      expect(fileNames).toContain('backup/config.json');
+      expect(fileNames).not.toContain('server.js');
+      expect(fileNames).toContain('src/utils/greeter.js');
+    }, 180000);
 
-  /**
-   * Test 2: Streaming execution with real-time output
-   *
-   * Tests execStream to verify SSE streaming works correctly
-   * within the same sandbox context.
-   */
-  test('should stream command output in real-time', async () => {
-    // Helper to collect SSE events
-    async function collectSSEEvents(
-      response: Response,
-      maxEvents: number = 50
-    ): Promise<ExecEvent[]> {
-      if (!response.body) throw new Error('No body');
+    /**
+     * Test 2: Streaming execution with real-time output
+     *
+     * Tests execStream to verify SSE streaming works correctly
+     * within the same sandbox context.
+     */
+    test('should stream command output in real-time', async () => {
+      // Helper to collect SSE events
+      async function collectSSEEvents(
+        response: Response,
+        maxEvents: number = 50
+      ): Promise<ExecEvent[]> {
+        if (!response.body) throw new Error('No body');
 
-      const events: ExecEvent[] = [];
-      const abortController = new AbortController();
+        const events: ExecEvent[] = [];
+        const abortController = new AbortController();
 
-      try {
-        for await (const event of parseSSEStream<ExecEvent>(
-          response.body,
-          abortController.signal
-        )) {
-          events.push(event);
-          if (event.type === 'complete' || event.type === 'error') {
-            abortController.abort();
-            break;
+        try {
+          for await (const event of parseSSEStream<ExecEvent>(
+            response.body,
+            abortController.signal
+          )) {
+            events.push(event);
+            if (event.type === 'complete' || event.type === 'error') {
+              abortController.abort();
+              break;
+            }
+            if (events.length >= maxEvents) {
+              abortController.abort();
+              break;
+            }
           }
-          if (events.length >= maxEvents) {
-            abortController.abort();
-            break;
+        } catch (error) {
+          if (
+            error instanceof Error &&
+            error.message !== 'Operation was aborted'
+          ) {
+            throw error;
           }
         }
-      } catch (error) {
-        if (
-          error instanceof Error &&
-          error.message !== 'Operation was aborted'
-        ) {
-          throw error;
-        }
+
+        return events;
       }
 
-      return events;
-    }
+      // Stream a command that outputs multiple lines with timestamps
+      const streamResponse = await fetch(`${workerUrl}/api/execStream`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          command:
+            'for i in 1 2 3; do echo "[$PROJECT_NAME] Step $i at $(date +%s)"; sleep 0.3; done'
+        })
+      });
 
-    // Stream a command that outputs multiple lines with timestamps
-    const streamResponse = await fetch(`${workerUrl}/api/execStream`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        command:
-          'for i in 1 2 3; do echo "[$PROJECT_NAME] Step $i at $(date +%s)"; sleep 0.3; done'
-      })
-    });
+      expect(streamResponse.status).toBe(200);
+      expect(streamResponse.headers.get('content-type')).toBe(
+        'text/event-stream'
+      );
 
-    expect(streamResponse.status).toBe(200);
-    expect(streamResponse.headers.get('content-type')).toBe(
-      'text/event-stream'
-    );
+      const events = await collectSSEEvents(streamResponse);
 
-    const events = await collectSSEEvents(streamResponse);
+      // Verify event types
+      const eventTypes = new Set(events.map((e) => e.type));
+      expect(eventTypes.has('start')).toBe(true);
+      expect(eventTypes.has('stdout')).toBe(true);
+      expect(eventTypes.has('complete')).toBe(true);
 
-    // Verify event types
-    const eventTypes = new Set(events.map((e) => e.type));
-    expect(eventTypes.has('start')).toBe(true);
-    expect(eventTypes.has('stdout')).toBe(true);
-    expect(eventTypes.has('complete')).toBe(true);
+      // Verify output includes env var from earlier phase
+      const output = events
+        .filter((e) => e.type === 'stdout')
+        .map((e) => e.data)
+        .join('');
+      expect(output).toContain('[hello-world]');
+      expect(output).toContain('Step 1');
+      expect(output).toContain('Step 3');
 
-    // Verify output includes env var from earlier phase
-    const output = events
-      .filter((e) => e.type === 'stdout')
-      .map((e) => e.data)
-      .join('');
-    expect(output).toContain('[hello-world]');
-    expect(output).toContain('Step 1');
-    expect(output).toContain('Step 3');
+      // Verify successful completion
+      const completeEvent = events.find((e) => e.type === 'complete');
+      expect(completeEvent?.exitCode).toBe(0);
+    }, 60000);
 
-    // Verify successful completion
-    const completeEvent = events.find((e) => e.type === 'complete');
-    expect(completeEvent?.exitCode).toBe(0);
-  }, 60000);
+    /**
+     * Test 3: Per-command env and cwd without mutating session
+     *
+     * Verifies that per-command options work correctly and
+     * don't affect the session state.
+     */
+    test('should support per-command env and cwd without affecting session', async () => {
+      // Execute with per-command env
+      const cmdEnvResponse = await fetch(`${workerUrl}/api/execute`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          command: 'echo "TEMP=$TEMP_VAR, PROJECT=$PROJECT_NAME"',
+          env: { TEMP_VAR: 'temporary-value' }
+        })
+      });
 
-  /**
-   * Test 3: Per-command env and cwd without mutating session
-   *
-   * Verifies that per-command options work correctly and
-   * don't affect the session state.
-   */
-  test('should support per-command env and cwd without affecting session', async () => {
-    // Execute with per-command env
-    const cmdEnvResponse = await fetch(`${workerUrl}/api/execute`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        command: 'echo "TEMP=$TEMP_VAR, PROJECT=$PROJECT_NAME"',
-        env: { TEMP_VAR: 'temporary-value' }
-      })
-    });
+      expect(cmdEnvResponse.status).toBe(200);
+      const cmdEnvData = (await cmdEnvResponse.json()) as ExecResult;
+      // Should have both per-command env AND session env
+      expect(cmdEnvData.stdout.trim()).toBe(
+        'TEMP=temporary-value, PROJECT=hello-world'
+      );
 
-    expect(cmdEnvResponse.status).toBe(200);
-    const cmdEnvData = (await cmdEnvResponse.json()) as ExecResult;
-    // Should have both per-command env AND session env
-    expect(cmdEnvData.stdout.trim()).toBe(
-      'TEMP=temporary-value, PROJECT=hello-world'
-    );
+      // Verify TEMP_VAR didn't persist to session
+      const verifyEnvResponse = await fetch(`${workerUrl}/api/execute`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          command: 'echo "TEMP=$TEMP_VAR"'
+        })
+      });
 
-    // Verify TEMP_VAR didn't persist to session
-    const verifyEnvResponse = await fetch(`${workerUrl}/api/execute`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        command: 'echo "TEMP=$TEMP_VAR"'
-      })
-    });
+      const verifyEnvData = (await verifyEnvResponse.json()) as ExecResult;
+      expect(verifyEnvData.stdout.trim()).toBe('TEMP=');
 
-    const verifyEnvData = (await verifyEnvResponse.json()) as ExecResult;
-    expect(verifyEnvData.stdout.trim()).toBe('TEMP=');
+      // Execute with per-command cwd
+      const cmdCwdResponse = await fetch(`${workerUrl}/api/execute`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          command: 'pwd',
+          cwd: '/tmp'
+        })
+      });
 
-    // Execute with per-command cwd
-    const cmdCwdResponse = await fetch(`${workerUrl}/api/execute`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        command: 'pwd',
-        cwd: '/tmp'
-      })
-    });
+      expect(cmdCwdResponse.status).toBe(200);
+      const cmdCwdData = (await cmdCwdResponse.json()) as ExecResult;
+      expect(cmdCwdData.stdout.trim()).toBe('/tmp');
 
-    expect(cmdCwdResponse.status).toBe(200);
-    const cmdCwdData = (await cmdCwdResponse.json()) as ExecResult;
-    expect(cmdCwdData.stdout.trim()).toBe('/tmp');
+      // Verify session cwd wasn't changed
+      const verifyCwdResponse = await fetch(`${workerUrl}/api/execute`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          command: 'pwd'
+        })
+      });
 
-    // Verify session cwd wasn't changed
-    const verifyCwdResponse = await fetch(`${workerUrl}/api/execute`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        command: 'pwd'
-      })
-    });
+      const verifyCwdData = (await verifyCwdResponse.json()) as ExecResult;
+      expect(verifyCwdData.stdout.trim()).toBe('/workspace');
+    }, 60000);
 
-    const verifyCwdData = (await verifyCwdResponse.json()) as ExecResult;
-    expect(verifyCwdData.stdout.trim()).toBe('/workspace');
-  }, 60000);
+    /**
+     * Test 4: Binary file handling
+     *
+     * Tests reading and writing binary files.
+     */
+    test('should handle binary file operations', async () => {
+      // Create a binary file using base64
+      const pngBase64 =
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChAI9jYlkKQAAAABJRU5ErkJggg==';
 
-  /**
-   * Test 4: Binary file handling
-   *
-   * Tests reading and writing binary files.
-   */
-  test('should handle binary file operations', async () => {
-    // Create a binary file using base64
-    const pngBase64 =
-      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChAI9jYlkKQAAAABJRU5ErkJggg==';
+      await fetch(`${workerUrl}/api/execute`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          command: `echo '${pngBase64}' | base64 -d > /workspace/test-image.png`
+        })
+      });
 
-    await fetch(`${workerUrl}/api/execute`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        command: `echo '${pngBase64}' | base64 -d > /workspace/test-image.png`
-      })
-    });
+      // Read the binary file
+      const readBinaryResponse = await fetch(`${workerUrl}/api/file/read`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          path: '/workspace/test-image.png'
+        })
+      });
 
-    // Read the binary file
-    const readBinaryResponse = await fetch(`${workerUrl}/api/file/read`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: '/workspace/test-image.png'
-      })
-    });
+      expect(readBinaryResponse.status).toBe(200);
+      const binaryData = (await readBinaryResponse.json()) as ReadFileResult;
 
-    expect(readBinaryResponse.status).toBe(200);
-    const binaryData = (await readBinaryResponse.json()) as ReadFileResult;
+      expect(binaryData.isBinary).toBe(true);
+      expect(binaryData.encoding).toBe('base64');
+      expect(binaryData.mimeType).toMatch(/image\/png/);
+      expect(binaryData.content).toBeTruthy();
 
-    expect(binaryData.isBinary).toBe(true);
-    expect(binaryData.encoding).toBe('base64');
-    expect(binaryData.mimeType).toMatch(/image\/png/);
-    expect(binaryData.content).toBeTruthy();
+      // Clean up
+      await fetch(`${workerUrl}/api/file/delete`, {
+        method: 'DELETE',
+        headers,
+        body: JSON.stringify({ path: '/workspace/test-image.png' })
+      });
+    }, 60000);
 
-    // Clean up
-    await fetch(`${workerUrl}/api/file/delete`, {
-      method: 'DELETE',
-      headers,
-      body: JSON.stringify({ path: '/workspace/test-image.png' })
-    });
-  }, 60000);
+    /**
+     * Test 5: Process list and management
+     *
+     * Tests starting multiple processes and listing them.
+     */
+    test('should manage multiple background processes', async () => {
+      // Start two background processes
+      const process1Response = await fetch(`${workerUrl}/api/process/start`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ command: 'sleep 30' })
+      });
+      const process1 = (await process1Response.json()) as Process;
 
-  /**
-   * Test 5: Process list and management
-   *
-   * Tests starting multiple processes and listing them.
-   */
-  test('should manage multiple background processes', async () => {
-    // Start two background processes
-    const process1Response = await fetch(`${workerUrl}/api/process/start`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ command: 'sleep 30' })
-    });
-    const process1 = (await process1Response.json()) as Process;
+      const process2Response = await fetch(`${workerUrl}/api/process/start`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ command: 'sleep 30' })
+      });
+      const process2 = (await process2Response.json()) as Process;
 
-    const process2Response = await fetch(`${workerUrl}/api/process/start`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ command: 'sleep 30' })
-    });
-    const process2 = (await process2Response.json()) as Process;
+      // Wait for processes to be registered
+      await new Promise((resolve) => setTimeout(resolve, 1000));
 
-    // Wait for processes to be registered
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-
-    // List all processes
-    const listResponse = await fetch(`${workerUrl}/api/process/list`, {
-      method: 'GET',
-      headers
-    });
-
-    expect(listResponse.status).toBe(200);
-    const processList = (await listResponse.json()) as Process[];
-
-    expect(processList.length).toBeGreaterThanOrEqual(2);
-    const ids = processList.map((p) => p.id);
-    expect(ids).toContain(process1.id);
-    expect(ids).toContain(process2.id);
-
-    // Kill all processes
-    const killAllResponse = await fetch(`${workerUrl}/api/process/kill-all`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({})
-    });
-
-    expect(killAllResponse.status).toBe(200);
-
-    // Poll until no running processes remain (up to 5 seconds)
-    let running: Process[] = [];
-    for (let i = 0; i < 10; i++) {
-      await new Promise((resolve) => setTimeout(resolve, 500));
-      const listAfterResponse = await fetch(`${workerUrl}/api/process/list`, {
+      // List all processes
+      const listResponse = await fetch(`${workerUrl}/api/process/list`, {
         method: 'GET',
         headers
       });
-      const processesAfter = (await listAfterResponse.json()) as Process[];
-      running = processesAfter.filter((p) => p.status === 'running');
-      if (running.length === 0) break;
-    }
-    expect(running.length).toBe(0);
-  }, 60000);
-});
+
+      expect(listResponse.status).toBe(200);
+      const processList = (await listResponse.json()) as Process[];
+
+      expect(processList.length).toBeGreaterThanOrEqual(2);
+      const ids = processList.map((p) => p.id);
+      expect(ids).toContain(process1.id);
+      expect(ids).toContain(process2.id);
+
+      // Kill all processes
+      const killAllResponse = await fetch(`${workerUrl}/api/process/kill-all`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({})
+      });
+
+      expect(killAllResponse.status).toBe(200);
+
+      // Poll until no running processes remain (up to 5 seconds)
+      let running: Process[] = [];
+      for (let i = 0; i < 10; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        const listAfterResponse = await fetch(`${workerUrl}/api/process/list`, {
+          method: 'GET',
+          headers
+        });
+        const processesAfter = (await listAfterResponse.json()) as Process[];
+        running = processesAfter.filter((p) => p.status === 'running');
+        if (running.length === 0) break;
+      }
+      expect(running.length).toBe(0);
+    }, 60000);
+  }
+);
