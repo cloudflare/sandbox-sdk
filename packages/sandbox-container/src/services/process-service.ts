@@ -150,7 +150,9 @@ export class ProcessService {
         command,
         async (event) => {
           // Route events to process record listeners
-          if (event.type === 'stdout' && event.data) {
+          if (event.type === 'start' && event.pid !== undefined) {
+            await this.store.update(processRecord.id, { pid: event.pid });
+          } else if (event.type === 'stdout' && event.data) {
             processRecord.stdout += event.data;
             processRecord.outputListeners.forEach((listener) => {
               listener('stdout', event.data!);
@@ -214,14 +216,15 @@ export class ProcessService {
         return streamResult as ServiceResult<ProcessRecord>;
       }
 
-      // Command is now tracked and first event processed - safe to return process record
-      // Continue streaming in background without blocking
-      streamResult.data.continueStreaming.catch((error) => {
-        this.logger.error('Failed to execute streaming command', error, {
-          processId: processRecord.id,
-          command
+      // Store streaming promise so getLogs() can await it for completed processes
+      // This ensures all output is captured before returning logs
+      processRecord.streamingComplete =
+        streamResult.data.continueStreaming.catch((error) => {
+          this.logger.error('Failed to execute streaming command', error, {
+            processId: processRecord.id,
+            command
+          });
         });
-      });
 
       return {
         success: true,
@@ -252,9 +255,9 @@ export class ProcessService {
 
   async getProcess(id: string): Promise<ServiceResult<ProcessRecord>> {
     try {
-      const process = await this.store.get(id);
+      const processRecord = await this.store.get(id);
 
-      if (!process) {
+      if (!processRecord) {
         return {
           success: false,
           error: {
@@ -267,9 +270,42 @@ export class ProcessService {
         };
       }
 
+      // Wait for streaming to finish to ensure all output is captured
+      // We use three indicators to decide whether to wait:
+      // 1. Terminal status: command has finished, wait for streaming callbacks
+      // 2. PID check: if process is no longer alive, command finished, wait for streaming
+      // 3. No streamingComplete: process was read from disk, output is complete
+      //
+      // For long-running processes (servers), PID is alive and status is 'running',
+      // so we return current output without blocking.
+      if (processRecord.streamingComplete) {
+        const isTerminal = ['completed', 'failed', 'killed', 'error'].includes(
+          processRecord.status
+        );
+
+        // Check if the subprocess is still alive (deterministic check for fast commands)
+        // If PID is set and subprocess is dead, the command has finished
+        let commandFinished = false;
+        if (processRecord.pid !== undefined) {
+          try {
+            // Signal 0 doesn't actually send a signal, just checks if process exists
+            process.kill(processRecord.pid, 0);
+            // Subprocess is still running
+          } catch {
+            // Subprocess is not running (either finished or doesn't exist)
+            commandFinished = true;
+          }
+        }
+
+        // Wait if status is terminal OR command has finished (for fast commands)
+        if (isTerminal || commandFinished) {
+          await processRecord.streamingComplete;
+        }
+      }
+
       return {
         success: true,
-        data: process
+        data: processRecord
       };
     } catch (error) {
       const errorMessage =

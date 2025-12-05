@@ -1,6 +1,5 @@
-import { describe, test, expect, beforeAll, afterAll, afterEach } from 'vitest';
-import { getTestWorkerUrl, WranglerDevRunner } from './helpers/wrangler-runner';
-import { createSandboxId, cleanupSandbox } from './helpers/test-fixtures';
+import { describe, test, expect, beforeAll } from 'vitest';
+import { getSharedSandbox } from './helpers/global-sandbox';
 import type { HealthResponse } from './test-worker/types';
 
 /**
@@ -9,50 +8,25 @@ import type { HealthResponse } from './test-worker/types';
  * This test validates that:
  * 1. Can get worker URL (deployed in CI, wrangler dev locally)
  * 2. Worker is running and responding
- * 3. Can cleanup properly
+ * 3. Shared sandbox initializes correctly
  *
- * NOTE: This is just infrastructure validation. Real SDK integration
- * tests will be in the workflow test suites.
+ * NOTE: This test runs first (sorted by name) and initializes the shared sandbox.
  */
 describe('Integration Infrastructure Smoke Test', () => {
-  describe('local', () => {
-    let runner: WranglerDevRunner | null = null;
-    let workerUrl: string;
-    let currentSandboxId: string | null = null;
+  let workerUrl: string;
 
-    beforeAll(async () => {
-      const result = await getTestWorkerUrl();
-      workerUrl = result.url;
-      runner = result.runner;
-    });
+  beforeAll(async () => {
+    // Initialize shared sandbox - this will be reused by all other tests
+    const sandbox = await getSharedSandbox();
+    workerUrl = sandbox.workerUrl;
+  }, 120000);
 
-    afterEach(async () => {
-      // Cleanup sandbox container after each test
-      if (currentSandboxId) {
-        await cleanupSandbox(workerUrl, currentSandboxId);
-        currentSandboxId = null;
-      }
-    });
+  test('should verify worker is running with health check', async () => {
+    // Verify worker is running with health check
+    const response = await fetch(`${workerUrl}/health`);
+    expect(response.status).toBe(200);
 
-    afterAll(async () => {
-      if (runner) {
-        await runner.stop();
-      }
-    });
-
-    test('should verify worker is running with health check', async () => {
-      // Verify worker is running with health check
-      const response = await fetch(`${workerUrl}/health`);
-      expect(response.status).toBe(200);
-
-      const data = (await response.json()) as HealthResponse;
-      expect(data.status).toBe('ok');
-
-      // In local mode, verify stdout captured wrangler startup
-      if (runner) {
-        const stdout = runner.getStdout();
-        expect(stdout).toContain('Ready on');
-      }
-    });
+    const data = (await response.json()) as HealthResponse;
+    expect(data.status).toBe('ok');
   });
 });

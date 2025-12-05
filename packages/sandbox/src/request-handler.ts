@@ -3,8 +3,8 @@ import { createLogger, type LogContext, TraceContext } from '@repo/shared';
 import { getSandbox, type Sandbox } from './sandbox';
 import { sanitizeSandboxId, validatePort } from './security';
 
-export interface SandboxEnv {
-  Sandbox: DurableObjectNamespace<Sandbox>;
+export interface SandboxEnv<T extends Sandbox<any> = Sandbox<any>> {
+  Sandbox: DurableObjectNamespace<T>;
 }
 
 export interface RouteInfo {
@@ -14,10 +14,10 @@ export interface RouteInfo {
   token: string;
 }
 
-export async function proxyToSandbox<E extends SandboxEnv>(
-  request: Request,
-  env: E
-): Promise<Response | null> {
+export async function proxyToSandbox<
+  T extends Sandbox<any>,
+  E extends SandboxEnv<T>
+>(request: Request, env: E): Promise<Response | null> {
   // Create logger context for this request
   const traceId =
     TraceContext.fromHeaders(request.headers) || TraceContext.generate();

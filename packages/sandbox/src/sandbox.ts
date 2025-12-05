@@ -10,25 +10,35 @@ import type {
   ExecutionResult,
   ExecutionSession,
   ISandbox,
+  LogEvent,
   MountBucketOptions,
+  PortCheckRequest,
   Process,
   ProcessOptions,
   ProcessStatus,
   RunCodeOptions,
   SandboxOptions,
   SessionOptions,
-  StreamOptions
+  StreamOptions,
+  WaitForLogResult,
+  WaitForPortOptions
 } from '@repo/shared';
 import {
   createLogger,
   getEnvString,
+  isTerminalStatus,
   type SessionDeleteResult,
   shellEscape,
   TraceContext
 } from '@repo/shared';
 import { type ExecuteResponse, SandboxClient } from './clients';
 import type { ErrorResponse } from './errors';
-import { CustomDomainRequiredError, ErrorCode } from './errors';
+import {
+  CustomDomainRequiredError,
+  ErrorCode,
+  ProcessExitedBeforeReadyError,
+  ProcessReadyTimeoutError
+} from './errors';
 import { CodeInterpreter } from './interpreter';
 import { isLocalhostPattern } from './request-handler';
 import { SecurityError, sanitizeSandboxId, validatePort } from './security';
@@ -45,11 +55,11 @@ import {
 import type { MountInfo } from './storage-mount/types';
 import { SDK_VERSION } from './version';
 
-export function getSandbox(
-  ns: DurableObjectNamespace<Sandbox>,
+export function getSandbox<T extends Sandbox<any>>(
+  ns: DurableObjectNamespace<T>,
   id: string,
   options?: SandboxOptions
-): Sandbox {
+): T {
   const sanitizedId = sanitizeSandboxId(id);
   const effectiveId = options?.normalizeId
     ? sanitizedId.toLowerCase()
@@ -65,7 +75,7 @@ export function getSandbox(
     );
   }
 
-  const stub = getContainer(ns, effectiveId) as unknown as Sandbox;
+  const stub = getContainer(ns, effectiveId);
 
   stub.setSandboxName?.(effectiveId, options?.normalizeId);
 
@@ -87,7 +97,7 @@ export function getSandbox(
 
   return Object.assign(stub, {
     wsConnect: connect(stub)
-  });
+  }) as T;
 }
 
 export function connect(stub: {
@@ -1239,8 +1249,374 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       getLogs: async () => {
         const logs = await this.getProcessLogs(data.id);
         return { stdout: logs.stdout, stderr: logs.stderr };
+      },
+
+      waitForLog: async (
+        pattern: string | RegExp,
+        timeout?: number
+      ): Promise<WaitForLogResult> => {
+        return this.waitForLogPattern(data.id, data.command, pattern, timeout);
+      },
+
+      waitForPort: async (
+        port: number,
+        options?: WaitForPortOptions
+      ): Promise<void> => {
+        await this.waitForPortReady(data.id, data.command, port, options);
       }
     };
+  }
+
+  /**
+   * Wait for a log pattern to appear in process output
+   */
+  private async waitForLogPattern(
+    processId: string,
+    command: string,
+    pattern: string | RegExp,
+    timeout?: number
+  ): Promise<WaitForLogResult> {
+    const startTime = Date.now();
+    const conditionStr = this.conditionToString(pattern);
+    let collectedStdout = '';
+    let collectedStderr = '';
+
+    // First check existing logs
+    try {
+      const existingLogs = await this.getProcessLogs(processId);
+      // Ensure existing logs end with newline for proper line separation from streamed output
+      collectedStdout = existingLogs.stdout;
+      if (collectedStdout && !collectedStdout.endsWith('\n')) {
+        collectedStdout += '\n';
+      }
+      collectedStderr = existingLogs.stderr;
+      if (collectedStderr && !collectedStderr.endsWith('\n')) {
+        collectedStderr += '\n';
+      }
+
+      // Check stdout
+      const stdoutResult = this.matchPattern(existingLogs.stdout, pattern);
+      if (stdoutResult) {
+        return stdoutResult;
+      }
+
+      // Check stderr
+      const stderrResult = this.matchPattern(existingLogs.stderr, pattern);
+      if (stderrResult) {
+        return stderrResult;
+      }
+    } catch (error) {
+      // Process might have already exited, continue to streaming
+      this.logger.debug('Could not get existing logs, will stream', {
+        processId,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+
+    // Stream new logs and check for pattern
+    const stream = await this.streamProcessLogs(processId);
+
+    // Set up timeout if specified
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    let timeoutPromise: Promise<never> | undefined;
+
+    if (timeout !== undefined) {
+      const remainingTime = timeout - (Date.now() - startTime);
+      if (remainingTime <= 0) {
+        throw this.createReadyTimeoutError(
+          processId,
+          command,
+          conditionStr,
+          timeout
+        );
+      }
+
+      timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => {
+          reject(
+            this.createReadyTimeoutError(
+              processId,
+              command,
+              conditionStr,
+              timeout
+            )
+          );
+        }, remainingTime);
+      });
+    }
+
+    try {
+      // Process stream
+      const streamProcessor = async (): Promise<WaitForLogResult> => {
+        const DEBOUNCE_MS = 50;
+        let lastCheckTime = 0;
+        let pendingCheck = false;
+
+        const checkPattern = (): WaitForLogResult | null => {
+          // Check both stdout and stderr buffers
+          const stdoutResult = this.matchPattern(collectedStdout, pattern);
+          if (stdoutResult) return stdoutResult;
+          const stderrResult = this.matchPattern(collectedStderr, pattern);
+          if (stderrResult) return stderrResult;
+          return null;
+        };
+
+        for await (const event of parseSSEStream<LogEvent>(stream)) {
+          // Handle different event types
+          if (event.type === 'stdout' || event.type === 'stderr') {
+            const data = event.data || '';
+
+            if (event.type === 'stdout') {
+              collectedStdout += data;
+            } else {
+              collectedStderr += data;
+            }
+            pendingCheck = true;
+
+            // Debounce pattern matching - check at most every 50ms
+            const now = Date.now();
+            if (now - lastCheckTime >= DEBOUNCE_MS) {
+              lastCheckTime = now;
+              pendingCheck = false;
+              const result = checkPattern();
+              if (result) return result;
+            }
+          }
+
+          // Process exited - do final check before throwing
+          if (event.type === 'exit') {
+            if (pendingCheck) {
+              const result = checkPattern();
+              if (result) return result;
+            }
+            throw this.createExitedBeforeReadyError(
+              processId,
+              command,
+              conditionStr,
+              event.exitCode ?? 1
+            );
+          }
+        }
+
+        // Stream ended - do final check before throwing
+        if (pendingCheck) {
+          const result = checkPattern();
+          if (result) return result;
+        }
+        // Stream ended without finding pattern - this indicates process exited
+        throw this.createExitedBeforeReadyError(
+          processId,
+          command,
+          conditionStr,
+          0
+        );
+      };
+
+      // Race with timeout if specified, otherwise just run stream processor
+      if (timeoutPromise) {
+        return await Promise.race([streamProcessor(), timeoutPromise]);
+      }
+      return await streamProcessor();
+    } finally {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+    }
+  }
+
+  /**
+   * Wait for a port to become available (for process readiness checking)
+   */
+  private async waitForPortReady(
+    processId: string,
+    command: string,
+    port: number,
+    options?: WaitForPortOptions
+  ): Promise<void> {
+    const {
+      mode = 'http',
+      path = '/',
+      status = { min: 200, max: 399 },
+      timeout,
+      interval = 500
+    } = options ?? {};
+
+    const startTime = Date.now();
+    const conditionStr =
+      mode === 'http' ? `port ${port} (HTTP ${path})` : `port ${port} (TCP)`;
+    const targetInterval = interval;
+    let checkCount = 0;
+
+    // Normalize status to min/max
+    const statusMin = typeof status === 'number' ? status : status.min;
+    const statusMax = typeof status === 'number' ? status : status.max;
+
+    // Build the port check request
+    const checkRequest: PortCheckRequest = {
+      port,
+      mode,
+      path,
+      statusMin,
+      statusMax
+    };
+
+    while (true) {
+      // Check timeout if specified
+      if (timeout !== undefined) {
+        const elapsed = Date.now() - startTime;
+        const remaining = timeout - elapsed;
+
+        // Exit if we've exceeded timeout
+        if (remaining <= 0) {
+          throw this.createReadyTimeoutError(
+            processId,
+            command,
+            conditionStr,
+            timeout
+          );
+        }
+      }
+
+      // Track total operation time for accurate sleep calculation
+      const iterationStart = Date.now();
+
+      // Check process status less frequently (every 3rd iteration) to reduce latency
+      if (checkCount % 3 === 0) {
+        const processInfo = await this.getProcess(processId);
+        if (!processInfo || isTerminalStatus(processInfo.status)) {
+          throw this.createExitedBeforeReadyError(
+            processId,
+            command,
+            conditionStr,
+            processInfo?.exitCode ?? 1
+          );
+        }
+      }
+
+      // Check port readiness via container endpoint
+      try {
+        const result = await this.client.ports.checkPortReady(checkRequest);
+        if (result.ready) {
+          return; // Port is ready
+        }
+      } catch {
+        // Port not ready yet, continue polling
+      }
+
+      checkCount++;
+
+      // Calculate sleep time accounting for total iteration duration (process check + port check)
+      const iterationDuration = Date.now() - iterationStart;
+      const sleepTime = Math.max(0, targetInterval - iterationDuration);
+
+      // Sleep between checks (skip if timeout would be exceeded)
+      if (sleepTime > 0) {
+        if (
+          timeout === undefined ||
+          Date.now() - startTime + sleepTime < timeout
+        ) {
+          await new Promise((resolve) => setTimeout(resolve, sleepTime));
+        }
+      }
+    }
+  }
+
+  /**
+   * Match a pattern against text
+   */
+  private matchPattern(
+    text: string,
+    pattern: string | RegExp
+  ): WaitForLogResult | null {
+    if (typeof pattern === 'string') {
+      // Simple substring match
+      if (text.includes(pattern)) {
+        // Find the line containing the pattern
+        const lines = text.split('\n');
+        for (const line of lines) {
+          if (line.includes(pattern)) {
+            return { line };
+          }
+        }
+        return { line: pattern };
+      }
+    } else {
+      const safePattern = new RegExp(
+        pattern.source,
+        pattern.flags.replace('g', '')
+      );
+      const match = text.match(safePattern);
+      if (match) {
+        // Find the full line containing the match
+        const lines = text.split('\n');
+        for (const line of lines) {
+          const lineMatch = line.match(safePattern);
+          if (lineMatch) {
+            return { line, match: lineMatch };
+          }
+        }
+        return { line: match[0], match };
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Convert a log pattern to a human-readable string
+   */
+  private conditionToString(pattern: string | RegExp): string {
+    if (typeof pattern === 'string') {
+      return `"${pattern}"`;
+    }
+    return pattern.toString();
+  }
+
+  /**
+   * Create a ProcessReadyTimeoutError
+   */
+  private createReadyTimeoutError(
+    processId: string,
+    command: string,
+    condition: string,
+    timeout: number
+  ): ProcessReadyTimeoutError {
+    return new ProcessReadyTimeoutError({
+      code: ErrorCode.PROCESS_READY_TIMEOUT,
+      message: `Process did not become ready within ${timeout}ms. Waiting for: ${condition}`,
+      context: {
+        processId,
+        command,
+        condition,
+        timeout
+      },
+      httpStatus: 408,
+      timestamp: new Date().toISOString(),
+      suggestion: `Check if your process outputs ${condition}. You can increase the timeout parameter.`
+    });
+  }
+
+  /**
+   * Create a ProcessExitedBeforeReadyError
+   */
+  private createExitedBeforeReadyError(
+    processId: string,
+    command: string,
+    condition: string,
+    exitCode: number
+  ): ProcessExitedBeforeReadyError {
+    return new ProcessExitedBeforeReadyError({
+      code: ErrorCode.PROCESS_EXITED_BEFORE_READY,
+      message: `Process exited with code ${exitCode} before becoming ready. Waiting for: ${condition}`,
+      context: {
+        processId,
+        command,
+        condition,
+        exitCode
+      },
+      httpStatus: 500,
+      timestamp: new Date().toISOString(),
+      suggestion: 'Check process logs with getLogs() for error messages'
+    });
   }
 
   // Background process management
@@ -1289,6 +1665,16 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         options.onStart(processObj);
       }
 
+      // Start background streaming if output/exit callbacks are provided
+      if (options?.onOutput || options?.onExit) {
+        // Fire and forget - don't await, let it run in background
+        this.startProcessCallbackStream(response.processId, options).catch(
+          () => {
+            // Error already handled in startProcessCallbackStream
+          }
+        );
+      }
+
       return processObj;
     } catch (error) {
       if (options?.onError && error instanceof Error) {
@@ -1296,6 +1682,56 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       }
 
       throw error;
+    }
+  }
+
+  /**
+   * Start background streaming for process callbacks
+   * Opens SSE stream to container and routes events to callbacks
+   */
+  private async startProcessCallbackStream(
+    processId: string,
+    options: ProcessOptions
+  ): Promise<void> {
+    try {
+      const stream = await this.client.processes.streamProcessLogs(processId);
+
+      for await (const event of parseSSEStream<{
+        type: string;
+        data?: string;
+        exitCode?: number;
+        processId?: string;
+      }>(stream)) {
+        switch (event.type) {
+          case 'stdout':
+            if (event.data && options.onOutput) {
+              options.onOutput('stdout', event.data);
+            }
+            break;
+          case 'stderr':
+            if (event.data && options.onOutput) {
+              options.onOutput('stderr', event.data);
+            }
+            break;
+          case 'exit':
+          case 'complete':
+            if (options.onExit) {
+              options.onExit(event.exitCode ?? null);
+            }
+            return; // Stream complete
+        }
+      }
+    } catch (error) {
+      // Call onError if streaming fails
+      if (options.onError && error instanceof Error) {
+        options.onError(error);
+      }
+      // Don't rethrow - background streaming failure shouldn't crash the caller
+      this.logger.error(
+        'Background process streaming failed',
+        error instanceof Error ? error : new Error(String(error)),
+        { processId }
+      );
     }
   }
 

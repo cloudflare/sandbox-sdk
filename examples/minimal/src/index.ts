@@ -9,9 +9,9 @@ export default {
     // Get or create a sandbox instance
     const sandbox = getSandbox(env.Sandbox, 'my-sandbox');
 
-    // Execute Python code
+    // Execute a shell command
     if (url.pathname === '/run') {
-      const result = await sandbox.exec('python3 -c "print(2 + 2)"');
+      const result = await sandbox.exec('echo "2 + 2 = $((2 + 2))"');
       return Response.json({
         output: result.stdout,
         error: result.stderr,

@@ -1,4 +1,6 @@
 import type {
+  PortCheckRequest,
+  PortCheckResponse,
   PortCloseResult,
   PortExposeResult,
   PortListResult
@@ -7,7 +9,12 @@ import { BaseHttpClient } from './base-client';
 import type { HttpClientOptions } from './types';
 
 // Re-export for convenience
-export type { PortExposeResult, PortCloseResult, PortListResult };
+export type {
+  PortExposeResult,
+  PortCloseResult,
+  PortListResult,
+  PortCheckResponse
+};
 
 /**
  * Request interface for exposing ports
@@ -100,6 +107,26 @@ export class PortClient extends BaseHttpClient {
     } catch (error) {
       this.logError('getExposedPorts', error);
       throw error;
+    }
+  }
+
+  /**
+   * Check if a port is ready to accept connections
+   * @param request - Port check configuration
+   */
+  async checkPortReady(request: PortCheckRequest): Promise<PortCheckResponse> {
+    try {
+      const response = await this.post<PortCheckResponse>(
+        '/api/port-check',
+        request
+      );
+      return response;
+    } catch (error) {
+      // On error (e.g., container not ready), return not ready
+      return {
+        ready: false,
+        error: error instanceof Error ? error.message : 'Port check failed'
+      };
     }
   }
 }

@@ -1,5 +1,45 @@
 # @cloudflare/sandbox
 
+## 0.6.3
+
+### Patch Changes
+
+- [#273](https://github.com/cloudflare/sandbox-sdk/pull/273) [`8cf6b2f`](https://github.com/cloudflare/sandbox-sdk/commit/8cf6b2fe5b7aa0d9287387067a0a2f26ef538de4) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - Add process readiness detection with port and log pattern waiting
+  The `Process` object returned by `startProcess()` now includes readiness methods:
+  - `process.waitForPort(port, options?)`: Wait for process to listen on a port
+    - Supports HTTP mode (default): checks endpoint returns expected status (200-399)
+    - Supports TCP mode: checks port accepts connections
+    - Configurable timeout, interval, path, and expected status
+  - `process.waitForLog(pattern, options?)`: Wait for pattern in process output
+    - Supports string or RegExp patterns
+    - Returns matching line and capture groups
+
+## 0.6.2
+
+### Patch Changes
+
+- [#267](https://github.com/cloudflare/sandbox-sdk/pull/267) [`204f9ac`](https://github.com/cloudflare/sandbox-sdk/commit/204f9ac301c983ed04589eb9d72418a0b06ec8a3) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Fix process callbacks, PID capture, and getLogs race condition for fast commands
+
+- [#264](https://github.com/cloudflare/sandbox-sdk/pull/264) [`8601b5c`](https://github.com/cloudflare/sandbox-sdk/commit/8601b5c4fcb3a822aeefd870f26b3618c59e3212) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Fix type error when extending Sandbox class by making getSandbox and SandboxEnv generic
+
+- [#263](https://github.com/cloudflare/sandbox-sdk/pull/263) [`059963e`](https://github.com/cloudflare/sandbox-sdk/commit/059963e80ff7d7d9696e8d9770339d3e849fcfdf) Thanks [@PavanKalisetti](https://github.com/PavanKalisetti)! - Fix a bug where the /api/ping endpoint was not handled, causing a 500 error
+
+## 0.6.1
+
+### Patch Changes
+
+- [#261](https://github.com/cloudflare/sandbox-sdk/pull/261) [`b6cc244`](https://github.com/cloudflare/sandbox-sdk/commit/b6cc24456681932b76d17dd57b6e788c18813cc4) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - Add top-level await support for JavaScript code execution
+
+  JavaScript code can now use `await` at the top level without wrapping in an async IIFE. Variables declared with `const`, `let`, or `var` persist across executions, enabling multi-step workflows like:
+
+  ```javascript
+  // Execution 1
+  const data = await fetch('https://api.example.com').then((r) => r.json());
+
+  // Execution 2
+  console.log(data); // Works - data persists
+  ```
+
 ## 0.6.0
 
 ### Minor Changes
@@ -14,10 +54,10 @@
 
   ```dockerfile
   # Before
-  FROM cloudflare/sandbox:0.6.0
+  FROM cloudflare/sandbox:0.6.3
 
   # After
-  FROM cloudflare/sandbox:0.6.0-python
+  FROM cloudflare/sandbox:0.6.3-python
   ```
 
   Without this change, Python execution will fail with `PYTHON_NOT_AVAILABLE` error.

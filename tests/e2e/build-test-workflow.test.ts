@@ -1,51 +1,27 @@
-import { describe, test, expect, beforeAll, afterAll, vi } from 'vitest';
-import { getTestWorkerUrl, WranglerDevRunner } from './helpers/wrangler-runner';
+import { describe, test, expect, beforeAll } from 'vitest';
 import {
-  createSandboxId,
-  createTestHeaders,
-  cleanupSandbox
-} from './helpers/test-fixtures';
+  getSharedSandbox,
+  createUniqueSession
+} from './helpers/global-sandbox';
 import type { ExecResult, WriteFileResult, ReadFileResult } from '@repo/shared';
 import type { ErrorResponse } from './test-worker/types';
 
 /**
  * Build and Test Workflow Integration Tests
  *
- * Tests the README "Build and Test Code" example (lines 343-362):
- * - Clone a repository
- * - Run tests
- * - Build the project
- *
- * This validates the complete CI/CD workflow:
- * Git → Install → Test → Build
+ * Tests the README "Build and Test Code" example.
+ * Uses the shared sandbox with a unique session.
  */
 describe('Build and Test Workflow', () => {
   describe('local', () => {
-    let runner: WranglerDevRunner | null;
     let workerUrl: string;
-    let currentSandboxId: string;
     let headers: Record<string, string>;
 
     beforeAll(async () => {
-      // Get test worker URL (CI: uses deployed URL, Local: spawns wrangler dev)
-      const result = await getTestWorkerUrl();
-      workerUrl = result.url;
-      runner = result.runner;
-
-      // Create a single sandbox for all tests in this suite
-      currentSandboxId = createSandboxId();
-      headers = createTestHeaders(currentSandboxId);
-    });
-
-    afterAll(async () => {
-      // Cleanup sandbox container after all tests
-      await cleanupSandbox(workerUrl, currentSandboxId);
-
-      // Cleanup wrangler process (only in local mode)
-      if (runner) {
-        await runner.stop();
-      }
-    });
+      const sandbox = await getSharedSandbox();
+      workerUrl = sandbox.workerUrl;
+      headers = sandbox.createHeaders(createUniqueSession());
+    }, 120000);
 
     test('should execute basic commands and verify file operations', async () => {
       // Step 1: Execute simple command

@@ -5,6 +5,10 @@ on:
     branches:
       - main
 
+permissions:
+  id-token: write # Required for OIDC
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -144,6 +148,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
+      id-token: write # Required for trusted publishing
       contents: write
       pull-requests: write
 
@@ -155,11 +160,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+          registry-url: 'https://registry.npmjs.org'
           cache: 'npm'
 
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
+
+      - name: Upgrade npm for OIDC trusted publishing
+        run: npm install -g npm@latest
 
       - name: Install dependencies
         run: npm ci
@@ -220,8 +229,7 @@ jobs:
           publish: npx tsx .github/changeset-publish.ts
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_PUBLISH_TOKEN }}
-          NPM_PUBLISH_TOKEN: ${{ secrets.NPM_PUBLISH_TOKEN }}
+          NPM_CONFIG_PROVENANCE: true
 
       - name: Upload standalone binary to GitHub release
         if: steps.changesets.outputs.published == 'true'

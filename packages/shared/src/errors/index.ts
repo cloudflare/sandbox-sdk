@@ -54,7 +54,9 @@ export type {
   PortErrorContext,
   PortNotExposedContext,
   ProcessErrorContext,
+  ProcessExitedBeforeReadyContext,
   ProcessNotFoundContext,
+  ProcessReadyTimeoutContext,
   ValidationFailedContext
 } from './contexts';
 // Export utility functions

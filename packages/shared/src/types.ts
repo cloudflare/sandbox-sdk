@@ -100,6 +100,77 @@ export interface ExecResult {
   sessionId?: string;
 }
 
+/**
+ * Result from waiting for a log pattern
+ */
+export interface WaitForLogResult {
+  /** The log line that matched */
+  line: string;
+  /** Regex capture groups (if condition was a RegExp) */
+  match?: RegExpMatchArray;
+}
+
+/**
+ * Options for waiting for a port to become ready
+ */
+export interface WaitForPortOptions {
+  /**
+   * Check mode
+   * - 'http': Make an HTTP request and check for success status (default)
+   * - 'tcp': Just check if TCP connection succeeds
+   * @default 'http'
+   */
+  mode?: 'http' | 'tcp';
+
+  /**
+   * HTTP path to check (only used when mode is 'http')
+   * @default '/'
+   */
+  path?: string;
+
+  /**
+   * Expected HTTP status code or range (only used when mode is 'http')
+   * - Single number: exact match (e.g., 200)
+   * - Object with min/max: range match (e.g., { min: 200, max: 399 })
+   * @default { min: 200, max: 399 }
+   */
+  status?: number | { min: number; max: number };
+
+  /**
+   * Maximum time to wait in milliseconds
+   * @default no timeout
+   */
+  timeout?: number;
+
+  /**
+   * Interval between checks in milliseconds
+   * @default 500
+   */
+  interval?: number;
+}
+
+/**
+ * Request body for port readiness check endpoint
+ */
+export interface PortCheckRequest {
+  port: number;
+  mode: 'http' | 'tcp';
+  path?: string;
+  statusMin?: number;
+  statusMax?: number;
+}
+
+/**
+ * Response from port readiness check endpoint
+ */
+export interface PortCheckResponse {
+  ready: boolean;
+  /** HTTP status code received (only for http mode) */
+  statusCode?: number;
+  /** Error message if check failed */
+  error?: string;
+}
+
 // Background process types
 export interface ProcessOptions extends BaseExecOptions {
   /**
@@ -141,6 +212,18 @@ export type ProcessStatus =
   | 'failed' // Process exited with non-zero code
   | 'killed' // Process was terminated by signal
   | 'error'; // Process failed to start or encountered error
+
+/**
+ * Check if a process status indicates the process has terminated
+ */
+export function isTerminalStatus(status: ProcessStatus): boolean {
+  return (
+    status === 'completed' ||
+    status === 'failed' ||
+    status === 'killed' ||
+    status === 'error'
+  );
+}
 
 export interface Process {
   /**
@@ -197,6 +280,37 @@ export interface Process {
    * Get accumulated logs
    */
   getLogs(): Promise<{ stdout: string; stderr: string }>;
+
+  /**
+   * Wait for a log pattern to appear in process output
+   *
+   * @example
+   * const proc = await sandbox.startProcess("python train.py");
+   * await proc.waitForLog("Epoch 1 complete");
+   * await proc.waitForLog(/Epoch (\d+) complete/);
+   */
+  waitForLog(
+    pattern: string | RegExp,
+    timeout?: number
+  ): Promise<WaitForLogResult>;
+
+  /**
+   * Wait for a port to become ready
+   *
+   * @example
+   * // Wait for HTTP endpoint to return 200-399
+   * const proc = await sandbox.startProcess("npm run dev");
+   * await proc.waitForPort(3000);
+   *
+   * @example
+   * // Wait for specific health endpoint
+   * await proc.waitForPort(3000, { path: '/health', status: 200 });
+   *
+   * @example
+   * // TCP-only check (just verify port is accepting connections)
+   * await proc.waitForPort(5432, { mode: 'tcp' });
+   */
+  waitForPort(port: number, options?: WaitForPortOptions): Promise<void>;
 }
 
 // Streaming event types
@@ -209,6 +323,7 @@ export interface ExecEvent {
   result?: ExecResult;
   error?: string;
   sessionId?: string;
+  pid?: number; // Present on 'start' event
 }
 
 export interface LogEvent {

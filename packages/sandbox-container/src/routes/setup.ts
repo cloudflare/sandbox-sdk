@@ -119,6 +119,13 @@ export function setupRoutes(router: Router, container: Container): void {
   });
 
   router.register({
+    method: 'POST',
+    path: '/api/port-check',
+    handler: async (req, ctx) => container.get('portHandler').handle(req, ctx),
+    middleware: [container.get('loggingMiddleware')]
+  });
+
+  router.register({
     method: 'GET',
     path: '/api/exposed-ports',
     handler: async (req, ctx) => container.get('portHandler').handle(req, ctx),

@@ -220,18 +220,38 @@ export class SessionManager {
 
       const session = sessionResult.data;
 
-      // Get async generator
       const generator = session.execStream(command, { commandId, cwd, env });
 
-      // CRITICAL: Await first event to ensure command is tracked before returning
-      // This prevents race condition where killCommand() is called before trackCommand()
+      // Process 'start' event synchronously to capture PID before returning
+      // All other events stream in background via continueStreaming promise
+      // getLogs() awaits continueStreaming for completed processes to ensure
+      // all output is captured (deterministic, no timing heuristics)
       const firstResult = await generator.next();
 
-      if (!firstResult.done) {
-        await onEvent(firstResult.value);
+      if (firstResult.done) {
+        return {
+          success: true,
+          data: { continueStreaming: Promise.resolve() }
+        };
       }
 
-      // Create background task for remaining events
+      await onEvent(firstResult.value);
+
+      // If already complete/error, drain remaining events synchronously
+      if (
+        firstResult.value.type === 'complete' ||
+        firstResult.value.type === 'error'
+      ) {
+        for await (const event of generator) {
+          await onEvent(event);
+        }
+        return {
+          success: true,
+          data: { continueStreaming: Promise.resolve() }
+        };
+      }
+
+      // Continue streaming remaining events in background
       const continueStreaming = (async () => {
         try {
           for await (const event of generator) {

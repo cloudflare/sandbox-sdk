@@ -78,6 +78,8 @@ export type {
   MkdirResult,
   MountBucketOptions,
   MoveFileResult,
+  PortCheckRequest,
+  PortCheckResponse,
   PortCloseResult,
   // Port management result types
   PortExposeResult,
@@ -103,6 +105,14 @@ export type {
   SessionOptions,
   ShutdownResult,
   StreamOptions,
+  // Process readiness types
+  WaitForLogResult,
+  WaitForPortOptions,
   WriteFileResult
 } from './types.js';
-export { isExecResult, isProcess, isProcessStatus } from './types.js';
+export {
+  isExecResult,
+  isProcess,
+  isProcessStatus,
+  isTerminalStatus
+} from './types.js';

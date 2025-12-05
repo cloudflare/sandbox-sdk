@@ -1,346 +1,50 @@
 /**
- * E2E Test: File Operations Workflow
+ * File Operations Error Handling Tests
  *
- * Tests comprehensive file system operations including:
- * - Directory creation (mkdir)
- * - File deletion (deleteFile)
- * - File renaming (renameFile)
- * - File moving (moveFile)
+ * Tests error cases and edge cases for file operations.
+ * Happy path tests (mkdir, write, read, rename, move, delete, list) are in comprehensive-workflow.test.ts.
  *
- * These tests validate realistic workflows like project scaffolding
- * and file manipulation across directory structures.
+ * This file focuses on:
+ * - Deleting directories with deleteFile (should reject)
+ * - Deleting nonexistent files
+ * - listFiles errors (nonexistent dir, file instead of dir)
+ * - Hidden file handling
  */
 
-import {
-  afterAll,
-  afterEach,
-  beforeAll,
-  describe,
-  expect,
-  test,
-  vi
-} from 'vitest';
-import type {
-  FileInfo,
-  WriteFileResult,
-  ReadFileResult,
-  DeleteFileResult,
-  MkdirResult,
-  ListFilesResult,
-  ExecResult,
-  FileExistsResult
-} from '@repo/shared';
+import { beforeAll, beforeEach, describe, expect, test } from 'vitest';
+import type { FileInfo, ListFilesResult, ReadFileResult } from '@repo/shared';
 import type { ErrorResponse } from './test-worker/types';
-import { getTestWorkerUrl, WranglerDevRunner } from './helpers/wrangler-runner';
 import {
-  createSandboxId,
-  createTestHeaders,
-  cleanupSandbox
-} from './helpers/test-fixtures';
+  getSharedSandbox,
+  createUniqueSession,
+  uniqueTestPath
+} from './helpers/global-sandbox';
 
-describe('File Operations Workflow (E2E)', () => {
-  let runner: WranglerDevRunner | null;
+describe('File Operations Error Handling', () => {
   let workerUrl: string;
-  let currentSandboxId: string | null = null;
+  let headers: Record<string, string>;
+  let testDir: string;
 
   beforeAll(async () => {
-    // Get test worker URL (CI: uses deployed URL, Local: spawns wrangler dev)
-    const result = await getTestWorkerUrl();
-    workerUrl = result.url;
-    runner = result.runner;
-  }, 120000); // 2 minute timeout for wrangler startup
+    const sandbox = await getSharedSandbox();
+    workerUrl = sandbox.workerUrl;
+    headers = sandbox.createHeaders(createUniqueSession());
+  }, 120000);
 
-  afterEach(async () => {
-    // Cleanup sandbox container after each test
-    if (currentSandboxId) {
-      await cleanupSandbox(workerUrl, currentSandboxId);
-      currentSandboxId = null;
-    }
+  // Use unique directory for each test to avoid conflicts
+  beforeEach(() => {
+    testDir = uniqueTestPath('file-ops');
   });
-
-  afterAll(async () => {
-    if (runner) {
-      await runner.stop();
-    }
-  });
-
-  test('should create nested directories', async () => {
-    currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
-
-    // Create nested directory structure
-    const mkdirResponse = await fetch(`${workerUrl}/api/file/mkdir`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: '/workspace/project/src/components',
-
-        recursive: true
-      })
-    });
-
-    const mkdirData = (await mkdirResponse.json()) as MkdirResult;
-    expect(mkdirData.success).toBe(true);
-
-    // Verify directory exists by listing it
-    const lsResponse = await fetch(`${workerUrl}/api/execute`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        command: 'ls -la /workspace/project/src/components'
-      })
-    });
-
-    const lsData = (await lsResponse.json()) as ReadFileResult;
-    expect(lsResponse.status).toBe(200);
-    expect(lsData.success).toBe(true);
-    // Directory should exist (ls succeeds)
-  }, 90000);
-
-  test('should write files in subdirectories and read them back', async () => {
-    currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
-
-    // Create directory structure
-    await fetch(`${workerUrl}/api/file/mkdir`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: '/workspace/app/config',
-
-        recursive: true
-      })
-    });
-
-    // Write file in subdirectory
-    const writeResponse = await fetch(`${workerUrl}/api/file/write`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: '/workspace/app/config/settings.json',
-        content: JSON.stringify({ debug: true, port: 3000 })
-      })
-    });
-
-    expect(writeResponse.status).toBe(200);
-
-    // Read file back
-    const readResponse = await fetch(`${workerUrl}/api/file/read`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: '/workspace/app/config/settings.json'
-      })
-    });
-
-    const readData = (await readResponse.json()) as ReadFileResult;
-    expect(readResponse.status).toBe(200);
-    expect(readData.content).toContain('debug');
-    expect(readData.content).toContain('3000');
-  }, 90000);
-
-  test('should rename files', async () => {
-    currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
-
-    // Create directory and write file
-    await fetch(`${workerUrl}/api/file/mkdir`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: '/workspace/docs',
-
-        recursive: true
-      })
-    });
-
-    await fetch(`${workerUrl}/api/file/write`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: '/workspace/docs/README.txt',
-        content: '# Project Documentation'
-      })
-    });
-
-    // Rename file from .txt to .md
-    const renameResponse = await fetch(`${workerUrl}/api/file/rename`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        oldPath: '/workspace/docs/README.txt',
-        newPath: '/workspace/docs/README.md'
-      })
-    });
-
-    expect(renameResponse.status).toBe(200);
-
-    // Verify new file exists
-    const readNewResponse = await fetch(`${workerUrl}/api/file/read`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: '/workspace/docs/README.md'
-      })
-    });
-
-    const readNewData = (await readNewResponse.json()) as ReadFileResult;
-    expect(readNewResponse.status).toBe(200);
-    expect(readNewData.content).toContain('Project Documentation');
-
-    // Verify old file doesn't exist
-    const readOldResponse = await fetch(`${workerUrl}/api/file/read`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: '/workspace/docs/README.txt'
-      })
-    });
-
-    expect(readOldResponse.status).toBe(500); // Should fail - file doesn't exist
-  }, 90000);
-
-  test('should move files between directories', async () => {
-    currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
-
-    // Create two directories
-    await fetch(`${workerUrl}/api/file/mkdir`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: '/workspace/source',
-
-        recursive: true
-      })
-    });
-
-    await fetch(`${workerUrl}/api/file/mkdir`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: '/workspace/destination',
-
-        recursive: true
-      })
-    });
-
-    // Write file in source directory
-    await fetch(`${workerUrl}/api/file/write`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: '/workspace/source/data.json',
-        content: JSON.stringify({ id: 1, name: 'test' })
-      })
-    });
-
-    // Move file to destination
-    const moveResponse = await fetch(`${workerUrl}/api/file/move`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        sourcePath: '/workspace/source/data.json',
-        destinationPath: '/workspace/destination/data.json'
-      })
-    });
-
-    expect(moveResponse.status).toBe(200);
-
-    // Verify file exists in destination
-    const readDestResponse = await fetch(`${workerUrl}/api/file/read`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: '/workspace/destination/data.json'
-      })
-    });
-
-    const readDestData = (await readDestResponse.json()) as ReadFileResult;
-    expect(readDestResponse.status).toBe(200);
-    expect(readDestData.content).toContain('test');
-
-    // Verify file doesn't exist in source
-    const readSourceResponse = await fetch(`${workerUrl}/api/file/read`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: '/workspace/source/data.json'
-      })
-    });
-
-    expect(readSourceResponse.status).toBe(500); // Should fail - file moved
-  }, 90000);
-
-  test('should delete files', async () => {
-    currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
-
-    // Create directory and file
-    await fetch(`${workerUrl}/api/file/mkdir`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: '/workspace/temp',
-
-        recursive: true
-      })
-    });
-
-    await fetch(`${workerUrl}/api/file/write`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: '/workspace/temp/delete-me.txt',
-        content: 'This file will be deleted'
-      })
-    });
-
-    // Verify file exists
-    const readBeforeResponse = await fetch(`${workerUrl}/api/file/read`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: '/workspace/temp/delete-me.txt'
-      })
-    });
-
-    expect(readBeforeResponse.status).toBe(200);
-
-    // Delete file
-    const deleteResponse = await fetch(`${workerUrl}/api/file/delete`, {
-      method: 'DELETE',
-      headers,
-      body: JSON.stringify({
-        path: '/workspace/temp/delete-me.txt'
-      })
-    });
-
-    expect(deleteResponse.status).toBe(200);
-
-    // Verify file doesn't exist
-    const readAfterResponse = await fetch(`${workerUrl}/api/file/read`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: '/workspace/temp/delete-me.txt'
-      })
-    });
-
-    expect(readAfterResponse.status).toBe(500); // Should fail - file deleted
-  }, 90000);
 
   test('should reject deleting directories with deleteFile', async () => {
-    currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
+    const dirPath = `${testDir}/test-dir`;
 
     // Create a directory
     await fetch(`${workerUrl}/api/file/mkdir`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        path: '/workspace/test-dir',
-
+        path: dirPath,
         recursive: true
       })
     });
@@ -350,13 +54,11 @@ describe('File Operations Workflow (E2E)', () => {
       method: 'DELETE',
       headers,
       body: JSON.stringify({
-        path: '/workspace/test-dir'
+        path: dirPath
       })
     });
 
-    // Should return error
     expect(deleteResponse.status).toBe(500);
-
     const deleteData = (await deleteResponse.json()) as ErrorResponse;
     expect(deleteData.error).toContain('Cannot delete directory');
     expect(deleteData.error).toContain('deleteFile()');
@@ -366,330 +68,174 @@ describe('File Operations Workflow (E2E)', () => {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        command: 'ls -d /workspace/test-dir'
+        command: `ls -d ${dirPath}`
       })
     });
 
     const lsData = (await lsResponse.json()) as ReadFileResult;
     expect(lsResponse.status).toBe(200);
-    expect(lsData.success).toBe(true); // Directory should still exist
+    expect(lsData.success).toBe(true);
+  }, 90000);
 
-    // Cleanup - delete directory properly using exec
-    await fetch(`${workerUrl}/api/execute`, {
+  test('should return error when deleting nonexistent file', async () => {
+    const deleteResponse = await fetch(`${workerUrl}/api/file/delete`, {
+      method: 'DELETE',
+      headers,
+      body: JSON.stringify({
+        path: `${testDir}/this-file-does-not-exist.txt`
+      })
+    });
+
+    expect(deleteResponse.status).toBe(500);
+    const errorData = (await deleteResponse.json()) as ErrorResponse;
+    expect(errorData.error).toBeTruthy();
+    expect(errorData.error).toMatch(/not found|does not exist|no such file/i);
+  }, 90000);
+
+  test('should handle listFiles errors appropriately', async () => {
+    // Test non-existent directory
+    const notFoundResponse = await fetch(`${workerUrl}/api/list-files`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        command: 'rm -rf /workspace/test-dir'
+        path: `${testDir}/does-not-exist`
       })
     });
-  }, 90000);
 
-  test('should delete directories recursively using exec', async () => {
-    currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
+    expect(notFoundResponse.status).toBe(500);
+    const notFoundData = (await notFoundResponse.json()) as ErrorResponse;
+    expect(notFoundData.error).toBeTruthy();
+    expect(notFoundData.error).toMatch(/not found|does not exist/i);
 
-    // Create nested directory structure with files
+    // Test listing a file instead of directory
+    const filePath = `${testDir}/file.txt`;
     await fetch(`${workerUrl}/api/file/mkdir`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({
-        path: '/workspace/cleanup/nested/deep',
-
-        recursive: true
-      })
+      body: JSON.stringify({ path: testDir, recursive: true })
     });
-
-    // Write files in different levels
     await fetch(`${workerUrl}/api/file/write`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        path: '/workspace/cleanup/file1.txt',
-        content: 'Level 1'
+        path: filePath,
+        content: 'Not a directory'
       })
     });
 
-    await fetch(`${workerUrl}/api/file/write`, {
+    const wrongTypeResponse = await fetch(`${workerUrl}/api/list-files`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        path: '/workspace/cleanup/nested/file2.txt',
-        content: 'Level 2'
+        path: filePath
       })
     });
 
-    // Delete entire directory tree (use exec since deleteFile only works on files)
-    const deleteResponse = await fetch(`${workerUrl}/api/execute`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        command: 'rm -rf /workspace/cleanup'
-      })
-    });
-
-    const deleteData = (await deleteResponse.json()) as DeleteFileResult;
-    expect(deleteResponse.status).toBe(200);
-    expect(deleteData.success).toBe(true);
-
-    // Verify directory doesn't exist
-    const lsResponse = await fetch(`${workerUrl}/api/execute`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        command: 'ls /workspace/cleanup'
-      })
-    });
-
-    const lsData = (await lsResponse.json()) as ReadFileResult;
-    // ls should fail or show empty result
-    expect(lsData.success).toBe(false);
+    expect(wrongTypeResponse.status).toBe(500);
+    const wrongTypeData = (await wrongTypeResponse.json()) as ErrorResponse;
+    expect(wrongTypeData.error).toMatch(/not a directory/i);
   }, 90000);
 
-  test('should handle complete project scaffolding workflow', async () => {
-    currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
+  // Regression test for #196: hidden files in hidden directories
+  test('should list files in hidden directories with includeHidden flag', async () => {
+    const hiddenDir = `${testDir}/.hidden/foo`;
 
-    // Step 1: Create project directory structure
-    // Create main project directories
+    // Create hidden directory structure
     await fetch(`${workerUrl}/api/file/mkdir`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({
-        path: '/workspace/myapp/src',
-
-        recursive: true
-      })
+      body: JSON.stringify({ path: `${hiddenDir}/bar`, recursive: true })
     });
 
-    await fetch(`${workerUrl}/api/file/mkdir`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: '/workspace/myapp/tests',
-
-        recursive: true
-      })
-    });
-
-    await fetch(`${workerUrl}/api/file/mkdir`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: '/workspace/myapp/config',
-
-        recursive: true
-      })
-    });
-
-    // Step 2: Write initial files
+    // Write visible files in hidden directory
     await fetch(`${workerUrl}/api/file/write`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        path: '/workspace/myapp/package.json',
-        content: JSON.stringify({ name: 'myapp', version: '1.0.0' })
+        path: `${hiddenDir}/visible1.txt`,
+        content: 'Visible 1'
       })
     });
-
     await fetch(`${workerUrl}/api/file/write`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        path: '/workspace/myapp/src/index.js',
-        content: 'console.log("Hello World");'
+        path: `${hiddenDir}/visible2.txt`,
+        content: 'Visible 2'
       })
     });
 
+    // Write hidden file in hidden directory
     await fetch(`${workerUrl}/api/file/write`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        path: '/workspace/myapp/config/dev.json',
-        content: JSON.stringify({ env: 'development' })
+        path: `${hiddenDir}/.hiddenfile.txt`,
+        content: 'Hidden'
       })
     });
 
-    // Step 3: Rename config file
-    const renameResponse = await fetch(`${workerUrl}/api/file/rename`, {
+    // List WITHOUT includeHidden - should NOT show .hiddenfile.txt
+    const listResponse = await fetch(`${workerUrl}/api/list-files`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ path: hiddenDir })
+    });
+
+    expect(listResponse.status).toBe(200);
+    const listData = (await listResponse.json()) as ListFilesResult;
+    expect(listData.success).toBe(true);
+
+    const visibleFiles = listData.files.filter(
+      (f: FileInfo) => !f.name.startsWith('.')
+    );
+    expect(visibleFiles.length).toBe(3); // visible1.txt, visible2.txt, bar/
+
+    const hiddenFile = listData.files.find(
+      (f: FileInfo) => f.name === '.hiddenfile.txt'
+    );
+    expect(hiddenFile).toBeUndefined();
+
+    // List WITH includeHidden - should show all files
+    const listWithHiddenResponse = await fetch(`${workerUrl}/api/list-files`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        oldPath: '/workspace/myapp/config/dev.json',
-        newPath: '/workspace/myapp/config/development.json'
+        path: hiddenDir,
+        options: { includeHidden: true }
       })
     });
 
-    expect(renameResponse.status).toBe(200);
+    expect(listWithHiddenResponse.status).toBe(200);
+    const listWithHiddenData =
+      (await listWithHiddenResponse.json()) as ListFilesResult;
 
-    // Step 4: Move index.js to a lib subdirectory
-    await fetch(`${workerUrl}/api/file/mkdir`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: '/workspace/myapp/src/lib',
+    expect(listWithHiddenData.success).toBe(true);
+    expect(listWithHiddenData.files.length).toBe(4); // +.hiddenfile.txt
 
-        recursive: true
-      })
-    });
-
-    const moveResponse = await fetch(`${workerUrl}/api/file/move`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        sourcePath: '/workspace/myapp/src/index.js',
-        destinationPath: '/workspace/myapp/src/lib/index.js'
-      })
-    });
-
-    expect(moveResponse.status).toBe(200);
-
-    // Step 5: Verify final structure
-    const readPackageResponse = await fetch(`${workerUrl}/api/file/read`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: '/workspace/myapp/package.json'
-      })
-    });
-
-    const packageData = (await readPackageResponse.json()) as ReadFileResult;
-    expect(readPackageResponse.status).toBe(200);
-    expect(packageData.content).toContain('myapp');
-
-    const readConfigResponse = await fetch(`${workerUrl}/api/file/read`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: '/workspace/myapp/config/development.json'
-      })
-    });
-
-    const configData = (await readConfigResponse.json()) as ReadFileResult;
-    expect(readConfigResponse.status).toBe(200);
-    expect(configData.content).toContain('development');
-
-    const readIndexResponse = await fetch(`${workerUrl}/api/file/read`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: '/workspace/myapp/src/lib/index.js'
-      })
-    });
-
-    const indexData = (await readIndexResponse.json()) as ReadFileResult;
-    expect(readIndexResponse.status).toBe(200);
-    expect(indexData.content).toContain('Hello World');
-
-    // Step 6: Cleanup - delete entire project (use exec since deleteFile only works on files)
-    const deleteResponse = await fetch(`${workerUrl}/api/execute`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        command: 'rm -rf /workspace/myapp'
-      })
-    });
-
-    const deleteData = (await deleteResponse.json()) as DeleteFileResult;
-    expect(deleteResponse.status).toBe(200);
-    expect(deleteData.success).toBe(true);
-
-    // Verify cleanup
-    const lsResponse = await fetch(`${workerUrl}/api/execute`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        command: 'ls /workspace/myapp'
-      })
-    });
-
-    const lsData = (await lsResponse.json()) as ReadFileResult;
-    expect(lsData.success).toBe(false); // Directory should not exist
+    const hiddenFileWithFlag = listWithHiddenData.files.find(
+      (f: FileInfo) => f.name === '.hiddenfile.txt'
+    );
+    expect(hiddenFileWithFlag).toBeDefined();
   }, 90000);
 
-  test('should allow writing to any path (no path blocking - trust container isolation)', async () => {
-    currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
-
-    // Phase 0: Security simplification - we no longer block system paths
-    // Users control their sandbox - container isolation provides real security
-    // This test verifies we don't artificially restrict paths
-
-    // Try to write to /tmp (should work - users control their sandbox)
-    const writeResponse = await fetch(`${workerUrl}/api/file/write`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: '/tmp/test-no-restrictions.txt',
-        content: 'Users control their sandbox!'
-      })
-    });
-
-    expect(writeResponse.status).toBe(200);
-    const writeData = (await writeResponse.json()) as WriteFileResult;
-    expect(writeData.success).toBe(true);
-
-    // Verify we can read it back
-    const readResponse = await fetch(`${workerUrl}/api/file/read`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: '/tmp/test-no-restrictions.txt'
-      })
-    });
-
-    expect(readResponse.status).toBe(200);
-    const readData = (await readResponse.json()) as ReadFileResult;
-    expect(readData.content).toBe('Users control their sandbox!');
-  }, 90000);
-
-  test('should read text files with correct encoding and metadata', async () => {
-    currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
-
-    // Create a text file
-    await fetch(`${workerUrl}/api/file/write`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: '/workspace/test.txt',
-        content: 'Hello, World! This is a test.'
-      })
-    });
-
-    // Read the file and check metadata
-    const readResponse = await fetch(`${workerUrl}/api/file/read`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: '/workspace/test.txt'
-      })
-    });
-
-    expect(readResponse.status).toBe(200);
-    const readData = (await readResponse.json()) as ReadFileResult;
-
-    expect(readData.success).toBe(true);
-    expect(readData.content).toBe('Hello, World! This is a test.');
-    expect(readData.encoding).toBe('utf-8');
-    expect(readData.isBinary).toBe(false);
-    expect(readData.mimeType).toMatch(/text\/plain/);
-    expect(readData.size).toBeGreaterThan(0);
-  }, 90000);
-
-  test('should write and read binary files with base64 encoding', async () => {
-    currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
-
-    // Create a simple binary file (1x1 PNG - smallest valid PNG)
+  test('should read binary files with base64 encoding', async () => {
+    // 1x1 PNG - smallest valid PNG
     const pngBase64 =
       'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChAI9jYlkKQAAAABJRU5ErkJggg==';
 
-    // First create the file using exec with base64 decode
+    // Create binary file via base64 decode
+    await fetch(`${workerUrl}/api/file/mkdir`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ path: testDir, recursive: true })
+    });
+
     await fetch(`${workerUrl}/api/execute`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        command: `echo '${pngBase64}' | base64 -d > /workspace/test.png`
+        command: `echo '${pngBase64}' | base64 -d > ${testDir}/test.png`
       })
     });
 
@@ -697,9 +243,7 @@ describe('File Operations Workflow (E2E)', () => {
     const readResponse = await fetch(`${workerUrl}/api/file/read`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({
-        path: '/workspace/test.png'
-      })
+      body: JSON.stringify({ path: `${testDir}/test.png` })
     });
 
     expect(readResponse.status).toBe(200);
@@ -714,485 +258,5 @@ describe('File Operations Workflow (E2E)', () => {
 
     // Verify the content is valid base64
     expect(readData.content).toMatch(/^[A-Za-z0-9+/=]+$/);
-  }, 90000);
-
-  test('should detect JSON files as text', async () => {
-    currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
-
-    const jsonContent = JSON.stringify({ key: 'value', number: 42 });
-
-    // Write JSON file
-    await fetch(`${workerUrl}/api/file/write`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: '/workspace/config.json',
-        content: jsonContent
-      })
-    });
-
-    // Read and verify metadata
-    const readResponse = await fetch(`${workerUrl}/api/file/read`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: '/workspace/config.json'
-      })
-    });
-
-    expect(readResponse.status).toBe(200);
-    const readData = (await readResponse.json()) as ReadFileResult;
-
-    expect(readData.success).toBe(true);
-    expect(readData.content).toBe(jsonContent);
-    expect(readData.encoding).toBe('utf-8');
-    expect(readData.isBinary).toBe(false);
-    expect(readData.mimeType).toMatch(/json/);
-  }, 90000);
-
-  test('should stream large text files', async () => {
-    currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
-
-    // Create a larger text file
-    const largeContent = 'Line content\n'.repeat(1000); // 13KB file
-
-    await fetch(`${workerUrl}/api/file/write`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: '/workspace/large.txt',
-        content: largeContent
-      })
-    });
-
-    // Stream the file
-    const streamResponse = await fetch(`${workerUrl}/api/read/stream`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: '/workspace/large.txt'
-      })
-    });
-
-    expect(streamResponse.status).toBe(200);
-    expect(streamResponse.headers.get('content-type')).toBe(
-      'text/event-stream'
-    );
-
-    // Collect events from stream
-    const reader = streamResponse.body?.getReader();
-    expect(reader).toBeDefined();
-
-    if (!reader) return;
-
-    const decoder = new TextDecoder();
-    let receivedMetadata = false;
-    let receivedChunks = 0;
-    let receivedComplete = false;
-    let buffer = '';
-
-    // Read entire stream - don't break early
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-    }
-
-    // Process all buffered events
-    const lines = buffer.split('\n');
-    for (const line of lines) {
-      if (line.startsWith('data: ')) {
-        const jsonStr = line.slice(6);
-        try {
-          const event = JSON.parse(jsonStr);
-
-          if (event.type === 'metadata') {
-            receivedMetadata = true;
-            expect(event.encoding).toBe('utf-8');
-            expect(event.isBinary).toBe(false);
-            expect(event.mimeType).toMatch(/text\/plain/);
-          } else if (event.type === 'chunk') {
-            receivedChunks++;
-            expect(event.data).toBeTruthy();
-          } else if (event.type === 'complete') {
-            receivedComplete = true;
-            expect(event.bytesRead).toBe(13000);
-          }
-        } catch (e) {
-          // Ignore parse errors for empty lines
-        }
-      }
-    }
-
-    expect(receivedMetadata).toBe(true);
-    expect(receivedChunks).toBeGreaterThan(0);
-    expect(receivedComplete).toBe(true);
-  }, 90000);
-
-  test('should return error when deleting nonexistent file', async () => {
-    currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
-
-    // Try to delete a file that doesn't exist
-    const deleteResponse = await fetch(`${workerUrl}/api/file/delete`, {
-      method: 'DELETE',
-      headers,
-      body: JSON.stringify({
-        path: '/workspace/this-file-does-not-exist.txt'
-      })
-    });
-
-    // Should return error with FILE_NOT_FOUND
-    expect(deleteResponse.status).toBe(500);
-    const errorData = (await deleteResponse.json()) as ErrorResponse;
-    expect(errorData.error).toBeTruthy();
-    expect(errorData.error).toMatch(/not found|does not exist|no such file/i);
-  }, 90000);
-
-  test('should list files with metadata and permissions', async () => {
-    currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
-
-    // Create directory with files including executable script
-    await fetch(`${workerUrl}/api/file/mkdir`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: '/workspace/project',
-        recursive: true
-      })
-    });
-
-    await fetch(`${workerUrl}/api/file/write`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: '/workspace/project/data.txt',
-        content: 'Some data'
-      })
-    });
-
-    await fetch(`${workerUrl}/api/execute`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        command:
-          'echo "#!/bin/bash" > /workspace/project/script.sh && chmod +x /workspace/project/script.sh'
-      })
-    });
-
-    // List files and verify metadata
-    const listResponse = await fetch(`${workerUrl}/api/list-files`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: '/workspace/project'
-      })
-    });
-
-    expect(listResponse.status).toBe(200);
-    const listData = (await listResponse.json()) as ListFilesResult;
-
-    expect(listData.success).toBe(true);
-    expect(listData.path).toBe('/workspace/project');
-    expect(listData.files).toBeInstanceOf(Array);
-    expect(listData.count).toBeGreaterThan(0);
-
-    // Verify file has correct metadata and permissions
-    const dataFile = listData.files.find(
-      (f: FileInfo) => f.name === 'data.txt'
-    );
-    expect(dataFile).toBeDefined();
-    if (!dataFile) throw new Error('dataFile not found');
-
-    expect(dataFile.type).toBe('file');
-    expect(dataFile.absolutePath).toBe('/workspace/project/data.txt');
-    expect(dataFile.relativePath).toBe('data.txt');
-    expect(dataFile.size).toBeGreaterThan(0);
-    expect(dataFile.mode).toMatch(/^[r-][w-][x-][r-][w-][x-][r-][w-][x-]$/);
-    expect(dataFile.permissions.readable).toBe(true);
-    expect(dataFile.permissions.writable).toBe(true);
-    expect(dataFile.permissions.executable).toBe(false);
-
-    // Verify executable script has correct permissions
-    const scriptFile = listData.files.find(
-      (f: FileInfo) => f.name === 'script.sh'
-    );
-    expect(scriptFile).toBeDefined();
-    if (!scriptFile) throw new Error('scriptFile not found');
-
-    expect(scriptFile.permissions.executable).toBe(true);
-  }, 90000);
-
-  test('should list files recursively with correct relative paths', async () => {
-    currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
-
-    // Create nested directory structure
-    await fetch(`${workerUrl}/api/file/mkdir`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: '/workspace/tree/level1/level2',
-        recursive: true
-      })
-    });
-
-    await fetch(`${workerUrl}/api/file/write`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: '/workspace/tree/root.txt',
-        content: 'Root'
-      })
-    });
-
-    await fetch(`${workerUrl}/api/file/write`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: '/workspace/tree/level1/level2/deep.txt',
-        content: 'Deep'
-      })
-    });
-
-    const listResponse = await fetch(`${workerUrl}/api/list-files`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: '/workspace/tree',
-        options: { recursive: true }
-      })
-    });
-
-    expect(listResponse.status).toBe(200);
-    const listData = (await listResponse.json()) as ListFilesResult;
-
-    expect(listData.success).toBe(true);
-
-    // Verify relative paths are correct
-    const rootFile = listData.files.find(
-      (f: FileInfo) => f.name === 'root.txt'
-    );
-    expect(rootFile?.relativePath).toBe('root.txt');
-
-    const deepFile = listData.files.find(
-      (f: FileInfo) => f.name === 'deep.txt'
-    );
-    expect(deepFile?.relativePath).toBe('level1/level2/deep.txt');
-  }, 90000);
-
-  test('should handle listFiles errors appropriately', async () => {
-    currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
-
-    // Test non-existent directory
-    const notFoundResponse = await fetch(`${workerUrl}/api/list-files`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: '/workspace/does-not-exist'
-      })
-    });
-
-    expect(notFoundResponse.status).toBe(500);
-    const notFoundData = (await notFoundResponse.json()) as ErrorResponse;
-    expect(notFoundData.error).toBeTruthy();
-    expect(notFoundData.error).toMatch(/not found|does not exist/i);
-
-    // Test listing a file instead of directory
-    await fetch(`${workerUrl}/api/file/write`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: '/workspace/file.txt',
-        content: 'Not a directory'
-      })
-    });
-
-    const wrongTypeResponse = await fetch(`${workerUrl}/api/list-files`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: '/workspace/file.txt'
-      })
-    });
-
-    expect(wrongTypeResponse.status).toBe(500);
-    const wrongTypeData = (await wrongTypeResponse.json()) as ErrorResponse;
-    expect(wrongTypeData.error).toMatch(/not a directory/i);
-  }, 90000);
-
-  test('should check file and directory existence', async () => {
-    currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
-
-    // Create a file and directory for testing
-    await fetch(`${workerUrl}/api/file/mkdir`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: '/workspace/testdir',
-        recursive: true
-      })
-    });
-
-    await fetch(`${workerUrl}/api/file/write`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: '/workspace/testfile.txt',
-        content: 'Test content'
-      })
-    });
-
-    // Check that file exists
-    const fileExistsResponse = await fetch(`${workerUrl}/api/file/exists`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: '/workspace/testfile.txt'
-      })
-    });
-
-    expect(fileExistsResponse.status).toBe(200);
-    const fileExistsData =
-      (await fileExistsResponse.json()) as FileExistsResult;
-    expect(fileExistsData.success).toBe(true);
-    expect(fileExistsData.exists).toBe(true);
-
-    // Check that directory exists
-    const dirExistsResponse = await fetch(`${workerUrl}/api/file/exists`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: '/workspace/testdir'
-      })
-    });
-
-    expect(dirExistsResponse.status).toBe(200);
-    const dirExistsData = (await dirExistsResponse.json()) as FileExistsResult;
-    expect(dirExistsData.success).toBe(true);
-    expect(dirExistsData.exists).toBe(true);
-
-    // Check that non-existent path returns false
-    const notExistsResponse = await fetch(`${workerUrl}/api/file/exists`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: '/workspace/nonexistent'
-      })
-    });
-
-    expect(notExistsResponse.status).toBe(200);
-    const notExistsData = (await notExistsResponse.json()) as FileExistsResult;
-    expect(notExistsData.success).toBe(true);
-    expect(notExistsData.exists).toBe(false);
-  }, 90000);
-
-  test('should list files in hidden directories without includeHidden flag', async () => {
-    currentSandboxId = createSandboxId();
-    const headers = createTestHeaders(currentSandboxId);
-
-    // Create hidden directory structure with non-hidden files
-    await fetch(`${workerUrl}/api/file/mkdir`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: '/workspace/.hidden/foo/bar',
-        recursive: true
-      })
-    });
-
-    // Write visible files in hidden directory
-    await fetch(`${workerUrl}/api/file/write`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: '/workspace/.hidden/foo/visible1.txt',
-        content: 'Visible file 1'
-      })
-    });
-
-    await fetch(`${workerUrl}/api/file/write`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: '/workspace/.hidden/foo/visible2.txt',
-        content: 'Visible file 2'
-      })
-    });
-
-    // Write hidden file in hidden directory
-    await fetch(`${workerUrl}/api/file/write`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: '/workspace/.hidden/foo/.hiddenfile.txt',
-        content: 'Hidden file'
-      })
-    });
-
-    // List files WITHOUT includeHidden flag - should show visible files only
-    const listResponse = await fetch(`${workerUrl}/api/list-files`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: '/workspace/.hidden/foo'
-      })
-    });
-
-    expect(listResponse.status).toBe(200);
-    const listData = (await listResponse.json()) as ListFilesResult;
-
-    expect(listData.success).toBe(true);
-    expect(listData.files).toBeInstanceOf(Array);
-
-    // Should contain visible files
-    const visibleFiles = listData.files.filter(
-      (f: FileInfo) => !f.name.startsWith('.')
-    );
-    expect(visibleFiles.length).toBe(3); // visible1.txt, visible2.txt, bar/
-
-    const visible1 = listData.files.find(
-      (f: FileInfo) => f.name === 'visible1.txt'
-    );
-    expect(visible1).toBeDefined();
-
-    const visible2 = listData.files.find(
-      (f: FileInfo) => f.name === 'visible2.txt'
-    );
-    expect(visible2).toBeDefined();
-
-    // Should NOT contain hidden file
-    const hiddenFile = listData.files.find(
-      (f: FileInfo) => f.name === '.hiddenfile.txt'
-    );
-    expect(hiddenFile).toBeUndefined();
-
-    // List files WITH includeHidden flag - should show all files
-    const listWithHiddenResponse = await fetch(`${workerUrl}/api/list-files`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: '/workspace/.hidden/foo',
-        options: { includeHidden: true }
-      })
-    });
-
-    expect(listWithHiddenResponse.status).toBe(200);
-    const listWithHiddenData =
-      (await listWithHiddenResponse.json()) as ListFilesResult;
-
-    expect(listWithHiddenData.success).toBe(true);
-    expect(listWithHiddenData.files.length).toBe(4); // visible1.txt, visible2.txt, bar/, .hiddenfile.txt
-
-    const hiddenFileWithFlag = listWithHiddenData.files.find(
-      (f: FileInfo) => f.name === '.hiddenfile.txt'
-    );
-    expect(hiddenFileWithFlag).toBeDefined();
   }, 90000);
 });

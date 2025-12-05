@@ -61,7 +61,9 @@ export type {
   PortErrorContext,
   PortNotExposedContext,
   ProcessErrorContext,
+  ProcessExitedBeforeReadyContext,
   ProcessNotFoundContext,
+  ProcessReadyTimeoutContext,
   ValidationFailedContext
 } from '@repo/shared/errors';
 // Re-export shared types and constants
@@ -100,8 +102,11 @@ export {
   PortInUseError,
   PortNotExposedError,
   ProcessError,
+  // Process Readiness Errors
+  ProcessExitedBeforeReadyError,
   // Process Errors
   ProcessNotFoundError,
+  ProcessReadyTimeoutError,
   SandboxError,
   ServiceNotRespondingError,
   // Validation Errors
