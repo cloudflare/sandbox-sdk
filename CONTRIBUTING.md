@@ -165,11 +165,10 @@ Located in `tests/e2e/`:
 
 - Test full workflows against real Workers and containers
 - Require Docker
-- Slower but comprehensive
+- Share a single sandbox container for performance (~30s for full suite)
+- Use sessions for test isolation
 
 Run with: `npm run test:e2e`
-
-You can also run specific test files or individual tests:
 
 ```bash
 # Run a single E2E test file
@@ -179,12 +178,15 @@ npm run test:e2e -- -- tests/e2e/process-lifecycle-workflow.test.ts
 npm run test:e2e -- -- tests/e2e/git-clone-workflow.test.ts -t 'should handle cloning to default directory'
 ```
 
+**See `docs/E2E_TESTING.md` for the complete guide on writing E2E tests.**
+
 ### Writing Tests
 
 - Write tests for new features
 - Add regression tests for bug fixes
 - Ensure tests are deterministic (no flaky tests)
 - Use descriptive test names
+- For E2E tests: use `getSharedSandbox()` and `createUniqueSession()` for isolation
 
 ## Documentation
 
