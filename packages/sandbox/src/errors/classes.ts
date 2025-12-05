@@ -25,7 +25,9 @@ import type {
   PortErrorContext,
   PortNotExposedContext,
   ProcessErrorContext,
+  ProcessExitedBeforeReadyContext,
   ProcessNotFoundContext,
+  ProcessReadyTimeoutContext,
   ValidationFailedContext
 } from '@repo/shared/errors';
 
@@ -590,5 +592,57 @@ export class ValidationFailedError extends SandboxError<ValidationFailedContext>
   // Type-safe accessor
   get validationErrors() {
     return this.context.validationErrors;
+  }
+}
+
+// ============================================================================
+// Process Readiness Errors
+// ============================================================================
+
+/**
+ * Error thrown when a process does not become ready within the timeout period
+ */
+export class ProcessReadyTimeoutError extends SandboxError<ProcessReadyTimeoutContext> {
+  constructor(errorResponse: ErrorResponse<ProcessReadyTimeoutContext>) {
+    super(errorResponse);
+    this.name = 'ProcessReadyTimeoutError';
+  }
+
+  // Type-safe accessors
+  get processId() {
+    return this.context.processId;
+  }
+  get command() {
+    return this.context.command;
+  }
+  get condition() {
+    return this.context.condition;
+  }
+  get timeout() {
+    return this.context.timeout;
+  }
+}
+
+/**
+ * Error thrown when a process exits before becoming ready
+ */
+export class ProcessExitedBeforeReadyError extends SandboxError<ProcessExitedBeforeReadyContext> {
+  constructor(errorResponse: ErrorResponse<ProcessExitedBeforeReadyContext>) {
+    super(errorResponse);
+    this.name = 'ProcessExitedBeforeReadyError';
+  }
+
+  // Type-safe accessors
+  get processId() {
+    return this.context.processId;
+  }
+  get command() {
+    return this.context.command;
+  }
+  get condition() {
+    return this.context.condition;
+  }
+  get exitCode() {
+    return this.context.exitCode;
   }
 }

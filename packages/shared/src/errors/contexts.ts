@@ -49,6 +49,23 @@ export interface ProcessErrorContext {
 }
 
 /**
+ * Process readiness error contexts
+ */
+export interface ProcessReadyTimeoutContext {
+  processId: string;
+  command: string;
+  condition: string;
+  timeout: number;
+}
+
+export interface ProcessExitedBeforeReadyContext {
+  processId: string;
+  command: string;
+  condition: string;
+  exitCode: number;
+}
+
+/**
  * Port error contexts
  */
 export interface PortAlreadyExposedContext {

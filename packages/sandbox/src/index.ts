@@ -40,7 +40,10 @@ export type {
   RunCodeOptions,
   SandboxOptions,
   SessionOptions,
-  StreamOptions
+  StreamOptions,
+  // Process readiness types
+  WaitForLogResult,
+  WaitForPortOptions
 } from '@repo/shared';
 // Export type guards for runtime validation
 export { isExecResult, isProcess, isProcessStatus } from '@repo/shared';
@@ -96,6 +99,11 @@ export type {
   ExecutionCallbacks,
   InterpreterClient
 } from './clients/interpreter-client.js';
+// Export process readiness errors
+export {
+  ProcessExitedBeforeReadyError,
+  ProcessReadyTimeoutError
+} from './errors';
 // Export file streaming utilities for binary file support
 export { collectFile, streamFile } from './file-stream';
 // Export interpreter functionality

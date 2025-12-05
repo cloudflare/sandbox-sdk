@@ -53,7 +53,11 @@ export const ERROR_STATUS_MAP: Record<ErrorCode, number> = {
   // 503 Service Unavailable
   [ErrorCode.INTERPRETER_NOT_READY]: 503,
 
+  // 408 Request Timeout
+  [ErrorCode.PROCESS_READY_TIMEOUT]: 408,
+
   // 500 Internal Server Error
+  [ErrorCode.PROCESS_EXITED_BEFORE_READY]: 500,
   [ErrorCode.NO_SPACE]: 500,
   [ErrorCode.TOO_MANY_FILES]: 500,
   [ErrorCode.TOO_MANY_LINKS]: 500,

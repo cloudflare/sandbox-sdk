@@ -510,6 +510,65 @@ console.log('Terminal server on port ' + port);
         });
       }
 
+      // Process waitForLog - waits for a log pattern
+      if (
+        url.pathname.startsWith('/api/process/') &&
+        url.pathname.endsWith('/waitForLog') &&
+        request.method === 'POST'
+      ) {
+        const pathParts = url.pathname.split('/');
+        const processId = pathParts[3];
+        const process = await executor.getProcess(processId);
+        if (!process) {
+          return new Response(JSON.stringify({ error: 'Process not found' }), {
+            status: 404,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+        // pattern can be string or regex pattern (as string starting with /)
+        let pattern = body.pattern;
+        if (
+          typeof pattern === 'string' &&
+          pattern.startsWith('/') &&
+          pattern.endsWith('/')
+        ) {
+          // Convert regex string to RegExp
+          pattern = new RegExp(pattern.slice(1, -1));
+        }
+        const result = await process.waitForLog(pattern, body.timeout);
+        return new Response(JSON.stringify(result), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      // Process waitForPort - waits for a port to be available
+      if (
+        url.pathname.startsWith('/api/process/') &&
+        url.pathname.endsWith('/waitForPort') &&
+        request.method === 'POST'
+      ) {
+        const pathParts = url.pathname.split('/');
+        const processId = pathParts[3];
+        const process = await executor.getProcess(processId);
+        if (!process) {
+          return new Response(JSON.stringify({ error: 'Process not found' }), {
+            status: 404,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+        // Build WaitForPortOptions from request body
+        await process.waitForPort(body.port, {
+          mode: body.mode,
+          path: body.path,
+          status: body.status,
+          timeout: body.timeout,
+          interval: body.interval
+        });
+        return new Response(JSON.stringify({ success: true }), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
       // Process list
       if (url.pathname === '/api/process/list' && request.method === 'GET') {
         const processes = await executor.listProcesses();
