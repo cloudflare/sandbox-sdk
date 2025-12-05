@@ -11,6 +11,7 @@ import {
   type WSServerMessage,
   type WSStreamChunk
 } from '@repo/shared';
+import type { ContainerStub } from './types';
 
 /**
  * Pending request tracker for response matching
@@ -34,6 +35,15 @@ export interface WSTransportOptions {
 
   /** Request timeout in milliseconds */
   requestTimeoutMs?: number;
+
+  /**
+   * Container stub for DO-internal WebSocket connections.
+   * When provided, uses fetch-based WebSocket (Workers style) instead of new WebSocket().
+   */
+  stub?: ContainerStub;
+
+  /** Port number for container connection */
+  port?: number;
 }
 
 /**
@@ -55,6 +65,8 @@ export class WSTransport {
   private logger: Logger;
   private options: WSTransportOptions;
   private url: string;
+  private stub?: ContainerStub;
+  private port?: number;
 
   // Bound event handlers for proper add/remove
   private boundHandleMessage: (event: MessageEvent) => void;
@@ -64,6 +76,8 @@ export class WSTransport {
     this.url = url;
     this.options = options;
     this.logger = options.logger ?? createNoOpLogger();
+    this.stub = options.stub;
+    this.port = options.port;
 
     // Bind handlers once in constructor
     this.boundHandleMessage = this.handleMessage.bind(this);
@@ -93,7 +107,92 @@ export class WSTransport {
 
     this.state = 'connecting';
 
-    this.connectPromise = new Promise<void>((resolve, reject) => {
+    // Use fetch-based WebSocket for DO context (Workers style)
+    if (this.stub) {
+      this.connectPromise = this.connectViaFetch();
+    } else {
+      // Use standard WebSocket for browser/Node
+      this.connectPromise = this.connectViaWebSocket();
+    }
+
+    try {
+      await this.connectPromise;
+    } finally {
+      this.connectPromise = null;
+    }
+  }
+
+  /**
+   * Connect using fetch-based WebSocket (Cloudflare Workers style)
+   * This is required when running inside a Durable Object.
+   */
+  private async connectViaFetch(): Promise<void> {
+    const timeoutMs = this.options.connectTimeoutMs ?? 30000;
+
+    // Create abort controller for timeout
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      // Build the WebSocket URL for the container
+      const wsPath = new URL(this.url).pathname;
+      const httpUrl = `http://localhost:${this.port || 3000}${wsPath}`;
+
+      // Use containerFetch with upgrade headers to establish WebSocket
+      const response = await this.stub!.containerFetch(
+        httpUrl,
+        {
+          headers: {
+            Upgrade: 'websocket',
+            Connection: 'Upgrade'
+          },
+          signal: controller.signal
+        },
+        this.port || 3000
+      );
+
+      clearTimeout(timeout);
+
+      // Check if upgrade was successful
+      if (response.status !== 101) {
+        throw new Error(
+          `WebSocket upgrade failed: ${response.status} ${response.statusText}`
+        );
+      }
+
+      // Get the WebSocket from the response (Workers-specific API)
+      const ws = (response as unknown as { webSocket?: WebSocket }).webSocket;
+      if (!ws) {
+        throw new Error('No WebSocket in upgrade response');
+      }
+
+      // Accept the WebSocket connection (Workers-specific)
+      (ws as unknown as { accept: () => void }).accept();
+
+      this.ws = ws;
+      this.state = 'connected';
+
+      // Set up event handlers
+      this.ws.addEventListener('close', this.boundHandleClose);
+      this.ws.addEventListener('message', this.boundHandleMessage);
+
+      this.logger.debug('WebSocket connected via fetch', { url: this.url });
+    } catch (error) {
+      clearTimeout(timeout);
+      this.state = 'error';
+      this.logger.error(
+        'WebSocket fetch connection failed',
+        error instanceof Error ? error : new Error(String(error))
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Connect using standard WebSocket API (browser/Node style)
+   */
+  private connectViaWebSocket(): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
       const timeoutMs = this.options.connectTimeoutMs ?? 30000;
       const timeout = setTimeout(() => {
         this.cleanup();
@@ -136,12 +235,6 @@ export class WSTransport {
         reject(error);
       }
     });
-
-    try {
-      await this.connectPromise;
-    } finally {
-      this.connectPromise = null;
-    }
   }
 
   /**

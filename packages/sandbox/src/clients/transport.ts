@@ -68,7 +68,9 @@ export class Transport {
     if (this.mode === 'websocket' && options.wsUrl) {
       this.wsTransport = new WSTransport(options.wsUrl, {
         logger: this.logger,
-        requestTimeoutMs: options.requestTimeoutMs
+        requestTimeoutMs: options.requestTimeoutMs,
+        stub: options.stub,
+        port: options.port
       });
     }
   }
