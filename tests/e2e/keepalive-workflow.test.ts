@@ -17,99 +17,112 @@ import type { Process, ExecResult, ReadFileResult } from '@repo/shared';
  * 3. File and process operations work with keepAlive
  * 4. Explicit destroy works (cleanup endpoint)
  */
-describe('KeepAlive Feature', () => {
-  let workerUrl: string;
-  let headers: Record<string, string>;
 
-  beforeAll(async () => {
-    const sandbox = await getSharedSandbox();
-    workerUrl = sandbox.workerUrl;
-    headers = sandbox.createHeaders(createUniqueSession());
-  }, 120000);
+// Transport modes to test
+const transportModes = [
+  { name: 'HTTP', useWebSocket: false },
+  { name: 'WebSocket', useWebSocket: true }
+];
 
-  test('should accept keepAlive header and execute commands', async () => {
-    const keepAliveHeaders = { ...headers, 'X-Sandbox-KeepAlive': 'true' };
+describe.each(transportModes)(
+  'KeepAlive Feature ($name transport)',
+  ({ useWebSocket }) => {
+    let workerUrl: string;
+    let headers: Record<string, string>;
 
-    // First command with keepAlive
-    const response1 = await fetch(`${workerUrl}/api/execute`, {
-      method: 'POST',
-      headers: keepAliveHeaders,
-      body: JSON.stringify({ command: 'echo "keepAlive command 1"' })
-    });
-    expect(response1.status).toBe(200);
-    const data1 = (await response1.json()) as ExecResult;
-    expect(data1.stdout).toContain('keepAlive command 1');
+    beforeAll(async () => {
+      const sandbox = await getSharedSandbox();
+      workerUrl = sandbox.workerUrl;
+      const baseHeaders = sandbox.createHeaders(createUniqueSession());
+      headers = useWebSocket
+        ? { ...baseHeaders, 'X-Use-WebSocket': 'true' }
+        : baseHeaders;
+    }, 120000);
 
-    // Second command immediately after
-    const response2 = await fetch(`${workerUrl}/api/execute`, {
-      method: 'POST',
-      headers: keepAliveHeaders,
-      body: JSON.stringify({ command: 'echo "keepAlive command 2"' })
-    });
-    expect(response2.status).toBe(200);
-    const data2 = (await response2.json()) as ExecResult;
-    expect(data2.stdout).toContain('keepAlive command 2');
-  }, 30000);
+    test('should accept keepAlive header and execute commands', async () => {
+      const keepAliveHeaders = { ...headers, 'X-Sandbox-KeepAlive': 'true' };
 
-  test('should support background processes with keepAlive', async () => {
-    const keepAliveHeaders = { ...headers, 'X-Sandbox-KeepAlive': 'true' };
+      // First command with keepAlive
+      const response1 = await fetch(`${workerUrl}/api/execute`, {
+        method: 'POST',
+        headers: keepAliveHeaders,
+        body: JSON.stringify({ command: 'echo "keepAlive command 1"' })
+      });
+      expect(response1.status).toBe(200);
+      const data1 = (await response1.json()) as ExecResult;
+      expect(data1.stdout).toContain('keepAlive command 1');
 
-    // Start a background process
-    const startResponse = await fetch(`${workerUrl}/api/process/start`, {
-      method: 'POST',
-      headers: keepAliveHeaders,
-      body: JSON.stringify({ command: 'sleep 10' })
-    });
-    expect(startResponse.status).toBe(200);
-    const processData = (await startResponse.json()) as Process;
-    expect(processData.id).toBeTruthy();
+      // Second command immediately after
+      const response2 = await fetch(`${workerUrl}/api/execute`, {
+        method: 'POST',
+        headers: keepAliveHeaders,
+        body: JSON.stringify({ command: 'echo "keepAlive command 2"' })
+      });
+      expect(response2.status).toBe(200);
+      const data2 = (await response2.json()) as ExecResult;
+      expect(data2.stdout).toContain('keepAlive command 2');
+    }, 30000);
 
-    // Verify process is running
-    const statusResponse = await fetch(
-      `${workerUrl}/api/process/${processData.id}`,
-      { method: 'GET', headers: keepAliveHeaders }
-    );
-    expect(statusResponse.status).toBe(200);
-    const statusData = (await statusResponse.json()) as Process;
-    expect(statusData.status).toBe('running');
+    test('should support background processes with keepAlive', async () => {
+      const keepAliveHeaders = { ...headers, 'X-Sandbox-KeepAlive': 'true' };
 
-    // Cleanup
-    await fetch(`${workerUrl}/api/process/${processData.id}`, {
-      method: 'DELETE',
-      headers: keepAliveHeaders
-    });
-  }, 30000);
+      // Start a background process
+      const startResponse = await fetch(`${workerUrl}/api/process/start`, {
+        method: 'POST',
+        headers: keepAliveHeaders,
+        body: JSON.stringify({ command: 'sleep 10' })
+      });
+      expect(startResponse.status).toBe(200);
+      const processData = (await startResponse.json()) as Process;
+      expect(processData.id).toBeTruthy();
 
-  test('should work with file operations and keepAlive', async () => {
-    const keepAliveHeaders = { ...headers, 'X-Sandbox-KeepAlive': 'true' };
-    const testPath = `/workspace/keepalive-test-${Date.now()}.txt`;
+      // Verify process is running
+      const statusResponse = await fetch(
+        `${workerUrl}/api/process/${processData.id}`,
+        { method: 'GET', headers: keepAliveHeaders }
+      );
+      expect(statusResponse.status).toBe(200);
+      const statusData = (await statusResponse.json()) as Process;
+      expect(statusData.status).toBe('running');
 
-    // Write file with keepAlive
-    const writeResponse = await fetch(`${workerUrl}/api/file/write`, {
-      method: 'POST',
-      headers: keepAliveHeaders,
-      body: JSON.stringify({
-        path: testPath,
-        content: 'keepAlive file content'
-      })
-    });
-    expect(writeResponse.status).toBe(200);
+      // Cleanup
+      await fetch(`${workerUrl}/api/process/${processData.id}`, {
+        method: 'DELETE',
+        headers: keepAliveHeaders
+      });
+    }, 30000);
 
-    // Read file with keepAlive
-    const readResponse = await fetch(`${workerUrl}/api/file/read`, {
-      method: 'POST',
-      headers: keepAliveHeaders,
-      body: JSON.stringify({ path: testPath })
-    });
-    expect(readResponse.status).toBe(200);
-    const readData = (await readResponse.json()) as ReadFileResult;
-    expect(readData.content).toBe('keepAlive file content');
+    test('should work with file operations and keepAlive', async () => {
+      const keepAliveHeaders = { ...headers, 'X-Sandbox-KeepAlive': 'true' };
+      const testPath = `/workspace/keepalive-test-${Date.now()}.txt`;
 
-    // Cleanup
-    await fetch(`${workerUrl}/api/file/delete`, {
-      method: 'DELETE',
-      headers: keepAliveHeaders,
-      body: JSON.stringify({ path: testPath })
-    });
-  }, 30000);
-});
+      // Write file with keepAlive
+      const writeResponse = await fetch(`${workerUrl}/api/file/write`, {
+        method: 'POST',
+        headers: keepAliveHeaders,
+        body: JSON.stringify({
+          path: testPath,
+          content: 'keepAlive file content'
+        })
+      });
+      expect(writeResponse.status).toBe(200);
+
+      // Read file with keepAlive
+      const readResponse = await fetch(`${workerUrl}/api/file/read`, {
+        method: 'POST',
+        headers: keepAliveHeaders,
+        body: JSON.stringify({ path: testPath })
+      });
+      expect(readResponse.status).toBe(200);
+      const readData = (await readResponse.json()) as ReadFileResult;
+      expect(readData.content).toBe('keepAlive file content');
+
+      // Cleanup
+      await fetch(`${workerUrl}/api/file/delete`, {
+        method: 'DELETE',
+        headers: keepAliveHeaders,
+        body: JSON.stringify({ path: testPath })
+      });
+    }, 30000);
+  }
+);

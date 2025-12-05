@@ -20,243 +20,258 @@ import {
   uniqueTestPath
 } from './helpers/global-sandbox';
 
-describe('File Operations Error Handling', () => {
-  let workerUrl: string;
-  let headers: Record<string, string>;
-  let testDir: string;
+// Transport modes to test
+const transportModes = [
+  { name: 'HTTP', useWebSocket: false },
+  { name: 'WebSocket', useWebSocket: true }
+];
 
-  beforeAll(async () => {
-    const sandbox = await getSharedSandbox();
-    workerUrl = sandbox.workerUrl;
-    headers = sandbox.createHeaders(createUniqueSession());
-  }, 120000);
+describe.each(transportModes)(
+  'File Operations Error Handling ($name transport)',
+  ({ useWebSocket }) => {
+    let workerUrl: string;
+    let headers: Record<string, string>;
+    let testDir: string;
 
-  // Use unique directory for each test to avoid conflicts
-  beforeEach(() => {
-    testDir = uniqueTestPath('file-ops');
-  });
+    beforeAll(async () => {
+      const sandbox = await getSharedSandbox();
+      workerUrl = sandbox.workerUrl;
+      const baseHeaders = sandbox.createHeaders(createUniqueSession());
+      headers = useWebSocket
+        ? { ...baseHeaders, 'X-Use-WebSocket': 'true' }
+        : baseHeaders;
+    }, 120000);
 
-  test('should reject deleting directories with deleteFile', async () => {
-    const dirPath = `${testDir}/test-dir`;
-
-    // Create a directory
-    await fetch(`${workerUrl}/api/file/mkdir`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: dirPath,
-        recursive: true
-      })
+    // Use unique directory for each test to avoid conflicts
+    beforeEach(() => {
+      testDir = uniqueTestPath('file-ops');
     });
 
-    // Try to delete directory with deleteFile - should fail
-    const deleteResponse = await fetch(`${workerUrl}/api/file/delete`, {
-      method: 'DELETE',
-      headers,
-      body: JSON.stringify({
-        path: dirPath
-      })
-    });
+    test('should reject deleting directories with deleteFile', async () => {
+      const dirPath = `${testDir}/test-dir`;
 
-    expect(deleteResponse.status).toBe(500);
-    const deleteData = (await deleteResponse.json()) as ErrorResponse;
-    expect(deleteData.error).toContain('Cannot delete directory');
-    expect(deleteData.error).toContain('deleteFile()');
+      // Create a directory
+      await fetch(`${workerUrl}/api/file/mkdir`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          path: dirPath,
+          recursive: true
+        })
+      });
 
-    // Verify directory still exists
-    const lsResponse = await fetch(`${workerUrl}/api/execute`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        command: `ls -d ${dirPath}`
-      })
-    });
+      // Try to delete directory with deleteFile - should fail
+      const deleteResponse = await fetch(`${workerUrl}/api/file/delete`, {
+        method: 'DELETE',
+        headers,
+        body: JSON.stringify({
+          path: dirPath
+        })
+      });
 
-    const lsData = (await lsResponse.json()) as ReadFileResult;
-    expect(lsResponse.status).toBe(200);
-    expect(lsData.success).toBe(true);
-  }, 90000);
+      expect(deleteResponse.status).toBe(500);
+      const deleteData = (await deleteResponse.json()) as ErrorResponse;
+      expect(deleteData.error).toContain('Cannot delete directory');
+      expect(deleteData.error).toContain('deleteFile()');
 
-  test('should return error when deleting nonexistent file', async () => {
-    const deleteResponse = await fetch(`${workerUrl}/api/file/delete`, {
-      method: 'DELETE',
-      headers,
-      body: JSON.stringify({
-        path: `${testDir}/this-file-does-not-exist.txt`
-      })
-    });
+      // Verify directory still exists
+      const lsResponse = await fetch(`${workerUrl}/api/execute`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          command: `ls -d ${dirPath}`
+        })
+      });
 
-    expect(deleteResponse.status).toBe(500);
-    const errorData = (await deleteResponse.json()) as ErrorResponse;
-    expect(errorData.error).toBeTruthy();
-    expect(errorData.error).toMatch(/not found|does not exist|no such file/i);
-  }, 90000);
+      const lsData = (await lsResponse.json()) as ReadFileResult;
+      expect(lsResponse.status).toBe(200);
+      expect(lsData.success).toBe(true);
+    }, 90000);
 
-  test('should handle listFiles errors appropriately', async () => {
-    // Test non-existent directory
-    const notFoundResponse = await fetch(`${workerUrl}/api/list-files`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: `${testDir}/does-not-exist`
-      })
-    });
+    test('should return error when deleting nonexistent file', async () => {
+      const deleteResponse = await fetch(`${workerUrl}/api/file/delete`, {
+        method: 'DELETE',
+        headers,
+        body: JSON.stringify({
+          path: `${testDir}/this-file-does-not-exist.txt`
+        })
+      });
 
-    expect(notFoundResponse.status).toBe(500);
-    const notFoundData = (await notFoundResponse.json()) as ErrorResponse;
-    expect(notFoundData.error).toBeTruthy();
-    expect(notFoundData.error).toMatch(/not found|does not exist/i);
+      expect(deleteResponse.status).toBe(500);
+      const errorData = (await deleteResponse.json()) as ErrorResponse;
+      expect(errorData.error).toBeTruthy();
+      expect(errorData.error).toMatch(/not found|does not exist|no such file/i);
+    }, 90000);
 
-    // Test listing a file instead of directory
-    const filePath = `${testDir}/file.txt`;
-    await fetch(`${workerUrl}/api/file/mkdir`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ path: testDir, recursive: true })
-    });
-    await fetch(`${workerUrl}/api/file/write`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: filePath,
-        content: 'Not a directory'
-      })
-    });
+    test('should handle listFiles errors appropriately', async () => {
+      // Test non-existent directory
+      const notFoundResponse = await fetch(`${workerUrl}/api/list-files`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          path: `${testDir}/does-not-exist`
+        })
+      });
 
-    const wrongTypeResponse = await fetch(`${workerUrl}/api/list-files`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: filePath
-      })
-    });
+      expect(notFoundResponse.status).toBe(500);
+      const notFoundData = (await notFoundResponse.json()) as ErrorResponse;
+      expect(notFoundData.error).toBeTruthy();
+      expect(notFoundData.error).toMatch(/not found|does not exist/i);
 
-    expect(wrongTypeResponse.status).toBe(500);
-    const wrongTypeData = (await wrongTypeResponse.json()) as ErrorResponse;
-    expect(wrongTypeData.error).toMatch(/not a directory/i);
-  }, 90000);
+      // Test listing a file instead of directory
+      const filePath = `${testDir}/file.txt`;
+      await fetch(`${workerUrl}/api/file/mkdir`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ path: testDir, recursive: true })
+      });
+      await fetch(`${workerUrl}/api/file/write`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          path: filePath,
+          content: 'Not a directory'
+        })
+      });
 
-  // Regression test for #196: hidden files in hidden directories
-  test('should list files in hidden directories with includeHidden flag', async () => {
-    const hiddenDir = `${testDir}/.hidden/foo`;
+      const wrongTypeResponse = await fetch(`${workerUrl}/api/list-files`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          path: filePath
+        })
+      });
 
-    // Create hidden directory structure
-    await fetch(`${workerUrl}/api/file/mkdir`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ path: `${hiddenDir}/bar`, recursive: true })
-    });
+      expect(wrongTypeResponse.status).toBe(500);
+      const wrongTypeData = (await wrongTypeResponse.json()) as ErrorResponse;
+      expect(wrongTypeData.error).toMatch(/not a directory/i);
+    }, 90000);
 
-    // Write visible files in hidden directory
-    await fetch(`${workerUrl}/api/file/write`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: `${hiddenDir}/visible1.txt`,
-        content: 'Visible 1'
-      })
-    });
-    await fetch(`${workerUrl}/api/file/write`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: `${hiddenDir}/visible2.txt`,
-        content: 'Visible 2'
-      })
-    });
+    // Regression test for #196: hidden files in hidden directories
+    test('should list files in hidden directories with includeHidden flag', async () => {
+      const hiddenDir = `${testDir}/.hidden/foo`;
 
-    // Write hidden file in hidden directory
-    await fetch(`${workerUrl}/api/file/write`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: `${hiddenDir}/.hiddenfile.txt`,
-        content: 'Hidden'
-      })
-    });
+      // Create hidden directory structure
+      await fetch(`${workerUrl}/api/file/mkdir`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ path: `${hiddenDir}/bar`, recursive: true })
+      });
 
-    // List WITHOUT includeHidden - should NOT show .hiddenfile.txt
-    const listResponse = await fetch(`${workerUrl}/api/list-files`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ path: hiddenDir })
-    });
+      // Write visible files in hidden directory
+      await fetch(`${workerUrl}/api/file/write`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          path: `${hiddenDir}/visible1.txt`,
+          content: 'Visible 1'
+        })
+      });
+      await fetch(`${workerUrl}/api/file/write`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          path: `${hiddenDir}/visible2.txt`,
+          content: 'Visible 2'
+        })
+      });
 
-    expect(listResponse.status).toBe(200);
-    const listData = (await listResponse.json()) as ListFilesResult;
-    expect(listData.success).toBe(true);
+      // Write hidden file in hidden directory
+      await fetch(`${workerUrl}/api/file/write`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          path: `${hiddenDir}/.hiddenfile.txt`,
+          content: 'Hidden'
+        })
+      });
 
-    const visibleFiles = listData.files.filter(
-      (f: FileInfo) => !f.name.startsWith('.')
-    );
-    expect(visibleFiles.length).toBe(3); // visible1.txt, visible2.txt, bar/
+      // List WITHOUT includeHidden - should NOT show .hiddenfile.txt
+      const listResponse = await fetch(`${workerUrl}/api/list-files`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ path: hiddenDir })
+      });
 
-    const hiddenFile = listData.files.find(
-      (f: FileInfo) => f.name === '.hiddenfile.txt'
-    );
-    expect(hiddenFile).toBeUndefined();
+      expect(listResponse.status).toBe(200);
+      const listData = (await listResponse.json()) as ListFilesResult;
+      expect(listData.success).toBe(true);
 
-    // List WITH includeHidden - should show all files
-    const listWithHiddenResponse = await fetch(`${workerUrl}/api/list-files`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: hiddenDir,
-        options: { includeHidden: true }
-      })
-    });
+      const visibleFiles = listData.files.filter(
+        (f: FileInfo) => !f.name.startsWith('.')
+      );
+      expect(visibleFiles.length).toBe(3); // visible1.txt, visible2.txt, bar/
 
-    expect(listWithHiddenResponse.status).toBe(200);
-    const listWithHiddenData =
-      (await listWithHiddenResponse.json()) as ListFilesResult;
+      const hiddenFile = listData.files.find(
+        (f: FileInfo) => f.name === '.hiddenfile.txt'
+      );
+      expect(hiddenFile).toBeUndefined();
 
-    expect(listWithHiddenData.success).toBe(true);
-    expect(listWithHiddenData.files.length).toBe(4); // +.hiddenfile.txt
+      // List WITH includeHidden - should show all files
+      const listWithHiddenResponse = await fetch(
+        `${workerUrl}/api/list-files`,
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            path: hiddenDir,
+            options: { includeHidden: true }
+          })
+        }
+      );
 
-    const hiddenFileWithFlag = listWithHiddenData.files.find(
-      (f: FileInfo) => f.name === '.hiddenfile.txt'
-    );
-    expect(hiddenFileWithFlag).toBeDefined();
-  }, 90000);
+      expect(listWithHiddenResponse.status).toBe(200);
+      const listWithHiddenData =
+        (await listWithHiddenResponse.json()) as ListFilesResult;
 
-  test('should read binary files with base64 encoding', async () => {
-    // 1x1 PNG - smallest valid PNG
-    const pngBase64 =
-      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChAI9jYlkKQAAAABJRU5ErkJggg==';
+      expect(listWithHiddenData.success).toBe(true);
+      expect(listWithHiddenData.files.length).toBe(4); // +.hiddenfile.txt
 
-    // Create binary file via base64 decode
-    await fetch(`${workerUrl}/api/file/mkdir`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ path: testDir, recursive: true })
-    });
+      const hiddenFileWithFlag = listWithHiddenData.files.find(
+        (f: FileInfo) => f.name === '.hiddenfile.txt'
+      );
+      expect(hiddenFileWithFlag).toBeDefined();
+    }, 90000);
 
-    await fetch(`${workerUrl}/api/execute`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        command: `echo '${pngBase64}' | base64 -d > ${testDir}/test.png`
-      })
-    });
+    test('should read binary files with base64 encoding', async () => {
+      // 1x1 PNG - smallest valid PNG
+      const pngBase64 =
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChAI9jYlkKQAAAABJRU5ErkJggg==';
 
-    // Read the binary file
-    const readResponse = await fetch(`${workerUrl}/api/file/read`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ path: `${testDir}/test.png` })
-    });
+      // Create binary file via base64 decode
+      await fetch(`${workerUrl}/api/file/mkdir`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ path: testDir, recursive: true })
+      });
 
-    expect(readResponse.status).toBe(200);
-    const readData = (await readResponse.json()) as ReadFileResult;
+      await fetch(`${workerUrl}/api/execute`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          command: `echo '${pngBase64}' | base64 -d > ${testDir}/test.png`
+        })
+      });
 
-    expect(readData.success).toBe(true);
-    expect(readData.encoding).toBe('base64');
-    expect(readData.isBinary).toBe(true);
-    expect(readData.mimeType).toMatch(/image\/png/);
-    expect(readData.content).toBeTruthy();
-    expect(readData.size).toBeGreaterThan(0);
+      // Read the binary file
+      const readResponse = await fetch(`${workerUrl}/api/file/read`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ path: `${testDir}/test.png` })
+      });
 
-    // Verify the content is valid base64
-    expect(readData.content).toMatch(/^[A-Za-z0-9+/=]+$/);
-  }, 90000);
-});
+      expect(readResponse.status).toBe(200);
+      const readData = (await readResponse.json()) as ReadFileResult;
+
+      expect(readData.success).toBe(true);
+      expect(readData.encoding).toBe('base64');
+      expect(readData.isBinary).toBe(true);
+      expect(readData.mimeType).toMatch(/image\/png/);
+      expect(readData.content).toBeTruthy();
+      expect(readData.size).toBeGreaterThan(0);
+
+      // Verify the content is valid base64
+      expect(readData.content).toMatch(/^[A-Za-z0-9+/=]+$/);
+    }, 90000);
+  }
+);
