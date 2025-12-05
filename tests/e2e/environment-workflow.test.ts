@@ -3,18 +3,24 @@ import {
   getSharedSandbox,
   createUniqueSession
 } from './helpers/global-sandbox';
-import type { ExecResult } from '@repo/shared';
+import type { ExecResult, ExecEvent } from '@repo/shared';
+import { parseSSEStream } from '../../packages/sandbox/src/sse-parser';
 
 /**
- * Environment Edge Case Tests
+ * Environment Variable Tests
  *
- * Tests edge cases for environment and command execution.
- * Happy path tests (env vars, persistence, per-command env/cwd) are in comprehensive-workflow.test.ts.
+ * Tests all ways to set environment variables and their override behavior:
+ * - Dockerfile ENV (base level, e.g. SANDBOX_VERSION)
+ * - setEnvVars at session level
+ * - Per-command env in exec()
+ * - Per-command env in execStream()
  *
- * This file focuses on:
- * - Commands that read stdin (should not hang)
+ * Override precedence (highest to lowest):
+ * 1. Per-command env
+ * 2. Session-level setEnvVars
+ * 3. Dockerfile ENV
  */
-describe('Environment Edge Cases', () => {
+describe('Environment Variables', () => {
   let workerUrl: string;
   let headers: Record<string, string>;
 
@@ -23,6 +29,171 @@ describe('Environment Edge Cases', () => {
     workerUrl = sandbox.workerUrl;
     headers = sandbox.createHeaders(createUniqueSession());
   }, 120000);
+
+  test('should have Dockerfile ENV vars available', async () => {
+    // SANDBOX_VERSION is set in the Dockerfile
+    const response = await fetch(`${workerUrl}/api/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ command: 'echo $SANDBOX_VERSION' })
+    });
+
+    expect(response.status).toBe(200);
+    const data = (await response.json()) as ExecResult;
+    expect(data.success).toBe(true);
+    // Should have some version value (not empty)
+    expect(data.stdout.trim()).toBeTruthy();
+    expect(data.stdout.trim()).not.toBe('$SANDBOX_VERSION');
+  }, 30000);
+
+  test('should set and persist session-level env vars via setEnvVars', async () => {
+    // Set env vars at session level
+    const setResponse = await fetch(`${workerUrl}/api/env/set`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        envVars: {
+          MY_SESSION_VAR: 'session-value',
+          ANOTHER_VAR: 'another-value'
+        }
+      })
+    });
+
+    expect(setResponse.status).toBe(200);
+
+    // Verify they persist across commands
+    const readResponse = await fetch(`${workerUrl}/api/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        command: 'echo "$MY_SESSION_VAR:$ANOTHER_VAR"'
+      })
+    });
+
+    expect(readResponse.status).toBe(200);
+    const readData = (await readResponse.json()) as ExecResult;
+    expect(readData.stdout.trim()).toBe('session-value:another-value');
+  }, 30000);
+
+  test('should support per-command env in exec()', async () => {
+    const response = await fetch(`${workerUrl}/api/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        command: 'echo "$CMD_VAR"',
+        env: { CMD_VAR: 'command-specific-value' }
+      })
+    });
+
+    expect(response.status).toBe(200);
+    const data = (await response.json()) as ExecResult;
+    expect(data.stdout.trim()).toBe('command-specific-value');
+  }, 30000);
+
+  test('should support per-command env in execStream()', async () => {
+    const response = await fetch(`${workerUrl}/api/execStream`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        command: 'echo "$STREAM_VAR"',
+        env: { STREAM_VAR: 'stream-env-value' }
+      })
+    });
+
+    expect(response.status).toBe(200);
+
+    // Collect streamed output
+    const events: ExecEvent[] = [];
+    const abortController = new AbortController();
+    for await (const event of parseSSEStream<ExecEvent>(
+      response.body!,
+      abortController.signal
+    )) {
+      events.push(event);
+      if (event.type === 'complete' || event.type === 'error') break;
+    }
+
+    const stdout = events
+      .filter((e) => e.type === 'stdout')
+      .map((e) => e.data)
+      .join('');
+    expect(stdout.trim()).toBe('stream-env-value');
+  }, 30000);
+
+  test('should override session env with per-command env', async () => {
+    // First set a session-level var
+    await fetch(`${workerUrl}/api/env/set`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        envVars: { OVERRIDE_TEST: 'session-level' }
+      })
+    });
+
+    // Verify session value
+    const sessionResponse = await fetch(`${workerUrl}/api/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ command: 'echo "$OVERRIDE_TEST"' })
+    });
+    const sessionData = (await sessionResponse.json()) as ExecResult;
+    expect(sessionData.stdout.trim()).toBe('session-level');
+
+    // Override with per-command env
+    const overrideResponse = await fetch(`${workerUrl}/api/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        command: 'echo "$OVERRIDE_TEST"',
+        env: { OVERRIDE_TEST: 'command-level' }
+      })
+    });
+    const overrideData = (await overrideResponse.json()) as ExecResult;
+    expect(overrideData.stdout.trim()).toBe('command-level');
+
+    // Session value should still be intact
+    const afterResponse = await fetch(`${workerUrl}/api/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ command: 'echo "$OVERRIDE_TEST"' })
+    });
+    const afterData = (await afterResponse.json()) as ExecResult;
+    expect(afterData.stdout.trim()).toBe('session-level');
+  }, 30000);
+
+  test('should override Dockerfile ENV with session setEnvVars', async () => {
+    // Create a fresh session to test clean override
+    const sandbox = await getSharedSandbox();
+    const freshHeaders = sandbox.createHeaders(createUniqueSession());
+
+    // First read Dockerfile value
+    const beforeResponse = await fetch(`${workerUrl}/api/execute`, {
+      method: 'POST',
+      headers: freshHeaders,
+      body: JSON.stringify({ command: 'echo "$SANDBOX_VERSION"' })
+    });
+    const beforeData = (await beforeResponse.json()) as ExecResult;
+    const dockerValue = beforeData.stdout.trim();
+    expect(dockerValue).toBeTruthy();
+
+    // Override with session setEnvVars
+    await fetch(`${workerUrl}/api/env/set`, {
+      method: 'POST',
+      headers: freshHeaders,
+      body: JSON.stringify({
+        envVars: { SANDBOX_VERSION: 'overridden-version' }
+      })
+    });
+
+    // Verify override
+    const afterResponse = await fetch(`${workerUrl}/api/execute`, {
+      method: 'POST',
+      headers: freshHeaders,
+      body: JSON.stringify({ command: 'echo "$SANDBOX_VERSION"' })
+    });
+    const afterData = (await afterResponse.json()) as ExecResult;
+    expect(afterData.stdout.trim()).toBe('overridden-version');
+  }, 30000);
 
   test('should handle commands that read stdin without hanging', async () => {
     // Test 1: cat with no arguments should exit immediately with EOF

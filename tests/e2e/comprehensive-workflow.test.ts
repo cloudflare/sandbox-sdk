@@ -609,15 +609,18 @@ const interval = setInterval(() => {
 
     expect(killAllResponse.status).toBe(200);
 
-    // Verify no running processes remain
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    const listAfterResponse = await fetch(`${workerUrl}/api/process/list`, {
-      method: 'GET',
-      headers
-    });
-
-    const processesAfter = (await listAfterResponse.json()) as Process[];
-    const running = processesAfter.filter((p) => p.status === 'running');
+    // Poll until no running processes remain (up to 5 seconds)
+    let running: Process[] = [];
+    for (let i = 0; i < 10; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      const listAfterResponse = await fetch(`${workerUrl}/api/process/list`, {
+        method: 'GET',
+        headers
+      });
+      const processesAfter = (await listAfterResponse.json()) as Process[];
+      running = processesAfter.filter((p) => p.status === 'running');
+      if (running.length === 0) break;
+    }
     expect(running.length).toBe(0);
   }, 60000);
 });
