@@ -37,7 +37,7 @@ describe('Session State Isolation Workflow', () => {
       const sandbox = await getSharedSandbox();
       workerUrl = sandbox.workerUrl;
       sandboxId = sandbox.sandboxId;
-      baseHeaders = createTestHeaders(createUniqueSession());
+      baseHeaders = createTestHeaders(sandboxId, createUniqueSession());
 
       // Initialize the sandbox
       await fetch(`${workerUrl}/api/execute`, {

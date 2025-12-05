@@ -9,15 +9,14 @@ import type { ExecEvent } from '@repo/shared';
 /**
  * Streaming Operations Edge Case Tests
  *
- * Tests error handling and long-running edge cases for streaming.
+ * Tests error handling and edge cases for streaming.
  * Basic streaming tests are in comprehensive-workflow.test.ts.
  *
  * This file focuses on:
  * - Command failures with non-zero exit codes
  * - Nonexistent commands (exit code 127)
- * - Long-running commands (15s+, 60s+)
- * - High-volume streaming
- * - Intermittent output gaps
+ * - Chunked output delivery over time
+ * - File content streaming
  */
 describe('Streaming Operations Edge Cases', () => {
   let workerUrl: string;
@@ -136,4 +135,64 @@ describe('Streaming Operations Edge Cases', () => {
     expect(completeEvent).toBeDefined();
     expect(completeEvent?.exitCode).toBe(0);
   }, 15000);
+
+  test('should stream file contents', async () => {
+    // Create a test file first
+    const testPath = `/workspace/stream-test-${Date.now()}.txt`;
+    const testContent =
+      'Line 1\nLine 2\nLine 3\nThis is streaming file content.';
+
+    await fetch(`${workerUrl}/api/file/write`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ path: testPath, content: testContent })
+    });
+
+    // Stream the file back
+    const streamResponse = await fetch(`${workerUrl}/api/read/stream`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ path: testPath })
+    });
+
+    expect(streamResponse.status).toBe(200);
+    expect(streamResponse.headers.get('Content-Type')).toBe(
+      'text/event-stream'
+    );
+
+    // Collect streamed content
+    const reader = streamResponse.body?.getReader();
+    expect(reader).toBeDefined();
+
+    const decoder = new TextDecoder();
+    let rawContent = '';
+    while (true) {
+      const { done, value } = await reader!.read();
+      if (done) break;
+      rawContent += decoder.decode(value, { stream: true });
+    }
+
+    // Parse SSE JSON events
+    const lines = rawContent.split('\n').filter((l) => l.startsWith('data: '));
+    const events = lines.map((l) => JSON.parse(l.slice(6)));
+
+    // Should have metadata, chunk(s), and complete events
+    const metadata = events.find((e) => e.type === 'metadata');
+    const chunk = events.find((e) => e.type === 'chunk');
+    const complete = events.find((e) => e.type === 'complete');
+
+    expect(metadata).toBeDefined();
+    expect(metadata.mimeType).toBe('text/plain');
+    expect(chunk).toBeDefined();
+    expect(chunk.data).toBe(testContent);
+    expect(complete).toBeDefined();
+    expect(complete.bytesRead).toBe(testContent.length);
+
+    // Cleanup
+    await fetch(`${workerUrl}/api/file/delete`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ path: testPath })
+    });
+  }, 30000);
 });
