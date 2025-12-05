@@ -207,12 +207,9 @@ jobs:
       - name: Extract standalone binary from Docker image
         run: |
           VERSION=${{ needs.unit-tests.outputs.version }}
-          # Create container from the default image (has the binary at /sandbox)
           CONTAINER_ID=$(docker create cloudflare/sandbox:$VERSION)
-          # Extract the binary
-          docker cp $CONTAINER_ID:/sandbox ./sandbox-linux-x64
+          docker cp $CONTAINER_ID:/container-server/sandbox ./sandbox-linux-x64
           docker rm $CONTAINER_ID
-          # Verify the binary
           file ./sandbox-linux-x64
           ls -la ./sandbox-linux-x64
 

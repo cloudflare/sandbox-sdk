@@ -23,7 +23,7 @@ Use the `-python` variant if you need Python code execution.
 **For arbitrary Dockerfiles:**
 
 ```dockerfile
-COPY --from={{DEFAULT_TAG}} /sandbox /sandbox
+COPY --from={{DEFAULT_TAG}} /container-server/sandbox /sandbox
 ENTRYPOINT ["/sandbox"]
 ```
 
@@ -36,5 +36,5 @@ gh run download {{RUN_ID}} -n sandbox-binary
 **Extract from Docker:**
 
 ```bash
-docker run --rm {{DEFAULT_TAG}} cat /sandbox > sandbox && chmod +x sandbox
+docker run --rm {{DEFAULT_TAG}} cat /container-server/sandbox > sandbox && chmod +x sandbox
 ```

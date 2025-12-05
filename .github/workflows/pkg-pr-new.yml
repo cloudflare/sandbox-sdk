@@ -113,7 +113,7 @@ jobs:
         run: |
           VERSION=${{ steps.package-version.outputs.version }}
           CONTAINER_ID=$(docker create cloudflare/sandbox:$VERSION)
-          docker cp $CONTAINER_ID:/sandbox ./sandbox-linux-x64
+          docker cp $CONTAINER_ID:/container-server/sandbox ./sandbox-linux-x64
           docker rm $CONTAINER_ID
           chmod +x ./sandbox-linux-x64
 

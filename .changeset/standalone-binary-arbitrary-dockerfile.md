@@ -9,7 +9,7 @@ Users can now add sandbox capabilities to any Docker image:
 ```dockerfile
 FROM your-image:tag
 
-COPY --from=cloudflare/sandbox:VERSION /sandbox /sandbox
+COPY --from=cloudflare/sandbox:VERSION /container-server/sandbox /sandbox
 ENTRYPOINT ["/sandbox"]
 
 # Optional: run your own startup command

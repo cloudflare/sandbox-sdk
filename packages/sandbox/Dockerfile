@@ -119,8 +119,8 @@ RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm && \
 # Install Bun runtime from official image
 COPY --from=oven/bun:1 /usr/local/bin/bun /usr/local/bin/bun
 
-# Copy standalone binary to root (for easy COPY --from in arbitrary Dockerfiles)
-COPY --from=builder /app/packages/sandbox-container/dist/sandbox /sandbox
+# Copy standalone binary
+COPY --from=builder /app/packages/sandbox-container/dist/sandbox /container-server/sandbox
 
 # Set up container server directory for executors
 WORKDIR /container-server
@@ -147,7 +147,7 @@ ENV PYTHON_POOL_MIN_SIZE=0
 ENV JAVASCRIPT_POOL_MIN_SIZE=3
 ENV TYPESCRIPT_POOL_MIN_SIZE=3
 
-ENTRYPOINT ["/sandbox"]
+ENTRYPOINT ["/container-server/sandbox"]
 
 # ============================================================================
 # Stage 5b: Python image - full, with Python + data science packages
@@ -179,4 +179,4 @@ ENV PYTHON_POOL_MIN_SIZE=3
 ENV JAVASCRIPT_POOL_MIN_SIZE=3
 ENV TYPESCRIPT_POOL_MIN_SIZE=3
 
-ENTRYPOINT ["/sandbox"]
+ENTRYPOINT ["/container-server/sandbox"]
