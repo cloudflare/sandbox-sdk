@@ -12,6 +12,7 @@ import { getTestWorkerUrl, WranglerDevRunner } from './helpers/wrangler-runner';
 import {
   createSandboxId,
   createTestHeaders,
+  createPythonImageHeaders,
   cleanupSandbox
 } from './helpers/test-fixtures';
 
@@ -37,7 +38,7 @@ export async function setup() {
   workerUrl = result.url;
   sandboxId = createSandboxId();
 
-  // Initialize the sandbox
+  // Initialize the sandboxes
   const headers = createTestHeaders(sandboxId);
   const initResponse = await fetch(`${workerUrl}/api/execute`, {
     method: 'POST',
@@ -47,6 +48,19 @@ export async function setup() {
 
   if (!initResponse.ok) {
     throw new Error(`Failed to initialize sandbox: ${initResponse.status}`);
+  }
+
+  const pythonHeaders = createPythonImageHeaders(sandboxId);
+  const pythonInitResponse = await fetch(`${workerUrl}/api/execute`, {
+    method: 'POST',
+    headers: pythonHeaders,
+    body: JSON.stringify({ command: 'echo "Python sandbox initialized"' })
+  });
+
+  if (!pythonInitResponse.ok) {
+    console.warn(
+      `Warning: Failed to initialize Python sandbox: ${pythonInitResponse.status}`
+    );
   }
 
   // Write state to temp file for worker threads to read
