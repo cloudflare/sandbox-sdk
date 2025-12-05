@@ -64,7 +64,7 @@ npm run build:clean        # Force rebuild without cache
 # Unit tests (runs in Workers runtime with vitest-pool-workers)
 npm test
 
-# E2E tests (requires Docker, runs sequentially due to container provisioning)
+# E2E tests (requires Docker)
 npm run test:e2e
 
 # Run a single E2E test file
@@ -74,7 +74,7 @@ npm run test:e2e -- -- tests/e2e/process-lifecycle-workflow.test.ts
 npm run test:e2e -- -- tests/e2e/git-clone-workflow.test.ts -t 'test name'
 ```
 
-**Important**: E2E tests (`tests/e2e/`) run sequentially (not in parallel) to avoid container resource contention. Each test spawns its own wrangler dev instance.
+**Important**: E2E tests share a single sandbox container for performance. Tests run in parallel using unique sessions for isolation.
 
 ### Code Quality
 
@@ -211,11 +211,12 @@ npm run test:e2e -- -- tests/e2e/git-clone-workflow.test.ts -t 'should handle cl
 **Architecture:**
 
 - Tests in `tests/e2e/` run against real Cloudflare Workers + Docker containers
-- **In CI**: Tests deploy to actual Cloudflare infrastructure and run against deployed workers
-- **Locally**: Each test file spawns its own `wrangler dev` instance
+- **Shared sandbox**: All tests share ONE container, using sessions for isolation
+- **In CI**: Tests deploy to actual Cloudflare infrastructure
+- **Locally**: Global setup spawns wrangler dev once, all tests share it
 - Config: `vitest.e2e.config.ts` (root level)
-- Sequential execution (`singleFork: true`) to prevent container resource contention
-- Longer timeouts (2min per test) for container operations
+- Parallel execution via thread pool (~30s for full suite)
+- See `docs/E2E_TESTING.md` for writing tests
 
 **Build system trust:** The monorepo build system (turbo + npm workspaces) is robust and handles all package dependencies automatically. E2E tests always run against the latest built code - there's no need to manually rebuild or worry about stale builds unless explicitly working on the build setup itself.
 

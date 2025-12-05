@@ -1,177 +1,109 @@
-import {
-  describe,
-  test,
-  expect,
-  beforeAll,
-  afterAll,
-  afterEach,
-  vi
-} from 'vitest';
+import { describe, test, expect, beforeAll } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import WebSocket from 'ws';
-import { getTestWorkerUrl, WranglerDevRunner } from './helpers/wrangler-runner';
-import {
-  createSandboxId,
-  createTestHeaders,
-  cleanupSandbox
-} from './helpers/test-fixtures';
+import { getSharedSandbox } from './helpers/global-sandbox';
 import type { Process, PortExposeResult } from '@repo/shared';
 
-// Port exposure tests require custom domain with wildcard DNS routing
-// Skip these tests when running against workers.dev deployment (no wildcard support)
-const skipWebSocketTests =
+// Dedicated port for websocket tests - not used by any other test file
+const skipPortExposureTests =
   process.env.TEST_WORKER_URL?.endsWith('.workers.dev') ?? false;
+const WEBSOCKET_TEST_PORT = 9999;
 
 /**
- * WebSocket Workflow Integration Tests
+ * WebSocket Port Exposure Tests
  *
- * Tests WebSocket support for exposed sandbox ports.
- *
- * SCOPE: Phase 1 - WebSocket Routing Validation
- * This test validates that WebSocket upgrade requests are correctly routed
- * through the sandbox infrastructure (Worker → proxyToSandbox → Sandbox.fetch → Container).
- *
- * NOT TESTED HERE:
- * - Long-running connection timeout management (Phase 2)
- * - Keep-alive strategies (Phase 2)
- * - Error recovery and reconnection (Phase 3)
- * - Concurrent connections or load testing (Phase 4)
- *
- * KNOWN LIMITATION:
- * Current runtime has 30-second CPU timeout without keep-alive mechanism.
- * This test keeps connections brief (< 5s) to validate routing correctness only.
- * Timeout management will be addressed in Phase 2.
+ * Tests WebSocket via exposed ports. Uses SHARED sandbox with unique session.
  */
-describe('WebSocket Workflow', () => {
-  describe.skipIf(skipWebSocketTests)('local', () => {
-    let runner: WranglerDevRunner | null = null;
+describe('WebSocket Port Exposure', () => {
+  describe('local', () => {
     let workerUrl: string;
-    let currentSandboxId: string | null = null;
+    let headers: Record<string, string>;
+    let sandboxId: string;
 
     beforeAll(async () => {
-      const result = await getTestWorkerUrl();
-      workerUrl = result.url;
-      runner = result.runner;
-    });
+      const sandbox = await getSharedSandbox();
+      workerUrl = sandbox.workerUrl;
+      sandboxId = sandbox.sandboxId;
+      // Port exposure requires sandbox headers, not session headers
+      headers = {
+        'X-Sandbox-Id': sandboxId,
+        'Content-Type': 'application/json'
+      };
+    }, 120000);
 
-    afterEach(async () => {
-      // Cleanup sandbox container after each test
-      if (currentSandboxId) {
-        await cleanupSandbox(workerUrl, currentSandboxId);
-        currentSandboxId = null;
-      }
-    });
-
-    afterAll(async () => {
-      if (runner) {
-        await runner.stop();
-      }
-    });
-
-    test('should connect to WebSocket server via exposed port and echo messages', async () => {
-      currentSandboxId = createSandboxId();
-      const headers = createTestHeaders(currentSandboxId);
-
-      // Read the WebSocket echo server fixture
-      const serverCode = readFileSync(
-        join(__dirname, 'fixtures', 'websocket-echo-server.ts'),
-        'utf-8'
-      );
-
-      // Step 1: Write the WebSocket echo server to the container
-      await fetch(`${workerUrl}/api/file/write`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          path: '/workspace/ws-server.ts',
-          content: serverCode
-        })
-      });
-
-      // Step 2: Start the WebSocket server as a background process
-      const port = 8080;
-      const startResponse = await fetch(`${workerUrl}/api/process/start`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          command: `bun run /workspace/ws-server.ts ${port}`
-        })
-      });
-
-      expect(startResponse.status).toBe(200);
-      const processData = (await startResponse.json()) as Process;
-      const processId = processData.id;
-      expect(processData.id).toBeTruthy();
-
-      // Wait for server to be ready (generous timeout for first startup)
-      await new Promise((resolve) => setTimeout(resolve, 2000));
-
-      // Step 3: Expose the port to get preview URL
-      const exposeResponse = await fetch(`${workerUrl}/api/port/expose`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          port,
-          name: 'websocket-test'
-        })
-      });
-
-      expect(exposeResponse.status).toBe(200);
-      const exposeData = (await exposeResponse.json()) as PortExposeResult;
-      expect(exposeData.url).toBeTruthy();
-      console.log('[DEBUG] Preview URL:', exposeData.url);
-
-      // Step 4: Connect to WebSocket via preview URL
-      // Convert http:// to ws:// for WebSocket protocol
-      const wsUrl = exposeData.url.replace(/^http/, 'ws');
-
-      const ws = new WebSocket(wsUrl);
-
-      // Wait for connection to open
-      await new Promise<void>((resolve, reject) => {
-        ws.on('open', () => resolve());
-        ws.on('error', (error) => reject(error));
-        setTimeout(
-          () => reject(new Error('WebSocket connection timeout')),
-          10000
+    test.skipIf(skipPortExposureTests)(
+      'should connect to WebSocket server via exposed port',
+      async () => {
+        // Write the echo server
+        const serverCode = readFileSync(
+          join(__dirname, 'fixtures', 'websocket-echo-server.ts'),
+          'utf-8'
         );
-      });
-
-      console.log('[DEBUG] WebSocket connected');
-
-      // Step 5: Send a message and verify echo
-      const testMessage = 'Hello WebSocket!';
-      const messagePromise = new Promise<string>((resolve, reject) => {
-        ws.on('message', (data) => {
-          resolve(data.toString());
+        await fetch(`${workerUrl}/api/file/write`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            path: '/workspace/ws-server.ts',
+            content: serverCode
+          })
         });
-        setTimeout(() => reject(new Error('Echo timeout')), 5000);
-      });
 
-      ws.send(testMessage);
-      const echoedMessage = await messagePromise;
+        // Start server on dedicated port
+        const port = WEBSOCKET_TEST_PORT;
+        const startResponse = await fetch(`${workerUrl}/api/process/start`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            command: `bun run /workspace/ws-server.ts ${port}`
+          })
+        });
+        expect(startResponse.status).toBe(200);
+        const processData = (await startResponse.json()) as Process;
 
-      expect(echoedMessage).toBe(testMessage);
-      console.log('[DEBUG] Message echoed successfully:', echoedMessage);
+        // Wait for startup
+        await new Promise((r) => setTimeout(r, 1000));
 
-      // Step 6: Close WebSocket connection gracefully
-      ws.close();
-      await new Promise<void>((resolve) => {
-        ws.on('close', () => resolve());
-        setTimeout(() => resolve(), 1000); // Fallback timeout
-      });
+        // Expose port
+        const exposeResponse = await fetch(`${workerUrl}/api/port/expose`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ port, name: 'ws-test' })
+        });
+        expect(exposeResponse.status).toBe(200);
+        const exposeData = (await exposeResponse.json()) as PortExposeResult;
 
-      // Step 7: Cleanup - kill process and unexpose port
-      await fetch(`${workerUrl}/api/process/${processId}`, {
-        method: 'DELETE',
-        headers
-      });
+        // Connect WebSocket
+        const wsUrl = exposeData.url.replace(/^http/, 'ws');
+        const ws = new WebSocket(wsUrl);
 
-      await fetch(`${workerUrl}/api/exposed-ports/${port}`, {
-        method: 'DELETE',
-        headers
-      });
-    }, 90000);
+        await new Promise<void>((resolve, reject) => {
+          ws.on('open', () => resolve());
+          ws.on('error', reject);
+          setTimeout(() => reject(new Error('Timeout')), 10000);
+        });
+
+        // Echo test
+        const testMessage = 'WebSocket via exposed port!';
+        const messagePromise = new Promise<string>((resolve, reject) => {
+          ws.on('message', (data) => resolve(data.toString()));
+          setTimeout(() => reject(new Error('Echo timeout')), 5000);
+        });
+        ws.send(testMessage);
+        expect(await messagePromise).toBe(testMessage);
+
+        // Cleanup
+        ws.close();
+        await fetch(`${workerUrl}/api/process/${processData.id}`, {
+          method: 'DELETE',
+          headers
+        });
+        await fetch(`${workerUrl}/api/exposed-ports/${port}`, {
+          method: 'DELETE',
+          headers
+        });
+      },
+      30000
+    );
   });
 });

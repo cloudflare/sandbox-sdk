@@ -1,13 +1,8 @@
-import { afterAll, afterEach, beforeAll, describe, expect, test } from 'vitest';
+import { beforeAll, describe, expect, test } from 'vitest';
 import {
-  cleanupSandbox,
-  createSandboxId,
-  createTestHeaders
-} from './helpers/test-fixtures';
-import {
-  getTestWorkerUrl,
-  type WranglerDevRunner
-} from './helpers/wrangler-runner';
+  getSharedSandbox,
+  createUniqueSession
+} from './helpers/global-sandbox';
 import type { ExecResult } from '@repo/shared';
 import type { SuccessResponse, BucketGetResponse } from './test-worker/types';
 
@@ -33,9 +28,8 @@ describe('Bucket Mounting E2E', () => {
   }
 
   describe('local', () => {
-    let runner: WranglerDevRunner | null;
     let workerUrl: string;
-    let currentSandboxId: string | null = null;
+    let headers: Record<string, string>;
 
     const TEST_BUCKET = 'sandbox-e2e-test';
     const MOUNT_PATH = '/mnt/test-data';
@@ -43,23 +37,10 @@ describe('Bucket Mounting E2E', () => {
     const TEST_CONTENT = `Bucket mounting E2E test - ${new Date().toISOString()}`;
 
     beforeAll(async () => {
-      const result = await getTestWorkerUrl();
-      workerUrl = result.url;
-      runner = result.runner;
-    }, 30000);
-
-    afterEach(async () => {
-      if (currentSandboxId) {
-        await cleanupSandbox(workerUrl, currentSandboxId);
-        currentSandboxId = null;
-      }
-    });
-
-    afterAll(async () => {
-      if (runner) {
-        await runner.stop();
-      }
-    });
+      const sandbox = await getSharedSandbox();
+      workerUrl = sandbox.workerUrl;
+      headers = sandbox.createHeaders(createUniqueSession());
+    }, 120000);
 
     test('should mount bucket and perform bidirectional file operations', async () => {
       // Verify required credentials are present
@@ -75,9 +56,6 @@ describe('Bucket Mounting E2E', () => {
           `Missing required environment variables: ${missing.join(', ')}`
         );
       }
-
-      currentSandboxId = createSandboxId();
-      const headers = createTestHeaders(currentSandboxId);
 
       const PRE_EXISTING_FILE = `pre-existing-${Date.now()}.txt`;
       const PRE_EXISTING_CONTENT =
