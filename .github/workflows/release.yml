@@ -204,6 +204,18 @@ jobs:
           build-args: |
             SANDBOX_VERSION=${{ needs.unit-tests.outputs.version }}
 
+      - name: Extract standalone binary from Docker image
+        run: |
+          VERSION=${{ needs.unit-tests.outputs.version }}
+          # Create container from the default image (has the binary at /sandbox)
+          CONTAINER_ID=$(docker create cloudflare/sandbox:$VERSION)
+          # Extract the binary
+          docker cp $CONTAINER_ID:/sandbox ./sandbox-linux-x64
+          docker rm $CONTAINER_ID
+          # Verify the binary
+          file ./sandbox-linux-x64
+          ls -la ./sandbox-linux-x64
+
       - id: changesets
         uses: changesets/action@v1
         with:
@@ -213,3 +225,12 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_PUBLISH_TOKEN }}
           NPM_PUBLISH_TOKEN: ${{ secrets.NPM_PUBLISH_TOKEN }}
+
+      - name: Upload standalone binary to GitHub release
+        if: steps.changesets.outputs.published == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=${{ needs.unit-tests.outputs.version }}
+          # Tag format matches changesets: @cloudflare/sandbox@VERSION
+          gh release upload "@cloudflare/sandbox@${VERSION}" ./sandbox-linux-x64 --clobber

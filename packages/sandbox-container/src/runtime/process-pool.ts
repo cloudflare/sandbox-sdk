@@ -16,6 +16,29 @@ const PYTHON_AVAILABLE = (() => {
   }
 })();
 
+// Check which JavaScript runtime is available (prefer Node.js, fall back to Bun)
+const JS_RUNTIME: 'node' | 'bun' | null = (() => {
+  try {
+    const nodeResult = spawnSync('node', ['--version'], { timeout: 5000 });
+    if (nodeResult.status === 0) {
+      return 'node';
+    }
+  } catch {
+    // Node.js not available, try Bun
+  }
+
+  try {
+    const bunResult = spawnSync('bun', ['--version'], { timeout: 5000 });
+    if (bunResult.status === 0) {
+      return 'bun';
+    }
+  } catch {
+    // Bun not available either
+  }
+
+  return null;
+})();
+
 export type InterpreterLanguage = 'python' | 'javascript' | 'typescript';
 
 export interface InterpreterProcess {
@@ -245,6 +268,25 @@ export class ProcessPoolManager {
       };
     }
 
+    // Check if a JavaScript runtime is available for JavaScript/TypeScript
+    if (
+      (language === 'javascript' || language === 'typescript') &&
+      !JS_RUNTIME
+    ) {
+      return {
+        stdout: '',
+        stderr: `JavaScript runtime not available. JavaScript/TypeScript code execution requires Node.js or Bun to be installed in the container.`,
+        success: false,
+        executionId: randomUUID(),
+        outputs: [],
+        error: {
+          type: ErrorCode.JAVASCRIPT_NOT_AVAILABLE,
+          message:
+            'JavaScript runtime (Node.js or Bun) not available in this container'
+        }
+      };
+    }
+
     if (sessionId) {
       // Context execution: Get dedicated executor and lock on it
       const contextExecutor = this.contextExecutors.get(sessionId);
@@ -354,14 +396,15 @@ export class ProcessPoolManager {
         ];
         break;
       case 'javascript':
-        command = 'node';
+        // Use detected JS runtime (node or bun)
+        command = JS_RUNTIME!;
         args = [
           '/container-server/dist/runtime/executors/javascript/node_executor.js'
         ];
         break;
       case 'typescript':
         // TypeScript is transpiled in execute(), so use the same JS executor
-        command = 'node';
+        command = JS_RUNTIME!;
         args = [
           '/container-server/dist/runtime/executors/javascript/node_executor.js'
         ];
@@ -566,6 +609,16 @@ export class ProcessPoolManager {
       const version = process.env.SANDBOX_VERSION || '<version>';
       throw new Error(
         `Python interpreter not available. Use the cloudflare/sandbox:${version}-python image variant for Python code execution. See https://developers.cloudflare.com/sandbox/configuration/dockerfile/`
+      );
+    }
+
+    // Check if a JavaScript runtime is available before trying to create a context
+    if (
+      (language === 'javascript' || language === 'typescript') &&
+      !JS_RUNTIME
+    ) {
+      throw new Error(
+        `JavaScript runtime not available. JavaScript/TypeScript code execution requires Node.js or Bun to be installed in the container.`
       );
     }
 

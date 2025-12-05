@@ -1,4 +1,4 @@
-# Sandbox container image with full development environment
+# Sandbox container images (default and python variants)
 # Multi-stage build optimized for Turborepo monorepo
 
 # ============================================================================
@@ -8,10 +8,8 @@ FROM node:20-alpine AS pruner
 
 WORKDIR /app
 
-# Install Turborepo globally
 RUN npm install -g turbo
 
-# Copy entire monorepo
 COPY . .
 
 # Prune to only @repo/sandbox-container and its dependencies (@repo/shared)
@@ -36,11 +34,10 @@ COPY --from=pruner /app/out/package-lock.json ./package-lock.json
 RUN --mount=type=cache,target=/root/.npm \
     CI=true npm ci
 
-# Copy pruned source code
 COPY --from=pruner /app/out/full/ .
 
 # Build all packages (Turborepo handles dependency order automatically)
-# This builds @repo/shared first, then @repo/sandbox-container
+# This builds @repo/shared first, then @repo/sandbox-container (including standalone binary)
 RUN npx turbo run build
 
 # ============================================================================
@@ -96,7 +93,6 @@ ARG SANDBOX_VERSION=unknown
 # Prevent interactive prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Set the sandbox version as an environment variable for version checking
 ENV SANDBOX_VERSION=${SANDBOX_VERSION}
 
 # Install runtime packages and S3FS-FUSE for bucket mounting
@@ -123,26 +119,23 @@ RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm && \
 # Install Bun runtime from official image
 COPY --from=oven/bun:1 /usr/local/bin/bun /usr/local/bin/bun
 
-# Set up runtime container server directory
+# Copy standalone binary to root (for easy COPY --from in arbitrary Dockerfiles)
+COPY --from=builder /app/packages/sandbox-container/dist/sandbox /sandbox
+
+# Set up container server directory for executors
 WORKDIR /container-server
 
-# Copy bundled container server (all dependencies inlined, no node_modules needed)
-COPY --from=builder /app/packages/sandbox-container/dist/index.js ./dist/
-COPY --from=builder /app/packages/sandbox-container/dist/index.js.map ./dist/
-
-# Copy bundled JavaScript executor
+# Copy bundled JavaScript executor (runs on Node or Bun for code interpreter)
 COPY --from=builder /app/packages/sandbox-container/dist/runtime/executors/javascript/node_executor.js ./dist/runtime/executors/javascript/
-COPY --from=builder /app/packages/sandbox-container/dist/runtime/executors/javascript/node_executor.js.map ./dist/runtime/executors/javascript/
 
-# Create clean workspace directory for user code
+# Copy legacy JS bundle for backwards compatibility
+# Users with custom startup scripts that call `bun /container-server/dist/index.js` need this
+COPY --from=builder /app/packages/sandbox-container/dist/index.js ./dist/
+
 RUN mkdir -p /workspace
 
 # Expose the application port (3000 for control)
 EXPOSE 3000
-
-# Copy and make startup script executable
-COPY packages/sandbox/startup.sh ./
-RUN chmod +x startup.sh
 
 # ============================================================================
 # Stage 5a: Default image - lean, no Python
@@ -154,7 +147,7 @@ ENV PYTHON_POOL_MIN_SIZE=0
 ENV JAVASCRIPT_POOL_MIN_SIZE=3
 ENV TYPESCRIPT_POOL_MIN_SIZE=3
 
-CMD ["/container-server/startup.sh"]
+ENTRYPOINT ["/sandbox"]
 
 # ============================================================================
 # Stage 5b: Python image - full, with Python + data science packages
@@ -186,4 +179,4 @@ ENV PYTHON_POOL_MIN_SIZE=3
 ENV JAVASCRIPT_POOL_MIN_SIZE=3
 ENV TYPESCRIPT_POOL_MIN_SIZE=3
 
-CMD ["/container-server/startup.sh"]
+ENTRYPOINT ["/sandbox"]
