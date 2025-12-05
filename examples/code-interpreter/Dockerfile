@@ -1,1 +1,1 @@
-FROM docker.io/cloudflare/sandbox:0.6.2-python
+FROM docker.io/cloudflare/sandbox:0.6.3-python

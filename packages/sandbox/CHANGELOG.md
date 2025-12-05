@@ -1,5 +1,19 @@
 # @cloudflare/sandbox
 
+## 0.6.3
+
+### Patch Changes
+
+- [#273](https://github.com/cloudflare/sandbox-sdk/pull/273) [`8cf6b2f`](https://github.com/cloudflare/sandbox-sdk/commit/8cf6b2fe5b7aa0d9287387067a0a2f26ef538de4) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - Add process readiness detection with port and log pattern waiting
+  The `Process` object returned by `startProcess()` now includes readiness methods:
+  - `process.waitForPort(port, options?)`: Wait for process to listen on a port
+    - Supports HTTP mode (default): checks endpoint returns expected status (200-399)
+    - Supports TCP mode: checks port accepts connections
+    - Configurable timeout, interval, path, and expected status
+  - `process.waitForLog(pattern, options?)`: Wait for pattern in process output
+    - Supports string or RegExp patterns
+    - Returns matching line and capture groups
+
 ## 0.6.2
 
 ### Patch Changes
@@ -40,10 +54,10 @@
 
   ```dockerfile
   # Before
-  FROM cloudflare/sandbox:0.6.2
+  FROM cloudflare/sandbox:0.6.3
 
   # After
-  FROM cloudflare/sandbox:0.6.2-python
+  FROM cloudflare/sandbox:0.6.3-python
   ```
 
   Without this change, Python execution will fail with `PYTHON_NOT_AVAILABLE` error.
