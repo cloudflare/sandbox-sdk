@@ -286,21 +286,25 @@ export abstract class BaseHttpClient {
   /**
    * Stream request handler for WebSocket transport
    * Returns a ReadableStream that receives data over WebSocket
+   * @param path - The API path to call
+   * @param body - Optional request body (for POST requests)
+   * @param method - HTTP method (default: POST, use GET for process logs)
    */
   protected async doStreamFetch(
     path: string,
-    body?: unknown
+    body?: unknown,
+    method: 'GET' | 'POST' = 'POST'
   ): Promise<ReadableStream<Uint8Array>> {
     // Use WebSocket transport if available
     if (this.transport?.getMode() === 'websocket') {
-      return this.transport.requestStream('POST', path, body);
+      return this.transport.requestStream(method, path, body);
     }
 
     // Fall back to HTTP streaming
     const response = await this.doFetch(path, {
-      method: 'POST',
+      method,
       headers: { 'Content-Type': 'application/json' },
-      body: body ? JSON.stringify(body) : undefined
+      body: body && method === 'POST' ? JSON.stringify(body) : undefined
     });
 
     return this.handleStreamResponse(response);

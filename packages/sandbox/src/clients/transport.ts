@@ -125,7 +125,7 @@ export class Transport {
    * Make a streaming request using the configured transport
    */
   async requestStream(
-    method: 'POST',
+    method: 'GET' | 'POST',
     path: string,
     body?: unknown
   ): Promise<ReadableStream<Uint8Array>> {
@@ -179,7 +179,7 @@ export class Transport {
    * Make an HTTP streaming request
    */
   private async httpRequestStream(
-    method: 'POST',
+    method: 'GET' | 'POST',
     path: string,
     body?: unknown
   ): Promise<ReadableStream<Uint8Array>> {
@@ -189,8 +189,11 @@ export class Transport {
 
     const options: RequestInit = {
       method,
-      headers: { 'Content-Type': 'application/json' },
-      body: body ? JSON.stringify(body) : undefined
+      headers:
+        body && method === 'POST'
+          ? { 'Content-Type': 'application/json' }
+          : undefined,
+      body: body && method === 'POST' ? JSON.stringify(body) : undefined
     };
 
     let response: Response;

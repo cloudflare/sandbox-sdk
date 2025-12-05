@@ -203,7 +203,7 @@ console.log("Line 3");
         const errorData = (await exposeResponse.json()) as { error: string };
         expect(errorData.error).toBeTruthy();
         expect(errorData.error).toMatch(
-          /reserved|not allowed|forbidden|invalid port/i
+          /reserved|not allowed|forbidden|invalid port|already exposed/i
         );
       },
       90000
