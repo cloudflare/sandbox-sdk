@@ -569,8 +569,23 @@ export class ProcessPoolManager {
       );
     }
 
+    this.logger.debug('Attempting to reserve executor for context', {
+      contextId,
+      language,
+      availableCount: this.availableExecutors.get(language)?.length || 0
+    });
+
     const mutex = this.poolLocks.get(language)!;
+    const mutexWaitStart = Date.now();
+
     await mutex.runExclusive(async () => {
+      const mutexWaitTime = Date.now() - mutexWaitStart;
+      this.logger.debug('Acquired mutex for context reservation', {
+        contextId,
+        language,
+        mutexWaitTime
+      });
+
       const available = this.availableExecutors.get(language) || [];
 
       let executor: InterpreterProcess;
@@ -583,11 +598,19 @@ export class ProcessPoolManager {
         this.logger.debug('Assigned available executor to context', {
           contextId,
           language,
-          executorId: executor.id
+          executorId: executor.id,
+          remainingAvailable: available.length
         });
       } else {
         // No available executors, create a new one
+        this.logger.debug('No available executors, creating new one', {
+          contextId,
+          language
+        });
+
+        const createStart = Date.now();
         executor = await this.createProcess(language, contextId);
+        const createTime = Date.now() - createStart;
 
         // Add to main pool for tracking
         const pool = this.pools.get(language)!;
@@ -596,7 +619,8 @@ export class ProcessPoolManager {
         this.logger.debug('Created new executor for context', {
           contextId,
           language,
-          executorId: executor.id
+          executorId: executor.id,
+          createTime
         });
       }
 
@@ -605,6 +629,13 @@ export class ProcessPoolManager {
 
       // Track in contextExecutors map
       this.contextExecutors.set(contextId, executor);
+
+      this.logger.debug('Successfully reserved executor for context', {
+        contextId,
+        language,
+        executorId: executor.id,
+        totalTime: Date.now() - mutexWaitStart
+      });
     });
   }
 
@@ -612,6 +643,11 @@ export class ProcessPoolManager {
     contextId: string,
     language: InterpreterLanguage
   ): Promise<void> {
+    this.logger.debug('Attempting to release executor for context', {
+      contextId,
+      language
+    });
+
     const executor = this.contextExecutors.get(contextId);
     if (!executor) {
       this.logger.debug('Context already released or never existed', {
@@ -623,7 +659,9 @@ export class ProcessPoolManager {
     this.logger.debug('Releasing executor for context', {
       contextId,
       language,
-      executorId: executor.id
+      executorId: executor.id,
+      processKilled: executor.process.killed,
+      processExitCode: executor.process.exitCode
     });
 
     // Remove from context ownership map
@@ -638,7 +676,13 @@ export class ProcessPoolManager {
     this.executorLocks.delete(executor.id);
 
     // Terminate the executor process immediately
-    executor.process.kill();
+    if (!executor.process.killed) {
+      executor.process.kill();
+      this.logger.debug('Killed executor process', {
+        contextId,
+        executorId: executor.id
+      });
+    }
 
     // Remove from main pool
     const pool = this.pools.get(language);
@@ -646,11 +690,25 @@ export class ProcessPoolManager {
       const index = pool.indexOf(executor);
       if (index > -1) {
         pool.splice(index, 1);
+        this.logger.debug('Removed executor from pool', {
+          contextId,
+          executorId: executor.id,
+          remainingInPool: pool.length
+        });
       }
     }
 
     // Ensure minimum pool is maintained
+    this.logger.debug('Ensuring minimum pool after release', {
+      contextId,
+      language
+    });
     await this.ensureMinimumPool(language);
+
+    this.logger.debug('Successfully released executor for context', {
+      contextId,
+      language
+    });
   }
 
   isContextExecutorHealthy(contextId: string): boolean {
