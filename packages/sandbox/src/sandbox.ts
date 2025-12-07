@@ -994,39 +994,43 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * we reuse it instead of trying to create a new one.
    */
   private async ensureDefaultSession(): Promise<string> {
-    if (!this.defaultSession) {
-      const sessionId = `sandbox-${this.sandboxName || 'default'}`;
+    const sessionId = `sandbox-${this.sandboxName || 'default'}`;
 
-      try {
-        // Try to create session in container
-        await this.client.utils.createSession({
-          id: sessionId,
-          env: this.envVars || {},
-          cwd: '/workspace'
-        });
+    // Fast path: session already initialized in this instance
+    if (this.defaultSession === sessionId) {
+      return this.defaultSession;
+    }
 
+    // Check storage - session may have been created by a previous call in this request
+    const storedSession = await this.ctx.storage.get<string>('defaultSession');
+    if (storedSession === sessionId) {
+      this.defaultSession = sessionId;
+      this.logger.debug('Restored session from storage', { sessionId });
+      return this.defaultSession;
+    }
+
+    // Need to create session
+    try {
+      await this.client.utils.createSession({
+        id: sessionId,
+        env: this.envVars || {},
+        cwd: '/workspace'
+      });
+
+      this.defaultSession = sessionId;
+      await this.ctx.storage.put('defaultSession', sessionId);
+      this.logger.debug('Default session initialized', { sessionId });
+    } catch (error: unknown) {
+      // If session already exists (container has it but storage didn't), reuse it
+      if (error instanceof Error && error.message.includes('already exists')) {
+        this.logger.debug('Reusing existing session', { sessionId });
         this.defaultSession = sessionId;
-        // Persist to storage so it survives hot reloads
         await this.ctx.storage.put('defaultSession', sessionId);
-        this.logger.debug('Default session initialized', { sessionId });
-      } catch (error: unknown) {
-        // If session already exists (e.g., after hot reload), reuse it
-        if (
-          error instanceof Error &&
-          error.message.includes('already exists')
-        ) {
-          this.logger.debug('Reusing existing session after reload', {
-            sessionId
-          });
-          this.defaultSession = sessionId;
-          // Persist to storage in case it wasn't saved before
-          await this.ctx.storage.put('defaultSession', sessionId);
-        } else {
-          // Re-throw other errors
-          throw error;
-        }
+      } else {
+        throw error;
       }
     }
+
     return this.defaultSession;
   }
 
