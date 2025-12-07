@@ -48,6 +48,14 @@
       "types": "./dist/openai/index.d.ts",
       "import": "./dist/openai/index.js",
       "require": "./dist/openai/index.js"
+    },
+    "./bridge": {
+      "types": "./dist/bridge/index.d.ts",
+      "import": "./dist/bridge/index.js"
+    },
+    "./client": {
+      "types": "./dist/client/index.d.ts",
+      "import": "./dist/client/index.js"
     }
   },
   "keywords": [],
