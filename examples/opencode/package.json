@@ -1,0 +1,25 @@
+{
+  "name": "@cloudflare/sandbox-opencode-example",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "description": "Example of running OpenCode web UI inside Sandbox",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "start": "wrangler dev",
+    "types": "wrangler types",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@opencode-ai/sdk": "^1.0.0"
+  },
+  "devDependencies": {
+    "@cloudflare/sandbox": "*",
+    "@types/node": "^24.10.1",
+    "typescript": "^5.9.3",
+    "wrangler": "^4.50.0"
+  },
+  "author": "",
+  "license": "MIT"
+}

@@ -12,13 +12,18 @@
   },
   "devDependencies": {
     "@openai/agents": "^0.3.3",
+    "@opencode-ai/sdk": "^1.0.133",
     "@repo/shared": "*"
   },
   "peerDependencies": {
-    "@openai/agents": "^0.3.3"
+    "@openai/agents": "^0.3.3",
+    "@opencode-ai/sdk": "^1.0.0"
   },
   "peerDependenciesMeta": {
     "@openai/agents": {
+      "optional": true
+    },
+    "@opencode-ai/sdk": {
       "optional": true
     }
   },
@@ -48,6 +53,11 @@
       "types": "./dist/openai/index.d.ts",
       "import": "./dist/openai/index.js",
       "require": "./dist/openai/index.js"
+    },
+    "./opencode": {
+      "types": "./dist/opencode/index.d.ts",
+      "import": "./dist/opencode/index.js",
+      "require": "./dist/opencode/index.js"
     }
   },
   "keywords": [],
