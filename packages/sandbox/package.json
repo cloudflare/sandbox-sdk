@@ -17,7 +17,7 @@
   },
   "peerDependencies": {
     "@openai/agents": "^0.3.3",
-    "@opencode-ai/sdk": "^1.0.0"
+    "@opencode-ai/sdk": "^1.0.133"
   },
   "peerDependenciesMeta": {
     "@openai/agents": {

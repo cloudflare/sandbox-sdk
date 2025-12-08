@@ -52,6 +52,7 @@ export const ERROR_STATUS_MAP: Record<ErrorCode, number> = {
 
   // 503 Service Unavailable
   [ErrorCode.INTERPRETER_NOT_READY]: 503,
+  [ErrorCode.OPENCODE_STARTUP_FAILED]: 503,
 
   // 408 Request Timeout
   [ErrorCode.PROCESS_READY_TIMEOUT]: 408,

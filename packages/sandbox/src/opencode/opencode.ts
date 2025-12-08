@@ -1,4 +1,4 @@
-import type { Process } from '@repo/shared';
+import type { Logger, Process } from '@repo/shared';
 import type { Sandbox } from '../sandbox';
 import { createSandboxFetch } from './fetch';
 import type {
@@ -34,14 +34,15 @@ async function ensureSdkLoaded(): Promise<void> {
  * Returns the process if found and still active, null otherwise.
  */
 async function findExistingOpencodeProcess(
-  sandbox: Sandbox<any>,
+  sandbox: Sandbox<unknown>,
   port: number
 ): Promise<Process | null> {
   const processes = await sandbox.listProcesses();
-  const command = `opencode serve --port ${port}`;
+  // Use exact command match to avoid matching unrelated processes
+  const expectedCommand = `opencode serve --port ${port} --hostname 0.0.0.0`;
 
   for (const proc of processes) {
-    if (proc.command.includes(command)) {
+    if (proc.command === expectedCommand) {
       if (proc.status === 'starting' || proc.status === 'running') {
         return proc;
       }
@@ -54,37 +55,84 @@ async function findExistingOpencodeProcess(
 /**
  * Ensures OpenCode server is running in the container.
  * Reuses existing process if one is already running on the specified port.
+ * Handles concurrent startup attempts gracefully by retrying on failure.
  * Returns the process handle.
  */
 async function ensureOpencodeServer(
-  sandbox: Sandbox<any>,
+  sandbox: Sandbox<unknown>,
   port: number,
-  config?: Record<string, unknown>
+  config?: Record<string, unknown>,
+  logger?: Logger
 ): Promise<Process> {
   // Check if OpenCode is already running on this port
-  let process = await findExistingOpencodeProcess(sandbox, port);
-
-  if (process) {
+  const existingProcess = await findExistingOpencodeProcess(sandbox, port);
+  if (existingProcess) {
+    logger?.debug('Reusing existing OpenCode process', {
+      port,
+      processId: existingProcess.id
+    });
     // Reuse existing process - wait for it to be ready if still starting
-    if (process.status === 'starting') {
+    if (existingProcess.status === 'starting') {
       try {
-        await process.waitForPort(port, {
+        await existingProcess.waitForPort(port, {
           mode: 'http',
           path: '/',
           timeout: 60_000
         });
       } catch (e) {
-        const logs = await process.getLogs();
+        const logs = await existingProcess.getLogs();
         throw new OpencodeStartupError(
           `OpenCode server failed to start. Stderr: ${logs.stderr || '(empty)'}`,
           { cause: e }
         );
       }
     }
-    return process;
+    return existingProcess;
   }
 
-  // Start new OpenCode server
+  // Try to start a new OpenCode server
+  try {
+    return await startOpencodeServer(sandbox, port, config, logger);
+  } catch (startupError) {
+    // Startup failed - check if another concurrent request started the server
+    // This handles the race condition where multiple requests try to start simultaneously
+    logger?.debug('Startup failed, checking for concurrent server start', {
+      port
+    });
+
+    const retryProcess = await findExistingOpencodeProcess(sandbox, port);
+    if (retryProcess) {
+      logger?.debug('Found server started by concurrent request', {
+        port,
+        processId: retryProcess.id
+      });
+      // Wait for the concurrent server to be ready
+      if (retryProcess.status === 'starting') {
+        await retryProcess.waitForPort(port, {
+          mode: 'http',
+          path: '/',
+          timeout: 60_000
+        });
+      }
+      return retryProcess;
+    }
+
+    // No concurrent server found - the failure was genuine
+    throw startupError;
+  }
+}
+
+/**
+ * Internal function to start a new OpenCode server process.
+ */
+async function startOpencodeServer(
+  sandbox: Sandbox<unknown>,
+  port: number,
+  config?: Record<string, unknown>,
+  logger?: Logger
+): Promise<Process> {
+  logger?.info('Starting OpenCode server', { port });
+
   // Pass config via OPENCODE_CONFIG_CONTENT and also extract API keys to env vars
   // because OpenCode's provider auth looks for env vars like ANTHROPIC_API_KEY
   const env: Record<string, string> = {};
@@ -107,7 +155,7 @@ async function ensureOpencodeServer(
     }
   }
 
-  process = await sandbox.startProcess(
+  const process = await sandbox.startProcess(
     `opencode serve --port ${port} --hostname 0.0.0.0`,
     { env: Object.keys(env).length > 0 ? env : undefined }
   );
@@ -119,8 +167,13 @@ async function ensureOpencodeServer(
       path: '/',
       timeout: 60_000
     });
+    logger?.debug('OpenCode server started', { operation: 'opencode.start' });
   } catch (e) {
     const logs = await process.getLogs();
+    const error = e instanceof Error ? e : undefined;
+    logger?.error('OpenCode server failed to start', error, {
+      operation: 'opencode.start'
+    });
     throw new OpencodeStartupError(
       `OpenCode server failed to start. Stderr: ${logs.stderr || '(empty)'}`,
       { cause: e }
@@ -158,13 +211,18 @@ async function ensureOpencodeServer(
  * ```
  */
 export async function createOpencode<TClient = unknown>(
-  sandbox: Sandbox<any>,
+  sandbox: Sandbox<unknown>,
   options?: OpencodeOptions
 ): Promise<OpencodeResult<TClient>> {
   await ensureSdkLoaded();
 
   const port = options?.port ?? DEFAULT_PORT;
-  const process = await ensureOpencodeServer(sandbox, port, options?.config);
+  const process = await ensureOpencodeServer(
+    sandbox,
+    port,
+    options?.config,
+    options?.logger
+  );
 
   // Create SDK client with Sandbox transport
   // Cast from unknown - SDK is optional peer dependency loaded dynamically
@@ -220,7 +278,7 @@ export async function createOpencode<TClient = unknown>(
  */
 export async function proxyToOpencode(
   request: Request,
-  sandbox: Sandbox<any>,
+  sandbox: Sandbox<unknown>,
   options?: ProxyToOpencodeOptions
 ): Promise<Response> {
   const url = new URL(request.url);
@@ -233,17 +291,32 @@ export async function proxyToOpencode(
     request.method === 'GET' &&
     request.headers.get('Accept')?.includes('text/html');
 
-  if (
-    url.hostname === 'localhost' &&
-    !url.searchParams.has('url') &&
-    isNavigation
-  ) {
+  // Also handle 127.0.0.1 which OpenCode may use
+  const isLocalhost =
+    url.hostname === 'localhost' || url.hostname === '127.0.0.1';
+
+  if (isLocalhost && !url.searchParams.has('url') && isNavigation) {
     url.searchParams.set('url', url.origin);
     return Response.redirect(url.toString(), 302);
   }
 
   // Ensure OpenCode server is running
-  await ensureOpencodeServer(sandbox, port, options?.config);
+  try {
+    await ensureOpencodeServer(sandbox, port, options?.config, options?.logger);
+  } catch (err) {
+    const error = err instanceof Error ? err : undefined;
+    options?.logger?.error('Failed to start OpenCode server', error, {
+      operation: 'opencode.proxy'
+    });
+    const message =
+      err instanceof OpencodeStartupError
+        ? err.message
+        : 'Failed to start OpenCode server';
+    return new Response(JSON.stringify({ error: message }), {
+      status: 503,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
 
   // Proxy the request to OpenCode
   return sandbox.containerFetch(request, port);

@@ -97,6 +97,9 @@ export const ErrorCode = {
   // Code Interpreter Errors (501) - Feature not available in image variant
   PYTHON_NOT_AVAILABLE: 'PYTHON_NOT_AVAILABLE',
 
+  // OpenCode Errors (503)
+  OPENCODE_STARTUP_FAILED: 'OPENCODE_STARTUP_FAILED',
+
   // Process Readiness Errors (408/500)
   PROCESS_READY_TIMEOUT: 'PROCESS_READY_TIMEOUT',
   PROCESS_EXITED_BEFORE_READY: 'PROCESS_EXITED_BEFORE_READY',
