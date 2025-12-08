@@ -1015,7 +1015,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     } catch (error: unknown) {
       // Session may already exist (e.g., after hot reload or concurrent request)
       if (error instanceof Error && error.message.includes('already exists')) {
-        this.logger.debug('Reusing existing session', { sessionId });
+        this.logger.debug(
+          'Session exists in container but not in DO state, syncing',
+          { sessionId }
+        );
         this.defaultSession = sessionId;
         await this.ctx.storage.put('defaultSession', sessionId);
       } else {
