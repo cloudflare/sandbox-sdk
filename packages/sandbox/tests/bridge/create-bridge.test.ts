@@ -17,7 +17,11 @@ describe('createBridge', () => {
       body: JSON.stringify({ command: 'echo hi' })
     });
 
-    const response = await handler.fetch!(request, mockEnv as any, {} as any);
+    const response = await handler.fetch!(
+      request as any,
+      mockEnv as any,
+      {} as any
+    );
 
     expect(response.status).toBe(401);
   });
@@ -30,7 +34,11 @@ describe('createBridge', () => {
       body: JSON.stringify({ command: 'echo hi' })
     });
 
-    const response = await handler.fetch!(request, mockEnv as any, {} as any);
+    const response = await handler.fetch!(
+      request as any,
+      mockEnv as any,
+      {} as any
+    );
 
     expect(response.status).toBe(401);
   });
@@ -41,7 +49,11 @@ describe('createBridge', () => {
       method: 'OPTIONS'
     });
 
-    const response = await handler.fetch!(request, mockEnv as any, {} as any);
+    const response = await handler.fetch!(
+      request as any,
+      mockEnv as any,
+      {} as any
+    );
 
     expect(response.status).toBe(204);
     expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
@@ -53,7 +65,11 @@ describe('createBridge', () => {
       headers: { Authorization: 'Bearer test-secret-key' }
     });
 
-    const response = await handler.fetch!(request, mockEnv as any, {} as any);
+    const response = await handler.fetch!(
+      request as any,
+      mockEnv as any,
+      {} as any
+    );
 
     expect(response.status).toBe(404);
   });

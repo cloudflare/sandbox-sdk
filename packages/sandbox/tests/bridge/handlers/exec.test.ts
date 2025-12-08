@@ -20,7 +20,7 @@ describe('handleExec', () => {
     });
 
     const response = await handleExec(request, mockSandbox as any);
-    const body = await response.json();
+    const body = (await response.json()) as Record<string, unknown>;
 
     expect(response.status).toBe(200);
     expect(body.success).toBe(true);
@@ -97,7 +97,7 @@ describe('handleExec', () => {
     const response = await handleExec(request, mockSandbox as any);
 
     expect(response.status).toBe(400);
-    const body = await response.json();
+    const body = (await response.json()) as Record<string, unknown>;
     expect(body.error).toBe('INVALID_REQUEST');
   });
 });

@@ -1,0 +1,22 @@
+{
+  "name": "sandbox-bridge-example",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-06-02",
+  "containers": {
+    "enabled": true
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "Sandbox",
+        "class_name": "Sandbox"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_classes": ["Sandbox"]
+    }
+  ]
+}
