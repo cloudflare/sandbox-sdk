@@ -293,6 +293,8 @@ Turbo handles task orchestration (`turbo.json`) with dependency-aware builds.
 
 **Focus on the change, not how it was discovered** - never reference "review feedback", "PR comments", or "code review" in commit messages. Describe what the change does and why, not that someone asked for it.
 
+**Avoid bullet points** - write prose, not lists. If you need bullets to explain a change, you're either committing too much at once or over-explaining implementation details. The body should be a brief paragraph, not a changelog.
+
 Good examples:
 
 ```

@@ -38,7 +38,7 @@ import {
   ErrorCode,
   ProcessExitedBeforeReadyError,
   ProcessReadyTimeoutError,
-  SandboxError
+  SessionAlreadyExistsError
 } from './errors';
 import { CodeInterpreter } from './interpreter';
 import { isLocalhostPattern } from './request-handler';
@@ -1015,10 +1015,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       this.logger.debug('Default session initialized', { sessionId });
     } catch (error: unknown) {
       // Session may already exist (e.g., after hot reload or concurrent request)
-      if (
-        error instanceof SandboxError &&
-        error.code === ErrorCode.RESOURCE_BUSY
-      ) {
+      if (error instanceof SessionAlreadyExistsError) {
         this.logger.debug(
           'Session exists in container but not in DO state, syncing',
           { sessionId }

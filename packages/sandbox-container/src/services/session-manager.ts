@@ -32,7 +32,7 @@ export class SessionManager {
           success: false,
           error: {
             message: `Session '${options.id}' already exists`,
-            code: ErrorCode.RESOURCE_BUSY,
+            code: ErrorCode.SESSION_ALREADY_EXISTS,
             details: {
               sessionId: options.id
             }
