@@ -109,6 +109,8 @@ export {
   ProcessReadyTimeoutError,
   SandboxError,
   ServiceNotRespondingError,
+  // Session Errors
+  SessionAlreadyExistsError,
   // Validation Errors
   ValidationFailedError
 } from './classes';

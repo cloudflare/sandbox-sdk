@@ -28,6 +28,7 @@ import type {
   ProcessExitedBeforeReadyContext,
   ProcessNotFoundContext,
   ProcessReadyTimeoutContext,
+  SessionAlreadyExistsContext,
   ValidationFailedContext
 } from '@repo/shared/errors';
 
@@ -233,6 +234,25 @@ export class ProcessError extends SandboxError<ProcessErrorContext> {
   }
   get stderr() {
     return this.context.stderr;
+  }
+}
+
+// ============================================================================
+// Session Errors
+// ============================================================================
+
+/**
+ * Error thrown when a session already exists
+ */
+export class SessionAlreadyExistsError extends SandboxError<SessionAlreadyExistsContext> {
+  constructor(errorResponse: ErrorResponse<SessionAlreadyExistsContext>) {
+    super(errorResponse);
+    this.name = 'SessionAlreadyExistsError';
+  }
+
+  // Type-safe accessors
+  get sessionId() {
+    return this.context.sessionId;
   }
 }
 

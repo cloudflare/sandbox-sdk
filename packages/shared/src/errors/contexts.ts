@@ -48,6 +48,10 @@ export interface ProcessErrorContext {
   stderr?: string;
 }
 
+export interface SessionAlreadyExistsContext {
+  sessionId: string;
+}
+
 /**
  * Process readiness error contexts
  */

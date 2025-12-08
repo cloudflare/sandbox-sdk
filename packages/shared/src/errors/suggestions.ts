@@ -30,6 +30,9 @@ export function getSuggestion(
     case ErrorCode.PORT_IN_USE:
       return `Port ${context.port} is already in use by another service. Choose a different port`;
 
+    case ErrorCode.SESSION_ALREADY_EXISTS:
+      return `Session "${context.sessionId}" already exists. Use a different session ID or reuse the existing session`;
+
     case ErrorCode.INVALID_PORT:
       return `Port must be between 1 and 65535. Port ${context.port} is ${context.reason}`;
 
