@@ -1,32 +1,72 @@
 // packages/sandbox/tests/opencode/opencode.test.ts
+import type { Process, ProcessStatus } from '@repo/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createOpencode } from '../../src/opencode/opencode';
 import { OpencodeStartupError } from '../../src/opencode/types';
+import type { Sandbox } from '../../src/sandbox';
 
 // Mock the dynamic import of @opencode-ai/sdk
 vi.mock('@opencode-ai/sdk', () => ({
   createOpencodeClient: vi.fn().mockReturnValue({ session: {} })
 }));
 
+/** Minimal mock for Process methods used by OpenCode integration */
+interface MockProcess {
+  id: string;
+  command: string;
+  status: ProcessStatus;
+  startTime: Date;
+  waitForPort: ReturnType<typeof vi.fn>;
+  kill: ReturnType<typeof vi.fn>;
+  getLogs: ReturnType<typeof vi.fn>;
+  getStatus: ReturnType<typeof vi.fn>;
+  waitForLog: ReturnType<typeof vi.fn>;
+}
+
+/** Minimal mock for Sandbox methods used by OpenCode integration */
+interface MockSandbox {
+  startProcess: ReturnType<typeof vi.fn>;
+  listProcesses: ReturnType<typeof vi.fn>;
+  containerFetch: ReturnType<typeof vi.fn>;
+}
+
+function createMockProcess(overrides: Partial<MockProcess> = {}): MockProcess {
+  return {
+    id: 'proc-1',
+    command: 'opencode serve --port 4096 --hostname 0.0.0.0',
+    status: 'running',
+    startTime: new Date(),
+    waitForPort: vi.fn().mockResolvedValue(undefined),
+    kill: vi.fn().mockResolvedValue(undefined),
+    getLogs: vi.fn().mockResolvedValue({ stdout: '', stderr: '' }),
+    getStatus: vi.fn().mockResolvedValue('running'),
+    waitForLog: vi.fn().mockResolvedValue({ line: '' }),
+    ...overrides
+  };
+}
+
+function createMockSandbox(overrides: Partial<MockSandbox> = {}): MockSandbox {
+  return {
+    startProcess: vi.fn(),
+    listProcesses: vi.fn().mockResolvedValue([]),
+    containerFetch: vi.fn().mockResolvedValue(new Response('ok')),
+    ...overrides
+  };
+}
+
 describe('createOpencode', () => {
-  let mockSandbox: any;
-  let mockProcess: any;
+  let mockSandbox: MockSandbox;
+  let mockProcess: MockProcess;
 
   beforeEach(() => {
-    mockProcess = {
-      waitForPort: vi.fn().mockResolvedValue(undefined),
-      kill: vi.fn().mockResolvedValue(undefined),
-      getLogs: vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
-    };
-
-    mockSandbox = {
-      startProcess: vi.fn().mockResolvedValue(mockProcess),
-      containerFetch: vi.fn().mockResolvedValue(new Response('ok'))
-    };
+    mockProcess = createMockProcess();
+    mockSandbox = createMockSandbox({
+      startProcess: vi.fn().mockResolvedValue(mockProcess)
+    });
   });
 
   it('should start OpenCode server on default port 4096', async () => {
-    const result = await createOpencode(mockSandbox);
+    const result = await createOpencode(mockSandbox as unknown as Sandbox);
 
     expect(mockSandbox.startProcess).toHaveBeenCalledWith(
       'opencode serve --port 4096 --hostname 0.0.0.0',
@@ -37,7 +77,9 @@ describe('createOpencode', () => {
   });
 
   it('should start OpenCode server on custom port', async () => {
-    const result = await createOpencode(mockSandbox, { port: 8080 });
+    const result = await createOpencode(mockSandbox as unknown as Sandbox, {
+      port: 8080
+    });
 
     expect(mockSandbox.startProcess).toHaveBeenCalledWith(
       'opencode serve --port 8080 --hostname 0.0.0.0',
@@ -48,18 +90,41 @@ describe('createOpencode', () => {
 
   it('should pass config via OPENCODE_CONFIG_CONTENT env var', async () => {
     const config = { provider: { anthropic: { apiKey: 'test-key' } } };
-    await createOpencode(mockSandbox, { config });
+    await createOpencode(mockSandbox as unknown as Sandbox, { config });
 
     expect(mockSandbox.startProcess).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({
-        env: { OPENCODE_CONFIG_CONTENT: JSON.stringify(config) }
+        env: expect.objectContaining({
+          OPENCODE_CONFIG_CONTENT: JSON.stringify(config)
+        })
+      })
+    );
+  });
+
+  it('should extract API keys from config to env vars', async () => {
+    const config = {
+      provider: {
+        anthropic: { apiKey: 'anthropic-key' },
+        openai: { apiKey: 'openai-key' }
+      }
+    };
+    await createOpencode(mockSandbox as unknown as Sandbox, { config });
+
+    expect(mockSandbox.startProcess).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        env: expect.objectContaining({
+          OPENCODE_CONFIG_CONTENT: JSON.stringify(config),
+          ANTHROPIC_API_KEY: 'anthropic-key',
+          OPENAI_API_KEY: 'openai-key'
+        })
       })
     );
   });
 
   it('should wait for port to be ready', async () => {
-    await createOpencode(mockSandbox);
+    await createOpencode(mockSandbox as unknown as Sandbox);
 
     expect(mockProcess.waitForPort).toHaveBeenCalledWith(4096, {
       mode: 'http',
@@ -69,7 +134,7 @@ describe('createOpencode', () => {
   });
 
   it('should return client and server', async () => {
-    const result = await createOpencode(mockSandbox);
+    const result = await createOpencode(mockSandbox as unknown as Sandbox);
 
     expect(result.client).toBeDefined();
     expect(result.server).toBeDefined();
@@ -77,7 +142,7 @@ describe('createOpencode', () => {
   });
 
   it('should provide stop method that kills process', async () => {
-    const result = await createOpencode(mockSandbox);
+    const result = await createOpencode(mockSandbox as unknown as Sandbox);
 
     await result.server.stop();
 
@@ -91,9 +156,96 @@ describe('createOpencode', () => {
       stderr: 'Server crashed'
     });
 
-    await expect(createOpencode(mockSandbox)).rejects.toThrow(
-      OpencodeStartupError
-    );
-    await expect(createOpencode(mockSandbox)).rejects.toThrow(/Server crashed/);
+    await expect(
+      createOpencode(mockSandbox as unknown as Sandbox)
+    ).rejects.toThrow(OpencodeStartupError);
+    await expect(
+      createOpencode(mockSandbox as unknown as Sandbox)
+    ).rejects.toThrow(/Server crashed/);
+  });
+
+  describe('process reuse', () => {
+    it('should reuse existing running process on same port', async () => {
+      const existingProcess = createMockProcess({
+        command: 'opencode serve --port 4096 --hostname 0.0.0.0',
+        status: 'running'
+      });
+      mockSandbox.listProcesses.mockResolvedValue([existingProcess]);
+
+      const result = await createOpencode(mockSandbox as unknown as Sandbox);
+
+      // Should not start a new process
+      expect(mockSandbox.startProcess).not.toHaveBeenCalled();
+      // Should return the existing process
+      expect(result.server.process).toBe(existingProcess);
+    });
+
+    it('should wait for starting process to be ready', async () => {
+      const startingProcess = createMockProcess({
+        command: 'opencode serve --port 4096 --hostname 0.0.0.0',
+        status: 'starting'
+      });
+      mockSandbox.listProcesses.mockResolvedValue([startingProcess]);
+
+      await createOpencode(mockSandbox as unknown as Sandbox);
+
+      // Should not start a new process
+      expect(mockSandbox.startProcess).not.toHaveBeenCalled();
+      // Should wait for the existing process
+      expect(startingProcess.waitForPort).toHaveBeenCalledWith(4096, {
+        mode: 'http',
+        path: '/',
+        timeout: 60_000
+      });
+    });
+
+    it('should start new process when existing one has completed', async () => {
+      const completedProcess = createMockProcess({
+        command: 'opencode serve --port 4096 --hostname 0.0.0.0',
+        status: 'completed'
+      });
+      mockSandbox.listProcesses.mockResolvedValue([completedProcess]);
+
+      await createOpencode(mockSandbox as unknown as Sandbox);
+
+      // Should start a new process since existing one completed
+      expect(mockSandbox.startProcess).toHaveBeenCalled();
+    });
+
+    it('should start new process on different port', async () => {
+      const existingProcess = createMockProcess({
+        command: 'opencode serve --port 4096 --hostname 0.0.0.0',
+        status: 'running'
+      });
+      mockSandbox.listProcesses.mockResolvedValue([existingProcess]);
+
+      await createOpencode(mockSandbox as unknown as Sandbox, { port: 8080 });
+
+      // Should start new process on different port
+      expect(mockSandbox.startProcess).toHaveBeenCalledWith(
+        'opencode serve --port 8080 --hostname 0.0.0.0',
+        expect.any(Object)
+      );
+    });
+
+    it('should throw OpencodeStartupError when starting process fails to become ready', async () => {
+      const startingProcess = createMockProcess({
+        command: 'opencode serve --port 4096 --hostname 0.0.0.0',
+        status: 'starting'
+      });
+      startingProcess.waitForPort.mockRejectedValue(new Error('timeout'));
+      startingProcess.getLogs.mockResolvedValue({
+        stdout: '',
+        stderr: 'Startup failed'
+      });
+      mockSandbox.listProcesses.mockResolvedValue([startingProcess]);
+
+      await expect(
+        createOpencode(mockSandbox as unknown as Sandbox)
+      ).rejects.toThrow(OpencodeStartupError);
+      await expect(
+        createOpencode(mockSandbox as unknown as Sandbox)
+      ).rejects.toThrow(/Startup failed/);
+    });
   });
 });

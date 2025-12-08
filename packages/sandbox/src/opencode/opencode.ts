@@ -12,7 +12,8 @@ import { OpencodeStartupError } from './types';
 const DEFAULT_PORT = 4096;
 
 // Dynamic import to handle peer dependency
-let createOpencodeClient: any;
+// Using unknown since SDK is optional peer dep - cast at usage site
+let createOpencodeClient: unknown;
 
 async function ensureSdkLoaded(): Promise<void> {
   if (createOpencodeClient) return;
@@ -166,10 +167,16 @@ export async function createOpencode<TClient = unknown>(
   const process = await ensureOpencodeServer(sandbox, port, options?.config);
 
   // Create SDK client with Sandbox transport
-  const client = createOpencodeClient({
+  // Cast from unknown - SDK is optional peer dependency loaded dynamically
+  const clientFactory = createOpencodeClient as (options: {
+    baseUrl: string;
+    fetch: (request: Request) => Promise<Response>;
+  }) => TClient;
+
+  const client = clientFactory({
     baseUrl: `http://localhost:${port}`,
     fetch: createSandboxFetch(sandbox, port)
-  }) as TClient;
+  });
 
   // Build server handle
   const server: OpencodeServer = {
