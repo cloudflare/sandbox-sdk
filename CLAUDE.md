@@ -291,6 +291,8 @@ Turbo handles task orchestration (`turbo.json`) with dependency-aware builds.
 
 **Subject line should stand alone** - don't require reading the body to understand the change. Body is optional and only needed for non-obvious context.
 
+**Focus on the change, not how it was discovered** - never reference "review feedback", "PR comments", or "code review" in commit messages. Describe what the change does and why, not that someone asked for it.
+
 Good examples:
 
 ```

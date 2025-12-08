@@ -2,4 +2,4 @@
 '@cloudflare/sandbox': patch
 ---
 
-Improve session initialization to check storage before creating new session
+Fix session initialization to eliminate noisy error logs during hot reloads
