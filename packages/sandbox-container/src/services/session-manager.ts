@@ -32,11 +32,10 @@ export class SessionManager {
           success: false,
           error: {
             message: `Session '${options.id}' already exists`,
-            code: ErrorCode.INTERNAL_ERROR,
+            code: ErrorCode.SESSION_ALREADY_EXISTS,
             details: {
-              sessionId: options.id,
-              originalError: 'Session already exists'
-            } satisfies InternalErrorContext
+              sessionId: options.id
+            }
           }
         };
       }
