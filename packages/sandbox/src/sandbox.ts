@@ -1001,15 +1001,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       return this.defaultSession;
     }
 
-    // Check storage - session may have been created by a previous call in this request
-    const storedSession = await this.ctx.storage.get<string>('defaultSession');
-    if (storedSession === sessionId) {
-      this.defaultSession = sessionId;
-      this.logger.debug('Restored session from storage', { sessionId });
-      return this.defaultSession;
-    }
-
-    // Need to create session
+    // Create session in container
     try {
       await this.client.utils.createSession({
         id: sessionId,
@@ -1021,7 +1013,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       await this.ctx.storage.put('defaultSession', sessionId);
       this.logger.debug('Default session initialized', { sessionId });
     } catch (error: unknown) {
-      // If session already exists (container has it but storage didn't), reuse it
+      // Session may already exist (e.g., after hot reload or concurrent request)
       if (error instanceof Error && error.message.includes('already exists')) {
         this.logger.debug('Reusing existing session', { sessionId });
         this.defaultSession = sessionId;
