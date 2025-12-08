@@ -7,7 +7,17 @@
  */
 import { getSandbox } from '@cloudflare/sandbox';
 import { createOpencode, proxyToOpencode } from '@cloudflare/sandbox/opencode';
-import type { OpencodeClient } from '@opencode-ai/sdk';
+import type { Config, OpencodeClient } from '@opencode-ai/sdk';
+
+const getConfig = (env: Env): Config => ({
+  provider: {
+    anthropic: {
+      options: {
+        apiKey: env.ANTHROPIC_API_KEY
+      }
+    }
+  }
+});
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -20,15 +30,7 @@ export default {
     }
 
     // Everything else: Web UI proxy
-    return proxyToOpencode(request, sandbox, {
-      config: {
-        provider: {
-          anthropic: {
-            apiKey: env.ANTHROPIC_API_KEY
-          }
-        }
-      }
-    });
+    return proxyToOpencode(request, sandbox, { config: getConfig(env) });
   }
 };
 
@@ -47,15 +49,10 @@ async function handleSdkTest(
 
     // Get typed SDK client
     const { client } = await createOpencode<OpencodeClient>(sandbox, {
-      config: {
-        provider: {
-          anthropic: {
-            apiKey: env.ANTHROPIC_API_KEY
-          }
-        }
-      }
+      config: getConfig(env)
     });
 
+    console.log('Client created:', client);
     // Create a session
     const session = await client.session.create({
       body: { title: 'Test Session' },
@@ -66,6 +63,7 @@ async function handleSdkTest(
       throw new Error(`Failed to create session: ${JSON.stringify(session)}`);
     }
 
+    console.log('Session created:', session.data);
     // Send a prompt using the SDK
     const promptResult = await client.session.prompt({
       path: { id: session.data.id },
@@ -84,6 +82,7 @@ async function handleSdkTest(
       }
     });
 
+    console.log('Prompt result:', promptResult.data);
     // Extract text response from result
     const parts = promptResult.data?.parts ?? [];
     const textPart = parts.find((p: { type: string }) => p.type === 'text') as

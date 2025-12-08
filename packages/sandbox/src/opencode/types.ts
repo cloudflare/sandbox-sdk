@@ -1,18 +1,15 @@
-// packages/sandbox/src/opencode/types.ts
-import type { Logger, Process } from '@repo/shared';
-import { ErrorCode } from '@repo/shared/errors';
+import type { Config } from '@opencode-ai/sdk';
+import type { Process } from '@repo/shared';
+import { ErrorCode, type OpencodeStartupContext } from '@repo/shared/errors';
 
 /**
  * Configuration options for starting OpenCode server
- * Uses OpencodeConfig from @opencode-ai/sdk for provider configuration
  */
 export interface OpencodeOptions {
   /** Port for OpenCode server (default: 4096) */
   port?: number;
-  /** OpenCode configuration - passed via OPENCODE_CONFIG_CONTENT env var */
-  config?: Record<string, unknown>;
-  /** Logger for debug output */
-  logger?: Logger;
+  /** OpenCode configuration */
+  config?: Config;
 }
 
 /**
@@ -46,10 +43,8 @@ export interface OpencodeResult<TClient = unknown> {
 export interface ProxyToOpencodeOptions {
   /** Port for OpenCode server (default: 4096) */
   port?: number;
-  /** OpenCode configuration - passed via OPENCODE_CONFIG_CONTENT env var */
-  config?: Record<string, unknown>;
-  /** Logger for debug output */
-  logger?: Logger;
+  /** OpenCode configuration */
+  config?: Config;
 }
 
 /**
@@ -57,9 +52,15 @@ export interface ProxyToOpencodeOptions {
  */
 export class OpencodeStartupError extends Error {
   public readonly code = ErrorCode.OPENCODE_STARTUP_FAILED;
+  public readonly context: OpencodeStartupContext;
 
-  constructor(message: string, options?: ErrorOptions) {
+  constructor(
+    message: string,
+    context: OpencodeStartupContext,
+    options?: ErrorOptions
+  ) {
     super(message, options);
     this.name = 'OpencodeStartupError';
+    this.context = context;
   }
 }

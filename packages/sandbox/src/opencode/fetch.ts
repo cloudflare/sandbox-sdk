@@ -25,7 +25,7 @@ import type { Sandbox } from '../sandbox';
  * ```
  */
 export function createSandboxFetch(
-  sandbox: Sandbox<any>,
+  sandbox: Sandbox<unknown>,
   port = 4096
 ): (request: Request) => Promise<Response> {
   return (request: Request): Promise<Response> => {

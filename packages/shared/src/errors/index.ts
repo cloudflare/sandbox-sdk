@@ -50,6 +50,7 @@ export type {
   InvalidMountConfigContext,
   InvalidPortContext,
   MissingCredentialsContext,
+  OpencodeStartupContext,
   PortAlreadyExposedContext,
   PortErrorContext,
   PortNotExposedContext,

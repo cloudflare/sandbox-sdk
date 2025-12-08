@@ -89,7 +89,9 @@ describe('createOpencode', () => {
   });
 
   it('should pass config via OPENCODE_CONFIG_CONTENT env var', async () => {
-    const config = { provider: { anthropic: { apiKey: 'test-key' } } };
+    const config = {
+      provider: { anthropic: { options: { apiKey: 'test-key' } } }
+    };
     await createOpencode(mockSandbox as unknown as Sandbox, { config });
 
     expect(mockSandbox.startProcess).toHaveBeenCalledWith(
@@ -105,8 +107,8 @@ describe('createOpencode', () => {
   it('should extract API keys from config to env vars', async () => {
     const config = {
       provider: {
-        anthropic: { apiKey: 'anthropic-key' },
-        openai: { apiKey: 'openai-key' }
+        anthropic: { options: { apiKey: 'anthropic-key' } },
+        openai: { options: { apiKey: 'openai-key' } }
       }
     };
     await createOpencode(mockSandbox as unknown as Sandbox, { config });
