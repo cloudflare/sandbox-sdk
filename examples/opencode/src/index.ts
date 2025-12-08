@@ -9,6 +9,8 @@ import { getSandbox } from '@cloudflare/sandbox';
 import { createOpencode, proxyToOpencode } from '@cloudflare/sandbox/opencode';
 import type { Config, OpencodeClient } from '@opencode-ai/sdk';
 
+export { Sandbox } from '@cloudflare/sandbox';
+
 const getConfig = (env: Env): Config => ({
   provider: {
     anthropic: {
@@ -52,7 +54,6 @@ async function handleSdkTest(
       config: getConfig(env)
     });
 
-    console.log('Client created:', client);
     // Create a session
     const session = await client.session.create({
       body: { title: 'Test Session' },
@@ -63,7 +64,6 @@ async function handleSdkTest(
       throw new Error(`Failed to create session: ${JSON.stringify(session)}`);
     }
 
-    console.log('Session created:', session.data);
     // Send a prompt using the SDK
     const promptResult = await client.session.prompt({
       path: { id: session.data.id },
@@ -82,7 +82,6 @@ async function handleSdkTest(
       }
     });
 
-    console.log('Prompt result:', promptResult.data);
     // Extract text response from result
     const parts = promptResult.data?.parts ?? [];
     const textPart = parts.find((p: { type: string }) => p.type === 'text') as
@@ -102,6 +101,3 @@ async function handleSdkTest(
     );
   }
 }
-
-// Export Sandbox DO for wrangler
-export { Sandbox } from '@cloudflare/sandbox';

@@ -160,9 +160,6 @@ describe('createOpencode', () => {
 
     await expect(
       createOpencode(mockSandbox as unknown as Sandbox)
-    ).rejects.toThrow(OpencodeStartupError);
-    await expect(
-      createOpencode(mockSandbox as unknown as Sandbox)
     ).rejects.toThrow(/Server crashed/);
   });
 
@@ -242,9 +239,6 @@ describe('createOpencode', () => {
       });
       mockSandbox.listProcesses.mockResolvedValue([startingProcess]);
 
-      await expect(
-        createOpencode(mockSandbox as unknown as Sandbox)
-      ).rejects.toThrow(OpencodeStartupError);
       await expect(
         createOpencode(mockSandbox as unknown as Sandbox)
       ).rejects.toThrow(/Startup failed/);

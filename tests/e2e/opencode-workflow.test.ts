@@ -1,14 +1,9 @@
 /**
  * E2E Test: OpenCode Integration Workflow
  *
- * Tests the complete OpenCode integration including:
- * - OpenCode CLI availability in the container
- * - Server startup via SDK
- * - Process reuse for existing servers
- * - Basic SDK client operations
- *
- * These tests require the -opencode container variant which includes
- * the OpenCode CLI pre-installed.
+ * Tests:
+ * - OpenCode CLI availability in the -opencode container variant
+ * - Server startup and lifecycle via process API
  */
 
 import { beforeAll, describe, expect, test } from 'vitest';
@@ -28,31 +23,16 @@ describe('OpenCode Workflow (E2E)', () => {
     headers = sandbox.createOpencodeHeaders(createUniqueSession());
   }, 120000);
 
-  describe('OpenCode CLI availability', () => {
-    test('should have opencode command available', async () => {
-      const res = await fetch(`${workerUrl}/api/execute`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ command: 'which opencode' })
-      });
-      expect(res.status).toBe(200);
-      const result = (await res.json()) as ExecResult;
-      expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain('opencode');
+  test('should have opencode CLI available', async () => {
+    const res = await fetch(`${workerUrl}/api/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ command: 'opencode --version' })
     });
-
-    test('should report opencode version', async () => {
-      const res = await fetch(`${workerUrl}/api/execute`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ command: 'opencode --version' })
-      });
-      expect(res.status).toBe(200);
-      const result = (await res.json()) as ExecResult;
-      expect(result.exitCode).toBe(0);
-      // Version output should contain version number
-      expect(result.stdout).toMatch(/\d+\.\d+/);
-    });
+    expect(res.status).toBe(200);
+    const result = (await res.json()) as ExecResult;
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toMatch(/\d+\.\d+/);
   });
 
   describe('OpenCode server lifecycle', () => {
@@ -100,13 +80,12 @@ describe('OpenCode Workflow (E2E)', () => {
       expect(opencodeProcess).toBeDefined();
       expect(opencodeProcess?.status).toBe('running');
 
-      // Kill the server
+      // Kill the server (DELETE method)
       const killRes = await fetch(
-        `${workerUrl}/api/process/${startResult.id}/kill`,
+        `${workerUrl}/api/process/${startResult.id}`,
         {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({ signal: 'SIGTERM' })
+          method: 'DELETE',
+          headers
         }
       );
       expect(killRes.status).toBe(200);

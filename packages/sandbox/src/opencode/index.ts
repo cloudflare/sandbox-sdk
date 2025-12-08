@@ -37,7 +37,6 @@
  * @packageDocumentation
  */
 
-export { createSandboxFetch } from './fetch';
 export { createOpencode, proxyToOpencode } from './opencode';
 export type {
   OpencodeOptions,

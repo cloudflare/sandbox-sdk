@@ -1,7 +1,6 @@
 import type { Config } from '@opencode-ai/sdk';
 import { createLogger, type Logger, type Process } from '@repo/shared';
 import type { Sandbox } from '../sandbox';
-import { createSandboxFetch } from './fetch';
 import type {
   OpencodeOptions,
   OpencodeResult,
@@ -248,7 +247,7 @@ export async function createOpencode<TClient = unknown>(
 
   const client = clientFactory({
     baseUrl: `http://localhost:${port}`,
-    fetch: createSandboxFetch(sandbox, port)
+    fetch: (request: Request) => sandbox.containerFetch(request, port)
   });
 
   // Build server handle
