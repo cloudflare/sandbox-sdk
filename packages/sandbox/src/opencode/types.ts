@@ -1,5 +1,4 @@
 import type { Config } from '@opencode-ai/sdk';
-import type { Process } from '@repo/shared';
 import { ErrorCode, type OpencodeStartupContext } from '@repo/shared/errors';
 
 /**
@@ -8,6 +7,8 @@ import { ErrorCode, type OpencodeStartupContext } from '@repo/shared/errors';
 export interface OpencodeOptions {
   /** Port for OpenCode server (default: 4096) */
   port?: number;
+  /** Working directory for OpenCode (default: container's cwd) */
+  directory?: string;
   /** OpenCode configuration */
   config?: Config;
 }
@@ -20,10 +21,8 @@ export interface OpencodeServer {
   port: number;
   /** Base URL for SDK client (http://localhost:{port}) */
   url: string;
-  /** Underlying Sandbox process handle */
-  process: Process;
-  /** Stop the server gracefully */
-  stop(): Promise<void>;
+  /** Close the server gracefully */
+  close(): Promise<void>;
 }
 
 /**
@@ -35,16 +34,6 @@ export interface OpencodeResult<TClient = unknown> {
   client: TClient;
   /** Server lifecycle management */
   server: OpencodeServer;
-}
-
-/**
- * Options for proxyToOpencode()
- */
-export interface ProxyToOpencodeOptions {
-  /** Port for OpenCode server (default: 4096) */
-  port?: number;
-  /** OpenCode configuration */
-  config?: Config;
 }
 
 /**

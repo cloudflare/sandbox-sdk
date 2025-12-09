@@ -1,12 +1,7 @@
 import type { Config } from '@opencode-ai/sdk';
 import { createLogger, type Logger, type Process } from '@repo/shared';
 import type { Sandbox } from '../sandbox';
-import type {
-  OpencodeOptions,
-  OpencodeResult,
-  OpencodeServer,
-  ProxyToOpencodeOptions
-} from './types';
+import type { OpencodeOptions, OpencodeResult, OpencodeServer } from './types';
 import { OpencodeStartupError } from './types';
 
 // Lazy logger creation to avoid global scope restrictions in Workers
@@ -15,8 +10,17 @@ function getLogger(): Logger {
 }
 
 const DEFAULT_PORT = 4096;
-const OPENCODE_COMMAND = (port: number) =>
+const OPENCODE_SERVE = (port: number) =>
   `opencode serve --port ${port} --hostname 0.0.0.0`;
+
+/**
+ * Build the full command, optionally with a directory prefix.
+ * If directory is provided, we cd to it first so OpenCode uses it as cwd.
+ */
+function buildOpencodeCommand(port: number, directory?: string): string {
+  const serve = OPENCODE_SERVE(port);
+  return directory ? `cd ${directory} && ${serve}` : serve;
+}
 
 // Dynamic import to handle peer dependency
 // Using unknown since SDK is optional peer dep - cast at usage site
@@ -39,16 +43,18 @@ async function ensureSdkLoaded(): Promise<void> {
 /**
  * Find an existing OpenCode server process running on the specified port.
  * Returns the process if found and still active, null otherwise.
+ * Matches by the serve command pattern since directory prefix may vary.
  */
 async function findExistingOpencodeProcess(
   sandbox: Sandbox<unknown>,
   port: number
 ): Promise<Process | null> {
   const processes = await sandbox.listProcesses();
-  const expectedCommand = OPENCODE_COMMAND(port);
+  const serveCommand = OPENCODE_SERVE(port);
 
   for (const proc of processes) {
-    if (proc.command === expectedCommand) {
+    // Match commands that contain the serve command (with or without cd prefix)
+    if (proc.command.includes(serveCommand)) {
       if (proc.status === 'starting' || proc.status === 'running') {
         return proc;
       }
@@ -67,6 +73,7 @@ async function findExistingOpencodeProcess(
 async function ensureOpencodeServer(
   sandbox: Sandbox<unknown>,
   port: number,
+  directory?: string,
   config?: Config
 ): Promise<Process> {
   // Check if OpenCode is already running on this port
@@ -102,7 +109,7 @@ async function ensureOpencodeServer(
 
   // Try to start a new OpenCode server
   try {
-    return await startOpencodeServer(sandbox, port, config);
+    return await startOpencodeServer(sandbox, port, directory, config);
   } catch (startupError) {
     // Startup failed - check if another concurrent request started the server
     // This handles the race condition where multiple requests try to start simultaneously
@@ -137,9 +144,10 @@ async function ensureOpencodeServer(
 async function startOpencodeServer(
   sandbox: Sandbox<unknown>,
   port: number,
+  directory?: string,
   config?: Config
 ): Promise<Process> {
-  getLogger().info('Starting OpenCode server', { port });
+  getLogger().info('Starting OpenCode server', { port, directory });
 
   // Pass config via OPENCODE_CONFIG_CONTENT and also extract API keys to env vars
   // because OpenCode's provider auth looks for env vars like ANTHROPIC_API_KEY
@@ -169,7 +177,7 @@ async function startOpencodeServer(
     }
   }
 
-  const command = OPENCODE_COMMAND(port);
+  const command = buildOpencodeCommand(port, directory);
   const process = await sandbox.startProcess(command, {
     env: Object.keys(env).length > 0 ? env : undefined
   });
@@ -203,6 +211,56 @@ async function startOpencodeServer(
 }
 
 /**
+ * Starts an OpenCode server inside a Sandbox container.
+ *
+ * This function manages the server lifecycle only - use `createOpencode()` if you
+ * also need a typed SDK client for programmatic access.
+ *
+ * If an OpenCode server is already running on the specified port, this function
+ * will reuse it instead of starting a new one.
+ *
+ * @param sandbox - The Sandbox instance to run OpenCode in
+ * @param options - Configuration options
+ * @returns Promise resolving to server handle { port, url, close() }
+ *
+ * @example
+ * ```typescript
+ * import { getSandbox } from '@cloudflare/sandbox'
+ * import { createOpencodeServer } from '@cloudflare/sandbox/opencode'
+ *
+ * const sandbox = getSandbox(env.Sandbox, 'my-agent')
+ * const server = await createOpencodeServer(sandbox, {
+ *   directory: '/home/user/my-project',
+ *   config: { provider: { anthropic: { options: { apiKey: env.ANTHROPIC_KEY } } } }
+ * })
+ *
+ * // Proxy requests to the web UI
+ * return sandbox.containerFetch(request, server.port)
+ *
+ * // When done
+ * await server.close()
+ * ```
+ */
+export async function createOpencodeServer(
+  sandbox: Sandbox<unknown>,
+  options?: OpencodeOptions
+): Promise<OpencodeServer> {
+  const port = options?.port ?? DEFAULT_PORT;
+  const process = await ensureOpencodeServer(
+    sandbox,
+    port,
+    options?.directory,
+    options?.config
+  );
+
+  return {
+    port,
+    url: `http://localhost:${port}`,
+    close: () => process.kill('SIGTERM')
+  };
+}
+
+/**
  * Creates an OpenCode server inside a Sandbox container and returns a typed SDK client.
  *
  * This function is API-compatible with OpenCode's own createOpencode(), but uses
@@ -223,10 +281,15 @@ async function startOpencodeServer(
  *
  * const sandbox = getSandbox(env.Sandbox, 'my-agent')
  * const { client, server } = await createOpencode(sandbox, {
+ *   directory: '/home/user/my-project',
  *   config: { provider: { anthropic: { options: { apiKey: env.ANTHROPIC_KEY } } } }
  * })
  *
- * const session = await client.session.create({ body: { title: 'Task' } })
+ * // Use the SDK client for programmatic access
+ * const session = await client.session.create()
+ *
+ * // When done
+ * await server.close()
  * ```
  */
 export async function createOpencode<TClient = unknown>(
@@ -235,8 +298,7 @@ export async function createOpencode<TClient = unknown>(
 ): Promise<OpencodeResult<TClient>> {
   await ensureSdkLoaded();
 
-  const port = options?.port ?? DEFAULT_PORT;
-  const process = await ensureOpencodeServer(sandbox, port, options?.config);
+  const server = await createOpencodeServer(sandbox, options);
 
   // Create SDK client with Sandbox transport
   // Cast from unknown - SDK is optional peer dependency loaded dynamically
@@ -246,94 +308,66 @@ export async function createOpencode<TClient = unknown>(
   }) => TClient;
 
   const client = clientFactory({
-    baseUrl: `http://localhost:${port}`,
-    fetch: (request: Request) => sandbox.containerFetch(request, port)
+    baseUrl: server.url,
+    fetch: (request: Request) => sandbox.containerFetch(request, server.port)
   });
-
-  // Build server handle
-  const server: OpencodeServer = {
-    port,
-    url: `http://localhost:${port}`,
-    process,
-    stop: () => process.kill('SIGTERM')
-  };
 
   return { client, server };
 }
 
 /**
- * Proxies HTTP requests to OpenCode running in a Sandbox container.
+ * Proxy a request to the OpenCode web UI.
  *
- * This is the simplest way to expose OpenCode's web UI through a Cloudflare Worker.
- * It handles:
- * - Starting the OpenCode server (with automatic process reuse)
- * - Redirecting localhost requests to use the correct API URL
- * - Proxying all requests to the container
+ * This function handles the redirect and proxying only - you must start the
+ * server separately using `createOpencodeServer()`.
+ *
+ * Specifically handles:
+ * 1. Ensuring the `?url=` parameter is set (required for OpenCode's frontend to
+ *    make API calls through the proxy instead of directly to localhost:4096)
+ * 2. Proxying the request to the container
  *
  * @param request - The incoming HTTP request
- * @param sandbox - The Sandbox instance to run OpenCode in
- * @param options - Configuration options
- * @returns Promise resolving to the proxied Response
+ * @param sandbox - The Sandbox instance running OpenCode
+ * @param server - The OpenCode server handle from createOpencodeServer()
+ * @returns Response from OpenCode or a redirect response
  *
  * @example
  * ```typescript
  * import { getSandbox } from '@cloudflare/sandbox'
- * import { proxyToOpencode } from '@cloudflare/sandbox/opencode'
+ * import { createOpencodeServer, proxyToOpencode } from '@cloudflare/sandbox/opencode'
  *
  * export default {
- *   async fetch(request: Request, env: Env): Promise<Response> {
+ *   async fetch(request: Request, env: Env) {
  *     const sandbox = getSandbox(env.Sandbox, 'opencode')
- *     return proxyToOpencode(request, sandbox, {
- *       config: { provider: { anthropic: { options: { apiKey: env.ANTHROPIC_API_KEY } } } }
+ *     const server = await createOpencodeServer(sandbox, {
+ *       directory: '/home/user/project',
+ *       config: { provider: { anthropic: { options: { apiKey: env.ANTHROPIC_KEY } } } }
  *     })
+ *     return proxyToOpencode(request, sandbox, server)
  *   }
  * }
  * ```
  */
-export async function proxyToOpencode(
+export function proxyToOpencode(
   request: Request,
   sandbox: Sandbox<unknown>,
-  options?: ProxyToOpencodeOptions
-): Promise<Response> {
+  server: OpencodeServer
+): Response | Promise<Response> {
   const url = new URL(request.url);
-  const port = options?.port ?? DEFAULT_PORT;
 
-  // OpenCode's web UI connects to 127.0.0.1:4096 when hostname includes "localhost".
-  // Redirect navigational requests to include ?url= param so the UI uses our proxy.
-  // Only redirect browser navigations (GET with Accept: text/html), not API requests.
-  const isNavigation =
-    request.method === 'GET' &&
-    request.headers.get('Accept')?.includes('text/html');
-
-  // Also handle 127.0.0.1 which OpenCode may use
-  const isLocalhost =
-    url.hostname === 'localhost' || url.hostname === '127.0.0.1';
-
-  // Safe redirect: Only redirects localhost requests to themselves with ?url= param.
-  // The isLocalhost check ensures we cannot redirect to external domains.
-  if (isLocalhost && !url.searchParams.has('url') && isNavigation) {
-    url.searchParams.set('url', url.origin);
-    return Response.redirect(url.toString(), 302);
+  // OpenCode's frontend defaults to http://127.0.0.1:4096 when hostname includes
+  // "localhost" or "opencode.ai". The ?url= parameter overrides this behavior.
+  // We only redirect GET requests for HTML pages (initial page load).
+  // API calls (POST, PATCH, etc.) and asset requests are proxied directly
+  // since redirecting POST loses the request body.
+  if (!url.searchParams.has('url') && request.method === 'GET') {
+    const accept = request.headers.get('accept') || '';
+    const isHtmlRequest = accept.includes('text/html') || url.pathname === '/';
+    if (isHtmlRequest) {
+      url.searchParams.set('url', url.origin);
+      return Response.redirect(url.toString(), 302);
+    }
   }
 
-  // Ensure OpenCode server is running
-  try {
-    await ensureOpencodeServer(sandbox, port, options?.config);
-  } catch (err) {
-    const error = err instanceof Error ? err : undefined;
-    getLogger().error('Failed to start OpenCode server for proxy', error, {
-      port
-    });
-    const message =
-      err instanceof OpencodeStartupError
-        ? err.message
-        : 'Failed to start OpenCode server';
-    return new Response(JSON.stringify({ error: message }), {
-      status: 503,
-      headers: { 'Content-Type': 'application/json' }
-    });
-  }
-
-  // Proxy the request to OpenCode
-  return sandbox.containerFetch(request, port);
+  return sandbox.containerFetch(request, server.port);
 }

@@ -1,25 +1,8 @@
 /**
  * OpenCode integration for Cloudflare Sandbox
  *
- * This module provides two ways to use OpenCode inside Sandbox containers:
- *
- * 1. **Web UI** - Use `proxyToOpencode()` to expose the full OpenCode web experience
- * 2. **Programmatic** - Use `createOpencode()` to get an SDK client for automation
- *
- * @example Web UI
- * ```typescript
- * import { getSandbox } from '@cloudflare/sandbox'
- * import { proxyToOpencode } from '@cloudflare/sandbox/opencode'
- *
- * export default {
- *   async fetch(request: Request, env: Env): Promise<Response> {
- *     const sandbox = getSandbox(env.Sandbox, 'opencode')
- *     return proxyToOpencode(request, sandbox, {
- *       config: { provider: { anthropic: { apiKey: env.ANTHROPIC_API_KEY } } }
- *     })
- *   }
- * }
- * ```
+ * Use `createOpencode()` to start an OpenCode server in a Sandbox container
+ * and get an SDK client for programmatic access or web UI proxying.
  *
  * @example Programmatic SDK
  * ```typescript
@@ -27,21 +10,25 @@
  * import { createOpencode } from '@cloudflare/sandbox/opencode'
  *
  * const sandbox = getSandbox(env.Sandbox, 'my-agent')
- * const { client } = await createOpencode(sandbox, {
- *   config: { provider: { anthropic: { apiKey: env.ANTHROPIC_KEY } } }
+ * const { client, server } = await createOpencode(sandbox, {
+ *   directory: '/home/user/my-project',
+ *   config: { provider: { anthropic: { options: { apiKey: env.ANTHROPIC_KEY } } } }
  * })
  *
- * const session = await client.session.create({ body: { title: 'Task' } })
+ * // Use SDK client
+ * const session = await client.session.create()
+ *
+ * // Or proxy to web UI
+ * return sandbox.containerFetch(request, server.port)
  * ```
  *
  * @packageDocumentation
  */
 
-export { createOpencode, proxyToOpencode } from './opencode';
-export type {
-  OpencodeOptions,
-  OpencodeResult,
-  OpencodeServer,
-  ProxyToOpencodeOptions
-} from './types';
+export {
+  createOpencode,
+  createOpencodeServer,
+  proxyToOpencode
+} from './opencode';
+export type { OpencodeOptions, OpencodeResult, OpencodeServer } from './types';
 export { OpencodeStartupError } from './types';

@@ -12,12 +12,12 @@
   },
   "devDependencies": {
     "@openai/agents": "^0.3.3",
-    "@opencode-ai/sdk": "^1.0.133",
+    "@opencode-ai/sdk": "^1.0.137",
     "@repo/shared": "*"
   },
   "peerDependencies": {
     "@openai/agents": "^0.3.3",
-    "@opencode-ai/sdk": "^1.0.133"
+    "@opencode-ai/sdk": "^1.0.137"
   },
   "peerDependenciesMeta": {
     "@openai/agents": {

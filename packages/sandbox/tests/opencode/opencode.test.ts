@@ -88,6 +88,17 @@ describe('createOpencode', () => {
     expect(result.server.port).toBe(8080);
   });
 
+  it('should start OpenCode server in specified directory', async () => {
+    await createOpencode(mockSandbox as unknown as Sandbox, {
+      directory: '/home/user/project'
+    });
+
+    expect(mockSandbox.startProcess).toHaveBeenCalledWith(
+      'cd /home/user/project && opencode serve --port 4096 --hostname 0.0.0.0',
+      expect.any(Object)
+    );
+  });
+
   it('should pass config via OPENCODE_CONFIG_CONTENT env var', async () => {
     const config = {
       provider: { anthropic: { options: { apiKey: 'test-key' } } }
@@ -140,13 +151,14 @@ describe('createOpencode', () => {
 
     expect(result.client).toBeDefined();
     expect(result.server).toBeDefined();
-    expect(result.server.process).toBe(mockProcess);
+    expect(result.server.port).toBe(4096);
+    expect(result.server.url).toBe('http://localhost:4096');
   });
 
-  it('should provide stop method that kills process', async () => {
+  it('should provide close method that kills process', async () => {
     const result = await createOpencode(mockSandbox as unknown as Sandbox);
 
-    await result.server.stop();
+    await result.server.close();
 
     expect(mockProcess.kill).toHaveBeenCalledWith('SIGTERM');
   });
@@ -175,8 +187,8 @@ describe('createOpencode', () => {
 
       // Should not start a new process
       expect(mockSandbox.startProcess).not.toHaveBeenCalled();
-      // Should return the existing process
-      expect(result.server.process).toBe(existingProcess);
+      // Server should be valid (process is internal, not exposed)
+      expect(result.server.port).toBe(4096);
     });
 
     it('should wait for starting process to be ready', async () => {
