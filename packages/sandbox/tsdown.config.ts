@@ -5,7 +5,8 @@ export default defineConfig({
     'src/index.ts',
     'src/openai/index.ts',
     'src/bridge/index.ts',
-    'src/client/index.ts'
+    'src/client/index.ts',
+    'src/cli/index.ts'
   ],
   outDir: 'dist',
   dts: {
