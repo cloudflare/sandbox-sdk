@@ -15,9 +15,20 @@ import type { ClientOptions } from './types';
  * ```typescript
  * import { getSandbox } from '@cloudflare/sandbox/client';
  *
+ * // Basic usage
  * const sandbox = getSandbox('my-project', {
  *   baseUrl: 'https://my-bridge.workers.dev',
  *   apiKey: process.env.SANDBOX_API_KEY
+ * });
+ *
+ * // With custom headers (e.g., for Python container)
+ * const pythonSandbox = getSandbox('my-project', {
+ *   baseUrl: 'https://my-bridge.workers.dev',
+ *   apiKey: process.env.SANDBOX_API_KEY,
+ *   headers: {
+ *     'X-Sandbox-Type': 'python',
+ *     'X-Sandbox-KeepAlive': 'true'
+ *   }
  * });
  *
  * const result = await sandbox.exec('ls -la');
@@ -45,7 +56,8 @@ export function getSandbox(
   return new BridgeSandboxClient(id, {
     apiKey,
     baseUrl,
-    timeout: options?.timeout
+    timeout: options?.timeout,
+    headers: options?.headers
   });
 }
 

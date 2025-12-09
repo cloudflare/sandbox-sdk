@@ -6,20 +6,27 @@ export interface HttpClientOptions {
   apiKey: string;
   sandboxId: string;
   timeout?: number;
+  /** Custom headers to include in all requests */
+  headers?: Record<string, string>;
 }
 
 export class HttpClient {
   constructor(private readonly options: HttpClientOptions) {}
+
+  private getHeaders(): Record<string, string> {
+    return {
+      Authorization: `Bearer ${this.options.apiKey}`,
+      'Content-Type': 'application/json',
+      ...this.options.headers
+    };
+  }
 
   async request<T>(method: string, path: string, body?: unknown): Promise<T> {
     const url = `${this.options.baseUrl}/api/sandbox/${this.options.sandboxId}${path}`;
 
     const response = await fetch(url, {
       method,
-      headers: {
-        Authorization: `Bearer ${this.options.apiKey}`,
-        'Content-Type': 'application/json'
-      },
+      headers: this.getHeaders(),
       body: body ? JSON.stringify(body) : undefined
     });
 
@@ -49,10 +56,7 @@ export class HttpClient {
 
     const response = await fetch(url, {
       method,
-      headers: {
-        Authorization: `Bearer ${this.options.apiKey}`,
-        'Content-Type': 'application/json'
-      },
+      headers: this.getHeaders(),
       body: body ? JSON.stringify(body) : undefined
     });
 

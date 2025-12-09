@@ -112,4 +112,61 @@ describe('HttpClient', () => {
       client.requestStream('POST', '/code/run/stream', { code: 'error' })
     ).rejects.toThrow();
   });
+
+  it('should include custom headers in requests', async () => {
+    vi.mocked(globalThis.fetch).mockResolvedValue(
+      new Response(JSON.stringify({ success: true }), { status: 200 })
+    );
+
+    const client = new HttpClient({
+      baseUrl: 'https://bridge.example.com',
+      apiKey: 'test-key',
+      sandboxId: 'test-sandbox',
+      headers: {
+        'X-Sandbox-Type': 'python',
+        'X-Sandbox-KeepAlive': 'true'
+      }
+    });
+
+    await client.request('POST', '/exec', { command: 'python --version' });
+
+    expect(fetch).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: 'Bearer test-key',
+          'Content-Type': 'application/json',
+          'X-Sandbox-Type': 'python',
+          'X-Sandbox-KeepAlive': 'true'
+        })
+      })
+    );
+  });
+
+  it('should include custom headers in stream requests', async () => {
+    const mockStream = new ReadableStream();
+    vi.mocked(globalThis.fetch).mockResolvedValue(
+      new Response(mockStream, { status: 200 })
+    );
+
+    const client = new HttpClient({
+      baseUrl: 'https://bridge.example.com',
+      apiKey: 'test-key',
+      sandboxId: 'test-sandbox',
+      headers: {
+        'X-Session-Id': 'session-123'
+      }
+    });
+
+    await client.requestStream('POST', '/exec/stream', { command: 'echo hi' });
+
+    expect(fetch).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          'X-Session-Id': 'session-123'
+        })
+      })
+    );
+  });
 });
