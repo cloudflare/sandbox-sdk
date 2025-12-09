@@ -28,10 +28,22 @@ export function createSessionId(): string {
 }
 
 /**
+ * Options for creating test headers
+ */
+export interface TestHeaderOptions {
+  /** Session ID for session isolation tests */
+  sessionId?: string;
+  /** Enable WebSocket transport instead of HTTP */
+  useWebSocket?: boolean;
+  /** Enable keepAlive mode */
+  keepAlive?: boolean;
+}
+
+/**
  * Create headers for sandbox/session identification
  *
  * @param sandboxId - Which container instance to use
- * @param sessionId - (Optional) Which session within that container (SDK defaults to auto-managed session)
+ * @param options - Optional configuration (sessionId, useWebSocket, keepAlive)
  *
  * @example
  * // Most tests: unique sandbox, default session
@@ -40,20 +52,36 @@ export function createSessionId(): string {
  * @example
  * // Session isolation tests: one sandbox, multiple sessions
  * const sandboxId = createSandboxId();
- * const headers1 = createTestHeaders(sandboxId, createSessionId());
- * const headers2 = createTestHeaders(sandboxId, createSessionId());
+ * const headers1 = createTestHeaders(sandboxId, { sessionId: createSessionId() });
+ * const headers2 = createTestHeaders(sandboxId, { sessionId: createSessionId() });
+ *
+ * @example
+ * // WebSocket transport tests
+ * const headers = createTestHeaders(createSandboxId(), { useWebSocket: true });
  */
 export function createTestHeaders(
   sandboxId: string,
-  sessionId?: string
+  options?: TestHeaderOptions | string
 ): Record<string, string> {
+  // Support legacy signature: createTestHeaders(sandboxId, sessionId)
+  const opts: TestHeaderOptions =
+    typeof options === 'string' ? { sessionId: options } : options || {};
+
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     'X-Sandbox-Id': sandboxId
   };
 
-  if (sessionId) {
-    headers['X-Session-Id'] = sessionId;
+  if (opts.sessionId) {
+    headers['X-Session-Id'] = opts.sessionId;
+  }
+
+  if (opts.useWebSocket) {
+    headers['X-Use-WebSocket'] = 'true';
+  }
+
+  if (opts.keepAlive) {
+    headers['X-Sandbox-KeepAlive'] = 'true';
   }
 
   return headers;
