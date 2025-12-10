@@ -16,7 +16,9 @@ const PYTHON_AVAILABLE = (() => {
   }
 })();
 
-// Check which JavaScript runtime is available (prefer Node.js, fall back to Bun)
+// Prefer Node.js for user code execution: better npm compatibility and more
+// predictable vm module behavior. Bun works as a fallback but may have subtle
+// differences in edge cases.
 const JS_RUNTIME: 'node' | 'bun' | null = (() => {
   try {
     const nodeResult = spawnSync('node', ['--version'], { timeout: 5000 });

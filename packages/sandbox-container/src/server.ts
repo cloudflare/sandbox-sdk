@@ -4,86 +4,65 @@ import { Container } from './core/container';
 import { Router } from './core/router';
 import { setupRoutes } from './routes/setup';
 
-// Create module-level logger for server lifecycle events
 const logger = createLogger({ component: 'container' });
+const SERVER_PORT = 3000;
 
-// Store container reference for cleanup
-let containerInstance: Container | null = null;
+export interface ServerInstance {
+  port: number;
+  cleanup: () => Promise<void>;
+}
 
 async function createApplication(): Promise<{
   fetch: (req: Request) => Promise<Response>;
+  container: Container;
 }> {
-  // Initialize dependency injection container
   const container = new Container();
   await container.initialize();
-  containerInstance = container;
 
-  // Create and configure router
   const router = new Router(logger);
-
-  // Add global CORS middleware
   router.use(container.get('corsMiddleware'));
-
-  // Setup all application routes
   setupRoutes(router, container);
 
   return {
-    fetch: (req: Request) => router.route(req)
+    fetch: (req: Request) => router.route(req),
+    container
   };
 }
 
 /**
  * Start the HTTP API server on port 3000.
- * Returns the Bun server instance.
+ * Returns server info and a cleanup function for graceful shutdown.
  */
-export async function startServer(): Promise<ReturnType<typeof serve>> {
+export async function startServer(): Promise<ServerInstance> {
   const app = await createApplication();
 
-  const server = serve({
+  serve({
     idleTimeout: 255,
     fetch: app.fetch,
     hostname: '0.0.0.0',
-    port: 3000,
-    // Enhanced WebSocket placeholder for future streaming features
+    port: SERVER_PORT,
     websocket: {
       async message() {
-        // WebSocket functionality can be added here in the future
+        // WebSocket placeholder for future streaming features
       }
     }
   });
 
   logger.info('Container server started', {
-    port: server.port,
+    port: SERVER_PORT,
     hostname: '0.0.0.0'
   });
 
-  return server;
-}
+  return {
+    port: SERVER_PORT,
+    cleanup: async () => {
+      if (!app.container.isInitialized()) return;
 
-// Track whether shutdown handlers are registered
-let shutdownRegistered = false;
-
-/**
- * Register graceful shutdown handlers for SIGTERM and SIGINT.
- * Safe to call multiple times - handlers are only registered once.
- */
-export function registerShutdownHandlers(): void {
-  if (shutdownRegistered) return;
-  shutdownRegistered = true;
-
-  process.on('SIGTERM', async () => {
-    logger.info('Received SIGTERM, shutting down gracefully');
-
-    if (containerInstance?.isInitialized()) {
       try {
-        // Cleanup services with proper typing
-        const processService = containerInstance.get('processService');
-        const portService = containerInstance.get('portService');
+        const processService = app.container.get('processService');
+        const portService = app.container.get('portService');
 
-        // Cleanup processes (asynchronous - kills all running processes)
         await processService.destroy();
-
-        // Cleanup ports (synchronous)
         portService.destroy();
 
         logger.info('Services cleaned up successfully');
@@ -94,7 +73,22 @@ export function registerShutdownHandlers(): void {
         );
       }
     }
+  };
+}
 
+let shutdownRegistered = false;
+
+/**
+ * Register graceful shutdown handlers for SIGTERM and SIGINT.
+ * Safe to call multiple times - handlers are only registered once.
+ */
+export function registerShutdownHandlers(cleanup: () => Promise<void>): void {
+  if (shutdownRegistered) return;
+  shutdownRegistered = true;
+
+  process.on('SIGTERM', async () => {
+    logger.info('Received SIGTERM, shutting down gracefully');
+    await cleanup();
     process.exit(0);
   });
 

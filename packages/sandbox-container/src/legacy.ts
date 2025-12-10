@@ -16,21 +16,17 @@ import { registerShutdownHandlers, startServer } from './server';
 
 const logger = createLogger({ component: 'container' });
 
-// If server already started by /sandbox binary, this is a no-op
 if (process.env.SANDBOX_STARTED === 'true') {
   logger.info(
     'Server already running (SANDBOX_STARTED=true). Legacy entry is a no-op.'
   );
-  // Don't exit - just let the script end naturally so it doesn't affect the parent
 } else {
-  // Legacy behavior: start server normally
   logger.info('Starting server via legacy entry point');
 
-  registerShutdownHandlers();
-
   startServer()
-    .then((server) => {
-      logger.info('Server started via legacy entry', { port: server.port });
+    .then(({ port, cleanup }) => {
+      registerShutdownHandlers(cleanup);
+      logger.info('Server started via legacy entry', { port });
     })
     .catch((err) => {
       logger.error('Failed to start server via legacy entry', err);
