@@ -51,7 +51,8 @@ export interface SessionOptions {
    *
    * Note: This only affects where the shell starts. Individual commands can
    * specify their own cwd via exec options, and the shell can cd anywhere.
-   * If the directory doesn't exist, the session falls back to /tmp.
+   * If the specified directory doesn't exist when the session initializes,
+   * the session will fall back to the home directory.
    */
   cwd?: string;
 
@@ -143,22 +144,22 @@ export class Session {
     this.sessionDir = join(tmpdir(), `session-${this.id}-${Date.now()}`);
     await mkdir(this.sessionDir, { recursive: true });
 
-    // Determine working directory. If the requested
-    // cwd doesn't exist, we fall back to /tmp since it's always available and
-    // safer than / for accidental operations.
+    // Determine working directory. If the requested cwd doesn't exist, we fall
+    // back to the home directory since it's a natural default for shell sessions.
+    const homeDir = process.env.HOME || '/root';
     let cwd = this.options.cwd || CONFIG.DEFAULT_CWD;
     try {
       await stat(cwd);
     } catch {
       this.logger.debug(
-        `Shell startup directory '${cwd}' does not exist, using '/tmp'`,
+        `Shell startup directory '${cwd}' does not exist, using '${homeDir}'`,
         {
           sessionId: this.id,
           requestedCwd: cwd,
-          actualCwd: '/tmp'
+          actualCwd: homeDir
         }
       );
-      cwd = '/tmp';
+      cwd = homeDir;
     }
 
     // Spawn persistent bash with stdin pipe - no IPC or wrapper needed!

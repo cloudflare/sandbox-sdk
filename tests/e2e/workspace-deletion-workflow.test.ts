@@ -339,7 +339,8 @@ describe('Workspace Deletion Workflow (Issue #288)', () => {
    * Test 6: New session can be created when /workspace doesn't exist
    *
    * This tests the core fix for issue #288: when a new session is created
-   * and /workspace doesn't exist, it should fall back to / instead of failing.
+   * and /workspace doesn't exist, it should fall back to the home directory
+   * instead of failing.
    *
    * Note: This test uses a different sandbox ID to ensure a completely new
    * session is created (not reusing an existing one).
@@ -377,7 +378,8 @@ describe('Workspace Deletion Workflow (Issue #288)', () => {
    * This is the PRIMARY test for issue #288. The bug was that creating a NEW session
    * after /workspace was deleted would fail with "Unknown Error, TODO".
    *
-   * The fix makes session initialization fall back to "/" if /workspace doesn't exist.
+   * The fix makes session initialization fall back to the home directory if
+   * /workspace doesn't exist.
    *
    * IMPORTANT: This test actually deletes /workspace and creates a new session.
    * It restores /workspace at the end to avoid breaking other tests.
@@ -450,7 +452,7 @@ describe('Workspace Deletion Workflow (Issue #288)', () => {
     );
     expect(newSessionData.stderr?.toLowerCase() || '').not.toContain('todo');
 
-    // Step 5: Verify the new session fell back to "/" as working directory
+    // Step 5: Verify the new session fell back to home directory
     const pwdResponse = await fetch(`${workerUrl}/api/execute`, {
       method: 'POST',
       headers: newHeaders,
@@ -461,8 +463,8 @@ describe('Workspace Deletion Workflow (Issue #288)', () => {
     expect(pwdResponse.status).toBe(200);
     const pwdData = (await pwdResponse.json()) as ExecResult;
     expect(pwdData.success).toBe(true);
-    // Session should have fallen back to / since /workspace didn't exist
-    expect(pwdData.stdout?.trim()).toBe('/');
+    // Session should have fallen back to /root since /workspace didn't exist
+    expect(pwdData.stdout?.trim()).toBe('/root');
 
     // Step 6: Restore /workspace for other tests
     const restoreResponse = await fetch(`${workerUrl}/api/execute`, {
