@@ -609,6 +609,40 @@ describe('Session State Isolation Workflow', () => {
       expect(exec2Data.stdout.trim()).toBe('Completed in session2');
     }, 90000);
 
+    test('should serialize concurrent requests to the same session', async () => {
+      // Fire multiple concurrent requests to the SAME session
+      // Without proper locking, outputs would interleave
+      const requests = Array(3)
+        .fill(null)
+        .map((_, i) =>
+          fetch(`${workerUrl}/api/execute`, {
+            method: 'POST',
+            headers: baseHeaders,
+            body: JSON.stringify({
+              command: `echo "START-${i}"; sleep 0.1; echo "END-${i}"`
+            })
+          }).then((res) => res.json() as Promise<ExecResult>)
+        );
+
+      const results = await Promise.all(requests);
+
+      // All should succeed
+      for (const result of results) {
+        expect(result.exitCode).toBe(0);
+      }
+
+      // Each result should have its own complete START/END pair (not interleaved)
+      for (const result of results) {
+        const stdout = result.stdout;
+        const startMatch = stdout.match(/START-(\d)/);
+        expect(startMatch).toBeTruthy();
+        if (startMatch) {
+          const cmdNum = startMatch[1];
+          expect(stdout).toContain(`END-${cmdNum}`);
+        }
+      }
+    }, 90000);
+
     test('should properly cleanup session resources with deleteSession', async () => {
       // Create a session with custom environment variable
       const sessionResponse = await fetch(`${workerUrl}/api/session/create`, {
