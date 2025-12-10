@@ -124,11 +124,20 @@ async function ensureOpencodeServer(
       );
       // Wait for the concurrent server to be ready
       if (retryProcess.status === 'starting') {
-        await retryProcess.waitForPort(port, {
-          mode: 'http',
-          path: '/',
-          timeout: 60_000
-        });
+        try {
+          await retryProcess.waitForPort(port, {
+            mode: 'http',
+            path: '/',
+            timeout: 60_000
+          });
+        } catch (e) {
+          const logs = await retryProcess.getLogs();
+          throw new OpencodeStartupError(
+            `OpenCode server failed to start. Stderr: ${logs.stderr || '(empty)'}`,
+            { port, stderr: logs.stderr, command: retryProcess.command },
+            { cause: e }
+          );
+        }
       }
       return retryProcess;
     }
