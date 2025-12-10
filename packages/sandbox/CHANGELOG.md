@@ -1,5 +1,17 @@
 # @cloudflare/sandbox
 
+## 0.6.4
+
+### Patch Changes
+
+- [#282](https://github.com/cloudflare/sandbox-sdk/pull/282) [`d3997a8`](https://github.com/cloudflare/sandbox-sdk/commit/d3997a8b9a443b5726d780bff2d3f4530db3e53b) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Add OpenCode integration with createOpencode() and proxyToOpencode() helpers
+
+- [#286](https://github.com/cloudflare/sandbox-sdk/pull/286) [`c6349aa`](https://github.com/cloudflare/sandbox-sdk/commit/c6349aa274d8c9e226f1782320c82d416393634d) Thanks [@NuroDev](https://github.com/NuroDev)! - Fix `options` parameter types for `gitCheckout`
+
+- [#281](https://github.com/cloudflare/sandbox-sdk/pull/281) [`472d5ae`](https://github.com/cloudflare/sandbox-sdk/commit/472d5ae4bb7fbf075376a90558a2de282c649edb) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Fix session initialization to eliminate noisy error logs during hot reloads
+
+- [#289](https://github.com/cloudflare/sandbox-sdk/pull/289) [`67100d0`](https://github.com/cloudflare/sandbox-sdk/commit/67100d070cc8608ccb8da8845ddb9bfafc109d72) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - fix workspace bug
+
 ## 0.6.3
 
 ### Patch Changes
@@ -54,10 +66,10 @@
 
   ```dockerfile
   # Before
-  FROM cloudflare/sandbox:0.6.3
+  FROM cloudflare/sandbox:0.6.4
 
   # After
-  FROM cloudflare/sandbox:0.6.3-python
+  FROM cloudflare/sandbox:0.6.4-python
   ```
 
   Without this change, Python execution will fail with `PYTHON_NOT_AVAILABLE` error.

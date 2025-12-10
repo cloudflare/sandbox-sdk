@@ -1,4 +1,4 @@
-FROM docker.io/cloudflare/sandbox:0.6.3
+FROM docker.io/cloudflare/sandbox:0.6.4
 
 # Add opencode install location to PATH before installation
 ENV PATH="/root/.opencode/bin:${PATH}"
