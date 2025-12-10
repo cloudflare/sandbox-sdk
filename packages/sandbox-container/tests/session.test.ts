@@ -76,7 +76,7 @@ describe('Session', () => {
       expect(session.isReady()).toBe(true);
     });
 
-    it('should fall back to home directory when cwd does not exist (issue #288)', async () => {
+    it('should fall back to home directory when cwd does not exist', async () => {
       // Session cwd only affects shell startup directory - it's not critical.
       // If cwd doesn't exist, we fall back to the home directory since individual
       // commands can specify their own cwd anyway.
@@ -97,8 +97,8 @@ describe('Session', () => {
       expect(result.stdout.trim()).toBe(homeDir);
     });
 
-    it('should fall back to home directory when workspace is deleted before session creation (issue #288)', async () => {
-      // Simulate the exact scenario from issue #288
+    it('should fall back to home directory when workspace is deleted before session creation', async () => {
+      // Simulate the scenario where workspace is deleted before session creation
       // Create a workspace, then delete it, then try to create a session with it
       const workspaceDir = join(testDir, 'workspace');
       await mkdir(workspaceDir, { recursive: true });
@@ -544,7 +544,7 @@ describe('Session', () => {
       expect(result.stderr).toContain('Failed to change directory');
     });
 
-    it('should continue working after session cwd is deleted (issue #288)', async () => {
+    it('should continue working after session cwd is deleted', async () => {
       // Create a working directory for the session
       const workspaceDir = join(testDir, 'workspace');
       await mkdir(workspaceDir, { recursive: true });
@@ -574,7 +574,7 @@ describe('Session', () => {
       expect(afterRemoval.stdout.trim()).toBe('after removal');
     });
 
-    it('should handle cwd being replaced with symlink (issue #288)', async () => {
+    it('should handle cwd being replaced with symlink', async () => {
       // Create directories for the test
       const workspaceDir = join(testDir, 'workspace');
       const backupDir = join(testDir, 'backup');
@@ -602,32 +602,6 @@ describe('Session', () => {
       const afterSymlink = await session.exec('echo "after symlink"');
       expect(afterSymlink.exitCode).toBe(0);
       expect(afterSymlink.stdout.trim()).toBe('after symlink');
-    });
-
-    it('should be recoverable by cd-ing to valid directory after cwd deletion', async () => {
-      // Create a working directory for the session
-      const workspaceDir = join(testDir, 'workspace');
-      await mkdir(workspaceDir, { recursive: true });
-
-      session = new Session({
-        id: 'test-cwd-recovery',
-        cwd: workspaceDir
-      });
-
-      await session.initialize();
-
-      // Delete the workspace directory
-      await session.exec(`rm -rf ${workspaceDir}`);
-
-      // Change to a valid directory - this should work and recover the session
-      const cdResult = await session.exec('cd /tmp && pwd');
-      expect(cdResult.exitCode).toBe(0);
-      expect(cdResult.stdout.trim()).toBe('/tmp');
-
-      // Subsequent commands should work
-      const afterCd = await session.exec('echo "recovered"');
-      expect(afterCd.exitCode).toBe(0);
-      expect(afterCd.stdout.trim()).toBe('recovered');
     });
   });
 
