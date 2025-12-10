@@ -50,6 +50,7 @@ export type {
   InvalidMountConfigContext,
   InvalidPortContext,
   MissingCredentialsContext,
+  OpencodeStartupContext,
   PortAlreadyExposedContext,
   PortErrorContext,
   PortNotExposedContext,
@@ -57,6 +58,7 @@ export type {
   ProcessExitedBeforeReadyContext,
   ProcessNotFoundContext,
   ProcessReadyTimeoutContext,
+  SessionAlreadyExistsContext,
   ValidationFailedContext
 } from './contexts';
 // Export utility functions

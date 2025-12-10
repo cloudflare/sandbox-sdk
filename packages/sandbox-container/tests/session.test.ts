@@ -75,6 +75,53 @@ describe('Session', () => {
       // Session directory should be created (we can't easily check without accessing private fields)
       expect(session.isReady()).toBe(true);
     });
+
+    it('should fall back to home directory when cwd does not exist', async () => {
+      // Session cwd only affects shell startup directory - it's not critical.
+      // If cwd doesn't exist, we fall back to the home directory since individual
+      // commands can specify their own cwd anyway.
+      session = new Session({
+        id: 'test-session-nonexistent-cwd',
+        cwd: '/nonexistent/path/that/does/not/exist'
+      });
+
+      await session.initialize();
+
+      expect(session.isReady()).toBe(true);
+
+      // Verify we can execute commands
+      const result = await session.exec('pwd');
+      expect(result.exitCode).toBe(0);
+      // The shell should have started in the home directory since the requested cwd doesn't exist
+      const homeDir = process.env.HOME || '/root';
+      expect(result.stdout.trim()).toBe(homeDir);
+    });
+
+    it('should fall back to home directory when workspace is deleted before session creation', async () => {
+      // Simulate the scenario where workspace is deleted before session creation
+      // Create a workspace, then delete it, then try to create a session with it
+      const workspaceDir = join(testDir, 'workspace');
+      await mkdir(workspaceDir, { recursive: true });
+
+      // Delete the workspace
+      await rm(workspaceDir, { recursive: true, force: true });
+
+      // Now try to create a session with the deleted workspace as cwd
+      session = new Session({
+        id: 'test-session-deleted-workspace',
+        cwd: workspaceDir
+      });
+
+      // Should succeed - falls back to home directory
+      await session.initialize();
+
+      expect(session.isReady()).toBe(true);
+
+      // Verify we can execute commands
+      const result = await session.exec('echo "session works"');
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout.trim()).toBe('session works');
+    });
   });
 
   describe('exec', () => {
@@ -495,6 +542,66 @@ describe('Session', () => {
       // Should fail to change directory
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain('Failed to change directory');
+    });
+
+    it('should continue working after session cwd is deleted', async () => {
+      // Create a working directory for the session
+      const workspaceDir = join(testDir, 'workspace');
+      await mkdir(workspaceDir, { recursive: true });
+
+      session = new Session({
+        id: 'test-cwd-deletion',
+        cwd: workspaceDir
+      });
+
+      await session.initialize();
+
+      // Verify baseline works
+      const baseline = await session.exec('echo "baseline"');
+      expect(baseline.exitCode).toBe(0);
+      expect(baseline.stdout.trim()).toBe('baseline');
+
+      // Delete the workspace directory (this is the bug scenario)
+      await session.exec(`rm -rf ${workspaceDir}`);
+
+      // Try a subsequent command - this should NOT fail with an obscure error
+      // It should either work (falling back to /) or give a clear error message
+      const afterRemoval = await session.exec('echo "after removal"');
+
+      // The command should succeed - bash can still run commands even if cwd is deleted
+      // It will use the deleted directory's inode until a cd happens
+      expect(afterRemoval.exitCode).toBe(0);
+      expect(afterRemoval.stdout.trim()).toBe('after removal');
+    });
+
+    it('should handle cwd being replaced with symlink', async () => {
+      // Create directories for the test
+      const workspaceDir = join(testDir, 'workspace');
+      const backupDir = join(testDir, 'backup');
+      await mkdir(workspaceDir, { recursive: true });
+      await mkdir(backupDir, { recursive: true });
+
+      session = new Session({
+        id: 'test-cwd-symlink',
+        cwd: workspaceDir
+      });
+
+      await session.initialize();
+
+      // Verify baseline works
+      const baseline = await session.exec('echo "baseline"');
+      expect(baseline.exitCode).toBe(0);
+      expect(baseline.stdout.trim()).toBe('baseline');
+
+      // Replace workspace with a symlink to backup directory
+      await session.exec(
+        `rm -rf ${workspaceDir} && ln -sf ${backupDir} ${workspaceDir}`
+      );
+
+      // Try a subsequent command - should continue working
+      const afterSymlink = await session.exec('echo "after symlink"');
+      expect(afterSymlink.exitCode).toBe(0);
+      expect(afterSymlink.stdout.trim()).toBe('after symlink');
     });
   });
 

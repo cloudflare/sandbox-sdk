@@ -180,3 +180,27 @@ ENV JAVASCRIPT_POOL_MIN_SIZE=3
 ENV TYPESCRIPT_POOL_MIN_SIZE=3
 
 ENTRYPOINT ["/container-server/sandbox"]
+
+# ============================================================================
+# Stage 5c: OpenCode image - with OpenCode CLI for AI coding agent
+# ============================================================================
+FROM runtime-base AS opencode
+
+# Add opencode to PATH
+ENV PATH="/root/.opencode/bin:${PATH}"
+
+# Install OpenCode CLI
+RUN curl -fsSL https://opencode.ai/install -o /tmp/install-opencode.sh \
+    && bash /tmp/install-opencode.sh \
+    && rm /tmp/install-opencode.sh \
+    && opencode --version
+
+# Disable Python pool (Python not available in this image)
+ENV PYTHON_POOL_MIN_SIZE=0
+ENV JAVASCRIPT_POOL_MIN_SIZE=3
+ENV TYPESCRIPT_POOL_MIN_SIZE=3
+
+# Expose OpenCode server port (in addition to 3000 from runtime-base)
+EXPOSE 4096
+
+ENTRYPOINT ["/container-server/sandbox"]

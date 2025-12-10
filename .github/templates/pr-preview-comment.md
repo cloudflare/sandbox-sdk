@@ -1,6 +1,6 @@
 ### 🐳 Docker Images Published
 
-**Default (no Python):**
+**Default:**
 
 ```dockerfile
 FROM {{DEFAULT_TAG}}
@@ -12,9 +12,15 @@ FROM {{DEFAULT_TAG}}
 FROM {{PYTHON_TAG}}
 ```
 
+**With OpenCode:**
+
+```dockerfile
+FROM {{OPENCODE_TAG}}
+```
+
 **Version:** `{{VERSION}}`
 
-Use the `-python` variant if you need Python code execution.
+Use the `-python` variant if you need Python code execution, or `-opencode` for the variant with OpenCode AI coding agent pre-installed.
 
 ---
 

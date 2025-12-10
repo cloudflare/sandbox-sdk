@@ -26,6 +26,7 @@ import type {
   PortNotExposedContext,
   ProcessErrorContext,
   ProcessNotFoundContext,
+  SessionAlreadyExistsContext,
   ValidationFailedContext
 } from '@repo/shared/errors';
 import { ErrorCode } from '@repo/shared/errors';
@@ -58,6 +59,7 @@ import {
   ProcessNotFoundError,
   SandboxError,
   ServiceNotRespondingError,
+  SessionAlreadyExistsError,
   ValidationFailedError
 } from './classes';
 
@@ -121,6 +123,12 @@ export function createErrorFromResponse(errorResponse: ErrorResponse): Error {
     case ErrorCode.PROCESS_ERROR:
       return new ProcessError(
         errorResponse as unknown as ErrorResponse<ProcessErrorContext>
+      );
+
+    // Session Errors
+    case ErrorCode.SESSION_ALREADY_EXISTS:
+      return new SessionAlreadyExistsError(
+        errorResponse as unknown as ErrorResponse<SessionAlreadyExistsContext>
       );
 
     // Port Errors
