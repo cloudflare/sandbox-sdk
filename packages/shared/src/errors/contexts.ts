@@ -170,6 +170,15 @@ export interface InvalidMountConfigContext {
 }
 
 /**
+ * OpenCode error contexts
+ */
+export interface OpencodeStartupContext {
+  port: number;
+  stderr?: string;
+  command?: string;
+}
+
+/**
  * Generic error contexts
  */
 export interface InternalErrorContext {

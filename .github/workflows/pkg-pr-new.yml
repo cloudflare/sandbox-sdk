@@ -109,6 +109,22 @@ jobs:
           build-args: |
             SANDBOX_VERSION=${{ steps.package-version.outputs.version }}
 
+      - name: Build and push Docker image (opencode)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: packages/sandbox/Dockerfile
+          target: opencode
+          platforms: linux/amd64
+          push: true
+          tags: cloudflare/sandbox:${{ steps.package-version.outputs.version }}-opencode
+          cache-from: |
+            type=gha,scope=preview-pr-${{ github.event.pull_request.number }}-opencode
+            type=gha,scope=release-opencode
+          cache-to: type=gha,mode=max,scope=preview-pr-${{ github.event.pull_request.number }}-opencode
+          build-args: |
+            SANDBOX_VERSION=${{ steps.package-version.outputs.version }}
+
       - name: Publish to pkg.pr.new
         run: npx pkg-pr-new publish './packages/sandbox'
 
@@ -119,7 +135,8 @@ jobs:
             const version = '${{ steps.package-version.outputs.version }}';
             const defaultTag = `cloudflare/sandbox:${version}`;
             const pythonTag = `cloudflare/sandbox:${version}-python`;
-            const body = `### 🐳 Docker Images Published\n\n**Default (no Python):**\n\`\`\`dockerfile\nFROM ${defaultTag}\n\`\`\`\n\n**With Python:**\n\`\`\`dockerfile\nFROM ${pythonTag}\n\`\`\`\n\n**Version:** \`${version}\`\n\nUse the \`-python\` variant if you need Python code execution.`;
+            const opencodeTag = `cloudflare/sandbox:${version}-opencode`;
+            const body = `### 🐳 Docker Images Published\n\n**Default (no Python):**\n\`\`\`dockerfile\nFROM ${defaultTag}\n\`\`\`\n\n**With Python:**\n\`\`\`dockerfile\nFROM ${pythonTag}\n\`\`\`\n\n**With OpenCode:**\n\`\`\`dockerfile\nFROM ${opencodeTag}\n\`\`\`\n\n**Version:** \`${version}\`\n\nUse the \`-python\` variant for Python code execution, or \`-opencode\` for the OpenCode AI coding agent.`;
 
             // Find existing comment
             const { data: comments } = await github.rest.issues.listComments({

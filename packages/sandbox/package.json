@@ -12,13 +12,18 @@
   },
   "devDependencies": {
     "@openai/agents": "^0.3.3",
+    "@opencode-ai/sdk": "^1.0.137",
     "@repo/shared": "*"
   },
   "peerDependencies": {
-    "@openai/agents": "^0.3.3"
+    "@openai/agents": "^0.3.3",
+    "@opencode-ai/sdk": "^1.0.137"
   },
   "peerDependenciesMeta": {
     "@openai/agents": {
+      "optional": true
+    },
+    "@opencode-ai/sdk": {
       "optional": true
     }
   },
@@ -34,7 +39,7 @@
     "check": "biome check && npm run typecheck",
     "fix": "biome check --fix && npm run typecheck",
     "typecheck": "tsc --noEmit",
-    "docker:local": "cd ../.. && docker build -f packages/sandbox/Dockerfile --target default --platform linux/amd64 --build-arg SANDBOX_VERSION=$npm_package_version -t cloudflare/sandbox-test:$npm_package_version . && docker build -f packages/sandbox/Dockerfile --target python --platform linux/amd64 --build-arg SANDBOX_VERSION=$npm_package_version -t cloudflare/sandbox-test:$npm_package_version-python .",
+    "docker:local": "cd ../.. && docker build -f packages/sandbox/Dockerfile --target default --platform linux/amd64 --build-arg SANDBOX_VERSION=$npm_package_version -t cloudflare/sandbox-test:$npm_package_version . && docker build -f packages/sandbox/Dockerfile --target python --platform linux/amd64 --build-arg SANDBOX_VERSION=$npm_package_version -t cloudflare/sandbox-test:$npm_package_version-python . && docker build -f packages/sandbox/Dockerfile --target opencode --platform linux/amd64 --build-arg SANDBOX_VERSION=$npm_package_version -t cloudflare/sandbox-test:$npm_package_version-opencode .",
     "test": "vitest run --config vitest.config.ts \"$@\"",
     "test:e2e": "cd ../../tests/e2e/test-worker && ./generate-config.sh && cd ../../.. && vitest run --config vitest.e2e.config.ts \"$@\""
   },
@@ -48,6 +53,11 @@
       "types": "./dist/openai/index.d.ts",
       "import": "./dist/openai/index.js",
       "require": "./dist/openai/index.js"
+    },
+    "./opencode": {
+      "types": "./dist/opencode/index.d.ts",
+      "import": "./dist/opencode/index.js",
+      "require": "./dist/opencode/index.js"
     }
   },
   "keywords": [],

@@ -1,0 +1,8 @@
+# E2E test Dockerfile for OpenCode
+# Uses the -opencode variant for testing the OpenCode integration
+FROM docker.io/cloudflare/sandbox-test:0.6.3-opencode
+
+# Expose ports used for testing
+# 4096: OpenCode server default port
+# 8080: general testing
+EXPOSE 4096 8080

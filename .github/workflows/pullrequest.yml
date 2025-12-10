@@ -116,15 +116,18 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build test worker Docker images (base + python)
+      - name: Build test worker Docker images (base + python + opencode)
         run: |
           VERSION=${{ needs.unit-tests.outputs.version || '0.0.0' }}
-          # Build base image (no Python) - used by SandboxBase binding
+          # Build base image (no Python) - used by Sandbox binding
           docker build -f packages/sandbox/Dockerfile --target default --platform linux/amd64 \
             --build-arg SANDBOX_VERSION=$VERSION -t cloudflare/sandbox-test:$VERSION .
-          # Build python image - used by Sandbox binding
+          # Build python image - used by SandboxPython binding
           docker build -f packages/sandbox/Dockerfile --target python --platform linux/amd64 \
             --build-arg SANDBOX_VERSION=$VERSION -t cloudflare/sandbox-test:$VERSION-python .
+          # Build opencode image - used by SandboxOpencode binding
+          docker build -f packages/sandbox/Dockerfile --target opencode --platform linux/amd64 \
+            --build-arg SANDBOX_VERSION=$VERSION -t cloudflare/sandbox-test:$VERSION-opencode .
 
       # Deploy test worker using official Cloudflare action
       - name: Deploy test worker
