@@ -205,10 +205,7 @@ export abstract class BaseHttpClient {
    * Utility method to log successful operations
    */
   protected logSuccess(operation: string, details?: string): void {
-    this.logger.info(
-      `${operation} completed successfully`,
-      details ? { details } : undefined
-    );
+    this.logger.info(operation, details ? { details } : undefined);
   }
 
   /**
