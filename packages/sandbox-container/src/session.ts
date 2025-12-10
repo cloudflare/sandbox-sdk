@@ -25,7 +25,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { watch } from 'node:fs';
-import { mkdir, rm } from 'node:fs/promises';
+import { mkdir, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import type { ExecEvent, Logger } from '@repo/shared';
@@ -137,10 +137,29 @@ export class Session {
     this.sessionDir = join(tmpdir(), `session-${this.id}-${Date.now()}`);
     await mkdir(this.sessionDir, { recursive: true });
 
+    // Determine working directory and verify it exists to avoid spawn failures
+    // If /workspace or specified cwd doesn't exist, fall back to /
+    // This handles the case where /workspace is deleted
+    let cwd = this.options.cwd || CONFIG.DEFAULT_CWD;
+    try {
+      await stat(cwd);
+    } catch {
+      // Directory doesn't exist, fall back to root
+      this.logger.warn(
+        `Working directory '${cwd}' does not exist, falling back to '/'`,
+        {
+          sessionId: this.id,
+          requestedCwd: cwd,
+          fallbackCwd: '/'
+        }
+      );
+      cwd = '/';
+    }
+
     // Spawn persistent bash with stdin pipe - no IPC or wrapper needed!
     this.shell = Bun.spawn({
       cmd: ['bash', '--norc'],
-      cwd: this.options.cwd || CONFIG.DEFAULT_CWD,
+      cwd,
       env: {
         ...process.env,
         ...this.options.env,
