@@ -47,10 +47,12 @@ export class SessionManager {
    *
    * Uses a two-phase approach:
    * 1. Check if session exists (fast path)
-   * 2. Use creatingLocks map with atomic check-and-set to coordinate creation
+   * 2. Use creatingLocks map to coordinate creation across callers
    *
-   * IMPORTANT: This method must be called while holding the session lock
-   * to prevent race conditions between checking and setting creatingLocks.
+   * IMPORTANT: All callers (executeInSession, withSession, etc.) acquire the
+   * session lock before calling this method. The lock ensures only one caller
+   * executes this method at a time for a given sessionId, making the
+   * creatingLocks check-and-set atomic.
    */
   private async getOrCreateSession(
     sessionId: string,
@@ -125,6 +127,10 @@ export class SessionManager {
       };
     } finally {
       this.creatingLocks.delete(sessionId);
+      // Clean up orphaned lock if session creation failed
+      if (!this.sessions.has(sessionId)) {
+        this.sessionLocks.delete(sessionId);
+      }
     }
   }
 
