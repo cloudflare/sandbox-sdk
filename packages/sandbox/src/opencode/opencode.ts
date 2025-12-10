@@ -158,7 +158,11 @@ async function startOpencodeServer(
 
     // Extract API keys from provider config
     // Support both options.apiKey (official type) and legacy top-level apiKey
-    if (config.provider) {
+    if (
+      config.provider &&
+      typeof config.provider === 'object' &&
+      !Array.isArray(config.provider)
+    ) {
       for (const [providerId, providerConfig] of Object.entries(
         config.provider
       )) {
