@@ -1,15 +1,6 @@
 /**
  * Workspace Deletion Workflow Tests (Issue #288)
- *
- * Tests the fix for GitHub issue #288 where `sandbox.exec()` fails with
- * "Unknown Error, TODO" after `/workspace` is removed or replaced with symlink.
- *
- * These tests verify:
- * 1. Symlinks work correctly in non-/workspace directories
- * 2. Session continues working after /workspace is deleted
- * 3. Session continues working after /workspace is replaced with symlink
- * 4. Session can recreate /workspace after deletion
- * 5. New sessions can be created even when /workspace doesn't exist
+
  *
  * @see https://github.com/cloudflare/sandbox-sdk/issues/288
  */
@@ -381,7 +372,212 @@ describe('Workspace Deletion Workflow (Issue #288)', () => {
   }, 90000);
 
   /**
-   * Test 7: Multiple operations after workspace manipulation
+   * Test 7: New session creation after /workspace is deleted (Core bug from Issue #288)
+   *
+   * This is the PRIMARY test for issue #288. The bug was that creating a NEW session
+   * after /workspace was deleted would fail with "Unknown Error, TODO".
+   *
+   * The fix makes session initialization fall back to "/" if /workspace doesn't exist.
+   *
+   * IMPORTANT: This test actually deletes /workspace and creates a new session.
+   * It restores /workspace at the end to avoid breaking other tests.
+   */
+  test('should create new session successfully after /workspace is deleted (issue #288 core bug)', async () => {
+    const sandbox = await getSharedSandbox();
+
+    // Use a dedicated session for the setup/cleanup operations
+    const setupSession = createUniqueSession();
+    const setupHeaders = sandbox.createHeaders(setupSession);
+
+    // Step 1: Verify /workspace exists (or create it if needed)
+    const ensureWorkspaceResponse = await fetch(`${workerUrl}/api/execute`, {
+      method: 'POST',
+      headers: setupHeaders,
+      body: JSON.stringify({
+        command: 'mkdir -p /workspace && ls -la /workspace'
+      })
+    });
+    expect(ensureWorkspaceResponse.status).toBe(200);
+
+    // Step 2: Delete /workspace entirely
+    const deleteResponse = await fetch(`${workerUrl}/api/execute`, {
+      method: 'POST',
+      headers: setupHeaders,
+      body: JSON.stringify({
+        command: 'rm -rf /workspace'
+      })
+    });
+    expect(deleteResponse.status).toBe(200);
+    const deleteData = (await deleteResponse.json()) as ExecResult;
+    expect(deleteData.success).toBe(true);
+
+    // Step 3: Verify /workspace is gone
+    const verifyGoneResponse = await fetch(`${workerUrl}/api/execute`, {
+      method: 'POST',
+      headers: setupHeaders,
+      body: JSON.stringify({
+        command:
+          '[ ! -d /workspace ] && echo "workspace deleted" || echo "workspace exists"'
+      })
+    });
+    expect(verifyGoneResponse.status).toBe(200);
+    const verifyGoneData = (await verifyGoneResponse.json()) as ExecResult;
+    expect(verifyGoneData.stdout?.trim()).toBe('workspace deleted');
+
+    // Step 4: Create a BRAND NEW session - this is where the bug occurred
+    // Before the fix, this would fail with "Unknown Error, TODO"
+    const newSession = `new-after-delete-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const newHeaders = sandbox.createHeaders(newSession);
+
+    const newSessionResponse = await fetch(`${workerUrl}/api/execute`, {
+      method: 'POST',
+      headers: newHeaders,
+      body: JSON.stringify({
+        command: 'echo "new session after workspace deletion works"'
+      })
+    });
+
+    expect(newSessionResponse.status).toBe(200);
+    const newSessionData = (await newSessionResponse.json()) as ExecResult;
+    expect(newSessionData.success).toBe(true);
+    expect(newSessionData.stdout?.trim()).toBe(
+      'new session after workspace deletion works'
+    );
+
+    // Verify NO "Unknown Error" or "TODO" in stderr
+    expect(newSessionData.stderr?.toLowerCase() || '').not.toContain(
+      'unknown error'
+    );
+    expect(newSessionData.stderr?.toLowerCase() || '').not.toContain('todo');
+
+    // Step 5: Verify the new session fell back to "/" as working directory
+    const pwdResponse = await fetch(`${workerUrl}/api/execute`, {
+      method: 'POST',
+      headers: newHeaders,
+      body: JSON.stringify({
+        command: 'pwd'
+      })
+    });
+    expect(pwdResponse.status).toBe(200);
+    const pwdData = (await pwdResponse.json()) as ExecResult;
+    expect(pwdData.success).toBe(true);
+    // Session should have fallen back to / since /workspace didn't exist
+    expect(pwdData.stdout?.trim()).toBe('/');
+
+    // Step 6: Restore /workspace for other tests
+    const restoreResponse = await fetch(`${workerUrl}/api/execute`, {
+      method: 'POST',
+      headers: setupHeaders,
+      body: JSON.stringify({
+        command: 'mkdir -p /workspace && echo "workspace restored"'
+      })
+    });
+    expect(restoreResponse.status).toBe(200);
+    const restoreData = (await restoreResponse.json()) as ExecResult;
+    expect(restoreData.success).toBe(true);
+  }, 120000);
+
+  /**
+   * Test 8: New session creation after /workspace is replaced with symlink (Issue #288 variant)
+   *
+   * Tests the symlink variant of issue #288 where /workspace is replaced with
+   * a symlink to another directory.
+   */
+  test('should create new session successfully after /workspace is replaced with symlink', async () => {
+    const sandbox = await getSharedSandbox();
+
+    // Use a dedicated session for setup/cleanup
+    const setupSession = createUniqueSession();
+    const setupHeaders = sandbox.createHeaders(setupSession);
+    const backupDir = `/tmp/workspace-backup-${Date.now()}`;
+
+    // Step 1: Create backup directory and ensure /workspace exists
+    const setupResponse = await fetch(`${workerUrl}/api/execute`, {
+      method: 'POST',
+      headers: setupHeaders,
+      body: JSON.stringify({
+        command: `mkdir -p ${backupDir} /workspace`
+      })
+    });
+    expect(setupResponse.status).toBe(200);
+
+    // Step 2: Replace /workspace with a symlink
+    const symlinkResponse = await fetch(`${workerUrl}/api/execute`, {
+      method: 'POST',
+      headers: setupHeaders,
+      body: JSON.stringify({
+        command: `rm -rf /workspace && ln -sf ${backupDir} /workspace`
+      })
+    });
+    expect(symlinkResponse.status).toBe(200);
+    const symlinkData = (await symlinkResponse.json()) as ExecResult;
+    expect(symlinkData.success).toBe(true);
+
+    // Step 3: Verify /workspace is now a symlink
+    const verifySymlinkResponse = await fetch(`${workerUrl}/api/execute`, {
+      method: 'POST',
+      headers: setupHeaders,
+      body: JSON.stringify({
+        command: '[ -L /workspace ] && echo "is symlink" || echo "not symlink"'
+      })
+    });
+    expect(verifySymlinkResponse.status).toBe(200);
+    const verifySymlinkData =
+      (await verifySymlinkResponse.json()) as ExecResult;
+    expect(verifySymlinkData.stdout?.trim()).toBe('is symlink');
+
+    // Step 4: Create a NEW session - should work with the symlink
+    const newSession = `new-after-symlink-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const newHeaders = sandbox.createHeaders(newSession);
+
+    const newSessionResponse = await fetch(`${workerUrl}/api/execute`, {
+      method: 'POST',
+      headers: newHeaders,
+      body: JSON.stringify({
+        command: 'echo "new session with symlink workspace works"'
+      })
+    });
+
+    expect(newSessionResponse.status).toBe(200);
+    const newSessionData = (await newSessionResponse.json()) as ExecResult;
+    expect(newSessionData.success).toBe(true);
+    expect(newSessionData.stdout?.trim()).toBe(
+      'new session with symlink workspace works'
+    );
+
+    // Verify NO "Unknown Error" or "TODO" in stderr
+    expect(newSessionData.stderr?.toLowerCase() || '').not.toContain(
+      'unknown error'
+    );
+    expect(newSessionData.stderr?.toLowerCase() || '').not.toContain('todo');
+
+    // Step 5: Verify the session's cwd is through the symlink (resolves to backup dir)
+    const pwdResponse = await fetch(`${workerUrl}/api/execute`, {
+      method: 'POST',
+      headers: newHeaders,
+      body: JSON.stringify({
+        command: 'pwd -P' // -P shows physical path, resolving symlinks
+      })
+    });
+    expect(pwdResponse.status).toBe(200);
+    const pwdData = (await pwdResponse.json()) as ExecResult;
+    expect(pwdData.success).toBe(true);
+    // The physical path should be the backup directory
+    expect(pwdData.stdout?.trim()).toBe(backupDir);
+
+    // Step 6: Cleanup - restore /workspace as a real directory
+    const cleanupResponse = await fetch(`${workerUrl}/api/execute`, {
+      method: 'POST',
+      headers: setupHeaders,
+      body: JSON.stringify({
+        command: `rm -f /workspace && mkdir -p /workspace && rm -rf ${backupDir}`
+      })
+    });
+    expect(cleanupResponse.status).toBe(200);
+  }, 120000);
+
+  /**
+   * Test 9: Multiple operations after workspace manipulation
    *
    * Tests a realistic workflow where the workspace is manipulated
    * and then multiple subsequent operations are performed.
@@ -470,6 +666,67 @@ describe('Workspace Deletion Workflow (Issue #288)', () => {
       method: 'POST',
       headers,
       body: JSON.stringify({ command: `rm -rf ${testWorkspace} ${backupDir}` })
+    });
+  }, 90000);
+
+  /**
+   * Exact reproduction from Issue #288
+   *
+   * @see https://github.com/cloudflare/sandbox-sdk/issues/288
+   */
+  test('issue #288 exact minimal reproduction', async () => {
+    const sandbox = await getSharedSandbox();
+
+    // Use a single session for the entire test (matches the bug report scenario)
+    const sessionId = `issue-288-repro-${Date.now()}`;
+    const headers = sandbox.createHeaders(sessionId);
+
+    // 1. Get a sandbox instance (done via shared sandbox)
+
+    // 2. Verify baseline works
+    const baselineResponse = await fetch(`${workerUrl}/api/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ command: 'echo "baseline works"' })
+    });
+    expect(baselineResponse.status).toBe(200);
+    const baselineData = (await baselineResponse.json()) as ExecResult;
+    expect(baselineData.success).toBe(true);
+    expect(baselineData.stdout?.trim()).toBe('baseline works');
+
+    // 3. Remove /workspace
+    const removeResponse = await fetch(`${workerUrl}/api/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ command: 'rm -rf /workspace' })
+    });
+    expect(removeResponse.status).toBe(200);
+    const removeData = (await removeResponse.json()) as ExecResult;
+    expect(removeData.success).toBe(true);
+
+    // 4. Try ANY subsequent exec() call
+    const afterRemovalResponse = await fetch(`${workerUrl}/api/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ command: 'echo "after removal"' })
+    });
+    expect(afterRemovalResponse.status).toBe(200);
+    const afterRemovalData = (await afterRemovalResponse.json()) as ExecResult;
+
+    expect(afterRemovalData.success).toBe(true);
+    expect(afterRemovalData.stdout?.trim()).toBe('after removal');
+
+    // Verify no "Unknown Error, TODO" anywhere
+    expect(afterRemovalData.stderr?.toLowerCase() || '').not.toContain(
+      'unknown error'
+    );
+    expect(afterRemovalData.stderr?.toLowerCase() || '').not.toContain('todo');
+
+    // Cleanup: restore /workspace for other tests
+    await fetch(`${workerUrl}/api/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ command: 'mkdir -p /workspace' })
     });
   }, 90000);
 });

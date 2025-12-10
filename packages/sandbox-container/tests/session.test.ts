@@ -76,15 +76,15 @@ describe('Session', () => {
       expect(session.isReady()).toBe(true);
     });
 
-    it('should initialize with non-existent cwd by falling back to / (issue #288)', async () => {
-      // This tests the fix for issue #288 where session creation failed
-      // if /workspace was deleted before a new session was created
+    it('should fall back to /tmp when cwd does not exist (issue #288)', async () => {
+      // Session cwd only affects shell startup directory - it's not critical.
+      // If cwd doesn't exist, we fall back to /tmp since individual commands
+      // can specify their own cwd anyway.
       session = new Session({
         id: 'test-session-nonexistent-cwd',
         cwd: '/nonexistent/path/that/does/not/exist'
       });
 
-      // This should NOT throw - instead it should fall back to /
       await session.initialize();
 
       expect(session.isReady()).toBe(true);
@@ -92,11 +92,12 @@ describe('Session', () => {
       // Verify we can execute commands
       const result = await session.exec('pwd');
       expect(result.exitCode).toBe(0);
-      // The shell should have started in / since the requested cwd doesn't exist
-      expect(result.stdout.trim()).toBe('/');
+      // The shell should have started in /tmp since the requested cwd doesn't exist
+      // On macOS, /tmp is a symlink to /private/tmp
+      expect(result.stdout.trim()).toMatch(/^(\/tmp|\/private\/tmp)$/);
     });
 
-    it('should initialize with missing /workspace by falling back to / (issue #288)', async () => {
+    it('should fall back to /tmp when workspace is deleted before session creation (issue #288)', async () => {
       // Simulate the exact scenario from issue #288
       // Create a workspace, then delete it, then try to create a session with it
       const workspaceDir = join(testDir, 'workspace');
@@ -111,7 +112,7 @@ describe('Session', () => {
         cwd: workspaceDir
       });
 
-      // This should NOT throw - instead it should fall back to /
+      // Should succeed - falls back to /tmp
       await session.initialize();
 
       expect(session.isReady()).toBe(true);

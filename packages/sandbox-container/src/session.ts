@@ -46,7 +46,13 @@ export interface SessionOptions {
   /** Session identifier (generated if not provided) */
   id: string;
 
-  /** Working directory for the session */
+  /**
+   * Initial working directory for the shell.
+   *
+   * Note: This only affects where the shell starts. Individual commands can
+   * specify their own cwd via exec options, and the shell can cd anywhere.
+   * If the directory doesn't exist, the session falls back to /tmp.
+   */
   cwd?: string;
 
   /** Environment variables for the session */
@@ -137,23 +143,22 @@ export class Session {
     this.sessionDir = join(tmpdir(), `session-${this.id}-${Date.now()}`);
     await mkdir(this.sessionDir, { recursive: true });
 
-    // Determine working directory and verify it exists to avoid spawn failures
-    // If /workspace or specified cwd doesn't exist, fall back to /
-    // This handles the case where /workspace is deleted
+    // Determine working directory. If the requested
+    // cwd doesn't exist, we fall back to /tmp since it's always available and
+    // safer than / for accidental operations.
     let cwd = this.options.cwd || CONFIG.DEFAULT_CWD;
     try {
       await stat(cwd);
     } catch {
-      // Directory doesn't exist, fall back to root
-      this.logger.warn(
-        `Working directory '${cwd}' does not exist, falling back to '/'`,
+      this.logger.debug(
+        `Shell startup directory '${cwd}' does not exist, using '/tmp'`,
         {
           sessionId: this.id,
           requestedCwd: cwd,
-          fallbackCwd: '/'
+          actualCwd: '/tmp'
         }
       );
-      cwd = '/';
+      cwd = '/tmp';
     }
 
     // Spawn persistent bash with stdin pipe - no IPC or wrapper needed!
