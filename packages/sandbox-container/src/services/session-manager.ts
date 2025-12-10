@@ -7,7 +7,12 @@ import type {
   InternalErrorContext
 } from '@repo/shared/errors';
 import { ErrorCode } from '@repo/shared/errors';
-import type { ServiceResult } from '../core/types';
+import { Mutex } from 'async-mutex';
+import {
+  type ServiceResult,
+  serviceError,
+  serviceSuccess
+} from '../core/types';
 import { type RawExecResult, Session, type SessionOptions } from '../session';
 
 /**
@@ -16,8 +21,112 @@ import { type RawExecResult, Session, type SessionOptions } from '../session';
  */
 export class SessionManager {
   private sessions = new Map<string, Session>();
+  /** Per-session mutexes to prevent concurrent command execution */
+  private sessionLocks = new Map<string, Mutex>();
+  /** Tracks in-progress session creation to prevent duplicate creation races */
+  private creatingLocks = new Map<string, Promise<Session>>();
 
   constructor(private logger: Logger) {}
+
+  /**
+   * Get or create a mutex for a specific session
+   */
+  private getSessionLock(sessionId: string): Mutex {
+    let lock = this.sessionLocks.get(sessionId);
+    if (!lock) {
+      lock = new Mutex();
+      this.sessionLocks.set(sessionId, lock);
+    }
+    return lock;
+  }
+
+  /**
+   * Get or create a session with coordination to prevent race conditions.
+   * If multiple requests try to create the same session simultaneously,
+   * only one will create it and others will wait for that result.
+   *
+   * Uses a two-phase approach:
+   * 1. Check if session exists (fast path)
+   * 2. Use creatingLocks map with atomic check-and-set to coordinate creation
+   *
+   * IMPORTANT: This method must be called while holding the session lock
+   * to prevent race conditions between checking and setting creatingLocks.
+   */
+  private async getOrCreateSession(
+    sessionId: string,
+    options: { cwd?: string; commandTimeoutMs?: number } = {}
+  ): Promise<ServiceResult<Session>> {
+    // Fast path: session already exists
+    const existing = this.sessions.get(sessionId);
+    if (existing) {
+      return { success: true, data: existing };
+    }
+
+    // Check if another request is already creating this session
+    // Since we're called under the session lock, only one caller can reach here
+    // at a time for the same sessionId
+    const pendingCreate = this.creatingLocks.get(sessionId);
+    if (pendingCreate) {
+      try {
+        const session = await pendingCreate;
+        return { success: true, data: session };
+      } catch (error) {
+        // Creation failed, will retry below
+      }
+    }
+
+    // We need to create the session - set up coordination
+    // Since we hold the lock, we can safely set creatingLocks without race
+    const createPromise = (async (): Promise<Session> => {
+      // Double-check after acquiring coordination (another request may have finished)
+      const doubleCheck = this.sessions.get(sessionId);
+      if (doubleCheck) {
+        return doubleCheck;
+      }
+
+      const session = new Session({
+        id: sessionId,
+        cwd: options.cwd || '/workspace',
+        commandTimeoutMs: options.commandTimeoutMs,
+        logger: this.logger
+      });
+      await session.initialize();
+      this.sessions.set(sessionId, session);
+      return session;
+    })();
+
+    this.creatingLocks.set(sessionId, createPromise);
+
+    try {
+      const session = await createPromise;
+      return { success: true, data: session };
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error(
+        'Failed to create session',
+        error instanceof Error ? error : undefined,
+        {
+          sessionId,
+          originalError: errorMessage
+        }
+      );
+
+      return {
+        success: false,
+        error: {
+          message: `Failed to create session '${sessionId}': ${errorMessage}`,
+          code: ErrorCode.INTERNAL_ERROR,
+          details: {
+            sessionId,
+            originalError: errorMessage
+          } satisfies InternalErrorContext
+        }
+      };
+    } finally {
+      this.creatingLocks.delete(sessionId);
+    }
+  }
 
   /**
    * Create a new persistent session
@@ -109,7 +218,8 @@ export class SessionManager {
   }
 
   /**
-   * Execute a command in a session
+   * Execute a command in a session with per-session locking.
+   * Commands to the same session are serialized; different sessions run in parallel.
    */
   async executeInSession(
     sessionId: string,
@@ -118,72 +228,162 @@ export class SessionManager {
     timeoutMs?: number,
     env?: Record<string, string>
   ): Promise<ServiceResult<RawExecResult>> {
-    try {
-      // Get or create session on demand
-      let sessionResult = await this.getSession(sessionId);
+    const lock = this.getSessionLock(sessionId);
 
-      // If session doesn't exist, create it automatically
-      if (
-        !sessionResult.success &&
-        (sessionResult.error!.details as InternalErrorContext)
-          ?.originalError === 'Session not found'
-      ) {
-        sessionResult = await this.createSession({
-          id: sessionId,
+    return lock.runExclusive(async () => {
+      try {
+        // Get or create session (coordinated)
+        const sessionResult = await this.getOrCreateSession(sessionId, {
           cwd: cwd || '/workspace',
-          commandTimeoutMs: timeoutMs // Pass timeout to session
+          commandTimeoutMs: timeoutMs
         });
-      }
 
-      if (!sessionResult.success) {
-        return sessionResult as ServiceResult<RawExecResult>;
-      }
-
-      const session = sessionResult.data;
-
-      const result = await session.exec(
-        command,
-        cwd || env ? { cwd, env } : undefined
-      );
-
-      return {
-        success: true,
-        data: result
-      };
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(
-        'Failed to execute command',
-        error instanceof Error ? error : undefined,
-        {
-          sessionId,
-          command
+        if (!sessionResult.success) {
+          return sessionResult as ServiceResult<RawExecResult>;
         }
-      );
 
-      return {
-        success: false,
-        error: {
-          message: `Failed to execute command '${command}' in session '${sessionId}': ${errorMessage}`,
-          code: ErrorCode.COMMAND_EXECUTION_ERROR,
-          details: {
-            command,
-            stderr: errorMessage
-          } satisfies CommandErrorContext
-        }
-      };
-    }
+        const session = sessionResult.data;
+
+        const result = await session.exec(
+          command,
+          cwd || env ? { cwd, env } : undefined
+        );
+
+        return {
+          success: true,
+          data: result
+        };
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : 'Unknown error';
+        this.logger.error(
+          'Failed to execute command',
+          error instanceof Error ? error : undefined,
+          {
+            sessionId,
+            command
+          }
+        );
+
+        return {
+          success: false,
+          error: {
+            message: `Failed to execute command '${command}' in session '${sessionId}': ${errorMessage}`,
+            code: ErrorCode.COMMAND_EXECUTION_ERROR,
+            details: {
+              command,
+              stderr: errorMessage
+            } satisfies CommandErrorContext
+          }
+        };
+      }
+    });
   }
 
   /**
-   * Execute a command with streaming output
+   * Execute multiple commands atomically within a session.
+   * The lock is held for the entire callback duration, preventing
+   * other operations from interleaving.
+   *
+   * WARNING: Do not call withSession recursively on the same session - it will deadlock.
+   *
+   * @param sessionId - The session identifier
+   * @param fn - Callback that receives an exec function for running commands
+   * @param cwd - Optional working directory for session creation
+   * @returns The result of the callback wrapped in ServiceResult
+   */
+  async withSession<T>(
+    sessionId: string,
+    fn: (
+      exec: (
+        command: string,
+        options?: { cwd?: string; env?: Record<string, string> }
+      ) => Promise<RawExecResult>
+    ) => Promise<T>,
+    cwd?: string
+  ): Promise<ServiceResult<T>> {
+    const lock = this.getSessionLock(sessionId);
+
+    return lock.runExclusive(async (): Promise<ServiceResult<T>> => {
+      try {
+        // Get or create session (coordinated)
+        const sessionResult = await this.getOrCreateSession(sessionId, {
+          cwd: cwd || '/workspace'
+        });
+
+        if (!sessionResult.success) {
+          return serviceError<T>(sessionResult.error);
+        }
+
+        const session = sessionResult.data;
+
+        // Provide exec function that uses the session directly (already under lock)
+        const exec = async (
+          command: string,
+          options?: { cwd?: string; env?: Record<string, string> }
+        ): Promise<RawExecResult> => {
+          return session.exec(command, options);
+        };
+
+        const result = await fn(exec);
+
+        return serviceSuccess<T>(result);
+      } catch (error) {
+        // Check if error is a ServiceError-like object (from service callbacks)
+        // Validates that code is a known ErrorCode to avoid catching unrelated objects
+        if (
+          error &&
+          typeof error === 'object' &&
+          'code' in error &&
+          'message' in error &&
+          typeof (error as { code: unknown }).code === 'string' &&
+          Object.values(ErrorCode).includes(
+            (error as { code: string }).code as ErrorCode
+          )
+        ) {
+          const customError = error as {
+            message: string;
+            code: string;
+            details?: Record<string, unknown>;
+          };
+          return serviceError<T>({
+            message: customError.message,
+            code: customError.code,
+            details: customError.details
+          });
+        }
+
+        const errorMessage =
+          error instanceof Error ? error.message : 'Unknown error';
+        this.logger.error(
+          'withSession callback failed',
+          error instanceof Error ? error : undefined,
+          { sessionId }
+        );
+
+        return serviceError<T>({
+          message: `withSession callback failed for session '${sessionId}': ${errorMessage}`,
+          code: ErrorCode.INTERNAL_ERROR,
+          details: {
+            sessionId,
+            originalError: errorMessage
+          } satisfies InternalErrorContext
+        });
+      }
+    });
+  }
+
+  /**
+   * Execute a command with streaming output.
    *
    * @param sessionId - The session identifier
    * @param command - The command to execute
    * @param onEvent - Callback for streaming events
-   * @param cwd - Optional working directory override
+   * @param options - Optional cwd and env overrides
    * @param commandId - Required command identifier for tracking and killing
+   * @param lockOptions - Lock behavior options
+   * @param lockOptions.background - If true, release lock after 'start' event (for startProcess).
+   *                                 If false (default), hold lock until streaming completes (for exec --stream).
    * @returns A promise that resolves when first event is processed, with continueStreaming promise for background execution
    */
   async executeStreamInSession(
@@ -191,119 +391,249 @@ export class SessionManager {
     command: string,
     onEvent: (event: ExecEvent) => Promise<void>,
     options: { cwd?: string; env?: Record<string, string> } = {},
-    commandId: string
+    commandId: string,
+    lockOptions: { background?: boolean } = {}
   ): Promise<ServiceResult<{ continueStreaming: Promise<void> }>> {
-    try {
-      const { cwd, env } = options;
+    const { background = false } = lockOptions;
+    const lock = this.getSessionLock(sessionId);
 
-      // Get or create session on demand
-      let sessionResult = await this.getSession(sessionId);
-
-      // If session doesn't exist, create it automatically
-      if (
-        !sessionResult.success &&
-        (sessionResult.error!.details as InternalErrorContext)
-          ?.originalError === 'Session not found'
-      ) {
-        sessionResult = await this.createSession({
-          id: sessionId,
-          cwd: cwd || '/workspace'
-        });
-      }
-
-      if (!sessionResult.success) {
-        return sessionResult as ServiceResult<{
-          continueStreaming: Promise<void>;
-        }>;
-      }
-
-      const session = sessionResult.data;
-
-      const generator = session.execStream(command, { commandId, cwd, env });
-
-      // Process 'start' event synchronously to capture PID before returning
-      // All other events stream in background via continueStreaming promise
-      // getLogs() awaits continueStreaming for completed processes to ensure
-      // all output is captured (deterministic, no timing heuristics)
-      const firstResult = await generator.next();
-
-      if (firstResult.done) {
-        return {
-          success: true,
-          data: { continueStreaming: Promise.resolve() }
-        };
-      }
-
-      await onEvent(firstResult.value);
-
-      // If already complete/error, drain remaining events synchronously
-      if (
-        firstResult.value.type === 'complete' ||
-        firstResult.value.type === 'error'
-      ) {
-        for await (const event of generator) {
-          await onEvent(event);
-        }
-        return {
-          success: true,
-          data: { continueStreaming: Promise.resolve() }
-        };
-      }
-
-      // Continue streaming remaining events in background
-      const continueStreaming = (async () => {
-        try {
-          for await (const event of generator) {
-            await onEvent(event);
-          }
-        } catch (error) {
-          const errorMessage =
-            error instanceof Error ? error.message : 'Unknown error';
-          this.logger.error(
-            'Error during streaming',
-            error instanceof Error ? error : undefined,
-            {
-              sessionId,
-              commandId,
-              originalError: errorMessage
-            }
-          );
-          throw error;
-        }
-      })();
-
-      return {
-        success: true,
-        data: { continueStreaming }
-      };
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(
-        'Failed to execute streaming command',
-        error instanceof Error ? error : undefined,
-        {
-          sessionId,
-          command
-        }
+    // For background mode: acquire lock, process start event, release lock, continue streaming
+    // For foreground mode: acquire lock, process all events, release lock
+    if (background) {
+      return this.executeStreamBackground(
+        sessionId,
+        command,
+        onEvent,
+        options,
+        commandId,
+        lock
       );
-
-      return {
-        success: false,
-        error: {
-          message: `Failed to execute streaming command '${command}' in session '${sessionId}': ${errorMessage}`,
-          code: ErrorCode.STREAM_START_ERROR,
-          details: {
-            command,
-            stderr: errorMessage
-          } satisfies CommandErrorContext
-        }
-      };
+    } else {
+      return this.executeStreamForeground(
+        sessionId,
+        command,
+        onEvent,
+        options,
+        commandId,
+        lock
+      );
     }
   }
 
   /**
-   * Kill a running command in a session
+   * Foreground streaming: hold lock until all events are processed
+   */
+  private async executeStreamForeground(
+    sessionId: string,
+    command: string,
+    onEvent: (event: ExecEvent) => Promise<void>,
+    options: { cwd?: string; env?: Record<string, string> },
+    commandId: string,
+    lock: Mutex
+  ): Promise<ServiceResult<{ continueStreaming: Promise<void> }>> {
+    return lock.runExclusive(async () => {
+      try {
+        const { cwd, env } = options;
+
+        const sessionResult = await this.getOrCreateSession(sessionId, {
+          cwd: cwd || '/workspace'
+        });
+
+        if (!sessionResult.success) {
+          return sessionResult as ServiceResult<{
+            continueStreaming: Promise<void>;
+          }>;
+        }
+
+        const session = sessionResult.data;
+        const generator = session.execStream(command, { commandId, cwd, env });
+
+        // Process ALL events under lock
+        for await (const event of generator) {
+          await onEvent(event);
+        }
+
+        return {
+          success: true,
+          data: { continueStreaming: Promise.resolve() }
+        };
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : 'Unknown error';
+        this.logger.error(
+          'Failed to execute streaming command',
+          error instanceof Error ? error : undefined,
+          {
+            sessionId,
+            command
+          }
+        );
+
+        return {
+          success: false,
+          error: {
+            message: `Failed to execute streaming command '${command}' in session '${sessionId}': ${errorMessage}`,
+            code: ErrorCode.STREAM_START_ERROR,
+            details: {
+              command,
+              stderr: errorMessage
+            } satisfies CommandErrorContext
+          }
+        };
+      }
+    });
+  }
+
+  /**
+   * Background streaming: hold lock only until 'start' event, then release.
+   *
+   * This mode is used for long-running background processes (like servers)
+   * where we want to:
+   * 1. Ensure the process starts successfully (verified by 'start' event)
+   * 2. Allow other commands to run while the background process continues
+   *
+   * IMPORTANT SAFETY NOTE: After lock release, session state (cwd, env vars)
+   * may change while the background process is running. This is intentional -
+   * background processes capture their environment at start time and are not
+   * affected by subsequent session state changes. The process runs in its own
+   * shell context independent of the session's interactive state.
+   *
+   * Use cases:
+   * - Starting web servers (python -m http.server, node server.js)
+   * - Starting background services
+   * - Any long-running process that should not block other operations
+   */
+  private async executeStreamBackground(
+    sessionId: string,
+    command: string,
+    onEvent: (event: ExecEvent) => Promise<void>,
+    options: { cwd?: string; env?: Record<string, string> },
+    commandId: string,
+    lock: Mutex
+  ): Promise<ServiceResult<{ continueStreaming: Promise<void> }>> {
+    // Acquire lock for startup phase only
+    const startupResult = await lock.runExclusive(async () => {
+      try {
+        const { cwd, env } = options;
+
+        const sessionResult = await this.getOrCreateSession(sessionId, {
+          cwd: cwd || '/workspace'
+        });
+
+        if (!sessionResult.success) {
+          return { success: false as const, error: sessionResult.error };
+        }
+
+        const session = sessionResult.data;
+        const generator = session.execStream(command, { commandId, cwd, env });
+
+        // Process 'start' event under lock
+        const firstResult = await generator.next();
+
+        if (firstResult.done) {
+          return {
+            success: true as const,
+            generator: null,
+            firstEvent: null
+          };
+        }
+
+        await onEvent(firstResult.value);
+
+        // If already complete/error, drain remaining events under lock
+        if (
+          firstResult.value.type === 'complete' ||
+          firstResult.value.type === 'error'
+        ) {
+          for await (const event of generator) {
+            await onEvent(event);
+          }
+          return {
+            success: true as const,
+            generator: null,
+            firstEvent: null
+          };
+        }
+
+        // Return generator for background processing (lock will be released)
+        return {
+          success: true as const,
+          generator,
+          firstEvent: firstResult.value
+        };
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : 'Unknown error';
+        this.logger.error(
+          'Failed to start streaming command',
+          error instanceof Error ? error : undefined,
+          {
+            sessionId,
+            command
+          }
+        );
+
+        return {
+          success: false as const,
+          error: {
+            message: `Failed to execute streaming command '${command}' in session '${sessionId}': ${errorMessage}`,
+            code: ErrorCode.STREAM_START_ERROR,
+            details: {
+              command,
+              stderr: errorMessage
+            } satisfies CommandErrorContext
+          }
+        };
+      }
+    });
+
+    if (!startupResult.success) {
+      return {
+        success: false,
+        error: startupResult.error!
+      };
+    }
+
+    // If generator is null, everything completed during startup
+    if (!startupResult.generator) {
+      return {
+        success: true,
+        data: { continueStreaming: Promise.resolve() }
+      };
+    }
+
+    // Continue streaming remaining events WITHOUT lock
+    const continueStreaming = (async () => {
+      try {
+        for await (const event of startupResult.generator!) {
+          await onEvent(event);
+        }
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : 'Unknown error';
+        this.logger.error(
+          'Error during background streaming',
+          error instanceof Error ? error : undefined,
+          {
+            sessionId,
+            commandId,
+            originalError: errorMessage
+          }
+        );
+        throw error;
+      }
+    })();
+
+    return {
+      success: true,
+      data: { continueStreaming }
+    };
+  }
+
+  /**
+   * Kill a running command in a session.
+   * Does not acquire session lock - kill signals must work immediately,
+   * even while another command is queued or running.
    */
   async killCommand(
     sessionId: string,
@@ -363,82 +693,28 @@ export class SessionManager {
   }
 
   /**
-   * Set environment variables on a session
+   * Set environment variables on a session atomically.
+   * All exports are executed under a single lock acquisition.
    */
   async setEnvVars(
     sessionId: string,
     envVars: Record<string, string>
   ): Promise<ServiceResult<void>> {
-    try {
-      // Get or create session on demand
-      let sessionResult = await this.getSession(sessionId);
-
-      // If session doesn't exist, create it automatically
-      if (
-        !sessionResult.success &&
-        (sessionResult.error!.details as InternalErrorContext)
-          ?.originalError === 'Session not found'
-      ) {
-        sessionResult = await this.createSession({
-          id: sessionId,
-          cwd: '/workspace'
-        });
-      }
-
-      if (!sessionResult.success) {
-        return sessionResult as ServiceResult<void>;
-      }
-
-      const session = sessionResult.data;
-
-      // Export each environment variable in the running bash session
+    return this.withSession(sessionId, async (exec) => {
       for (const [key, value] of Object.entries(envVars)) {
         // Escape the value for safe bash usage
         const escapedValue = value.replace(/'/g, "'\\''");
         const exportCommand = `export ${key}='${escapedValue}'`;
 
-        const result = await session.exec(exportCommand);
+        const result = await exec(exportCommand);
 
         if (result.exitCode !== 0) {
-          return {
-            success: false,
-            error: {
-              message: `Failed to set environment variable '${key}' in session '${sessionId}': ${result.stderr}`,
-              code: ErrorCode.COMMAND_EXECUTION_ERROR,
-              details: {
-                command: `export ${key}='...'`,
-                exitCode: result.exitCode,
-                stderr: result.stderr
-              } satisfies CommandErrorContext
-            }
-          };
+          throw new Error(
+            `Failed to set environment variable '${key}': ${result.stderr}`
+          );
         }
       }
-
-      return {
-        success: true
-      };
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(
-        'Failed to set environment variables',
-        error instanceof Error ? error : undefined,
-        { sessionId }
-      );
-
-      return {
-        success: false,
-        error: {
-          message: `Failed to set environment variables in session '${sessionId}': ${errorMessage}`,
-          code: ErrorCode.COMMAND_EXECUTION_ERROR,
-          details: {
-            command: 'export',
-            stderr: errorMessage
-          } satisfies CommandErrorContext
-        }
-      };
-    }
+    });
   }
 
   /**
@@ -464,6 +740,8 @@ export class SessionManager {
 
       await session.destroy();
       this.sessions.delete(sessionId);
+      this.sessionLocks.delete(sessionId);
+      this.creatingLocks.delete(sessionId);
 
       return {
         success: true
@@ -544,5 +822,7 @@ export class SessionManager {
     }
 
     this.sessions.clear();
+    this.sessionLocks.clear();
+    this.creatingLocks.clear();
   }
 }

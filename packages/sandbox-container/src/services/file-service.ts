@@ -97,229 +97,152 @@ export class FileService implements FileSystemOperations {
         };
       }
 
-      // 2. Check if file exists using session-aware check
-      const existsResult = await this.exists(path, sessionId);
-      if (!existsResult.success) {
-        return {
-          success: false,
-          error: existsResult.error
-        };
-      }
-
-      if (!existsResult.data) {
-        return {
-          success: false,
-          error: {
-            message: `File not found: ${path}`,
-            code: ErrorCode.FILE_NOT_FOUND,
-            details: {
-              path,
-              operation: Operation.FILE_READ
-            } satisfies FileNotFoundContext
-          }
-        };
-      }
-
-      // 3. Get file size using stat
+      // 2. Execute exists→stat→mime→cat sequence atomically within session
       const escapedPath = shellEscape(path);
-      const statCommand = `stat -c '%s' ${escapedPath} 2>/dev/null`;
-      const statResult = await this.sessionManager.executeInSession(
-        sessionId,
-        statCommand
-      );
 
-      if (!statResult.success) {
-        return {
-          success: false,
-          error: {
-            message: `Failed to get file size for '${path}'`,
-            code: ErrorCode.FILESYSTEM_ERROR,
-            details: {
-              path,
-              operation: Operation.FILE_READ,
-              stderr: 'Command execution failed'
-            } satisfies FileSystemContext
-          }
-        };
-      }
-
-      if (statResult.data.exitCode !== 0) {
-        return {
-          success: false,
-          error: {
-            message: `Failed to get file size for '${path}'`,
-            code: ErrorCode.FILESYSTEM_ERROR,
-            details: {
-              path,
-              operation: Operation.FILE_READ,
-              stderr: statResult.data.stderr
-            } satisfies FileSystemContext
-          }
-        };
-      }
-
-      const fileSize = parseInt(statResult.data.stdout.trim(), 10);
-
-      if (Number.isNaN(fileSize)) {
-        return {
-          success: false,
-          error: {
-            message: `Failed to parse file size for '${path}': invalid stat output`,
-            code: ErrorCode.FILESYSTEM_ERROR,
-            details: {
-              path,
-              operation: Operation.FILE_READ,
-              stderr: `Unexpected stat output: ${statResult.data.stdout}`
-            } satisfies FileSystemContext
-          }
-        };
-      }
-
-      // 4. Detect MIME type using file command
-      const mimeCommand = `file --mime-type -b ${escapedPath}`;
-      const mimeResult = await this.sessionManager.executeInSession(
-        sessionId,
-        mimeCommand
-      );
-
-      if (!mimeResult.success) {
-        return {
-          success: false,
-          error: {
-            message: `Failed to detect MIME type for '${path}'`,
-            code: ErrorCode.FILESYSTEM_ERROR,
-            details: {
-              path,
-              operation: Operation.FILE_READ,
-              stderr: 'Command execution failed'
-            } satisfies FileSystemContext
-          }
-        };
-      }
-
-      if (mimeResult.data.exitCode !== 0) {
-        return {
-          success: false,
-          error: {
-            message: `Failed to detect MIME type for '${path}'`,
-            code: ErrorCode.FILESYSTEM_ERROR,
-            details: {
-              path,
-              operation: Operation.FILE_READ,
-              stderr: mimeResult.data.stderr
-            } satisfies FileSystemContext
-          }
-        };
-      }
-
-      const mimeType = mimeResult.data.stdout.trim();
-
-      // 5. Determine if file is binary based on MIME type
-      const isBinary = this.isBinaryMimeType(mimeType);
-
-      // 6. Read file with appropriate encoding
-      // Respect user's encoding preference if provided, otherwise use MIME-based detection
-      let actualEncoding: 'utf-8' | 'base64';
-      if (options.encoding === 'base64') {
-        actualEncoding = 'base64';
-      } else if (options.encoding === 'utf-8' || options.encoding === 'utf8') {
-        actualEncoding = 'utf-8';
-      } else {
-        // No explicit encoding requested - use MIME-based detection (original behavior)
-        actualEncoding = isBinary ? 'base64' : 'utf-8';
-      }
-
-      let content: string;
-      if (actualEncoding === 'base64') {
-        // Binary files: read as base64, return as-is (DO NOT decode)
-        const base64Command = `base64 -w 0 < ${escapedPath}`;
-        const base64Result = await this.sessionManager.executeInSession(
-          sessionId,
-          base64Command
-        );
-
-        if (!base64Result.success) {
-          return {
-            success: false,
-            error: {
-              message: `Failed to read binary file '${path}': Command execution failed`,
-              code: ErrorCode.FILESYSTEM_ERROR,
+      return this.sessionManager
+        .withSession(sessionId, async (exec) => {
+          // Check if file exists
+          const existsResult = await exec(`test -e ${escapedPath}`);
+          if (existsResult.exitCode !== 0) {
+            throw {
+              code: ErrorCode.FILE_NOT_FOUND,
+              message: `File not found: ${path}`,
               details: {
                 path,
                 operation: Operation.FILE_READ
-              } satisfies FileSystemContext
-            }
-          };
-        }
+              } satisfies FileNotFoundContext
+            };
+          }
 
-        if (base64Result.data.exitCode !== 0) {
-          return {
-            success: false,
-            error: {
-              message: `Failed to read binary file '${path}': ${base64Result.data.stderr}`,
+          // Get file size using stat
+          const statCommand = `stat -c '%s' ${escapedPath} 2>/dev/null`;
+          const statResult = await exec(statCommand);
+
+          if (statResult.exitCode !== 0) {
+            throw {
               code: ErrorCode.FILESYSTEM_ERROR,
+              message: `Failed to get file size for '${path}'`,
               details: {
                 path,
                 operation: Operation.FILE_READ,
-                exitCode: base64Result.data.exitCode,
-                stderr: base64Result.data.stderr
+                stderr: statResult.stderr
               } satisfies FileSystemContext
-            }
-          };
-        }
+            };
+          }
 
-        content = base64Result.data.stdout.trim();
-      } else {
-        // Text files: read normally
-        const catCommand = `cat ${escapedPath}`;
-        const catResult = await this.sessionManager.executeInSession(
-          sessionId,
-          catCommand
-        );
+          const fileSize = parseInt(statResult.stdout.trim(), 10);
 
-        if (!catResult.success) {
-          return {
-            success: false,
-            error: {
-              message: `Failed to read text file '${path}': Command execution failed`,
+          if (Number.isNaN(fileSize)) {
+            throw {
               code: ErrorCode.FILESYSTEM_ERROR,
-              details: {
-                path,
-                operation: Operation.FILE_READ
-              } satisfies FileSystemContext
-            }
-          };
-        }
-
-        if (catResult.data.exitCode !== 0) {
-          return {
-            success: false,
-            error: {
-              message: `Failed to read text file '${path}': ${catResult.data.stderr}`,
-              code: ErrorCode.FILESYSTEM_ERROR,
+              message: `Failed to parse file size for '${path}': invalid stat output`,
               details: {
                 path,
                 operation: Operation.FILE_READ,
-                exitCode: catResult.data.exitCode,
-                stderr: catResult.data.stderr
+                stderr: `Unexpected stat output: ${statResult.stdout}`
               } satisfies FileSystemContext
+            };
+          }
+
+          // Detect MIME type using file command
+          const mimeCommand = `file --mime-type -b ${escapedPath}`;
+          const mimeResult = await exec(mimeCommand);
+
+          if (mimeResult.exitCode !== 0) {
+            throw {
+              code: ErrorCode.FILESYSTEM_ERROR,
+              message: `Failed to detect MIME type for '${path}'`,
+              details: {
+                path,
+                operation: Operation.FILE_READ,
+                stderr: mimeResult.stderr
+              } satisfies FileSystemContext
+            };
+          }
+
+          const mimeType = mimeResult.stdout.trim();
+
+          // Determine if file is binary based on MIME type
+          const isBinary = this.isBinaryMimeType(mimeType);
+
+          // Read file with appropriate encoding
+          // Respect user's encoding preference if provided, otherwise use MIME-based detection
+          let actualEncoding: 'utf-8' | 'base64';
+          if (options.encoding === 'base64') {
+            actualEncoding = 'base64';
+          } else if (
+            options.encoding === 'utf-8' ||
+            options.encoding === 'utf8'
+          ) {
+            actualEncoding = 'utf-8';
+          } else {
+            // No explicit encoding requested - use MIME-based detection (original behavior)
+            actualEncoding = isBinary ? 'base64' : 'utf-8';
+          }
+
+          let content: string;
+          if (actualEncoding === 'base64') {
+            // Binary files: read as base64, return as-is (DO NOT decode)
+            const base64Command = `base64 -w 0 < ${escapedPath}`;
+            const base64Result = await exec(base64Command);
+
+            if (base64Result.exitCode !== 0) {
+              throw {
+                code: ErrorCode.FILESYSTEM_ERROR,
+                message: `Failed to read binary file '${path}': ${base64Result.stderr}`,
+                details: {
+                  path,
+                  operation: Operation.FILE_READ,
+                  exitCode: base64Result.exitCode,
+                  stderr: base64Result.stderr
+                } satisfies FileSystemContext
+              };
+            }
+
+            content = base64Result.stdout.trim();
+          } else {
+            // Text files: read normally
+            const catCommand = `cat ${escapedPath}`;
+            const catResult = await exec(catCommand);
+
+            if (catResult.exitCode !== 0) {
+              throw {
+                code: ErrorCode.FILESYSTEM_ERROR,
+                message: `Failed to read text file '${path}': ${catResult.stderr}`,
+                details: {
+                  path,
+                  operation: Operation.FILE_READ,
+                  exitCode: catResult.exitCode,
+                  stderr: catResult.stderr
+                } satisfies FileSystemContext
+              };
+            }
+
+            content = catResult.stdout;
+          }
+
+          return {
+            content,
+            metadata: {
+              encoding: actualEncoding,
+              isBinary: actualEncoding === 'base64',
+              mimeType,
+              size: fileSize
             }
           };
-        }
+        })
+        .then((result) => {
+          if (!result.success) {
+            return result as ServiceResult<string, FileMetadata>;
+          }
 
-        content = catResult.data.stdout;
-      }
-
-      return {
-        success: true,
-        data: content,
-        metadata: {
-          encoding: actualEncoding,
-          isBinary: actualEncoding === 'base64',
-          mimeType,
-          size: fileSize
-        }
-      };
+          return {
+            success: true,
+            data: result.data.content,
+            metadata: result.data.metadata
+          };
+        });
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
@@ -490,78 +413,55 @@ export class FileService implements FileSystemOperations {
         };
       }
 
-      // 2. Check if file exists using session-aware check
-      const existsResult = await this.exists(path, sessionId);
-      if (!existsResult.success) {
-        return existsResult as ServiceResult<void>;
-      }
+      // 2. Execute exists→isdir→rm sequence atomically within session
+      const escapedPath = shellEscape(path);
 
-      if (!existsResult.data) {
-        return {
-          success: false,
-          error: {
-            message: `File not found: ${path}`,
+      return this.sessionManager.withSession(sessionId, async (exec) => {
+        // Check if file exists
+        const existsResult = await exec(`test -e ${escapedPath}`);
+        if (existsResult.exitCode !== 0) {
+          throw {
             code: ErrorCode.FILE_NOT_FOUND,
+            message: `File not found: ${path}`,
             details: {
               path,
               operation: Operation.FILE_DELETE
             } satisfies FileNotFoundContext
-          }
-        };
-      }
+          };
+        }
 
-      // 3. Check if path is a directory (deleteFile only works on files)
-      const statResult = await this.stat(path, sessionId);
-      if (statResult.success && statResult.data.isDirectory) {
-        return {
-          success: false,
-          error: {
-            message: `Cannot delete directory with deleteFile() at '${path}'. Use exec('rm -rf <path>') instead.`,
+        // Check if path is a directory (deleteFile only works on files)
+        const isDirResult = await exec(`test -d ${escapedPath}`);
+        if (isDirResult.exitCode === 0) {
+          throw {
             code: ErrorCode.IS_DIRECTORY,
+            message: `Cannot delete directory with deleteFile() at '${path}'. Use exec('rm -rf <path>') instead.`,
             details: {
               path,
               operation: Operation.FILE_DELETE
             } satisfies FileSystemContext
-          }
-        };
-      }
+          };
+        }
 
-      // 4. Delete file using SessionManager with rm command
-      const escapedPath = shellEscape(path);
-      const command = `rm ${escapedPath}`;
+        // Delete file using rm command
+        const command = `rm ${escapedPath}`;
+        const result = await exec(command);
 
-      const execResult = await this.sessionManager.executeInSession(
-        sessionId,
-        command
-      );
-
-      if (!execResult.success) {
-        return execResult as ServiceResult<void>;
-      }
-
-      const result = execResult.data;
-
-      if (result.exitCode !== 0) {
-        return {
-          success: false,
-          error: {
+        if (result.exitCode !== 0) {
+          throw {
+            code: ErrorCode.FILESYSTEM_ERROR,
             message: `Failed to delete file '${path}': ${
               result.stderr || `exit code ${result.exitCode}`
             }`,
-            code: ErrorCode.FILESYSTEM_ERROR,
             details: {
               path,
               operation: Operation.FILE_DELETE,
               exitCode: result.exitCode,
               stderr: result.stderr
             } satisfies FileSystemContext
-          }
-        };
-      }
-
-      return {
-        success: true
-      };
+          };
+        }
+      });
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';

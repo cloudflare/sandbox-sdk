@@ -38,7 +38,8 @@ const mockSessionManager = {
   createSession: vi.fn(),
   deleteSession: vi.fn(),
   listSessions: vi.fn(),
-  destroy: vi.fn()
+  destroy: vi.fn(),
+  withSession: vi.fn()
 } as unknown as SessionManager;
 
 describe('GitService', () => {
@@ -57,6 +58,50 @@ describe('GitService', () => {
       isValid: true,
       errors: []
     });
+
+    // Mock withSession to execute the callback immediately with a mock exec function
+    mocked(mockSessionManager.withSession).mockImplementation(
+      async (_sessionId, callback) => {
+        try {
+          const mockExec = async (
+            cmd: string,
+            options?: { cwd?: string; env?: Record<string, string> }
+          ) => {
+            // Delegate to executeInSession mock for compatibility with existing tests
+            // Only pass cwd if it's defined to match test expectations
+            const result =
+              options?.cwd !== undefined
+                ? await mockSessionManager.executeInSession(
+                    _sessionId,
+                    cmd,
+                    options.cwd
+                  )
+                : await mockSessionManager.executeInSession(_sessionId, cmd);
+            if (result.success) {
+              return result.data;
+            }
+            // If executeInSession returned an error, throw it to propagate to withSession
+            throw result.error;
+          };
+          const data = await callback(mockExec);
+          return { success: true, data } as any;
+        } catch (error: any) {
+          // If error has code/message/details, return it as-is
+          if (error && typeof error === 'object' && 'code' in error) {
+            return { success: false, error } as any;
+          }
+          // Otherwise wrap as generic error
+          return {
+            success: false,
+            error: {
+              code: 'INTERNAL_ERROR',
+              message: error instanceof Error ? error.message : 'Unknown error',
+              details: {}
+            }
+          } as any;
+        }
+      }
+    );
 
     gitService = new GitService(
       mockSecurityService,
