@@ -10,6 +10,7 @@ set -e
 # This script handles multiple container variants:
 # - <worker-name>: Base image container (no Python, default)
 # - <worker-name>-python: Python image container
+# - <worker-name>-opencode: OpenCode image container
 #
 # Environment variables required:
 # - CLOUDFLARE_API_TOKEN
@@ -33,14 +34,16 @@ RAW_OUTPUT=$(npx wrangler containers list 2>&1)
 
 CONTAINER_ID=""
 CONTAINER_PYTHON_ID=""
+CONTAINER_OPENCODE_ID=""
 
 # Check if output looks like JSON (starts with '[')
 if echo "$RAW_OUTPUT" | grep -q '^\['; then
   echo "✓ Got JSON output from wrangler containers list"
 
-  # Parse JSON to find both containers
+  # Parse JSON to find all containers
   CONTAINER_ID=$(echo "$RAW_OUTPUT" | jq -r ".[] | select(.name==\"$WORKER_NAME\") | .id" 2>/dev/null || echo "")
   CONTAINER_PYTHON_ID=$(echo "$RAW_OUTPUT" | jq -r ".[] | select(.name==\"$WORKER_NAME-python\") | .id" 2>/dev/null || echo "")
+  CONTAINER_OPENCODE_ID=$(echo "$RAW_OUTPUT" | jq -r ".[] | select(.name==\"$WORKER_NAME-opencode\") | .id" 2>/dev/null || echo "")
 
   if [ -n "$CONTAINER_ID" ]; then
     echo "✓ Found base container: $CONTAINER_ID"
@@ -54,7 +57,13 @@ if echo "$RAW_OUTPUT" | grep -q '^\['; then
     echo "⚠️  No python container found for $WORKER_NAME-python"
   fi
 
-  if [ -z "$CONTAINER_ID" ] && [ -z "$CONTAINER_PYTHON_ID" ]; then
+  if [ -n "$CONTAINER_OPENCODE_ID" ]; then
+    echo "✓ Found opencode container: $CONTAINER_OPENCODE_ID"
+  else
+    echo "⚠️  No opencode container found for $WORKER_NAME-opencode"
+  fi
+
+  if [ -z "$CONTAINER_ID" ] && [ -z "$CONTAINER_PYTHON_ID" ] && [ -z "$CONTAINER_OPENCODE_ID" ]; then
     echo "Available containers:"
     echo "$RAW_OUTPUT" | jq -r '.[].name' 2>/dev/null || echo "(unable to parse container names)"
   fi
@@ -102,6 +111,7 @@ CLEANUP_FAILED=false
 
 delete_container "$CONTAINER_ID" "base" || CLEANUP_FAILED=true
 delete_container "$CONTAINER_PYTHON_ID" "python" || CLEANUP_FAILED=true
+delete_container "$CONTAINER_OPENCODE_ID" "opencode" || CLEANUP_FAILED=true
 
 if [ "$CLEANUP_FAILED" = true ]; then
   echo "=== Cleanup completed with errors ==="
