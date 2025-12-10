@@ -80,12 +80,6 @@ export class SessionManager {
     // We need to create the session - set up coordination
     // Since we hold the lock, we can safely set creatingLocks without race
     const createPromise = (async (): Promise<Session> => {
-      // Double-check after acquiring coordination (another request may have finished)
-      const doubleCheck = this.sessions.get(sessionId);
-      if (doubleCheck) {
-        return doubleCheck;
-      }
-
       const session = new Session({
         id: sessionId,
         cwd: options.cwd || '/workspace',
