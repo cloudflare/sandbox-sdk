@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'bun:test';
 import type { Logger } from '@repo/shared';
-import type { ValidationFailedContext } from '@repo/shared/errors';
+import { ErrorCode, type ValidationFailedContext } from '@repo/shared/errors';
 import type {
   CloneOptions,
   ServiceResult
@@ -275,7 +275,7 @@ describe('GitService', () => {
 
       expect(result.success).toBe(false);
       if (!result.success) {
-        expect(result.error.code).toBe('REPO_NOT_FOUND');
+        expect(result.error.code).toBe(ErrorCode.GIT_REPOSITORY_NOT_FOUND);
         expect(result.error.details?.exitCode).toBe(128);
         expect(result.error.details?.stderr).toContain('repository not found');
       }
@@ -357,7 +357,7 @@ describe('GitService', () => {
 
       expect(result.success).toBe(false);
       if (!result.success) {
-        expect(result.error.code).toBe('GIT_INVALID_REF');
+        expect(result.error.code).toBe(ErrorCode.GIT_BRANCH_NOT_FOUND);
         expect(result.error.details?.stderr).toContain('did not match');
       }
     });
@@ -448,7 +448,7 @@ describe('GitService', () => {
 
       expect(result.success).toBe(false);
       if (!result.success) {
-        expect(result.error.code).toBe('NOT_A_GIT_REPO');
+        expect(result.error.code).toBe(ErrorCode.GIT_OPERATION_FAILED);
         expect(result.error.details?.exitCode).toBe(128);
       }
     });
