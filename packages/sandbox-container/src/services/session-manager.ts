@@ -285,7 +285,8 @@ export class SessionManager {
    * The lock is held for the entire callback duration, preventing
    * other operations from interleaving.
    *
-   * WARNING: Do not call withSession recursively on the same session - it will deadlock.
+   * WARNING: Do not call withSession or executeInSession recursively on the same
+   * session - it will deadlock. Cross-session calls are safe.
    *
    * @param sessionId - The session identifier
    * @param fn - Callback that receives an exec function for running commands
@@ -709,9 +710,15 @@ export class SessionManager {
         const result = await exec(exportCommand);
 
         if (result.exitCode !== 0) {
-          throw new Error(
-            `Failed to set environment variable '${key}': ${result.stderr}`
-          );
+          throw {
+            code: ErrorCode.COMMAND_EXECUTION_ERROR,
+            message: `Failed to set environment variable '${key}': ${result.stderr}`,
+            details: {
+              command: exportCommand,
+              exitCode: result.exitCode,
+              stderr: result.stderr
+            } satisfies CommandErrorContext
+          };
         }
       }
     });
