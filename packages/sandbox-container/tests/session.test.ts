@@ -76,10 +76,10 @@ describe('Session', () => {
       expect(session.isReady()).toBe(true);
     });
 
-    it('should fall back to /tmp when cwd does not exist (issue #288)', async () => {
+    it('should fall back to home directory when cwd does not exist (issue #288)', async () => {
       // Session cwd only affects shell startup directory - it's not critical.
-      // If cwd doesn't exist, we fall back to /tmp since individual commands
-      // can specify their own cwd anyway.
+      // If cwd doesn't exist, we fall back to the home directory since individual
+      // commands can specify their own cwd anyway.
       session = new Session({
         id: 'test-session-nonexistent-cwd',
         cwd: '/nonexistent/path/that/does/not/exist'
@@ -92,12 +92,12 @@ describe('Session', () => {
       // Verify we can execute commands
       const result = await session.exec('pwd');
       expect(result.exitCode).toBe(0);
-      // The shell should have started in /tmp since the requested cwd doesn't exist
-      // On macOS, /tmp is a symlink to /private/tmp
-      expect(result.stdout.trim()).toMatch(/^(\/tmp|\/private\/tmp)$/);
+      // The shell should have started in the home directory since the requested cwd doesn't exist
+      const homeDir = process.env.HOME || '/root';
+      expect(result.stdout.trim()).toBe(homeDir);
     });
 
-    it('should fall back to /tmp when workspace is deleted before session creation (issue #288)', async () => {
+    it('should fall back to home directory when workspace is deleted before session creation (issue #288)', async () => {
       // Simulate the exact scenario from issue #288
       // Create a workspace, then delete it, then try to create a session with it
       const workspaceDir = join(testDir, 'workspace');
@@ -112,7 +112,7 @@ describe('Session', () => {
         cwd: workspaceDir
       });
 
-      // Should succeed - falls back to /tmp
+      // Should succeed - falls back to home directory
       await session.initialize();
 
       expect(session.isReady()).toBe(true);
