@@ -1868,12 +1868,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   async gitCheckout(
     repoUrl: string,
-    options: { branch?: string; targetDir?: string; sessionId?: string }
+    options?: { branch?: string; targetDir?: string; sessionId?: string }
   ) {
-    const session = options.sessionId ?? (await this.ensureDefaultSession());
+    const session = options?.sessionId ?? (await this.ensureDefaultSession());
     return this.client.git.checkout(repoUrl, session, {
-      branch: options.branch,
-      targetDir: options.targetDir
+      branch: options?.branch,
+      targetDir: options?.targetDir
     });
   }
 
