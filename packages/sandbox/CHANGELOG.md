@@ -1,5 +1,29 @@
 # @cloudflare/sandbox
 
+## 0.6.5
+
+### Patch Changes
+
+- [#290](https://github.com/cloudflare/sandbox-sdk/pull/290) [`2322c80`](https://github.com/cloudflare/sandbox-sdk/commit/2322c806fccc9c598e97dc337cc7e2db7ffbc9d2) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Add per-session mutex locking to prevent concurrent command execution race conditions
+
+- [#280](https://github.com/cloudflare/sandbox-sdk/pull/280) [`5d87b35`](https://github.com/cloudflare/sandbox-sdk/commit/5d87b351fa554a32cf7a274b497d43f041cc9c1a) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Add standalone binary support for arbitrary Dockerfiles
+
+  Users can now add sandbox capabilities to any Docker image:
+
+  ```dockerfile
+  FROM your-image:tag
+
+  COPY --from=cloudflare/sandbox:VERSION /container-server/sandbox /sandbox
+  ENTRYPOINT ["/sandbox"]
+
+  # Optional: run your own startup command
+  CMD ["/your-entrypoint.sh"]
+  ```
+
+  The `/sandbox` binary starts the HTTP API server, then executes any CMD as a child process with signal forwarding.
+
+  Includes backwards compatibility for existing custom startup scripts.
+
 ## 0.6.4
 
 ### Patch Changes
@@ -66,10 +90,10 @@
 
   ```dockerfile
   # Before
-  FROM cloudflare/sandbox:0.6.4
+  FROM cloudflare/sandbox:0.6.5
 
   # After
-  FROM cloudflare/sandbox:0.6.4-python
+  FROM cloudflare/sandbox:0.6.5-python
   ```
 
   Without this change, Python execution will fail with `PYTHON_NOT_AVAILABLE` error.
