@@ -417,22 +417,17 @@ describe('Session State Isolation Workflow', () => {
       const startData = (await startResponse.json()) as Process;
       const processId = startData.id;
 
-      // Wait for process to be registered
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-
-      // List processes from session2 - should see session1's process (shared process table)
+      // List processes from session2 - startProcess returns after registration,
+      // so process is immediately visible (shared process table)
       const listResponse = await fetch(`${workerUrl}/api/process/list`, {
         method: 'GET',
         headers: createTestHeaders(sandboxId, session2Id)
       });
-
       expect(listResponse.status).toBe(200);
-      const listData = (await listResponse.json()) as Process[];
-      const processes = listData;
+      const processes = (await listResponse.json()) as Process[];
       expect(Array.isArray(processes)).toBe(true);
-
-      // Find our process in the list
       const ourProcess = processes.find((p) => p.id === processId);
+
       expect(ourProcess).toBeTruthy();
       if (!ourProcess) throw new Error('Process not found');
 
@@ -449,19 +444,23 @@ describe('Session State Isolation Workflow', () => {
 
       expect(killResponse.status).toBe(200);
 
-      // Verify process is killed (check from session1)
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      // Poll until process status changes from running (check from session1)
+      let verifyData: Process | undefined;
+      for (let i = 0; i < 10; i++) {
+        const verifyResponse = await fetch(
+          `${workerUrl}/api/process/${processId}`,
+          {
+            method: 'GET',
+            headers: createTestHeaders(sandboxId, session1Id)
+          }
+        );
+        verifyData = (await verifyResponse.json()) as Process;
+        if (verifyData.status !== 'running') break;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
 
-      const verifyResponse = await fetch(
-        `${workerUrl}/api/process/${processId}`,
-        {
-          method: 'GET',
-          headers: createTestHeaders(sandboxId, session1Id)
-        }
-      );
-
-      const verifyData = (await verifyResponse.json()) as Process;
-      expect(verifyData.status).not.toBe('running');
+      expect(verifyData).toBeTruthy();
+      expect(verifyData!.status).not.toBe('running');
     }, 90000);
 
     test('should share file system between sessions (by design)', async () => {

@@ -298,8 +298,19 @@ const interval = setInterval(() => {
     expect(processData.id).toBeTruthy();
     const processId = processData.id;
 
-    // Wait for process to complete
-    await new Promise((resolve) => setTimeout(resolve, 3000));
+    // Wait for process to complete by watching for "Done" in output
+    const waitLogResponse = await fetch(
+      `${workerUrl}/api/process/${processId}/waitForLog`,
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          pattern: 'Done',
+          timeout: 10000
+        })
+      }
+    );
+    expect(waitLogResponse.status).toBe(200);
 
     // Get process logs
     const logsResponse = await fetch(
@@ -583,15 +594,11 @@ const interval = setInterval(() => {
     });
     const process2 = (await process2Response.json()) as Process;
 
-    // Wait for processes to be registered
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-
-    // List all processes
+    // List processes - startProcess returns after registration, so they're immediately visible
     const listResponse = await fetch(`${workerUrl}/api/process/list`, {
       method: 'GET',
       headers
     });
-
     expect(listResponse.status).toBe(200);
     const processList = (await listResponse.json()) as Process[];
 
