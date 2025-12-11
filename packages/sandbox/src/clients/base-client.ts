@@ -1,9 +1,10 @@
 import type { Logger } from '@repo/shared';
 import { createNoOpLogger } from '@repo/shared';
-import { getHttpStatus } from '@repo/shared/errors';
 import type { ErrorResponse as NewErrorResponse } from '../errors';
 import { createErrorFromResponse, ErrorCode } from '../errors';
 import type { SandboxError } from '../errors/classes';
+import type { CircuitBreaker } from './circuit-breaker';
+import type { RequestQueue } from './request-queue';
 import type { HttpClientOptions, ResponseHandler } from './types';
 
 // Container startup retry configuration
@@ -17,18 +18,54 @@ export abstract class BaseHttpClient {
   protected baseUrl: string;
   protected options: HttpClientOptions;
   protected logger: Logger;
+  protected circuitBreaker?: CircuitBreaker;
+  protected requestQueue?: RequestQueue;
 
   constructor(options: HttpClientOptions = {}) {
     this.options = options;
     this.logger = options.logger ?? createNoOpLogger();
     this.baseUrl = this.options.baseUrl!;
+
+    // Use injected instances (shared across all clients in SandboxClient)
+    this.circuitBreaker = options._circuitBreaker;
+    this.requestQueue = options._requestQueue;
   }
 
   /**
-   * Core HTTP request method with automatic retry for container startup delays
-   * Retries both 503 (provisioning) and 500 (startup failure) errors when they're container-related
+   * Core HTTP request method with resilience features
+   *
+   * Request flow:
+   * 1. Circuit breaker check - fail fast if circuit is open
+   * 2. Request queue - wait if at concurrency limit
+   * 3. Execute fetch with container startup retry logic
+   * 4. Record success/failure for circuit breaker
    */
   protected async doFetch(
+    path: string,
+    options?: RequestInit
+  ): Promise<Response> {
+    // Step 1: Check circuit breaker (fail fast if open)
+    if (this.circuitBreaker && !this.circuitBreaker.canExecute()) {
+      const stats = this.circuitBreaker.getStats();
+      const { CircuitOpenError } = await import('./circuit-breaker');
+      throw new CircuitOpenError(stats.remainingRecoveryMs ?? 0);
+    }
+
+    // Step 2: Execute through request queue if available
+    const executeRequest = () => this.doFetchWithRetry(path, options);
+
+    if (this.requestQueue) {
+      return this.requestQueue.execute(executeRequest);
+    }
+
+    return executeRequest();
+  }
+
+  /**
+   * Internal fetch with container startup retry logic
+   * Retries both 503 (provisioning) and 500 (startup failure) errors when they're container-related
+   */
+  private async doFetchWithRetry(
     path: string,
     options?: RequestInit
   ): Promise<Response> {
@@ -36,7 +73,15 @@ export abstract class BaseHttpClient {
     let attempt = 0;
 
     while (true) {
-      const response = await this.executeFetch(path, options);
+      let response: Response;
+
+      try {
+        response = await this.executeFetch(path, options);
+      } catch (error) {
+        // Network error - record as failure for circuit breaker
+        this.circuitBreaker?.recordFailure();
+        throw error;
+      }
 
       // Check if this is a retryable container error (both 500 and 503)
       const shouldRetry = await this.isRetryableContainerError(response);
@@ -62,17 +107,25 @@ export abstract class BaseHttpClient {
           continue;
         }
 
-        // Timeout exhausted
+        // Timeout exhausted - record as failure
         this.logger.error(
           'Container failed to become ready',
           new Error(
             `Failed after ${attempt + 1} attempts over ${Math.floor(elapsed / 1000)}s`
           )
         );
+        this.circuitBreaker?.recordFailure();
         return response;
       }
 
-      // Not a retryable error or request succeeded
+      // Record success/failure for circuit breaker based on response status
+      if (response.ok) {
+        this.circuitBreaker?.recordSuccess();
+      } else if (response.status >= 500) {
+        // Only count server errors as failures for circuit breaker
+        this.circuitBreaker?.recordFailure();
+      }
+
       return response;
     }
   }

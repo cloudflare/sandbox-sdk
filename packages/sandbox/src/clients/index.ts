@@ -1,8 +1,14 @@
 // Main client exports
 
+// Resilience exports
+export {
+  CircuitBreaker,
+  type CircuitBreakerOptions,
+  CircuitOpenError,
+  type CircuitState
+} from './circuit-breaker';
 // Command client types
 export type { ExecuteRequest, ExecuteResponse } from './command-client';
-
 // Domain-specific clients
 export { CommandClient } from './command-client';
 // File client types
@@ -40,6 +46,12 @@ export type {
   StartProcessRequest
 } from './process-client';
 export { ProcessClient } from './process-client';
+export {
+  QueueFullError,
+  QueueTimeoutError,
+  RequestQueue,
+  type RequestQueueOptions
+} from './request-queue';
 export { SandboxClient } from './sandbox-client';
 // Types and interfaces
 export type {
@@ -48,6 +60,7 @@ export type {
   ErrorResponse,
   HttpClientOptions,
   RequestConfig,
+  ResilienceOptions,
   ResponseHandler,
   SessionRequest
 } from './types';
