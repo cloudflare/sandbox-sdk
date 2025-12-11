@@ -1,22 +1,12 @@
 // Export the main Sandbox class and utilities
 
 // Export the new client architecture
-// Export resilience components for advanced usage
 export {
-  CircuitBreaker,
-  type CircuitBreakerOptions,
-  CircuitOpenError,
-  type CircuitState,
   CommandClient,
   FileClient,
   GitClient,
   PortClient,
   ProcessClient,
-  QueueFullError,
-  QueueTimeoutError,
-  RequestQueue,
-  type RequestQueueOptions,
-  type ResilienceOptions,
   SandboxClient,
   UtilityClient
 } from './clients';

@@ -1,6 +1,4 @@
 import type { Logger } from '@repo/shared';
-import type { CircuitBreaker, CircuitBreakerOptions } from './circuit-breaker';
-import type { RequestQueue, RequestQueueOptions } from './request-queue';
 
 /**
  * Minimal interface for container fetch functionality
@@ -11,24 +9,6 @@ export interface ContainerStub {
     options: RequestInit,
     port?: number
   ): Promise<Response>;
-}
-
-/**
- * Resilience configuration for the HTTP client
- * Controls circuit breaker and request queue behavior
- */
-export interface ResilienceOptions {
-  /**
-   * Circuit breaker configuration
-   * Set to false to disable circuit breaker entirely
-   */
-  circuitBreaker?: CircuitBreakerOptions | false;
-
-  /**
-   * Request queue configuration
-   * Set to false to disable request queuing entirely
-   */
-  requestQueue?: RequestQueueOptions | false;
 }
 
 /**
@@ -47,24 +27,6 @@ export interface HttpClientOptions {
     command: string
   ) => void;
   onError?: (error: string, command?: string) => void;
-
-  /**
-   * Resilience configuration (circuit breaker, request queue)
-   * These components are shared across all domain clients
-   */
-  resilience?: ResilienceOptions;
-
-  /**
-   * Shared circuit breaker instance (injected by SandboxClient)
-   * @internal
-   */
-  _circuitBreaker?: CircuitBreaker;
-
-  /**
-   * Shared request queue instance (injected by SandboxClient)
-   * @internal
-   */
-  _requestQueue?: RequestQueue;
 }
 
 /**
