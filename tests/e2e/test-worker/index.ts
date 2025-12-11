@@ -4,12 +4,13 @@
  * Exposes SDK methods via HTTP endpoints for E2E testing.
  * Supports both default sessions (implicit) and explicit sessions via X-Session-Id header.
  *
- * Three sandbox types are available:
+ * Sandbox types available:
  * - Sandbox: Base image without Python (default, lean image)
  * - SandboxPython: Full image with Python (for code interpreter tests)
  * - SandboxOpencode: Image with OpenCode CLI (for OpenCode integration tests)
+ * - SandboxStandalone: Standalone binary on arbitrary base image (for binary pattern tests)
  *
- * Use X-Sandbox-Type header to select: 'python' for SandboxPython, 'opencode' for SandboxOpencode, anything else for Sandbox
+ * Use X-Sandbox-Type header to select: 'python', 'opencode', 'standalone', or default
  */
 import { Sandbox, getSandbox, proxyToSandbox } from '@cloudflare/sandbox';
 import type {
@@ -31,11 +32,13 @@ import type {
 export { Sandbox };
 export { Sandbox as SandboxPython };
 export { Sandbox as SandboxOpencode };
+export { Sandbox as SandboxStandalone };
 
 interface Env {
   Sandbox: DurableObjectNamespace<Sandbox>;
   SandboxPython: DurableObjectNamespace<Sandbox>;
   SandboxOpencode: DurableObjectNamespace<Sandbox>;
+  SandboxStandalone: DurableObjectNamespace<Sandbox>;
   TEST_BUCKET: R2Bucket;
   // R2 credentials for bucket mounting tests
   CLOUDFLARE_ACCOUNT_ID?: string;
@@ -76,6 +79,8 @@ export default {
       sandboxNamespace = env.SandboxPython;
     } else if (sandboxType === 'opencode') {
       sandboxNamespace = env.SandboxOpencode;
+    } else if (sandboxType === 'standalone') {
+      sandboxNamespace = env.SandboxStandalone;
     } else {
       sandboxNamespace = env.Sandbox;
     }

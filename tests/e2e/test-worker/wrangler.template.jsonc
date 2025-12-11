@@ -28,6 +28,11 @@
       "class_name": "SandboxOpencode",
       "image": "./Dockerfile.opencode",
       "name": "{{CONTAINER_NAME}}-opencode"
+    },
+    {
+      "class_name": "SandboxStandalone",
+      "image": "./Dockerfile.standalone",
+      "name": "{{CONTAINER_NAME}}-standalone"
     }
   ],
 
@@ -44,6 +49,10 @@
       {
         "class_name": "SandboxOpencode",
         "name": "SandboxOpencode"
+      },
+      {
+        "class_name": "SandboxStandalone",
+        "name": "SandboxStandalone"
       }
     ]
   },
@@ -56,6 +65,10 @@
     {
       "new_sqlite_classes": ["SandboxOpencode"],
       "tag": "v3"
+    },
+    {
+      "new_sqlite_classes": ["SandboxStandalone"],
+      "tag": "v4"
     }
   ],
 
