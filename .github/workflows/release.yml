@@ -264,5 +264,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION=${{ needs.unit-tests.outputs.version }}
+          sha256sum sandbox-linux-x64 > sandbox-linux-x64.sha256
           # Tag format matches changesets: @cloudflare/sandbox@VERSION
-          gh release upload "@cloudflare/sandbox@${VERSION}" ./sandbox-linux-x64 --clobber
+          gh release upload "@cloudflare/sandbox@${VERSION}" ./sandbox-linux-x64 ./sandbox-linux-x64.sha256 --clobber

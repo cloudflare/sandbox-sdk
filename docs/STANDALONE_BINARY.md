@@ -17,6 +17,15 @@ ENTRYPOINT ["/sandbox"]
 CMD ["/your-startup-script.sh"]  # Optional: runs after server starts
 ```
 
+## How CMD Passthrough Works
+
+The `/sandbox` binary acts as a supervisor:
+
+1. Starts HTTP API server on port 3000
+2. Spawns your CMD as a child process
+3. Forwards SIGTERM/SIGINT to the child
+4. If CMD exits 0, server keeps running; non-zero exits terminate the container
+
 ## Required Dependencies
 
 | Dependency | Required For                                    | Install Command        |
