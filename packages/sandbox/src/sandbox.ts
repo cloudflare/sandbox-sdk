@@ -826,20 +826,37 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           }
         });
       } catch (e) {
-        // Handle provisioning vs startup errors
+        // 1. Provisioning: Container VM not yet available
         if (this.isNoInstanceError(e)) {
           return new Response(
             'Container is currently provisioning. This can take several minutes on first deployment. Please retry in a moment.',
             {
               status: 503,
-              headers: { 'Retry-After': '10' } // Suggest 10s retry
+              headers: { 'Retry-After': '10' }
             }
           );
         }
 
-        // Other startup errors
+        // 2. Transient startup errors: Container starting, port not ready yet
+        if (this.isTransientStartupError(e)) {
+          this.logger.debug(
+            'Transient container startup error, returning 503',
+            {
+              error: e instanceof Error ? e.message : String(e)
+            }
+          );
+          return new Response(
+            'Container is starting. Please retry in a moment.',
+            {
+              status: 503,
+              headers: { 'Retry-After': '3' }
+            }
+          );
+        }
+
+        // 3. Permanent errors: Configuration issues, missing images, etc.
         this.logger.error(
-          'Container startup failed',
+          'Container startup failed with permanent error',
           e instanceof Error ? e : new Error(String(e))
         );
         return new Response(
@@ -855,12 +872,59 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   /**
    * Helper: Check if error is "no container instance available"
+   * This indicates the container VM is still being provisioned.
    */
   private isNoInstanceError(error: unknown): boolean {
     return (
       error instanceof Error &&
       error.message.toLowerCase().includes('no container instance')
     );
+  }
+
+  /**
+   * Helper: Check if error is a transient startup error that should trigger retry
+   *
+   * These errors occur during normal container startup and are recoverable:
+   * - Port not yet mapped (container starting, app not listening yet)
+   * - Connection refused (port mapped but app not ready)
+   * - Timeouts during startup (recoverable with retry)
+   * - Network transients (temporary connectivity issues)
+   *
+   * Errors NOT included (permanent failures):
+   * - "no such image" - missing Docker image
+   * - "container already exists" - name collision
+   * - Configuration errors
+   */
+  private isTransientStartupError(error: unknown): boolean {
+    if (!(error instanceof Error)) return false;
+
+    const msg = error.message.toLowerCase();
+
+    // Transient errors from workerd container-client.c++ and @cloudflare/containers
+    const transientPatterns = [
+      // Port mapping race conditions (workerd DockerPort::connect)
+      'container port not found',
+      'connection refused: container port',
+
+      // Application startup delays (@cloudflare/containers)
+      'the container is not listening',
+      'failed to verify port',
+      'container did not start',
+
+      // Network transients (workerd)
+      'network connection lost',
+      'container suddenly disconnected',
+
+      // Monitor race conditions (workerd)
+      'monitor failed to find container',
+
+      // Timeouts (various layers)
+      'timed out',
+      'timeout',
+      'the operation was aborted'
+    ];
+
+    return transientPatterns.some((pattern) => msg.includes(pattern));
   }
 
   /**

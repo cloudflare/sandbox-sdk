@@ -110,8 +110,9 @@ describe('UtilityClient', () => {
         code: 'HEALTH_CHECK_FAILED'
       };
 
+      // Use 500 for permanent errors (503 triggers retry)
       mockFetch.mockResolvedValue(
-        new Response(JSON.stringify(errorResponse), { status: 503 })
+        new Response(JSON.stringify(errorResponse), { status: 500 })
       );
 
       await expect(client.ping()).rejects.toThrow();
@@ -219,14 +220,15 @@ describe('UtilityClient', () => {
         new Response(JSON.stringify(mockPingResponse()), { status: 200 })
       );
 
-      // Second call (getCommands) fails
+      // Second call (getCommands) fails with permanent error
+      // Use 500 for permanent errors (503 triggers retry)
       const errorResponse = {
         error: 'Command enumeration service unavailable',
         code: 'SERVICE_UNAVAILABLE'
       };
 
       mockFetch.mockResolvedValueOnce(
-        new Response(JSON.stringify(errorResponse), { status: 503 })
+        new Response(JSON.stringify(errorResponse), { status: 500 })
       );
 
       const pingResult = await client.ping();

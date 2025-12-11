@@ -221,8 +221,9 @@ describe('PortClient', () => {
         code: 'SERVICE_NOT_RESPONDING'
       };
 
+      // Note: 503 triggers container retry loop, so we use 500 for permanent errors
       mockFetch.mockResolvedValue(
-        new Response(JSON.stringify(errorResponse), { status: 503 })
+        new Response(JSON.stringify(errorResponse), { status: 500 })
       );
 
       await expect(client.exposePort(8080, 'session-err')).rejects.toThrow(
