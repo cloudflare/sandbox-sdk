@@ -108,7 +108,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build test worker Docker images (base + python + opencode)
+      - name: Build test worker Docker images (base + python + opencode + standalone)
         run: |
           VERSION=${{ needs.unit-tests.outputs.version }}
           # Build base image (no Python) - used by Sandbox binding
@@ -120,6 +120,16 @@ jobs:
           # Build opencode image - used by SandboxOpencode binding
           docker build -f packages/sandbox/Dockerfile --target opencode --platform linux/amd64 \
             --build-arg SANDBOX_VERSION=$VERSION -t cloudflare/sandbox-test:$VERSION-opencode .
+          # Build standalone image (arbitrary base with binary) - used by SandboxStandalone binding
+          # Use regex to replace any version number, avoiding hardcoded version mismatch
+          # Build from test-worker directory so COPY startup-test.sh works
+          cd tests/e2e/test-worker
+          sed -E "s|cloudflare/sandbox-test:[0-9]+\.[0-9]+\.[0-9]+|cloudflare/sandbox-test:$VERSION|g" \
+            Dockerfile.standalone > Dockerfile.standalone.tmp
+          docker build -f Dockerfile.standalone.tmp --platform linux/amd64 \
+            -t cloudflare/sandbox-test:$VERSION-standalone .
+          rm Dockerfile.standalone.tmp
+          cd ../../..
 
       - name: Deploy test worker
         uses: cloudflare/wrangler-action@v3
@@ -230,6 +240,15 @@ jobs:
           build-args: |
             SANDBOX_VERSION=${{ needs.unit-tests.outputs.version }}
 
+      - name: Extract standalone binary from Docker image
+        run: |
+          VERSION=${{ needs.unit-tests.outputs.version }}
+          CONTAINER_ID=$(docker create --platform linux/amd64 cloudflare/sandbox:$VERSION)
+          docker cp $CONTAINER_ID:/container-server/sandbox ./sandbox-linux-x64
+          docker rm $CONTAINER_ID
+          file ./sandbox-linux-x64
+          ls -la ./sandbox-linux-x64
+
       - id: changesets
         uses: changesets/action@v1
         with:
@@ -238,3 +257,13 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_CONFIG_PROVENANCE: true
+
+      - name: Upload standalone binary to GitHub release
+        if: steps.changesets.outputs.published == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=${{ needs.unit-tests.outputs.version }}
+          sha256sum sandbox-linux-x64 > sandbox-linux-x64.sha256
+          # Tag format matches changesets: @cloudflare/sandbox@VERSION
+          gh release upload "@cloudflare/sandbox@${VERSION}" ./sandbox-linux-x64 ./sandbox-linux-x64.sha256 --clobber

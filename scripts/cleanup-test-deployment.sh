@@ -11,6 +11,7 @@ set -e
 # - <worker-name>: Base image container (no Python, default)
 # - <worker-name>-python: Python image container
 # - <worker-name>-opencode: OpenCode image container
+# - <worker-name>-standalone: Standalone binary on arbitrary base image
 #
 # Environment variables required:
 # - CLOUDFLARE_API_TOKEN
@@ -35,6 +36,7 @@ RAW_OUTPUT=$(npx wrangler containers list 2>&1)
 CONTAINER_ID=""
 CONTAINER_PYTHON_ID=""
 CONTAINER_OPENCODE_ID=""
+CONTAINER_STANDALONE_ID=""
 
 # Check if output looks like JSON (starts with '[')
 if echo "$RAW_OUTPUT" | grep -q '^\['; then
@@ -44,6 +46,7 @@ if echo "$RAW_OUTPUT" | grep -q '^\['; then
   CONTAINER_ID=$(echo "$RAW_OUTPUT" | jq -r ".[] | select(.name==\"$WORKER_NAME\") | .id" 2>/dev/null || echo "")
   CONTAINER_PYTHON_ID=$(echo "$RAW_OUTPUT" | jq -r ".[] | select(.name==\"$WORKER_NAME-python\") | .id" 2>/dev/null || echo "")
   CONTAINER_OPENCODE_ID=$(echo "$RAW_OUTPUT" | jq -r ".[] | select(.name==\"$WORKER_NAME-opencode\") | .id" 2>/dev/null || echo "")
+  CONTAINER_STANDALONE_ID=$(echo "$RAW_OUTPUT" | jq -r ".[] | select(.name==\"$WORKER_NAME-standalone\") | .id" 2>/dev/null || echo "")
 
   if [ -n "$CONTAINER_ID" ]; then
     echo "✓ Found base container: $CONTAINER_ID"
@@ -63,7 +66,13 @@ if echo "$RAW_OUTPUT" | grep -q '^\['; then
     echo "⚠️  No opencode container found for $WORKER_NAME-opencode"
   fi
 
-  if [ -z "$CONTAINER_ID" ] && [ -z "$CONTAINER_PYTHON_ID" ] && [ -z "$CONTAINER_OPENCODE_ID" ]; then
+  if [ -n "$CONTAINER_STANDALONE_ID" ]; then
+    echo "✓ Found standalone container: $CONTAINER_STANDALONE_ID"
+  else
+    echo "⚠️  No standalone container found for $WORKER_NAME-standalone"
+  fi
+
+  if [ -z "$CONTAINER_ID" ] && [ -z "$CONTAINER_PYTHON_ID" ] && [ -z "$CONTAINER_OPENCODE_ID" ] && [ -z "$CONTAINER_STANDALONE_ID" ]; then
     echo "Available containers:"
     echo "$RAW_OUTPUT" | jq -r '.[].name' 2>/dev/null || echo "(unable to parse container names)"
   fi
@@ -112,6 +121,7 @@ CLEANUP_FAILED=false
 delete_container "$CONTAINER_ID" "base" || CLEANUP_FAILED=true
 delete_container "$CONTAINER_PYTHON_ID" "python" || CLEANUP_FAILED=true
 delete_container "$CONTAINER_OPENCODE_ID" "opencode" || CLEANUP_FAILED=true
+delete_container "$CONTAINER_STANDALONE_ID" "standalone" || CLEANUP_FAILED=true
 
 if [ "$CLEANUP_FAILED" = true ]; then
   echo "=== Cleanup completed with errors ==="

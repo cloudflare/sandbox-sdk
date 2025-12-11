@@ -99,6 +99,7 @@ export const ErrorCode = {
 
   // Code Interpreter Errors (501) - Feature not available in image variant
   PYTHON_NOT_AVAILABLE: 'PYTHON_NOT_AVAILABLE',
+  JAVASCRIPT_NOT_AVAILABLE: 'JAVASCRIPT_NOT_AVAILABLE',
 
   // OpenCode Errors (503)
   OPENCODE_STARTUP_FAILED: 'OPENCODE_STARTUP_FAILED',

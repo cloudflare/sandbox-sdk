@@ -1,0 +1,26 @@
+# Test the standalone binary pattern with an arbitrary base image
+# This validates that users can add sandbox capabilities to any Docker image
+FROM node:20-slim
+
+# Install dependencies required by the SDK
+# - file: MIME type detection for file operations
+# - git: git clone/checkout operations
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    file \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy standalone binary from sandbox image
+COPY --from=cloudflare/sandbox-test:0.6.4 /container-server/sandbox /sandbox
+
+# Copy startup script for CMD passthrough testing
+COPY startup-test.sh /startup-test.sh
+RUN chmod +x /startup-test.sh
+
+WORKDIR /workspace
+
+EXPOSE 3000 8080
+
+# Standard Docker pattern: ENTRYPOINT is the executable, CMD is passed as arguments
+ENTRYPOINT ["/sandbox"]
+CMD ["/startup-test.sh"]

@@ -116,7 +116,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build test worker Docker images (base + python + opencode)
+      - name: Build test worker Docker images (base + python + opencode + standalone)
         run: |
           VERSION=${{ needs.unit-tests.outputs.version || '0.0.0' }}
           # Build base image (no Python) - used by Sandbox binding
@@ -128,6 +128,16 @@ jobs:
           # Build opencode image - used by SandboxOpencode binding
           docker build -f packages/sandbox/Dockerfile --target opencode --platform linux/amd64 \
             --build-arg SANDBOX_VERSION=$VERSION -t cloudflare/sandbox-test:$VERSION-opencode .
+          # Build standalone image (arbitrary base with binary) - used by SandboxStandalone binding
+          # Use regex to replace any version number, avoiding hardcoded version mismatch
+          # Build from test-worker directory so COPY startup-test.sh works
+          cd tests/e2e/test-worker
+          sed -E "s|cloudflare/sandbox-test:[0-9]+\.[0-9]+\.[0-9]+|cloudflare/sandbox-test:$VERSION|g" \
+            Dockerfile.standalone > Dockerfile.standalone.tmp
+          docker build -f Dockerfile.standalone.tmp --platform linux/amd64 \
+            -t cloudflare/sandbox-test:$VERSION-standalone .
+          rm Dockerfile.standalone.tmp
+          cd ../../..
 
       # Deploy test worker using official Cloudflare action
       - name: Deploy test worker
