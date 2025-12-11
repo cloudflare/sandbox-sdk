@@ -4,7 +4,7 @@
 # ============================================================================
 # Stage 1: Prune monorepo to only include necessary packages
 # ============================================================================
-FROM node:20-alpine AS pruner
+FROM node:20-slim AS pruner
 
 WORKDIR /app
 
@@ -18,13 +18,15 @@ RUN turbo prune @repo/sandbox-container --docker
 
 # ============================================================================
 # Stage 2: Install dependencies and build packages
+# Using glibc-based images (not Alpine) so the standalone binary works on
+# standard Linux distributions (Debian, Ubuntu, RHEL, etc.)
 # ============================================================================
-FROM node:20-alpine AS builder
+FROM node:20-slim AS builder
 
 WORKDIR /app
 
-# Install Bun runtime (needed for sandbox-container build script)
-COPY --from=oven/bun:1-alpine /usr/local/bin/bun /usr/local/bin/bun
+# Install Bun runtime (glibc version for glibc-compatible standalone binary)
+COPY --from=oven/bun:1 /usr/local/bin/bun /usr/local/bin/bun
 
 # Copy pruned lockfile and package.json files (for Docker layer caching)
 COPY --from=pruner /app/out/json/ .
