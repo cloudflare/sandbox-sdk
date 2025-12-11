@@ -34,7 +34,8 @@ const mockSessionManager = {
   createSession: vi.fn(),
   deleteSession: vi.fn(),
   listSessions: vi.fn(),
-  destroy: vi.fn()
+  destroy: vi.fn(),
+  withSession: vi.fn()
 } as unknown as SessionManager;
 
 describe('FileService', () => {
@@ -49,6 +50,41 @@ describe('FileService', () => {
       isValid: true,
       errors: []
     });
+
+    // Mock withSession to execute the callback immediately with a mock exec function
+    mocked(mockSessionManager.withSession).mockImplementation(
+      async (_sessionId, callback) => {
+        try {
+          const mockExec = async (cmd: string) => {
+            // Delegate to executeInSession mock for compatibility with existing tests
+            const result = await mockSessionManager.executeInSession(
+              _sessionId,
+              cmd
+            );
+            if (result.success) {
+              return result.data;
+            }
+            throw new Error('Command execution failed');
+          };
+          const data = await callback(mockExec);
+          return { success: true, data } as any;
+        } catch (error: any) {
+          // If error has code/message/details, return it as-is
+          if (error && typeof error === 'object' && 'code' in error) {
+            return { success: false, error } as any;
+          }
+          // Otherwise wrap as generic error
+          return {
+            success: false,
+            error: {
+              code: 'INTERNAL_ERROR',
+              message: error instanceof Error ? error.message : 'Unknown error',
+              details: {}
+            }
+          } as any;
+        }
+      }
+    );
 
     // Create service with mocked SessionManager
     fileService = new FileService(
@@ -644,28 +680,18 @@ describe('FileService', () => {
       // 1. exists() - 1 call
       // 2. stat() which internally calls exists() again + stat command - 2 calls
       // 3. rm command - 1 call
-      // Total: 4 calls
+      // Total: 3 calls (exists, isdir, delete)
 
-      // Mock first exists check (from delete)
+      // Mock exists check (test -e returns 0 = file exists)
       mocked(mockSessionManager.executeInSession).mockResolvedValueOnce({
         success: true,
         data: { exitCode: 0, stdout: '', stderr: '' }
       } as ServiceResult<RawExecResult>);
 
-      // Mock second exists check (from stat)
+      // Mock isdir check (test -d returns non-zero = not a directory)
       mocked(mockSessionManager.executeInSession).mockResolvedValueOnce({
         success: true,
-        data: { exitCode: 0, stdout: '', stderr: '' }
-      } as ServiceResult<RawExecResult>);
-
-      // Mock stat command (to verify it's not a directory)
-      mocked(mockSessionManager.executeInSession).mockResolvedValueOnce({
-        success: true,
-        data: {
-          exitCode: 0,
-          stdout: 'regular file:100:1234567890:1234567890\n',
-          stderr: ''
-        }
+        data: { exitCode: 1, stdout: '', stderr: '' }
       } as ServiceResult<RawExecResult>);
 
       // Mock delete command
@@ -678,18 +704,17 @@ describe('FileService', () => {
 
       expect(result.success).toBe(true);
 
-      // Verify rm command was called (cwd is undefined, so only 2 params)
-      // Should be the 4th call
+      // Verify rm command was called
       expect(mockSessionManager.executeInSession).toHaveBeenNthCalledWith(
-        4,
+        3,
         'session-123',
         "rm '/tmp/test.txt'"
       );
     });
 
     it('should return error when file does not exist', async () => {
-      // Mock exists check returning false
-      mocked(mockSessionManager.executeInSession).mockResolvedValue({
+      // Mock exists check returning false (exitCode 1 = file doesn't exist)
+      mocked(mockSessionManager.executeInSession).mockResolvedValueOnce({
         success: true,
         data: { exitCode: 1, stdout: '', stderr: '' }
       } as ServiceResult<RawExecResult>);
@@ -703,20 +728,16 @@ describe('FileService', () => {
     });
 
     it('should handle delete command failures', async () => {
-      // Mock exists check
+      // Mock exists check (file exists)
       mocked(mockSessionManager.executeInSession).mockResolvedValueOnce({
         success: true,
         data: { exitCode: 0, stdout: '', stderr: '' }
       } as ServiceResult<RawExecResult>);
 
-      // Mock stat check
+      // Mock isdir check (not a directory)
       mocked(mockSessionManager.executeInSession).mockResolvedValueOnce({
         success: true,
-        data: {
-          exitCode: 0,
-          stdout: 'regular file:100:1234567890:1234567890\n',
-          stderr: ''
-        }
+        data: { exitCode: 1, stdout: '', stderr: '' }
       } as ServiceResult<RawExecResult>);
 
       // Mock delete command failure
