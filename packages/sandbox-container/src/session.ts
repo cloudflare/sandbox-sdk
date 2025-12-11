@@ -24,7 +24,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { createReadStream, watch } from 'node:fs';
+import { watch } from 'node:fs';
 import { mkdir, open, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
