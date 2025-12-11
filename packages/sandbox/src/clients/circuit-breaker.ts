@@ -159,7 +159,6 @@ export class CircuitBreaker {
 
   /**
    * Record a failed request
-   * Only counts failures for 5xx errors (server errors)
    */
   recordFailure(): void {
     const now = Date.now();
