@@ -1,20 +1,20 @@
-import { describe, test, expect, beforeAll, afterAll } from 'vitest';
+import type {
+  ExecResult,
+  Process,
+  ReadFileResult,
+  SessionCreateResult,
+  SessionDeleteResult
+} from '@repo/shared';
+import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import {
   createUniqueSession,
   getSharedSandbox
 } from './helpers/global-sandbox';
 import {
+  cleanupSandbox,
   createSandboxId,
-  createTestHeaders,
-  cleanupSandbox
+  createTestHeaders
 } from './helpers/test-fixtures';
-import type {
-  Process,
-  SessionCreateResult,
-  SessionDeleteResult,
-  ReadFileResult,
-  ExecResult
-} from '@repo/shared';
 
 /**
  * Session State Isolation Workflow Integration Tests

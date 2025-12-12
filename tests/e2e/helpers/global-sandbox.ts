@@ -32,12 +32,12 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { getTestWorkerUrl, WranglerDevRunner } from './wrangler-runner';
 import {
+  cleanupSandbox,
   createSandboxId,
-  createTestHeaders,
-  cleanupSandbox
+  createTestHeaders
 } from './test-fixtures';
+import { getTestWorkerUrl, type WranglerDevRunner } from './wrangler-runner';
 
 export interface SharedSandbox {
   /** The worker URL to make requests to */

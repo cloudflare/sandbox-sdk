@@ -18,26 +18,26 @@
  * Individual edge cases and error handling remain in dedicated test files.
  */
 
-import { describe, test, expect, beforeAll } from 'vitest';
-import {
-  getSharedSandbox,
-  createUniqueSession,
-  uniqueTestPath
-} from './helpers/global-sandbox';
-import { parseSSEStream } from '../../packages/sandbox/src/sse-parser';
 import type {
-  ExecResult,
-  WriteFileResult,
-  ReadFileResult,
-  MkdirResult,
-  GitCheckoutResult,
   EnvSetResult,
+  ExecEvent,
+  ExecResult,
+  FileInfo,
+  GitCheckoutResult,
+  ListFilesResult,
+  MkdirResult,
   Process,
   ProcessLogsResult,
-  ListFilesResult,
-  FileInfo,
-  ExecEvent
+  ReadFileResult,
+  WriteFileResult
 } from '@repo/shared';
+import { beforeAll, describe, expect, test } from 'vitest';
+import { parseSSEStream } from '../../packages/sandbox/src/sse-parser';
+import {
+  createUniqueSession,
+  getSharedSandbox,
+  uniqueTestPath
+} from './helpers/global-sandbox';
 
 describe('Comprehensive Workflow', () => {
   let workerUrl: string;
