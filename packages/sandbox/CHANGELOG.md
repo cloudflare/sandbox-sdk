@@ -1,5 +1,17 @@
 # @cloudflare/sandbox
 
+## 0.6.6
+
+### Patch Changes
+
+- [#299](https://github.com/cloudflare/sandbox-sdk/pull/299) [`d3252dc`](https://github.com/cloudflare/sandbox-sdk/commit/d3252dc9ef8f5c8ce23011c2a8492c6f248f92f2) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - Add waitForExit() method to Process interface for waiting until a process terminates
+
+- [#296](https://github.com/cloudflare/sandbox-sdk/pull/296) [`8a5d275`](https://github.com/cloudflare/sandbox-sdk/commit/8a5d275b0ccd341cd352a42c2659e56c6b841212) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - fix race condition for PID retrieval
+
+- [`a86f7db`](https://github.com/cloudflare/sandbox-sdk/commit/a86f7db01a4d8c4abf9843bfc1aef8841a775d70) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Improve automatic retry behavior for container startup errors
+
+  Transient errors like "container starting" now automatically retry with exponential backoff, while permanent errors like "missing image" fail immediately with clear error messages.
+
 ## 0.6.5
 
 ### Patch Changes
@@ -90,10 +102,10 @@
 
   ```dockerfile
   # Before
-  FROM cloudflare/sandbox:0.6.5
+  FROM cloudflare/sandbox:0.6.6
 
   # After
-  FROM cloudflare/sandbox:0.6.5-python
+  FROM cloudflare/sandbox:0.6.6-python
   ```
 
   Without this change, Python execution will fail with `PYTHON_NOT_AVAILABLE` error.
