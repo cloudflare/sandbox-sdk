@@ -1535,41 +1535,51 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     command: string,
     timeout?: number
   ): Promise<WaitForExitResult> {
-    const startTime = Date.now();
-    const pollInterval = 100; // ms
+    const stream = await this.streamProcessLogs(processId);
 
-    while (true) {
-      // Check timeout
-      if (timeout !== undefined) {
-        const elapsed = Date.now() - startTime;
-        if (elapsed >= timeout) {
-          throw this.createReadyTimeoutError(
-            processId,
-            command,
-            'process exit',
-            timeout
+    // Set up timeout if specified
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    let timeoutPromise: Promise<never> | undefined;
+
+    if (timeout !== undefined) {
+      timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => {
+          reject(
+            this.createReadyTimeoutError(
+              processId,
+              command,
+              'process exit',
+              timeout
+            )
           );
+        }, timeout);
+      });
+    }
+
+    try {
+      const streamProcessor = async (): Promise<WaitForExitResult> => {
+        for await (const event of parseSSEStream<LogEvent>(stream)) {
+          if (event.type === 'exit') {
+            return {
+              exitCode: event.exitCode ?? 0
+            };
+          }
         }
-      }
 
-      // Check process status
-      const processInfo = await this.getProcess(processId);
-
-      if (!processInfo) {
+        // Stream ended without exit event - shouldn't happen, but handle gracefully
         throw new Error(
-          `Process ${processId} not found. It may have been cleaned up or never existed.`
+          `Process ${processId} stream ended unexpectedly without exit event`
         );
-      }
+      };
 
-      if (isTerminalStatus(processInfo.status)) {
-        return {
-          exitCode:
-            processInfo.exitCode ?? (processInfo.status === 'completed' ? 0 : 1)
-        };
+      if (timeoutPromise) {
+        return await Promise.race([streamProcessor(), timeoutPromise]);
       }
-
-      // Wait before next poll
-      await new Promise((resolve) => setTimeout(resolve, pollInterval));
+      return await streamProcessor();
+    } finally {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
     }
   }
 

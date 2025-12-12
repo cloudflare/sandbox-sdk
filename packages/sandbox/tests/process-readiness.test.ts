@@ -670,19 +670,18 @@ data: {"type":"exit","exitCode":127,"timestamp":"${new Date().toISOString()}"}
         timestamp: new Date().toISOString()
       } as any);
 
-      vi.spyOn(sandbox.client.processes, 'getProcess').mockResolvedValue({
-        success: true,
-        process: {
-          id: 'proc-build',
-          pid: 12345,
-          command: 'npm run build',
-          status: 'completed',
-          exitCode: 0,
-          startTime: new Date().toISOString(),
-          endTime: new Date().toISOString()
-        },
-        timestamp: new Date().toISOString()
-      } as any);
+      // Mock stream that emits exit event with code 0
+      const sseData = `data: {"type":"exit","exitCode":0,"timestamp":"${new Date().toISOString()}"}\n\n`;
+      const mockStream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(sseData));
+          controller.close();
+        }
+      });
+
+      vi.spyOn(sandbox.client.processes, 'streamProcessLogs').mockResolvedValue(
+        mockStream
+      );
 
       const proc = await sandbox.startProcess('npm run build');
       const result = await proc.waitForExit();
@@ -699,19 +698,18 @@ data: {"type":"exit","exitCode":127,"timestamp":"${new Date().toISOString()}"}
         timestamp: new Date().toISOString()
       } as any);
 
-      vi.spyOn(sandbox.client.processes, 'getProcess').mockResolvedValue({
-        success: true,
-        process: {
-          id: 'proc-build',
-          pid: 12345,
-          command: 'npm run build',
-          status: 'failed',
-          exitCode: 1,
-          startTime: new Date().toISOString(),
-          endTime: new Date().toISOString()
-        },
-        timestamp: new Date().toISOString()
-      } as any);
+      // Mock stream that emits exit event with code 1
+      const sseData = `data: {"type":"exit","exitCode":1,"timestamp":"${new Date().toISOString()}"}\n\n`;
+      const mockStream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(sseData));
+          controller.close();
+        }
+      });
+
+      vi.spyOn(sandbox.client.processes, 'streamProcessLogs').mockResolvedValue(
+        mockStream
+      );
 
       const proc = await sandbox.startProcess('npm run build');
       const result = await proc.waitForExit();
@@ -719,7 +717,7 @@ data: {"type":"exit","exitCode":127,"timestamp":"${new Date().toISOString()}"}
       expect(result.exitCode).toBe(1);
     });
 
-    it('should poll until process exits', async () => {
+    it('should wait for exit event in stream', async () => {
       vi.spyOn(sandbox.client.processes, 'startProcess').mockResolvedValue({
         success: true,
         processId: 'proc-build',
@@ -728,32 +726,23 @@ data: {"type":"exit","exitCode":127,"timestamp":"${new Date().toISOString()}"}
         timestamp: new Date().toISOString()
       } as any);
 
-      // First call: running, second call: completed
-      let callCount = 0;
-      vi.spyOn(sandbox.client.processes, 'getProcess').mockImplementation(
-        async () => {
-          callCount++;
-          return {
-            success: true,
-            process: {
-              id: 'proc-build',
-              pid: 12345,
-              command: 'npm run build',
-              status: callCount === 1 ? 'running' : 'completed',
-              exitCode: callCount === 1 ? undefined : 0,
-              startTime: new Date().toISOString(),
-              endTime: callCount === 1 ? undefined : new Date().toISOString()
-            },
-            timestamp: new Date().toISOString()
-          } as any;
+      // Mock stream that emits some log events before exit
+      const sseData = `data: {"type":"stdout","data":"Building...\\n","timestamp":"${new Date().toISOString()}"}\n\ndata: {"type":"stdout","data":"Done!\\n","timestamp":"${new Date().toISOString()}"}\n\ndata: {"type":"exit","exitCode":0,"timestamp":"${new Date().toISOString()}"}\n\n`;
+      const mockStream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(sseData));
+          controller.close();
         }
+      });
+
+      vi.spyOn(sandbox.client.processes, 'streamProcessLogs').mockResolvedValue(
+        mockStream
       );
 
       const proc = await sandbox.startProcess('npm run build');
       const result = await proc.waitForExit();
 
       expect(result.exitCode).toBe(0);
-      expect(callCount).toBeGreaterThan(1);
     });
 
     it('should throw ProcessReadyTimeoutError when timeout exceeded', async () => {
@@ -765,18 +754,16 @@ data: {"type":"exit","exitCode":127,"timestamp":"${new Date().toISOString()}"}
         timestamp: new Date().toISOString()
       } as any);
 
-      // Always return running status
-      vi.spyOn(sandbox.client.processes, 'getProcess').mockResolvedValue({
-        success: true,
-        process: {
-          id: 'proc-long',
-          pid: 12345,
-          command: 'sleep 1000',
-          status: 'running',
-          startTime: new Date().toISOString()
-        },
-        timestamp: new Date().toISOString()
-      } as any);
+      // Mock stream that never emits exit event
+      const mockStream = new ReadableStream({
+        start() {
+          // Never close - simulates long-running process
+        }
+      });
+
+      vi.spyOn(sandbox.client.processes, 'streamProcessLogs').mockResolvedValue(
+        mockStream
+      );
 
       const proc = await sandbox.startProcess('sleep 1000');
 
@@ -785,24 +772,31 @@ data: {"type":"exit","exitCode":127,"timestamp":"${new Date().toISOString()}"}
       );
     });
 
-    it('should throw error when process not found', async () => {
+    it('should throw error when stream ends without exit event', async () => {
       vi.spyOn(sandbox.client.processes, 'startProcess').mockResolvedValue({
         success: true,
-        processId: 'proc-gone',
+        processId: 'proc-build',
         pid: 12345,
-        command: 'echo hello',
+        command: 'npm run build',
         timestamp: new Date().toISOString()
       } as any);
 
-      vi.spyOn(sandbox.client.processes, 'getProcess').mockResolvedValue({
-        success: true,
-        process: null,
-        timestamp: new Date().toISOString()
-      } as any);
+      // Mock stream that closes without exit event
+      const mockStream = new ReadableStream({
+        start(controller) {
+          controller.close();
+        }
+      });
 
-      const proc = await sandbox.startProcess('echo hello');
+      vi.spyOn(sandbox.client.processes, 'streamProcessLogs').mockResolvedValue(
+        mockStream
+      );
 
-      await expect(proc.waitForExit()).rejects.toThrow('not found');
+      const proc = await sandbox.startProcess('npm run build');
+
+      await expect(proc.waitForExit()).rejects.toThrow(
+        'stream ended unexpectedly'
+      );
     });
   });
 
