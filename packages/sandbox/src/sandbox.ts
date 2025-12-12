@@ -1528,7 +1528,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   /**
    * Wait for a process to exit
-   * Returns the exit code along with accumulated stdout/stderr
+   * Returns the exit code
    */
   private async waitForProcessExit(
     processId: string,
@@ -1536,122 +1536,40 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     timeout?: number
   ): Promise<WaitForExitResult> {
     const startTime = Date.now();
-    let collectedStdout = '';
-    let collectedStderr = '';
+    const pollInterval = 100; // ms
 
-    // First check if process already exited by getting existing logs and status
-    try {
-      const existingLogs = await this.getProcessLogs(processId);
-      collectedStdout = existingLogs.stdout;
-      collectedStderr = existingLogs.stderr;
+    while (true) {
+      // Check timeout
+      if (timeout !== undefined) {
+        const elapsed = Date.now() - startTime;
+        if (elapsed >= timeout) {
+          throw this.createReadyTimeoutError(
+            processId,
+            command,
+            'process exit',
+            timeout
+          );
+        }
+      }
 
-      // Check if process has already terminated
+      // Check process status
       const processInfo = await this.getProcess(processId);
-      if (processInfo && isTerminalStatus(processInfo.status)) {
+
+      if (!processInfo) {
+        throw new Error(
+          `Process ${processId} not found. It may have been cleaned up or never existed.`
+        );
+      }
+
+      if (isTerminalStatus(processInfo.status)) {
         return {
           exitCode:
-            processInfo.exitCode ??
-            (processInfo.status === 'completed' ? 0 : 1),
-          stdout: collectedStdout,
-          stderr: collectedStderr
+            processInfo.exitCode ?? (processInfo.status === 'completed' ? 0 : 1)
         };
       }
-    } catch (error) {
-      // Process might not exist yet or other error, continue to streaming
-      this.logger.debug('Could not get existing process info, will stream', {
-        processId,
-        error: error instanceof Error ? error.message : String(error)
-      });
-    }
 
-    // Stream logs and wait for exit event
-    const stream = await this.streamProcessLogs(processId);
-
-    // Set up timeout if specified
-    let timeoutId: ReturnType<typeof setTimeout> | undefined;
-    let timeoutPromise: Promise<never> | undefined;
-
-    if (timeout !== undefined) {
-      const remainingTime = timeout - (Date.now() - startTime);
-      if (remainingTime <= 0) {
-        throw this.createReadyTimeoutError(
-          processId,
-          command,
-          'process exit',
-          timeout
-        );
-      }
-
-      timeoutPromise = new Promise<never>((_, reject) => {
-        timeoutId = setTimeout(() => {
-          reject(
-            this.createReadyTimeoutError(
-              processId,
-              command,
-              'process exit',
-              timeout
-            )
-          );
-        }, remainingTime);
-      });
-    }
-
-    try {
-      const streamProcessor = async (): Promise<WaitForExitResult> => {
-        for await (const event of parseSSEStream<LogEvent>(stream)) {
-          if (event.type === 'stdout' || event.type === 'stderr') {
-            const data = event.data || '';
-            if (event.type === 'stdout') {
-              collectedStdout += data;
-            } else {
-              collectedStderr += data;
-            }
-          }
-
-          if (event.type === 'exit') {
-            return {
-              exitCode: event.exitCode ?? 0,
-              stdout: collectedStdout,
-              stderr: collectedStderr
-            };
-          }
-        }
-
-        // Stream ended without exit event - check process status
-        const processInfo = await this.getProcess(processId);
-        if (processInfo && isTerminalStatus(processInfo.status)) {
-          return {
-            exitCode:
-              processInfo.exitCode ??
-              (processInfo.status === 'completed' ? 0 : 1),
-            stdout: collectedStdout,
-            stderr: collectedStderr
-          };
-        }
-
-        // Stream ended unexpectedly - throw appropriate error
-        if (!processInfo) {
-          throw new Error(
-            `Process ${processId} not found. It may have been cleaned up or never existed.`
-          );
-        }
-
-        // Process still running but stream ended - this is unexpected
-        throw new Error(
-          `Stream ended unexpectedly while process ${processId} is still ${processInfo.status}. ` +
-            `This may indicate a connection issue.`
-        );
-      };
-
-      // Race with timeout if specified
-      if (timeoutPromise) {
-        return await Promise.race([streamProcessor(), timeoutPromise]);
-      }
-      return await streamProcessor();
-    } finally {
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-      }
+      // Wait before next poll
+      await new Promise((resolve) => setTimeout(resolve, pollInterval));
     }
   }
 

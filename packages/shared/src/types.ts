@@ -116,10 +116,6 @@ export interface WaitForLogResult {
 export interface WaitForExitResult {
   /** Process exit code */
   exitCode: number;
-  /** Accumulated stdout output */
-  stdout: string;
-  /** Accumulated stderr output */
-  stderr: string;
 }
 
 /**
@@ -327,8 +323,8 @@ export interface Process {
   /**
    * Wait for the process to exit
    *
-   * Returns the exit code along with accumulated stdout/stderr output.
-   * Useful for processes that exit on their own (builds, scripts, etc.)
+   * Returns the exit code. Use getProcessLogs() or streamProcessLogs()
+   * to retrieve output after the process exits.
    */
   waitForExit(timeout?: number): Promise<WaitForExitResult>;
 }
