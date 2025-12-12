@@ -14,6 +14,8 @@
       "packages/**",
       "examples/**",
       "sites/**",
+      "tests/**",
+      "vitest.*.config.ts",
       "!node_modules",
       "!**/node_modules",
       "!**/worker-configuration.d.ts",

@@ -20,6 +20,7 @@ import type {
   SandboxOptions,
   SessionOptions,
   StreamOptions,
+  WaitForExitResult,
   WaitForLogResult,
   WaitForPortOptions
 } from '@repo/shared';
@@ -1327,6 +1328,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         options?: WaitForPortOptions
       ): Promise<void> => {
         await this.waitForPortReady(data.id, data.command, port, options);
+      },
+
+      waitForExit: async (timeout?: number): Promise<WaitForExitResult> => {
+        return this.waitForProcessExit(data.id, data.command, timeout);
       }
     };
   }
@@ -1581,6 +1586,63 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         ) {
           await new Promise((resolve) => setTimeout(resolve, sleepTime));
         }
+      }
+    }
+  }
+
+  /**
+   * Wait for a process to exit
+   * Returns the exit code
+   */
+  private async waitForProcessExit(
+    processId: string,
+    command: string,
+    timeout?: number
+  ): Promise<WaitForExitResult> {
+    const stream = await this.streamProcessLogs(processId);
+
+    // Set up timeout if specified
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    let timeoutPromise: Promise<never> | undefined;
+
+    if (timeout !== undefined) {
+      timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => {
+          reject(
+            this.createReadyTimeoutError(
+              processId,
+              command,
+              'process exit',
+              timeout
+            )
+          );
+        }, timeout);
+      });
+    }
+
+    try {
+      const streamProcessor = async (): Promise<WaitForExitResult> => {
+        for await (const event of parseSSEStream<LogEvent>(stream)) {
+          if (event.type === 'exit') {
+            return {
+              exitCode: event.exitCode ?? 1
+            };
+          }
+        }
+
+        // Stream ended without exit event - shouldn't happen, but handle gracefully
+        throw new Error(
+          `Process ${processId} stream ended unexpectedly without exit event`
+        );
+      };
+
+      if (timeoutPromise) {
+        return await Promise.race([streamProcessor(), timeoutPromise]);
+      }
+      return await streamProcessor();
+    } finally {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
       }
     }
   }

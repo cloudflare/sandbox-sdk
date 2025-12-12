@@ -1,0 +1,40 @@
+{
+  "name": "{{WORKER_NAME}}",
+  "main": "index.ts",
+  "compatibility_date": "2025-05-06",
+  "compatibility_flags": ["nodejs_compat"],
+  "account_id": "b8afc92c7a87f699592038b756153d22",
+
+  "vars": {
+    "SANDBOX_LOG_LEVEL": "debug",
+    "SANDBOX_LOG_FORMAT": "pretty"
+  },
+  "observability": {
+    "enabled": true
+  },
+
+  // Performance tests only use the default sandbox type
+  "containers": [
+    {
+      "class_name": "Sandbox",
+      "image": "./Dockerfile",
+      "name": "{{CONTAINER_NAME}}"
+    }
+  ],
+
+  "durable_objects": {
+    "bindings": [
+      {
+        "class_name": "Sandbox",
+        "name": "Sandbox"
+      }
+    ]
+  },
+
+  "migrations": [
+    {
+      "new_sqlite_classes": ["Sandbox"],
+      "tag": "v1"
+    }
+  ]
+}

@@ -12,19 +12,19 @@
  *
  * Use X-Sandbox-Type header to select: 'python', 'opencode', 'standalone', or default
  */
-import { Sandbox, getSandbox, proxyToSandbox } from '@cloudflare/sandbox';
+import { getSandbox, proxyToSandbox, Sandbox } from '@cloudflare/sandbox';
 import type {
+  BucketDeleteResponse,
+  BucketGetResponse,
+  BucketPutResponse,
+  CodeContextDeleteResponse,
+  ErrorResponse,
   HealthResponse,
+  PortUnexposeResponse,
   SessionCreateResponse,
   SuccessResponse,
   SuccessWithMessageResponse,
-  BucketPutResponse,
-  BucketGetResponse,
-  BucketDeleteResponse,
-  PortUnexposeResponse,
-  CodeContextDeleteResponse,
-  WebSocketInitResponse,
-  ErrorResponse
+  WebSocketInitResponse
 } from './types';
 
 // Export Sandbox class with different names for each container type
@@ -579,6 +579,27 @@ console.log('Terminal server on port ' + port);
           interval: body.interval
         });
         return new Response(JSON.stringify({ success: true }), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      // Process waitForExit - waits for process to exit
+      if (
+        url.pathname.startsWith('/api/process/') &&
+        url.pathname.endsWith('/waitForExit') &&
+        request.method === 'POST'
+      ) {
+        const pathParts = url.pathname.split('/');
+        const processId = pathParts[3];
+        const process = await executor.getProcess(processId);
+        if (!process) {
+          return new Response(JSON.stringify({ error: 'Process not found' }), {
+            status: 404,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+        const result = await process.waitForExit(body.timeout);
+        return new Response(JSON.stringify(result), {
           headers: { 'Content-Type': 'application/json' }
         });
       }

@@ -18,26 +18,26 @@
  * Individual edge cases and error handling remain in dedicated test files.
  */
 
-import { describe, test, expect, beforeAll } from 'vitest';
-import {
-  getSharedSandbox,
-  createUniqueSession,
-  uniqueTestPath
-} from './helpers/global-sandbox';
-import { parseSSEStream } from '../../packages/sandbox/src/sse-parser';
 import type {
-  ExecResult,
-  WriteFileResult,
-  ReadFileResult,
-  MkdirResult,
-  GitCheckoutResult,
   EnvSetResult,
+  ExecEvent,
+  ExecResult,
+  FileInfo,
+  GitCheckoutResult,
+  ListFilesResult,
+  MkdirResult,
   Process,
   ProcessLogsResult,
-  ListFilesResult,
-  FileInfo,
-  ExecEvent
+  ReadFileResult,
+  WriteFileResult
 } from '@repo/shared';
+import { beforeAll, describe, expect, test } from 'vitest';
+import { parseSSEStream } from '../../packages/sandbox/src/sse-parser';
+import {
+  createUniqueSession,
+  getSharedSandbox,
+  uniqueTestPath
+} from './helpers/global-sandbox';
 
 describe('Comprehensive Workflow', () => {
   let workerUrl: string;
@@ -298,8 +298,9 @@ const interval = setInterval(() => {
     expect(processData.id).toBeTruthy();
     const processId = processData.id;
 
-    // Wait for process to complete by watching for "Done" in output
-    const waitLogResponse = await fetch(
+    // Wait for process to complete using waitForLog instead of fixed sleep
+    // This is more reliable under load as it waits for actual output
+    const waitResponse = await fetch(
       `${workerUrl}/api/process/${processId}/waitForLog`,
       {
         method: 'POST',
@@ -310,7 +311,7 @@ const interval = setInterval(() => {
         })
       }
     );
-    expect(waitLogResponse.status).toBe(200);
+    expect(waitResponse.status).toBe(200);
 
     // Get process logs
     const logsResponse = await fetch(

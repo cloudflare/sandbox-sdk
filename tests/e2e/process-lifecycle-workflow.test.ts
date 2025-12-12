@@ -1,9 +1,9 @@
-import { describe, test, expect, beforeAll } from 'vitest';
-import {
-  getSharedSandbox,
-  createUniqueSession
-} from './helpers/global-sandbox';
 import type { Process, ProcessLogsResult } from '@repo/shared';
+import { beforeAll, describe, expect, test } from 'vitest';
+import {
+  createUniqueSession,
+  getSharedSandbox
+} from './helpers/global-sandbox';
 
 // Dedicated port for this test file's port exposure error tests
 const PORT_LIFECYCLE_TEST_PORT = 9998;
@@ -138,7 +138,7 @@ console.log("Line 3");
 
     if (reader) {
       let done = false;
-      let timeout = Date.now() + 10000; // 10s timeout
+      const timeout = Date.now() + 10000; // 10s timeout
 
       while (!done && Date.now() < timeout) {
         const { value, done: streamDone } = await reader.read();
