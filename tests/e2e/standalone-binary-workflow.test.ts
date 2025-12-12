@@ -10,12 +10,12 @@
  * - Server continues running after CMD exits
  */
 
-import { describe, test, expect, beforeAll } from 'vitest';
-import {
-  getSharedSandbox,
-  createUniqueSession
-} from './helpers/global-sandbox';
 import type { ExecResult, ReadFileResult } from '@repo/shared';
+import { beforeAll, describe, expect, test } from 'vitest';
+import {
+  createUniqueSession,
+  getSharedSandbox
+} from './helpers/global-sandbox';
 
 describe('Standalone Binary Workflow', () => {
   let workerUrl: string;

@@ -6,12 +6,12 @@
  * - Server startup and lifecycle via process API
  */
 
+import type { ExecResult } from '@repo/shared';
 import { beforeAll, describe, expect, test } from 'vitest';
 import {
-  getSharedSandbox,
-  createUniqueSession
+  createUniqueSession,
+  getSharedSandbox
 } from './helpers/global-sandbox';
-import type { ExecResult } from '@repo/shared';
 
 describe('OpenCode Workflow (E2E)', () => {
   let workerUrl: string;

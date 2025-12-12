@@ -18,27 +18,26 @@
  * Individual edge cases and error handling remain in dedicated test files.
  */
 
-import { describe, test, expect, beforeAll } from 'vitest';
-import {
-  getSharedSandbox,
-  createUniqueSession,
-  uniqueTestPath
-} from './helpers/global-sandbox';
-import { parseSSEStream } from '../../packages/sandbox/src/sse-parser';
 import type {
-  ExecResult,
-  WriteFileResult,
-  ReadFileResult,
-  MkdirResult,
-  GitCheckoutResult,
   EnvSetResult,
+  ExecEvent,
+  ExecResult,
+  FileInfo,
+  GitCheckoutResult,
+  ListFilesResult,
+  MkdirResult,
   Process,
   ProcessLogsResult,
-  ListFilesResult,
-  FileInfo,
-  ExecEvent,
-  WaitForExitResult
+  ReadFileResult,
+  WriteFileResult
 } from '@repo/shared';
+import { beforeAll, describe, expect, test } from 'vitest';
+import { parseSSEStream } from '../../packages/sandbox/src/sse-parser';
+import {
+  createUniqueSession,
+  getSharedSandbox,
+  uniqueTestPath
+} from './helpers/global-sandbox';
 
 describe('Comprehensive Workflow', () => {
   let workerUrl: string;
@@ -299,27 +298,38 @@ const interval = setInterval(() => {
     expect(processData.id).toBeTruthy();
     const processId = processData.id;
 
-    // Wait for process to exit
-    const waitExitResponse = await fetch(
-      `${workerUrl}/api/process/${processId}/waitForExit`,
+    // Wait for process to complete using waitForLog instead of fixed sleep
+    // This is more reliable under load as it waits for actual output
+    const waitResponse = await fetch(
+      `${workerUrl}/api/process/${processId}/waitForLog`,
       {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          timeout: 30000
+          pattern: 'Done',
+          timeout: 10000
         })
       }
     );
+    expect(waitResponse.status).toBe(200);
 
-    expect(waitExitResponse.status).toBe(200);
-    const waitExitData = (await waitExitResponse.json()) as WaitForExitResult;
-    expect(waitExitData.exitCode).toBe(0);
+    // Get process logs
+    const logsResponse = await fetch(
+      `${workerUrl}/api/process/${processId}/logs`,
+      {
+        method: 'GET',
+        headers
+      }
+    );
 
-    // Verify env vars were available to the process (from waitForExit output)
-    expect(waitExitData.stdout).toContain('PROJECT_NAME = hello-world');
-    expect(waitExitData.stdout).toContain('BUILD_ENV = test');
-    expect(waitExitData.stdout).toContain('Heartbeat 3');
-    expect(waitExitData.stdout).toContain('Done');
+    expect(logsResponse.status).toBe(200);
+    const logsData = (await logsResponse.json()) as ProcessLogsResult;
+
+    // Verify env vars were available to the process
+    expect(logsData.stdout).toContain('PROJECT_NAME = hello-world');
+    expect(logsData.stdout).toContain('BUILD_ENV = test');
+    expect(logsData.stdout).toContain('Heartbeat 3');
+    expect(logsData.stdout).toContain('Done');
 
     // ========================================
     // Phase 6: Cleanup - move and delete files

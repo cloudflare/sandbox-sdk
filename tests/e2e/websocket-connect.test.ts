@@ -1,8 +1,8 @@
-import { describe, test, expect, beforeAll } from 'vitest';
+import { beforeAll, describe, expect, test } from 'vitest';
 import WebSocket from 'ws';
 import {
-  getSharedSandbox,
-  createUniqueSession
+  createUniqueSession,
+  getSharedSandbox
 } from './helpers/global-sandbox';
 
 /**

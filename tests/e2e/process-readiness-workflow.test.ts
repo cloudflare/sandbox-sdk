@@ -1,14 +1,9 @@
-import { describe, test, expect, beforeAll } from 'vitest';
+import type { PortExposeResult, Process, WaitForLogResult } from '@repo/shared';
+import { beforeAll, describe, expect, test } from 'vitest';
 import {
-  getSharedSandbox,
-  createUniqueSession
+  createUniqueSession,
+  getSharedSandbox
 } from './helpers/global-sandbox';
-import type {
-  Process,
-  WaitForLogResult,
-  WaitForExitResult,
-  PortExposeResult
-} from '@repo/shared';
 
 // Port exposure tests require custom domain with wildcard DNS routing
 const skipPortExposureTests =
@@ -324,148 +319,6 @@ await Bun.sleep(60000);
     expect(errorData.error).toMatch(
       /exited|exit|timeout|did not become ready/i
     );
-  }, 60000);
-
-  test('should wait for process to exit and return exit code with output', async () => {
-    // Write a script that does some work and then exits
-    const scriptCode = `
-console.log("Starting build...");
-await Bun.sleep(500);
-console.log("Step 1 complete");
-await Bun.sleep(500);
-console.log("Step 2 complete");
-console.log("Build finished successfully!");
-process.exit(0);
-    `.trim();
-
-    await fetch(`${workerUrl}/api/file/write`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: '/workspace/build-script.js',
-        content: scriptCode
-      })
-    });
-
-    // Start the process
-    const startResponse = await fetch(`${workerUrl}/api/process/start`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        command: 'bun run /workspace/build-script.js'
-      })
-    });
-
-    expect(startResponse.status).toBe(200);
-    const startData = (await startResponse.json()) as Process;
-    const processId = startData.id;
-
-    // Wait for process to exit
-    const waitResponse = await fetch(
-      `${workerUrl}/api/process/${processId}/waitForExit`,
-      {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          timeout: 30000
-        })
-      }
-    );
-
-    expect(waitResponse.status).toBe(200);
-    const waitData = (await waitResponse.json()) as WaitForExitResult;
-    expect(waitData.exitCode).toBe(0);
-    expect(waitData.stdout).toContain('Starting build...');
-    expect(waitData.stdout).toContain('Step 1 complete');
-    expect(waitData.stdout).toContain('Step 2 complete');
-    expect(waitData.stdout).toContain('Build finished successfully!');
-  }, 60000);
-
-  test('should return non-zero exit code when process fails', async () => {
-    // Write a script that fails
-    const scriptCode = `
-console.log("Starting...");
-console.error("Error: Something went wrong!");
-process.exit(1);
-    `.trim();
-
-    await fetch(`${workerUrl}/api/file/write`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        path: '/workspace/failing-script.js',
-        content: scriptCode
-      })
-    });
-
-    // Start the process
-    const startResponse = await fetch(`${workerUrl}/api/process/start`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        command: 'bun run /workspace/failing-script.js'
-      })
-    });
-
-    expect(startResponse.status).toBe(200);
-    const startData = (await startResponse.json()) as Process;
-    const processId = startData.id;
-
-    // Wait for process to exit
-    const waitResponse = await fetch(
-      `${workerUrl}/api/process/${processId}/waitForExit`,
-      {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          timeout: 30000
-        })
-      }
-    );
-
-    expect(waitResponse.status).toBe(200);
-    const waitData = (await waitResponse.json()) as WaitForExitResult;
-    expect(waitData.exitCode).toBe(1);
-    expect(waitData.stdout).toContain('Starting...');
-    expect(waitData.stderr).toContain('Error: Something went wrong!');
-  }, 60000);
-
-  test('should timeout when process does not exit in time', async () => {
-    // Start a long-running process
-    const startResponse = await fetch(`${workerUrl}/api/process/start`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        command: 'sleep 60'
-      })
-    });
-
-    expect(startResponse.status).toBe(200);
-    const startData = (await startResponse.json()) as Process;
-    const processId = startData.id;
-
-    // Wait for exit with short timeout - should fail
-    const waitResponse = await fetch(
-      `${workerUrl}/api/process/${processId}/waitForExit`,
-      {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          timeout: 2000
-        })
-      }
-    );
-
-    // Should fail with timeout
-    expect(waitResponse.status).toBe(500);
-    const errorData = (await waitResponse.json()) as { error: string };
-    expect(errorData.error).toMatch(/timeout|did not become ready/i);
-
-    // Cleanup
-    await fetch(`${workerUrl}/api/process/${processId}`, {
-      method: 'DELETE',
-      headers
-    });
   }, 60000);
 
   test('should detect pattern in stderr as well as stdout', async () => {

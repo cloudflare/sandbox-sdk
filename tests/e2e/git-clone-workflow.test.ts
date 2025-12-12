@@ -1,7 +1,7 @@
-import { describe, test, expect, beforeAll } from 'vitest';
+import { beforeAll, describe, expect, test } from 'vitest';
 import {
-  getSharedSandbox,
   createUniqueSession,
+  getSharedSandbox,
   uniqueTestPath
 } from './helpers/global-sandbox';
 import type { ErrorResponse } from './test-worker/types';

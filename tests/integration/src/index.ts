@@ -1,35 +1,35 @@
 import { getSandbox, proxyToSandbox, type Sandbox } from '@cloudflare/sandbox';
 import { codeExamples } from '../shared/examples';
 import {
+  createDirectory,
+  createTestBinaryFile,
+  deleteFile,
   executeCommand,
   executeCommandStream,
   exposePort,
   getProcess,
   getProcessLogs,
+  gitCheckout,
+  initializeWebSocketServer,
   killProcesses,
+  listFiles,
   listProcesses,
-  startProcess,
-  streamProcessLogs,
-  unexposePort,
+  moveFile,
   readFile,
   readFileStream,
-  listFiles,
-  deleteFile,
   renameFile,
-  moveFile,
-  createDirectory,
-  gitCheckout,
   setupNextjs,
   setupReact,
-  setupVue,
   setupStatic,
-  createTestBinaryFile,
-  initializeWebSocketServer
+  setupVue,
+  startProcess,
+  streamProcessLogs,
+  unexposePort
 } from './endpoints';
 import {
   createSession,
-  executeCell,
-  deleteSession
+  deleteSession,
+  executeCell
 } from './endpoints/notebook';
 import {
   corsHeaders,

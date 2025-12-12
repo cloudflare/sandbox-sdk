@@ -159,3 +159,4 @@ tests/e2e/test-worker/wrangler.jsonc
 !node_modules/**
 
 sites/**/.astro/
+perf-results/

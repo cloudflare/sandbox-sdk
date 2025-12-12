@@ -11,14 +11,14 @@
  * - Hidden file handling
  */
 
-import { beforeAll, beforeEach, describe, expect, test } from 'vitest';
 import type { FileInfo, ListFilesResult, ReadFileResult } from '@repo/shared';
-import type { ErrorResponse } from './test-worker/types';
+import { beforeAll, beforeEach, describe, expect, test } from 'vitest';
 import {
-  getSharedSandbox,
   createUniqueSession,
+  getSharedSandbox,
   uniqueTestPath
 } from './helpers/global-sandbox';
+import type { ErrorResponse } from './test-worker/types';
 
 describe('File Operations Error Handling', () => {
   let workerUrl: string;

@@ -1,10 +1,10 @@
-import { describe, test, expect, beforeAll } from 'vitest';
-import {
-  getSharedSandbox,
-  createUniqueSession
-} from './helpers/global-sandbox';
-import type { ExecResult, ExecEvent } from '@repo/shared';
+import type { ExecEvent, ExecResult } from '@repo/shared';
+import { beforeAll, describe, expect, test } from 'vitest';
 import { parseSSEStream } from '../../packages/sandbox/src/sse-parser';
+import {
+  createUniqueSession,
+  getSharedSandbox
+} from './helpers/global-sandbox';
 
 /**
  * Environment Variable Tests

@@ -10,6 +10,10 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+env:
+  # Account subdomain for workers.dev URLs (found in Cloudflare dashboard)
+  CF_ACCOUNT_SUBDOMAIN: agents-b8a
+
 jobs:
   # Unit tests (client + container)
   unit-tests:
@@ -161,7 +165,7 @@ jobs:
       - name: Get deployment URL
         id: get-url
         run: |
-          echo "worker_url=https://${{ steps.env-name.outputs.worker_name }}.agents-b8a.workers.dev" >> $GITHUB_OUTPUT
+          echo "worker_url=https://${{ steps.env-name.outputs.worker_name }}.${{ env.CF_ACCOUNT_SUBDOMAIN }}.workers.dev" >> $GITHUB_OUTPUT
 
       # Run E2E tests against deployed worker
       - name: Run E2E tests
