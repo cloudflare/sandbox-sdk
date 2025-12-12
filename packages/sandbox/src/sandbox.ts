@@ -1561,7 +1561,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         for await (const event of parseSSEStream<LogEvent>(stream)) {
           if (event.type === 'exit') {
             return {
-              exitCode: event.exitCode ?? 0
+              exitCode: event.exitCode ?? 1
             };
           }
         }
