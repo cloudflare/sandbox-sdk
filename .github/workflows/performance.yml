@@ -4,15 +4,17 @@ name: Performance Tests
 on:
   workflow_dispatch:
     inputs:
-      worker_url:
-        description: 'Test worker URL (leave empty to deploy fresh)'
-        required: false
-        type: string
-      scenarios:
-        description: 'Scenarios to run (comma-separated, or "all")'
+      scenario:
+        description: 'Scenario to run'
         required: false
         default: 'all'
-        type: string
+        type: choice
+        options:
+          - all
+          - cold-start
+          - sustained-throughput
+          - bursty-traffic
+          - concurrent-creation
 
   # Run before releases
   release:
@@ -31,7 +33,6 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  PERF_WORKER_NAME: sandbox-perf-test-worker
   # Account subdomain for workers.dev URLs (found in Cloudflare dashboard)
   CF_ACCOUNT_SUBDOMAIN: agents-b8a
 
@@ -41,8 +42,8 @@ jobs:
     timeout-minutes: 15
     outputs:
       worker_url: ${{ steps.deploy.outputs.worker_url }}
+      worker_name: ${{ steps.worker-name.outputs.name }}
       version: ${{ steps.version.outputs.version }}
-      deployed_fresh: ${{ steps.check-url.outputs.deployed_fresh }}
 
     steps:
       - uses: actions/checkout@v4
@@ -68,23 +69,17 @@ jobs:
           VERSION=$(node -p "require('./packages/sandbox/package.json').version")
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-      # Use provided URL or deploy fresh worker
-      - name: Check for existing worker URL
-        id: check-url
+      - name: Generate unique worker name
+        id: worker-name
         run: |
-          if [ -n "${{ inputs.worker_url }}" ]; then
-            echo "deployed_fresh=false" >> $GITHUB_OUTPUT
-            echo "worker_url=${{ inputs.worker_url }}" >> $GITHUB_OUTPUT
-          else
-            echo "deployed_fresh=true" >> $GITHUB_OUTPUT
-          fi
+          # Use run_id for unique worker per run (allows concurrent runs)
+          WORKER_NAME="sandbox-perf-${{ github.run_id }}"
+          echo "name=$WORKER_NAME" >> $GITHUB_OUTPUT
 
       - name: Set up Docker Buildx
-        if: steps.check-url.outputs.deployed_fresh == 'true'
         uses: docker/setup-buildx-action@v3
 
       - name: Build Docker image (default only)
-        if: steps.check-url.outputs.deployed_fresh == 'true'
         run: |
           VERSION=${{ steps.version.outputs.version }}
           # Perf tests only use default sandbox type - skip python/opencode/standalone
@@ -92,30 +87,25 @@ jobs:
             --build-arg SANDBOX_VERSION=$VERSION -t cloudflare/sandbox-test:$VERSION .
 
       - name: Generate wrangler config (perf-specific)
-        if: steps.check-url.outputs.deployed_fresh == 'true'
         run: |
           cd tests/e2e/test-worker
+          WORKER_NAME="${{ steps.worker-name.outputs.name }}"
           # Use perf-specific template with only default Sandbox container
-          sed "s/{{WORKER_NAME}}/${{ env.PERF_WORKER_NAME }}/g; s/{{CONTAINER_NAME}}/${{ env.PERF_WORKER_NAME }}/g" \
+          sed "s/{{WORKER_NAME}}/$WORKER_NAME/g; s/{{CONTAINER_NAME}}/$WORKER_NAME/g" \
             wrangler.perf.template.jsonc > wrangler.jsonc
 
       - name: Deploy test worker
-        if: steps.check-url.outputs.deployed_fresh == 'true'
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: deploy --name ${{ env.PERF_WORKER_NAME }}
+          command: deploy --name ${{ steps.worker-name.outputs.name }}
           workingDirectory: tests/e2e/test-worker
 
       - name: Set worker URL output
         id: deploy
         run: |
-          if [ "${{ steps.check-url.outputs.deployed_fresh }}" = "true" ]; then
-            echo "worker_url=https://${{ env.PERF_WORKER_NAME }}.${{ env.CF_ACCOUNT_SUBDOMAIN }}.workers.dev" >> $GITHUB_OUTPUT
-          else
-            echo "worker_url=${{ steps.check-url.outputs.worker_url }}" >> $GITHUB_OUTPUT
-          fi
+          echo "worker_url=https://${{ steps.worker-name.outputs.name }}.${{ env.CF_ACCOUNT_SUBDOMAIN }}.workers.dev" >> $GITHUB_OUTPUT
 
   performance-tests:
     needs: setup
@@ -148,15 +138,10 @@ jobs:
           TEST_WORKER_URL: ${{ needs.setup.outputs.worker_url }}
           CI: true
         run: |
-          if [ "${{ inputs.scenarios }}" = "all" ] || [ -z "${{ inputs.scenarios }}" ]; then
+          if [ "${{ inputs.scenario }}" = "all" ] || [ -z "${{ inputs.scenario }}" ]; then
             npm run test:perf
           else
-            # Run specific scenarios
-            IFS=',' read -ra SCENARIOS <<< "${{ inputs.scenarios }}"
-            for scenario in "${SCENARIOS[@]}"; do
-              scenario=$(echo "$scenario" | xargs)  # Trim whitespace
-              npx vitest run --config vitest.perf.config.ts "tests/perf/scenarios/${scenario}.test.ts"
-            done
+            npx vitest run --config vitest.perf.config.ts "tests/perf/scenarios/${{ inputs.scenario }}.test.ts"
           fi
 
       - name: Upload performance results
@@ -177,7 +162,7 @@ jobs:
 
   cleanup:
     needs: [setup, performance-tests]
-    if: always() && needs.setup.outputs.deployed_fresh == 'true'
+    if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
@@ -187,7 +172,7 @@ jobs:
       - name: Cleanup test worker
         continue-on-error: true
         run: |
-          scripts/cleanup-test-deployment.sh ${{ env.PERF_WORKER_NAME }}
+          scripts/cleanup-test-deployment.sh ${{ needs.setup.outputs.worker_name }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
