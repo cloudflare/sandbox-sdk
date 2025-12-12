@@ -595,15 +595,11 @@ const interval = setInterval(() => {
     });
     const process2 = (await process2Response.json()) as Process;
 
-    // Wait for processes to be registered
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-
-    // List all processes
+    // List processes - startProcess returns after registration, so they're immediately visible
     const listResponse = await fetch(`${workerUrl}/api/process/list`, {
       method: 'GET',
       headers
     });
-
     expect(listResponse.status).toBe(200);
     const processList = (await listResponse.json()) as Process[];
 

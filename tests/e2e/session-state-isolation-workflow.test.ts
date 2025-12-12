@@ -3,7 +3,8 @@ import type {
   Process,
   ReadFileResult,
   SessionCreateResult,
-  SessionDeleteResult
+  SessionDeleteResult,
+  WaitForExitResult
 } from '@repo/shared';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import {
@@ -417,22 +418,17 @@ describe('Session State Isolation Workflow', () => {
       const startData = (await startResponse.json()) as Process;
       const processId = startData.id;
 
-      // Wait for process to be registered
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-
-      // List processes from session2 - should see session1's process (shared process table)
+      // List processes from session2 - startProcess returns after registration,
+      // so process is immediately visible (shared process table)
       const listResponse = await fetch(`${workerUrl}/api/process/list`, {
         method: 'GET',
         headers: createTestHeaders(sandboxId, session2Id)
       });
-
       expect(listResponse.status).toBe(200);
-      const listData = (await listResponse.json()) as Process[];
-      const processes = listData;
+      const processes = (await listResponse.json()) as Process[];
       expect(Array.isArray(processes)).toBe(true);
-
-      // Find our process in the list
       const ourProcess = processes.find((p) => p.id === processId);
+
       expect(ourProcess).toBeTruthy();
       if (!ourProcess) throw new Error('Process not found');
 
@@ -449,19 +445,18 @@ describe('Session State Isolation Workflow', () => {
 
       expect(killResponse.status).toBe(200);
 
-      // Verify process is killed (check from session1)
-      await new Promise((resolve) => setTimeout(resolve, 500));
-
-      const verifyResponse = await fetch(
-        `${workerUrl}/api/process/${processId}`,
+      // Wait for process to exit (check from session1)
+      const waitExitResponse = await fetch(
+        `${workerUrl}/api/process/${processId}/waitForExit`,
         {
-          method: 'GET',
-          headers: createTestHeaders(sandboxId, session1Id)
+          method: 'POST',
+          headers: createTestHeaders(sandboxId, session1Id),
+          body: JSON.stringify({ timeout: 5000 })
         }
       );
-
-      const verifyData = (await verifyResponse.json()) as Process;
-      expect(verifyData.status).not.toBe('running');
+      expect(waitExitResponse.status).toBe(200);
+      const exitResult = (await waitExitResponse.json()) as WaitForExitResult;
+      expect(exitResult.exitCode).toBeDefined();
     }, 90000);
 
     test('should share file system between sessions (by design)', async () => {

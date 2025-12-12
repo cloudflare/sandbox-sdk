@@ -206,8 +206,10 @@ describe('BaseHttpClient', () => {
     });
 
     it('should handle server unavailable scenarios', async () => {
+      // Note: 503 triggers container retry loop (transient errors)
+      // For permanent server errors, use 500
       mockFetch.mockResolvedValue(
-        new Response('Service Unavailable', { status: 503 })
+        new Response('Internal Server Error', { status: 500 })
       );
 
       await expect(client.testRequest('/api/test')).rejects.toThrow(
@@ -215,7 +217,7 @@ describe('BaseHttpClient', () => {
       );
 
       expect(onError).toHaveBeenCalledWith(
-        'HTTP error! status: 503',
+        'HTTP error! status: 500',
         undefined
       );
     });
@@ -363,13 +365,18 @@ describe('BaseHttpClient', () => {
   });
 
   describe('container startup retry logic', () => {
-    it('should retry 503 errors with "no container instance available"', async () => {
+    // The client retries ONLY on 503 (Service Unavailable) status.
+    // 503 indicates transient errors like container starting up.
+    // 500 indicates permanent errors and should NOT be retried.
+
+    it('should retry 503 errors (container starting)', async () => {
       vi.useFakeTimers();
 
       mockFetch
         .mockResolvedValueOnce(
-          new Response('Error: There is no container instance available', {
-            status: 503
+          new Response('Container is starting. Please retry in a moment.', {
+            status: 503,
+            headers: { 'Retry-After': '3' }
           })
         )
         .mockResolvedValueOnce(
@@ -389,55 +396,33 @@ describe('BaseHttpClient', () => {
       vi.useRealTimers();
     });
 
-    it('should retry 500 errors with "container port not found"', async () => {
+    it('should retry multiple 503 errors until success', async () => {
       vi.useFakeTimers();
 
       mockFetch
         .mockResolvedValueOnce(
-          new Response('Connection refused: container port not found', {
-            status: 500
-          })
+          new Response('Container is starting.', { status: 503 })
+        )
+        .mockResolvedValueOnce(
+          new Response('Container is starting.', { status: 503 })
         )
         .mockResolvedValueOnce(
           new Response(JSON.stringify({ success: true }), { status: 200 })
         );
 
       const promise = client.testRequest('/api/test');
-      await vi.advanceTimersByTimeAsync(5_000);
+      await vi.advanceTimersByTimeAsync(15_000);
       const result = await promise;
 
-      expect(mockFetch).toHaveBeenCalledTimes(2);
+      expect(mockFetch).toHaveBeenCalledTimes(3);
       expect(result.success).toBe(true);
 
       vi.useRealTimers();
     });
 
-    it('should retry 500 errors with "the container is not listening"', async () => {
-      vi.useFakeTimers();
-
-      mockFetch
-        .mockResolvedValueOnce(
-          new Response('Error: the container is not listening on port 3000', {
-            status: 500
-          })
-        )
-        .mockResolvedValueOnce(
-          new Response(JSON.stringify({ success: true }), { status: 200 })
-        );
-
-      const promise = client.testRequest('/api/test');
-      await vi.advanceTimersByTimeAsync(5_000);
-      const result = await promise;
-
-      expect(mockFetch).toHaveBeenCalledTimes(2);
-      expect(result.success).toBe(true);
-
-      vi.useRealTimers();
-    });
-
-    it('should NOT retry 500 errors with "no such image"', async () => {
+    it('should NOT retry 500 errors (permanent failures)', async () => {
       mockFetch.mockResolvedValueOnce(
-        new Response('Error: no such image: my-container:latest', {
+        new Response('Failed to start container: no such image', {
           status: 500
         })
       );
@@ -446,27 +431,20 @@ describe('BaseHttpClient', () => {
       expect(mockFetch).toHaveBeenCalledTimes(1); // No retry
     });
 
-    it('should NOT retry 500 errors with "container already exists"', async () => {
+    it('should NOT retry 500 errors regardless of message content', async () => {
+      // Even if the message mentions transient-sounding errors,
+      // 500 status means permanent failure (DO decided it's not recoverable)
       mockFetch.mockResolvedValueOnce(
-        new Response('Error: container already exists', { status: 500 })
+        new Response('Internal server error: container port not found', {
+          status: 500
+        })
       );
 
       await expect(client.testRequest('/api/test')).rejects.toThrow();
       expect(mockFetch).toHaveBeenCalledTimes(1); // No retry
     });
 
-    it('should NOT retry 500 errors with unknown patterns', async () => {
-      mockFetch.mockResolvedValueOnce(
-        new Response('Internal server error: database connection failed', {
-          status: 500
-        })
-      );
-
-      await expect(client.testRequest('/api/test')).rejects.toThrow();
-      expect(mockFetch).toHaveBeenCalledTimes(1); // Fail-safe: don't retry
-    });
-
-    it('should NOT retry 404 or other non-500/503 errors', async () => {
+    it('should NOT retry 404 or other non-503 errors', async () => {
       mockFetch.mockResolvedValueOnce(
         new Response('Not found', { status: 404 })
       );
@@ -525,18 +503,19 @@ describe('BaseHttpClient', () => {
       vi.useRealTimers();
     });
 
-    it('should retry multiple transient errors in sequence', async () => {
+    it('should retry multiple 503 errors in sequence until success', async () => {
       vi.useFakeTimers();
 
+      // Only 503 triggers retry - 500 does not
       mockFetch
         .mockResolvedValueOnce(
-          new Response('No container instance available', { status: 503 })
+          new Response('Container is starting.', { status: 503 })
         )
         .mockResolvedValueOnce(
-          new Response('Container port not found', { status: 500 })
+          new Response('Container is starting.', { status: 503 })
         )
         .mockResolvedValueOnce(
-          new Response('The container is not listening', { status: 500 })
+          new Response('Container is starting.', { status: 503 })
         )
         .mockResolvedValueOnce(
           new Response(JSON.stringify({ success: true }), { status: 200 })
@@ -555,28 +534,22 @@ describe('BaseHttpClient', () => {
       vi.useRealTimers();
     });
 
-    it('should handle case-insensitive error matching', async () => {
-      vi.useFakeTimers();
+    it('should NOT retry on 500 regardless of error message', async () => {
+      // Previously this would retry based on message content
+      // Now we only retry on 503 status code
+      const errorMessages = [
+        'Container port not found',
+        'The container is not listening',
+        'ERROR: CONTAINER PORT NOT FOUND'
+      ];
 
-      mockFetch
-        .mockResolvedValueOnce(
-          new Response('ERROR: CONTAINER PORT NOT FOUND', { status: 500 })
-        )
-        .mockResolvedValueOnce(
-          new Response(JSON.stringify({ success: true }), { status: 200 })
-        );
+      for (const message of errorMessages) {
+        mockFetch.mockResolvedValueOnce(new Response(message, { status: 500 }));
 
-      const promise = client.testRequest('/api/test');
-
-      // Advance time for first retry (3s)
-      await vi.advanceTimersByTimeAsync(5_000);
-
-      const result = await promise;
-
-      expect(mockFetch).toHaveBeenCalledTimes(2);
-      expect(result.success).toBe(true);
-
-      vi.useRealTimers();
+        await expect(client.testRequest('/api/test')).rejects.toThrow();
+        expect(mockFetch).toHaveBeenCalledTimes(1);
+        mockFetch.mockClear();
+      }
     });
   });
 });

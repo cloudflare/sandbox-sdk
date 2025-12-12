@@ -239,10 +239,11 @@ describe('GitClient', () => {
     });
 
     it('should handle network errors', async () => {
+      // Note: 503 triggers container retry loop, so we use 500 for permanent errors
       mockFetch.mockResolvedValue(
         new Response(
           JSON.stringify({ error: 'Network error', code: 'GIT_NETWORK_ERROR' }),
-          { status: 503 }
+          { status: 500 }
         )
       );
 
@@ -354,7 +355,8 @@ describe('GitClient', () => {
           error: GitBranchNotFoundError
         },
         { status: 500, code: 'GIT_OPERATION_FAILED', error: GitError },
-        { status: 503, code: 'GIT_NETWORK_ERROR', error: GitNetworkError }
+        // Note: 503 triggers container retry loop, so we use 500 for permanent git errors
+        { status: 500, code: 'GIT_NETWORK_ERROR', error: GitNetworkError }
       ];
 
       for (const scenario of serverErrorScenarios) {
