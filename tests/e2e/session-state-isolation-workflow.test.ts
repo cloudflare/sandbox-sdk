@@ -3,7 +3,8 @@ import type {
   Process,
   ReadFileResult,
   SessionCreateResult,
-  SessionDeleteResult
+  SessionDeleteResult,
+  WaitForExitResult
 } from '@repo/shared';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import {
@@ -444,23 +445,18 @@ describe('Session State Isolation Workflow', () => {
 
       expect(killResponse.status).toBe(200);
 
-      // Poll until process status changes from running (check from session1)
-      let verifyData: Process | undefined;
-      for (let i = 0; i < 10; i++) {
-        const verifyResponse = await fetch(
-          `${workerUrl}/api/process/${processId}`,
-          {
-            method: 'GET',
-            headers: createTestHeaders(sandboxId, session1Id)
-          }
-        );
-        verifyData = (await verifyResponse.json()) as Process;
-        if (verifyData.status !== 'running') break;
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      }
-
-      expect(verifyData).toBeTruthy();
-      expect(verifyData!.status).not.toBe('running');
+      // Wait for process to exit (check from session1)
+      const waitExitResponse = await fetch(
+        `${workerUrl}/api/process/${processId}/waitForExit`,
+        {
+          method: 'POST',
+          headers: createTestHeaders(sandboxId, session1Id),
+          body: JSON.stringify({ timeout: 5000 })
+        }
+      );
+      expect(waitExitResponse.status).toBe(200);
+      const exitResult = (await waitExitResponse.json()) as WaitForExitResult;
+      expect(exitResult.exitCode).toBeDefined();
     }, 90000);
 
     test('should share file system between sessions (by design)', async () => {
