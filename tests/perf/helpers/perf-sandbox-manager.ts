@@ -139,8 +139,12 @@ export class PerfSandboxManager {
         method: 'POST',
         headers: sandbox.headers
       });
-    } catch {
-      // Ignore cleanup errors
+    } catch (error) {
+      // Log cleanup failures - could indicate system degradation during perf tests
+      console.debug(
+        `[PerfCleanup] Failed to cleanup sandbox ${sandbox.id}:`,
+        error
+      );
     }
     this.sandboxes.delete(sandbox.id);
   }

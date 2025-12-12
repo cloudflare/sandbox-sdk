@@ -30,6 +30,11 @@ concurrency:
   group: perf-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  PERF_WORKER_NAME: sandbox-perf-test-worker
+  # Account subdomain for workers.dev URLs (found in Cloudflare dashboard)
+  CF_ACCOUNT_SUBDOMAIN: agents-b8a
+
 jobs:
   setup:
     runs-on: ubuntu-latest
@@ -91,7 +96,7 @@ jobs:
         if: steps.check-url.outputs.deployed_fresh == 'true'
         run: |
           cd tests/e2e/test-worker
-          ./generate-config.sh sandbox-perf-test-worker
+          ./generate-config.sh ${{ env.PERF_WORKER_NAME }}
 
       - name: Deploy test worker
         if: steps.check-url.outputs.deployed_fresh == 'true'
@@ -99,14 +104,14 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: deploy --name sandbox-perf-test-worker
+          command: deploy --name ${{ env.PERF_WORKER_NAME }}
           workingDirectory: tests/e2e/test-worker
 
       - name: Set worker URL output
         id: deploy
         run: |
           if [ "${{ steps.check-url.outputs.deployed_fresh }}" = "true" ]; then
-            echo "worker_url=https://sandbox-perf-test-worker.agents-b8a.workers.dev" >> $GITHUB_OUTPUT
+            echo "worker_url=https://${{ env.PERF_WORKER_NAME }}.${{ env.CF_ACCOUNT_SUBDOMAIN }}.workers.dev" >> $GITHUB_OUTPUT
           else
             echo "worker_url=${{ steps.check-url.outputs.worker_url }}" >> $GITHUB_OUTPUT
           fi
@@ -177,7 +182,7 @@ jobs:
       - name: Cleanup test worker
         continue-on-error: true
         run: |
-          scripts/cleanup-test-deployment.sh sandbox-perf-test-worker
+          scripts/cleanup-test-deployment.sh ${{ env.PERF_WORKER_NAME }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

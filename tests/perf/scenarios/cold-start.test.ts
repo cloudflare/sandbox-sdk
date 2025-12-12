@@ -6,7 +6,7 @@
  */
 
 import { afterAll, afterEach, describe, expect, test } from 'vitest';
-import { METRICS, SCENARIOS } from '../helpers/constants';
+import { METRICS, PASS_THRESHOLD, SCENARIOS } from '../helpers/constants';
 import {
   createPerfTestContext,
   registerPerfScenario
@@ -76,6 +76,6 @@ describe('Cold Start Latency', () => {
     const successRate = ctx.collector.getSuccessRate(
       METRICS.COLD_START_LATENCY
     );
-    expect(successRate.rate).toBeGreaterThan(80);
+    expect(successRate.rate).toBeGreaterThanOrEqual(PASS_THRESHOLD);
   }, 600000);
 });

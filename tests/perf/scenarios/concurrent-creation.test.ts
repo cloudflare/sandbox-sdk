@@ -7,7 +7,7 @@
 
 import { afterAll, afterEach, describe, expect, test } from 'vitest';
 import { runConcurrent } from '../helpers/concurrent-runner';
-import { METRICS, SCENARIOS } from '../helpers/constants';
+import { METRICS, PASS_THRESHOLD, SCENARIOS } from '../helpers/constants';
 import { PerfSandboxManager } from '../helpers/perf-sandbox-manager';
 import {
   createPerfTestContext,
@@ -77,7 +77,7 @@ describe('Concurrent Sandbox Creation', () => {
     const successRate = (results.successCount / CONCURRENT_SANDBOXES) * 100;
     ctx.collector.record(METRICS.SUCCESS_RATE, successRate, 'percent');
 
-    expect(successRate).toBeGreaterThan(80);
+    expect(successRate).toBeGreaterThanOrEqual(PASS_THRESHOLD);
     expect(overallDuration).toBeLessThan(300000);
   }, 600000);
 });

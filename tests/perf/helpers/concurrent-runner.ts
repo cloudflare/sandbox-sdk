@@ -125,12 +125,17 @@ export async function runBurst<T>(
   }
 
   // Wait for all with timeout
+  let timeoutId: ReturnType<typeof setTimeout>;
   const timeoutPromise = new Promise<never>((_, reject) => {
-    setTimeout(() => reject(new Error('Burst timeout')), maxDuration);
+    timeoutId = setTimeout(
+      () => reject(new Error('Burst timeout')),
+      maxDuration
+    );
   });
 
   try {
     const results = await Promise.race([Promise.all(promises), timeoutPromise]);
+    clearTimeout(timeoutId!);
 
     let successCount = 0;
     let failureCount = 0;
