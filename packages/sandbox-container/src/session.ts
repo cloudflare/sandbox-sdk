@@ -1180,7 +1180,10 @@ export class Session {
         return pid;
       }
 
-      // Timeout reached, fall back to file polling
+      // The timed-out readPidFromPipe() is still blocked on open() - unblock it
+      // to prevent leaking a file descriptor
+      await this.unblockPidPipe(pidPipe);
+
       this.logger.warn(
         'PID pipe read timed out, falling back to file polling',
         {
@@ -1228,6 +1231,22 @@ export class Session {
       return Number.isNaN(pid) ? undefined : pid;
     } finally {
       await fd.close();
+    }
+  }
+
+  /**
+   * Unblock a FIFO reader by opening the pipe for writing
+   *
+   * Opening a FIFO for reading blocks until a writer opens it. Writing to
+   * the FIFO unblocks the reader, allowing it to complete.
+   */
+  private async unblockPidPipe(pidPipe: string): Promise<void> {
+    try {
+      const fd = await open(pidPipe, 'w');
+      await fd.write('\n');
+      await fd.close();
+    } catch {
+      // Ignore errors - FIFO might already have a writer, be closed, or be deleted
     }
   }
 
