@@ -41,16 +41,17 @@ The `MetricsCollector` class tracks timing and success rates:
 ```typescript
 const metrics = new MetricsCollector('scenario-name');
 
-// Time an async operation
+// Time an async operation (automatically tracks success/failure)
 const result = await metrics.timeAsync('operation-name', async () => {
   return await doSomething();
 });
 
-// Record a raw value
-metrics.record('custom-metric', 123.45, 'ms');
+// Record a raw value with success tracking in metadata
+metrics.record('custom-metric', 123.45, 'ms', { success: true });
 
-// Track success/failure
-metrics.recordSuccess('operation-name', succeeded);
+// Get success rate for a metric
+const rate = metrics.getSuccessRate('operation-name');
+// Returns: { total, success, failure, rate }
 ```
 
 Statistics calculated per metric:

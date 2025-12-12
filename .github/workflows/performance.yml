@@ -83,20 +83,21 @@ jobs:
         if: steps.check-url.outputs.deployed_fresh == 'true'
         uses: docker/setup-buildx-action@v3
 
-      - name: Build Docker images
+      - name: Build Docker image (default only)
         if: steps.check-url.outputs.deployed_fresh == 'true'
         run: |
           VERSION=${{ steps.version.outputs.version }}
+          # Perf tests only use default sandbox type - skip python/opencode/standalone
           docker build -f packages/sandbox/Dockerfile --target default --platform linux/amd64 \
             --build-arg SANDBOX_VERSION=$VERSION -t cloudflare/sandbox-test:$VERSION .
-          docker build -f packages/sandbox/Dockerfile --target python --platform linux/amd64 \
-            --build-arg SANDBOX_VERSION=$VERSION -t cloudflare/sandbox-test:$VERSION-python .
 
-      - name: Generate wrangler config
+      - name: Generate wrangler config (perf-specific)
         if: steps.check-url.outputs.deployed_fresh == 'true'
         run: |
           cd tests/e2e/test-worker
-          ./generate-config.sh ${{ env.PERF_WORKER_NAME }}
+          # Use perf-specific template with only default Sandbox container
+          sed "s/{{WORKER_NAME}}/${{ env.PERF_WORKER_NAME }}/g; s/{{CONTAINER_NAME}}/${{ env.PERF_WORKER_NAME }}/g" \
+            wrangler.perf.template.jsonc > wrangler.jsonc
 
       - name: Deploy test worker
         if: steps.check-url.outputs.deployed_fresh == 'true'
