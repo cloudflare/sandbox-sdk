@@ -57,10 +57,13 @@ export async function setup() {
   // Verify worker is accessible
   try {
     const healthResponse = await fetch(`${workerUrl}/health`);
-    const body = await healthResponse.text();
-    if (!healthResponse.ok || body !== 'OK') {
+    if (!healthResponse.ok) {
+      throw new Error(`Worker health check failed: ${healthResponse.status}`);
+    }
+    const body = (await healthResponse.json()) as { status: string };
+    if (body.status !== 'ok') {
       throw new Error(
-        `Worker health check failed: ${healthResponse.status} - ${body}`
+        `Worker health check returned unexpected status: ${body.status}`
       );
     }
     console.log(`[PerfSetup] Worker accessible at: ${workerUrl}`);
