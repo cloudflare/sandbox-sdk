@@ -583,6 +583,27 @@ console.log('Terminal server on port ' + port);
         });
       }
 
+      // Process waitForExit - waits for process to exit
+      if (
+        url.pathname.startsWith('/api/process/') &&
+        url.pathname.endsWith('/waitForExit') &&
+        request.method === 'POST'
+      ) {
+        const pathParts = url.pathname.split('/');
+        const processId = pathParts[3];
+        const process = await executor.getProcess(processId);
+        if (!process) {
+          return new Response(JSON.stringify({ error: 'Process not found' }), {
+            status: 404,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+        const result = await process.waitForExit(body.timeout);
+        return new Response(JSON.stringify(result), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
       // Process list
       if (url.pathname === '/api/process/list' && request.method === 'GET') {
         const processes = await executor.listProcesses();

@@ -111,6 +111,18 @@ export interface WaitForLogResult {
 }
 
 /**
+ * Result from waiting for process exit
+ */
+export interface WaitForExitResult {
+  /** Process exit code */
+  exitCode: number;
+  /** Accumulated stdout output */
+  stdout: string;
+  /** Accumulated stderr output */
+  stderr: string;
+}
+
+/**
  * Options for waiting for a port to become ready
  */
 export interface WaitForPortOptions {
@@ -311,6 +323,14 @@ export interface Process {
    * await proc.waitForPort(5432, { mode: 'tcp' });
    */
   waitForPort(port: number, options?: WaitForPortOptions): Promise<void>;
+
+  /**
+   * Wait for the process to exit
+   *
+   * Returns the exit code along with accumulated stdout/stderr output.
+   * Useful for processes that exit on their own (builds, scripts, etc.)
+   */
+  waitForExit(timeout?: number): Promise<WaitForExitResult>;
 }
 
 // Streaming event types

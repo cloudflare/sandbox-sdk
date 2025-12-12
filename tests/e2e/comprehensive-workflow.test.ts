@@ -36,7 +36,8 @@ import type {
   ProcessLogsResult,
   ListFilesResult,
   FileInfo,
-  ExecEvent
+  ExecEvent,
+  WaitForExitResult
 } from '@repo/shared';
 
 describe('Comprehensive Workflow', () => {
@@ -298,26 +299,27 @@ const interval = setInterval(() => {
     expect(processData.id).toBeTruthy();
     const processId = processData.id;
 
-    // Wait for process to complete
-    await new Promise((resolve) => setTimeout(resolve, 3000));
-
-    // Get process logs
-    const logsResponse = await fetch(
-      `${workerUrl}/api/process/${processId}/logs`,
+    // Wait for process to exit
+    const waitExitResponse = await fetch(
+      `${workerUrl}/api/process/${processId}/waitForExit`,
       {
-        method: 'GET',
-        headers
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          timeout: 30000
+        })
       }
     );
 
-    expect(logsResponse.status).toBe(200);
-    const logsData = (await logsResponse.json()) as ProcessLogsResult;
+    expect(waitExitResponse.status).toBe(200);
+    const waitExitData = (await waitExitResponse.json()) as WaitForExitResult;
+    expect(waitExitData.exitCode).toBe(0);
 
-    // Verify env vars were available to the process
-    expect(logsData.stdout).toContain('PROJECT_NAME = hello-world');
-    expect(logsData.stdout).toContain('BUILD_ENV = test');
-    expect(logsData.stdout).toContain('Heartbeat 3');
-    expect(logsData.stdout).toContain('Done');
+    // Verify env vars were available to the process (from waitForExit output)
+    expect(waitExitData.stdout).toContain('PROJECT_NAME = hello-world');
+    expect(waitExitData.stdout).toContain('BUILD_ENV = test');
+    expect(waitExitData.stdout).toContain('Heartbeat 3');
+    expect(waitExitData.stdout).toContain('Done');
 
     // ========================================
     // Phase 6: Cleanup - move and delete files
