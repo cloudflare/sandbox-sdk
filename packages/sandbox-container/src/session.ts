@@ -1081,24 +1081,31 @@ export class Session {
     logFile: string,
     exitCodeFile: string
   ): Promise<void> {
-    // Derive PID file from log file
+    // Derive related files from log file
     const pidFile = logFile.replace('.log', '.pid');
+    const pidPipe = logFile.replace('.log', '.pid.pipe');
 
     try {
       await rm(logFile, { force: true });
-    } catch (error) {
+    } catch {
       // Ignore errors
     }
 
     try {
       await rm(exitCodeFile, { force: true });
-    } catch (error) {
+    } catch {
       // Ignore errors
     }
 
     try {
       await rm(pidFile, { force: true });
-    } catch (error) {
+    } catch {
+      // Ignore errors
+    }
+
+    try {
+      await rm(pidPipe, { force: true });
+    } catch {
       // Ignore errors
     }
   }
@@ -1168,30 +1175,43 @@ export class Session {
     pidFile: string,
     timeoutMs: number = 5000
   ): Promise<number | undefined> {
+    const TIMEOUT_SENTINEL = Symbol('timeout');
+
     try {
       // Read from FIFO with timeout
       // Opening a FIFO for reading blocks until a writer opens it
-      const pid = await Promise.race([
+      const result = await Promise.race([
         this.readPidFromPipe(pidPipe),
-        Bun.sleep(timeoutMs).then(() => undefined)
+        Bun.sleep(timeoutMs).then(() => TIMEOUT_SENTINEL)
       ]);
 
-      if (pid !== undefined) {
-        return pid;
+      if (typeof result === 'number') {
+        return result;
       }
 
-      // The timed-out readPidFromPipe() is still blocked on open() - unblock it
-      // to prevent leaking a file descriptor
-      await this.unblockPidPipe(pidPipe);
+      if (result === TIMEOUT_SENTINEL) {
+        // The timed-out readPidFromPipe() is still blocked on open() - unblock it
+        // to prevent leaking a file descriptor
+        await this.unblockPidPipe(pidPipe);
 
-      this.logger.warn(
-        'PID pipe read timed out, falling back to file polling',
-        {
-          pidPipe,
-          pidFile,
-          timeoutMs
-        }
-      );
+        this.logger.warn(
+          'PID pipe read timed out, falling back to file polling',
+          {
+            pidPipe,
+            pidFile,
+            timeoutMs
+          }
+        );
+      } else {
+        // readPidFromPipe returned undefined (empty or invalid content from shell)
+        this.logger.warn(
+          'PID pipe returned invalid content, falling back to file polling',
+          {
+            pidPipe,
+            pidFile
+          }
+        );
+      }
     } catch (error) {
       // FIFO read failed, fall back to file polling
       this.logger.warn('PID pipe read failed, falling back to file polling', {
