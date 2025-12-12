@@ -1629,12 +1629,18 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           };
         }
 
-        // Process disappeared or stream ended unexpectedly
-        return {
-          exitCode: 1,
-          stdout: collectedStdout,
-          stderr: collectedStderr
-        };
+        // Stream ended unexpectedly - throw appropriate error
+        if (!processInfo) {
+          throw new Error(
+            `Process ${processId} not found. It may have been cleaned up or never existed.`
+          );
+        }
+
+        // Process still running but stream ended - this is unexpected
+        throw new Error(
+          `Stream ended unexpectedly while process ${processId} is still ${processInfo.status}. ` +
+            `This may indicate a connection issue.`
+        );
       };
 
       // Race with timeout if specified
