@@ -2,12 +2,32 @@
  * Metrics collection and statistical analysis for performance tests
  */
 
+/** Typed metadata for individual measurements */
+export interface MeasurementMetadata {
+  success?: boolean;
+  error?: string;
+  sandboxId?: string;
+  index?: number;
+  iteration?: number;
+  sandboxCount?: number;
+  burstIndex?: number;
+  commandIndex?: number;
+  [key: string]: string | number | boolean | undefined;
+}
+
+/** Typed metadata for test run information */
+export interface RunMetadata {
+  workerUrl?: string;
+  mode?: 'local' | 'ci';
+  [key: string]: string | undefined;
+}
+
 export interface Measurement {
   name: string;
   value: number;
   unit: 'ms' | 'ops/s' | 'count' | 'percent';
   timestamp: string;
-  metadata?: Record<string, unknown>;
+  metadata?: MeasurementMetadata;
 }
 
 export interface MeasurementStats {
@@ -43,7 +63,7 @@ export class MetricsCollector {
     name: string,
     value: number,
     unit: Measurement['unit'] = 'ms',
-    metadata?: Record<string, unknown>
+    metadata?: MeasurementMetadata
   ): void {
     const measurement: Measurement = {
       name,
@@ -65,7 +85,7 @@ export class MetricsCollector {
   async timeAsync<T>(
     name: string,
     operation: () => Promise<T>,
-    metadata?: Record<string, unknown>
+    metadata?: MeasurementMetadata
   ): Promise<{ result: T; duration: number }> {
     const start = performance.now();
     try {
@@ -200,7 +220,7 @@ export class GlobalMetricsStore {
   private static instance: GlobalMetricsStore;
   private scenarioResults: Map<string, MetricsCollector> = new Map();
   private runStartTime: number = Date.now();
-  private runMetadata: Record<string, unknown> = {};
+  private runMetadata: RunMetadata = {};
 
   static getInstance(): GlobalMetricsStore {
     if (!GlobalMetricsStore.instance) {
@@ -209,7 +229,7 @@ export class GlobalMetricsStore {
     return GlobalMetricsStore.instance;
   }
 
-  setRunMetadata(metadata: Record<string, unknown>): void {
+  setRunMetadata(metadata: RunMetadata): void {
     this.runMetadata = { ...this.runMetadata, ...metadata };
   }
 
@@ -225,7 +245,7 @@ export class GlobalMetricsStore {
   getRunInfo(): {
     startTime: number;
     duration: number;
-    metadata: Record<string, unknown>;
+    metadata: RunMetadata;
   } {
     return {
       startTime: this.runStartTime,
