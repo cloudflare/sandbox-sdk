@@ -1,9 +1,9 @@
-import { describe, test, expect, beforeAll } from 'vitest';
+import type { ExecResult, Process, ReadFileResult } from '@repo/shared';
+import { beforeAll, describe, expect, test } from 'vitest';
 import {
-  getSharedSandbox,
-  createUniqueSession
+  createUniqueSession,
+  getSharedSandbox
 } from './helpers/global-sandbox';
-import type { Process, ExecResult, ReadFileResult } from '@repo/shared';
 
 /**
  * KeepAlive Feature Tests

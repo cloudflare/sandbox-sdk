@@ -1,5 +1,5 @@
 import type { Sandbox } from '@cloudflare/sandbox';
-import { jsonResponse, errorResponse } from '../http';
+import { errorResponse, jsonResponse } from '../http';
 
 // Minimal WebSocket echo server script using Bun
 const ECHO_SERVER_SCRIPT = `

@@ -1,10 +1,10 @@
+import type { ExecResult } from '@repo/shared';
 import { beforeAll, describe, expect, test } from 'vitest';
 import {
-  getSharedSandbox,
-  createUniqueSession
+  createUniqueSession,
+  getSharedSandbox
 } from './helpers/global-sandbox';
-import type { ExecResult } from '@repo/shared';
-import type { SuccessResponse, BucketGetResponse } from './test-worker/types';
+import type { BucketGetResponse, SuccessResponse } from './test-worker/types';
 
 /**
  * E2E test for S3-compatible bucket mounting

@@ -1,9 +1,9 @@
-import { describe, test, expect, beforeAll } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import type { PortExposeResult, Process } from '@repo/shared';
+import { beforeAll, describe, expect, test } from 'vitest';
 import WebSocket from 'ws';
 import { getSharedSandbox } from './helpers/global-sandbox';
-import type { Process, PortExposeResult } from '@repo/shared';
 
 // Dedicated port for websocket tests - not used by any other test file
 const skipPortExposureTests =

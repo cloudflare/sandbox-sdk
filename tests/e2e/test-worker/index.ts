@@ -12,19 +12,19 @@
  *
  * Use X-Sandbox-Type header to select: 'python', 'opencode', 'standalone', or default
  */
-import { Sandbox, getSandbox, proxyToSandbox } from '@cloudflare/sandbox';
+import { getSandbox, proxyToSandbox, Sandbox } from '@cloudflare/sandbox';
 import type {
+  BucketDeleteResponse,
+  BucketGetResponse,
+  BucketPutResponse,
+  CodeContextDeleteResponse,
+  ErrorResponse,
   HealthResponse,
+  PortUnexposeResponse,
   SessionCreateResponse,
   SuccessResponse,
   SuccessWithMessageResponse,
-  BucketPutResponse,
-  BucketGetResponse,
-  BucketDeleteResponse,
-  PortUnexposeResponse,
-  CodeContextDeleteResponse,
-  WebSocketInitResponse,
-  ErrorResponse
+  WebSocketInitResponse
 } from './types';
 
 // Export Sandbox class with different names for each container type

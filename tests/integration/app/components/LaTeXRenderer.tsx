@@ -1,5 +1,5 @@
-import React from 'react';
-import { InlineMath, BlockMath } from 'react-katex';
+import type React from 'react';
+import { BlockMath, InlineMath } from 'react-katex';
 import 'katex/dist/katex.min.css';
 
 interface LaTeXRendererProps {
@@ -12,7 +12,7 @@ export function LaTeXRenderer({ content }: LaTeXRendererProps) {
     const elements: React.ReactNode[] = [];
 
     // Regular expressions for finding LaTeX delimiters
-    const combinedRegex = /(\$\$[\s\S]*?\$\$|\$[^\$\n]+?\$)/g;
+    const combinedRegex = /(\$\$[\s\S]*?\$\$|\$[^$\n]+?\$)/g;
 
     let lastIndex = 0;
     let match;

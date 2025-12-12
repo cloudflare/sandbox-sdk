@@ -83,6 +83,16 @@
         "vitest.e2e.config.ts",
         "packages/sandbox/Dockerfile"
       ]
+    },
+    "test:perf": {
+      "dependsOn": ["^build", "docker:local"],
+      "cache": false,
+      "outputs": ["perf-results/**"],
+      "inputs": [
+        "tests/perf/**/*.ts",
+        "vitest.perf.config.ts",
+        "packages/sandbox/Dockerfile"
+      ]
     }
   },
   "globalDependencies": ["tooling/typescript-config/*.json", "biome.json"]
