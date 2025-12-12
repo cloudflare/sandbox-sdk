@@ -25,7 +25,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { watch } from 'node:fs';
-import { mkdir, rm, stat } from 'node:fs/promises';
+import { mkdir, open, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import type { ExecEvent, Logger } from '@repo/shared';
@@ -335,6 +335,7 @@ export class Session {
     const logFile = join(this.sessionDir!, `${commandId}.log`);
     const exitCodeFile = join(this.sessionDir!, `${commandId}.exit`);
     const pidFile = join(this.sessionDir!, `${commandId}.pid`);
+    const pidPipe = join(this.sessionDir!, `${commandId}.pid.pipe`);
     const labelersDoneFile = join(
       this.sessionDir!,
       `${commandId}.labelers.done`
@@ -351,6 +352,10 @@ export class Session {
       // Track command
       this.trackCommand(commandId, pidFile, logFile, exitCodeFile);
 
+      // Create PID notification FIFO before sending command
+      // This ensures synchronization: shell writes PID, we read it (blocking)
+      await this.createPidPipe(pidPipe);
+
       // Build FIFO script for BACKGROUND execution
       // Command runs concurrently, shell continues immediately
       const bashScript = this.buildFIFOScript(
@@ -360,7 +365,8 @@ export class Session {
         exitCodeFile,
         options?.cwd,
         true,
-        options?.env
+        options?.env,
+        pidPipe
       );
 
       if (this.shell!.stdin && typeof this.shell!.stdin !== 'number') {
@@ -369,14 +375,14 @@ export class Session {
         throw new Error('Shell stdin is not available');
       }
 
-      // Wait for PID file to be created (bash script writes it after starting command)
-      const pid = await this.waitForPidFile(pidFile);
+      // Wait for PID via FIFO (blocking read - guarantees synchronization)
+      const pid = await this.waitForPidViaPipe(pidPipe, pidFile);
 
       if (pid === undefined) {
-        this.logger.warn('PID file not created within timeout', {
+        this.logger.warn('PID not received within timeout', {
           sessionId: this.id,
           commandId,
-          pidFile
+          pidPipe
         });
       }
 
@@ -690,6 +696,7 @@ export class Session {
    *
    * @param isBackground - If true, command runs in background (for execStream/startProcess)
    *                       If false, command runs in foreground (for exec) - state persists!
+   * @param pidPipe - Optional path to PID notification FIFO (for reliable PID synchronization)
    */
   private buildFIFOScript(
     command: string,
@@ -698,7 +705,8 @@ export class Session {
     exitCodeFile: string,
     cwd?: string,
     isBackground = false,
-    env?: Record<string, string>
+    env?: Record<string, string>,
+    pidPipe?: string
   ): string {
     // Create unique FIFO names to prevent collisions
     const stdoutPipe = join(this.sessionDir!, `${cmdId}.stdout.pipe`);
@@ -714,6 +722,7 @@ export class Session {
     const safeSessionDir = this.escapeShellPath(this.sessionDir!);
     const safePidFile = this.escapeShellPath(pidFile);
     const safeLabelersDoneFile = this.escapeShellPath(labelersDoneFile);
+    const safePidPipe = pidPipe ? this.escapeShellPath(pidPipe) : null;
 
     const indentLines = (input: string, spaces: number) => {
       const prefix = ' '.repeat(spaces);
@@ -794,6 +803,10 @@ export class Session {
         script += `    # Write PID for process killing\n`;
         script += `    echo "$CMD_PID" > ${safePidFile}.tmp\n`;
         script += `    mv ${safePidFile}.tmp ${safePidFile}\n`;
+        if (safePidPipe) {
+          script += `    # Notify PID via FIFO (unblocks waitForPidViaPipe)\n`;
+          script += `    echo "$CMD_PID" > ${safePidPipe}\n`;
+        }
         script += `    # Background monitor: waits for labelers to finish (after FIFO EOF)\n`;
         script += `    # and then removes the FIFOs. PID file is cleaned up by TypeScript.\n`;
         script += `    (\n`;
@@ -806,6 +819,10 @@ export class Session {
         script += `  else\n`;
         script += `    printf '\\x02\\x02\\x02%s\\n' "Failed to change directory to ${safeCwd}" >> "$log"\n`;
         script += `    EXIT_CODE=1\n`;
+        if (safePidPipe) {
+          script += `    # Notify error via FIFO (unblocks waitForPidViaPipe with empty/error)\n`;
+          script += `    echo "" > ${safePidPipe}\n`;
+        }
         script += `  fi\n`;
       } else {
         script += `  # Execute command in BACKGROUND (runs in subshell, enables concurrency)\n`;
@@ -818,6 +835,10 @@ export class Session {
         script += `  # Write PID for process killing\n`;
         script += `  echo "$CMD_PID" > ${safePidFile}.tmp\n`;
         script += `  mv ${safePidFile}.tmp ${safePidFile}\n`;
+        if (safePidPipe) {
+          script += `  # Notify PID via FIFO (unblocks waitForPidViaPipe)\n`;
+          script += `  echo "$CMD_PID" > ${safePidPipe}\n`;
+        }
         script += `  # Background monitor: waits for labelers to finish (after FIFO EOF)\n`;
         script += `  # and then removes the FIFOs. PID file is cleaned up by TypeScript.\n`;
         script += `  (\n`;
@@ -1109,6 +1130,105 @@ export class Session {
     }
 
     return undefined;
+  }
+
+  /**
+   * Create a FIFO (named pipe) for PID notification
+   * This must be created BEFORE sending the command to the shell
+   */
+  private async createPidPipe(pidPipe: string): Promise<void> {
+    // Remove any existing pipe first
+    try {
+      await rm(pidPipe, { force: true });
+    } catch {
+      // Ignore errors
+    }
+
+    // Create the FIFO using mkfifo command
+    const result = Bun.spawnSync(['mkfifo', pidPipe]);
+    if (result.exitCode !== 0) {
+      throw new Error(`Failed to create PID pipe: ${result.stderr.toString()}`);
+    }
+  }
+
+  /**
+   * Wait for PID via FIFO with fallback to file polling
+   *
+   * Uses a FIFO for reliable synchronization: the shell writes the PID to the pipe,
+   * and we do a blocking read. This eliminates race conditions from file polling.
+   * Falls back to file polling if FIFO read fails (e.g., pipe broken).
+   *
+   * @param pidPipe - Path to the PID notification FIFO
+   * @param pidFile - Path to the PID file (fallback)
+   * @param timeoutMs - Timeout for waiting
+   * @returns The PID or undefined if not available within timeout
+   */
+  private async waitForPidViaPipe(
+    pidPipe: string,
+    pidFile: string,
+    timeoutMs: number = 5000
+  ): Promise<number | undefined> {
+    try {
+      // Read from FIFO with timeout
+      // Opening a FIFO for reading blocks until a writer opens it
+      const pid = await Promise.race([
+        this.readPidFromPipe(pidPipe),
+        Bun.sleep(timeoutMs).then(() => undefined)
+      ]);
+
+      if (pid !== undefined) {
+        return pid;
+      }
+
+      // Timeout reached, fall back to file polling
+      this.logger.warn(
+        'PID pipe read timed out, falling back to file polling',
+        {
+          pidPipe,
+          pidFile,
+          timeoutMs
+        }
+      );
+    } catch (error) {
+      // FIFO read failed, fall back to file polling
+      this.logger.warn('PID pipe read failed, falling back to file polling', {
+        pidPipe,
+        pidFile,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    } finally {
+      // Clean up the pipe
+      try {
+        await rm(pidPipe, { force: true });
+      } catch {
+        // Ignore cleanup errors
+      }
+    }
+
+    // Fallback: poll the PID file (less reliable but works)
+    return this.waitForPidFile(pidFile, 1000);
+  }
+
+  /**
+   * Read PID from a FIFO (named pipe)
+   * This blocks until the shell writes the PID
+   *
+   * Uses Node.js fs.open which properly handles FIFOs - the open() call
+   * blocks until a writer opens the pipe, then we read the content.
+   */
+  private async readPidFromPipe(pidPipe: string): Promise<number | undefined> {
+    // Open the FIFO for reading - this blocks until a writer opens it
+    const fd = await open(pidPipe, 'r');
+    try {
+      // Read content from the FIFO
+      const buffer = Buffer.alloc(64);
+      const { bytesRead } = await fd.read(buffer, 0, 64, null);
+      const content = buffer.toString('utf8', 0, bytesRead).trim();
+      const pid = parseInt(content, 10);
+      return Number.isNaN(pid) ? undefined : pid;
+    } finally {
+      await fd.close();
+    }
   }
 
   /**

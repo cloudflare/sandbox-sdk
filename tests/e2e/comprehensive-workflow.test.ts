@@ -298,8 +298,20 @@ const interval = setInterval(() => {
     expect(processData.id).toBeTruthy();
     const processId = processData.id;
 
-    // Wait for process to complete
-    await new Promise((resolve) => setTimeout(resolve, 3000));
+    // Wait for process to complete using waitForLog instead of fixed sleep
+    // This is more reliable under load as it waits for actual output
+    const waitResponse = await fetch(
+      `${workerUrl}/api/process/${processId}/waitForLog`,
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          pattern: 'Done',
+          timeout: 10000
+        })
+      }
+    );
+    expect(waitResponse.status).toBe(200);
 
     // Get process logs
     const logsResponse = await fetch(
