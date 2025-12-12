@@ -1,5 +1,5 @@
 ---
-'@cloudflare/sandbox': patch
+"@cloudflare/sandbox": patch
 ---
 
 fix race condition for PID retrieval
