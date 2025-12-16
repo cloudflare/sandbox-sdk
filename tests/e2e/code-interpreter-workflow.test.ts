@@ -15,12 +15,12 @@
  *
  */
 
+import type { CodeContext, ExecutionResult } from '@repo/shared';
 import { beforeAll, describe, expect, test } from 'vitest';
 import {
-  getSharedSandbox,
-  createUniqueSession
+  createUniqueSession,
+  getSharedSandbox
 } from './helpers/global-sandbox';
-import type { CodeContext, ExecutionResult } from '@repo/shared';
 import type { ErrorResponse } from './test-worker/types';
 
 // Transport modes to test

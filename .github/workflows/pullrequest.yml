@@ -10,6 +10,10 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+env:
+  # Account subdomain for workers.dev URLs (found in Cloudflare dashboard)
+  CF_ACCOUNT_SUBDOMAIN: agents-b8a
+
 jobs:
   # Unit tests (client + container)
   unit-tests:
@@ -116,15 +120,28 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build test worker Docker images (base + python)
+      - name: Build test worker Docker images (base + python + opencode + standalone)
         run: |
           VERSION=${{ needs.unit-tests.outputs.version || '0.0.0' }}
-          # Build base image (no Python) - used by SandboxBase binding
+          # Build base image (no Python) - used by Sandbox binding
           docker build -f packages/sandbox/Dockerfile --target default --platform linux/amd64 \
             --build-arg SANDBOX_VERSION=$VERSION -t cloudflare/sandbox-test:$VERSION .
-          # Build python image - used by Sandbox binding
+          # Build python image - used by SandboxPython binding
           docker build -f packages/sandbox/Dockerfile --target python --platform linux/amd64 \
             --build-arg SANDBOX_VERSION=$VERSION -t cloudflare/sandbox-test:$VERSION-python .
+          # Build opencode image - used by SandboxOpencode binding
+          docker build -f packages/sandbox/Dockerfile --target opencode --platform linux/amd64 \
+            --build-arg SANDBOX_VERSION=$VERSION -t cloudflare/sandbox-test:$VERSION-opencode .
+          # Build standalone image (arbitrary base with binary) - used by SandboxStandalone binding
+          # Use regex to replace any version number, avoiding hardcoded version mismatch
+          # Build from test-worker directory so COPY startup-test.sh works
+          cd tests/e2e/test-worker
+          sed -E "s|cloudflare/sandbox-test:[0-9]+\.[0-9]+\.[0-9]+|cloudflare/sandbox-test:$VERSION|g" \
+            Dockerfile.standalone > Dockerfile.standalone.tmp
+          docker build -f Dockerfile.standalone.tmp --platform linux/amd64 \
+            -t cloudflare/sandbox-test:$VERSION-standalone .
+          rm Dockerfile.standalone.tmp
+          cd ../../..
 
       # Deploy test worker using official Cloudflare action
       - name: Deploy test worker
@@ -148,7 +165,7 @@ jobs:
       - name: Get deployment URL
         id: get-url
         run: |
-          echo "worker_url=https://${{ steps.env-name.outputs.worker_name }}.agents-b8a.workers.dev" >> $GITHUB_OUTPUT
+          echo "worker_url=https://${{ steps.env-name.outputs.worker_name }}.${{ env.CF_ACCOUNT_SUBDOMAIN }}.workers.dev" >> $GITHUB_OUTPUT
 
       # Run E2E tests against deployed worker
       - name: Run E2E tests

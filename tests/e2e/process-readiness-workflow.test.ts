@@ -1,9 +1,9 @@
-import { describe, test, expect, beforeAll } from 'vitest';
+import type { PortExposeResult, Process, WaitForLogResult } from '@repo/shared';
+import { beforeAll, describe, expect, test } from 'vitest';
 import {
-  getSharedSandbox,
-  createUniqueSession
+  createUniqueSession,
+  getSharedSandbox
 } from './helpers/global-sandbox';
-import type { Process, WaitForLogResult, PortExposeResult } from '@repo/shared';
 
 // Port exposure tests require custom domain with wildcard DNS routing
 const skipPortExposureTests =

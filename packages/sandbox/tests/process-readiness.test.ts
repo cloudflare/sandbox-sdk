@@ -660,6 +660,146 @@ data: {"type":"exit","exitCode":127,"timestamp":"${new Date().toISOString()}"}
     });
   });
 
+  describe('waitForExit() method', () => {
+    it('should resolve when process exits successfully', async () => {
+      vi.spyOn(sandbox.client.processes, 'startProcess').mockResolvedValue({
+        success: true,
+        processId: 'proc-build',
+        pid: 12345,
+        command: 'npm run build',
+        timestamp: new Date().toISOString()
+      } as any);
+
+      // Mock stream that emits exit event with code 0
+      const sseData = `data: {"type":"exit","exitCode":0,"timestamp":"${new Date().toISOString()}"}\n\n`;
+      const mockStream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(sseData));
+          controller.close();
+        }
+      });
+
+      vi.spyOn(sandbox.client.processes, 'streamProcessLogs').mockResolvedValue(
+        mockStream
+      );
+
+      const proc = await sandbox.startProcess('npm run build');
+      const result = await proc.waitForExit();
+
+      expect(result.exitCode).toBe(0);
+    });
+
+    it('should return non-zero exit code when process fails', async () => {
+      vi.spyOn(sandbox.client.processes, 'startProcess').mockResolvedValue({
+        success: true,
+        processId: 'proc-build',
+        pid: 12345,
+        command: 'npm run build',
+        timestamp: new Date().toISOString()
+      } as any);
+
+      // Mock stream that emits exit event with code 1
+      const sseData = `data: {"type":"exit","exitCode":1,"timestamp":"${new Date().toISOString()}"}\n\n`;
+      const mockStream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(sseData));
+          controller.close();
+        }
+      });
+
+      vi.spyOn(sandbox.client.processes, 'streamProcessLogs').mockResolvedValue(
+        mockStream
+      );
+
+      const proc = await sandbox.startProcess('npm run build');
+      const result = await proc.waitForExit();
+
+      expect(result.exitCode).toBe(1);
+    });
+
+    it('should wait for exit event in stream', async () => {
+      vi.spyOn(sandbox.client.processes, 'startProcess').mockResolvedValue({
+        success: true,
+        processId: 'proc-build',
+        pid: 12345,
+        command: 'npm run build',
+        timestamp: new Date().toISOString()
+      } as any);
+
+      // Mock stream that emits some log events before exit
+      const sseData = `data: {"type":"stdout","data":"Building...\\n","timestamp":"${new Date().toISOString()}"}\n\ndata: {"type":"stdout","data":"Done!\\n","timestamp":"${new Date().toISOString()}"}\n\ndata: {"type":"exit","exitCode":0,"timestamp":"${new Date().toISOString()}"}\n\n`;
+      const mockStream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(sseData));
+          controller.close();
+        }
+      });
+
+      vi.spyOn(sandbox.client.processes, 'streamProcessLogs').mockResolvedValue(
+        mockStream
+      );
+
+      const proc = await sandbox.startProcess('npm run build');
+      const result = await proc.waitForExit();
+
+      expect(result.exitCode).toBe(0);
+    });
+
+    it('should throw ProcessReadyTimeoutError when timeout exceeded', async () => {
+      vi.spyOn(sandbox.client.processes, 'startProcess').mockResolvedValue({
+        success: true,
+        processId: 'proc-long',
+        pid: 12345,
+        command: 'sleep 1000',
+        timestamp: new Date().toISOString()
+      } as any);
+
+      // Mock stream that never emits exit event
+      const mockStream = new ReadableStream({
+        start() {
+          // Never close - simulates long-running process
+        }
+      });
+
+      vi.spyOn(sandbox.client.processes, 'streamProcessLogs').mockResolvedValue(
+        mockStream
+      );
+
+      const proc = await sandbox.startProcess('sleep 1000');
+
+      await expect(proc.waitForExit(100)).rejects.toThrow(
+        ProcessReadyTimeoutError
+      );
+    });
+
+    it('should throw error when stream ends without exit event', async () => {
+      vi.spyOn(sandbox.client.processes, 'startProcess').mockResolvedValue({
+        success: true,
+        processId: 'proc-build',
+        pid: 12345,
+        command: 'npm run build',
+        timestamp: new Date().toISOString()
+      } as any);
+
+      // Mock stream that closes without exit event
+      const mockStream = new ReadableStream({
+        start(controller) {
+          controller.close();
+        }
+      });
+
+      vi.spyOn(sandbox.client.processes, 'streamProcessLogs').mockResolvedValue(
+        mockStream
+      );
+
+      const proc = await sandbox.startProcess('npm run build');
+
+      await expect(proc.waitForExit()).rejects.toThrow(
+        'stream ended unexpectedly'
+      );
+    });
+  });
+
   describe('conditionToString helper', () => {
     it('should format string conditions as quoted strings', async () => {
       vi.spyOn(sandbox.client.processes, 'startProcess').mockResolvedValue({

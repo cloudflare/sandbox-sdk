@@ -182,7 +182,8 @@ describe('ProcessService', () => {
         'sleep 10',
         expect.any(Function), // event handler callback
         expect.objectContaining({ cwd: '/tmp' }),
-        expect.any(String) // commandId (generated dynamically)
+        expect.any(String), // commandId (generated dynamically)
+        { background: true } // Release lock after startup
       );
 
       // Verify process was stored

@@ -48,6 +48,10 @@ export interface ProcessErrorContext {
   stderr?: string;
 }
 
+export interface SessionAlreadyExistsContext {
+  sessionId: string;
+}
+
 /**
  * Process readiness error contexts
  */
@@ -163,6 +167,15 @@ export interface InvalidMountConfigContext {
   mountPath?: string;
   endpoint?: string;
   reason?: string;
+}
+
+/**
+ * OpenCode error contexts
+ */
+export interface OpencodeStartupContext {
+  port: number;
+  stderr?: string;
+  command?: string;
 }
 
 /**

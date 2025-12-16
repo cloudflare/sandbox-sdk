@@ -109,6 +109,37 @@ jobs:
           build-args: |
             SANDBOX_VERSION=${{ steps.package-version.outputs.version }}
 
+      - name: Build and push Docker image (opencode)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: packages/sandbox/Dockerfile
+          target: opencode
+          platforms: linux/amd64
+          push: true
+          tags: cloudflare/sandbox:${{ steps.package-version.outputs.version }}-opencode
+          cache-from: |
+            type=gha,scope=preview-pr-${{ github.event.pull_request.number }}-opencode
+            type=gha,scope=release-opencode
+          cache-to: type=gha,mode=max,scope=preview-pr-${{ github.event.pull_request.number }}-opencode
+          build-args: |
+            SANDBOX_VERSION=${{ steps.package-version.outputs.version }}
+
+      - name: Extract standalone binary from Docker image
+        run: |
+          VERSION=${{ steps.package-version.outputs.version }}
+          CONTAINER_ID=$(docker create --platform linux/amd64 cloudflare/sandbox:$VERSION)
+          docker cp $CONTAINER_ID:/container-server/sandbox ./sandbox-linux-x64
+          docker rm $CONTAINER_ID
+          chmod +x ./sandbox-linux-x64
+
+      - name: Upload standalone binary as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sandbox-binary
+          path: ./sandbox-linux-x64
+          retention-days: 30
+
       - name: Publish to pkg.pr.new
         run: npx pkg-pr-new publish './packages/sandbox'
 
@@ -116,10 +147,20 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
+            const fs = require('fs');
             const version = '${{ steps.package-version.outputs.version }}';
+            const runId = '${{ github.run_id }}';
             const defaultTag = `cloudflare/sandbox:${version}`;
             const pythonTag = `cloudflare/sandbox:${version}-python`;
-            const body = `### 🐳 Docker Images Published\n\n**Default (no Python):**\n\`\`\`dockerfile\nFROM ${defaultTag}\n\`\`\`\n\n**With Python:**\n\`\`\`dockerfile\nFROM ${pythonTag}\n\`\`\`\n\n**Version:** \`${version}\`\n\nUse the \`-python\` variant if you need Python code execution.`;
+            const opencodeTag = `cloudflare/sandbox:${version}-opencode`;
+
+            const template = fs.readFileSync('.github/templates/pr-preview-comment.md', 'utf8');
+            const body = template
+              .replace(/\{\{VERSION\}\}/g, version)
+              .replace(/\{\{RUN_ID\}\}/g, runId)
+              .replace(/\{\{DEFAULT_TAG\}\}/g, defaultTag)
+              .replace(/\{\{PYTHON_TAG\}\}/g, pythonTag)
+              .replace(/\{\{OPENCODE_TAG\}\}/g, opencodeTag);
 
             // Find existing comment
             const { data: comments } = await github.rest.issues.listComments({

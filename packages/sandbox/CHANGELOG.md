@@ -1,5 +1,53 @@
 # @cloudflare/sandbox
 
+## 0.6.6
+
+### Patch Changes
+
+- [#299](https://github.com/cloudflare/sandbox-sdk/pull/299) [`d3252dc`](https://github.com/cloudflare/sandbox-sdk/commit/d3252dc9ef8f5c8ce23011c2a8492c6f248f92f2) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - Add waitForExit() method to Process interface for waiting until a process terminates
+
+- [#296](https://github.com/cloudflare/sandbox-sdk/pull/296) [`8a5d275`](https://github.com/cloudflare/sandbox-sdk/commit/8a5d275b0ccd341cd352a42c2659e56c6b841212) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - fix race condition for PID retrieval
+
+- [`a86f7db`](https://github.com/cloudflare/sandbox-sdk/commit/a86f7db01a4d8c4abf9843bfc1aef8841a775d70) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Improve automatic retry behavior for container startup errors
+
+  Transient errors like "container starting" now automatically retry with exponential backoff, while permanent errors like "missing image" fail immediately with clear error messages.
+
+## 0.6.5
+
+### Patch Changes
+
+- [#290](https://github.com/cloudflare/sandbox-sdk/pull/290) [`2322c80`](https://github.com/cloudflare/sandbox-sdk/commit/2322c806fccc9c598e97dc337cc7e2db7ffbc9d2) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Add per-session mutex locking to prevent concurrent command execution race conditions
+
+- [#280](https://github.com/cloudflare/sandbox-sdk/pull/280) [`5d87b35`](https://github.com/cloudflare/sandbox-sdk/commit/5d87b351fa554a32cf7a274b497d43f041cc9c1a) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Add standalone binary support for arbitrary Dockerfiles
+
+  Users can now add sandbox capabilities to any Docker image:
+
+  ```dockerfile
+  FROM your-image:tag
+
+  COPY --from=cloudflare/sandbox:VERSION /container-server/sandbox /sandbox
+  ENTRYPOINT ["/sandbox"]
+
+  # Optional: run your own startup command
+  CMD ["/your-entrypoint.sh"]
+  ```
+
+  The `/sandbox` binary starts the HTTP API server, then executes any CMD as a child process with signal forwarding.
+
+  Includes backwards compatibility for existing custom startup scripts.
+
+## 0.6.4
+
+### Patch Changes
+
+- [#282](https://github.com/cloudflare/sandbox-sdk/pull/282) [`d3997a8`](https://github.com/cloudflare/sandbox-sdk/commit/d3997a8b9a443b5726d780bff2d3f4530db3e53b) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Add OpenCode integration with createOpencode() and proxyToOpencode() helpers
+
+- [#286](https://github.com/cloudflare/sandbox-sdk/pull/286) [`c6349aa`](https://github.com/cloudflare/sandbox-sdk/commit/c6349aa274d8c9e226f1782320c82d416393634d) Thanks [@NuroDev](https://github.com/NuroDev)! - Fix `options` parameter types for `gitCheckout`
+
+- [#281](https://github.com/cloudflare/sandbox-sdk/pull/281) [`472d5ae`](https://github.com/cloudflare/sandbox-sdk/commit/472d5ae4bb7fbf075376a90558a2de282c649edb) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Fix session initialization to eliminate noisy error logs during hot reloads
+
+- [#289](https://github.com/cloudflare/sandbox-sdk/pull/289) [`67100d0`](https://github.com/cloudflare/sandbox-sdk/commit/67100d070cc8608ccb8da8845ddb9bfafc109d72) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - fix workspace bug
+
 ## 0.6.3
 
 ### Patch Changes
@@ -54,10 +102,10 @@
 
   ```dockerfile
   # Before
-  FROM cloudflare/sandbox:0.6.3
+  FROM cloudflare/sandbox:0.6.6
 
   # After
-  FROM cloudflare/sandbox:0.6.3-python
+  FROM cloudflare/sandbox:0.6.6-python
   ```
 
   Without this change, Python execution will fail with `PYTHON_NOT_AVAILABLE` error.

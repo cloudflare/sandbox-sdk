@@ -42,6 +42,7 @@ export const ERROR_STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.PORT_ALREADY_EXPOSED]: 409,
   [ErrorCode.PORT_IN_USE]: 409,
   [ErrorCode.RESOURCE_BUSY]: 409,
+  [ErrorCode.SESSION_ALREADY_EXISTS]: 409,
 
   // 502 Bad Gateway
   [ErrorCode.SERVICE_NOT_RESPONDING]: 502,
@@ -49,9 +50,11 @@ export const ERROR_STATUS_MAP: Record<ErrorCode, number> = {
 
   // 501 Not Implemented (feature not available in image variant)
   [ErrorCode.PYTHON_NOT_AVAILABLE]: 501,
+  [ErrorCode.JAVASCRIPT_NOT_AVAILABLE]: 501,
 
   // 503 Service Unavailable
   [ErrorCode.INTERPRETER_NOT_READY]: 503,
+  [ErrorCode.OPENCODE_STARTUP_FAILED]: 503,
 
   // 408 Request Timeout
   [ErrorCode.PROCESS_READY_TIMEOUT]: 408,

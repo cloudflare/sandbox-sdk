@@ -56,6 +56,18 @@ export interface ServiceError {
   details?: Record<string, unknown>;
 }
 
+/**
+ * Helper functions to construct ServiceResult with proper typing.
+ * Use these instead of manual object construction to avoid type casts.
+ */
+export function serviceSuccess<T>(data: T): ServiceResult<T> {
+  return { success: true, data } as ServiceResult<T>;
+}
+
+export function serviceError<T>(error: ServiceError): ServiceResult<T> {
+  return { success: false, error } as ServiceResult<T>;
+}
+
 // Handler error response structure - matches BaseHandler.createErrorResponse()
 export interface HandlerErrorResponse {
   success: false;

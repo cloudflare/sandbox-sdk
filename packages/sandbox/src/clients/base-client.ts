@@ -53,7 +53,7 @@ export abstract class BaseHttpClient {
 
   /**
    * Core HTTP request method with automatic retry for container startup delays
-   * Retries both 503 (provisioning) and 500 (startup failure) errors when they're container-related
+   * Retries on 503 (Service Unavailable) which indicates container is starting
    *
    * When WebSocket transport is enabled, this creates a Response-like object
    * from the WebSocket response for compatibility with existing code.
@@ -120,8 +120,8 @@ export abstract class BaseHttpClient {
     while (true) {
       const response = await this.executeFetch(path, options);
 
-      // Check if this is a retryable container error (both 500 and 503)
-      const shouldRetry = await this.isRetryableContainerError(response);
+      // Check if this is a retryable container error (503 = transient)
+      const shouldRetry = this.isRetryableContainerError(response);
 
       if (shouldRetry) {
         const elapsed = Date.now() - startTime;
@@ -314,10 +314,7 @@ export abstract class BaseHttpClient {
    * Utility method to log successful operations
    */
   protected logSuccess(operation: string, details?: string): void {
-    this.logger.info(
-      `${operation} completed successfully`,
-      details ? { details } : undefined
-    );
+    this.logger.info(operation, details ? { details } : undefined);
   }
 
   /**
@@ -352,87 +349,22 @@ export abstract class BaseHttpClient {
 
   /**
    * Check if response indicates a retryable container error
-   * Uses fail-safe strategy: only retry known transient errors
    *
-   * TODO: This relies on string matching error messages, which is brittle.
-   * Ideally, the container API should return structured errors with a
-   * `retryable: boolean` field to avoid coupling to error message format.
+   * The Sandbox DO returns proper HTTP status codes:
+   * - 503 Service Unavailable: Transient errors (container starting, port not ready)
+   * - 500 Internal Server Error: Permanent errors (bad config, missing image)
+   *
+   * We only retry on 503, which indicates the container is starting up.
+   * The Retry-After header suggests how long to wait.
    *
    * @param response - HTTP response to check
-   * @returns true if error is retryable container error, false otherwise
+   * @returns true if error is retryable (503), false otherwise
    */
-  private async isRetryableContainerError(
-    response: Response
-  ): Promise<boolean> {
-    // Only consider 500 and 503 status codes
-    if (response.status !== 500 && response.status !== 503) {
-      return false;
-    }
-
-    try {
-      const cloned = response.clone();
-      const text = await cloned.text();
-      const textLower = text.toLowerCase();
-
-      // Step 1: Check for permanent errors (fail fast)
-      const permanentErrors = [
-        'no such image', // Missing Docker image
-        'container already exists', // Name collision
-        'malformed containerinspect' // Docker API issue
-      ];
-
-      if (permanentErrors.some((err) => textLower.includes(err))) {
-        this.logger.debug('Detected permanent error, not retrying', { text });
-        return false; // Don't retry
-      }
-
-      // Step 2: Check for known transient errors (do retry)
-      const transientErrors = [
-        // Platform provisioning (503)
-        'no container instance available',
-        'currently provisioning',
-
-        // Port mapping race conditions (500)
-        'container port not found',
-        'connection refused: container port',
-
-        // Application startup delays (500)
-        'the container is not listening',
-        'failed to verify port',
-        'container did not start',
-
-        // Network transients (500)
-        'network connection lost',
-        'container suddenly disconnected',
-
-        // Monitor race conditions (500)
-        'monitor failed to find container',
-
-        // General timeouts (500)
-        'timed out',
-        'timeout'
-      ];
-
-      const shouldRetry = transientErrors.some((err) =>
-        textLower.includes(err)
-      );
-
-      if (!shouldRetry) {
-        this.logger.debug('Unknown error pattern, not retrying', {
-          status: response.status,
-          text: text.substring(0, 200) // Log first 200 chars
-        });
-      }
-
-      return shouldRetry;
-    } catch (error) {
-      this.logger.error(
-        'Error checking if response is retryable',
-        error instanceof Error ? error : new Error(String(error))
-      );
-      // If we can't read response, don't retry (fail fast)
-      return false;
-    }
+  private isRetryableContainerError(response: Response): boolean {
+    // 503 = transient, retry
+    // 500 = permanent, don't retry
+    // Everything else = not a container error
+    return response.status === 503;
   }
 
   private async executeFetch(

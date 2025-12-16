@@ -1,9 +1,9 @@
-import { describe, test, expect, beforeAll } from 'vitest';
-import {
-  getSharedSandbox,
-  createUniqueSession
-} from './helpers/global-sandbox';
 import type { Process, ProcessLogsResult } from '@repo/shared';
+import { beforeAll, describe, expect, test } from 'vitest';
+import {
+  createUniqueSession,
+  getSharedSandbox
+} from './helpers/global-sandbox';
 
 // Dedicated port for this test file's port exposure error tests
 const PORT_LIFECYCLE_TEST_PORT = 9998;
@@ -156,7 +156,7 @@ console.log("Line 3");
 
       if (reader) {
         let done = false;
-        let timeout = Date.now() + 10000; // 10s timeout
+        const timeout = Date.now() + 10000; // 10s timeout
 
         while (!done && Date.now() < timeout) {
           const { value, done: streamDone } = await reader.read();
@@ -186,6 +186,84 @@ console.log("Line 3");
         }
       }
     }, 90000);
+
+    test.skipIf(skipPortExposureTests)(
+      'should reject exposing reserved ports',
+      async () => {
+        const exposeResponse = await fetch(`${workerUrl}/api/port/expose`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            path: '/workspace/script.js',
+            content: scriptCode
+          })
+        });
+
+        // Start the script
+        const startResponse = await fetch(`${workerUrl}/api/process/start`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            command: 'bun run /workspace/script.js'
+          })
+        });
+
+        const startData = (await startResponse.json()) as Process;
+        const processId = startData.id;
+
+        // Stream logs (SSE)
+        const streamResponse = await fetch(
+          `${workerUrl}/api/process/${processId}/stream`,
+          {
+            method: 'GET',
+            headers
+          }
+        );
+
+        expect(streamResponse.status).toBe(200);
+        expect(streamResponse.headers.get('content-type')).toBe(
+          'text/event-stream'
+        );
+
+        // Collect events from the stream
+        const reader = streamResponse.body?.getReader();
+        const decoder = new TextDecoder();
+        const events: any[] = [];
+
+        if (reader) {
+          let done = false;
+          let timeout = Date.now() + 10000; // 10s timeout
+
+          while (!done && Date.now() < timeout) {
+            const { value, done: streamDone } = await reader.read();
+            done = streamDone;
+
+            if (value) {
+              const chunk = decoder.decode(value);
+              const lines = chunk
+                .split('\n\n')
+                .filter((line) => line.startsWith('data: '));
+
+              for (const line of lines) {
+                const eventData = line.replace('data: ', '');
+                try {
+                  events.push(JSON.parse(eventData));
+                } catch (e) {
+                  // Skip malformed events
+                }
+              }
+            }
+
+            // Stop after collecting some events
+            if (events.length >= 3) {
+              reader.cancel();
+              break;
+            }
+          }
+        }
+      },
+      90000
+    );
 
     test.skipIf(skipPortExposureTests)(
       'should reject exposing reserved ports',

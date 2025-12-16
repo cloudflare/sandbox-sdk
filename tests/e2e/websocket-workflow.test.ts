@@ -1,9 +1,9 @@
-import { describe, test, expect, beforeAll } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import type { PortExposeResult, Process } from '@repo/shared';
+import { beforeAll, describe, expect, test } from 'vitest';
 import WebSocket from 'ws';
 import { getSharedSandbox } from './helpers/global-sandbox';
-import type { Process, PortExposeResult } from '@repo/shared';
 
 // Dedicated port for websocket tests - not used by any other test file
 const skipPortExposureTests =
@@ -61,8 +61,20 @@ describe('WebSocket Port Exposure', () => {
         expect(startResponse.status).toBe(200);
         const processData = (await startResponse.json()) as Process;
 
-        // Wait for startup
-        await new Promise((r) => setTimeout(r, 1000));
+        // Wait for server to be listening on the port (instead of arbitrary setTimeout)
+        const waitPortResponse = await fetch(
+          `${workerUrl}/api/process/${processData.id}/waitForPort`,
+          {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              port,
+              mode: 'tcp',
+              timeout: 10000
+            })
+          }
+        );
+        expect(waitPortResponse.status).toBe(200);
 
         // Expose port
         const exposeResponse = await fetch(`${workerUrl}/api/port/expose`, {

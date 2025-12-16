@@ -20,6 +20,7 @@ import type {
   SandboxOptions,
   SessionOptions,
   StreamOptions,
+  WaitForExitResult,
   WaitForLogResult,
   WaitForPortOptions
 } from '@repo/shared';
@@ -37,7 +38,8 @@ import {
   CustomDomainRequiredError,
   ErrorCode,
   ProcessExitedBeforeReadyError,
-  ProcessReadyTimeoutError
+  ProcessReadyTimeoutError,
+  SessionAlreadyExistsError
 } from './errors';
 import { CodeInterpreter } from './interpreter';
 import { isLocalhostPattern } from './request-handler';
@@ -889,20 +891,37 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           }
         });
       } catch (e) {
-        // Handle provisioning vs startup errors
+        // 1. Provisioning: Container VM not yet available
         if (this.isNoInstanceError(e)) {
           return new Response(
             'Container is currently provisioning. This can take several minutes on first deployment. Please retry in a moment.',
             {
               status: 503,
-              headers: { 'Retry-After': '10' } // Suggest 10s retry
+              headers: { 'Retry-After': '10' }
             }
           );
         }
 
-        // Other startup errors
+        // 2. Transient startup errors: Container starting, port not ready yet
+        if (this.isTransientStartupError(e)) {
+          this.logger.debug(
+            'Transient container startup error, returning 503',
+            {
+              error: e instanceof Error ? e.message : String(e)
+            }
+          );
+          return new Response(
+            'Container is starting. Please retry in a moment.',
+            {
+              status: 503,
+              headers: { 'Retry-After': '3' }
+            }
+          );
+        }
+
+        // 3. Permanent errors: Configuration issues, missing images, etc.
         this.logger.error(
-          'Container startup failed',
+          'Container startup failed with permanent error',
           e instanceof Error ? e : new Error(String(e))
         );
         return new Response(
@@ -918,12 +937,59 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   /**
    * Helper: Check if error is "no container instance available"
+   * This indicates the container VM is still being provisioned.
    */
   private isNoInstanceError(error: unknown): boolean {
     return (
       error instanceof Error &&
       error.message.toLowerCase().includes('no container instance')
     );
+  }
+
+  /**
+   * Helper: Check if error is a transient startup error that should trigger retry
+   *
+   * These errors occur during normal container startup and are recoverable:
+   * - Port not yet mapped (container starting, app not listening yet)
+   * - Connection refused (port mapped but app not ready)
+   * - Timeouts during startup (recoverable with retry)
+   * - Network transients (temporary connectivity issues)
+   *
+   * Errors NOT included (permanent failures):
+   * - "no such image" - missing Docker image
+   * - "container already exists" - name collision
+   * - Configuration errors
+   */
+  private isTransientStartupError(error: unknown): boolean {
+    if (!(error instanceof Error)) return false;
+
+    const msg = error.message.toLowerCase();
+
+    // Transient errors from workerd container-client.c++ and @cloudflare/containers
+    const transientPatterns = [
+      // Port mapping race conditions (workerd DockerPort::connect)
+      'container port not found',
+      'connection refused: container port',
+
+      // Application startup delays (@cloudflare/containers)
+      'the container is not listening',
+      'failed to verify port',
+      'container did not start',
+
+      // Network transients (workerd)
+      'network connection lost',
+      'container suddenly disconnected',
+
+      // Monitor race conditions (workerd)
+      'monitor failed to find container',
+
+      // Timeouts (various layers)
+      'timed out',
+      'timeout',
+      'the operation was aborted'
+    ];
+
+    return transientPatterns.some((pattern) => msg.includes(pattern));
   }
 
   /**
@@ -1058,39 +1124,38 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * we reuse it instead of trying to create a new one.
    */
   private async ensureDefaultSession(): Promise<string> {
-    if (!this.defaultSession) {
-      const sessionId = `sandbox-${this.sandboxName || 'default'}`;
+    const sessionId = `sandbox-${this.sandboxName || 'default'}`;
 
-      try {
-        // Try to create session in container
-        await this.client.utils.createSession({
-          id: sessionId,
-          env: this.envVars || {},
-          cwd: '/workspace'
-        });
+    // Fast path: session already initialized in this instance
+    if (this.defaultSession === sessionId) {
+      return this.defaultSession;
+    }
 
+    // Create session in container
+    try {
+      await this.client.utils.createSession({
+        id: sessionId,
+        env: this.envVars || {},
+        cwd: '/workspace'
+      });
+
+      this.defaultSession = sessionId;
+      await this.ctx.storage.put('defaultSession', sessionId);
+      this.logger.debug('Default session initialized', { sessionId });
+    } catch (error: unknown) {
+      // Session may already exist (e.g., after hot reload or concurrent request)
+      if (error instanceof SessionAlreadyExistsError) {
+        this.logger.debug(
+          'Session exists in container but not in DO state, syncing',
+          { sessionId }
+        );
         this.defaultSession = sessionId;
-        // Persist to storage so it survives hot reloads
         await this.ctx.storage.put('defaultSession', sessionId);
-        this.logger.debug('Default session initialized', { sessionId });
-      } catch (error: unknown) {
-        // If session already exists (e.g., after hot reload), reuse it
-        if (
-          error instanceof Error &&
-          error.message.includes('already exists')
-        ) {
-          this.logger.debug('Reusing existing session after reload', {
-            sessionId
-          });
-          this.defaultSession = sessionId;
-          // Persist to storage in case it wasn't saved before
-          await this.ctx.storage.put('defaultSession', sessionId);
-        } else {
-          // Re-throw other errors
-          throw error;
-        }
+      } else {
+        throw error;
       }
     }
+
     return this.defaultSession;
   }
 
@@ -1327,6 +1392,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         options?: WaitForPortOptions
       ): Promise<void> => {
         await this.waitForPortReady(data.id, data.command, port, options);
+      },
+
+      waitForExit: async (timeout?: number): Promise<WaitForExitResult> => {
+        return this.waitForProcessExit(data.id, data.command, timeout);
       }
     };
   }
@@ -1581,6 +1650,63 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         ) {
           await new Promise((resolve) => setTimeout(resolve, sleepTime));
         }
+      }
+    }
+  }
+
+  /**
+   * Wait for a process to exit
+   * Returns the exit code
+   */
+  private async waitForProcessExit(
+    processId: string,
+    command: string,
+    timeout?: number
+  ): Promise<WaitForExitResult> {
+    const stream = await this.streamProcessLogs(processId);
+
+    // Set up timeout if specified
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    let timeoutPromise: Promise<never> | undefined;
+
+    if (timeout !== undefined) {
+      timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => {
+          reject(
+            this.createReadyTimeoutError(
+              processId,
+              command,
+              'process exit',
+              timeout
+            )
+          );
+        }, timeout);
+      });
+    }
+
+    try {
+      const streamProcessor = async (): Promise<WaitForExitResult> => {
+        for await (const event of parseSSEStream<LogEvent>(stream)) {
+          if (event.type === 'exit') {
+            return {
+              exitCode: event.exitCode ?? 1
+            };
+          }
+        }
+
+        // Stream ended without exit event - shouldn't happen, but handle gracefully
+        throw new Error(
+          `Process ${processId} stream ended unexpectedly without exit event`
+        );
+      };
+
+      if (timeoutPromise) {
+        return await Promise.race([streamProcessor(), timeoutPromise]);
+      }
+      return await streamProcessor();
+    } finally {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
       }
     }
   }
@@ -1932,12 +2058,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   async gitCheckout(
     repoUrl: string,
-    options: { branch?: string; targetDir?: string; sessionId?: string }
+    options?: { branch?: string; targetDir?: string; sessionId?: string }
   ) {
-    const session = options.sessionId ?? (await this.ensureDefaultSession());
+    const session = options?.sessionId ?? (await this.ensureDefaultSession());
     return this.client.git.checkout(repoUrl, session, {
-      branch: options.branch,
-      targetDir: options.targetDir
+      branch: options?.branch,
+      targetDir: options?.targetDir
     });
   }
 

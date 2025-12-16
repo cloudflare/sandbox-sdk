@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
+import { ErrorCode } from '@repo/shared/errors';
 import { GitManager } from '@sandbox-container/managers/git-manager';
 
 describe('GitManager', () => {
@@ -170,77 +171,77 @@ describe('GitManager', () => {
   });
 
   describe('determineErrorCode', () => {
-    it('should return NOT_A_GIT_REPO for exit code 128 with not a git repository message', () => {
+    it('should return GIT_OPERATION_FAILED for exit code 128 with not a git repository message', () => {
       const error = new Error('fatal: not a git repository');
 
       expect(manager.determineErrorCode('getCurrentBranch', error, 128)).toBe(
-        'NOT_A_GIT_REPO'
+        ErrorCode.GIT_OPERATION_FAILED
       );
     });
 
-    it('should return REPO_NOT_FOUND for exit code 128 with repository not found message', () => {
+    it('should return GIT_REPOSITORY_NOT_FOUND for exit code 128 with repository not found message', () => {
       const error = new Error('fatal: repository not found');
 
       expect(manager.determineErrorCode('clone', error, 128)).toBe(
-        'REPO_NOT_FOUND'
+        ErrorCode.GIT_REPOSITORY_NOT_FOUND
       );
     });
 
-    it('should return GIT_PERMISSION_DENIED for permission errors', () => {
+    it('should return GIT_AUTH_FAILED for permission errors', () => {
       expect(
         manager.determineErrorCode('clone', new Error('Permission denied'))
-      ).toBe('GIT_PERMISSION_DENIED');
+      ).toBe(ErrorCode.GIT_AUTH_FAILED);
     });
 
-    it('should return GIT_NOT_FOUND for not found errors', () => {
+    it('should return GIT_REPOSITORY_NOT_FOUND for not found errors', () => {
       expect(
         manager.determineErrorCode('checkout', new Error('Branch not found'))
-      ).toBe('GIT_NOT_FOUND');
+      ).toBe(ErrorCode.GIT_REPOSITORY_NOT_FOUND);
     });
 
-    it('should return GIT_INVALID_REF for pathspec errors', () => {
+    it('should return GIT_BRANCH_NOT_FOUND for pathspec errors', () => {
       expect(
         manager.determineErrorCode(
           'checkout',
           new Error("pathspec 'branch' did not match")
         )
-      ).toBe('GIT_INVALID_REF');
+      ).toBe(ErrorCode.GIT_BRANCH_NOT_FOUND);
     });
 
     it('should return GIT_AUTH_FAILED for authentication errors', () => {
       expect(
         manager.determineErrorCode('clone', new Error('Authentication failed'))
-      ).toBe('GIT_AUTH_FAILED');
+      ).toBe(ErrorCode.GIT_AUTH_FAILED);
     });
 
     it('should return operation-specific error codes as fallback', () => {
       expect(
         manager.determineErrorCode('clone', new Error('Unknown error'))
-      ).toBe('GIT_CLONE_FAILED');
+      ).toBe(ErrorCode.GIT_CLONE_FAILED);
       expect(
         manager.determineErrorCode('checkout', new Error('Unknown error'))
-      ).toBe('GIT_CHECKOUT_FAILED');
+      ).toBe(ErrorCode.GIT_CHECKOUT_FAILED);
       expect(
         manager.determineErrorCode(
           'getCurrentBranch',
           new Error('Unknown error')
         )
-      ).toBe('GIT_BRANCH_ERROR');
+      ).toBe(ErrorCode.GIT_OPERATION_FAILED);
       expect(
         manager.determineErrorCode('listBranches', new Error('Unknown error'))
-      ).toBe('GIT_BRANCH_LIST_ERROR');
+      ).toBe(ErrorCode.GIT_OPERATION_FAILED);
     });
 
     it('should handle string errors', () => {
       expect(manager.determineErrorCode('clone', 'repository not found')).toBe(
-        'GIT_NOT_FOUND'
+        ErrorCode.GIT_REPOSITORY_NOT_FOUND
       );
     });
 
     it('should handle case-insensitive error matching', () => {
       expect(
         manager.determineErrorCode('clone', new Error('PERMISSION DENIED'))
-      ).toBe('GIT_PERMISSION_DENIED');
+      ).toBe(ErrorCode.GIT_AUTH_FAILED);
     });
   });
 

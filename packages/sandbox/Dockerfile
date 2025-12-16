@@ -1,17 +1,15 @@
-# Sandbox container image with full development environment
+# Sandbox container images (default and python variants)
 # Multi-stage build optimized for Turborepo monorepo
 
 # ============================================================================
 # Stage 1: Prune monorepo to only include necessary packages
 # ============================================================================
-FROM node:20-alpine AS pruner
+FROM node:20-slim AS pruner
 
 WORKDIR /app
 
-# Install Turborepo globally
 RUN npm install -g turbo
 
-# Copy entire monorepo
 COPY . .
 
 # Prune to only @repo/sandbox-container and its dependencies (@repo/shared)
@@ -20,13 +18,15 @@ RUN turbo prune @repo/sandbox-container --docker
 
 # ============================================================================
 # Stage 2: Install dependencies and build packages
+# Using glibc-based images (not Alpine) so the standalone binary works on
+# standard Linux distributions (Debian, Ubuntu, RHEL, etc.)
 # ============================================================================
-FROM node:20-alpine AS builder
+FROM node:20-slim AS builder
 
 WORKDIR /app
 
-# Install Bun runtime (needed for sandbox-container build script)
-COPY --from=oven/bun:1-alpine /usr/local/bin/bun /usr/local/bin/bun
+# Install Bun runtime (glibc version for glibc-compatible standalone binary)
+COPY --from=oven/bun:1 /usr/local/bin/bun /usr/local/bin/bun
 
 # Copy pruned lockfile and package.json files (for Docker layer caching)
 COPY --from=pruner /app/out/json/ .
@@ -36,11 +36,10 @@ COPY --from=pruner /app/out/package-lock.json ./package-lock.json
 RUN --mount=type=cache,target=/root/.npm \
     CI=true npm ci
 
-# Copy pruned source code
 COPY --from=pruner /app/out/full/ .
 
 # Build all packages (Turborepo handles dependency order automatically)
-# This builds @repo/shared first, then @repo/sandbox-container
+# This builds @repo/shared first, then @repo/sandbox-container (including standalone binary)
 RUN npx turbo run build
 
 # ============================================================================
@@ -96,7 +95,6 @@ ARG SANDBOX_VERSION=unknown
 # Prevent interactive prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Set the sandbox version as an environment variable for version checking
 ENV SANDBOX_VERSION=${SANDBOX_VERSION}
 
 # Install runtime packages and S3FS-FUSE for bucket mounting
@@ -123,26 +121,23 @@ RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm && \
 # Install Bun runtime from official image
 COPY --from=oven/bun:1 /usr/local/bin/bun /usr/local/bin/bun
 
-# Set up runtime container server directory
+# Copy standalone binary
+COPY --from=builder /app/packages/sandbox-container/dist/sandbox /container-server/sandbox
+
+# Set up container server directory for executors
 WORKDIR /container-server
 
-# Copy bundled container server (all dependencies inlined, no node_modules needed)
-COPY --from=builder /app/packages/sandbox-container/dist/index.js ./dist/
-COPY --from=builder /app/packages/sandbox-container/dist/index.js.map ./dist/
-
-# Copy bundled JavaScript executor
+# Copy bundled JavaScript executor (runs on Node or Bun for code interpreter)
 COPY --from=builder /app/packages/sandbox-container/dist/runtime/executors/javascript/node_executor.js ./dist/runtime/executors/javascript/
-COPY --from=builder /app/packages/sandbox-container/dist/runtime/executors/javascript/node_executor.js.map ./dist/runtime/executors/javascript/
 
-# Create clean workspace directory for user code
+# Copy legacy JS bundle for backwards compatibility
+# Users with custom startup scripts that call `bun /container-server/dist/index.js` need this
+COPY --from=builder /app/packages/sandbox-container/dist/index.js ./dist/
+
 RUN mkdir -p /workspace
 
 # Expose the application port (3000 for control)
 EXPOSE 3000
-
-# Copy and make startup script executable
-COPY packages/sandbox/startup.sh ./
-RUN chmod +x startup.sh
 
 # ============================================================================
 # Stage 5a: Default image - lean, no Python
@@ -154,7 +149,7 @@ ENV PYTHON_POOL_MIN_SIZE=0
 ENV JAVASCRIPT_POOL_MIN_SIZE=3
 ENV TYPESCRIPT_POOL_MIN_SIZE=3
 
-CMD ["/container-server/startup.sh"]
+ENTRYPOINT ["/container-server/sandbox"]
 
 # ============================================================================
 # Stage 5b: Python image - full, with Python + data science packages
@@ -186,4 +181,28 @@ ENV PYTHON_POOL_MIN_SIZE=3
 ENV JAVASCRIPT_POOL_MIN_SIZE=3
 ENV TYPESCRIPT_POOL_MIN_SIZE=3
 
-CMD ["/container-server/startup.sh"]
+ENTRYPOINT ["/container-server/sandbox"]
+
+# ============================================================================
+# Stage 5c: OpenCode image - with OpenCode CLI for AI coding agent
+# ============================================================================
+FROM runtime-base AS opencode
+
+# Add opencode to PATH
+ENV PATH="/root/.opencode/bin:${PATH}"
+
+# Install OpenCode CLI
+RUN curl -fsSL https://opencode.ai/install -o /tmp/install-opencode.sh \
+    && bash /tmp/install-opencode.sh \
+    && rm /tmp/install-opencode.sh \
+    && opencode --version
+
+# Disable Python pool (Python not available in this image)
+ENV PYTHON_POOL_MIN_SIZE=0
+ENV JAVASCRIPT_POOL_MIN_SIZE=3
+ENV TYPESCRIPT_POOL_MIN_SIZE=3
+
+# Expose OpenCode server port (in addition to 3000 from runtime-base)
+EXPOSE 4096
+
+ENTRYPOINT ["/container-server/sandbox"]

@@ -23,6 +23,16 @@
       "class_name": "SandboxPython",
       "image": "./Dockerfile.python",
       "name": "{{CONTAINER_NAME}}-python"
+    },
+    {
+      "class_name": "SandboxOpencode",
+      "image": "./Dockerfile.opencode",
+      "name": "{{CONTAINER_NAME}}-opencode"
+    },
+    {
+      "class_name": "SandboxStandalone",
+      "image": "./Dockerfile.standalone",
+      "name": "{{CONTAINER_NAME}}-standalone"
     }
   ],
 
@@ -35,6 +45,14 @@
       {
         "class_name": "SandboxPython",
         "name": "SandboxPython"
+      },
+      {
+        "class_name": "SandboxOpencode",
+        "name": "SandboxOpencode"
+      },
+      {
+        "class_name": "SandboxStandalone",
+        "name": "SandboxStandalone"
       }
     ]
   },
@@ -43,6 +61,14 @@
     {
       "new_sqlite_classes": ["Sandbox", "SandboxPython"],
       "tag": "v2"
+    },
+    {
+      "new_sqlite_classes": ["SandboxOpencode"],
+      "tag": "v3"
+    },
+    {
+      "new_sqlite_classes": ["SandboxStandalone"],
+      "tag": "v4"
     }
   ],
 

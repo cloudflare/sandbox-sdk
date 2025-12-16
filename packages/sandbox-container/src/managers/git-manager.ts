@@ -15,6 +15,7 @@
  * NO I/O operations - all infrastructure delegated to SessionManager via GitService
  */
 
+import { ErrorCode } from '@repo/shared/errors';
 import type { CloneOptions } from '../core/types';
 
 /**
@@ -139,25 +140,26 @@ export class GitManager {
   }
 
   /**
-   * Determine appropriate error code based on operation and error
+   * Determine appropriate error code based on operation and error.
+   * Returns valid ErrorCode enum values for use with withSession error handling.
    */
   determineErrorCode(
     operation: string,
     error: Error | string,
     exitCode?: number
-  ): string {
+  ): ErrorCode {
     const errorMessage = typeof error === 'string' ? error : error.message;
     const lowerMessage = errorMessage.toLowerCase();
 
     // Check exit code patterns first
     if (exitCode === 128) {
       if (lowerMessage.includes('not a git repository')) {
-        return 'NOT_A_GIT_REPO';
+        return ErrorCode.GIT_OPERATION_FAILED;
       }
       if (lowerMessage.includes('repository not found')) {
-        return 'REPO_NOT_FOUND';
+        return ErrorCode.GIT_REPOSITORY_NOT_FOUND;
       }
-      return 'GIT_COMMAND_ERROR';
+      return ErrorCode.GIT_OPERATION_FAILED;
     }
 
     // Common error patterns
@@ -165,46 +167,45 @@ export class GitManager {
       lowerMessage.includes('permission denied') ||
       lowerMessage.includes('access denied')
     ) {
-      return 'GIT_PERMISSION_DENIED';
+      return ErrorCode.GIT_AUTH_FAILED;
     }
 
     if (
       lowerMessage.includes('not found') ||
       lowerMessage.includes('does not exist')
     ) {
-      return 'GIT_NOT_FOUND';
+      return ErrorCode.GIT_REPOSITORY_NOT_FOUND;
     }
 
     if (lowerMessage.includes('already exists')) {
-      return 'GIT_ALREADY_EXISTS';
+      return ErrorCode.GIT_CLONE_FAILED;
     }
 
     if (
       lowerMessage.includes('did not match') ||
       lowerMessage.includes('pathspec')
     ) {
-      return 'GIT_INVALID_REF';
+      return ErrorCode.GIT_BRANCH_NOT_FOUND;
     }
 
     if (
       lowerMessage.includes('authentication') ||
       lowerMessage.includes('credentials')
     ) {
-      return 'GIT_AUTH_FAILED';
+      return ErrorCode.GIT_AUTH_FAILED;
     }
 
     // Operation-specific defaults
     switch (operation) {
       case 'clone':
-        return 'GIT_CLONE_FAILED';
+        return ErrorCode.GIT_CLONE_FAILED;
       case 'checkout':
-        return 'GIT_CHECKOUT_FAILED';
+        return ErrorCode.GIT_CHECKOUT_FAILED;
       case 'getCurrentBranch':
-        return 'GIT_BRANCH_ERROR';
       case 'listBranches':
-        return 'GIT_BRANCH_LIST_ERROR';
+        return ErrorCode.GIT_OPERATION_FAILED;
       default:
-        return 'GIT_OPERATION_ERROR';
+        return ErrorCode.GIT_OPERATION_FAILED;
     }
   }
 

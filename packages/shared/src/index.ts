@@ -106,6 +106,7 @@ export type {
   ShutdownResult,
   StreamOptions,
   // Process readiness types
+  WaitForExitResult,
   WaitForLogResult,
   WaitForPortOptions,
   WriteFileResult

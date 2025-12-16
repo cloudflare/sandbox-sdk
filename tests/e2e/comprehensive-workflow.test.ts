@@ -20,26 +20,26 @@
  * Tests run TWICE: once with HTTP transport (default) and once with WebSocket transport.
  */
 
-import { describe, test, expect, beforeAll } from 'vitest';
-import {
-  getSharedSandbox,
-  createUniqueSession,
-  uniqueTestPath
-} from './helpers/global-sandbox';
-import { parseSSEStream } from '../../packages/sandbox/src/sse-parser';
 import type {
-  ExecResult,
-  WriteFileResult,
-  ReadFileResult,
-  MkdirResult,
-  GitCheckoutResult,
   EnvSetResult,
+  ExecEvent,
+  ExecResult,
+  FileInfo,
+  GitCheckoutResult,
+  ListFilesResult,
+  MkdirResult,
   Process,
   ProcessLogsResult,
-  ListFilesResult,
-  FileInfo,
-  ExecEvent
+  ReadFileResult,
+  WriteFileResult
 } from '@repo/shared';
+import { beforeAll, describe, expect, test } from 'vitest';
+import { parseSSEStream } from '../../packages/sandbox/src/sse-parser';
+import {
+  createUniqueSession,
+  getSharedSandbox,
+  uniqueTestPath
+} from './helpers/global-sandbox';
 
 // Transport modes to test - runs all tests with both HTTP and WebSocket
 const transportModes = [
@@ -313,8 +313,20 @@ const interval = setInterval(() => {
       expect(processData.id).toBeTruthy();
       const processId = processData.id;
 
-      // Wait for process to complete
-      await new Promise((resolve) => setTimeout(resolve, 3000));
+      // Wait for process to complete using waitForLog instead of fixed sleep
+      // This is more reliable under load as it waits for actual output
+      const waitResponse = await fetch(
+        `${workerUrl}/api/process/${processId}/waitForLog`,
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            pattern: 'Done',
+            timeout: 10000
+          })
+        }
+      );
+      expect(waitResponse.status).toBe(200);
 
       // Get process logs
       const logsResponse = await fetch(
@@ -600,15 +612,11 @@ const interval = setInterval(() => {
       });
       const process2 = (await process2Response.json()) as Process;
 
-      // Wait for processes to be registered
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-
-      // List all processes
+      // List processes - startProcess returns after registration, so they're immediately visible
       const listResponse = await fetch(`${workerUrl}/api/process/list`, {
         method: 'GET',
         headers
       });
-
       expect(listResponse.status).toBe(200);
       const processList = (await listResponse.json()) as Process[];
 

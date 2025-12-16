@@ -1,20 +1,21 @@
-import { describe, test, expect, beforeAll, afterAll } from 'vitest';
+import type {
+  ExecResult,
+  Process,
+  ReadFileResult,
+  SessionCreateResult,
+  SessionDeleteResult,
+  WaitForExitResult
+} from '@repo/shared';
+import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import {
   createUniqueSession,
   getSharedSandbox
 } from './helpers/global-sandbox';
 import {
+  cleanupSandbox,
   createSandboxId,
-  createTestHeaders,
-  cleanupSandbox
+  createTestHeaders
 } from './helpers/test-fixtures';
-import type {
-  Process,
-  SessionCreateResult,
-  SessionDeleteResult,
-  ReadFileResult,
-  ExecResult
-} from '@repo/shared';
 
 /**
  * Session State Isolation Workflow Integration Tests
@@ -417,22 +418,17 @@ describe('Session State Isolation Workflow', () => {
       const startData = (await startResponse.json()) as Process;
       const processId = startData.id;
 
-      // Wait for process to be registered
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-
-      // List processes from session2 - should see session1's process (shared process table)
+      // List processes from session2 - startProcess returns after registration,
+      // so process is immediately visible (shared process table)
       const listResponse = await fetch(`${workerUrl}/api/process/list`, {
         method: 'GET',
         headers: createTestHeaders(sandboxId, session2Id)
       });
-
       expect(listResponse.status).toBe(200);
-      const listData = (await listResponse.json()) as Process[];
-      const processes = listData;
+      const processes = (await listResponse.json()) as Process[];
       expect(Array.isArray(processes)).toBe(true);
-
-      // Find our process in the list
       const ourProcess = processes.find((p) => p.id === processId);
+
       expect(ourProcess).toBeTruthy();
       if (!ourProcess) throw new Error('Process not found');
 
@@ -449,19 +445,18 @@ describe('Session State Isolation Workflow', () => {
 
       expect(killResponse.status).toBe(200);
 
-      // Verify process is killed (check from session1)
-      await new Promise((resolve) => setTimeout(resolve, 500));
-
-      const verifyResponse = await fetch(
-        `${workerUrl}/api/process/${processId}`,
+      // Wait for process to exit (check from session1)
+      const waitExitResponse = await fetch(
+        `${workerUrl}/api/process/${processId}/waitForExit`,
         {
-          method: 'GET',
-          headers: createTestHeaders(sandboxId, session1Id)
+          method: 'POST',
+          headers: createTestHeaders(sandboxId, session1Id),
+          body: JSON.stringify({ timeout: 5000 })
         }
       );
-
-      const verifyData = (await verifyResponse.json()) as Process;
-      expect(verifyData.status).not.toBe('running');
+      expect(waitExitResponse.status).toBe(200);
+      const exitResult = (await waitExitResponse.json()) as WaitForExitResult;
+      expect(exitResult.exitCode).toBeDefined();
     }, 90000);
 
     test('should share file system between sessions (by design)', async () => {
@@ -607,6 +602,40 @@ describe('Session State Isolation Workflow', () => {
 
       expect(exec2Data.success).toBe(true);
       expect(exec2Data.stdout.trim()).toBe('Completed in session2');
+    }, 90000);
+
+    test('should serialize concurrent requests to the same session', async () => {
+      // Fire multiple concurrent requests to the SAME session
+      // Without proper locking, outputs would interleave
+      const requests = Array(3)
+        .fill(null)
+        .map((_, i) =>
+          fetch(`${workerUrl}/api/execute`, {
+            method: 'POST',
+            headers: baseHeaders,
+            body: JSON.stringify({
+              command: `echo "START-${i}"; sleep 0.1; echo "END-${i}"`
+            })
+          }).then((res) => res.json() as Promise<ExecResult>)
+        );
+
+      const results = await Promise.all(requests);
+
+      // All should succeed
+      for (const result of results) {
+        expect(result.exitCode).toBe(0);
+      }
+
+      // Each result should have its own complete START/END pair (not interleaved)
+      for (const result of results) {
+        const stdout = result.stdout;
+        const startMatch = stdout.match(/START-(\d)/);
+        expect(startMatch).toBeTruthy();
+        if (startMatch) {
+          const cmdNum = startMatch[1];
+          expect(stdout).toContain(`END-${cmdNum}`);
+        }
+      }
     }, 90000);
 
     test('should properly cleanup session resources with deleteSession', async () => {

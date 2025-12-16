@@ -7,12 +7,14 @@ describe('isThenable', () => {
   });
 
   it('returns true for custom thenable', () => {
+    // biome-ignore lint/suspicious/noThenProperty: Testing thenable detection requires objects with `then`
     expect(isThenable({ then: () => {} })).toBe(true);
   });
 
   it('returns false for non-thenable', () => {
     expect(isThenable(null)).toBe(false);
     expect(isThenable(42)).toBe(false);
+    // biome-ignore lint/suspicious/noThenProperty: Testing thenable detection requires objects with `then`
     expect(isThenable({ then: 'not a function' })).toBe(false);
   });
 });

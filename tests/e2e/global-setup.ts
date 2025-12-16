@@ -5,16 +5,19 @@
  * Creates the shared sandbox and passes info via a temp file (env vars don't work across processes).
  */
 
-import { writeFileSync, unlinkSync, existsSync } from 'node:fs';
+import { existsSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { getTestWorkerUrl, WranglerDevRunner } from './helpers/wrangler-runner';
 import {
-  createSandboxId,
-  createTestHeaders,
+  cleanupSandbox,
   createPythonImageHeaders,
-  cleanupSandbox
+  createSandboxId,
+  createTestHeaders
 } from './helpers/test-fixtures';
+import {
+  getTestWorkerUrl,
+  type WranglerDevRunner
+} from './helpers/wrangler-runner';
 
 // Shared state file path
 export const SHARED_STATE_FILE = join(tmpdir(), 'e2e-shared-sandbox.json');

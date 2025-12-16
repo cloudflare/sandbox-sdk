@@ -32,12 +32,12 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { getTestWorkerUrl, WranglerDevRunner } from './wrangler-runner';
 import {
+  cleanupSandbox,
   createSandboxId,
-  createTestHeaders,
-  cleanupSandbox
+  createTestHeaders
 } from './test-fixtures';
+import { getTestWorkerUrl, type WranglerDevRunner } from './wrangler-runner';
 
 export interface SharedSandbox {
   /** The worker URL to make requests to */
@@ -48,6 +48,10 @@ export interface SharedSandbox {
   createHeaders: (sessionId?: string) => Record<string, string>;
   /** Create headers for Python image sandbox (with Python) */
   createPythonHeaders: (sessionId?: string) => Record<string, string>;
+  /** Create headers for OpenCode image sandbox (with OpenCode CLI) */
+  createOpencodeHeaders: (sessionId?: string) => Record<string, string>;
+  /** Create headers for standalone binary sandbox (arbitrary base image) */
+  createStandaloneHeaders: (sessionId?: string) => Record<string, string>;
   /** Generate a unique file path prefix for test isolation */
   uniquePath: (prefix: string) => string;
 }
@@ -131,6 +135,26 @@ async function initializeSharedSandbox(): Promise<SharedSandbox> {
             }
             return headers;
           },
+          createOpencodeHeaders: (sessionId?: string) => {
+            const headers: Record<string, string> = {
+              ...baseHeaders,
+              'X-Sandbox-Type': 'opencode'
+            };
+            if (sessionId) {
+              headers['X-Session-Id'] = sessionId;
+            }
+            return headers;
+          },
+          createStandaloneHeaders: (sessionId?: string) => {
+            const headers: Record<string, string> = {
+              ...baseHeaders,
+              'X-Sandbox-Type': 'standalone'
+            };
+            if (sessionId) {
+              headers['X-Session-Id'] = sessionId;
+            }
+            return headers;
+          },
           uniquePath: (prefix: string) =>
             `/workspace/test-${randomUUID().slice(0, 8)}/${prefix}`
         };
@@ -181,6 +205,26 @@ async function initializeSharedSandbox(): Promise<SharedSandbox> {
       const headers: Record<string, string> = {
         ...baseHeaders,
         'X-Sandbox-Type': 'python'
+      };
+      if (sessionId) {
+        headers['X-Session-Id'] = sessionId;
+      }
+      return headers;
+    },
+    createOpencodeHeaders: (sessionId?: string) => {
+      const headers: Record<string, string> = {
+        ...baseHeaders,
+        'X-Sandbox-Type': 'opencode'
+      };
+      if (sessionId) {
+        headers['X-Session-Id'] = sessionId;
+      }
+      return headers;
+    },
+    createStandaloneHeaders: (sessionId?: string) => {
+      const headers: Record<string, string> = {
+        ...baseHeaders,
+        'X-Sandbox-Type': 'standalone'
       };
       if (sessionId) {
         headers['X-Session-Id'] = sessionId;

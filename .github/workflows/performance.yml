@@ -1,0 +1,178 @@
+name: Performance Tests
+
+# On-demand + pre-release triggers
+on:
+  workflow_dispatch:
+    inputs:
+      scenario:
+        description: 'Scenario to run'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - cold-start
+          - sustained-throughput
+          - bursty-traffic
+          - concurrent-creation
+
+  # Run before releases
+  release:
+    types: [published]
+
+  # Schedule for baseline tracking (weekly)
+  schedule:
+    - cron: '0 0 * * 0' # Sunday midnight UTC
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: perf-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Account subdomain for workers.dev URLs (found in Cloudflare dashboard)
+  CF_ACCOUNT_SUBDOMAIN: agents-b8a
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      worker_url: ${{ steps.deploy.outputs.worker_url }}
+      worker_name: ${{ steps.worker-name.outputs.name }}
+      version: ${{ steps.version.outputs.version }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: 'npm'
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build packages
+        run: npm run build
+
+      - name: Get package version
+        id: version
+        run: |
+          VERSION=$(node -p "require('./packages/sandbox/package.json').version")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Generate unique worker name
+        id: worker-name
+        run: |
+          # Use run_id for unique worker per run (allows concurrent runs)
+          WORKER_NAME="sandbox-perf-${{ github.run_id }}"
+          echo "name=$WORKER_NAME" >> $GITHUB_OUTPUT
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image (default only)
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          # Perf tests only use default sandbox type - skip python/opencode/standalone
+          docker build -f packages/sandbox/Dockerfile --target default --platform linux/amd64 \
+            --build-arg SANDBOX_VERSION=$VERSION -t cloudflare/sandbox-test:$VERSION .
+
+      - name: Generate wrangler config (perf-specific)
+        run: |
+          cd tests/e2e/test-worker
+          WORKER_NAME="${{ steps.worker-name.outputs.name }}"
+          # Use perf-specific template with only default Sandbox container
+          sed "s/{{WORKER_NAME}}/$WORKER_NAME/g; s/{{CONTAINER_NAME}}/$WORKER_NAME/g" \
+            wrangler.perf.template.jsonc > wrangler.jsonc
+
+      - name: Deploy test worker
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy --name ${{ steps.worker-name.outputs.name }}
+          workingDirectory: tests/e2e/test-worker
+
+      - name: Set worker URL output
+        id: deploy
+        run: |
+          echo "worker_url=https://${{ steps.worker-name.outputs.name }}.${{ env.CF_ACCOUNT_SUBDOMAIN }}.workers.dev" >> $GITHUB_OUTPUT
+
+  performance-tests:
+    needs: setup
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: 'npm'
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build packages
+        run: npm run build
+
+      - name: Create output directory
+        run: mkdir -p perf-results
+
+      - name: Run performance tests
+        env:
+          TEST_WORKER_URL: ${{ needs.setup.outputs.worker_url }}
+          CI: true
+        run: |
+          if [ "${{ inputs.scenario }}" = "all" ] || [ -z "${{ inputs.scenario }}" ]; then
+            npm run test:perf
+          else
+            npx vitest run --config vitest.perf.config.ts "tests/perf/scenarios/${{ inputs.scenario }}.test.ts"
+          fi
+
+      - name: Upload performance results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: perf-results-${{ github.run_id }}
+          path: perf-results/
+          retention-days: 90
+
+      - name: Upload latest results for comparison
+        uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: perf-baseline
+          path: perf-results/latest.json
+          retention-days: 365
+
+  cleanup:
+    needs: [setup, performance-tests]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cleanup test worker
+        continue-on-error: true
+        run: |
+          scripts/cleanup-test-deployment.sh ${{ needs.setup.outputs.worker_name }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

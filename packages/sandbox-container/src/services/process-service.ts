@@ -151,6 +151,7 @@ export class ProcessService {
         async (event) => {
           // Route events to process record listeners
           if (event.type === 'start' && event.pid !== undefined) {
+            processRecord.pid = event.pid;
             await this.store.update(processRecord.id, { pid: event.pid });
           } else if (event.type === 'stdout' && event.data) {
             processRecord.stdout += event.data;
@@ -209,7 +210,8 @@ export class ProcessService {
           cwd: options.cwd,
           env: options.env
         },
-        processRecordData.id // Pass process ID as commandId for tracking and killing
+        processRecordData.id, // Pass process ID as commandId for tracking and killing
+        { background: true } // Release lock after startup
       );
 
       if (!streamResult.success) {

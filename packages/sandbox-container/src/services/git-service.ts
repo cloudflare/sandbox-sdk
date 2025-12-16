@@ -104,84 +104,70 @@ export class GitService {
       );
       const command = this.buildCommand(args);
 
-      // Execute git clone (via SessionManager)
+      // Execute clone→branch sequence atomically within session
       const sessionId = options.sessionId || 'default';
-      const execResult = await this.sessionManager.executeInSession(
-        sessionId,
-        command
-      );
 
-      if (!execResult.success) {
-        return execResult as ServiceResult<{ path: string; branch: string }>;
-      }
+      return this.sessionManager
+        .withSession(sessionId, async (exec) => {
+          // Execute git clone
+          const result = await exec(command);
 
-      const result = execResult.data;
+          if (result.exitCode !== 0) {
+            this.logger.error('Git clone failed', undefined, {
+              repoUrl,
+              targetDirectory,
+              exitCode: result.exitCode,
+              stderr: result.stderr
+            });
 
-      if (result.exitCode !== 0) {
-        this.logger.error('Git clone failed', undefined, {
-          repoUrl,
-          targetDirectory,
-          exitCode: result.exitCode,
-          stderr: result.stderr
-        });
+            const errorCode = this.manager.determineErrorCode(
+              'clone',
+              result.stderr || 'Unknown error',
+              result.exitCode
+            );
+            throw {
+              message: `Failed to clone repository '${repoUrl}': ${
+                result.stderr || `exit code ${result.exitCode}`
+              }`,
+              code: errorCode,
+              details: {
+                repository: repoUrl,
+                targetDir: targetDirectory,
+                exitCode: result.exitCode,
+                stderr: result.stderr
+              } satisfies GitErrorContext
+            };
+          }
 
-        const errorCode = this.manager.determineErrorCode(
-          'clone',
-          result.stderr || 'Unknown error',
-          result.exitCode
-        );
-        return this.returnError({
-          message: `Failed to clone repository '${repoUrl}': ${
-            result.stderr || `exit code ${result.exitCode}`
-          }`,
-          code: errorCode,
-          details: {
-            repository: repoUrl,
-            targetDir: targetDirectory,
-            exitCode: result.exitCode,
-            stderr: result.stderr
-          } satisfies GitErrorContext
-        });
-      }
+          // Determine the actual branch that was checked out by querying Git
+          // This ensures we always return the true current branch, whether it was
+          // explicitly specified or defaulted to the repository's HEAD
+          const branchArgs = this.manager.buildGetCurrentBranchArgs();
+          const branchCommand = this.buildCommand(branchArgs);
+          const branchResult = await exec(branchCommand, {
+            cwd: targetDirectory
+          });
 
-      // Determine the actual branch that was checked out by querying Git
-      // This ensures we always return the true current branch, whether it was
-      // explicitly specified or defaulted to the repository's HEAD
-      const branchArgs = this.manager.buildGetCurrentBranchArgs();
-      const branchCommand = this.buildCommand(branchArgs);
-      const branchExecResult = await this.sessionManager.executeInSession(
-        sessionId,
-        branchCommand,
-        targetDirectory
-      );
+          let actualBranch: string;
+          if (branchResult.exitCode === 0 && branchResult.stdout.trim()) {
+            actualBranch = branchResult.stdout.trim();
+          } else {
+            // Fallback: use the requested branch or 'unknown'
+            actualBranch = options.branch || 'unknown';
+          }
 
-      if (!branchExecResult.success) {
-        // If we can't get the branch, use fallback but don't fail the entire operation
-        const actualBranch = options.branch || 'unknown';
-
-        return {
-          success: true,
-          data: {
+          return {
             path: targetDirectory,
             branch: actualBranch
+          };
+        })
+        .then((result) => {
+          if (!result.success) {
+            return result as ServiceResult<{ path: string; branch: string }>;
           }
-        };
-      }
 
-      const branchResult = branchExecResult.data;
-
-      let actualBranch: string;
-      if (branchResult.exitCode === 0 && branchResult.stdout.trim()) {
-        actualBranch = branchResult.stdout.trim();
-      } else {
-        // Fallback: use the requested branch or 'unknown'
-        actualBranch = options.branch || 'unknown';
-      }
-
-      return this.returnSuccess({
-        path: targetDirectory,
-        branch: actualBranch
-      });
+          return this.returnSuccess(result.data);
+        });
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';

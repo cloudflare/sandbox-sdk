@@ -4,35 +4,41 @@
  * Exposes SDK methods via HTTP endpoints for E2E testing.
  * Supports both default sessions (implicit) and explicit sessions via X-Session-Id header.
  *
- * Two sandbox types are available:
+ * Sandbox types available:
  * - Sandbox: Base image without Python (default, lean image)
  * - SandboxPython: Full image with Python (for code interpreter tests)
+ * - SandboxOpencode: Image with OpenCode CLI (for OpenCode integration tests)
+ * - SandboxStandalone: Standalone binary on arbitrary base image (for binary pattern tests)
  *
- * Use X-Sandbox-Type header to select: 'python' for SandboxPython, anything else for Sandbox
+ * Use X-Sandbox-Type header to select: 'python', 'opencode', 'standalone', or default
  */
-import { Sandbox, getSandbox, proxyToSandbox } from '@cloudflare/sandbox';
+import { getSandbox, proxyToSandbox, Sandbox } from '@cloudflare/sandbox';
 import type {
+  BucketDeleteResponse,
+  BucketGetResponse,
+  BucketPutResponse,
+  CodeContextDeleteResponse,
+  ErrorResponse,
   HealthResponse,
+  PortUnexposeResponse,
   SessionCreateResponse,
   SuccessResponse,
   SuccessWithMessageResponse,
-  BucketPutResponse,
-  BucketGetResponse,
-  BucketDeleteResponse,
-  PortUnexposeResponse,
-  CodeContextDeleteResponse,
-  WebSocketInitResponse,
-  ErrorResponse
+  WebSocketInitResponse
 } from './types';
 
-// Export Sandbox twice - once as Sandbox (base image) and once as SandboxPython (python image)
+// Export Sandbox class with different names for each container type
 // The actual image is determined by the container binding in wrangler.jsonc
 export { Sandbox };
 export { Sandbox as SandboxPython };
+export { Sandbox as SandboxOpencode };
+export { Sandbox as SandboxStandalone };
 
 interface Env {
   Sandbox: DurableObjectNamespace<Sandbox>;
   SandboxPython: DurableObjectNamespace<Sandbox>;
+  SandboxOpencode: DurableObjectNamespace<Sandbox>;
+  SandboxStandalone: DurableObjectNamespace<Sandbox>;
   TEST_BUCKET: R2Bucket;
   // R2 credentials for bucket mounting tests
   CLOUDFLARE_ACCOUNT_ID?: string;
@@ -66,10 +72,18 @@ export default {
     const keepAliveHeader = request.headers.get('X-Sandbox-KeepAlive');
     const keepAlive = keepAliveHeader === 'true';
 
-    // Select sandbox type: 'python' uses SandboxPython (with Python), anything else uses Sandbox (base, no Python)
+    // Select sandbox type based on X-Sandbox-Type header
     const sandboxType = request.headers.get('X-Sandbox-Type');
-    const sandboxNamespace =
-      sandboxType === 'python' ? env.SandboxPython : env.Sandbox;
+    let sandboxNamespace: DurableObjectNamespace<Sandbox>;
+    if (sandboxType === 'python') {
+      sandboxNamespace = env.SandboxPython;
+    } else if (sandboxType === 'opencode') {
+      sandboxNamespace = env.SandboxOpencode;
+    } else if (sandboxType === 'standalone') {
+      sandboxNamespace = env.SandboxStandalone;
+    } else {
+      sandboxNamespace = env.Sandbox;
+    }
 
     // Check if WebSocket transport is requested
     const useWebSocket = request.headers.get('X-Use-WebSocket') === 'true';
@@ -570,6 +584,27 @@ console.log('Terminal server on port ' + port);
           interval: body.interval
         });
         return new Response(JSON.stringify({ success: true }), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      // Process waitForExit - waits for process to exit
+      if (
+        url.pathname.startsWith('/api/process/') &&
+        url.pathname.endsWith('/waitForExit') &&
+        request.method === 'POST'
+      ) {
+        const pathParts = url.pathname.split('/');
+        const processId = pathParts[3];
+        const process = await executor.getProcess(processId);
+        if (!process) {
+          return new Response(JSON.stringify({ error: 'Process not found' }), {
+            status: 404,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+        const result = await process.waitForExit(body.timeout);
+        return new Response(JSON.stringify(result), {
           headers: { 'Content-Type': 'application/json' }
         });
       }

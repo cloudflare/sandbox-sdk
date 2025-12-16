@@ -207,6 +207,8 @@ export const pythonExample = `<pre class="shiki custom-theme" style="background-
 
 export const websocketExample = `<pre class="shiki custom-theme max-w-full overflow-auto" style="background-color:var(--background);color:var(--foreground)" tabindex="0"><code><span class="line"><span style="color:var(--foreground);font-weight:bold">import</span><span style="color:var(--foreground)"> { getSandbox } </span><span style="color:var(--foreground);font-weight:bold">from</span><span style="color:var(--color-orange-800)"> '@cloudflare/sandbox'</span><span style="color:var(--foreground)">;</span></span>
 <span class="line"></span>
+<span class="line"><span style="color:var(--foreground)">let initialized = false;</span></span>
+<span class="line"></span>
 <span class="line"><span style="color:var(--foreground);font-weight:bold">export</span><span style="color:var(--foreground);font-weight:bold"> default</span><span style="color:var(--foreground)"> {</span></span>
 <span class="line"><span style="color:var(--foreground)">  async fetch(request</span><span style="color:var(--foreground);font-weight:bold">:</span><span style="color:var(--foreground)"> Request, env</span><span style="color:var(--foreground);font-weight:bold">:</span><span style="color:var(--foreground)"> Env)</span><span style="color:var(--foreground);font-weight:bold"></span><span style="color:var(--foreground)"> {</span></span>
 <span class="line"><span style="color:var(--foreground)">    const sandbox </span><span style="color:var(--foreground);font-weight:bold">=</span><span style="color:var(--foreground)"> getSandbox(</span></span>
@@ -219,7 +221,7 @@ export const websocketExample = `<pre class="shiki custom-theme max-w-full overf
 <span class="line"></span>
 <span class="line"><span style="color:var(--foreground);font-weight:bold">    if</span><span style="color:var(--foreground)"> (upgrade </span><span style="color:var(--foreground);font-weight:bold">===</span><span style="color:var(--color-orange-800)"> 'websocket'</span><span style="color:var(--foreground)">) {</span></span>
 <span class="line"><span style="color:var(--color-neutral-400)">      // Initialize server on first connection</span></span>
-<span class="line"><span style="color:var(--foreground)">      </span><span style="color:var(--foreground);font-weight:bold">if</span><span style="color:var(--foreground)"> (!initialized.has(</span><span style="color:var(--color-orange-800)">'websocket-app'</span><span style="color:var(--foreground)">)) {</span></span>
+<span class="line"><span style="color:var(--foreground)">      </span><span style="color:var(--foreground);font-weight:bold">if</span><span style="color:var(--foreground)"> (!initialized) {</span></span>
 <span class="line"><span style="color:var(--foreground)">        </span><span style="color:var(--foreground);font-weight:bold">await</span><span style="color:var(--foreground)"> sandbox.writeFile(</span></span>
 <span class="line"><span style="color:var(--color-orange-800)">          '/workspace/server.js'</span><span style="color:var(--foreground)">,</span></span>
 <span class="line"><span style="color:var(--color-orange-800)">          \`Bun.serve({</span></span>
@@ -237,7 +239,7 @@ export const websocketExample = `<pre class="shiki custom-theme max-w-full overf
 <span class="line"><span style="color:var(--foreground)">        </span><span style="color:var(--foreground);font-weight:bold">await</span><span style="color:var(--foreground)"> sandbox.startProcess(</span></span>
 <span class="line"><span style="color:var(--color-orange-800)">          'bun /workspace/server.js'</span></span>
 <span class="line"><span style="color:var(--foreground)">        );</span></span>
-<span class="line"><span style="color:var(--foreground)">        initialized.add(</span><span style="color:var(--color-orange-800)">'websocket-app'</span><span style="color:var(--foreground)">);</span></span>
+<span class="line"><span style="color:var(--foreground)">        initialized = true;</span></span>
 <span class="line"><span style="color:var(--foreground)">      }</span></span>
 <span class="line"><span style="color:var(--color-neutral-400)">      // Connect to WebSocket server</span></span>
 <span class="line"><span style="color:var(--foreground);font-weight:bold">      return</span><span style="color:var(--foreground);font-weight:bold"> await</span><span style="color:var(--foreground)"> sandbox.wsConnect(request, 8080);</span></span>
