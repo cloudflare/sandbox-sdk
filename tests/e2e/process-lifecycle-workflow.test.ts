@@ -107,12 +107,12 @@ describe.each(transportModes)(
     test('should stream process logs in real-time', async () => {
       // Write a script that outputs multiple lines
       const scriptCode = `
-console.log("Line 1");
-await Bun.sleep(100);
-console.log("Line 2");
-await Bun.sleep(100);
-console.log("Line 3");
-    `.trim();
+    console.log("Line 1");
+    await Bun.sleep(100);
+    console.log("Line 2");
+    await Bun.sleep(100);
+    console.log("Line 3");
+        `.trim();
 
       await fetch(`${workerUrl}/api/file/write`, {
         method: 'POST',
@@ -192,84 +192,6 @@ console.log("Line 3");
       async () => {
         const exposeResponse = await fetch(`${workerUrl}/api/port/expose`, {
           method: 'POST',
-          headers,
-          body: JSON.stringify({
-            path: '/workspace/script.js',
-            content: scriptCode
-          })
-        });
-
-        // Start the script
-        const startResponse = await fetch(`${workerUrl}/api/process/start`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            command: 'bun run /workspace/script.js'
-          })
-        });
-
-        const startData = (await startResponse.json()) as Process;
-        const processId = startData.id;
-
-        // Stream logs (SSE)
-        const streamResponse = await fetch(
-          `${workerUrl}/api/process/${processId}/stream`,
-          {
-            method: 'GET',
-            headers
-          }
-        );
-
-        expect(streamResponse.status).toBe(200);
-        expect(streamResponse.headers.get('content-type')).toBe(
-          'text/event-stream'
-        );
-
-        // Collect events from the stream
-        const reader = streamResponse.body?.getReader();
-        const decoder = new TextDecoder();
-        const events: any[] = [];
-
-        if (reader) {
-          let done = false;
-          let timeout = Date.now() + 10000; // 10s timeout
-
-          while (!done && Date.now() < timeout) {
-            const { value, done: streamDone } = await reader.read();
-            done = streamDone;
-
-            if (value) {
-              const chunk = decoder.decode(value);
-              const lines = chunk
-                .split('\n\n')
-                .filter((line) => line.startsWith('data: '));
-
-              for (const line of lines) {
-                const eventData = line.replace('data: ', '');
-                try {
-                  events.push(JSON.parse(eventData));
-                } catch (e) {
-                  // Skip malformed events
-                }
-              }
-            }
-
-            // Stop after collecting some events
-            if (events.length >= 3) {
-              reader.cancel();
-              break;
-            }
-          }
-        }
-      },
-      90000
-    );
-
-    test.skipIf(skipPortExposureTests)(
-      'should reject exposing reserved ports',
-      async () => {
-        const exposeResponse = await fetch(`${workerUrl}/api/port/expose`, {
-          method: 'POST',
           headers: portHeaders,
           body: JSON.stringify({
             port: 22,
@@ -281,7 +203,7 @@ console.log("Line 3");
         const errorData = (await exposeResponse.json()) as { error: string };
         expect(errorData.error).toBeTruthy();
         expect(errorData.error).toMatch(
-          /reserved|not allowed|forbidden|invalid port|already exposed/i
+          /reserved|not allowed|forbidden|invalid port/i
         );
       },
       90000
