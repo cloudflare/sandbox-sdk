@@ -118,11 +118,11 @@ export function setupRoutes(router: Router, container: Container): void {
     middleware: [container.get('loggingMiddleware')]
   });
 
+  // No logging middleware; this is called frequently by waitForPort() polling
   router.register({
     method: 'POST',
     path: '/api/port-check',
-    handler: async (req, ctx) => container.get('portHandler').handle(req, ctx),
-    middleware: [container.get('loggingMiddleware')]
+    handler: async (req, ctx) => container.get('portHandler').handle(req, ctx)
   });
 
   router.register({
@@ -205,12 +205,12 @@ export function setupRoutes(router: Router, container: Container): void {
   });
 
   // Interpreter/Code execution routes
+  // No logging middleware for health endpoint; high-frequency internal operation
   router.register({
     method: 'GET',
     path: '/api/interpreter/health',
     handler: async (req, ctx) =>
-      container.get('interpreterHandler').handle(req, ctx),
-    middleware: [container.get('loggingMiddleware')]
+      container.get('interpreterHandler').handle(req, ctx)
   });
 
   router.register({
@@ -281,11 +281,11 @@ export function setupRoutes(router: Router, container: Container): void {
     handler: async (req, ctx) => container.get('miscHandler').handle(req, ctx)
   });
 
+  // No logging middleware; health checks are high-frequency internal operations
   router.register({
     method: 'GET',
     path: '/api/ping',
-    handler: async (req, ctx) => container.get('miscHandler').handle(req, ctx),
-    middleware: [container.get('loggingMiddleware')]
+    handler: async (req, ctx) => container.get('miscHandler').handle(req, ctx)
   });
 
   router.register({
