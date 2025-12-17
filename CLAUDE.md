@@ -418,6 +418,19 @@ Note: Container isolation is handled at the Cloudflare platform level (VMs), not
 
 **Important:** Changeset files should only reference `@cloudflare/sandbox`, never `@repo/shared` or `@repo/sandbox-container`. These internal packages should not be versioned independently - changes to them flow through the public package. Pre-commit hooks and CI will validate this rule.
 
+**Write for end users.** Changeset descriptions appear in GitHub releases - they're user-facing documentation, not internal notes. Focus on the problem solved and the benefit, not technical implementation details. Include how to enable or use the feature when applicable.
+
+```markdown
+# Bad - technical/internal focused
+
+Add WebSocket transport for request multiplexing over a single connection
+
+# Good - user-focused with clear benefit and usage
+
+Add WebSocket transport to avoid sub-request limits in Workers and Durable Objects.
+Enable with `useWebSocket: true` in sandbox options.
+```
+
 **Releases are fully automated** via GitHub Actions (`.github/workflows/release.yml`) and changesets (`.changeset/`):
 
 - **Changesets**: Create a `.changeset/your-feature-name.md` file to document changes affecting published packages (see PR process above)
