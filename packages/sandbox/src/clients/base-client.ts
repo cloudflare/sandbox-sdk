@@ -3,7 +3,7 @@ import { createNoOpLogger } from '@repo/shared';
 import type { ErrorResponse as NewErrorResponse } from '../errors';
 import { createErrorFromResponse, ErrorCode } from '../errors';
 import type { SandboxError } from '../errors/classes';
-import { createTransport, type Transport } from './transport';
+import { createTransport, type ITransport } from './transport';
 import type { HttpClientOptions, ResponseHandler } from './types';
 
 /**
@@ -20,7 +20,7 @@ import type { HttpClientOptions, ResponseHandler } from './types';
 export abstract class BaseHttpClient {
   protected options: HttpClientOptions;
   protected logger: Logger;
-  protected transport: Transport;
+  protected transport: ITransport;
 
   constructor(options: HttpClientOptions = {}) {
     this.options = options;

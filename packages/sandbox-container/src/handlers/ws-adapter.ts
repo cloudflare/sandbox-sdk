@@ -1,7 +1,7 @@
 /**
- * WebSocket Handler for Container
+ * WebSocket Protocol Adapter for Container
  *
- * Handles WebSocket connections and routes messages to HTTP handlers.
+ * Adapts WebSocket messages to HTTP requests for routing through existing handlers.
  * This enables multiplexing multiple requests over a single WebSocket connection,
  * reducing sub-request count when the SDK runs inside Workers/Durable Objects.
  */
@@ -30,15 +30,18 @@ export interface WSData {
 }
 
 /**
- * WebSocket handler that bridges WebSocket messages to HTTP handlers
+ * WebSocket protocol adapter that bridges WebSocket messages to HTTP handlers
+ *
+ * Converts incoming WebSocket requests to HTTP Request objects and routes them
+ * through the standard router. Supports both regular responses and SSE streaming.
  */
-export class WebSocketHandler {
+export class WebSocketAdapter {
   private router: Router;
   private logger: Logger;
 
   constructor(router: Router, logger: Logger) {
     this.router = router;
-    this.logger = logger.child({ component: 'ws-handler' });
+    this.logger = logger.child({ component: 'container' });
   }
 
   /**

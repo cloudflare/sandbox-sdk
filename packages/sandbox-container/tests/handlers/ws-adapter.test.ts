@@ -3,9 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Router } from '../../src/core/router';
 import {
   generateConnectionId,
-  WebSocketHandler,
+  WebSocketAdapter,
   type WSData
-} from '../../src/handlers/ws-handler';
+} from '../../src/handlers/ws-adapter';
 
 // Mock ServerWebSocket
 class MockServerWebSocket {
@@ -47,8 +47,8 @@ function createMockLogger(): Logger {
   } as unknown as Logger;
 }
 
-describe('WebSocketHandler', () => {
-  let handler: WebSocketHandler;
+describe('WebSocketAdapter', () => {
+  let adapter: WebSocketAdapter;
   let mockRouter: Router;
   let mockLogger: Logger;
   let mockWs: MockServerWebSocket;
@@ -57,7 +57,7 @@ describe('WebSocketHandler', () => {
     vi.clearAllMocks();
     mockRouter = createMockRouter();
     mockLogger = createMockLogger();
-    handler = new WebSocketHandler(mockRouter, mockLogger);
+    adapter = new WebSocketAdapter(mockRouter, mockLogger);
     mockWs = new MockServerWebSocket({ connectionId: 'test-conn-123' });
   });
 
@@ -67,7 +67,7 @@ describe('WebSocketHandler', () => {
 
   describe('onOpen', () => {
     it('should log connection open', () => {
-      handler.onOpen(mockWs as any);
+      adapter.onOpen(mockWs as any);
 
       expect(mockLogger.child).toHaveBeenCalled();
     });
@@ -75,7 +75,7 @@ describe('WebSocketHandler', () => {
 
   describe('onClose', () => {
     it('should log connection close with code and reason', () => {
-      handler.onClose(mockWs as any, 1000, 'Normal closure');
+      adapter.onClose(mockWs as any, 1000, 'Normal closure');
 
       expect(mockLogger.child).toHaveBeenCalled();
     });
@@ -98,7 +98,7 @@ describe('WebSocketHandler', () => {
         })
       );
 
-      await handler.onMessage(mockWs as any, JSON.stringify(request));
+      await adapter.onMessage(mockWs as any, JSON.stringify(request));
 
       expect(mockRouter.route).toHaveBeenCalled();
 
@@ -130,7 +130,7 @@ describe('WebSocketHandler', () => {
         )
       );
 
-      await handler.onMessage(mockWs as any, JSON.stringify(request));
+      await adapter.onMessage(mockWs as any, JSON.stringify(request));
 
       // Verify router was called with correct Request
       const routerCall = (mockRouter.route as any).mock.calls[0][0] as Request;
@@ -142,7 +142,7 @@ describe('WebSocketHandler', () => {
     });
 
     it('should return error for invalid JSON', async () => {
-      await handler.onMessage(mockWs as any, 'not valid json');
+      await adapter.onMessage(mockWs as any, 'not valid json');
 
       const response = mockWs.getLastMessage<WSError>();
       expect(response.type).toBe('error');
@@ -151,7 +151,7 @@ describe('WebSocketHandler', () => {
     });
 
     it('should return error for invalid request format', async () => {
-      await handler.onMessage(
+      await adapter.onMessage(
         mockWs as any,
         JSON.stringify({ notARequest: true })
       );
@@ -172,7 +172,7 @@ describe('WebSocketHandler', () => {
 
       (mockRouter.route as any).mockRejectedValue(new Error('Router failed'));
 
-      await handler.onMessage(mockWs as any, JSON.stringify(request));
+      await adapter.onMessage(mockWs as any, JSON.stringify(request));
 
       const response = mockWs.getLastMessage<WSError>();
       expect(response.type).toBe('error');
@@ -200,7 +200,7 @@ describe('WebSocketHandler', () => {
         )
       );
 
-      await handler.onMessage(mockWs as any, JSON.stringify(request));
+      await adapter.onMessage(mockWs as any, JSON.stringify(request));
 
       const response = mockWs.getLastMessage<WSResponse>();
       expect(response.type).toBe('response');
@@ -243,7 +243,7 @@ describe('WebSocketHandler', () => {
         })
       );
 
-      await handler.onMessage(mockWs as any, JSON.stringify(request));
+      await adapter.onMessage(mockWs as any, JSON.stringify(request));
 
       // Should have received stream chunks and final response
       const messages = mockWs.getSentMessages<any>();
@@ -272,7 +272,7 @@ describe('WebSocketHandler', () => {
 
       // Send as Buffer
       const buffer = Buffer.from(JSON.stringify(request));
-      await handler.onMessage(mockWs as any, buffer);
+      await adapter.onMessage(mockWs as any, buffer);
 
       expect(mockRouter.route).toHaveBeenCalled();
     });
@@ -291,14 +291,14 @@ describe('WebSocketHandler', () => {
 });
 
 describe('WebSocket Integration', () => {
-  let handler: WebSocketHandler;
+  let adapter: WebSocketAdapter;
   let mockRouter: Router;
   let mockLogger: Logger;
 
   beforeEach(() => {
     mockRouter = createMockRouter();
     mockLogger = createMockLogger();
-    handler = new WebSocketHandler(mockRouter, mockLogger);
+    adapter = new WebSocketAdapter(mockRouter, mockLogger);
   });
 
   it('should handle multiple concurrent requests', async () => {
@@ -319,7 +319,7 @@ describe('WebSocket Integration', () => {
     // Process all requests concurrently
     await Promise.all(
       requests.map((req) =>
-        handler.onMessage(mockWs as any, JSON.stringify(req))
+        adapter.onMessage(mockWs as any, JSON.stringify(req))
       )
     );
 
@@ -364,8 +364,8 @@ describe('WebSocket Integration', () => {
     });
 
     // Process both requests
-    await handler.onMessage(mockWs as any, JSON.stringify(failRequest));
-    await handler.onMessage(mockWs as any, JSON.stringify(successRequest));
+    await adapter.onMessage(mockWs as any, JSON.stringify(failRequest));
+    await adapter.onMessage(mockWs as any, JSON.stringify(successRequest));
 
     const messages = mockWs.getSentMessages<any>();
     expect(messages).toHaveLength(2);

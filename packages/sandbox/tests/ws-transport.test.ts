@@ -12,20 +12,20 @@ import {
   isWSStreamChunk
 } from '@repo/shared';
 import { describe, expect, it } from 'vitest';
-import { WSTransport } from '../src/clients/ws-transport';
+import { WebSocketTransport } from '../src/clients/transport';
 
 /**
- * Tests for WebSocket protocol types and the WSTransport class.
+ * Tests for WebSocket protocol types and the WebSocketTransport class.
  *
  * Testing Strategy:
  * - Protocol tests (type guards, serialization): Full unit test coverage here
- * - WSTransport class tests: Limited unit tests for non-connection behavior,
+ * - WebSocketTransport class tests: Limited unit tests for non-connection behavior,
  *   plus comprehensive E2E tests in tests/e2e/websocket-transport.test.ts
  *
- * Why limited WSTransport unit tests:
+ * Why limited WebSocketTransport unit tests:
  * - Tests run in Workers runtime (vitest-pool-workers) where mocking WebSocket
  *   is complex and error-prone
- * - The WSTransport class is tightly coupled to WebSocket - most methods
+ * - The WebSocketTransport class is tightly coupled to WebSocket - most methods
  *   require an active connection
  * - E2E tests verify the complete request/response cycle, error handling,
  *   streaming, and cleanup against a real container
@@ -324,32 +324,45 @@ describe('WebSocket Message Serialization', () => {
   });
 });
 
-describe('WSTransport', () => {
+describe('WebSocketTransport', () => {
   describe('initial state', () => {
     it('should not be connected after construction', () => {
-      const transport = new WSTransport('ws://localhost:3000/ws');
+      const transport = new WebSocketTransport({
+        wsUrl: 'ws://localhost:3000/ws'
+      });
       expect(transport.isConnected()).toBe(false);
     });
 
     it('should accept custom options', () => {
-      const transport = new WSTransport('ws://localhost:3000/ws', {
+      const transport = new WebSocketTransport({
+        wsUrl: 'ws://localhost:3000/ws',
         connectTimeoutMs: 5000,
         requestTimeoutMs: 60000
       });
       expect(transport.isConnected()).toBe(false);
     });
+
+    it('should throw if wsUrl is missing', () => {
+      expect(() => {
+        new WebSocketTransport({});
+      }).toThrow('wsUrl is required for WebSocket transport');
+    });
   });
 
   describe('disconnect', () => {
     it('should be safe to call disconnect when not connected', () => {
-      const transport = new WSTransport('ws://localhost:3000/ws');
+      const transport = new WebSocketTransport({
+        wsUrl: 'ws://localhost:3000/ws'
+      });
       // Should not throw
       transport.disconnect();
       expect(transport.isConnected()).toBe(false);
     });
 
     it('should be safe to call disconnect multiple times', () => {
-      const transport = new WSTransport('ws://localhost:3000/ws');
+      const transport = new WebSocketTransport({
+        wsUrl: 'ws://localhost:3000/ws'
+      });
       transport.disconnect();
       transport.disconnect();
       transport.disconnect();
@@ -357,23 +370,25 @@ describe('WSTransport', () => {
     });
   });
 
-  describe('request without connection', () => {
-    it('should attempt to connect when making a request', async () => {
-      const transport = new WSTransport('ws://invalid-url:9999/ws', {
+  describe('fetch without connection', () => {
+    it('should attempt to connect when making a fetch request', async () => {
+      const transport = new WebSocketTransport({
+        wsUrl: 'ws://invalid-url:9999/ws',
         connectTimeoutMs: 100
       });
 
-      // Request should fail because connection fails
-      await expect(transport.request('GET', '/test')).rejects.toThrow();
+      // Fetch should fail because connection fails
+      await expect(transport.fetch('/test')).rejects.toThrow();
     });
 
     it('should attempt to connect when making a stream request', async () => {
-      const transport = new WSTransport('ws://invalid-url:9999/ws', {
+      const transport = new WebSocketTransport({
+        wsUrl: 'ws://invalid-url:9999/ws',
         connectTimeoutMs: 100
       });
 
       // Stream request should fail because connection fails
-      await expect(transport.requestStream('POST', '/test')).rejects.toThrow();
+      await expect(transport.fetchStream('/test')).rejects.toThrow();
     });
   });
 });

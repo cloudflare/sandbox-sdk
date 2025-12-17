@@ -1,5 +1,5 @@
 import type { Logger } from '@repo/shared';
-import type { Transport, TransportMode } from './transport';
+import type { ITransport, TransportMode } from './transport';
 
 /**
  * Minimal interface for container fetch functionality
@@ -46,7 +46,7 @@ export interface HttpClientOptions {
    * Shared transport instance (for internal use).
    * When provided, clients will use this transport instead of creating their own.
    */
-  transport?: Transport;
+  transport?: ITransport;
 }
 
 /**

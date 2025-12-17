@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createTransport, Transport } from '../src/clients/transport';
+import {
+  createTransport,
+  HttpTransport,
+  WebSocketTransport
+} from '../src/clients/transport';
 
 describe('Transport', () => {
   let mockFetch: ReturnType<typeof vi.fn>;
@@ -156,19 +160,17 @@ describe('Transport', () => {
       });
 
       // Initially not connected
-      expect(transport.isWebSocketConnected()).toBe(false);
+      expect(transport.isConnected()).toBe(false);
     });
 
-    it('should handle missing WebSocket URL gracefully', () => {
-      // When wsUrl is missing, transport is created but won't connect
-      const transport = createTransport({
-        mode: 'websocket'
-        // wsUrl missing - will fail on connect attempt
-      });
-
-      // Transport is created but in an invalid state for WebSocket
-      expect(transport.getMode()).toBe('websocket');
-      expect(transport.isWebSocketConnected()).toBe(false);
+    it('should throw error when wsUrl is missing', () => {
+      // When wsUrl is missing, WebSocket transport throws an error
+      expect(() => {
+        createTransport({
+          mode: 'websocket'
+          // wsUrl missing - should throw
+        });
+      }).toThrow('wsUrl is required for WebSocket transport');
     });
   });
 
@@ -179,7 +181,7 @@ describe('Transport', () => {
         baseUrl: 'http://localhost:3000'
       });
 
-      expect(transport).toBeInstanceOf(Transport);
+      expect(transport).toBeInstanceOf(HttpTransport);
       expect(transport.getMode()).toBe('http');
     });
 
@@ -189,7 +191,7 @@ describe('Transport', () => {
         wsUrl: 'ws://localhost:3000/ws'
       });
 
-      expect(transport).toBeInstanceOf(Transport);
+      expect(transport).toBeInstanceOf(WebSocketTransport);
       expect(transport.getMode()).toBe('websocket');
     });
 

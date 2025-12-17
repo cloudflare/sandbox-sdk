@@ -14,11 +14,7 @@ export enum LogLevel {
   ERROR = 3
 }
 
-export type LogComponent =
-  | 'container'
-  | 'sandbox-do'
-  | 'executor'
-  | 'ws-handler';
+export type LogComponent = 'container' | 'sandbox-do' | 'executor';
 
 /**
  * Context metadata included in every log entry

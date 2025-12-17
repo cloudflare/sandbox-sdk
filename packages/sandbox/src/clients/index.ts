@@ -21,10 +21,18 @@ export { UtilityClient } from './utility-client';
 // Transport layer
 // =============================================================================
 
-export type { TransportMode, TransportOptions } from './transport';
-export { createTransport, Transport } from './transport';
-export type { WSTransportOptions } from './ws-transport';
-export { WSTransport } from './ws-transport';
+export type {
+  ITransport,
+  TransportConfig,
+  TransportMode,
+  TransportOptions
+} from './transport';
+export {
+  BaseTransport,
+  createTransport,
+  HttpTransport,
+  WebSocketTransport
+} from './transport';
 
 // =============================================================================
 // Client types and interfaces

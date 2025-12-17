@@ -6,7 +6,7 @@ import { PortClient } from './port-client';
 import { ProcessClient } from './process-client';
 import {
   createTransport,
-  type Transport,
+  type ITransport,
   type TransportMode
 } from './transport';
 import type { HttpClientOptions } from './types';
@@ -31,7 +31,7 @@ export class SandboxClient {
   public readonly interpreter: InterpreterClient;
   public readonly utils: UtilityClient;
 
-  private transport: Transport | null = null;
+  private transport: ITransport | null = null;
 
   constructor(options: HttpClientOptions) {
     // Create shared transport if WebSocket mode is enabled
@@ -75,7 +75,7 @@ export class SandboxClient {
    * Check if WebSocket is connected (only relevant in WebSocket mode)
    */
   isWebSocketConnected(): boolean {
-    return this.transport?.isWebSocketConnected() ?? false;
+    return this.transport?.isConnected() ?? false;
   }
 
   /**

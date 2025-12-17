@@ -1,6 +1,4 @@
-import type { Logger } from '@repo/shared';
 import {
-  createNoOpLogger,
   generateRequestId,
   isWSError,
   isWSResponse,
@@ -11,7 +9,8 @@ import {
   type WSServerMessage,
   type WSStreamChunk
 } from '@repo/shared';
-import type { ContainerStub } from './types';
+import { BaseTransport } from './base-transport';
+import type { TransportConfig, TransportMode } from './types';
 
 /**
  * Pending request tracker for response matching
@@ -25,64 +24,40 @@ interface PendingRequest {
 }
 
 /**
- * WebSocket transport configuration
- */
-export interface WSTransportOptions {
-  /** Logger instance */
-  logger?: Logger;
-
-  /** Connection timeout in milliseconds */
-  connectTimeoutMs?: number;
-
-  /** Request timeout in milliseconds */
-  requestTimeoutMs?: number;
-
-  /**
-   * Container stub for DO-internal WebSocket connections.
-   * When provided, uses fetch-based WebSocket (Workers style) instead of new WebSocket().
-   */
-  stub?: ContainerStub;
-
-  /** Port number for container connection */
-  port?: number;
-}
-
-/**
  * WebSocket transport state
  */
 type WSTransportState = 'disconnected' | 'connecting' | 'connected' | 'error';
 
 /**
- * WebSocket transport layer for multiplexing HTTP-like requests
+ * WebSocket transport implementation
  *
- * Maintains a single WebSocket connection and multiplexes requests using
- * unique IDs. Supports both request/response and streaming patterns.
+ * Multiplexes HTTP-like requests over a single WebSocket connection.
+ * Useful when running inside Workers/DO where sub-request limits apply.
  */
-export class WSTransport {
+export class WebSocketTransport extends BaseTransport {
   private ws: WebSocket | null = null;
   private state: WSTransportState = 'disconnected';
   private pendingRequests: Map<string, PendingRequest> = new Map();
   private connectPromise: Promise<void> | null = null;
-  private logger: Logger;
-  private options: WSTransportOptions;
-  private url: string;
-  private stub?: ContainerStub;
-  private port?: number;
 
   // Bound event handlers for proper add/remove
   private boundHandleMessage: (event: MessageEvent) => void;
   private boundHandleClose: (event: CloseEvent) => void;
 
-  constructor(url: string, options: WSTransportOptions = {}) {
-    this.url = url;
-    this.options = options;
-    this.logger = options.logger ?? createNoOpLogger();
-    this.stub = options.stub;
-    this.port = options.port;
+  constructor(config: TransportConfig) {
+    super(config);
+
+    if (!config.wsUrl) {
+      throw new Error('wsUrl is required for WebSocket transport');
+    }
 
     // Bind handlers once in constructor
     this.boundHandleMessage = this.handleMessage.bind(this);
     this.boundHandleClose = this.handleClose.bind(this);
+  }
+
+  getMode(): TransportMode {
+    return 'websocket';
   }
 
   /**
@@ -122,12 +97,72 @@ export class WSTransport {
   }
 
   /**
+   * Disconnect from the WebSocket server
+   */
+  disconnect(): void {
+    this.cleanup();
+  }
+
+  /**
+   * Transport-specific fetch implementation
+   * Converts WebSocket response to standard Response object.
+   */
+  protected async doFetch(
+    path: string,
+    options?: RequestInit
+  ): Promise<Response> {
+    await this.connect();
+
+    const method = (options?.method || 'GET') as WSMethod;
+    const body = this.parseBody(options?.body);
+
+    const result = await this.request(method, path, body);
+
+    return new Response(JSON.stringify(result.body), {
+      status: result.status,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+
+  /**
+   * Streaming fetch implementation
+   */
+  async fetchStream(
+    path: string,
+    body?: unknown,
+    method: 'GET' | 'POST' = 'POST'
+  ): Promise<ReadableStream<Uint8Array>> {
+    return this.requestStream(method, path, body);
+  }
+
+  /**
+   * Parse request body from RequestInit
+   */
+  private parseBody(body: RequestInit['body']): unknown {
+    if (!body) {
+      return undefined;
+    }
+
+    if (typeof body === 'string') {
+      try {
+        return JSON.parse(body);
+      } catch {
+        return body;
+      }
+    }
+
+    throw new Error(
+      `WebSocket transport only supports string bodies. Got: ${typeof body}`
+    );
+  }
+
+  /**
    * Internal connection logic
    */
   private async doConnect(): Promise<void> {
     this.state = 'connecting';
     // Use fetch-based WebSocket for DO context (Workers style)
-    if (this.stub) {
+    if (this.config.stub) {
       await this.connectViaFetch();
     } else {
       // Use standard WebSocket for browser/Node
@@ -140,7 +175,7 @@ export class WSTransport {
    * This is required when running inside a Durable Object.
    */
   private async connectViaFetch(): Promise<void> {
-    const timeoutMs = this.options.connectTimeoutMs ?? 30000;
+    const timeoutMs = this.config.connectTimeoutMs ?? 30000;
 
     // Create abort controller for timeout
     const controller = new AbortController();
@@ -148,11 +183,11 @@ export class WSTransport {
 
     try {
       // Build the WebSocket URL for the container
-      const wsPath = new URL(this.url).pathname;
-      const httpUrl = `http://localhost:${this.port || 3000}${wsPath}`;
+      const wsPath = new URL(this.config.wsUrl!).pathname;
+      const httpUrl = `http://localhost:${this.config.port || 3000}${wsPath}`;
 
       // Use containerFetch with upgrade headers to establish WebSocket
-      const response = await this.stub!.containerFetch(
+      const response = await this.config.stub!.containerFetch(
         httpUrl,
         {
           headers: {
@@ -161,7 +196,7 @@ export class WSTransport {
           },
           signal: controller.signal
         },
-        this.port || 3000
+        this.config.port || 3000
       );
 
       clearTimeout(timeout);
@@ -189,7 +224,9 @@ export class WSTransport {
       this.ws.addEventListener('close', this.boundHandleClose);
       this.ws.addEventListener('message', this.boundHandleMessage);
 
-      this.logger.debug('WebSocket connected via fetch', { url: this.url });
+      this.logger.debug('WebSocket connected via fetch', {
+        url: this.config.wsUrl
+      });
     } catch (error) {
       clearTimeout(timeout);
       this.state = 'error';
@@ -206,14 +243,14 @@ export class WSTransport {
    */
   private connectViaWebSocket(): Promise<void> {
     return new Promise<void>((resolve, reject) => {
-      const timeoutMs = this.options.connectTimeoutMs ?? 30000;
+      const timeoutMs = this.config.connectTimeoutMs ?? 30000;
       const timeout = setTimeout(() => {
         this.cleanup();
         reject(new Error(`WebSocket connection timeout after ${timeoutMs}ms`));
       }, timeoutMs);
 
       try {
-        this.ws = new WebSocket(this.url);
+        this.ws = new WebSocket(this.config.wsUrl!);
 
         // One-time open handler for connection
         const onOpen = () => {
@@ -221,7 +258,7 @@ export class WSTransport {
           this.ws?.removeEventListener('open', onOpen);
           this.ws?.removeEventListener('error', onConnectError);
           this.state = 'connected';
-          this.logger.debug('WebSocket connected', { url: this.url });
+          this.logger.debug('WebSocket connected', { url: this.config.wsUrl });
           resolve();
         };
 
@@ -251,16 +288,9 @@ export class WSTransport {
   }
 
   /**
-   * Disconnect from the WebSocket server
-   */
-  disconnect(): void {
-    this.cleanup();
-  }
-
-  /**
    * Send a request and wait for response
    */
-  async request<T>(
+  private async request<T>(
     method: WSMethod,
     path: string,
     body?: unknown
@@ -277,7 +307,7 @@ export class WSTransport {
     };
 
     return new Promise((resolve, reject) => {
-      const timeoutMs = this.options.requestTimeoutMs ?? 120000;
+      const timeoutMs = this.config.requestTimeoutMs ?? 120000;
       const timeoutId = setTimeout(() => {
         this.pendingRequests.delete(id);
         reject(
@@ -310,7 +340,7 @@ export class WSTransport {
    * The stream will receive data chunks as they arrive over the WebSocket.
    * Format matches SSE for compatibility with existing streaming code.
    */
-  async requestStream(
+  private async requestStream(
     method: WSMethod,
     path: string,
     body?: unknown
@@ -330,7 +360,7 @@ export class WSTransport {
 
     return new ReadableStream<Uint8Array>({
       start: (controller) => {
-        const timeoutMs = this.options.requestTimeoutMs ?? 120000;
+        const timeoutMs = this.config.requestTimeoutMs ?? 120000;
         const timeoutId = setTimeout(() => {
           this.pendingRequests.delete(id);
           controller.error(

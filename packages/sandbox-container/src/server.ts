@@ -4,9 +4,9 @@ import { Container } from './core/container';
 import { Router } from './core/router';
 import {
   generateConnectionId,
-  WebSocketHandler,
+  WebSocketAdapter,
   type WSData
-} from './handlers/ws-handler';
+} from './handlers/ws-adapter';
 import { setupRoutes } from './routes/setup';
 
 const logger = createLogger({ component: 'container' });
@@ -23,7 +23,7 @@ async function createApplication(): Promise<{
     server: ReturnType<typeof serve<WSData>>
   ) => Promise<Response>;
   container: Container;
-  wsHandler: WebSocketHandler;
+  wsAdapter: WebSocketAdapter;
 }> {
   const container = new Container();
   await container.initialize();
@@ -32,8 +32,8 @@ async function createApplication(): Promise<{
   router.use(container.get('corsMiddleware'));
   setupRoutes(router, container);
 
-  // Create WebSocket handler with the router for control plane multiplexing
-  const wsHandler = new WebSocketHandler(router, logger);
+  // Create WebSocket adapter with the router for control plane multiplexing
+  const wsAdapter = new WebSocketAdapter(router, logger);
 
   return {
     fetch: async (
@@ -62,7 +62,7 @@ async function createApplication(): Promise<{
       return router.route(req);
     },
     container,
-    wsHandler
+    wsAdapter
   };
 }
 
@@ -78,11 +78,11 @@ export async function startServer(): Promise<ServerInstance> {
     fetch: (req, server) => app.fetch(req, server),
     hostname: '0.0.0.0',
     port: SERVER_PORT,
-    // WebSocket handlers for control plane multiplexing
+    // WebSocket adapter for control plane multiplexing
     websocket: {
       open(ws) {
         try {
-          app.wsHandler.onOpen(ws);
+          app.wsAdapter.onOpen(ws);
         } catch (error) {
           logger.error(
             'Error in WebSocket open handler',
@@ -92,7 +92,7 @@ export async function startServer(): Promise<ServerInstance> {
       },
       close(ws, code, reason) {
         try {
-          app.wsHandler.onClose(ws, code, reason);
+          app.wsAdapter.onClose(ws, code, reason);
         } catch (error) {
           logger.error(
             'Error in WebSocket close handler',
@@ -102,7 +102,7 @@ export async function startServer(): Promise<ServerInstance> {
       },
       async message(ws, message) {
         try {
-          await app.wsHandler.onMessage(ws, message);
+          await app.wsAdapter.onMessage(ws, message);
         } catch (error) {
           logger.error(
             'Error in WebSocket message handler',
