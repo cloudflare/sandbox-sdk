@@ -161,6 +161,22 @@ export class InterpreterClient extends BaseHttpClient {
   }
 
   /**
+   * Get a raw stream for code execution.
+   * Used by CodeInterpreter.runCodeStreaming() for direct stream access.
+   */
+  async streamCode(
+    contextId: string,
+    code: string,
+    language?: string
+  ): Promise<ReadableStream<Uint8Array>> {
+    return this.doStreamFetch('/api/execute/code', {
+      context_id: contextId,
+      code,
+      language
+    });
+  }
+
+  /**
    * Execute an operation with automatic retry for transient errors
    */
   private async executeWithRetry<T>(operation: () => Promise<T>): Promise<T> {

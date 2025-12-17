@@ -85,7 +85,6 @@ export default {
       sandboxNamespace = env.Sandbox;
     }
 
-    // WebSocket transport is controlled via SANDBOX_USE_WEBSOCKET env var
     const sandbox = getSandbox(sandboxNamespace, sandboxId, {
       keepAlive
     });

@@ -239,7 +239,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         // Explicit stored value overrides env var
         if (storedTransport !== this.transport) {
           this.transport = storedTransport;
-          // Recreate client with updated transport setting
+          // Disconnect old client before recreating with updated transport
+          this.client.disconnect();
           this.client = new SandboxClient({
             logger: this.logger,
             port: 3000,
@@ -314,11 +315,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     this.transport = transport;
     await this.ctx.storage.put('transport', transport);
 
+    // Disconnect old client before recreating with new transport
+    this.client.disconnect();
+
     if (transport === 'websocket') {
-      this.logger.info(
-        'WebSocket transport enabled - requests will be multiplexed over single connection'
-      );
-      // Recreate client with WebSocket transport
       this.client = new SandboxClient({
         logger: this.logger,
         port: 3000,
@@ -327,8 +327,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         wsUrl: 'ws://localhost:3000/ws'
       });
     } else {
-      this.logger.info('HTTP transport enabled - using individual requests');
-      // Recreate client with HTTP transport
       this.client = new SandboxClient({
         logger: this.logger,
         port: 3000,
@@ -764,6 +762,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    */
   override async destroy(): Promise<void> {
     this.logger.info('Destroying sandbox container');
+
+    // Disconnect WebSocket transport if active
+    this.client.disconnect();
 
     // Unmount all mounted buckets and cleanup password files
     for (const [mountPath, mountInfo] of this.activeMounts.entries()) {

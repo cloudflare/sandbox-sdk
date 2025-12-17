@@ -21,6 +21,7 @@ interface PendingRequest {
   reject: (error: Error) => void;
   streamController?: ReadableStreamDefaultController<Uint8Array>;
   isStreaming: boolean;
+  timeoutId?: ReturnType<typeof setTimeout>;
 }
 
 /**
@@ -271,7 +272,7 @@ export class WSTransport {
 
     return new Promise((resolve, reject) => {
       const timeoutMs = this.options.requestTimeoutMs ?? 120000;
-      const timeout = setTimeout(() => {
+      const timeoutId = setTimeout(() => {
         this.pendingRequests.delete(id);
         reject(
           new Error(`Request timeout after ${timeoutMs}ms: ${method} ${path}`)
@@ -280,16 +281,17 @@ export class WSTransport {
 
       this.pendingRequests.set(id, {
         resolve: (response: WSResponse) => {
-          clearTimeout(timeout);
+          clearTimeout(timeoutId);
           this.pendingRequests.delete(id);
           resolve({ status: response.status, body: response.body as T });
         },
         reject: (error: Error) => {
-          clearTimeout(timeout);
+          clearTimeout(timeoutId);
           this.pendingRequests.delete(id);
           reject(error);
         },
-        isStreaming: false
+        isStreaming: false,
+        timeoutId
       });
 
       this.send(request);
@@ -323,7 +325,7 @@ export class WSTransport {
     return new ReadableStream<Uint8Array>({
       start: (controller) => {
         const timeoutMs = this.options.requestTimeoutMs ?? 120000;
-        const timeout = setTimeout(() => {
+        const timeoutId = setTimeout(() => {
           this.pendingRequests.delete(id);
           controller.error(
             new Error(`Stream timeout after ${timeoutMs}ms: ${method} ${path}`)
@@ -332,7 +334,7 @@ export class WSTransport {
 
         this.pendingRequests.set(id, {
           resolve: (response: WSResponse) => {
-            clearTimeout(timeout);
+            clearTimeout(timeoutId);
             this.pendingRequests.delete(id);
             // Final response - close the stream
             if (response.status >= 400) {
@@ -346,17 +348,22 @@ export class WSTransport {
             }
           },
           reject: (error: Error) => {
-            clearTimeout(timeout);
+            clearTimeout(timeoutId);
             this.pendingRequests.delete(id);
             controller.error(error);
           },
           streamController: controller,
-          isStreaming: true
+          isStreaming: true,
+          timeoutId
         });
 
         this.send(request);
       },
       cancel: () => {
+        const pending = this.pendingRequests.get(id);
+        if (pending?.timeoutId) {
+          clearTimeout(pending.timeoutId);
+        }
         this.pendingRequests.delete(id);
         // Could send a cancel message to server if needed
       }
@@ -494,9 +501,13 @@ export class WSTransport {
       `WebSocket closed: ${event.code} ${event.reason || 'No reason'}`
     );
 
-    // Reject all pending requests and error their stream controllers
+    // Reject all pending requests, clear their timeouts, and error their stream controllers
     for (const [, pending] of this.pendingRequests) {
-      // Error stream controller first if it exists
+      // Clear timeout first to prevent memory leak
+      if (pending.timeoutId) {
+        clearTimeout(pending.timeoutId);
+      }
+      // Error stream controller if it exists
       if (pending.streamController) {
         try {
           pending.streamController.error(closeError);
@@ -521,6 +532,12 @@ export class WSTransport {
     }
     this.state = 'disconnected';
     this.connectPromise = null;
+    // Clear all pending request timeouts before clearing the map
+    for (const pending of this.pendingRequests.values()) {
+      if (pending.timeoutId) {
+        clearTimeout(pending.timeoutId);
+      }
+    }
     this.pendingRequests.clear();
   }
 }

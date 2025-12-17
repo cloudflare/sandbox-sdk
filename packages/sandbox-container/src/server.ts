@@ -81,13 +81,39 @@ export async function startServer(): Promise<ServerInstance> {
     // WebSocket handlers for control plane multiplexing
     websocket: {
       open(ws) {
-        app.wsHandler.onOpen(ws);
+        try {
+          app.wsHandler.onOpen(ws);
+        } catch (error) {
+          logger.error(
+            'Error in WebSocket open handler',
+            error instanceof Error ? error : new Error(String(error))
+          );
+        }
       },
       close(ws, code, reason) {
-        app.wsHandler.onClose(ws, code, reason);
+        try {
+          app.wsHandler.onClose(ws, code, reason);
+        } catch (error) {
+          logger.error(
+            'Error in WebSocket close handler',
+            error instanceof Error ? error : new Error(String(error))
+          );
+        }
       },
       async message(ws, message) {
-        await app.wsHandler.onMessage(ws, message);
+        try {
+          await app.wsHandler.onMessage(ws, message);
+        } catch (error) {
+          logger.error(
+            'Error in WebSocket message handler',
+            error instanceof Error ? error : new Error(String(error))
+          );
+          try {
+            ws.close(1011, 'Internal error');
+          } catch {
+            // Connection already closed
+          }
+        }
       }
     }
   });

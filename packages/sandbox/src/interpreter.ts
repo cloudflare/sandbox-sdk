@@ -96,12 +96,12 @@ export class CodeInterpreter {
       context = await this.getOrCreateDefaultContext(language);
     }
 
-    // Use doStreamFetch which handles both HTTP and WebSocket streaming
-    return (this.interpreterClient as any).doStreamFetch('/api/execute/code', {
-      context_id: context.id,
+    // Use streamCode which handles both HTTP and WebSocket streaming
+    return this.interpreterClient.streamCode(
+      context.id,
       code,
-      language: options.language
-    });
+      options.language
+    );
   }
 
   /**
