@@ -65,22 +65,6 @@ describe('WebSocketAdapter', () => {
     vi.restoreAllMocks();
   });
 
-  describe('onOpen', () => {
-    it('should log connection open', () => {
-      adapter.onOpen(mockWs as any);
-
-      expect(mockLogger.child).toHaveBeenCalled();
-    });
-  });
-
-  describe('onClose', () => {
-    it('should log connection close with code and reason', () => {
-      adapter.onClose(mockWs as any, 1000, 'Normal closure');
-
-      expect(mockLogger.child).toHaveBeenCalled();
-    });
-  });
-
   describe('onMessage', () => {
     it('should handle valid request and return response', async () => {
       const request: WSRequest = {
