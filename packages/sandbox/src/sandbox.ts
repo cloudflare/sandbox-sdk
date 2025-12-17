@@ -97,10 +97,6 @@ export function getSandbox<T extends Sandbox<any>>(
     stub.setContainerTimeouts(options.containerTimeouts);
   }
 
-  if (options?.transport !== undefined) {
-    stub.setTransport(options.transport);
-  }
-
   return Object.assign(stub, {
     wsConnect: connect(stub)
   }) as T;
@@ -195,7 +191,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       sandboxId: this.ctx.id.toString()
     });
 
-    // Read transport setting from env var (can be overridden via API)
+    // Read transport setting from env var
     const transportEnv = envObj?.SANDBOX_TRANSPORT;
     if (transportEnv === 'websocket') {
       this.transport = 'websocket';
@@ -230,22 +226,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           ...this.containerTimeouts,
           ...storedTimeouts
         };
-      }
-
-      // Load transport setting from storage (overrides env var if set)
-      const storedTransport = await this.ctx.storage.get<'http' | 'websocket'>(
-        'transport'
-      );
-      if (storedTransport != null) {
-        // Explicit stored value overrides env var
-        if (storedTransport !== this.transport) {
-          this.transport = storedTransport;
-          // Disconnect old client before recreating with updated transport
-          this.client.disconnect();
-          this.client = this.createSandboxClient();
-          // Re-initialize code interpreter with new client
-          this.codeInterpreter = new CodeInterpreter(this);
-        }
       }
     });
   }
@@ -290,31 +270,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         'KeepAlive mode disabled - container will timeout normally'
       );
     }
-  }
-
-  /**
-   * RPC method to set the transport protocol for control plane communication
-   *
-   * - `'http'`: Individual HTTP requests for each operation (default)
-   * - `'websocket'`: All operations multiplexed over a single WebSocket connection
-   *
-   * Note: WebSocket connection is established lazily on first request, not during
-   * setTransport(). Call sandbox.client.connect() to establish immediately.
-   */
-  async setTransport(transport: 'http' | 'websocket'): Promise<void> {
-    if (this.transport === transport) {
-      return; // No change needed
-    }
-
-    this.transport = transport;
-    await this.ctx.storage.put('transport', transport);
-
-    // Disconnect old client before recreating with new transport
-    this.client.disconnect();
-    this.client = this.createSandboxClient();
-
-    // Re-initialize code interpreter with new client
-    this.codeInterpreter = new CodeInterpreter(this);
   }
 
   // RPC method to set environment variables

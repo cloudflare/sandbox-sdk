@@ -489,19 +489,6 @@ export interface SandboxOptions {
      */
     waitIntervalMS?: number;
   };
-
-  /**
-   * Transport protocol for control plane communication
-   *
-   * - `'http'` (default): Individual HTTP requests for each operation
-   * - `'websocket'`: Single persistent connection multiplexes all operations
-   *
-   * Can also be configured via `SANDBOX_TRANSPORT` environment variable.
-   * Option value takes precedence over env var.
-   *
-   * @default 'http'
-   */
-  transport?: 'http' | 'websocket';
 }
 
 /**
