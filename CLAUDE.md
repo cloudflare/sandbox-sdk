@@ -326,6 +326,40 @@ encodings. Uses proper error handling with custom error types from the
 shared package for consistency across the SDK.
 ```
 
+### Code Comments
+
+**Write comments for future readers, not for the current conversation.**
+
+Comments should describe the current state of the code. A developer reading the code months later won't have context about bugs that were fixed, conversations that happened, or previous implementations.
+
+**Don't reference historical context:**
+
+```typescript
+// Bad: references a bug the reader knows nothing about
+// Uses character tracking to avoid the bug where indexOf('') returns wrong position
+
+// Bad: implies something was wrong before
+// Start the server with proper WebSocket typing
+
+// Bad: "prevent" implies there was a problem to prevent
+// Assign synchronously to prevent race conditions
+```
+
+**Do describe current behavior and design intent:**
+
+```typescript
+// Good: describes what the code does now
+// Returns parsed events and any remaining unparsed content
+
+// Good: explains design rationale without historical context
+// Assigned synchronously so concurrent callers share the same connection attempt
+
+// Good: explains a non-obvious implementation choice
+// Uses IIFE to ensure promise exists before any await points
+```
+
+**When in doubt:** If your comment includes phrases like "to avoid", "to fix", "to prevent", "instead of", or "properly" - reconsider whether you're describing current behavior or referencing something that no longer exists.
+
 ## Important Patterns
 
 ### Error Handling
