@@ -95,7 +95,7 @@ export class WSTransport {
   /**
    * Connect to the WebSocket server
    *
-   * The connection promise is assigned synchronously via IIFE so concurrent
+   * The connection promise is assigned synchronously so concurrent
    * callers share the same connection attempt.
    */
   async connect(): Promise<void> {
@@ -110,23 +110,29 @@ export class WSTransport {
     }
 
     // Assign synchronously so concurrent callers await the same promise
-    this.connectPromise = (async () => {
-      this.state = 'connecting';
-      try {
-        // Use fetch-based WebSocket for DO context (Workers style)
-        if (this.stub) {
-          await this.connectViaFetch();
-        } else {
-          // Use standard WebSocket for browser/Node
-          await this.connectViaWebSocket();
-        }
-      } catch (error) {
-        this.connectPromise = null; // Allow retry on failure
-        throw error;
-      }
-    })();
+    this.connectPromise = this.doConnect();
 
-    return this.connectPromise;
+    try {
+      await this.connectPromise;
+    } catch (error) {
+      // Clear promise AFTER await so concurrent callers see the same rejection
+      this.connectPromise = null;
+      throw error;
+    }
+  }
+
+  /**
+   * Internal connection logic
+   */
+  private async doConnect(): Promise<void> {
+    this.state = 'connecting';
+    // Use fetch-based WebSocket for DO context (Workers style)
+    if (this.stub) {
+      await this.connectViaFetch();
+    } else {
+      // Use standard WebSocket for browser/Node
+      await this.connectViaWebSocket();
+    }
   }
 
   /**
@@ -458,11 +464,16 @@ export class WSTransport {
     try {
       pending.streamController.enqueue(encoder.encode(sseData));
     } catch (error) {
-      // Stream may have been cancelled
-      this.logger.debug('Failed to enqueue stream chunk', {
+      // Stream was cancelled or errored - clean up the pending request
+      this.logger.debug('Failed to enqueue stream chunk, cleaning up', {
         id: chunk.id,
         error: error instanceof Error ? error.message : String(error)
       });
+      // Clear timeout and remove from pending requests
+      if (pending.timeoutId) {
+        clearTimeout(pending.timeoutId);
+      }
+      this.pendingRequests.delete(chunk.id);
     }
   }
 

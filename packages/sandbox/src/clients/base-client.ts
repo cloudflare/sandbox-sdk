@@ -72,7 +72,7 @@ export abstract class BaseHttpClient {
   }
 
   /**
-   * WebSocket-based fetch implementation
+   * WebSocket-based fetch implementation with retry logic for container startup
    * Converts WebSocket request/response to Response object for compatibility
    */
   private async doWebSocketFetch(
@@ -80,7 +80,9 @@ export abstract class BaseHttpClient {
     options?: RequestInit
   ): Promise<Response> {
     if (!this.transport) {
-      throw new Error('WebSocket transport not initialized');
+      throw new Error(
+        'WebSocket transport not initialized. Ensure transportMode is "websocket" and wsUrl is provided.'
+      );
     }
 
     const method = (options?.method || 'GET') as
@@ -90,21 +92,60 @@ export abstract class BaseHttpClient {
       | 'DELETE';
     let body: unknown;
 
-    if (options?.body && typeof options.body === 'string') {
-      try {
-        body = JSON.parse(options.body);
-      } catch {
-        body = options.body;
+    if (options?.body) {
+      if (typeof options.body === 'string') {
+        try {
+          body = JSON.parse(options.body);
+        } catch {
+          body = options.body;
+        }
+      } else {
+        throw new Error(
+          `WebSocket transport only supports string bodies. Got: ${typeof options.body}`
+        );
       }
     }
 
-    const result = await this.transport.request(method, path, body);
+    const startTime = Date.now();
+    let attempt = 0;
 
-    // Create a Response-like object for compatibility
-    return new Response(JSON.stringify(result.body), {
-      status: result.status,
-      headers: { 'Content-Type': 'application/json' }
-    });
+    while (true) {
+      const result = await this.transport.request(method, path, body);
+
+      // Check for retryable 503 (container starting)
+      if (result.status === 503) {
+        const elapsed = Date.now() - startTime;
+        const remaining = TIMEOUT_MS - elapsed;
+
+        if (remaining > MIN_TIME_FOR_RETRY_MS) {
+          const delay = Math.min(3000 * 2 ** attempt, 30000);
+
+          this.logger.info('Container not ready (WebSocket), retrying', {
+            status: result.status,
+            attempt: attempt + 1,
+            delayMs: delay,
+            remainingSec: Math.floor(remaining / 1000)
+          });
+
+          await new Promise((resolve) => setTimeout(resolve, delay));
+          attempt++;
+          continue;
+        }
+
+        this.logger.error(
+          'Container failed to become ready (WebSocket)',
+          new Error(
+            `Failed after ${attempt + 1} attempts over ${Math.floor(elapsed / 1000)}s`
+          )
+        );
+      }
+
+      // Create a Response-like object for compatibility
+      return new Response(JSON.stringify(result.body), {
+        status: result.status,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
   }
 
   /**
@@ -297,7 +338,13 @@ export abstract class BaseHttpClient {
   ): Promise<ReadableStream<Uint8Array>> {
     // Use WebSocket transport if available
     if (this.transport?.getMode() === 'websocket') {
-      return this.transport.requestStream(method, path, body);
+      try {
+        return await this.transport.requestStream(method, path, body);
+      } catch (error) {
+        // Log and rethrow connection/transport errors
+        this.logError(`stream ${method} ${path}`, error);
+        throw error;
+      }
     }
 
     // Fall back to HTTP streaming

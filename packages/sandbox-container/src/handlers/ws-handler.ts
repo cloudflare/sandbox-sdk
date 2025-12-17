@@ -18,6 +18,9 @@ import {
 import type { ServerWebSocket } from 'bun';
 import type { Router } from '../core/router';
 
+/** Container server port - must match SERVER_PORT in server.ts */
+const SERVER_PORT = 3000;
+
 /**
  * WebSocket data attached to each connection
  */
@@ -122,7 +125,7 @@ export class WebSocketHandler {
     request: WSRequest
   ): Promise<void> {
     // Build URL for the request
-    const url = `http://localhost:3000${request.path}`;
+    const url = `http://localhost:${SERVER_PORT}${request.path}`;
 
     // Build headers
     const headers: Record<string, string> = {
@@ -268,6 +271,13 @@ export class WebSocketHandler {
    *
    * Returns parsed events and any remaining unparsed content (incomplete lines
    * waiting for more data from the next chunk).
+   *
+   * Note: This is a minimal SSE parser that only handles `event:` and `data:`
+   * fields - sufficient for our streaming handlers which only emit these.
+   * Per the SSE spec, we intentionally ignore:
+   * - `id:` field (event IDs for reconnection)
+   * - `retry:` field (reconnection timing hints)
+   * - Comment lines (starting with `:`)
    */
   private parseSSEEvents(buffer: string): {
     events: Array<{ event?: string; data: string }>;

@@ -12,13 +12,23 @@ import {
   isWSStreamChunk
 } from '@repo/shared';
 import { describe, expect, it } from 'vitest';
+import { WSTransport } from '../src/clients/ws-transport';
 
 /**
- * Tests for WebSocket protocol types and utilities.
+ * Tests for WebSocket protocol types and the WSTransport class.
  *
- * Note: Full WSTransport integration tests require a real WebSocket environment
- * and are covered in E2E tests. These unit tests focus on the protocol layer:
- * message types, type guards, and request ID generation.
+ * Testing Strategy:
+ * - Protocol tests (type guards, serialization): Full unit test coverage here
+ * - WSTransport class tests: Limited unit tests for non-connection behavior,
+ *   plus comprehensive E2E tests in tests/e2e/websocket-transport.test.ts
+ *
+ * Why limited WSTransport unit tests:
+ * - Tests run in Workers runtime (vitest-pool-workers) where mocking WebSocket
+ *   is complex and error-prone
+ * - The WSTransport class is tightly coupled to WebSocket - most methods
+ *   require an active connection
+ * - E2E tests verify the complete request/response cycle, error handling,
+ *   streaming, and cleanup against a real container
  */
 describe('WebSocket Protocol Types', () => {
   describe('generateRequestId', () => {
@@ -311,5 +321,59 @@ describe('WebSocket Message Serialization', () => {
     const parsed = JSON.parse(serialized);
 
     expect(parsed.body.content.length).toBe(100000);
+  });
+});
+
+describe('WSTransport', () => {
+  describe('initial state', () => {
+    it('should not be connected after construction', () => {
+      const transport = new WSTransport('ws://localhost:3000/ws');
+      expect(transport.isConnected()).toBe(false);
+    });
+
+    it('should accept custom options', () => {
+      const transport = new WSTransport('ws://localhost:3000/ws', {
+        connectTimeoutMs: 5000,
+        requestTimeoutMs: 60000
+      });
+      expect(transport.isConnected()).toBe(false);
+    });
+  });
+
+  describe('disconnect', () => {
+    it('should be safe to call disconnect when not connected', () => {
+      const transport = new WSTransport('ws://localhost:3000/ws');
+      // Should not throw
+      transport.disconnect();
+      expect(transport.isConnected()).toBe(false);
+    });
+
+    it('should be safe to call disconnect multiple times', () => {
+      const transport = new WSTransport('ws://localhost:3000/ws');
+      transport.disconnect();
+      transport.disconnect();
+      transport.disconnect();
+      expect(transport.isConnected()).toBe(false);
+    });
+  });
+
+  describe('request without connection', () => {
+    it('should attempt to connect when making a request', async () => {
+      const transport = new WSTransport('ws://invalid-url:9999/ws', {
+        connectTimeoutMs: 100
+      });
+
+      // Request should fail because connection fails
+      await expect(transport.request('GET', '/test')).rejects.toThrow();
+    });
+
+    it('should attempt to connect when making a stream request', async () => {
+      const transport = new WSTransport('ws://invalid-url:9999/ws', {
+        connectTimeoutMs: 100
+      });
+
+      // Stream request should fail because connection fails
+      await expect(transport.requestStream('POST', '/test')).rejects.toThrow();
+    });
   });
 });

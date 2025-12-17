@@ -104,7 +104,7 @@ export class InterpreterClient extends BaseHttpClient {
     timeoutMs?: number
   ): Promise<void> {
     return this.executeWithRetry(async () => {
-      // Use doStreamFetch which handles both HTTP and WebSocket streaming
+      // Use doStreamFetch which handles both WebSocket and HTTP streaming
       const stream = await this.doStreamFetch('/api/execute/code', {
         context_id: contextId,
         code,

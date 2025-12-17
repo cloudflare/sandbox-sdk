@@ -112,6 +112,10 @@ export type WSClientMessage = WSRequest;
 
 /**
  * Type guard for WSRequest
+ *
+ * Note: Only validates the discriminator field (type === 'request').
+ * Does not validate other required fields (id, method, path).
+ * Use for routing messages; trust TypeScript for field validation.
  */
 export function isWSRequest(msg: unknown): msg is WSRequest {
   return (
@@ -124,6 +128,8 @@ export function isWSRequest(msg: unknown): msg is WSRequest {
 
 /**
  * Type guard for WSResponse
+ *
+ * Note: Only validates the discriminator field (type === 'response').
  */
 export function isWSResponse(msg: unknown): msg is WSResponse {
   return (
@@ -136,6 +142,8 @@ export function isWSResponse(msg: unknown): msg is WSResponse {
 
 /**
  * Type guard for WSStreamChunk
+ *
+ * Note: Only validates the discriminator field (type === 'stream').
  */
 export function isWSStreamChunk(msg: unknown): msg is WSStreamChunk {
   return (
@@ -148,6 +156,8 @@ export function isWSStreamChunk(msg: unknown): msg is WSStreamChunk {
 
 /**
  * Type guard for WSError
+ *
+ * Note: Only validates the discriminator field (type === 'error').
  */
 export function isWSError(msg: unknown): msg is WSError {
   return (

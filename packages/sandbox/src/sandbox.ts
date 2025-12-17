@@ -160,6 +160,21 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    */
   private containerTimeouts = { ...this.DEFAULT_CONTAINER_TIMEOUTS };
 
+  /**
+   * Create a SandboxClient with current transport settings
+   */
+  private createSandboxClient(): SandboxClient {
+    return new SandboxClient({
+      logger: this.logger,
+      port: 3000,
+      stub: this,
+      ...(this.transport === 'websocket' && {
+        transportMode: 'websocket' as const,
+        wsUrl: 'ws://localhost:3000/ws'
+      })
+    });
+  }
+
   constructor(ctx: DurableObjectState<{}>, env: Env) {
     super(ctx, env);
 
@@ -172,12 +187,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       }
     });
 
-    // Read transport setting from env var (can be overridden via API)
-    const transportEnv = envObj?.['SANDBOX_TRANSPORT'];
-    if (transportEnv === 'websocket') {
-      this.transport = 'websocket';
-    }
-
     // Initialize timeouts with env var fallbacks
     this.containerTimeouts = this.getDefaultTimeouts(envObj);
 
@@ -186,16 +195,18 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       sandboxId: this.ctx.id.toString()
     });
 
+    // Read transport setting from env var (can be overridden via API)
+    const transportEnv = envObj?.SANDBOX_TRANSPORT;
+    if (transportEnv === 'websocket') {
+      this.transport = 'websocket';
+    } else if (transportEnv != null && transportEnv !== 'http') {
+      this.logger.warn(
+        `Invalid SANDBOX_TRANSPORT value: "${transportEnv}". Must be "http" or "websocket". Defaulting to "http".`
+      );
+    }
+
     // Create client with transport based on env var (may be updated from storage)
-    this.client = new SandboxClient({
-      logger: this.logger,
-      port: 3000, // Control plane port
-      stub: this,
-      ...(this.transport === 'websocket' && {
-        transportMode: 'websocket' as const,
-        wsUrl: 'ws://localhost:3000/ws'
-      })
-    });
+    this.client = this.createSandboxClient();
 
     // Initialize code interpreter - pass 'this' after client is ready
     // The CodeInterpreter extracts client.interpreter from the sandbox
@@ -231,15 +242,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           this.transport = storedTransport;
           // Disconnect old client before recreating with updated transport
           this.client.disconnect();
-          this.client = new SandboxClient({
-            logger: this.logger,
-            port: 3000,
-            stub: this,
-            ...(this.transport === 'websocket' && {
-              transportMode: 'websocket' as const,
-              wsUrl: 'ws://localhost:3000/ws'
-            })
-          });
+          this.client = this.createSandboxClient();
           // Re-initialize code interpreter with new client
           this.codeInterpreter = new CodeInterpreter(this);
         }
@@ -295,7 +298,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * - `'http'`: Individual HTTP requests for each operation (default)
    * - `'websocket'`: All operations multiplexed over a single WebSocket connection
    *
-   * Note: The WebSocket connection is established on the first request.
+   * Note: WebSocket connection is established lazily on first request, not during
+   * setTransport(). Call sandbox.client.connect() to establish immediately.
    */
   async setTransport(transport: 'http' | 'websocket'): Promise<void> {
     if (this.transport === transport) {
@@ -307,22 +311,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     // Disconnect old client before recreating with new transport
     this.client.disconnect();
-
-    if (transport === 'websocket') {
-      this.client = new SandboxClient({
-        logger: this.logger,
-        port: 3000,
-        stub: this,
-        transportMode: 'websocket',
-        wsUrl: 'ws://localhost:3000/ws'
-      });
-    } else {
-      this.client = new SandboxClient({
-        logger: this.logger,
-        port: 3000,
-        stub: this
-      });
-    }
+    this.client = this.createSandboxClient();
 
     // Re-initialize code interpreter with new client
     this.codeInterpreter = new CodeInterpreter(this);
