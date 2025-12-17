@@ -2,6 +2,11 @@ import { createLogger } from '@repo/shared';
 import { serve } from 'bun';
 import { Container } from './core/container';
 import { Router } from './core/router';
+import {
+  generateConnectionId,
+  WebSocketHandler,
+  type WSData
+} from './handlers/ws-handler';
 import { setupRoutes } from './routes/setup';
 
 const logger = createLogger({ component: 'container' });
@@ -13,8 +18,12 @@ export interface ServerInstance {
 }
 
 async function createApplication(): Promise<{
-  fetch: (req: Request) => Promise<Response>;
+  fetch: (
+    req: Request,
+    server: ReturnType<typeof serve<WSData>>
+  ) => Promise<Response>;
   container: Container;
+  wsHandler: WebSocketHandler;
 }> {
   const container = new Container();
   await container.initialize();
@@ -23,9 +32,37 @@ async function createApplication(): Promise<{
   router.use(container.get('corsMiddleware'));
   setupRoutes(router, container);
 
+  // Create WebSocket handler with the router for control plane multiplexing
+  const wsHandler = new WebSocketHandler(router, logger);
+
   return {
-    fetch: (req: Request) => router.route(req),
-    container
+    fetch: async (
+      req: Request,
+      server: ReturnType<typeof serve<WSData>>
+    ): Promise<Response> => {
+      // Check for WebSocket upgrade request
+      const upgradeHeader = req.headers.get('Upgrade');
+      if (upgradeHeader?.toLowerCase() === 'websocket') {
+        // Handle WebSocket upgrade for control plane
+        const url = new URL(req.url);
+        if (url.pathname === '/ws' || url.pathname === '/api/ws') {
+          const upgraded = server.upgrade(req, {
+            data: {
+              connectionId: generateConnectionId()
+            }
+          });
+          if (upgraded) {
+            return undefined as unknown as Response; // Bun handles the upgrade
+          }
+          return new Response('WebSocket upgrade failed', { status: 500 });
+        }
+      }
+
+      // Regular HTTP request
+      return router.route(req);
+    },
+    container,
+    wsHandler
   };
 }
 
@@ -36,14 +73,21 @@ async function createApplication(): Promise<{
 export async function startServer(): Promise<ServerInstance> {
   const app = await createApplication();
 
-  serve({
+  serve<WSData>({
     idleTimeout: 255,
-    fetch: app.fetch,
+    fetch: (req, server) => app.fetch(req, server),
     hostname: '0.0.0.0',
     port: SERVER_PORT,
+    // WebSocket handlers for control plane multiplexing
     websocket: {
-      async message() {
-        // WebSocket placeholder for future streaming features
+      open(ws) {
+        app.wsHandler.onOpen(ws);
+      },
+      close(ws, code, reason) {
+        app.wsHandler.onClose(ws, code, reason);
+      },
+      async message(ws, message) {
+        await app.wsHandler.onMessage(ws, message);
       }
     }
   });
