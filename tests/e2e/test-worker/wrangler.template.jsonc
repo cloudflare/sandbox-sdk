@@ -7,7 +7,8 @@
 
   "vars": {
     "SANDBOX_LOG_LEVEL": "debug",
-    "SANDBOX_LOG_FORMAT": "pretty"
+    "SANDBOX_LOG_FORMAT": "pretty",
+    "SANDBOX_TRANSPORT": "{{TRANSPORT}}"
   },
   "observability": {
     "enabled": true

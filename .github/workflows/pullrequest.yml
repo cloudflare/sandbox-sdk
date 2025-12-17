@@ -80,6 +80,10 @@ jobs:
     if: ${{ !contains(github.event.pull_request.title, 'Version Packages') }}
     timeout-minutes: 30
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        transport: [http, websocket]
     steps:
       - uses: actions/checkout@v4
 
@@ -98,23 +102,23 @@ jobs:
       - name: Build packages
         run: npm run build
 
-      # Set environment name (pr-X for PRs, branch name for pushes)
+      # Set environment name (pr-X for PRs, branch name for pushes) + transport mode
       - name: Set environment name
         id: env-name
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            echo "env_name=pr-${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
-            echo "worker_name=sandbox-e2e-test-worker-pr-${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
+            echo "env_name=pr-${{ github.event.pull_request.number }}-${{ matrix.transport }}" >> $GITHUB_OUTPUT
+            echo "worker_name=sandbox-e2e-test-worker-pr-${{ github.event.pull_request.number }}-${{ matrix.transport }}" >> $GITHUB_OUTPUT
           else
-            echo "env_name=${{ github.ref_name }}" >> $GITHUB_OUTPUT
-            echo "worker_name=sandbox-e2e-test-worker-${{ github.ref_name }}" >> $GITHUB_OUTPUT
+            echo "env_name=${{ github.ref_name }}-${{ matrix.transport }}" >> $GITHUB_OUTPUT
+            echo "worker_name=sandbox-e2e-test-worker-${{ github.ref_name }}-${{ matrix.transport }}" >> $GITHUB_OUTPUT
           fi
 
-      # Generate unique wrangler config for this PR/branch
+      # Generate unique wrangler config for this PR/branch with transport setting
       - name: Generate wrangler config
         run: |
           cd tests/e2e/test-worker
-          ./generate-config.sh ${{ steps.env-name.outputs.worker_name }}
+          ./generate-config.sh ${{ steps.env-name.outputs.worker_name }} ${{ steps.env-name.outputs.worker_name }} ${{ matrix.transport }}
 
       # Build Docker image for test worker with caching
       - name: Set up Docker Buildx

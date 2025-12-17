@@ -16,62 +16,49 @@ import type { ErrorResponse } from './test-worker/types';
  * - Nonexistent repository handling
  * - Private repository without auth
  */
+describe('Git Clone Error Handling', () => {
+  let workerUrl: string;
+  let headers: Record<string, string>;
 
-// Transport modes to test
-const transportModes = [
-  { name: 'HTTP', useWebSocket: false },
-  { name: 'WebSocket', useWebSocket: true }
-];
+  beforeAll(async () => {
+    const sandbox = await getSharedSandbox();
+    workerUrl = sandbox.workerUrl;
+    headers = sandbox.createHeaders(createUniqueSession());
+  }, 120000);
 
-describe.each(transportModes)(
-  'Git Clone Error Handling ($name transport)',
-  ({ useWebSocket }) => {
-    let workerUrl: string;
-    let headers: Record<string, string>;
+  test('should handle git clone errors for nonexistent repository', async () => {
+    const cloneResponse = await fetch(`${workerUrl}/api/git/clone`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        repoUrl:
+          'https://github.com/nonexistent/repository-that-does-not-exist-12345'
+      })
+    });
 
-    beforeAll(async () => {
-      const sandbox = await getSharedSandbox();
-      workerUrl = sandbox.workerUrl;
-      const baseHeaders = sandbox.createHeaders(createUniqueSession());
-      headers = useWebSocket
-        ? { ...baseHeaders, 'X-Use-WebSocket': 'true' }
-        : baseHeaders;
-    }, 120000);
+    expect(cloneResponse.status).toBe(500);
+    const errorData = (await cloneResponse.json()) as ErrorResponse;
+    expect(errorData.error).toBeTruthy();
+    expect(errorData.error).toMatch(
+      /not found|does not exist|repository|fatal/i
+    );
+  }, 90000);
 
-    test('should handle git clone errors for nonexistent repository', async () => {
-      const cloneResponse = await fetch(`${workerUrl}/api/git/clone`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          repoUrl:
-            'https://github.com/nonexistent/repository-that-does-not-exist-12345'
-        })
-      });
+  test('should handle git clone errors for private repository without auth', async () => {
+    const cloneResponse = await fetch(`${workerUrl}/api/git/clone`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        repoUrl:
+          'https://github.com/cloudflare/private-test-repo-that-requires-auth'
+      })
+    });
 
-      expect(cloneResponse.status).toBe(500);
-      const errorData = (await cloneResponse.json()) as ErrorResponse;
-      expect(errorData.error).toBeTruthy();
-      expect(errorData.error).toMatch(
-        /not found|does not exist|repository|fatal/i
-      );
-    }, 90000);
-
-    test('should handle git clone errors for private repository without auth', async () => {
-      const cloneResponse = await fetch(`${workerUrl}/api/git/clone`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          repoUrl:
-            'https://github.com/cloudflare/private-test-repo-that-requires-auth'
-        })
-      });
-
-      expect(cloneResponse.status).toBe(500);
-      const errorData = (await cloneResponse.json()) as ErrorResponse;
-      expect(errorData.error).toBeTruthy();
-      expect(errorData.error).toMatch(
-        /authentication|permission|access|denied|fatal|not found/i
-      );
-    }, 90000);
-  }
-);
+    expect(cloneResponse.status).toBe(500);
+    const errorData = (await cloneResponse.json()) as ErrorResponse;
+    expect(errorData.error).toBeTruthy();
+    expect(errorData.error).toMatch(
+      /authentication|permission|access|denied|fatal|not found/i
+    );
+  }, 90000);
+});

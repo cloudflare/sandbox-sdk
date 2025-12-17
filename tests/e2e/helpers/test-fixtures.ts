@@ -28,22 +28,10 @@ export function createSessionId(): string {
 }
 
 /**
- * Options for creating test headers
- */
-export interface TestHeaderOptions {
-  /** Session ID for session isolation tests */
-  sessionId?: string;
-  /** Enable WebSocket transport instead of HTTP */
-  useWebSocket?: boolean;
-  /** Enable keepAlive mode */
-  keepAlive?: boolean;
-}
-
-/**
  * Create headers for sandbox/session identification
  *
  * @param sandboxId - Which container instance to use
- * @param options - Optional configuration (sessionId, useWebSocket, keepAlive)
+ * @param sessionId - (Optional) Which session within that container (SDK defaults to auto-managed session)
  *
  * @example
  * // Most tests: unique sandbox, default session
@@ -52,36 +40,20 @@ export interface TestHeaderOptions {
  * @example
  * // Session isolation tests: one sandbox, multiple sessions
  * const sandboxId = createSandboxId();
- * const headers1 = createTestHeaders(sandboxId, { sessionId: createSessionId() });
- * const headers2 = createTestHeaders(sandboxId, { sessionId: createSessionId() });
- *
- * @example
- * // WebSocket transport tests
- * const headers = createTestHeaders(createSandboxId(), { useWebSocket: true });
+ * const headers1 = createTestHeaders(sandboxId, createSessionId());
+ * const headers2 = createTestHeaders(sandboxId, createSessionId());
  */
 export function createTestHeaders(
   sandboxId: string,
-  options?: TestHeaderOptions | string
+  sessionId?: string
 ): Record<string, string> {
-  // Support legacy signature: createTestHeaders(sandboxId, sessionId)
-  const opts: TestHeaderOptions =
-    typeof options === 'string' ? { sessionId: options } : options || {};
-
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     'X-Sandbox-Id': sandboxId
   };
 
-  if (opts.sessionId) {
-    headers['X-Session-Id'] = opts.sessionId;
-  }
-
-  if (opts.useWebSocket) {
-    headers['X-Use-WebSocket'] = 'true';
-  }
-
-  if (opts.keepAlive) {
-    headers['X-Sandbox-KeepAlive'] = 'true';
+  if (sessionId) {
+    headers['X-Session-Id'] = sessionId;
   }
 
   return headers;

@@ -85,12 +85,9 @@ export default {
       sandboxNamespace = env.Sandbox;
     }
 
-    // Check if WebSocket transport is requested
-    const useWebSocket = request.headers.get('X-Use-WebSocket') === 'true';
-
+    // WebSocket transport is controlled via SANDBOX_USE_WEBSOCKET env var
     const sandbox = getSandbox(sandboxNamespace, sandboxId, {
-      keepAlive,
-      useWebSocket
+      keepAlive
     });
 
     // Get session ID from header (optional)
