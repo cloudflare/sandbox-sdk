@@ -18,6 +18,16 @@ Use the MCP tools (e.g., `mcp__cloudflare-docs__search_cloudflare_documentation`
 
 **Always use the `gh` CLI for GitHub interactions.** When you need to access GitHub issues, PRs, repository information, or any GitHub-related data, use the gh CLI tool (e.g., `gh issue view`, `gh pr view`, `gh repo view`) instead of trying to fetch GitHub URLs directly. The CLI provides structured, reliable output and better access to GitHub data.
 
+## Project Skills
+
+This repository includes project-specific skills in `.claude/skills/`:
+
+- **session-execution**: Use when working on command execution, shell state, or stdout/stderr handling
+- **git-commit**: Use when creating commits to follow project commit message standards
+- **testing**: Use when writing or running tests - covers unit vs E2E decisions and project conventions
+
+These skills provide focused guidance for specific areas of the codebase. Check the skills directory when working in these areas.
+
 ## Project Overview
 
 The Cloudflare Sandbox SDK enables secure, isolated code execution in containers running on Cloudflare. The SDK allows Workers to execute arbitrary commands, manage files, run background processes, and expose services.
@@ -60,21 +70,17 @@ npm run build:clean        # Force rebuild without cache
 
 ### Testing
 
+See the **testing** skill for detailed guidance on unit vs E2E tests.
+
 ```bash
-# Unit tests (runs in Workers runtime with vitest-pool-workers)
-npm test
+npm test                                    # All unit tests
+npm test -w @cloudflare/sandbox             # SDK unit tests only
+npm test -w @repo/sandbox-container         # Container unit tests only
 
-# E2E tests (requires Docker)
-npm run test:e2e
-
-# Run a single E2E test file
-npm run test:e2e -- -- tests/e2e/process-lifecycle-workflow.test.ts
-
-# Run a specific test within a file
-npm run test:e2e -- -- tests/e2e/git-clone-workflow.test.ts -t 'test name'
+npm run test:e2e                            # All E2E tests (requires Docker)
+npm run test:e2e -- -- tests/e2e/file.ts    # Single E2E file
+npm run test:e2e -- -- tests/e2e/file.ts -t 'test name'  # Single test
 ```
-
-**Important**: E2E tests share a single sandbox container for performance. Tests run in parallel using unique sessions for isolation.
 
 ### Code Quality
 
@@ -163,69 +169,13 @@ npm run dev                # Start wrangler dev server (builds Docker on first r
 
 ## Testing Architecture
 
-**Tests are critical** - they verify functionality at multiple levels and run on every PR.
+See the **testing** skill (`.claude/skills/testing/SKILL.md`) for detailed testing guidance including unit vs E2E decisions, test locations, mock patterns, and conventions.
 
-**Development practice:** After making any meaningful code change:
+**Quick reference**: After any meaningful code change:
 
-1. Run `npm run check` to catch type errors (these often expose real issues)
-2. Run `npm test` to verify unit tests pass
-3. Run E2E tests if touching core functionality
-
-### Unit Tests
-
-Run these frequently during development:
-
-```bash
-# All unit tests
-npm test
-
-# Specific package
-npm test -w @cloudflare/sandbox          # SDK tests (Workers runtime)
-npm test -w @repo/sandbox-container      # Container runtime tests (Bun)
-```
-
-**Architecture:**
-
-- **SDK tests** (`packages/sandbox/tests/`) run in Workers runtime via `@cloudflare/vitest-pool-workers`
-- **Container tests** (`packages/sandbox-container/tests/`) run in Bun runtime
-- Mock container for isolated testing (SDK), no Docker required
-- Fast feedback loop for development
-
-**Known issue:** Sandbox unit tests may hang on exit due to vitest-pool-workers workerd shutdown issue. This is cosmetic - tests still pass/fail correctly.
-
-### E2E Tests
-
-Run before creating PRs to verify end-to-end functionality:
-
-```bash
-# All E2E tests (requires Docker)
-npm run test:e2e
-
-# Single test file
-npm run test:e2e -- -- tests/e2e/process-lifecycle-workflow.test.ts
-
-# Single test within a file
-npm run test:e2e -- -- tests/e2e/git-clone-workflow.test.ts -t 'should handle cloning to default directory'
-```
-
-**Architecture:**
-
-- Tests in `tests/e2e/` run against real Cloudflare Workers + Docker containers
-- **Shared sandbox**: All tests share ONE container, using sessions for isolation
-- **In CI**: Tests deploy to actual Cloudflare infrastructure
-- **Locally**: Global setup spawns wrangler dev once, all tests share it
-- Config: `vitest.e2e.config.ts` (root level)
-- Parallel execution via thread pool (~30s for full suite)
-- See `docs/E2E_TESTING.md` for writing tests
-
-**Build system trust:** The monorepo build system (turbo + npm workspaces) is robust and handles all package dependencies automatically. E2E tests always run against the latest built code - there's no need to manually rebuild or worry about stale builds unless explicitly working on the build setup itself.
-
-**CI behavior:** E2E tests in CI (`pullrequest.yml`):
-
-1. Build Docker image locally (`npm run docker:local`)
-2. Deploy test worker to Cloudflare with unique name (pr-XXX)
-3. Run E2E tests against deployed worker URL
-4. Cleanup test deployment after tests complete
+1. `npm run check` - catch type errors
+2. `npm test` - verify unit tests
+3. `npm run test:e2e` - if touching core functionality
 
 ## Client Architecture Pattern
 
@@ -277,54 +227,9 @@ Turbo handles task orchestration (`turbo.json`) with dependency-aware builds.
 
 ### Git Commits
 
-**Follow the 7 rules for great commit messages** (from https://cbea.ms/git-commit/):
+See the **git-commit** skill (`.claude/skills/git-commit/SKILL.md`) for detailed commit message guidelines.
 
-1. **Separate subject from body with a blank line**
-2. **Limit the subject line to 50 characters**
-3. **Capitalize the subject line**
-4. **Do not end the subject line with a period**
-5. **Use the imperative mood in the subject line** (e.g., "Add feature" not "Added feature")
-6. **Wrap the body at 72 characters**
-7. **Use the body to explain what and why vs. how**
-
-**Be concise, not verbose.** Every word should add value. Avoid unnecessary details about implementation mechanics - focus on what changed and why it matters.
-
-**Subject line should stand alone** - don't require reading the body to understand the change. Body is optional and only needed for non-obvious context.
-
-**Focus on the change, not how it was discovered** - never reference "review feedback", "PR comments", or "code review" in commit messages. Describe what the change does and why, not that someone asked for it.
-
-**Avoid bullet points** - write prose, not lists. If you need bullets to explain a change, you're either committing too much at once or over-explaining implementation details. The body should be a brief paragraph, not a changelog.
-
-Good examples:
-
-```
-Add session isolation for concurrent executions
-```
-
-```
-Fix encoding parameter handling in file operations
-
-The encoding parameter wasn't properly passed through the validation
-layer, causing base64 content to be treated as UTF-8.
-```
-
-Bad examples:
-
-```
-Update files
-
-Changes some things related to sessions and also fixes a bug.
-```
-
-```
-Add file operations support
-
-Implements FileClient with read/write methods and adds FileService
-in the container with a validation layer. Includes comprehensive test
-coverage for edge cases and supports both UTF-8 text and base64 binary
-encodings. Uses proper error handling with custom error types from the
-shared package for consistency across the SDK.
-```
+**Quick reference**: Use imperative mood, ≤50 char subject, explain why not how, no bullet points.
 
 ## Important Patterns
 

@@ -148,9 +148,9 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           plugin_marketplaces: |
-            https://github.com/obra/superpowers-marketplace.git
+            https://github.com/anthropics/claude-plugins-official.git
           plugins: |
-            superpowers@superpowers-marketplace
+            pr-review-toolkit@claude-plugins-official
           prompt: |
             You are Claude reviewing PRs for the Cloudflare Sandbox SDK.
 
@@ -232,16 +232,32 @@ jobs:
 
             Don't duplicate thread content in your new review. Reference it instead.
 
-            ### 7. Execute Review
+            ### 7. Execute Specialized Reviews (Parallel)
 
-            Launch superpowers:code-reviewer subagent (Task tool) with the context gathered above:
-            - Full PR diff from step 3
-            - Relevant architecture patterns from CLAUDE.md
-            - Documentation requirements from step 4
-            - Previous review feedback (if incremental update from step 2)
-            - Existing review threads from step 6
+            Launch these pr-review-toolkit agents **in parallel** using the Task tool (send all three in a single message):
 
-            The code-reviewer will analyze correctness, architecture, testing, and code quality.
+            1. **pr-review-toolkit:code-reviewer** - General code quality review
+               - Reviews against CLAUDE.md standards
+               - Checks for bugs, style violations, architecture issues
+               - Uses confidence scoring (only reports issues ≥80 confidence)
+
+            2. **pr-review-toolkit:silent-failure-hunter** - Error handling audit
+               - Finds silent failures and suppressed errors
+               - Checks catch blocks, fallback logic, error propagation
+               - Ensures errors are logged and surfaced appropriately
+
+            3. **pr-review-toolkit:pr-test-analyzer** - Test coverage analysis
+               - Identifies critical test gaps
+               - Focuses on behavioral coverage, not line coverage
+               - Rates gaps by severity (1-10)
+
+            Provide each agent with:
+            - The PR diff from step 3
+            - CLAUDE.md context
+            - Previous review feedback (step 2)
+            - The specific files they should focus on
+
+            Wait for all agents to complete, then consolidate their findings.
 
             ### 8. Post Review
 

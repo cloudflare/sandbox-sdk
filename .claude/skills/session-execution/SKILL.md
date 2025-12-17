@@ -1,6 +1,6 @@
 ---
 name: session-execution
-description: Use when working on or reviewing session execution, command handling, shell state, FIFO-based streaming, or stdout/stderr separation. Relevant for session.ts, command handlers, exec/execStream, or anything involving shell process management.
+description: Use when working on or reviewing session execution, command handling, shell state, FIFO-based streaming, or stdout/stderr separation. Relevant for session.ts, command handlers, exec/execStream, or anything involving shell process management. (project)
 ---
 
 # Session Execution
@@ -35,7 +35,33 @@ Read `docs/SESSION_EXECUTION.md` before working in this area. It explains the ar
 
 ## When Reviewing
 
-- Verify exit code handling is atomic
+**Correctness checks:**
+
+- Verify exit code handling is atomic (write to .tmp then mv)
 - Check FIFO cleanup in error paths
 - Ensure labelers.done is awaited before reading final output (background mode)
-- Look for race conditions in completion detection
+
+**Race condition analysis:**
+
+Session execution has a mutex that serializes command execution per session. Before flagging race conditions:
+
+1. Check if operations happen within the same session (mutex protects)
+2. Check if operations are per-session vs cross-session (cross-session races are real)
+3. Refer to `docs/CONCURRENCY.md` for the full concurrency model
+
+**Common false positives:**
+
+- "Concurrent reads/writes to session state" - mutex serializes these
+- "FIFO operations might race" - labelers are per-command, not shared
+
+**Actual concerns to watch for:**
+
+- Cross-session operations without proper isolation
+- Cleanup operations that might affect still-running commands
+- File operations outside the mutex-protected section
+
+## Key Files
+
+- `packages/sandbox-container/src/session.ts` - Session class with exec/execStream
+- `packages/sandbox-container/src/managers/SessionManager.ts` - Mutex and lifecycle
+- `packages/sandbox/src/clients/CommandClient.ts` - SDK interface to session commands
