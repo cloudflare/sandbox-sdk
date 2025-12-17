@@ -231,7 +231,9 @@ export class WebSocketHandler {
             event: event.event,
             data: event.data
           };
-          this.send(ws, chunk);
+          if (!this.send(ws, chunk)) {
+            return; // Connection dead, stop processing
+          }
         }
       }
 
@@ -263,18 +265,24 @@ export class WebSocketHandler {
 
   /**
    * Parse SSE events from a buffer
+   *
+   * Returns parsed events and any remaining unparsed content (incomplete lines
+   * waiting for more data from the next chunk).
    */
   private parseSSEEvents(buffer: string): {
     events: Array<{ event?: string; data: string }>;
     remaining: string;
   } {
     const events: Array<{ event?: string; data: string }> = [];
-    const lines = buffer.split('\n');
     let currentEvent: { event?: string; data: string[] } = { data: [] };
-    let processedIndex = 0;
+    let i = 0;
 
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
+    while (i < buffer.length) {
+      const newlineIndex = buffer.indexOf('\n', i);
+      if (newlineIndex === -1) break; // Incomplete line, keep in buffer
+
+      const line = buffer.substring(i, newlineIndex);
+      i = newlineIndex + 1;
 
       // Check if we have a complete event (empty line after data)
       if (line === '' && currentEvent.data.length > 0) {
@@ -283,38 +291,42 @@ export class WebSocketHandler {
           data: currentEvent.data.join('\n')
         });
         currentEvent = { data: [] };
-        processedIndex = buffer.indexOf(line, processedIndex) + line.length + 1;
         continue;
       }
 
       if (line.startsWith('event:')) {
         currentEvent.event = line.substring(6).trim();
-        processedIndex = buffer.indexOf(line, processedIndex) + line.length + 1;
       } else if (line.startsWith('data:')) {
         currentEvent.data.push(line.substring(5).trim());
-        processedIndex = buffer.indexOf(line, processedIndex) + line.length + 1;
-      } else if (line === '') {
-        processedIndex = buffer.indexOf(line, processedIndex) + line.length + 1;
       }
+      // Other lines (including empty lines without pending data) are ignored
     }
 
     return {
       events,
-      remaining: buffer.substring(processedIndex)
+      remaining: buffer.substring(i)
     };
   }
 
   /**
    * Send a message over WebSocket
+   * @returns true if send succeeded, false if it failed (connection will be closed)
    */
-  private send(ws: ServerWebSocket<WSData>, message: WSServerMessage): void {
+  private send(ws: ServerWebSocket<WSData>, message: WSServerMessage): boolean {
     try {
       ws.send(JSON.stringify(message));
+      return true;
     } catch (error) {
       this.logger.error(
-        'Failed to send WebSocket message',
+        'Failed to send WebSocket message, closing connection',
         error instanceof Error ? error : new Error(String(error))
       );
+      try {
+        ws.close(1011, 'Send failed'); // 1011 = unexpected condition
+      } catch {
+        // Connection already closed
+      }
+      return false;
     }
   }
 

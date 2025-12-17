@@ -1,5 +1,4 @@
 import { createLogger } from '@repo/shared';
-import type { ServerWebSocket } from 'bun';
 import { serve } from 'bun';
 import { Container } from './core/container';
 import { Router } from './core/router';
@@ -13,12 +12,13 @@ import { setupRoutes } from './routes/setup';
 // Create module-level logger for server lifecycle events
 const logger = createLogger({ component: 'container' });
 
-// WebSocket handler (initialized after router is ready)
-let wsHandler: WebSocketHandler | null = null;
-
 async function createApplication(): Promise<{
-  fetch: (req: Request, server: ReturnType<typeof serve>) => Promise<Response>;
+  fetch: (
+    req: Request,
+    server: ReturnType<typeof serve<WSData>>
+  ) => Promise<Response>;
   router: Router;
+  wsHandler: WebSocketHandler;
 }> {
   // Initialize dependency injection container
   const container = new Container();
@@ -33,8 +33,11 @@ async function createApplication(): Promise<{
   // Setup all application routes
   setupRoutes(router, container);
 
+  // Create WebSocket handler with the router
+  const wsHandler = new WebSocketHandler(router, logger);
+
   return {
-    fetch: async (req: Request, server: ReturnType<typeof serve>) => {
+    fetch: async (req: Request, server: ReturnType<typeof serve<WSData>>) => {
       // Check for WebSocket upgrade request
       const upgradeHeader = req.headers.get('Upgrade');
       if (upgradeHeader?.toLowerCase() === 'websocket') {
@@ -44,7 +47,7 @@ async function createApplication(): Promise<{
           const upgraded = server.upgrade(req, {
             data: {
               connectionId: generateConnectionId()
-            } as WSData
+            }
           });
           if (upgraded) {
             return undefined as unknown as Response; // Bun handles the upgrade
@@ -56,18 +59,16 @@ async function createApplication(): Promise<{
       // Regular HTTP request
       return router.route(req);
     },
-    router
+    router,
+    wsHandler
   };
 }
 
 // Initialize the application
 const app = await createApplication();
 
-// Initialize WebSocket handler with the router
-wsHandler = new WebSocketHandler(app.router, logger);
-
 // Start the Bun server
-const server = serve({
+const server = serve<WSData>({
   idleTimeout: 255,
   fetch: (req, server) => app.fetch(req, server),
   hostname: '0.0.0.0',
@@ -75,20 +76,13 @@ const server = serve({
   // WebSocket handlers for control plane multiplexing
   websocket: {
     open(ws) {
-      wsHandler?.onOpen(ws as unknown as ServerWebSocket<WSData>);
+      app.wsHandler.onOpen(ws);
     },
-    close(ws, code: number, reason: string) {
-      wsHandler?.onClose(
-        ws as unknown as ServerWebSocket<WSData>,
-        code,
-        reason
-      );
+    close(ws, code, reason) {
+      app.wsHandler.onClose(ws, code, reason);
     },
-    async message(ws, message: string | Buffer) {
-      await wsHandler?.onMessage(
-        ws as unknown as ServerWebSocket<WSData>,
-        message
-      );
+    async message(ws, message) {
+      await app.wsHandler.onMessage(ws, message);
     }
   }
 });

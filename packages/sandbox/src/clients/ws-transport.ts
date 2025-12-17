@@ -93,6 +93,9 @@ export class WSTransport {
 
   /**
    * Connect to the WebSocket server
+   *
+   * The connection promise is assigned synchronously via IIFE so concurrent
+   * callers share the same connection attempt.
    */
   async connect(): Promise<void> {
     // Already connected
@@ -100,26 +103,29 @@ export class WSTransport {
       return;
     }
 
-    // Connection in progress
+    // Connection in progress - wait for it
     if (this.connectPromise) {
       return this.connectPromise;
     }
 
-    this.state = 'connecting';
+    // Assign synchronously so concurrent callers await the same promise
+    this.connectPromise = (async () => {
+      this.state = 'connecting';
+      try {
+        // Use fetch-based WebSocket for DO context (Workers style)
+        if (this.stub) {
+          await this.connectViaFetch();
+        } else {
+          // Use standard WebSocket for browser/Node
+          await this.connectViaWebSocket();
+        }
+      } catch (error) {
+        this.connectPromise = null; // Allow retry on failure
+        throw error;
+      }
+    })();
 
-    // Use fetch-based WebSocket for DO context (Workers style)
-    if (this.stub) {
-      this.connectPromise = this.connectViaFetch();
-    } else {
-      // Use standard WebSocket for browser/Node
-      this.connectPromise = this.connectViaWebSocket();
-    }
-
-    try {
-      await this.connectPromise;
-    } finally {
-      this.connectPromise = null;
-    }
+    return this.connectPromise;
   }
 
   /**
@@ -484,13 +490,21 @@ export class WSTransport {
     this.state = 'disconnected';
     this.ws = null;
 
-    // Reject all pending requests
-    for (const [id, pending] of this.pendingRequests) {
-      pending.reject(
-        new Error(
-          `WebSocket closed: ${event.code} ${event.reason || 'No reason'}`
-        )
-      );
+    const closeError = new Error(
+      `WebSocket closed: ${event.code} ${event.reason || 'No reason'}`
+    );
+
+    // Reject all pending requests and error their stream controllers
+    for (const [, pending] of this.pendingRequests) {
+      // Error stream controller first if it exists
+      if (pending.streamController) {
+        try {
+          pending.streamController.error(closeError);
+        } catch {
+          // Stream may already be closed/errored
+        }
+      }
+      pending.reject(closeError);
     }
     this.pendingRequests.clear();
   }
