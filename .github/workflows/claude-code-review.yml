@@ -157,7 +157,10 @@ jobs:
             Repository: ${{ github.repository }}
             PR Number: ${{ github.event.pull_request.number }}
 
-            **Read CLAUDE.md first** - it contains architecture, patterns, and coding standards.
+            **Read these docs first**:
+            - CLAUDE.md - development workflow and coding standards
+            - docs/ARCHITECTURE.md - three-layer architecture and request flow
+            - docs/CONCURRENCY.md - concurrency model (read before flagging any race conditions)
 
             **BE CONCISE**: Only report actual issues worth addressing. Skip generic praise and obvious observations. If PR looks good, say so briefly.
 
@@ -215,7 +218,7 @@ jobs:
             Before writing your review, analyze inside <analysis> tags (do NOT include in final comment):
             a. What is this PR accomplishing?
             b. Which packages/layers are affected?
-            c. Are there architectural or security implications?
+            c. Are there architectural or security implications? (If flagging race conditions, verify against docs/CONCURRENCY.md first)
             d. What tests are needed?
             e. Does this need documentation updates?
 
