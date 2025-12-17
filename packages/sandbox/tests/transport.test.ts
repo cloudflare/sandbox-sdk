@@ -34,10 +34,11 @@ describe('Transport', () => {
         new Response(JSON.stringify({ data: 'test' }), { status: 200 })
       );
 
-      const result = await transport.request('GET', '/api/test');
+      const response = await transport.fetch('/api/test', { method: 'GET' });
 
-      expect(result.status).toBe(200);
-      expect(result.body).toEqual({ data: 'test' });
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body).toEqual({ data: 'test' });
       expect(mockFetch).toHaveBeenCalledWith(
         'http://localhost:3000/api/test',
         expect.objectContaining({ method: 'GET' })
@@ -54,11 +55,13 @@ describe('Transport', () => {
         new Response(JSON.stringify({ success: true }), { status: 200 })
       );
 
-      const result = await transport.request('POST', '/api/execute', {
-        command: 'echo hello'
+      const response = await transport.fetch('/api/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command: 'echo hello' })
       });
 
-      expect(result.status).toBe(200);
+      expect(response.status).toBe(200);
       expect(mockFetch).toHaveBeenCalledWith(
         'http://localhost:3000/api/execute',
         expect.objectContaining({
@@ -78,9 +81,9 @@ describe('Transport', () => {
         new Response(JSON.stringify({ error: 'Not found' }), { status: 404 })
       );
 
-      const result = await transport.request('GET', '/api/missing');
+      const response = await transport.fetch('/api/missing', { method: 'GET' });
 
-      expect(result.status).toBe(404);
+      expect(response.status).toBe(404);
     });
 
     it('should stream HTTP responses', async () => {
@@ -103,7 +106,7 @@ describe('Transport', () => {
         })
       );
 
-      const stream = await transport.requestStream('POST', '/api/stream', {});
+      const stream = await transport.fetchStream('/api/stream', {});
 
       expect(stream).toBeInstanceOf(ReadableStream);
     });
@@ -122,7 +125,7 @@ describe('Transport', () => {
         port: 3000
       });
 
-      await transport.request('GET', '/api/test');
+      await transport.fetch('/api/test', { method: 'GET' });
 
       expect(mockContainerFetch).toHaveBeenCalledWith(
         'http://localhost:3000/api/test',
@@ -222,7 +225,7 @@ describe('Transport', () => {
         new Response(JSON.stringify({}), { status: 200 })
       );
 
-      await httpTransport.request('GET', '/test');
+      await httpTransport.fetch('/test', { method: 'GET' });
 
       // Mode should still be http
       expect(httpTransport.getMode()).toBe('http');
@@ -255,9 +258,17 @@ describe('Transport with SandboxClient', () => {
     );
 
     // Multiple requests through same transport
-    await transport.request('POST', '/api/mkdir', { path: '/test' });
-    await transport.request('POST', '/api/write', { path: '/test/file.txt' });
-    await transport.request('GET', '/api/read');
+    await transport.fetch('/api/mkdir', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: '/test' })
+    });
+    await transport.fetch('/api/write', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: '/test/file.txt' })
+    });
+    await transport.fetch('/api/read', { method: 'GET' });
 
     expect(mockFetch).toHaveBeenCalledTimes(3);
   });

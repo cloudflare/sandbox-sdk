@@ -21,11 +21,7 @@ export { UtilityClient } from './utility-client';
 // Transport layer
 // =============================================================================
 
-export type {
-  TransportMode,
-  TransportOptions,
-  TransportResponse
-} from './transport';
+export type { TransportMode, TransportOptions } from './transport';
 export { createTransport, Transport } from './transport';
 export type { WSTransportOptions } from './ws-transport';
 export { WSTransport } from './ws-transport';

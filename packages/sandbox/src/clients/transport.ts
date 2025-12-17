@@ -3,6 +3,10 @@ import { createNoOpLogger } from '@repo/shared';
 import type { ContainerStub } from './types';
 import { WSTransport } from './ws-transport';
 
+// Container startup retry configuration
+const TIMEOUT_MS = 120_000; // 2 minutes total retry budget
+const MIN_TIME_FOR_RETRY_MS = 15_000; // Need at least 15s remaining to retry
+
 /**
  * Transport mode for SDK communication
  */
@@ -32,16 +36,6 @@ export interface TransportOptions {
 
   /** Request timeout in milliseconds */
   requestTimeoutMs?: number;
-}
-
-/**
- * HTTP response-like structure
- */
-export interface TransportResponse {
-  status: number;
-  ok: boolean;
-  body: unknown;
-  stream?: ReadableStream<Uint8Array>;
 }
 
 /**
@@ -108,80 +102,148 @@ export class Transport {
   }
 
   /**
-   * Make a request using the configured transport
+   * Fetch-compatible request method with automatic retry for container startup
+   *
+   * This is the primary entry point for making requests. It handles both HTTP
+   * and WebSocket modes transparently and includes retry logic for 503 errors
+   * (container starting).
+   *
+   * @param path - API path (e.g., '/api/execute')
+   * @param options - Standard RequestInit options
+   * @returns Response object (Fetch API compatible)
    */
-  async request<T>(
-    method: 'GET' | 'POST' | 'PUT' | 'DELETE',
-    path: string,
-    body?: unknown
-  ): Promise<TransportResponse> {
-    if (this.mode === 'websocket' && this.wsTransport) {
-      return this.wsRequest<T>(method, path, body);
+  async fetch(path: string, options?: RequestInit): Promise<Response> {
+    const startTime = Date.now();
+    let attempt = 0;
+
+    while (true) {
+      const response = await this.doFetch(path, options);
+
+      // Check for retryable 503 (container starting)
+      if (response.status === 503) {
+        const elapsed = Date.now() - startTime;
+        const remaining = TIMEOUT_MS - elapsed;
+
+        if (remaining > MIN_TIME_FOR_RETRY_MS) {
+          const delay = Math.min(3000 * 2 ** attempt, 30000);
+
+          this.logger.info('Container not ready, retrying', {
+            status: response.status,
+            attempt: attempt + 1,
+            delayMs: delay,
+            remainingSec: Math.floor(remaining / 1000),
+            mode: this.mode
+          });
+
+          await new Promise((resolve) => setTimeout(resolve, delay));
+          attempt++;
+          continue;
+        }
+
+        this.logger.error(
+          'Container failed to become ready',
+          new Error(
+            `Failed after ${attempt + 1} attempts over ${Math.floor(elapsed / 1000)}s`
+          )
+        );
+      }
+
+      return response;
     }
-    return this.httpRequest<T>(method, path, body);
   }
 
   /**
-   * Make a streaming request using the configured transport
+   * Internal fetch implementation without retry logic
    */
-  async requestStream(
-    method: 'GET' | 'POST',
+  private async doFetch(
     path: string,
-    body?: unknown
-  ): Promise<ReadableStream<Uint8Array>> {
+    options?: RequestInit
+  ): Promise<Response> {
     if (this.mode === 'websocket' && this.wsTransport) {
-      return this.wsTransport.requestStream(method, path, body);
+      return this.doWebSocketFetch(path, options);
     }
-    return this.httpRequestStream(method, path, body);
+    return this.doHttpFetch(path, options);
   }
 
   /**
-   * Make an HTTP request
+   * HTTP fetch implementation
    */
-  private async httpRequest<T>(
-    method: 'GET' | 'POST' | 'PUT' | 'DELETE',
+  private async doHttpFetch(
     path: string,
-    body?: unknown
-  ): Promise<TransportResponse> {
+    options?: RequestInit
+  ): Promise<Response> {
     const url = this.stub
       ? `http://localhost:${this.port}${path}`
       : `${this.baseUrl}${path}`;
 
-    const options: RequestInit = {
-      method,
-      headers: body ? { 'Content-Type': 'application/json' } : undefined,
-      body: body ? JSON.stringify(body) : undefined
-    };
-
-    let response: Response;
     if (this.stub) {
-      response = await this.stub.containerFetch(url, options, this.port);
-    } else {
-      response = await fetch(url, options);
+      return this.stub.containerFetch(url, options || {}, this.port);
     }
-
-    // Parse JSON body if possible
-    let responseBody: unknown;
-    try {
-      responseBody = await response.json();
-    } catch {
-      responseBody = undefined;
-    }
-
-    return {
-      status: response.status,
-      ok: response.ok,
-      body: responseBody
-    };
+    return globalThis.fetch(url, options);
   }
 
   /**
-   * Make an HTTP streaming request
+   * WebSocket fetch implementation - converts WS response to Response object
    */
-  private async httpRequestStream(
-    method: 'GET' | 'POST',
+  private async doWebSocketFetch(
     path: string,
-    body?: unknown
+    options?: RequestInit
+  ): Promise<Response> {
+    const method = (options?.method || 'GET') as
+      | 'GET'
+      | 'POST'
+      | 'PUT'
+      | 'DELETE';
+    let body: unknown;
+
+    if (options?.body) {
+      if (typeof options.body === 'string') {
+        try {
+          body = JSON.parse(options.body);
+        } catch {
+          body = options.body;
+        }
+      } else {
+        throw new Error(
+          `WebSocket transport only supports string bodies. Got: ${typeof options.body}`
+        );
+      }
+    }
+
+    const result = await this.wsTransport!.request(method, path, body);
+
+    return new Response(JSON.stringify(result.body), {
+      status: result.status,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+
+  /**
+   * Fetch a streaming response (SSE) with automatic retry for container startup
+   *
+   * @param path - API path
+   * @param body - Optional request body (for POST)
+   * @param method - HTTP method (default: POST)
+   * @returns ReadableStream for consuming the response
+   */
+  async fetchStream(
+    path: string,
+    body?: unknown,
+    method: 'GET' | 'POST' = 'POST'
+  ): Promise<ReadableStream<Uint8Array>> {
+    if (this.mode === 'websocket' && this.wsTransport) {
+      return this.wsTransport.requestStream(method, path, body);
+    }
+    return this.doHttpStream(path, body, method);
+  }
+
+  /**
+   * HTTP streaming implementation
+   */
+  private async doHttpStream(
+    path: string,
+    body?: unknown,
+    method: 'GET' | 'POST' = 'POST'
   ): Promise<ReadableStream<Uint8Array>> {
     const url = this.stub
       ? `http://localhost:${this.port}${path}`
@@ -200,7 +262,7 @@ export class Transport {
     if (this.stub) {
       response = await this.stub.containerFetch(url, options, this.port);
     } else {
-      response = await fetch(url, options);
+      response = await globalThis.fetch(url, options);
     }
 
     if (!response.ok) {
@@ -213,27 +275,6 @@ export class Transport {
     }
 
     return response.body;
-  }
-
-  /**
-   * Make a WebSocket request
-   */
-  private async wsRequest<T>(
-    method: 'GET' | 'POST' | 'PUT' | 'DELETE',
-    path: string,
-    body?: unknown
-  ): Promise<TransportResponse> {
-    if (!this.wsTransport) {
-      throw new Error('WebSocket transport not initialized');
-    }
-
-    const result = await this.wsTransport.request<T>(method, path, body);
-
-    return {
-      status: result.status,
-      ok: result.status >= 200 && result.status < 300,
-      body: result.body
-    };
   }
 }
 
