@@ -225,7 +225,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       const storedTransport = await this.ctx.storage.get<'http' | 'websocket'>(
         'transport'
       );
-      if (storedTransport !== undefined) {
+      if (storedTransport != null) {
         // Explicit stored value overrides env var
         if (storedTransport !== this.transport) {
           this.transport = storedTransport;
