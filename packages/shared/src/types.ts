@@ -179,6 +179,30 @@ export interface PortCheckResponse {
   error?: string;
 }
 
+/**
+ * Request body for streaming port watch endpoint
+ */
+export interface PortWatchRequest extends PortCheckRequest {
+  /** Process ID to monitor - stream closes if process exits */
+  processId?: string;
+  /** Internal polling interval in ms (default: 500) */
+  interval?: number;
+}
+
+/**
+ * SSE event emitted by port watch stream
+ */
+export interface PortWatchEvent {
+  type: 'watching' | 'ready' | 'process_exited' | 'error';
+  port: number;
+  /** HTTP status code (for 'ready' events with HTTP mode) */
+  statusCode?: number;
+  /** Process exit code (for 'process_exited' events) */
+  exitCode?: number;
+  /** Error message (for 'error' events) */
+  error?: string;
+}
+
 // Background process types
 export interface ProcessOptions extends BaseExecOptions {
   /**

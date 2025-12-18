@@ -14,6 +14,7 @@ import type {
 } from '@sandbox-container/core/types';
 import { PortHandler } from '@sandbox-container/handlers/port-handler';
 import type { PortService } from '@sandbox-container/services/port-service';
+import type { ProcessService } from '@sandbox-container/services/process-service';
 
 // Test-specific type for mock proxy response
 // The proxy handler passes through responses from the target service unchanged,
@@ -31,6 +32,7 @@ const mockPortService = {
   proxyRequest: vi.fn(),
   markPortInactive: vi.fn(),
   cleanupInactivePorts: vi.fn(),
+  checkPortReady: vi.fn(),
   destroy: vi.fn()
 } as unknown as PortService;
 
@@ -42,6 +44,15 @@ const mockLogger = {
   child: vi.fn()
 } as Logger;
 mockLogger.child = vi.fn(() => mockLogger);
+
+const mockProcessService = {
+  getProcess: vi.fn(),
+  startProcess: vi.fn(),
+  killProcess: vi.fn(),
+  listProcesses: vi.fn(),
+  killAllProcesses: vi.fn(),
+  streamProcessLogs: vi.fn()
+} as unknown as ProcessService;
 
 // Mock request context
 const mockContext: RequestContext = {
@@ -62,7 +73,11 @@ describe('PortHandler', () => {
     // Reset all mocks before each test
     vi.clearAllMocks();
 
-    portHandler = new PortHandler(mockPortService, mockLogger);
+    portHandler = new PortHandler(
+      mockPortService,
+      mockProcessService,
+      mockLogger
+    );
   });
 
   describe('handleExpose - POST /api/expose-port', () => {

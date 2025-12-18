@@ -1,20 +1,23 @@
 // Port Handler
 import type {
   Logger,
-  PortCheckRequest,
   PortCloseResult,
   PortExposeResult,
-  PortListResult
+  PortListResult,
+  PortWatchEvent,
+  PortWatchRequest
 } from '@repo/shared';
 import { ErrorCode } from '@repo/shared/errors';
 
 import type { ExposePortRequest, RequestContext } from '../core/types';
 import type { PortService } from '../services/port-service';
+import type { ProcessService } from '../services/process-service';
 import { BaseHandler } from './base-handler';
 
 export class PortHandler extends BaseHandler<Request, Response> {
   constructor(
     private portService: PortService,
+    private processService: ProcessService,
     logger: Logger
   ) {
     super(logger);
@@ -26,8 +29,8 @@ export class PortHandler extends BaseHandler<Request, Response> {
 
     if (pathname === '/api/expose-port') {
       return await this.handleExpose(request, context);
-    } else if (pathname === '/api/port-check') {
-      return await this.handlePortCheck(request, context);
+    } else if (pathname === '/api/port-watch') {
+      return await this.handlePortWatch(request, context);
     } else if (pathname === '/api/exposed-ports') {
       return await this.handleList(request, context);
     } else if (pathname.startsWith('/api/exposed-ports/')) {
@@ -54,18 +57,101 @@ export class PortHandler extends BaseHandler<Request, Response> {
     );
   }
 
-  private async handlePortCheck(
+  private async handlePortWatch(
     request: Request,
     context: RequestContext
   ): Promise<Response> {
-    const body = await this.parseRequestBody<PortCheckRequest>(request);
+    const body = await this.parseRequestBody<PortWatchRequest>(request);
+    const {
+      port,
+      mode,
+      path,
+      statusMin,
+      statusMax,
+      processId,
+      interval = 500
+    } = body;
 
-    const result = await this.portService.checkPortReady(body);
+    const portService = this.portService;
+    const processService = this.processService;
+    let cancelled = false;
 
-    return new Response(JSON.stringify(result), {
+    // Clamp interval between 100ms and 10s to prevent abuse
+    const clampedInterval = Math.max(100, Math.min(interval, 10000));
+
+    const stream = new ReadableStream({
+      async start(controller) {
+        const emit = (event: PortWatchEvent) => {
+          const data = `data: ${JSON.stringify(event)}\n\n`;
+          controller.enqueue(new TextEncoder().encode(data));
+        };
+
+        // Send initial event
+        emit({ type: 'watching', port });
+
+        try {
+          // Polling loop
+          while (!cancelled) {
+            // Check process status if processId provided
+            if (processId) {
+              const processResult = await processService.getProcess(processId);
+              if (!processResult.success) {
+                emit({ type: 'error', port, error: 'Process not found' });
+                return;
+              }
+              const proc = processResult.data;
+              if (
+                ['completed', 'failed', 'killed', 'error'].includes(proc.status)
+              ) {
+                emit({
+                  type: 'process_exited',
+                  port,
+                  exitCode: proc.exitCode ?? undefined
+                });
+                return;
+              }
+            }
+
+            // Check port readiness
+            const result = await portService.checkPortReady({
+              port,
+              mode,
+              path,
+              statusMin,
+              statusMax
+            });
+
+            if (result.ready) {
+              emit({ type: 'ready', port, statusCode: result.statusCode });
+              return;
+            }
+
+            // Wait before next check
+            await new Promise((resolve) =>
+              setTimeout(resolve, clampedInterval)
+            );
+          }
+        } catch (error) {
+          emit({
+            type: 'error',
+            port,
+            error: error instanceof Error ? error.message : 'Unknown error'
+          });
+        } finally {
+          controller.close();
+        }
+      },
+      cancel() {
+        cancelled = true;
+      }
+    });
+
+    return new Response(stream, {
       status: 200,
       headers: {
-        'Content-Type': 'application/json',
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
         ...context.corsHeaders
       }
     });

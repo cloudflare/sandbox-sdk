@@ -12,7 +12,7 @@ import type {
   ISandbox,
   LogEvent,
   MountBucketOptions,
-  PortCheckRequest,
+  PortWatchEvent,
   Process,
   ProcessOptions,
   ProcessStatus,
@@ -1526,82 +1526,76 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       interval = 500
     } = options ?? {};
 
-    const startTime = Date.now();
     const conditionStr =
       mode === 'http' ? `port ${port} (HTTP ${path})` : `port ${port} (TCP)`;
-    const targetInterval = interval;
-    let checkCount = 0;
 
     // Normalize status to min/max
     const statusMin = typeof status === 'number' ? status : status.min;
     const statusMax = typeof status === 'number' ? status : status.max;
 
-    // Build the port check request
-    const checkRequest: PortCheckRequest = {
+    // Open streaming watch - container handles internal polling
+    const stream = await this.client.ports.watchPort({
       port,
       mode,
       path,
       statusMin,
-      statusMax
-    };
+      statusMax,
+      processId,
+      interval
+    });
 
-    while (true) {
-      // Check timeout if specified
-      if (timeout !== undefined) {
-        const elapsed = Date.now() - startTime;
-        const remaining = timeout - elapsed;
+    // Set up timeout if specified
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    let timeoutPromise: Promise<never> | undefined;
 
-        // Exit if we've exceeded timeout
-        if (remaining <= 0) {
-          throw this.createReadyTimeoutError(
-            processId,
-            command,
-            conditionStr,
-            timeout
+    if (timeout !== undefined) {
+      timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => {
+          reject(
+            this.createReadyTimeoutError(
+              processId,
+              command,
+              conditionStr,
+              timeout
+            )
           );
+        }, timeout);
+      });
+    }
+
+    try {
+      const streamProcessor = async (): Promise<void> => {
+        for await (const event of parseSSEStream<PortWatchEvent>(stream)) {
+          switch (event.type) {
+            case 'ready':
+              return; // Success!
+            case 'process_exited':
+              throw this.createExitedBeforeReadyError(
+                processId,
+                command,
+                conditionStr,
+                event.exitCode ?? 1
+              );
+            case 'error':
+              throw new Error(event.error || 'Port watch failed');
+            // 'watching' - continue
+          }
         }
+        throw new Error('Port watch stream ended unexpectedly');
+      };
+
+      if (timeoutPromise) {
+        await Promise.race([streamProcessor(), timeoutPromise]);
+      } else {
+        await streamProcessor();
       }
-
-      // Track total operation time for accurate sleep calculation
-      const iterationStart = Date.now();
-
-      // Check process status less frequently (every 3rd iteration) to reduce latency
-      if (checkCount % 3 === 0) {
-        const processInfo = await this.getProcess(processId);
-        if (!processInfo || isTerminalStatus(processInfo.status)) {
-          throw this.createExitedBeforeReadyError(
-            processId,
-            command,
-            conditionStr,
-            processInfo?.exitCode ?? 1
-          );
-        }
-      }
-
-      // Check port readiness via container endpoint
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
+      // Cancel the stream to stop container-side polling
       try {
-        const result = await this.client.ports.checkPortReady(checkRequest);
-        if (result.ready) {
-          return; // Port is ready
-        }
+        await stream.cancel();
       } catch {
-        // Port not ready yet, continue polling
-      }
-
-      checkCount++;
-
-      // Calculate sleep time accounting for total iteration duration (process check + port check)
-      const iterationDuration = Date.now() - iterationStart;
-      const sleepTime = Math.max(0, targetInterval - iterationDuration);
-
-      // Sleep between checks (skip if timeout would be exceeded)
-      if (sleepTime > 0) {
-        if (
-          timeout === undefined ||
-          Date.now() - startTime + sleepTime < timeout
-        ) {
-          await new Promise((resolve) => setTimeout(resolve, sleepTime));
-        }
+        // Stream may already be closed
       }
     }
   }
