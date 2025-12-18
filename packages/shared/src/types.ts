@@ -1088,6 +1088,127 @@ export function isProcessStatus(value: string): value is ProcessStatus {
   ].includes(value);
 }
 
+// PTY (Pseudo-Terminal) Types
+
+/**
+ * PTY session state
+ */
+export type PtyState = 'running' | 'exited';
+
+/**
+ * Options for creating a new PTY session
+ */
+export interface CreatePtyOptions {
+  /** Terminal width in columns (default: 80) */
+  cols?: number;
+  /** Terminal height in rows (default: 24) */
+  rows?: number;
+  /** Command to run (default: ['bash']) */
+  command?: string[];
+  /** Working directory (default: /home/user) */
+  cwd?: string;
+  /** Environment variables */
+  env?: Record<string, string>;
+  /** Time in ms before orphaned PTY is killed (default: 30000) */
+  disconnectTimeout?: number;
+}
+
+/**
+ * Options for attaching PTY to existing session
+ */
+export interface AttachPtyOptions {
+  /** Terminal width in columns (default: 80) */
+  cols?: number;
+  /** Terminal height in rows (default: 24) */
+  rows?: number;
+}
+
+/**
+ * PTY session information
+ */
+export interface PtyInfo {
+  /** Unique PTY identifier */
+  id: string;
+  /** Associated session ID (if attached to session) */
+  sessionId?: string;
+  /** Terminal width */
+  cols: number;
+  /** Terminal height */
+  rows: number;
+  /** Command running in PTY */
+  command: string[];
+  /** Working directory */
+  cwd: string;
+  /** When the PTY was created */
+  createdAt: string;
+  /** Current state */
+  state: PtyState;
+  /** Exit code if exited */
+  exitCode?: number;
+}
+
+/**
+ * Request to send input to PTY
+ */
+export interface PtyInputRequest {
+  data: string;
+}
+
+/**
+ * Request to resize PTY
+ */
+export interface PtyResizeRequest {
+  cols: number;
+  rows: number;
+}
+
+/**
+ * Result from creating a PTY
+ */
+export interface PtyCreateResult {
+  success: boolean;
+  pty: PtyInfo;
+  timestamp: string;
+}
+
+/**
+ * Result from listing PTYs
+ */
+export interface PtyListResult {
+  success: boolean;
+  ptys: PtyInfo[];
+  timestamp: string;
+}
+
+/**
+ * Result from getting a PTY
+ */
+export interface PtyGetResult {
+  success: boolean;
+  pty: PtyInfo;
+  timestamp: string;
+}
+
+/**
+ * Result from killing a PTY
+ */
+export interface PtyKillResult {
+  success: boolean;
+  ptyId: string;
+  timestamp: string;
+}
+
+/**
+ * Result from resizing a PTY
+ */
+export interface PtyResizeResult {
+  success: boolean;
+  ptyId: string;
+  cols: number;
+  rows: number;
+  timestamp: string;
+}
+
 export type {
   ChartData,
   CodeContext,

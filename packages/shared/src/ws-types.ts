@@ -106,9 +106,52 @@ export interface WSError {
 export type WSServerMessage = WSResponse | WSStreamChunk | WSError;
 
 /**
+ * PTY input message - send keystrokes to PTY (fire-and-forget)
+ */
+export interface WSPtyInput {
+  type: 'pty_input';
+  ptyId: string;
+  data: string;
+}
+
+/**
+ * PTY resize message - resize terminal (fire-and-forget)
+ */
+export interface WSPtyResize {
+  type: 'pty_resize';
+  ptyId: string;
+  cols: number;
+  rows: number;
+}
+
+/**
+ * Type guard for WSPtyInput
+ */
+export function isWSPtyInput(msg: unknown): msg is WSPtyInput {
+  return (
+    typeof msg === 'object' &&
+    msg !== null &&
+    'type' in msg &&
+    (msg as WSPtyInput).type === 'pty_input'
+  );
+}
+
+/**
+ * Type guard for WSPtyResize
+ */
+export function isWSPtyResize(msg: unknown): msg is WSPtyResize {
+  return (
+    typeof msg === 'object' &&
+    msg !== null &&
+    'type' in msg &&
+    (msg as WSPtyResize).type === 'pty_resize'
+  );
+}
+
+/**
  * Union type for all WebSocket messages from client to server
  */
-export type WSClientMessage = WSRequest;
+export type WSClientMessage = WSRequest | WSPtyInput | WSPtyResize;
 
 /**
  * Type guard for WSRequest

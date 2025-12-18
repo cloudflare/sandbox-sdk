@@ -47,6 +47,7 @@ export type {
 export { shellEscape } from './shell-escape.js';
 // Export all types from types.ts
 export type {
+  AttachPtyOptions,
   BaseExecOptions,
   // Bucket mounting types
   BucketCredentials,
@@ -54,6 +55,7 @@ export type {
   ContextCreateResult,
   ContextDeleteResult,
   ContextListResult,
+  CreatePtyOptions,
   DeleteFileResult,
   EnvSetResult,
   ExecEvent,
@@ -97,6 +99,15 @@ export type {
   // Process management result types
   ProcessStartResult,
   ProcessStatus,
+  PtyCreateResult,
+  PtyGetResult,
+  PtyInfo,
+  PtyInputRequest,
+  PtyKillResult,
+  PtyListResult,
+  PtyResizeRequest,
+  PtyResizeResult,
+  PtyState,
   ReadFileResult,
   RenameFileResult,
   // Sandbox configuration options
@@ -124,6 +135,8 @@ export type {
   WSClientMessage,
   WSError,
   WSMethod,
+  WSPtyInput,
+  WSPtyResize,
   WSRequest,
   WSResponse,
   WSServerMessage,
@@ -132,6 +145,8 @@ export type {
 export {
   generateRequestId,
   isWSError,
+  isWSPtyInput,
+  isWSPtyResize,
   isWSRequest,
   isWSResponse,
   isWSStreamChunk
