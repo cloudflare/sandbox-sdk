@@ -2,7 +2,8 @@
 
 # Cloudflare Sandbox SDK
 
-[![npm version](https://img.shields.io/npm/v/@cloudflare/sandbox.svg)](https://www.npmjs.com/package/@cloudflare/sandbox)
+[![npm version](https://img.shields.io/npm/v/@cloudflare/sandbox)](https://www.npmjs.com/package/@cloudflare/sandbox)
+[![npm downloads](https://img.shields.io/npm/dw/@cloudflare/sandbox)](https://www.npmjs.com/package/@cloudflare/sandbox)
 
 **Build secure, isolated code execution environments on Cloudflare.**
 
