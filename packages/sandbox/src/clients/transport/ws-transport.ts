@@ -39,6 +39,8 @@ export class WebSocketTransport extends BaseTransport {
   private state: WSTransportState = 'disconnected';
   private pendingRequests: Map<string, PendingRequest> = new Map();
   private connectPromise: Promise<void> | null = null;
+  private ptyDataListeners = new Map<string, Set<(data: string) => void>>();
+  private ptyExitListeners = new Map<string, Set<(code: number) => void>>();
 
   // Bound event handlers for proper add/remove
   private boundHandleMessage: (event: MessageEvent) => void;
@@ -451,6 +453,32 @@ export class WebSocketTransport extends BaseTransport {
       } else if (isWSError(message)) {
         this.handleError(message);
       } else {
+        // Check for PTY events
+        const msg = message as {
+          type?: string;
+          id?: string;
+          event?: string;
+          data?: string;
+        };
+        if (msg.type === 'stream' && msg.event === 'pty_data' && msg.id) {
+          this.ptyDataListeners.get(msg.id)?.forEach((cb) => {
+            cb(msg.data || '');
+          });
+          return;
+        }
+        if (
+          msg.type === 'stream' &&
+          msg.event === 'pty_exit' &&
+          msg.id &&
+          msg.data
+        ) {
+          const { exitCode } = JSON.parse(msg.data);
+          this.ptyExitListeners.get(msg.id)?.forEach((cb) => {
+            cb(exitCode);
+          });
+          return;
+        }
+
         this.logger.warn('Unknown WebSocket message type', { message });
       }
     } catch (error) {
@@ -595,5 +623,49 @@ export class WebSocketTransport extends BaseTransport {
       }
     }
     this.pendingRequests.clear();
+  }
+
+  /**
+   * Send PTY input (fire-and-forget)
+   */
+  sendPtyInput(ptyId: string, data: string): void {
+    if (!this.ws || this.state !== 'connected') {
+      this.logger.warn('Cannot send PTY input: not connected');
+      return;
+    }
+    this.ws.send(JSON.stringify({ type: 'pty_input', ptyId, data }));
+  }
+
+  /**
+   * Send PTY resize (fire-and-forget)
+   */
+  sendPtyResize(ptyId: string, cols: number, rows: number): void {
+    if (!this.ws || this.state !== 'connected') {
+      this.logger.warn('Cannot send PTY resize: not connected');
+      return;
+    }
+    this.ws.send(JSON.stringify({ type: 'pty_resize', ptyId, cols, rows }));
+  }
+
+  /**
+   * Register PTY data listener
+   */
+  onPtyData(ptyId: string, callback: (data: string) => void): () => void {
+    if (!this.ptyDataListeners.has(ptyId)) {
+      this.ptyDataListeners.set(ptyId, new Set());
+    }
+    this.ptyDataListeners.get(ptyId)!.add(callback);
+    return () => this.ptyDataListeners.get(ptyId)?.delete(callback);
+  }
+
+  /**
+   * Register PTY exit listener
+   */
+  onPtyExit(ptyId: string, callback: (exitCode: number) => void): () => void {
+    if (!this.ptyExitListeners.has(ptyId)) {
+      this.ptyExitListeners.set(ptyId, new Set());
+    }
+    this.ptyExitListeners.get(ptyId)!.add(callback);
+    return () => this.ptyExitListeners.get(ptyId)?.delete(callback);
   }
 }

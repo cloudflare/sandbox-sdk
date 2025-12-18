@@ -98,4 +98,22 @@ export class HttpTransport extends BaseTransport {
       body: body && method === 'POST' ? JSON.stringify(body) : undefined
     };
   }
+
+  sendPtyInput(_ptyId: string, _data: string): void {
+    // No-op for HTTP - use fetch to /api/pty/:id/input instead
+  }
+
+  sendPtyResize(_ptyId: string, _cols: number, _rows: number): void {
+    // No-op for HTTP - use fetch to /api/pty/:id/resize instead
+  }
+
+  onPtyData(_ptyId: string, _callback: (data: string) => void): () => void {
+    // Not supported for HTTP
+    return () => {};
+  }
+
+  onPtyExit(_ptyId: string, _callback: (exitCode: number) => void): () => void {
+    // Not supported for HTTP
+    return () => {};
+  }
 }

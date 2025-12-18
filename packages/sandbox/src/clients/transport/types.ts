@@ -74,4 +74,24 @@ export interface ITransport {
    * Check if connected (always true for HTTP)
    */
   isConnected(): boolean;
+
+  /**
+   * Send PTY input (WebSocket only, no-op for HTTP)
+   */
+  sendPtyInput(ptyId: string, data: string): void;
+
+  /**
+   * Send PTY resize (WebSocket only, no-op for HTTP)
+   */
+  sendPtyResize(ptyId: string, cols: number, rows: number): void;
+
+  /**
+   * Register PTY data listener (WebSocket only)
+   */
+  onPtyData(ptyId: string, callback: (data: string) => void): () => void;
+
+  /**
+   * Register PTY exit listener (WebSocket only)
+   */
+  onPtyExit(ptyId: string, callback: (exitCode: number) => void): () => void;
 }
