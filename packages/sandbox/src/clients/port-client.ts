@@ -1,20 +1,13 @@
 import type {
-  PortCheckRequest,
-  PortCheckResponse,
   PortCloseResult,
   PortExposeResult,
-  PortListResult
+  PortListResult,
+  PortWatchRequest
 } from '@repo/shared';
 import { BaseHttpClient } from './base-client';
-import type { HttpClientOptions } from './types';
 
 // Re-export for convenience
-export type {
-  PortExposeResult,
-  PortCloseResult,
-  PortListResult,
-  PortCheckResponse
-};
+export type { PortExposeResult, PortCloseResult, PortListResult };
 
 /**
  * Request interface for exposing ports
@@ -111,22 +104,20 @@ export class PortClient extends BaseHttpClient {
   }
 
   /**
-   * Check if a port is ready to accept connections
-   * @param request - Port check configuration
+   * Watch a port for readiness via SSE stream
+   * @param request - Port watch configuration
+   * @returns SSE stream that emits PortWatchEvent objects
    */
-  async checkPortReady(request: PortCheckRequest): Promise<PortCheckResponse> {
+  async watchPort(
+    request: PortWatchRequest
+  ): Promise<ReadableStream<Uint8Array>> {
     try {
-      const response = await this.post<PortCheckResponse>(
-        '/api/port-check',
-        request
-      );
-      return response;
+      const stream = await this.doStreamFetch('/api/port-watch', request);
+      this.logSuccess('Port watch started', `port ${request.port}`);
+      return stream;
     } catch (error) {
-      // On error (e.g., container not ready), return not ready
-      return {
-        ready: false,
-        error: error instanceof Error ? error.message : 'Port check failed'
-      };
+      this.logError('watchPort', error);
+      throw error;
     }
   }
 }

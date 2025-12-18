@@ -85,6 +85,8 @@ export type {
   PortExposeResult,
   PortListResult,
   PortStatusResult,
+  PortWatchEvent,
+  PortWatchRequest,
   Process,
   ProcessCleanupResult,
   ProcessInfoResult,

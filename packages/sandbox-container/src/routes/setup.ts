@@ -120,7 +120,7 @@ export function setupRoutes(router: Router, container: Container): void {
 
   router.register({
     method: 'POST',
-    path: '/api/port-check',
+    path: '/api/port-watch',
     handler: async (req, ctx) => container.get('portHandler').handle(req, ctx),
     middleware: [container.get('loggingMiddleware')]
   });

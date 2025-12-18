@@ -3,7 +3,8 @@ import type {
   Logger,
   PortCloseResult,
   PortExposeResult,
-  PortListResult
+  PortListResult,
+  PortWatchEvent
 } from '@repo/shared';
 import type { ErrorResponse } from '@repo/shared/errors';
 import { ErrorCode } from '@repo/shared/errors';
@@ -14,6 +15,7 @@ import type {
 } from '@sandbox-container/core/types';
 import { PortHandler } from '@sandbox-container/handlers/port-handler';
 import type { PortService } from '@sandbox-container/services/port-service';
+import type { ProcessService } from '@sandbox-container/services/process-service';
 
 // Test-specific type for mock proxy response
 // The proxy handler passes through responses from the target service unchanged,
@@ -31,6 +33,7 @@ const mockPortService = {
   proxyRequest: vi.fn(),
   markPortInactive: vi.fn(),
   cleanupInactivePorts: vi.fn(),
+  checkPortReady: vi.fn(),
   destroy: vi.fn()
 } as unknown as PortService;
 
@@ -42,6 +45,15 @@ const mockLogger = {
   child: vi.fn()
 } as Logger;
 mockLogger.child = vi.fn(() => mockLogger);
+
+const mockProcessService = {
+  getProcess: vi.fn(),
+  startProcess: vi.fn(),
+  killProcess: vi.fn(),
+  listProcesses: vi.fn(),
+  killAllProcesses: vi.fn(),
+  streamProcessLogs: vi.fn()
+} as unknown as ProcessService;
 
 // Mock request context
 const mockContext: RequestContext = {
@@ -62,7 +74,11 @@ describe('PortHandler', () => {
     // Reset all mocks before each test
     vi.clearAllMocks();
 
-    portHandler = new PortHandler(mockPortService, mockLogger);
+    portHandler = new PortHandler(
+      mockPortService,
+      mockProcessService,
+      mockLogger
+    );
   });
 
   describe('handleExpose - POST /api/expose-port', () => {
@@ -606,6 +622,125 @@ describe('PortHandler', () => {
       const responseData = (await response.json()) as ErrorResponse;
       expect(responseData.code).toBe('UNKNOWN_ERROR');
       expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
+    });
+  });
+
+  describe('handlePortWatch - POST /api/port-watch', () => {
+    // Helper to collect SSE events from stream
+    async function collectEvents(
+      response: Response
+    ): Promise<PortWatchEvent[]> {
+      const events: PortWatchEvent[] = [];
+      const reader = response.body!.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        const lines = buffer.split('\n\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            events.push(JSON.parse(line.slice(6)));
+          }
+        }
+      }
+      return events;
+    }
+
+    it('should emit ready event when port becomes available', async () => {
+      (
+        mockPortService.checkPortReady as ReturnType<typeof vi.fn>
+      ).mockResolvedValue({
+        ready: true,
+        statusCode: 200
+      });
+
+      const request = new Request('http://localhost:3000/api/port-watch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ port: 8080 })
+      });
+
+      const response = await portHandler.handle(request, mockContext);
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get('Content-Type')).toBe('text/event-stream');
+
+      const events = await collectEvents(response);
+      expect(events).toEqual([
+        { type: 'watching', port: 8080 },
+        { type: 'ready', port: 8080, statusCode: 200 }
+      ]);
+    });
+
+    it('should emit process_exited when watched process terminates', async () => {
+      (
+        mockProcessService.getProcess as ReturnType<typeof vi.fn>
+      ).mockResolvedValue({
+        success: true,
+        data: { status: 'completed', exitCode: 0 }
+      });
+
+      const request = new Request('http://localhost:3000/api/port-watch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ port: 8080, processId: 'proc-123' })
+      });
+
+      const response = await portHandler.handle(request, mockContext);
+      const events = await collectEvents(response);
+
+      expect(events).toEqual([
+        { type: 'watching', port: 8080 },
+        { type: 'process_exited', port: 8080, exitCode: 0 }
+      ]);
+    });
+
+    it('should emit error when process not found', async () => {
+      (
+        mockProcessService.getProcess as ReturnType<typeof vi.fn>
+      ).mockResolvedValue({
+        success: false
+      });
+
+      const request = new Request('http://localhost:3000/api/port-watch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ port: 8080, processId: 'nonexistent' })
+      });
+
+      const response = await portHandler.handle(request, mockContext);
+      const events = await collectEvents(response);
+
+      expect(events).toEqual([
+        { type: 'watching', port: 8080 },
+        { type: 'error', port: 8080, error: 'Process not found' }
+      ]);
+    });
+
+    it('should emit error when port check throws', async () => {
+      (
+        mockPortService.checkPortReady as ReturnType<typeof vi.fn>
+      ).mockRejectedValue(new Error('Connection refused'));
+
+      const request = new Request('http://localhost:3000/api/port-watch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ port: 8080 })
+      });
+
+      const response = await portHandler.handle(request, mockContext);
+      const events = await collectEvents(response);
+
+      expect(events).toEqual([
+        { type: 'watching', port: 8080 },
+        { type: 'error', port: 8080, error: 'Connection refused' }
+      ]);
     });
   });
 
