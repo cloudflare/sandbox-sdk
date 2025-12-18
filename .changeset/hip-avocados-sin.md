@@ -1,5 +1,5 @@
 ---
-"@cloudflare/sandbox": patch
+'@cloudflare/sandbox': patch
 ---
 
-remove logging middleware from freq used routes
+Reduce log noise from high-frequency polling endpoints

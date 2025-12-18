@@ -118,7 +118,7 @@ export function setupRoutes(router: Router, container: Container): void {
     middleware: [container.get('loggingMiddleware')]
   });
 
-  // No logging middleware; this is called frequently by waitForPort() polling
+  // High-frequency polling endpoint used by waitForPort()
   router.register({
     method: 'POST',
     path: '/api/port-check',
@@ -205,7 +205,7 @@ export function setupRoutes(router: Router, container: Container): void {
   });
 
   // Interpreter/Code execution routes
-  // No logging middleware for health endpoint; high-frequency internal operation
+  // High-frequency health check endpoint
   router.register({
     method: 'GET',
     path: '/api/interpreter/health',
@@ -281,7 +281,7 @@ export function setupRoutes(router: Router, container: Container): void {
     handler: async (req, ctx) => container.get('miscHandler').handle(req, ctx)
   });
 
-  // No logging middleware; health checks are high-frequency internal operations
+  // High-frequency health check endpoint
   router.register({
     method: 'GET',
     path: '/api/ping',
