@@ -146,8 +146,10 @@ export class WebSocketTransport extends BaseTransport {
     if (typeof body === 'string') {
       try {
         return JSON.parse(body);
-      } catch {
-        return body;
+      } catch (error) {
+        throw new Error(
+          `Request body must be valid JSON: ${error instanceof Error ? error.message : String(error)}`
+        );
       }
     }
 
@@ -331,7 +333,13 @@ export class WebSocketTransport extends BaseTransport {
         timeoutId
       });
 
-      this.send(request);
+      try {
+        this.send(request);
+      } catch (error) {
+        clearTimeout(timeoutId);
+        this.pendingRequests.delete(id);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
     });
   }
 
@@ -392,7 +400,15 @@ export class WebSocketTransport extends BaseTransport {
           timeoutId
         });
 
-        this.send(request);
+        try {
+          this.send(request);
+        } catch (error) {
+          clearTimeout(timeoutId);
+          this.pendingRequests.delete(id);
+          controller.error(
+            error instanceof Error ? error : new Error(String(error))
+          );
+        }
       },
       cancel: () => {
         const pending = this.pendingRequests.get(id);
