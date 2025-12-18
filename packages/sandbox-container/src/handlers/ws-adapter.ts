@@ -8,6 +8,8 @@
 
 import type { Logger } from '@repo/shared';
 import {
+  isWSPtyInput,
+  isWSPtyResize,
   isWSRequest,
   type WSError,
   type WSRequest,
@@ -17,6 +19,7 @@ import {
 } from '@repo/shared';
 import type { ServerWebSocket } from 'bun';
 import type { Router } from '../core/router';
+import type { PtyManager } from '../managers/pty-manager';
 
 /** Container server port - must match SERVER_PORT in server.ts */
 const SERVER_PORT = 3000;
@@ -37,10 +40,12 @@ export interface WSData {
  */
 export class WebSocketAdapter {
   private router: Router;
+  private ptyManager: PtyManager;
   private logger: Logger;
 
-  constructor(router: Router, logger: Logger) {
+  constructor(router: Router, ptyManager: PtyManager, logger: Logger) {
     this.router = router;
+    this.ptyManager = ptyManager;
     this.logger = logger.child({ component: 'container' });
   }
 
@@ -79,6 +84,18 @@ export class WebSocketAdapter {
       parsed = JSON.parse(messageStr);
     } catch (error) {
       this.sendError(ws, undefined, 'PARSE_ERROR', 'Invalid JSON message', 400);
+      return;
+    }
+
+    // Handle PTY input messages (fire-and-forget)
+    if (isWSPtyInput(parsed)) {
+      this.ptyManager.write(parsed.ptyId, parsed.data);
+      return;
+    }
+
+    // Handle PTY resize messages (fire-and-forget)
+    if (isWSPtyResize(parsed)) {
+      this.ptyManager.resize(parsed.ptyId, parsed.cols, parsed.rows);
       return;
     }
 
@@ -361,6 +378,37 @@ export class WebSocketAdapter {
       status
     };
     this.send(ws, error);
+  }
+
+  /**
+   * Register PTY output listener for a WebSocket connection
+   * Returns cleanup function to unsubscribe from PTY events
+   */
+  registerPtyListener(ws: ServerWebSocket<WSData>, ptyId: string): () => void {
+    const unsubData = this.ptyManager.onData(ptyId, (data) => {
+      const chunk: WSStreamChunk = {
+        type: 'stream',
+        id: ptyId,
+        event: 'pty_data',
+        data
+      };
+      this.send(ws, chunk);
+    });
+
+    const unsubExit = this.ptyManager.onExit(ptyId, (exitCode) => {
+      const chunk: WSStreamChunk = {
+        type: 'stream',
+        id: ptyId,
+        event: 'pty_exit',
+        data: JSON.stringify({ exitCode })
+      };
+      this.send(ws, chunk);
+    });
+
+    return () => {
+      unsubData();
+      unsubExit();
+    };
   }
 }
 

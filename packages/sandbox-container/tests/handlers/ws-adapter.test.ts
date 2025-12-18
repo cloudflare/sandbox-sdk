@@ -6,6 +6,7 @@ import {
   WebSocketAdapter,
   type WSData
 } from '../../src/handlers/ws-adapter';
+import type { PtyManager } from '../../src/managers/pty-manager';
 
 // Mock ServerWebSocket
 class MockServerWebSocket {
@@ -47,17 +48,29 @@ function createMockLogger(): Logger {
   } as unknown as Logger;
 }
 
+// Mock PtyManager
+function createMockPtyManager(): PtyManager {
+  return {
+    write: vi.fn(),
+    resize: vi.fn(),
+    onData: vi.fn(() => () => {}),
+    onExit: vi.fn(() => () => {})
+  } as unknown as PtyManager;
+}
+
 describe('WebSocketAdapter', () => {
   let adapter: WebSocketAdapter;
   let mockRouter: Router;
+  let mockPtyManager: PtyManager;
   let mockLogger: Logger;
   let mockWs: MockServerWebSocket;
 
   beforeEach(() => {
     vi.clearAllMocks();
     mockRouter = createMockRouter();
+    mockPtyManager = createMockPtyManager();
     mockLogger = createMockLogger();
-    adapter = new WebSocketAdapter(mockRouter, mockLogger);
+    adapter = new WebSocketAdapter(mockRouter, mockPtyManager, mockLogger);
     mockWs = new MockServerWebSocket({ connectionId: 'test-conn-123' });
   });
 
@@ -277,12 +290,14 @@ describe('WebSocketAdapter', () => {
 describe('WebSocket Integration', () => {
   let adapter: WebSocketAdapter;
   let mockRouter: Router;
+  let mockPtyManager: PtyManager;
   let mockLogger: Logger;
 
   beforeEach(() => {
     mockRouter = createMockRouter();
+    mockPtyManager = createMockPtyManager();
     mockLogger = createMockLogger();
-    adapter = new WebSocketAdapter(mockRouter, mockLogger);
+    adapter = new WebSocketAdapter(mockRouter, mockPtyManager, mockLogger);
   });
 
   it('should handle multiple concurrent requests', async () => {
