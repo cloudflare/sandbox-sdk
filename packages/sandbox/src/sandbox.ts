@@ -32,7 +32,7 @@ import {
   shellEscape,
   TraceContext
 } from '@repo/shared';
-import { type ExecuteResponse, SandboxClient } from './clients';
+import { type ExecuteResponse, type PtyClient, SandboxClient } from './clients';
 import type { ErrorResponse } from './errors';
 import {
   CustomDomainRequiredError,
@@ -122,6 +122,24 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   client: SandboxClient;
   private codeInterpreter: CodeInterpreter;
+
+  /**
+   * PTY (pseudo-terminal) client for interactive terminal sessions
+   *
+   * Provides methods to create and manage interactive terminal sessions:
+   * - create() - Create a new PTY session
+   * - attach(sessionId) - Attach PTY to existing session
+   * - getById(id) - Get existing PTY by ID
+   * - list() - List all active PTY sessions
+   *
+   * @example
+   * const pty = await sandbox.pty.create({ cols: 80, rows: 24 });
+   * pty.onData((data) => terminal.write(data));
+   * pty.write('ls -la\n');
+   */
+  get pty(): PtyClient {
+    return this.client.pty;
+  }
   private sandboxName: string | null = null;
   private normalizeId: boolean = false;
   private baseUrl: string | null = null;

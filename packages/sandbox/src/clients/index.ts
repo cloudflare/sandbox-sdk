@@ -39,6 +39,7 @@ export {
 // Client types and interfaces
 // =============================================================================
 
+export type { PtyInfo } from '@repo/shared';
 // Command client types
 export type { ExecuteRequest, ExecuteResponse } from './command-client';
 // File client types
