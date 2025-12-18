@@ -147,6 +147,12 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          plugin_marketplaces: |
+            https://github.com/anthropics/claude-plugins-official.git
+            https://github.com/obra/superpowers-marketplace.git
+          plugins: |
+            pr-review-toolkit@claude-plugins-official
+            superpowers@superpowers-marketplace
           prompt: |
             You are Claude reviewing PRs for the Cloudflare Sandbox SDK.
 
