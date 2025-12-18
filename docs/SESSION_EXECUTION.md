@@ -38,7 +38,9 @@ echo "$EXIT_CODE" > "$exit.tmp" && mv "$exit.tmp" "$exit"
   - Create two FIFOs (stdout/stderr)
   - Start two background readers (labelers) that read each FIFO and prepend a binary prefix per line, appending to the log
   - Run the command in a subshell redirected to the FIFOs
-  - Write the exit code file and clean up FIFOs after readers finish
+  - Write the exit code file after command completes
+  - A background monitor waits for labelers to finish, removes FIFOs, and creates a `labelers.done` marker file
+  - The reader waits for this marker before reading final output, ensuring all log content is captured
 - This pattern works well for concurrent streaming and avoids blocking the main shell.
 
 Pseudo:
@@ -52,8 +54,8 @@ mkfifo "$sp" "$ep"
   CMD_EXIT=$?
   echo "$CMD_EXIT" > "$exit.tmp" && mv "$exit.tmp" "$exit"
 } > "$sp" 2> "$ep" & CMD_PID=$!
-# Monitor waits for readers to finish and then removes FIFOs
-( wait "$r1" "$r2" 2>/dev/null; rm -f "$sp" "$ep" ) &
+# Monitor waits for labelers to finish, removes FIFOs, signals completion
+( wait "$r1" "$r2" 2>/dev/null; rm -f "$sp" "$ep"; touch "$labelers_done" ) &
 ```
 
 ## Binary Prefix Contract

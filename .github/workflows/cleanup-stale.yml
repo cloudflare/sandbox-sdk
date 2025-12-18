@@ -3,6 +3,7 @@ name: Cleanup Stale PR Resources
 permissions:
   contents: read
   pull-requests: read
+  actions: write # Required for gh cache delete
 
 on:
   schedule:
@@ -37,13 +38,13 @@ jobs:
           # List all workers and filter for PR test workers
           WORKERS=$(npx wrangler workers list --json 2>/dev/null || echo "[]")
 
-          echo "$WORKERS" | jq -r '.[] | select(.name | test("^sandbox-e2e-test-worker-pr-[0-9]+$")) | .name' | while read -r WORKER_NAME; do
+          echo "$WORKERS" | jq -r '.[] | select(.name | test("^sandbox-e2e-test-worker-pr-[0-9]+(-http|-websocket)?$")) | .name' | while read -r WORKER_NAME; do
             if [ -z "$WORKER_NAME" ]; then
               continue
             fi
 
-            # Extract PR number from worker name
-            PR_NUMBER=$(echo "$WORKER_NAME" | sed 's/sandbox-e2e-test-worker-pr-//')
+            # Extract PR number from worker name (strip prefix and any transport suffix)
+            PR_NUMBER=$(echo "$WORKER_NAME" | sed 's/sandbox-e2e-test-worker-pr-//' | sed 's/-http$//' | sed 's/-websocket$//')
 
             echo ""
             echo "Checking worker: $WORKER_NAME (PR #$PR_NUMBER)"
@@ -86,9 +87,83 @@ jobs:
           done
 
           echo ""
-          echo "=== Stale resource cleanup complete ==="
+          echo "=== Stale worker cleanup complete ==="
         working-directory: tests/e2e/test-worker
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Cleanup stale registry images
+        run: |
+          echo "=== Checking for stale registry images ==="
+
+          # List all images and find PR-tagged ones
+          IMAGES=$(npx wrangler containers images list 2>/dev/null || echo "")
+
+          # Extract unique PR numbers from image tags
+          PR_NUMBERS=$(echo "$IMAGES" | grep -oE 'pr-[0-9]+' | sed 's/pr-//' | sort -u)
+
+          for PR_NUMBER in $PR_NUMBERS; do
+            if [ -z "$PR_NUMBER" ]; then
+              continue
+            fi
+
+            echo ""
+            echo "Checking images for PR #$PR_NUMBER..."
+
+            # Check if PR is closed/merged
+            PR_STATE=$(gh pr view "$PR_NUMBER" --json state -q '.state' 2>/dev/null || echo "NOT_FOUND")
+
+            if [ "$PR_STATE" = "CLOSED" ] || [ "$PR_STATE" = "MERGED" ] || [ "$PR_STATE" = "NOT_FOUND" ]; then
+              echo "  PR is $PR_STATE - cleaning up images..."
+
+              for image in sandbox sandbox-python sandbox-opencode sandbox-standalone; do
+                echo "  Deleting $image:pr-$PR_NUMBER..."
+                npx wrangler containers images delete "$image:pr-$PR_NUMBER" 2>/dev/null || true
+              done
+            else
+              echo "  PR is $PR_STATE - skipping"
+            fi
+          done
+
+          echo ""
+          echo "=== Stale image cleanup complete ==="
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Cleanup stale GHA caches
+        run: |
+          echo "=== Checking for stale GHA caches ==="
+
+          # List all caches and find PR branch ones
+          CACHES=$(gh cache list --json ref -q '.[].ref' 2>/dev/null || echo "")
+
+          # Filter for PR merge refs
+          echo "$CACHES" | grep -E 'refs/pull/[0-9]+/merge' | while read -r REF; do
+            if [ -z "$REF" ]; then
+              continue
+            fi
+
+            PR_NUMBER=$(echo "$REF" | grep -oE '[0-9]+')
+
+            echo ""
+            echo "Checking cache for PR #$PR_NUMBER..."
+
+            # Check if PR is closed/merged
+            PR_STATE=$(gh pr view "$PR_NUMBER" --json state -q '.state' 2>/dev/null || echo "NOT_FOUND")
+
+            if [ "$PR_STATE" = "CLOSED" ] || [ "$PR_STATE" = "MERGED" ] || [ "$PR_STATE" = "NOT_FOUND" ]; then
+              echo "  PR is $PR_STATE - cleaning up cache..."
+              gh cache delete --all --ref "$REF" || true
+            else
+              echo "  PR is $PR_STATE - skipping"
+            fi
+          done
+
+          echo ""
+          echo "=== Stale cache cleanup complete ==="
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

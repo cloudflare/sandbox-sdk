@@ -125,12 +125,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private sandboxName: string | null = null;
   private normalizeId: boolean = false;
   private baseUrl: string | null = null;
-  private portTokens: Map<number, string> = new Map();
   private defaultSession: string | null = null;
   envVars: Record<string, string> = {};
   private logger: ReturnType<typeof createLogger>;
   private keepAliveEnabled: boolean = false;
   private activeMounts: Map<string, MountInfo> = new Map();
+  private transport: 'http' | 'websocket' = 'http';
 
   /**
    * Default container startup timeouts (conservative for production)
@@ -156,6 +156,21 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    */
   private containerTimeouts = { ...this.DEFAULT_CONTAINER_TIMEOUTS };
 
+  /**
+   * Create a SandboxClient with current transport settings
+   */
+  private createSandboxClient(): SandboxClient {
+    return new SandboxClient({
+      logger: this.logger,
+      port: 3000,
+      stub: this,
+      ...(this.transport === 'websocket' && {
+        transportMode: 'websocket' as const,
+        wsUrl: 'ws://localhost:3000/ws'
+      })
+    });
+  }
+
   constructor(ctx: DurableObjectState<{}>, env: Env) {
     super(ctx, env);
 
@@ -176,11 +191,18 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       sandboxId: this.ctx.id.toString()
     });
 
-    this.client = new SandboxClient({
-      logger: this.logger,
-      port: 3000, // Control plane port
-      stub: this
-    });
+    // Read transport setting from env var
+    const transportEnv = envObj?.SANDBOX_TRANSPORT;
+    if (transportEnv === 'websocket') {
+      this.transport = 'websocket';
+    } else if (transportEnv != null && transportEnv !== 'http') {
+      this.logger.warn(
+        `Invalid SANDBOX_TRANSPORT value: "${transportEnv}". Must be "http" or "websocket". Defaulting to "http".`
+      );
+    }
+
+    // Create client with transport based on env var (may be updated from storage)
+    this.client = this.createSandboxClient();
 
     // Initialize code interpreter - pass 'this' after client is ready
     // The CodeInterpreter extracts client.interpreter from the sandbox
@@ -193,15 +215,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         (await this.ctx.storage.get<boolean>('normalizeId')) || false;
       this.defaultSession =
         (await this.ctx.storage.get<string>('defaultSession')) || null;
-      const storedTokens =
-        (await this.ctx.storage.get<Record<string, string>>('portTokens')) ||
-        {};
-
-      // Convert stored tokens back to Map
-      this.portTokens = new Map();
-      for (const [portStr, token] of Object.entries(storedTokens)) {
-        this.portTokens.set(parseInt(portStr, 10), token);
-      }
 
       // Load saved timeout configuration (highest priority)
       const storedTimeouts =
@@ -453,8 +466,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     // Generate unique password file path
     const passwordFilePath = this.generatePasswordFilePath();
 
-    // Reserve mount path immediately to prevent race conditions
-    // (two concurrent mount calls would both pass validation otherwise)
+    // Reserve mount path before async operations so concurrent mounts see it
     this.activeMounts.set(mountPath, {
       bucket,
       mountPath,
@@ -684,6 +696,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   override async destroy(): Promise<void> {
     this.logger.info('Destroying sandbox container');
 
+    // Disconnect WebSocket transport if active
+    this.client.disconnect();
+
     // Unmount all mounted buckets and cleanup password files
     for (const [mountPath, mountInfo] of this.activeMounts.entries()) {
       if (mountInfo.mounted) {
@@ -773,7 +788,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     // Clear in-memory state that references the old container
     // This prevents stale references after container restarts
-    this.portTokens.clear();
     this.defaultSession = null;
     this.activeMounts.clear();
 
@@ -1035,8 +1049,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   wsConnect(request: Request, port: number): Promise<Response> {
-    // Dummy implementation that will be overridden by the stub
-    throw new Error('Not implemented here to avoid RPC serialization issues');
+    // Stub - actual implementation is attached by getSandbox() on the stub object
+    throw new Error(
+      'wsConnect must be called on the stub returned by getSandbox()'
+    );
   }
 
   private determinePort(url: URL): number {
@@ -1055,9 +1071,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * Ensure default session exists - lazy initialization
    * This is called automatically by all public methods that need a session
    *
-   * The session is persisted to Durable Object storage to survive hot reloads
-   * during development. If a session already exists in the container after reload,
-   * we reuse it instead of trying to create a new one.
+   * The session ID is persisted to DO storage. On container restart, if the
+   * container already has this session (from a previous instance), we sync
+   * our state rather than failing on duplicate creation.
    */
   private async ensureDefaultSession(): Promise<string> {
     const sessionId = `sandbox-${this.sandboxName || 'default'}`;
@@ -1908,8 +1924,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     signal?: string,
     sessionId?: string
   ): Promise<void> {
-    // Note: signal parameter is not currently supported by the HttpClient implementation
-    // The HTTP client already throws properly typed errors, so we just let them propagate
+    // Note: signal parameter is not currently supported by the HTTP client
     await this.client.processes.killProcess(id);
   }
 
@@ -1919,9 +1934,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   async cleanupCompletedProcesses(sessionId?: string): Promise<number> {
-    // For now, this would need to be implemented as a container endpoint
-    // as we no longer maintain local process storage
-    // We'll return 0 as a placeholder until the container endpoint is added
+    // Not yet implemented - requires container endpoint
     return 0;
   }
 
@@ -1929,7 +1942,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     id: string,
     sessionId?: string
   ): Promise<{ stdout: string; stderr: string; processId: string }> {
-    // The HTTP client already throws properly typed errors, so we just let them propagate
     const response = await this.client.processes.getProcessLogs(id);
     return {
       stdout: response.stdout,
@@ -2103,10 +2115,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       );
     }
 
-    // Generate and store token for this port
+    // Generate and store token for this port (storage is protected by input gates)
     const token = this.generatePortToken();
-    this.portTokens.set(port, token);
-    await this.persistPortTokens();
+    const tokens =
+      (await this.ctx.storage.get<Record<string, string>>('portTokens')) || {};
+    tokens[port.toString()] = token;
+    await this.ctx.storage.put('portTokens', tokens);
 
     const url = this.constructPreviewUrl(
       port,
@@ -2132,10 +2146,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     const sessionId = await this.ensureDefaultSession();
     await this.client.ports.unexposePort(port, sessionId);
 
-    // Clean up token for this port
-    if (this.portTokens.has(port)) {
-      this.portTokens.delete(port);
-      await this.persistPortTokens();
+    // Clean up token for this port (storage is protected by input gates)
+    const tokens =
+      (await this.ctx.storage.get<Record<string, string>>('portTokens')) || {};
+    if (tokens[port.toString()]) {
+      delete tokens[port.toString()];
+      await this.ctx.storage.put('portTokens', tokens);
     }
   }
 
@@ -2150,9 +2166,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       );
     }
 
+    // Read all tokens from storage (protected by input gates)
+    const tokens =
+      (await this.ctx.storage.get<Record<string, string>>('portTokens')) || {};
+
     return response.ports.map((port) => {
-      // Get token for this port - must exist for all exposed ports
-      const token = this.portTokens.get(port.port);
+      const token = tokens[port.port.toString()];
       if (!token) {
         throw new Error(
           `Port ${port.port} is exposed but has no token. This should not happen.`
@@ -2194,8 +2213,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       return false;
     }
 
-    // Get stored token for this port - must exist for all exposed ports
-    const storedToken = this.portTokens.get(port);
+    // Read stored token from storage (protected by input gates)
+    const tokens =
+      (await this.ctx.storage.get<Record<string, string>>('portTokens')) || {};
+    const storedToken = tokens[port.toString()];
     if (!storedToken) {
       // This should not happen - all exposed ports must have tokens
       this.logger.error(
@@ -2223,15 +2244,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       .replace(/\//g, '_')
       .replace(/=/g, '')
       .toLowerCase();
-  }
-
-  private async persistPortTokens(): Promise<void> {
-    // Convert Map to plain object for storage
-    const tokensObj: Record<string, string> = {};
-    for (const [port, token] of this.portTokens.entries()) {
-      tokensObj[port.toString()] = token;
-    }
-    await this.ctx.storage.put('portTokens', tokensObj);
   }
 
   private constructPreviewUrl(

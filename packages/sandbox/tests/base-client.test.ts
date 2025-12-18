@@ -292,7 +292,7 @@ describe('BaseHttpClient', () => {
         })
       );
 
-      const stub = { containerFetch: stubFetch };
+      const stub = { containerFetch: stubFetch, fetch: vi.fn() };
       const stubClient = new TestHttpClient({
         baseUrl: 'http://test.com',
         port: 3000,
@@ -316,7 +316,7 @@ describe('BaseHttpClient', () => {
       const stubFetch = vi
         .fn()
         .mockRejectedValue(new Error('Stub connection failed'));
-      const stub = { containerFetch: stubFetch };
+      const stub = { containerFetch: stubFetch, fetch: vi.fn() };
       const stubClient = new TestHttpClient({
         baseUrl: 'http://test.com',
         port: 3000,

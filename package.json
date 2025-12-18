@@ -28,7 +28,6 @@
     "packages/*",
     "tooling/*",
     "sites/*",
-    "tests/integration",
     "examples/*"
   ],
   "devDependencies": {

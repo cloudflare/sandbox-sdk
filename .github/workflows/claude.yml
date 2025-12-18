@@ -42,6 +42,13 @@ jobs:
           additional_permissions: |
             actions: read
 
+          plugin_marketplaces: |
+            https://github.com/obra/superpowers-marketplace.git
+            https://github.com/anthropics/claude-plugins-official.git
+          plugins: |
+            superpowers@superpowers-marketplace
+            ralph-wiggum@claude-plugins-official
+
           prompt: |
             REPO: ${{ github.repository }}
             ISSUE/PR: #${{ github.event.issue.number || github.event.pull_request.number }}
@@ -76,26 +83,36 @@ jobs:
                - Include exact file paths, complete code examples, verification steps
                - Save plan to `${{ runner.temp }}/implementation.md` (temporary, not committed)
 
-            3. Execute the complete implementation:
-               - Follow TDD for all code changes (write test first, watch fail, implement, verify pass)
-               - Complete the entire implementation
-               - Run all tests and verification steps
-               - **After completion**: Use requesting-code-review skill to review your own work
-               - Fix any issues found in self-review
+            3. **Define completion criteria** before implementing:
+               - What specific, verifiable conditions indicate success?
+               - Examples: "All tests pass", "Feature X works as specified", "Bug no longer reproducible"
+               - Write criteria to `${{ runner.temp }}/completion-criteria.md`
+
+            4. **Use ralph-loop for implementation** (iterative until done):
+               ```
+               /ralph-loop "Execute the implementation plan at ${{ runner.temp }}/implementation.md following TDD.
+               After each task: run tests, fix failures, continue to next task.
+               When ALL tasks complete AND all tests pass AND npm run check succeeds:
+               - Use requesting-code-review skill to self-review
+               - Fix any issues found
                - Commit changes following CLAUDE.md git guidelines
+               - Output <promise>IMPLEMENTATION_COMPLETE</promise>" --completion-promise "IMPLEMENTATION_COMPLETE" --max-iterations 20
+               ```
 
             **For direct execution tasks:**
             - Use test-driven-development for code changes
             - Use systematic-debugging for investigations
             - Use verification-before-completion before claiming done
             - Follow CLAUDE.md conventions
+            - For bug fixes with clear criteria, consider using ralph-loop to ensure fix is complete
 
             **REMEMBER:**
             - If a superpowers skill applies to your task, you MUST use it (not optional)
             - Write tests before code (TDD iron law)
             - Verify with evidence before claiming completion
             - Create commits following CLAUDE.md git guidelines
+            - Ralph-loop ensures you iterate until truly done (don't give up early)
 
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://docs.claude.com/en/docs/claude-code/cli-reference for available options
-          claude_args: '--allowedTools "Task,Skill,Read,Write,Edit,Glob,Grep,TodoWrite,mcp__cloudflare-docs__search_cloudflare_documentation,mcp__exa__get_code_context_exa,mcp__exa__web_search_exa,Bash(npm test:*),Bash(npm run *),Bash(npm install:*),Bash(npm ls:*),Bash(npm view:*),Bash(docker:*),Bash(git status),Bash(git log:*),Bash(git diff:*),Bash(git rev-parse:*),Bash(git fetch:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git branch:*),Bash(git checkout:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr checks:*),Bash(gh pr create:*),Bash(gh issue view:*),Bash(gh issue create:*),Bash(gh issue comment:*),Bash(gh repo view:*),Bash(gh api:*),Bash(find:*),Bash(tree:*),Bash(ls:*),Bash(jq:*)"'
+          claude_args: '--allowedTools "Task,Skill,SlashCommand,Read,Write,Edit,Glob,Grep,TodoWrite,mcp__cloudflare-docs__search_cloudflare_documentation,mcp__exa__get_code_context_exa,mcp__exa__web_search_exa,Bash(npm test:*),Bash(npm run *),Bash(npm install:*),Bash(npm ls:*),Bash(npm view:*),Bash(docker:*),Bash(git status),Bash(git log:*),Bash(git diff:*),Bash(git rev-parse:*),Bash(git fetch:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git branch:*),Bash(git checkout:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr checks:*),Bash(gh pr create:*),Bash(gh issue view:*),Bash(gh issue create:*),Bash(gh issue comment:*),Bash(gh repo view:*),Bash(gh api:*),Bash(find:*),Bash(tree:*),Bash(ls:*),Bash(jq:*)"'

@@ -1,4 +1,5 @@
 import type { Logger } from '@repo/shared';
+import type { ITransport, TransportMode } from './transport';
 
 /**
  * Minimal interface for container fetch functionality
@@ -9,6 +10,12 @@ export interface ContainerStub {
     options: RequestInit,
     port?: number
   ): Promise<Response>;
+
+  /**
+   * Fetch that can handle WebSocket upgrades (routes through parent Container class).
+   * Required for WebSocket transport to establish control plane connections.
+   */
+  fetch(request: Request): Promise<Response>;
 }
 
 /**
@@ -27,6 +34,25 @@ export interface HttpClientOptions {
     command: string
   ) => void;
   onError?: (error: string, command?: string) => void;
+
+  /**
+   * Transport mode: 'http' (default) or 'websocket'
+   * WebSocket mode multiplexes all requests over a single connection,
+   * reducing sub-request count in Workers/Durable Objects.
+   */
+  transportMode?: TransportMode;
+
+  /**
+   * WebSocket URL for WebSocket transport mode.
+   * Required when transportMode is 'websocket'.
+   */
+  wsUrl?: string;
+
+  /**
+   * Shared transport instance (for internal use).
+   * When provided, clients will use this transport instead of creating their own.
+   */
+  transport?: ITransport;
 }
 
 /**

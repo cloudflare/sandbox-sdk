@@ -27,7 +27,7 @@ describe('WebSocket Connections', () => {
   }, 120000);
 
   test('should establish WebSocket connection and echo messages', async () => {
-    const wsUrl = workerUrl.replace(/^http/, 'ws') + '/ws/echo';
+    const wsUrl = `${workerUrl.replace(/^http/, 'ws')}/ws/echo`;
     const ws = new WebSocket(wsUrl, {
       headers: { 'X-Sandbox-Id': sandboxId }
     });
@@ -52,7 +52,7 @@ describe('WebSocket Connections', () => {
   }, 20000);
 
   test('should handle multiple concurrent connections', async () => {
-    const wsUrl = workerUrl.replace(/^http/, 'ws') + '/ws/echo';
+    const wsUrl = `${workerUrl.replace(/^http/, 'ws')}/ws/echo`;
 
     // Open 3 connections
     const connections = [1, 2, 3].map(
@@ -84,6 +84,8 @@ describe('WebSocket Connections', () => {
 
     expect(results).toEqual(['Message 1', 'Message 2', 'Message 3']);
 
-    connections.forEach((ws) => ws.close());
+    for (const ws of connections) {
+      ws.close();
+    }
   }, 20000);
 });

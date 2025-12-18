@@ -104,31 +104,16 @@ export class InterpreterClient extends BaseHttpClient {
     timeoutMs?: number
   ): Promise<void> {
     return this.executeWithRetry(async () => {
-      const response = await this.doFetch('/api/execute/code', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'text/event-stream'
-        },
-        body: JSON.stringify({
-          context_id: contextId,
-          code,
-          language,
-          ...(timeoutMs !== undefined && { timeout_ms: timeoutMs })
-        })
+      // Use doStreamFetch which handles both WebSocket and HTTP streaming
+      const stream = await this.doStreamFetch('/api/execute/code', {
+        context_id: contextId,
+        code,
+        language,
+        ...(timeoutMs !== undefined && { timeout_ms: timeoutMs })
       });
 
-      if (!response.ok) {
-        const error = await this.parseErrorResponse(response);
-        throw error;
-      }
-
-      if (!response.body) {
-        throw new Error('No response body for streaming execution');
-      }
-
       // Process streaming response
-      for await (const chunk of this.readLines(response.body)) {
+      for await (const chunk of this.readLines(stream)) {
         await this.parseExecutionResult(chunk, callbacks);
       }
     });
@@ -172,6 +157,22 @@ export class InterpreterClient extends BaseHttpClient {
         const error = await this.parseErrorResponse(response);
         throw error;
       }
+    });
+  }
+
+  /**
+   * Get a raw stream for code execution.
+   * Used by CodeInterpreter.runCodeStreaming() for direct stream access.
+   */
+  async streamCode(
+    contextId: string,
+    code: string,
+    language?: string
+  ): Promise<ReadableStream<Uint8Array>> {
+    return this.doStreamFetch('/api/execute/code', {
+      context_id: contextId,
+      code,
+      language
     });
   }
 

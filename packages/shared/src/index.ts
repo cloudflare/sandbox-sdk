@@ -117,3 +117,20 @@ export {
   isProcessStatus,
   isTerminalStatus
 } from './types.js';
+// Export WebSocket protocol types
+export type {
+  WSClientMessage,
+  WSError,
+  WSMethod,
+  WSRequest,
+  WSResponse,
+  WSServerMessage,
+  WSStreamChunk
+} from './ws-types.js';
+export {
+  generateRequestId,
+  isWSError,
+  isWSRequest,
+  isWSResponse,
+  isWSStreamChunk
+} from './ws-types.js';

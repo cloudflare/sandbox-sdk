@@ -88,7 +88,7 @@ export class WranglerDevRunner {
 
         // Check for ready pattern: "Ready on http://..."
         const match = output.match(/Ready on (?<url>https?:\/\/[^\s]+)/);
-        if (match && match.groups?.url && !this.url) {
+        if (match?.groups?.url && !this.url) {
           this.url = match.groups.url;
           clearTimeout(timeoutId);
           resolve(this.url);

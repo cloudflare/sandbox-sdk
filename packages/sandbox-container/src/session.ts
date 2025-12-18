@@ -8,15 +8,14 @@
  *   which we later parse to reconstruct the streams.
  *
  * Execution Modes
- * - Foreground (exec): Runs in the main shell (state persists). We avoid FIFOs
- *   here to eliminate cross-process FIFO open/close races on silent commands
- *   (e.g., cd, mkdir). Instead, we use bash process substitution to prefix
- *   stdout/stderr inline and append to the log, then `wait` to ensure those
- *   consumers drain before the exit code file is written.
+ * - Foreground (exec): Runs in the main shell (state persists). Writes stdout
+ *   and stderr to temp files, then prefixes and merges them into the log.
+ *   Bash waits for file redirects to complete before continuing, ensuring
+ *   the log is fully written before the exit code is published.
  * - Background (execStream/startProcess): Uses FIFOs + background labelers.
  *   The command runs in a subshell redirected to FIFOs; labelers read from
  *   FIFOs and prefix lines into the log; we write an exit code file and a
- *   small monitor ensures labelers finish and FIFOs are cleaned up.
+ *   monitor waits for labelers to finish before signaling completion.
  *
  * Exit Detection
  * - We write the exit code to a file and detect completion via a hybrid
