@@ -94,26 +94,51 @@ jobs:
       - name: Install wrangler
         run: npm install -g wrangler
 
-      # Determine image tag based on context
       - name: Set image tags
         id: tags
         run: |
           echo "tag=pr-${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
 
-      # Build base image with GHA cache
-      - name: Build base image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: packages/sandbox/Dockerfile
-          target: default
-          load: true
-          tags: sandbox:local
-          build-args: SANDBOX_VERSION=${{ needs.unit-tests.outputs.version }}
-          cache-from: type=gha,scope=sandbox-base
-          cache-to: type=gha,mode=max,scope=sandbox-base
+      # Build base, python, opencode in parallel (independent targets)
+      - name: Build base, python, opencode images in parallel
+        run: |
+          set -e
+          VERSION="${{ needs.unit-tests.outputs.version }}"
 
-      # Push to Cloudflare registry
+          echo "Starting parallel builds..."
+
+          docker buildx build \
+            --cache-from type=gha,scope=sandbox-base \
+            --cache-to type=gha,mode=max,scope=sandbox-base \
+            --load -t sandbox:local \
+            --build-arg SANDBOX_VERSION=$VERSION \
+            -f packages/sandbox/Dockerfile --target default . &
+          PID_BASE=$!
+
+          docker buildx build \
+            --cache-from type=gha,scope=sandbox-python \
+            --cache-to type=gha,mode=max,scope=sandbox-python \
+            --load -t sandbox-python:local \
+            --build-arg SANDBOX_VERSION=$VERSION \
+            -f packages/sandbox/Dockerfile --target python . &
+          PID_PYTHON=$!
+
+          docker buildx build \
+            --cache-from type=gha,scope=sandbox-opencode \
+            --cache-to type=gha,mode=max,scope=sandbox-opencode \
+            --load -t sandbox-opencode:local \
+            --build-arg SANDBOX_VERSION=$VERSION \
+            -f packages/sandbox/Dockerfile --target opencode . &
+          PID_OPENCODE=$!
+
+          # Wait for all builds to complete
+          echo "Waiting for builds to complete..."
+          wait $PID_BASE || { echo "Base build failed"; exit 1; }
+          wait $PID_PYTHON || { echo "Python build failed"; exit 1; }
+          wait $PID_OPENCODE || { echo "Opencode build failed"; exit 1; }
+          echo "All builds completed successfully"
+
+      # Push base first (standalone needs it in registry)
       - name: Push base image to Cloudflare
         run: |
           docker tag sandbox:local sandbox:${{ steps.tags.outputs.tag }}
@@ -122,65 +147,35 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
-      # Build python image
-      - name: Build python image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: packages/sandbox/Dockerfile
-          target: python
-          load: true
-          tags: sandbox-python:local
-          build-args: SANDBOX_VERSION=${{ needs.unit-tests.outputs.version }}
-          cache-from: type=gha,scope=sandbox-python
-          cache-to: type=gha,mode=max,scope=sandbox-python
-
-      - name: Push python image to Cloudflare
-        run: |
-          docker tag sandbox-python:local sandbox-python:${{ steps.tags.outputs.tag }}
-          wrangler containers push sandbox-python:${{ steps.tags.outputs.tag }}
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-
-      # Build opencode image
-      - name: Build opencode image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: packages/sandbox/Dockerfile
-          target: opencode
-          load: true
-          tags: sandbox-opencode:local
-          build-args: SANDBOX_VERSION=${{ needs.unit-tests.outputs.version }}
-          cache-from: type=gha,scope=sandbox-opencode
-          cache-to: type=gha,mode=max,scope=sandbox-opencode
-
-      - name: Push opencode image to Cloudflare
-        run: |
-          docker tag sandbox-opencode:local sandbox-opencode:${{ steps.tags.outputs.tag }}
-          wrangler containers push sandbox-opencode:${{ steps.tags.outputs.tag }}
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-
-      # Build standalone image
-      # Uses registry image as base (buildx builds run in isolated container)
+      # Build standalone (references base from registry)
       - name: Build standalone image
-        uses: docker/build-push-action@v6
-        with:
-          context: tests/e2e/test-worker
-          file: tests/e2e/test-worker/Dockerfile.standalone
-          load: true
-          tags: sandbox-standalone:local
-          build-args: BASE_IMAGE=registry.cloudflare.com/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/sandbox:${{ steps.tags.outputs.tag }}
-          cache-from: type=gha,scope=sandbox-standalone
-          cache-to: type=gha,mode=max,scope=sandbox-standalone
-
-      - name: Push standalone image to Cloudflare
         run: |
-          docker tag sandbox-standalone:local sandbox-standalone:${{ steps.tags.outputs.tag }}
-          wrangler containers push sandbox-standalone:${{ steps.tags.outputs.tag }}
+          docker buildx build \
+            --cache-from type=gha,scope=sandbox-standalone \
+            --cache-to type=gha,mode=max,scope=sandbox-standalone \
+            --load -t sandbox-standalone:local \
+            --build-arg BASE_IMAGE=registry.cloudflare.com/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/sandbox:${{ steps.tags.outputs.tag }} \
+            -f tests/e2e/test-worker/Dockerfile.standalone tests/e2e/test-worker
+
+      # Push remaining images in parallel
+      - name: Push python, opencode, standalone images to Cloudflare
+        run: |
+          set -e
+          TAG="${{ steps.tags.outputs.tag }}"
+
+          docker tag sandbox-python:local sandbox-python:$TAG
+          wrangler containers push sandbox-python:$TAG &
+          PID1=$!
+
+          docker tag sandbox-opencode:local sandbox-opencode:$TAG
+          wrangler containers push sandbox-opencode:$TAG &
+          PID2=$!
+
+          docker tag sandbox-standalone:local sandbox-standalone:$TAG
+          wrangler containers push sandbox-standalone:$TAG &
+          PID3=$!
+
+          wait $PID1 $PID2 $PID3
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
