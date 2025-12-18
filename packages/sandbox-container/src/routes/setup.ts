@@ -196,6 +196,63 @@ export function setupRoutes(router: Router, container: Container): void {
     middleware: [container.get('loggingMiddleware')]
   });
 
+  // PTY management routes
+  router.register({
+    method: 'POST',
+    path: '/api/pty',
+    handler: async (req, ctx) => container.get('ptyHandler').handle(req, ctx),
+    middleware: [container.get('loggingMiddleware')]
+  });
+
+  router.register({
+    method: 'GET',
+    path: '/api/pty',
+    handler: async (req, ctx) => container.get('ptyHandler').handle(req, ctx),
+    middleware: [container.get('loggingMiddleware')]
+  });
+
+  router.register({
+    method: 'POST',
+    path: '/api/pty/attach/{sessionId}',
+    handler: async (req, ctx) => container.get('ptyHandler').handle(req, ctx),
+    middleware: [container.get('loggingMiddleware')]
+  });
+
+  router.register({
+    method: 'GET',
+    path: '/api/pty/{id}',
+    handler: async (req, ctx) => container.get('ptyHandler').handle(req, ctx),
+    middleware: [container.get('loggingMiddleware')]
+  });
+
+  router.register({
+    method: 'DELETE',
+    path: '/api/pty/{id}',
+    handler: async (req, ctx) => container.get('ptyHandler').handle(req, ctx),
+    middleware: [container.get('loggingMiddleware')]
+  });
+
+  router.register({
+    method: 'POST',
+    path: '/api/pty/{id}/input',
+    handler: async (req, ctx) => container.get('ptyHandler').handle(req, ctx),
+    middleware: [container.get('loggingMiddleware')]
+  });
+
+  router.register({
+    method: 'POST',
+    path: '/api/pty/{id}/resize',
+    handler: async (req, ctx) => container.get('ptyHandler').handle(req, ctx),
+    middleware: [container.get('loggingMiddleware')]
+  });
+
+  router.register({
+    method: 'GET',
+    path: '/api/pty/{id}/stream',
+    handler: async (req, ctx) => container.get('ptyHandler').handle(req, ctx),
+    middleware: [container.get('loggingMiddleware')]
+  });
+
   // Git operations
   router.register({
     method: 'POST',
