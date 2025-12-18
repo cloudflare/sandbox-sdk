@@ -125,7 +125,7 @@ describe('Transport', () => {
       const transport = createTransport({
         mode: 'http',
         baseUrl: 'http://localhost:3000',
-        stub: { containerFetch: mockContainerFetch },
+        stub: { containerFetch: mockContainerFetch, fetch: vi.fn() },
         port: 3000
       });
 

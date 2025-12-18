@@ -10,6 +10,12 @@ export interface ContainerStub {
     options: RequestInit,
     port?: number
   ): Promise<Response>;
+
+  /**
+   * Fetch that can handle WebSocket upgrades (routes through parent Container class).
+   * Required for WebSocket transport to establish control plane connections.
+   */
+  fetch(request: Request): Promise<Response>;
 }
 
 /**

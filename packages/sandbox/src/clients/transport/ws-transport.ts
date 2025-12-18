@@ -173,6 +173,9 @@ export class WebSocketTransport extends BaseTransport {
   /**
    * Connect using fetch-based WebSocket (Cloudflare Workers style)
    * This is required when running inside a Durable Object.
+   *
+   * Uses stub.fetch() which routes WebSocket upgrade requests through the
+   * parent Container class that supports the WebSocket protocol.
    */
   private async connectViaFetch(): Promise<void> {
     const timeoutMs = this.config.connectTimeoutMs ?? 30000;
@@ -186,18 +189,16 @@ export class WebSocketTransport extends BaseTransport {
       const wsPath = new URL(this.config.wsUrl!).pathname;
       const httpUrl = `http://localhost:${this.config.port || 3000}${wsPath}`;
 
-      // Use containerFetch with upgrade headers to establish WebSocket
-      const response = await this.config.stub!.containerFetch(
-        httpUrl,
-        {
-          headers: {
-            Upgrade: 'websocket',
-            Connection: 'Upgrade'
-          },
-          signal: controller.signal
+      // Create a Request with WebSocket upgrade headers
+      const request = new Request(httpUrl, {
+        headers: {
+          Upgrade: 'websocket',
+          Connection: 'Upgrade'
         },
-        this.config.port || 3000
-      );
+        signal: controller.signal
+      });
+
+      const response = await this.config.stub!.fetch(request);
 
       clearTimeout(timeout);
 
@@ -355,8 +356,6 @@ export class WebSocketTransport extends BaseTransport {
       path,
       body
     };
-
-    const encoder = new TextEncoder();
 
     return new ReadableStream<Uint8Array>({
       start: (controller) => {
