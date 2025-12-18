@@ -84,6 +84,7 @@ export default {
     } else {
       sandboxNamespace = env.Sandbox;
     }
+
     const sandbox = getSandbox(sandboxNamespace, sandboxId, {
       keepAlive
     });

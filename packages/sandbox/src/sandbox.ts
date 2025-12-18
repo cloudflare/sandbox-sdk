@@ -130,6 +130,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private logger: ReturnType<typeof createLogger>;
   private keepAliveEnabled: boolean = false;
   private activeMounts: Map<string, MountInfo> = new Map();
+  private transport: 'http' | 'websocket' = 'http';
 
   /**
    * Default container startup timeouts (conservative for production)
@@ -155,6 +156,21 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    */
   private containerTimeouts = { ...this.DEFAULT_CONTAINER_TIMEOUTS };
 
+  /**
+   * Create a SandboxClient with current transport settings
+   */
+  private createSandboxClient(): SandboxClient {
+    return new SandboxClient({
+      logger: this.logger,
+      port: 3000,
+      stub: this,
+      ...(this.transport === 'websocket' && {
+        transportMode: 'websocket' as const,
+        wsUrl: 'ws://localhost:3000/ws'
+      })
+    });
+  }
+
   constructor(ctx: DurableObjectState<{}>, env: Env) {
     super(ctx, env);
 
@@ -175,11 +191,18 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       sandboxId: this.ctx.id.toString()
     });
 
-    this.client = new SandboxClient({
-      logger: this.logger,
-      port: 3000, // Control plane port
-      stub: this
-    });
+    // Read transport setting from env var
+    const transportEnv = envObj?.SANDBOX_TRANSPORT;
+    if (transportEnv === 'websocket') {
+      this.transport = 'websocket';
+    } else if (transportEnv != null && transportEnv !== 'http') {
+      this.logger.warn(
+        `Invalid SANDBOX_TRANSPORT value: "${transportEnv}". Must be "http" or "websocket". Defaulting to "http".`
+      );
+    }
+
+    // Create client with transport based on env var (may be updated from storage)
+    this.client = this.createSandboxClient();
 
     // Initialize code interpreter - pass 'this' after client is ready
     // The CodeInterpreter extracts client.interpreter from the sandbox
@@ -672,6 +695,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    */
   override async destroy(): Promise<void> {
     this.logger.info('Destroying sandbox container');
+
+    // Disconnect WebSocket transport if active
+    this.client.disconnect();
 
     // Unmount all mounted buckets and cleanup password files
     for (const [mountPath, mountInfo] of this.activeMounts.entries()) {

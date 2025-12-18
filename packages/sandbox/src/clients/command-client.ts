@@ -105,15 +105,8 @@ export class CommandClient extends BaseHttpClient {
         ...(options?.cwd !== undefined && { cwd: options.cwd })
       };
 
-      const response = await this.doFetch('/api/execute/stream', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(data)
-      });
-
-      const stream = await this.handleStreamResponse(response);
+      // Use doStreamFetch which handles both WebSocket and HTTP streaming
+      const stream = await this.doStreamFetch('/api/execute/stream', data);
 
       this.logSuccess('Command stream started', command);
 

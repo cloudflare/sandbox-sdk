@@ -2,6 +2,7 @@ name: Cleanup PR Resources
 
 permissions:
   contents: read
+  actions: write # Required for gh cache delete
 
 on:
   pull_request:
@@ -23,16 +24,43 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Set worker name
+      - name: Set worker name prefix
         id: worker-name
         run: |
-          echo "worker_name=sandbox-e2e-test-worker-pr-${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
+          echo "worker_prefix=sandbox-e2e-test-worker-pr-${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
 
-      - name: Cleanup test deployment
+      - name: Cleanup test deployments
         continue-on-error: true
         run: |
           cd tests/e2e/test-worker
-          ../../../scripts/cleanup-test-deployment.sh ${{ steps.worker-name.outputs.worker_name }}
+          # Clean up both transport variants
+          for suffix in "" "-http" "-websocket"; do
+            WORKER="${{ steps.worker-name.outputs.worker_prefix }}${suffix}"
+            echo "Cleaning up: $WORKER"
+            ../../../scripts/cleanup-test-deployment.sh "$WORKER" || true
+          done
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Cleanup Cloudflare registry images
+        continue-on-error: true
+        run: |
+          PR=${{ github.event.pull_request.number }}
+          echo "Deleting PR images from Cloudflare registry..."
+
+          for image in sandbox sandbox-python sandbox-opencode sandbox-standalone; do
+            echo "Deleting $image:pr-$PR..."
+            npx wrangler containers images delete "$image:pr-$PR" || true
+          done
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Cleanup GHA cache for PR branch
+        continue-on-error: true
+        run: |
+          echo "Deleting GHA caches for PR #${{ github.event.pull_request.number }}..."
+          gh cache delete --all --ref "refs/pull/${{ github.event.pull_request.number }}/merge" || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

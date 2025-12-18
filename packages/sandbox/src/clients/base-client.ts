@@ -1,80 +1,62 @@
 import type { Logger } from '@repo/shared';
 import { createNoOpLogger } from '@repo/shared';
-import { getHttpStatus } from '@repo/shared/errors';
 import type { ErrorResponse as NewErrorResponse } from '../errors';
 import { createErrorFromResponse, ErrorCode } from '../errors';
 import type { SandboxError } from '../errors/classes';
+import { createTransport, type ITransport } from './transport';
 import type { HttpClientOptions, ResponseHandler } from './types';
 
-// Container startup retry configuration
-const TIMEOUT_MS = 120_000; // 2 minutes total retry budget
-const MIN_TIME_FOR_RETRY_MS = 15_000; // Need at least 15s remaining to retry (allows for longer container startups)
-
 /**
- * Abstract base class providing common HTTP functionality for all domain clients
+ * Abstract base class providing common HTTP/WebSocket functionality for all domain clients
+ *
+ * All requests go through the Transport abstraction layer, which handles:
+ * - HTTP and WebSocket modes transparently
+ * - Automatic retry for 503 errors (container starting)
+ * - Streaming responses
+ *
+ * WebSocket mode is useful when running inside Workers/Durable Objects
+ * where sub-request limits apply.
  */
 export abstract class BaseHttpClient {
-  protected baseUrl: string;
   protected options: HttpClientOptions;
   protected logger: Logger;
+  protected transport: ITransport;
 
   constructor(options: HttpClientOptions = {}) {
     this.options = options;
     this.logger = options.logger ?? createNoOpLogger();
-    this.baseUrl = this.options.baseUrl!;
+
+    // Always create a Transport - it handles both HTTP and WebSocket modes
+    if (options.transport) {
+      this.transport = options.transport;
+    } else {
+      const mode = options.transportMode ?? 'http';
+      this.transport = createTransport({
+        mode,
+        baseUrl: options.baseUrl ?? 'http://localhost:3000',
+        wsUrl: options.wsUrl,
+        logger: this.logger,
+        stub: options.stub,
+        port: options.port
+      });
+    }
   }
 
   /**
-   * Core HTTP request method with automatic retry for container startup delays
-   * Retries on 503 (Service Unavailable) which indicates container is starting
+   * Check if using WebSocket transport
+   */
+  protected isWebSocketMode(): boolean {
+    return this.transport.getMode() === 'websocket';
+  }
+
+  /**
+   * Core fetch method - delegates to Transport which handles retry logic
    */
   protected async doFetch(
     path: string,
     options?: RequestInit
   ): Promise<Response> {
-    const startTime = Date.now();
-    let attempt = 0;
-
-    while (true) {
-      const response = await this.executeFetch(path, options);
-
-      // Check if this is a retryable container error (503 = transient)
-      const shouldRetry = this.isRetryableContainerError(response);
-
-      if (shouldRetry) {
-        const elapsed = Date.now() - startTime;
-        const remaining = TIMEOUT_MS - elapsed;
-
-        // Check if we have enough time for another attempt
-        if (remaining > MIN_TIME_FOR_RETRY_MS) {
-          // Exponential backoff with longer delays for container ops: 3s, 6s, 12s, 24s, 30s
-          const delay = Math.min(3000 * 2 ** attempt, 30000);
-
-          this.logger.info('Container not ready, retrying', {
-            status: response.status,
-            attempt: attempt + 1,
-            delayMs: delay,
-            remainingSec: Math.floor(remaining / 1000)
-          });
-
-          await new Promise((resolve) => setTimeout(resolve, delay));
-          attempt++;
-          continue;
-        }
-
-        // Timeout exhausted
-        this.logger.error(
-          'Container failed to become ready',
-          new Error(
-            `Failed after ${attempt + 1} attempts over ${Math.floor(elapsed / 1000)}s`
-          )
-        );
-        return response;
-      }
-
-      // Not a retryable error or request succeeded
-      return response;
-    }
+    return this.transport.fetch(path, options);
   }
 
   /**
@@ -202,6 +184,41 @@ export abstract class BaseHttpClient {
   }
 
   /**
+   * Stream request handler
+   *
+   * For HTTP mode, uses doFetch + handleStreamResponse to get proper error typing.
+   * For WebSocket mode, uses Transport's streaming support.
+   *
+   * @param path - The API path to call
+   * @param body - Optional request body (for POST requests)
+   * @param method - HTTP method (default: POST, use GET for process logs)
+   */
+  protected async doStreamFetch(
+    path: string,
+    body?: unknown,
+    method: 'GET' | 'POST' = 'POST'
+  ): Promise<ReadableStream<Uint8Array>> {
+    // WebSocket mode uses Transport's streaming directly
+    if (this.transport.getMode() === 'websocket') {
+      try {
+        return await this.transport.fetchStream(path, body, method);
+      } catch (error) {
+        this.logError(`stream ${method} ${path}`, error);
+        throw error;
+      }
+    }
+
+    // HTTP mode: use doFetch + handleStreamResponse for proper error typing
+    const response = await this.doFetch(path, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: body && method === 'POST' ? JSON.stringify(body) : undefined
+    });
+
+    return this.handleStreamResponse(response);
+  }
+
+  /**
    * Utility method to log successful operations
    */
   protected logSuccess(operation: string, details?: string): void {
@@ -235,54 +252,6 @@ export abstract class BaseHttpClient {
         `Error in ${operation}`,
         error instanceof Error ? error : new Error(String(error))
       );
-    }
-  }
-
-  /**
-   * Check if response indicates a retryable container error
-   *
-   * The Sandbox DO returns proper HTTP status codes:
-   * - 503 Service Unavailable: Transient errors (container starting, port not ready)
-   * - 500 Internal Server Error: Permanent errors (bad config, missing image)
-   *
-   * We only retry on 503, which indicates the container is starting up.
-   * The Retry-After header suggests how long to wait.
-   *
-   * @param response - HTTP response to check
-   * @returns true if error is retryable (503), false otherwise
-   */
-  private isRetryableContainerError(response: Response): boolean {
-    // 503 = transient, retry
-    // 500 = permanent, don't retry
-    // Everything else = not a container error
-    return response.status === 503;
-  }
-
-  private async executeFetch(
-    path: string,
-    options?: RequestInit
-  ): Promise<Response> {
-    const url = this.options.stub
-      ? `http://localhost:${this.options.port}${path}`
-      : `${this.baseUrl}${path}`;
-
-    try {
-      if (this.options.stub) {
-        return await this.options.stub.containerFetch(
-          url,
-          options || {},
-          this.options.port
-        );
-      } else {
-        return await fetch(url, options);
-      }
-    } catch (error) {
-      this.logger.error(
-        'HTTP request error',
-        error instanceof Error ? error : new Error(String(error)),
-        { method: options?.method || 'GET', url }
-      );
-      throw error;
     }
   }
 }

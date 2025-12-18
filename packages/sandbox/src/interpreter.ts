@@ -96,38 +96,12 @@ export class CodeInterpreter {
       context = await this.getOrCreateDefaultContext(language);
     }
 
-    // Create streaming response
-    // Note: doFetch is protected but we need direct access for raw stream response
-    const response = await (this.interpreterClient as any).doFetch(
-      '/api/execute/code',
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'text/event-stream'
-        },
-        body: JSON.stringify({
-          context_id: context.id,
-          code,
-          language: options.language
-        })
-      }
+    // Use streamCode which handles both HTTP and WebSocket streaming
+    return this.interpreterClient.streamCode(
+      context.id,
+      code,
+      options.language
     );
-
-    if (!response.ok) {
-      const errorData = (await response
-        .json()
-        .catch(() => ({ error: 'Unknown error' }))) as { error?: string };
-      throw new Error(
-        errorData.error || `Failed to execute code: ${response.status}`
-      );
-    }
-
-    if (!response.body) {
-      throw new Error('No response body for streaming execution');
-    }
-
-    return response.body;
   }
 
   /**
