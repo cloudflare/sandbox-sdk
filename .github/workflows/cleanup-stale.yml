@@ -37,13 +37,13 @@ jobs:
           # List all workers and filter for PR test workers
           WORKERS=$(npx wrangler workers list --json 2>/dev/null || echo "[]")
 
-          echo "$WORKERS" | jq -r '.[] | select(.name | test("^sandbox-e2e-test-worker-pr-[0-9]+$")) | .name' | while read -r WORKER_NAME; do
+          echo "$WORKERS" | jq -r '.[] | select(.name | test("^sandbox-e2e-test-worker-pr-[0-9]+(-http|-websocket)?$")) | .name' | while read -r WORKER_NAME; do
             if [ -z "$WORKER_NAME" ]; then
               continue
             fi
 
-            # Extract PR number from worker name
-            PR_NUMBER=$(echo "$WORKER_NAME" | sed 's/sandbox-e2e-test-worker-pr-//')
+            # Extract PR number from worker name (strip prefix and any transport suffix)
+            PR_NUMBER=$(echo "$WORKER_NAME" | sed 's/sandbox-e2e-test-worker-pr-//' | sed 's/-http$//' | sed 's/-websocket$//')
 
             echo ""
             echo "Checking worker: $WORKER_NAME (PR #$PR_NUMBER)"

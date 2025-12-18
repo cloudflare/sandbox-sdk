@@ -74,11 +74,91 @@ jobs:
       - name: Run container unit tests
         run: npm run test -w @repo/sandbox-container
 
-  # E2E tests against deployed worker
-  e2e-tests:
+  # Build Docker images once for E2E tests (shared between http/websocket jobs)
+  build-docker:
     needs: unit-tests
     if: ${{ !contains(github.event.pull_request.title, 'Version Packages') }}
-    timeout-minutes: 30
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Build base image with GHA cache
+      - name: Build base image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: packages/sandbox/Dockerfile
+          target: default
+          platforms: linux/amd64
+          build-args: SANDBOX_VERSION=${{ needs.unit-tests.outputs.version || '0.0.0' }}
+          tags: cloudflare/sandbox-test:${{ needs.unit-tests.outputs.version || '0.0.0' }}
+          outputs: type=docker,dest=/tmp/image-base.tar
+          cache-from: type=gha,scope=sandbox-base
+          cache-to: type=gha,mode=max,scope=sandbox-base
+
+      # Build python image (shares base layers via cache)
+      - name: Build python image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: packages/sandbox/Dockerfile
+          target: python
+          platforms: linux/amd64
+          build-args: SANDBOX_VERSION=${{ needs.unit-tests.outputs.version || '0.0.0' }}
+          tags: cloudflare/sandbox-test:${{ needs.unit-tests.outputs.version || '0.0.0' }}-python
+          outputs: type=docker,dest=/tmp/image-python.tar
+          cache-from: type=gha,scope=sandbox-python
+          cache-to: type=gha,mode=max,scope=sandbox-python
+
+      # Build opencode image
+      - name: Build opencode image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: packages/sandbox/Dockerfile
+          target: opencode
+          platforms: linux/amd64
+          build-args: SANDBOX_VERSION=${{ needs.unit-tests.outputs.version || '0.0.0' }}
+          tags: cloudflare/sandbox-test:${{ needs.unit-tests.outputs.version || '0.0.0' }}-opencode
+          outputs: type=docker,dest=/tmp/image-opencode.tar
+          cache-from: type=gha,scope=sandbox-opencode
+          cache-to: type=gha,mode=max,scope=sandbox-opencode
+
+      # Build standalone image (uses different Dockerfile)
+      - name: Prepare standalone Dockerfile
+        run: |
+          VERSION=${{ needs.unit-tests.outputs.version || '0.0.0' }}
+          cd tests/e2e/test-worker
+          sed -E "s|cloudflare/sandbox-test:[0-9]+\.[0-9]+\.[0-9]+|cloudflare/sandbox-test:$VERSION|g" \
+            Dockerfile.standalone > Dockerfile.standalone.versioned
+
+      - name: Build standalone image
+        uses: docker/build-push-action@v6
+        with:
+          context: tests/e2e/test-worker
+          file: tests/e2e/test-worker/Dockerfile.standalone.versioned
+          platforms: linux/amd64
+          tags: cloudflare/sandbox-test:${{ needs.unit-tests.outputs.version || '0.0.0' }}-standalone
+          outputs: type=docker,dest=/tmp/image-standalone.tar
+          cache-from: type=gha,scope=sandbox-standalone
+          cache-to: type=gha,mode=max,scope=sandbox-standalone
+
+      # Upload all image tars as single artifact
+      - name: Upload Docker images artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-images
+          path: /tmp/image-*.tar
+          retention-days: 1
+
+  # E2E tests against deployed worker
+  e2e-tests:
+    needs: [unit-tests, build-docker]
+    timeout-minutes: 20
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -120,32 +200,20 @@ jobs:
           cd tests/e2e/test-worker
           ./generate-config.sh ${{ steps.env-name.outputs.worker_name }} ${{ steps.env-name.outputs.worker_name }} ${{ matrix.transport }}
 
-      # Build Docker image for test worker with caching
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      # Download and load pre-built Docker images
+      - name: Download Docker images
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-images
+          path: /tmp
 
-      - name: Build test worker Docker images (base + python + opencode + standalone)
+      - name: Load Docker images
         run: |
-          VERSION=${{ needs.unit-tests.outputs.version || '0.0.0' }}
-          # Build base image (no Python) - used by Sandbox binding
-          docker build -f packages/sandbox/Dockerfile --target default --platform linux/amd64 \
-            --build-arg SANDBOX_VERSION=$VERSION -t cloudflare/sandbox-test:$VERSION .
-          # Build python image - used by SandboxPython binding
-          docker build -f packages/sandbox/Dockerfile --target python --platform linux/amd64 \
-            --build-arg SANDBOX_VERSION=$VERSION -t cloudflare/sandbox-test:$VERSION-python .
-          # Build opencode image - used by SandboxOpencode binding
-          docker build -f packages/sandbox/Dockerfile --target opencode --platform linux/amd64 \
-            --build-arg SANDBOX_VERSION=$VERSION -t cloudflare/sandbox-test:$VERSION-opencode .
-          # Build standalone image (arbitrary base with binary) - used by SandboxStandalone binding
-          # Use regex to replace any version number, avoiding hardcoded version mismatch
-          # Build from test-worker directory so COPY startup-test.sh works
-          cd tests/e2e/test-worker
-          sed -E "s|cloudflare/sandbox-test:[0-9]+\.[0-9]+\.[0-9]+|cloudflare/sandbox-test:$VERSION|g" \
-            Dockerfile.standalone > Dockerfile.standalone.tmp
-          docker build -f Dockerfile.standalone.tmp --platform linux/amd64 \
-            -t cloudflare/sandbox-test:$VERSION-standalone .
-          rm Dockerfile.standalone.tmp
-          cd ../../..
+          for tar in /tmp/image-*.tar; do
+            echo "Loading $tar..."
+            docker load -i "$tar"
+          done
+          docker images | grep sandbox-test
 
       # Deploy test worker using official Cloudflare action
       - name: Deploy test worker
