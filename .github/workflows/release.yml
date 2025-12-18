@@ -81,14 +81,17 @@ jobs:
         run: npm run test -w @repo/sandbox-container
 
   # E2E tests - runs on every push to main
+  # Uses buildx + GHA cache (shared with publish-release) + CF registry for fast deploys
   e2e-tests:
     needs: [unit-tests]
     if: ${{ github.repository_owner == 'cloudflare' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
 
     steps:
       - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
 
       - uses: actions/setup-node@v4
         with:
@@ -102,40 +105,105 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install wrangler
+        run: npm install -g wrangler
+
       - name: Build packages
         run: npm run build
 
+      # Build base image with GHA cache (shared with publish-release)
+      - name: Build base image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: packages/sandbox/Dockerfile
+          target: default
+          load: true
+          tags: sandbox:local
+          build-args: SANDBOX_VERSION=${{ needs.unit-tests.outputs.version }}
+          cache-from: type=gha,scope=release-default
+          cache-to: type=gha,mode=max,scope=release-default
+
+      - name: Push base image to Cloudflare
+        run: |
+          docker tag sandbox:local sandbox:main
+          wrangler containers push sandbox:main
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      # Build python image
+      - name: Build python image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: packages/sandbox/Dockerfile
+          target: python
+          load: true
+          tags: sandbox-python:local
+          build-args: SANDBOX_VERSION=${{ needs.unit-tests.outputs.version }}
+          cache-from: type=gha,scope=release-python
+          cache-to: type=gha,mode=max,scope=release-python
+
+      - name: Push python image to Cloudflare
+        run: |
+          docker tag sandbox-python:local sandbox-python:main
+          wrangler containers push sandbox-python:main
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      # Build opencode image
+      - name: Build opencode image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: packages/sandbox/Dockerfile
+          target: opencode
+          load: true
+          tags: sandbox-opencode:local
+          build-args: SANDBOX_VERSION=${{ needs.unit-tests.outputs.version }}
+          cache-from: type=gha,scope=release-opencode
+          cache-to: type=gha,mode=max,scope=release-opencode
+
+      - name: Push opencode image to Cloudflare
+        run: |
+          docker tag sandbox-opencode:local sandbox-opencode:main
+          wrangler containers push sandbox-opencode:main
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      # Build standalone image
+      # Uses registry image as base (buildx builds run in isolated container)
+      - name: Build standalone image
+        uses: docker/build-push-action@v6
+        with:
+          context: tests/e2e/test-worker
+          file: tests/e2e/test-worker/Dockerfile.standalone
+          load: true
+          tags: sandbox-standalone:local
+          build-args: BASE_IMAGE=registry.cloudflare.com/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/sandbox:main
+          cache-from: type=gha,scope=release-standalone
+          cache-to: type=gha,mode=max,scope=release-standalone
+
+      - name: Push standalone image to Cloudflare
+        run: |
+          docker tag sandbox-standalone:local sandbox-standalone:main
+          wrangler containers push sandbox-standalone:main
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      # Generate wrangler config with pre-pushed image references
       - name: Generate wrangler config
         run: |
           cd tests/e2e/test-worker
-          ./generate-config.sh ${{ env.E2E_WORKER_NAME }}
+          ./generate-config.sh ${{ env.E2E_WORKER_NAME }} ${{ env.E2E_WORKER_NAME }} http "registry:main"
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build test worker Docker images (base + python + opencode + standalone)
-        run: |
-          VERSION=${{ needs.unit-tests.outputs.version }}
-          # Build base image (no Python) - used by Sandbox binding
-          docker build -f packages/sandbox/Dockerfile --target default --platform linux/amd64 \
-            --build-arg SANDBOX_VERSION=$VERSION -t cloudflare/sandbox-test:$VERSION .
-          # Build python image - used by SandboxPython binding
-          docker build -f packages/sandbox/Dockerfile --target python --platform linux/amd64 \
-            --build-arg SANDBOX_VERSION=$VERSION -t cloudflare/sandbox-test:$VERSION-python .
-          # Build opencode image - used by SandboxOpencode binding
-          docker build -f packages/sandbox/Dockerfile --target opencode --platform linux/amd64 \
-            --build-arg SANDBOX_VERSION=$VERSION -t cloudflare/sandbox-test:$VERSION-opencode .
-          # Build standalone image (arbitrary base with binary) - used by SandboxStandalone binding
-          # Use regex to replace any version number, avoiding hardcoded version mismatch
-          # Build from test-worker directory so COPY startup-test.sh works
-          cd tests/e2e/test-worker
-          sed -E "s|cloudflare/sandbox-test:[0-9]+\.[0-9]+\.[0-9]+|cloudflare/sandbox-test:$VERSION|g" \
-            Dockerfile.standalone > Dockerfile.standalone.tmp
-          docker build -f Dockerfile.standalone.tmp --platform linux/amd64 \
-            -t cloudflare/sandbox-test:$VERSION-standalone .
-          rm Dockerfile.standalone.tmp
-          cd ../../..
-
+      # Deploy test worker (images are pre-pushed to Cloudflare registry)
       - name: Deploy test worker
         uses: cloudflare/wrangler-action@v3
         with:

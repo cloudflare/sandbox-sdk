@@ -17,22 +17,22 @@
   "containers": [
     {
       "class_name": "Sandbox",
-      "image": "./Dockerfile",
+      "image": "{{IMAGE_SANDBOX}}",
       "name": "{{CONTAINER_NAME}}"
     },
     {
       "class_name": "SandboxPython",
-      "image": "./Dockerfile.python",
+      "image": "{{IMAGE_PYTHON}}",
       "name": "{{CONTAINER_NAME}}-python"
     },
     {
       "class_name": "SandboxOpencode",
-      "image": "./Dockerfile.opencode",
+      "image": "{{IMAGE_OPENCODE}}",
       "name": "{{CONTAINER_NAME}}-opencode"
     },
     {
       "class_name": "SandboxStandalone",
-      "image": "./Dockerfile.standalone",
+      "image": "{{IMAGE_STANDALONE}}",
       "name": "{{CONTAINER_NAME}}-standalone"
     }
   ],
