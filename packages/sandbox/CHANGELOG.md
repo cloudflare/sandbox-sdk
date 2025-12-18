@@ -1,5 +1,14 @@
 # @cloudflare/sandbox
 
+## 0.6.7
+
+### Patch Changes
+
+- [#305](https://github.com/cloudflare/sandbox-sdk/pull/305) [`f2544c1`](https://github.com/cloudflare/sandbox-sdk/commit/f2544c1f66408b85ed10b69c8eb964bf1a02ed0c) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - Replace HTTP polling with SSE streaming for waitForPort.
+  This reduces container log noise and eliminates repeated HTTP requests during port readiness checks.
+
+- [#253](https://github.com/cloudflare/sandbox-sdk/pull/253) [`4b4ab48`](https://github.com/cloudflare/sandbox-sdk/commit/4b4ab483345ed3ffbd716a1ba4dcdb7df51fbd9c) Thanks [@deathbyknowledge](https://github.com/deathbyknowledge)! - Add WebSocket transport to avoid sub-request limits in Workers and Durable Objects. Set `SANDBOX_TRANSPORT=websocket` environment variable to multiplex all SDK calls over a single persistent connection.
+
 ## 0.6.6
 
 ### Patch Changes
@@ -102,10 +111,10 @@
 
   ```dockerfile
   # Before
-  FROM cloudflare/sandbox:0.6.6
+  FROM cloudflare/sandbox:0.6.7
 
   # After
-  FROM cloudflare/sandbox:0.6.6-python
+  FROM cloudflare/sandbox:0.6.7-python
   ```
 
   Without this change, Python execution will fail with `PYTHON_NOT_AVAILABLE` error.
