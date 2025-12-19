@@ -150,29 +150,39 @@ export class PtyManager {
     return Array.from(this.sessions.values()).map((s) => this.toInfo(s));
   }
 
-  write(id: string, data: string): void {
+  write(id: string, data: string): { success: boolean; error?: string } {
     const session = this.sessions.get(id);
     if (!session) {
       this.logger.warn('Write to unknown PTY', { ptyId: id });
-      return;
+      return { success: false, error: 'PTY not found' };
     }
     if (session.state !== 'running') {
       this.logger.warn('Write to exited PTY', { ptyId: id });
-      return;
+      return { success: false, error: 'PTY has exited' };
     }
     session.terminal.write(data);
+    return { success: true };
   }
 
-  resize(id: string, cols: number, rows: number): void {
+  resize(
+    id: string,
+    cols: number,
+    rows: number
+  ): { success: boolean; error?: string } {
     const session = this.sessions.get(id);
     if (!session) {
       this.logger.warn('Resize unknown PTY', { ptyId: id });
-      return;
+      return { success: false, error: 'PTY not found' };
+    }
+    if (session.state !== 'running') {
+      this.logger.warn('Resize exited PTY', { ptyId: id });
+      return { success: false, error: 'PTY has exited' };
     }
     session.terminal.resize(cols, rows);
     session.cols = cols;
     session.rows = rows;
     this.logger.debug('PTY resized', { ptyId: id, cols, rows });
+    return { success: true };
   }
 
   kill(id: string, signal?: string): void {

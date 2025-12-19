@@ -103,6 +103,7 @@ export type {
   PtyGetResult,
   PtyInfo,
   PtyInputRequest,
+  PtyInputResult,
   PtyKillResult,
   PtyListResult,
   PtyResizeRequest,

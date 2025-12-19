@@ -87,15 +87,37 @@ export class WebSocketAdapter {
       return;
     }
 
-    // Handle PTY input messages (fire-and-forget)
+    // Handle PTY input messages
     if (isWSPtyInput(parsed)) {
-      this.ptyManager.write(parsed.ptyId, parsed.data);
+      const result = this.ptyManager.write(parsed.ptyId, parsed.data);
+      if (!result.success) {
+        this.sendError(
+          ws,
+          parsed.ptyId,
+          'PTY_ERROR',
+          result.error ?? 'PTY write failed',
+          400
+        );
+      }
       return;
     }
 
-    // Handle PTY resize messages (fire-and-forget)
+    // Handle PTY resize messages
     if (isWSPtyResize(parsed)) {
-      this.ptyManager.resize(parsed.ptyId, parsed.cols, parsed.rows);
+      const result = this.ptyManager.resize(
+        parsed.ptyId,
+        parsed.cols,
+        parsed.rows
+      );
+      if (!result.success) {
+        this.sendError(
+          ws,
+          parsed.ptyId,
+          'PTY_ERROR',
+          result.error ?? 'PTY resize failed',
+          400
+        );
+      }
       return;
     }
 

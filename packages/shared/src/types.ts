@@ -1155,6 +1155,16 @@ export interface PtyInputRequest {
 }
 
 /**
+ * Result from sending input to PTY
+ */
+export interface PtyInputResult {
+  success: boolean;
+  ptyId: string;
+  error?: string;
+  timestamp: string;
+}
+
+/**
  * Request to resize PTY
  */
 export interface PtyResizeRequest {
@@ -1206,6 +1216,7 @@ export interface PtyResizeResult {
   ptyId: string;
   cols: number;
   rows: number;
+  error?: string;
   timestamp: string;
 }
 

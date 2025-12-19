@@ -5,6 +5,7 @@ import type {
   PtyCreateResult,
   PtyGetResult,
   PtyInputRequest,
+  PtyInputResult,
   PtyKillResult,
   PtyListResult,
   PtyResizeRequest,
@@ -239,19 +240,26 @@ export class PtyHandler extends BaseHandler<Request, Response> {
     context: RequestContext,
     ptyId: string
   ): Promise<Response> {
-    const session = this.ptyManager.get(ptyId);
+    const body = await this.parseRequestBody<PtyInputRequest>(request);
+    const result = this.ptyManager.write(ptyId, body.data);
 
-    if (!session) {
+    if (!result.success) {
       return this.createErrorResponse(
-        { message: 'PTY not found', code: ErrorCode.PROCESS_NOT_FOUND },
+        {
+          message: result.error ?? 'PTY write failed',
+          code: ErrorCode.PROCESS_NOT_FOUND
+        },
         context
       );
     }
 
-    const body = await this.parseRequestBody<PtyInputRequest>(request);
-    this.ptyManager.write(ptyId, body.data);
+    const response: PtyInputResult = {
+      success: true,
+      ptyId,
+      timestamp: new Date().toISOString()
+    };
 
-    return this.createTypedResponse({ success: true }, context);
+    return this.createTypedResponse(response, context);
   }
 
   private async handleResize(
@@ -259,17 +267,18 @@ export class PtyHandler extends BaseHandler<Request, Response> {
     context: RequestContext,
     ptyId: string
   ): Promise<Response> {
-    const session = this.ptyManager.get(ptyId);
+    const body = await this.parseRequestBody<PtyResizeRequest>(request);
+    const result = this.ptyManager.resize(ptyId, body.cols, body.rows);
 
-    if (!session) {
+    if (!result.success) {
       return this.createErrorResponse(
-        { message: 'PTY not found', code: ErrorCode.PROCESS_NOT_FOUND },
+        {
+          message: result.error ?? 'PTY resize failed',
+          code: ErrorCode.PROCESS_NOT_FOUND
+        },
         context
       );
     }
-
-    const body = await this.parseRequestBody<PtyResizeRequest>(request);
-    this.ptyManager.resize(ptyId, body.cols, body.rows);
 
     const response: PtyResizeResult = {
       success: true,

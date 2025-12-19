@@ -199,8 +199,37 @@ describe('PTY Workflow', () => {
       body: JSON.stringify({ cols: 80, rows: 24 })
     });
     const createData = (await createResponse.json()) as {
-      pty: { id: string };
+      pty: { id: string; state: string; exitCode?: number };
     };
+    console.log(
+      '[Test] PTY created:',
+      createData.pty.id,
+      'state:',
+      createData.pty.state,
+      'exitCode:',
+      createData.pty.exitCode
+    );
+
+    // Small delay to let PTY initialize
+    await new Promise((r) => setTimeout(r, 100));
+
+    // Check PTY state before resize
+    const checkResponse = await fetch(
+      `${workerUrl}/api/pty/${createData.pty.id}`,
+      {
+        method: 'GET',
+        headers
+      }
+    );
+    const checkData = (await checkResponse.json()) as {
+      pty: { state: string; exitCode?: number };
+    };
+    console.log(
+      '[Test] PTY state before resize:',
+      checkData.pty?.state,
+      'exitCode:',
+      checkData.pty?.exitCode
+    );
 
     // Resize via HTTP
     const resizeResponse = await fetch(
