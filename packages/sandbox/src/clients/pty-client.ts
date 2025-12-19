@@ -1,6 +1,7 @@
 import type {
   AttachPtyOptions,
   CreatePtyOptions,
+  Logger,
   PtyCreateResult,
   PtyGetResult,
   PtyInfo,
@@ -59,11 +60,13 @@ class PtyHandle implements Pty {
   constructor(
     readonly id: string,
     readonly sessionId: string | undefined,
-    private transport: ITransport
+    private transport: ITransport,
+    private logger: Logger
   ) {
     // Setup exit promise
     this.exited = new Promise((resolve) => {
       const unsub = this.transport.onPtyExit(this.id, (exitCode) => {
+        unsub(); // Clean up immediately
         resolve({ exitCode });
       });
       this.exitListeners.push(unsub);
@@ -84,8 +87,8 @@ class PtyHandle implements Pty {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ data })
         })
-        .catch(() => {
-          // Ignore errors for fire-and-forget
+        .catch((error: unknown) => {
+          this.logger.warn('PTY write failed', { ptyId: this.id, error });
         });
     }
   }
@@ -104,8 +107,8 @@ class PtyHandle implements Pty {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ cols, rows })
         })
-        .catch(() => {
-          // Ignore errors for fire-and-forget
+        .catch((error: unknown) => {
+          this.logger.warn('PTY resize failed', { ptyId: this.id, error });
         });
     }
   }
@@ -214,7 +217,8 @@ export class PtyClient extends BaseHttpClient {
     return new PtyHandle(
       response.pty.id,
       response.pty.sessionId,
-      this.transport
+      this.transport,
+      this.logger
     );
   }
 
@@ -246,7 +250,8 @@ export class PtyClient extends BaseHttpClient {
     return new PtyHandle(
       response.pty.id,
       response.pty.sessionId,
-      this.transport
+      this.transport,
+      this.logger
     );
   }
 
@@ -272,7 +277,12 @@ export class PtyClient extends BaseHttpClient {
 
     this.logSuccess('PTY retrieved', id);
 
-    return new PtyHandle(result.pty.id, result.pty.sessionId, this.transport);
+    return new PtyHandle(
+      result.pty.id,
+      result.pty.sessionId,
+      this.transport,
+      this.logger
+    );
   }
 
   /**

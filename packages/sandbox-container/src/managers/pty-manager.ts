@@ -1,9 +1,32 @@
 import type { CreatePtyOptions, Logger, PtyInfo, PtyState } from '@repo/shared';
 
+/**
+ * Minimal interface for Bun.Terminal (introduced in Bun v1.3.5+)
+ * @types/bun doesn't include this yet, so we define it here
+ */
+export interface BunTerminal {
+  write(data: string): void;
+  resize(cols: number, rows: number): void;
+}
+
+/**
+ * Options for creating a BunTerminal
+ */
+export interface BunTerminalOptions {
+  cols: number;
+  rows: number;
+  data: (terminal: BunTerminal, data: Uint8Array) => void;
+}
+
+/**
+ * Constructor type for BunTerminal
+ */
+type BunTerminalConstructor = new (options: BunTerminalOptions) => BunTerminal;
+
 export interface PtySession {
   id: string;
   sessionId?: string;
-  terminal: any; // Bun.Terminal type not available in older @types/bun
+  terminal: BunTerminal;
   process: ReturnType<typeof Bun.spawn>;
   cols: number;
   rows: number;
@@ -38,17 +61,18 @@ export class PtyManager {
     const exitListeners = new Set<(code: number) => void>();
 
     // Check if Bun.Terminal is available (introduced in Bun v1.3.5+)
-    const BunTerminal = (Bun as any).Terminal;
-    if (!BunTerminal) {
+    const BunTerminalClass = (Bun as { Terminal?: BunTerminalConstructor })
+      .Terminal;
+    if (!BunTerminalClass) {
       throw new Error(
         'Bun.Terminal is not available. Requires Bun v1.3.5 or higher.'
       );
     }
 
-    const terminal = new BunTerminal({
+    const terminal = new BunTerminalClass({
       cols,
       rows,
-      data: (_term: any, data: Uint8Array) => {
+      data: (_term: BunTerminal, data: Uint8Array) => {
         const text = new TextDecoder().decode(data);
         for (const cb of dataListeners) {
           cb(text);
