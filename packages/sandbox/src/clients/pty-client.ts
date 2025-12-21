@@ -309,4 +309,96 @@ export class PtyClient extends BaseHttpClient {
 
     return result.ptys;
   }
+
+  /**
+   * Get PTY information by ID (without creating a handle)
+   *
+   * Use this when you need raw PTY info for serialization or inspection.
+   * For interactive PTY usage, prefer getById() which returns a handle.
+   *
+   * @param id - PTY ID
+   * @returns PTY info object
+   */
+  async getInfo(id: string): Promise<PtyInfo> {
+    const response = await this.doFetch(`/api/pty/${id}`, {
+      method: 'GET'
+    });
+
+    const result: PtyGetResult = await response.json();
+
+    if (!result.success) {
+      throw new Error('PTY not found');
+    }
+
+    this.logSuccess('PTY info retrieved', id);
+
+    return result.pty;
+  }
+
+  /**
+   * Resize a PTY (synchronous - waits for completion)
+   *
+   * @param id - PTY ID
+   * @param cols - Number of columns
+   * @param rows - Number of rows
+   */
+  async resize(id: string, cols: number, rows: number): Promise<void> {
+    const response = await this.doFetch(`/api/pty/${id}/resize`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cols, rows })
+    });
+
+    const result: { success: boolean; error?: string } = await response.json();
+
+    if (!result.success) {
+      throw new Error(result.error || 'PTY resize failed');
+    }
+
+    this.logSuccess('PTY resized', `${id} -> ${cols}x${rows}`);
+  }
+
+  /**
+   * Send input to a PTY (synchronous - waits for completion)
+   *
+   * @param id - PTY ID
+   * @param data - Input data to send
+   */
+  async write(id: string, data: string): Promise<void> {
+    const response = await this.doFetch(`/api/pty/${id}/input`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ data })
+    });
+
+    const result: { success: boolean; error?: string } = await response.json();
+
+    if (!result.success) {
+      throw new Error(result.error || 'PTY write failed');
+    }
+
+    this.logSuccess('PTY input sent', id);
+  }
+
+  /**
+   * Kill a PTY (synchronous - waits for completion)
+   *
+   * @param id - PTY ID
+   * @param signal - Optional signal to send (e.g., 'SIGTERM', 'SIGKILL')
+   */
+  async kill(id: string, signal?: string): Promise<void> {
+    const response = await this.doFetch(`/api/pty/${id}`, {
+      method: 'DELETE',
+      headers: signal ? { 'Content-Type': 'application/json' } : undefined,
+      body: signal ? JSON.stringify({ signal }) : undefined
+    });
+
+    const result: { success: boolean; error?: string } = await response.json();
+
+    if (!result.success) {
+      throw new Error(result.error || 'PTY kill failed');
+    }
+
+    this.logSuccess('PTY killed', id);
+  }
 }

@@ -52,7 +52,7 @@ export class PtyManager {
     const id = this.generateId();
     const cols = options.cols ?? 80;
     const rows = options.rows ?? 24;
-    const command = options.command ?? ['bash'];
+    const command = options.command ?? ['/bin/bash'];
     const cwd = options.cwd ?? '/home/user';
     const env = options.env ?? {};
     const disconnectTimeout = options.disconnectTimeout ?? 30000;

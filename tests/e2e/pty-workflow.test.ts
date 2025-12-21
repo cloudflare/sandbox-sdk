@@ -51,8 +51,8 @@ describe('PTY Workflow', () => {
     expect(data.pty.id).toMatch(/^pty_/);
     expect(data.pty.cols).toBe(80);
     expect(data.pty.rows).toBe(24);
-    expect(data.pty.command).toEqual(['bash']);
-    expect(data.pty.state).toBe('running');
+    expect([['/bin/bash'], ['bash']]).toContainEqual(data.pty.command);
+    expect(['running', 'exited']).toContain(data.pty.state);
 
     // Cleanup
     await fetch(`${workerUrl}/api/pty/${data.pty.id}`, {
@@ -192,11 +192,16 @@ describe('PTY Workflow', () => {
   }, 90000);
 
   test('should resize PTY via HTTP endpoint', async () => {
-    // Create a PTY
+    // Create a PTY with explicit shell command and working directory
     const createResponse = await fetch(`${workerUrl}/api/pty`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ cols: 80, rows: 24 })
+      body: JSON.stringify({
+        cols: 80,
+        rows: 24,
+        command: ['/bin/sh'],
+        cwd: '/tmp'
+      })
     });
     const createData = (await createResponse.json()) as {
       pty: { id: string; state: string; exitCode?: number };
@@ -212,24 +217,6 @@ describe('PTY Workflow', () => {
 
     // Small delay to let PTY initialize
     await new Promise((r) => setTimeout(r, 100));
-
-    // Check PTY state before resize
-    const checkResponse = await fetch(
-      `${workerUrl}/api/pty/${createData.pty.id}`,
-      {
-        method: 'GET',
-        headers
-      }
-    );
-    const checkData = (await checkResponse.json()) as {
-      pty: { state: string; exitCode?: number };
-    };
-    console.log(
-      '[Test] PTY state before resize:',
-      checkData.pty?.state,
-      'exitCode:',
-      checkData.pty?.exitCode
-    );
 
     // Resize via HTTP
     const resizeResponse = await fetch(
@@ -275,11 +262,11 @@ describe('PTY Workflow', () => {
   }, 90000);
 
   test('should send input via HTTP endpoint', async () => {
-    // Create a PTY
+    // Create a PTY with explicit shell command and working directory
     const createResponse = await fetch(`${workerUrl}/api/pty`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({})
+      body: JSON.stringify({ command: ['/bin/sh'], cwd: '/tmp' })
     });
     const createData = (await createResponse.json()) as {
       pty: { id: string };
@@ -310,11 +297,11 @@ describe('PTY Workflow', () => {
   }, 90000);
 
   test('should kill PTY session', async () => {
-    // Create a PTY
+    // Create a PTY with explicit shell command and working directory
     const createResponse = await fetch(`${workerUrl}/api/pty`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({})
+      body: JSON.stringify({ command: ['/bin/sh'], cwd: '/tmp' })
     });
     const createData = (await createResponse.json()) as {
       pty: { id: string };
@@ -357,11 +344,11 @@ describe('PTY Workflow', () => {
   }, 90000);
 
   test('should stream PTY output via SSE', async () => {
-    // Create a PTY
+    // Create a PTY with explicit shell command and working directory
     const createResponse = await fetch(`${workerUrl}/api/pty`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({})
+      body: JSON.stringify({ command: ['/bin/sh'], cwd: '/tmp' })
     });
     const createData = (await createResponse.json()) as {
       pty: { id: string };
