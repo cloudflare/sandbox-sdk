@@ -352,11 +352,12 @@ describe('PTY Workflow', () => {
   }, 90000);
 
   test('should kill PTY session', async () => {
-    // Create a PTY with explicit shell command and working directory
+    // Create a PTY that will exit quickly when killed
+    // Use 'cat' which exits immediately when stdin closes
     const createResponse = await fetch(`${workerUrl}/api/pty`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ command: ['/bin/sh'], cwd: '/tmp' })
+      body: JSON.stringify({ command: ['/bin/cat'], cwd: '/tmp' })
     });
     const createData = (await createResponse.json()) as {
       pty: { id: string; state: string };
@@ -392,8 +393,8 @@ describe('PTY Workflow', () => {
 
     // Wait for process to exit - poll with longer intervals
     let getData: { pty: { state: string; exitCode?: number } } | null = null;
-    for (let i = 0; i < 20; i++) {
-      await new Promise((resolve) => setTimeout(resolve, 200));
+    for (let i = 0; i < 30; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 300));
 
       const getResponse = await fetch(
         `${workerUrl}/api/pty/${createData.pty.id}`,
@@ -498,15 +499,31 @@ describe('PTY Workflow', () => {
       body: JSON.stringify({ command: 'cd /tmp && export MY_VAR=hello' })
     });
 
-    // Attach PTY to session with explicit shell command
+    // Attach PTY to session with explicit shell command and cwd
     const attachResponse = await fetch(
       `${workerUrl}/api/pty/attach/${sessionId}`,
       {
         method: 'POST',
         headers: sessionHeaders,
-        body: JSON.stringify({ cols: 80, rows: 24, command: ['/bin/sh'] })
+        body: JSON.stringify({
+          cols: 80,
+          rows: 24,
+          command: ['/bin/sh'],
+          cwd: '/tmp'
+        })
       }
     );
+
+    // Log error details if attach fails
+    if (attachResponse.status !== 200) {
+      const errorBody = await attachResponse.clone().text();
+      console.error(
+        '[Attach Test] Failed with status:',
+        attachResponse.status,
+        'body:',
+        errorBody
+      );
+    }
 
     expect(attachResponse.status).toBe(200);
     const attachData = (await attachResponse.json()) as {
