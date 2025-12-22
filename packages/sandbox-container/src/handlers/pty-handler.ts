@@ -221,10 +221,14 @@ export class PtyHandler extends BaseHandler<Request, Response> {
       );
     }
 
-    const body = await this.parseRequestBody<{ signal?: string }>(
-      request
-    ).catch(() => ({ signal: undefined }));
-    this.ptyManager.kill(ptyId, body.signal);
+    // Body is optional for DELETE - only parse if content exists
+    let signal: string | undefined;
+    const contentLength = request.headers.get('content-length');
+    if (contentLength && parseInt(contentLength, 10) > 0) {
+      const body = await this.parseRequestBody<{ signal?: string }>(request);
+      signal = body.signal;
+    }
+    this.ptyManager.kill(ptyId, signal);
 
     const response: PtyKillResult = {
       success: true,

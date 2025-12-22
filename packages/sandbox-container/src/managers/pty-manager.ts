@@ -271,7 +271,11 @@ export class PtyManager {
 
     // If already exited, call immediately
     if (session.state === 'exited' && session.exitCode !== undefined) {
-      callback(session.exitCode);
+      try {
+        callback(session.exitCode);
+      } catch {
+        // Ignore callback errors to ensure registration completes
+      }
       return () => {};
     }
 
@@ -286,8 +290,12 @@ export class PtyManager {
     this.cancelDisconnectTimer(id);
 
     session.disconnectTimer = setTimeout(() => {
-      this.logger.info('PTY disconnect timeout, killing', { ptyId: id });
-      this.kill(id);
+      try {
+        this.logger.info('PTY disconnect timeout, killing', { ptyId: id });
+        this.kill(id);
+      } catch {
+        // Ignore errors to prevent timer callback from crashing
+      }
     }, session.disconnectTimeout);
   }
 
