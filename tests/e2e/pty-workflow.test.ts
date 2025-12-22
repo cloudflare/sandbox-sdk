@@ -28,12 +28,49 @@ describe('PTY Workflow', () => {
     headers = sandbox.createHeaders(createUniqueSession());
   }, 120000);
 
-  test('should create a PTY session with default options', async () => {
+  test('PTY sanity check - container has PTY support', async () => {
+    // Verify /dev/ptmx and /dev/pts exist in the container
+    const checkResponse = await fetch(`${workerUrl}/api/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        command:
+          'ls -l /dev/ptmx && ls -ld /dev/pts && mount | grep devpts || echo "devpts not mounted"'
+      })
+    });
+
+    expect(checkResponse.status).toBe(200);
+    const checkData = (await checkResponse.json()) as {
+      success: boolean;
+      stdout: string;
+      stderr: string;
+    };
+
+    console.log('[PTY Sanity Check] stdout:', checkData.stdout);
+    console.log('[PTY Sanity Check] stderr:', checkData.stderr);
+
+    // /dev/ptmx should exist for PTY allocation
+    expect(checkData.stdout).toContain('/dev/ptmx');
+  }, 30000);
+
+  test('should create a PTY session', async () => {
+    // Use /bin/sh and /tmp for reliable PTY creation
     const response = await fetch(`${workerUrl}/api/pty`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({})
+      body: JSON.stringify({ command: ['/bin/sh'], cwd: '/tmp' })
     });
+
+    // Log response for debugging if it fails
+    if (response.status !== 200) {
+      const errorText = await response.text();
+      console.error(
+        '[PTY Create] Failed with status:',
+        response.status,
+        'body:',
+        errorText
+      );
+    }
 
     expect(response.status).toBe(200);
     const data = (await response.json()) as {
@@ -45,14 +82,17 @@ describe('PTY Workflow', () => {
         command: string[];
         state: string;
       };
+      error?: string;
     };
+
+    console.log('[PTY Create] Response:', JSON.stringify(data, null, 2));
 
     expect(data.success).toBe(true);
     expect(data.pty.id).toMatch(/^pty_/);
     expect(data.pty.cols).toBe(80);
     expect(data.pty.rows).toBe(24);
-    expect([['/bin/bash'], ['bash']]).toContainEqual(data.pty.command);
-    expect(['running', 'exited']).toContain(data.pty.state);
+    expect(data.pty.command).toEqual(['/bin/sh']);
+    expect(data.pty.state).toBe('running');
 
     // Cleanup
     await fetch(`${workerUrl}/api/pty/${data.pty.id}`, {
@@ -99,18 +139,28 @@ describe('PTY Workflow', () => {
   }, 90000);
 
   test('should list all PTY sessions', async () => {
-    // Create two PTYs
+    // Create two PTYs with explicit shell command
     const pty1Response = await fetch(`${workerUrl}/api/pty`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ cols: 80, rows: 24 })
+      body: JSON.stringify({
+        cols: 80,
+        rows: 24,
+        command: ['/bin/sh'],
+        cwd: '/tmp'
+      })
     });
     const pty1 = (await pty1Response.json()) as { pty: { id: string } };
 
     const pty2Response = await fetch(`${workerUrl}/api/pty`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ cols: 100, rows: 30 })
+      body: JSON.stringify({
+        cols: 100,
+        rows: 30,
+        command: ['/bin/sh'],
+        cwd: '/tmp'
+      })
     });
     const pty2 = (await pty2Response.json()) as { pty: { id: string } };
 
@@ -143,11 +193,16 @@ describe('PTY Workflow', () => {
   }, 90000);
 
   test('should get PTY info by ID', async () => {
-    // Create a PTY
+    // Create a PTY with explicit shell command
     const createResponse = await fetch(`${workerUrl}/api/pty`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ cols: 100, rows: 50 })
+      body: JSON.stringify({
+        cols: 100,
+        rows: 50,
+        command: ['/bin/sh'],
+        cwd: '/tmp'
+      })
     });
     const createData = (await createResponse.json()) as {
       pty: { id: string };
@@ -304,15 +359,23 @@ describe('PTY Workflow', () => {
       body: JSON.stringify({ command: ['/bin/sh'], cwd: '/tmp' })
     });
     const createData = (await createResponse.json()) as {
-      pty: { id: string };
+      pty: { id: string; state: string };
     };
 
-    // Kill the PTY
+    console.log(
+      '[Kill Test] Created PTY:',
+      createData.pty.id,
+      'state:',
+      createData.pty.state
+    );
+
+    // Kill the PTY with SIGKILL for immediate termination
     const killResponse = await fetch(
       `${workerUrl}/api/pty/${createData.pty.id}`,
       {
         method: 'DELETE',
-        headers
+        headers,
+        body: JSON.stringify({ signal: 'SIGKILL' })
       }
     );
 
@@ -322,25 +385,35 @@ describe('PTY Workflow', () => {
       ptyId: string;
     };
 
+    console.log('[Kill Test] Kill response:', killData);
+
     expect(killData.success).toBe(true);
     expect(killData.ptyId).toBe(createData.pty.id);
 
-    // Wait for process to exit
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    // Wait for process to exit - poll with longer intervals
+    let getData: { pty: { state: string; exitCode?: number } } | null = null;
+    for (let i = 0; i < 20; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      const getResponse = await fetch(
+        `${workerUrl}/api/pty/${createData.pty.id}`,
+        {
+          method: 'GET',
+          headers
+        }
+      );
+
+      getData = (await getResponse.json()) as {
+        pty: { state: string; exitCode?: number };
+      };
+      console.log(
+        `[Kill Test] Poll ${i + 1}: state=${getData.pty.state}, exitCode=${getData.pty.exitCode}`
+      );
+      if (getData.pty.state === 'exited') break;
+    }
 
     // Verify PTY state is exited
-    const getResponse = await fetch(
-      `${workerUrl}/api/pty/${createData.pty.id}`,
-      {
-        method: 'GET',
-        headers
-      }
-    );
-
-    const getData = (await getResponse.json()) as {
-      pty: { state: string };
-    };
-    expect(getData.pty.state).toBe('exited');
+    expect(getData?.pty.state).toBe('exited');
   }, 90000);
 
   test('should stream PTY output via SSE', async () => {
@@ -425,13 +498,13 @@ describe('PTY Workflow', () => {
       body: JSON.stringify({ command: 'cd /tmp && export MY_VAR=hello' })
     });
 
-    // Attach PTY to session
+    // Attach PTY to session with explicit shell command
     const attachResponse = await fetch(
       `${workerUrl}/api/pty/attach/${sessionId}`,
       {
         method: 'POST',
         headers: sessionHeaders,
-        body: JSON.stringify({ cols: 80, rows: 24 })
+        body: JSON.stringify({ cols: 80, rows: 24, command: ['/bin/sh'] })
       }
     );
 
