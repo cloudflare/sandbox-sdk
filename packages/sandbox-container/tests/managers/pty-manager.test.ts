@@ -68,6 +68,48 @@ describe.skipIf(!canRunPtyTests)('PtyManager', () => {
       expect(session2.id).not.toBe(session3.id);
       expect(session1.id).not.toBe(session3.id);
     });
+
+    it('should reject cols below minimum (1)', () => {
+      expect(() => manager.create({ command: ['/bin/sh'], cols: 0 })).toThrow(
+        'Invalid cols: 0. Must be between 1 and 1000'
+      );
+    });
+
+    it('should reject cols above maximum (1000)', () => {
+      expect(() =>
+        manager.create({ command: ['/bin/sh'], cols: 1001 })
+      ).toThrow('Invalid cols: 1001. Must be between 1 and 1000');
+    });
+
+    it('should reject rows below minimum (1)', () => {
+      expect(() => manager.create({ command: ['/bin/sh'], rows: 0 })).toThrow(
+        'Invalid rows: 0. Must be between 1 and 1000'
+      );
+    });
+
+    it('should reject rows above maximum (1000)', () => {
+      expect(() =>
+        manager.create({ command: ['/bin/sh'], rows: 1001 })
+      ).toThrow('Invalid rows: 1001. Must be between 1 and 1000');
+    });
+
+    it('should accept boundary values (1 and 1000)', () => {
+      const session1 = manager.create({
+        command: ['/bin/sh'],
+        cols: 1,
+        rows: 1
+      });
+      expect(session1.cols).toBe(1);
+      expect(session1.rows).toBe(1);
+
+      const session2 = manager.create({
+        command: ['/bin/sh'],
+        cols: 1000,
+        rows: 1000
+      });
+      expect(session2.cols).toBe(1000);
+      expect(session2.rows).toBe(1000);
+    });
   });
 
   describe('get', () => {
@@ -215,6 +257,60 @@ describe.skipIf(!canRunPtyTests)('PtyManager', () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toBe('PTY has exited');
+    });
+
+    it('should reject cols below minimum (1)', () => {
+      const session = manager.create({ command: ['/bin/sh'] });
+      const result = manager.resize(session.id, 0, 24);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe(
+        'Invalid dimensions. Must be between 1 and 1000'
+      );
+    });
+
+    it('should reject cols above maximum (1000)', () => {
+      const session = manager.create({ command: ['/bin/sh'] });
+      const result = manager.resize(session.id, 1001, 24);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe(
+        'Invalid dimensions. Must be between 1 and 1000'
+      );
+    });
+
+    it('should reject rows below minimum (1)', () => {
+      const session = manager.create({ command: ['/bin/sh'] });
+      const result = manager.resize(session.id, 80, 0);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe(
+        'Invalid dimensions. Must be between 1 and 1000'
+      );
+    });
+
+    it('should reject rows above maximum (1000)', () => {
+      const session = manager.create({ command: ['/bin/sh'] });
+      const result = manager.resize(session.id, 80, 1001);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe(
+        'Invalid dimensions. Must be between 1 and 1000'
+      );
+    });
+
+    it('should accept boundary values (1 and 1000)', () => {
+      const session = manager.create({ command: ['/bin/sh'] });
+
+      const result1 = manager.resize(session.id, 1, 1);
+      expect(result1.success).toBe(true);
+      expect(manager.get(session.id)?.cols).toBe(1);
+      expect(manager.get(session.id)?.rows).toBe(1);
+
+      const result2 = manager.resize(session.id, 1000, 1000);
+      expect(result2.success).toBe(true);
+      expect(manager.get(session.id)?.cols).toBe(1000);
+      expect(manager.get(session.id)?.rows).toBe(1000);
     });
   });
 
@@ -433,6 +529,89 @@ describe.skipIf(!canRunPtyTests)('PtyManager', () => {
       // Listeners should be cleared to prevent memory leaks
       expect(session.dataListeners.size).toBe(0);
       expect(session.exitListeners.size).toBe(0);
+    });
+  });
+
+  describe('listener error isolation', () => {
+    it('should continue notifying other data listeners when one throws', async () => {
+      const session = manager.create({ command: ['/bin/sh'] });
+      let listener1Called = false;
+      let listener2Called = false;
+      let listener3Called = false;
+
+      // First listener throws
+      manager.onData(session.id, () => {
+        listener1Called = true;
+        throw new Error('Listener 1 error');
+      });
+
+      // Second listener should still be called
+      manager.onData(session.id, () => {
+        listener2Called = true;
+      });
+
+      // Third listener should also be called
+      manager.onData(session.id, () => {
+        listener3Called = true;
+      });
+
+      manager.write(session.id, 'echo test\n');
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      expect(listener1Called).toBe(true);
+      expect(listener2Called).toBe(true);
+      expect(listener3Called).toBe(true);
+    });
+
+    it('should continue notifying other exit listeners when one throws', async () => {
+      const session = manager.create({ command: ['/bin/sh'] });
+      let listener1Called = false;
+      let listener2Called = false;
+      let listener3Called = false;
+
+      // First listener throws
+      manager.onExit(session.id, () => {
+        listener1Called = true;
+        throw new Error('Exit listener 1 error');
+      });
+
+      // Second listener should still be called
+      manager.onExit(session.id, () => {
+        listener2Called = true;
+      });
+
+      // Third listener should also be called
+      manager.onExit(session.id, () => {
+        listener3Called = true;
+      });
+
+      manager.kill(session.id);
+      await new Promise((resolve) => setTimeout(resolve, 150));
+
+      expect(listener1Called).toBe(true);
+      expect(listener2Called).toBe(true);
+      expect(listener3Called).toBe(true);
+    });
+
+    it('should not crash PTY when all listeners throw', async () => {
+      const session = manager.create({ command: ['/bin/sh'] });
+
+      // All listeners throw
+      manager.onData(session.id, () => {
+        throw new Error('Error 1');
+      });
+      manager.onData(session.id, () => {
+        throw new Error('Error 2');
+      });
+
+      // Write should not crash
+      manager.write(session.id, 'echo test\n');
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      // PTY should still be functional
+      expect(manager.get(session.id)?.state).toBe('running');
+      const result = manager.write(session.id, 'echo still works\n');
+      expect(result.success).toBe(true);
     });
   });
 

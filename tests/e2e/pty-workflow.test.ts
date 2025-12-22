@@ -540,4 +540,144 @@ describe('PTY Workflow', () => {
       headers: sessionHeaders
     });
   }, 90000);
+
+  test('should prevent double PTY attachment to same session', async () => {
+    // Create a session and attach first PTY
+    const sessionId = `pty-double-attach-test-${Date.now()}`;
+    const sessionHeaders = {
+      ...headers,
+      'X-Session-Id': sessionId
+    };
+
+    // Initialize session
+    await fetch(`${workerUrl}/api/execute`, {
+      method: 'POST',
+      headers: sessionHeaders,
+      body: JSON.stringify({ command: 'echo init' })
+    });
+
+    // First attachment should succeed
+    const firstAttachResponse = await fetch(
+      `${workerUrl}/api/pty/attach/${sessionId}`,
+      {
+        method: 'POST',
+        headers: sessionHeaders,
+        body: JSON.stringify({ command: ['/bin/sh'], cwd: '/tmp' })
+      }
+    );
+    expect(firstAttachResponse.status).toBe(200);
+    const firstAttachData = (await firstAttachResponse.json()) as {
+      success: boolean;
+      pty: { id: string };
+    };
+    expect(firstAttachData.success).toBe(true);
+
+    // Second attachment should fail
+    const secondAttachResponse = await fetch(
+      `${workerUrl}/api/pty/attach/${sessionId}`,
+      {
+        method: 'POST',
+        headers: sessionHeaders,
+        body: JSON.stringify({ command: ['/bin/sh'], cwd: '/tmp' })
+      }
+    );
+    expect(secondAttachResponse.status).toBe(500);
+    const secondAttachData = (await secondAttachResponse.json()) as {
+      error: string;
+    };
+    expect(secondAttachData.error).toMatch(/already has active PTY/i);
+
+    // Cleanup
+    await fetch(`${workerUrl}/api/pty/${firstAttachData.pty.id}`, {
+      method: 'DELETE',
+      headers: sessionHeaders
+    });
+  }, 90000);
+
+  test('should reject invalid dimension values on create', async () => {
+    // Test cols below minimum
+    const response1 = await fetch(`${workerUrl}/api/pty`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ command: ['/bin/sh'], cols: 0, rows: 24 })
+    });
+    expect(response1.status).toBe(500);
+    const data1 = (await response1.json()) as { error: string };
+    expect(data1.error).toMatch(/Invalid cols/i);
+
+    // Test cols above maximum
+    const response2 = await fetch(`${workerUrl}/api/pty`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ command: ['/bin/sh'], cols: 1001, rows: 24 })
+    });
+    expect(response2.status).toBe(500);
+    const data2 = (await response2.json()) as { error: string };
+    expect(data2.error).toMatch(/Invalid cols/i);
+
+    // Test rows below minimum
+    const response3 = await fetch(`${workerUrl}/api/pty`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ command: ['/bin/sh'], cols: 80, rows: 0 })
+    });
+    expect(response3.status).toBe(500);
+    const data3 = (await response3.json()) as { error: string };
+    expect(data3.error).toMatch(/Invalid rows/i);
+
+    // Test rows above maximum
+    const response4 = await fetch(`${workerUrl}/api/pty`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ command: ['/bin/sh'], cols: 80, rows: 1001 })
+    });
+    expect(response4.status).toBe(500);
+    const data4 = (await response4.json()) as { error: string };
+    expect(data4.error).toMatch(/Invalid rows/i);
+  }, 90000);
+
+  test('should reject invalid dimension values on resize', async () => {
+    // Create a valid PTY first
+    const createResponse = await fetch(`${workerUrl}/api/pty`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ command: ['/bin/sh'], cwd: '/tmp' })
+    });
+    expect(createResponse.status).toBe(200);
+    const createData = (await createResponse.json()) as {
+      pty: { id: string };
+    };
+
+    // Test resize with cols below minimum
+    const response1 = await fetch(
+      `${workerUrl}/api/pty/${createData.pty.id}/resize`,
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ cols: 0, rows: 24 })
+      }
+    );
+    expect(response1.status).toBe(500);
+    const data1 = (await response1.json()) as { error: string };
+    expect(data1.error).toMatch(/Invalid dimensions/i);
+
+    // Test resize with cols above maximum
+    const response2 = await fetch(
+      `${workerUrl}/api/pty/${createData.pty.id}/resize`,
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ cols: 1001, rows: 24 })
+      }
+    );
+    expect(response2.status).toBe(500);
+    const data2 = (await response2.json()) as { error: string };
+    expect(data2.error).toMatch(/Invalid dimensions/i);
+
+    // Cleanup
+    await fetch(`${workerUrl}/api/pty/${createData.pty.id}`, {
+      method: 'DELETE',
+      headers
+    });
+  }, 90000);
 });
