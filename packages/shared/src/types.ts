@@ -1124,6 +1124,61 @@ export interface AttachPtyOptions {
 }
 
 /**
+ * Structured exit information for PTY sessions
+ * Maps exit codes to human-readable signal names (matches Daytona's pattern)
+ */
+export interface PtyExitInfo {
+  /** Process exit code */
+  exitCode: number;
+  /** Signal name if killed by signal (e.g., 'SIGKILL', 'SIGTERM') */
+  signal?: string;
+  /** Human-readable exit reason */
+  reason: string;
+}
+
+/**
+ * Get structured exit information from an exit code
+ * Exit codes > 128 indicate the process was killed by a signal (128 + signal number)
+ */
+export function getPtyExitInfo(exitCode: number): PtyExitInfo {
+  // Common signal mappings (128 + signal number)
+  const signalMap: Record<number, { signal: string; reason: string }> = {
+    130: { signal: 'SIGINT', reason: 'Interrupted (Ctrl+C)' },
+    137: { signal: 'SIGKILL', reason: 'Killed' },
+    143: { signal: 'SIGTERM', reason: 'Terminated' },
+    131: { signal: 'SIGQUIT', reason: 'Quit' },
+    134: { signal: 'SIGABRT', reason: 'Aborted' },
+    136: { signal: 'SIGFPE', reason: 'Floating point exception' },
+    139: { signal: 'SIGSEGV', reason: 'Segmentation fault' },
+    141: { signal: 'SIGPIPE', reason: 'Broken pipe' },
+    142: { signal: 'SIGALRM', reason: 'Alarm' },
+    129: { signal: 'SIGHUP', reason: 'Hangup' }
+  };
+
+  if (exitCode === 0) {
+    return { exitCode, reason: 'Exited normally' };
+  }
+
+  const signalInfo = signalMap[exitCode];
+  if (signalInfo) {
+    return { exitCode, signal: signalInfo.signal, reason: signalInfo.reason };
+  }
+
+  // Unknown signal (exitCode > 128)
+  if (exitCode > 128) {
+    const signalNum = exitCode - 128;
+    return {
+      exitCode,
+      signal: `SIG${signalNum}`,
+      reason: `Killed by signal ${signalNum}`
+    };
+  }
+
+  // Non-zero exit without signal
+  return { exitCode, reason: `Exited with code ${exitCode}` };
+}
+
+/**
  * PTY session information
  */
 export interface PtyInfo {
@@ -1145,6 +1200,8 @@ export interface PtyInfo {
   state: PtyState;
   /** Exit code if exited */
   exitCode?: number;
+  /** Structured exit information (populated when state is 'exited') */
+  exitInfo?: PtyExitInfo;
 }
 
 /**

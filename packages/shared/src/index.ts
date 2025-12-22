@@ -100,6 +100,8 @@ export type {
   ProcessStartResult,
   ProcessStatus,
   PtyCreateResult,
+  // PTY exit info
+  PtyExitInfo,
   PtyGetResult,
   PtyInfo,
   PtyInputRequest,
@@ -126,6 +128,7 @@ export type {
   WriteFileResult
 } from './types.js';
 export {
+  getPtyExitInfo,
   isExecResult,
   isProcess,
   isProcessStatus,

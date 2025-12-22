@@ -1,26 +1,28 @@
-import type { CreatePtyOptions, Logger, PtyInfo, PtyState } from '@repo/shared';
+import {
+  type CreatePtyOptions,
+  getPtyExitInfo,
+  type Logger,
+  type PtyExitInfo,
+  type PtyInfo,
+  type PtyState
+} from '@repo/shared';
 
 /**
  * Minimal interface for Bun.Terminal (introduced in Bun v1.3.5+)
- * @types/bun doesn't include this yet, so we define it here
+ * Defined locally since it's only used in the container runtime.
+ * @types/bun doesn't include this yet, so we define it here.
  */
-export interface BunTerminal {
+interface BunTerminal {
   write(data: string): void;
   resize(cols: number, rows: number): void;
 }
 
-/**
- * Options for creating a BunTerminal
- */
-export interface BunTerminalOptions {
+interface BunTerminalOptions {
   cols: number;
   rows: number;
   data: (terminal: BunTerminal, data: Uint8Array) => void;
 }
 
-/**
- * Constructor type for BunTerminal
- */
 type BunTerminalConstructor = new (options: BunTerminalOptions) => BunTerminal;
 
 export interface PtySession {
@@ -35,6 +37,7 @@ export interface PtySession {
   env: Record<string, string>;
   state: PtyState;
   exitCode?: number;
+  exitInfo?: PtyExitInfo;
   dataListeners: Set<(data: string) => void>;
   exitListeners: Set<(code: number) => void>;
   disconnectTimer?: Timer;
@@ -48,6 +51,9 @@ export class PtyManager {
 
   constructor(private logger: Logger) {}
 
+  /** Maximum terminal dimensions (matches Daytona's limits) */
+  private static readonly MAX_TERMINAL_SIZE = 1000;
+
   create(options: CreatePtyOptions & { sessionId?: string }): PtySession {
     const id = this.generateId();
     const cols = options.cols ?? 80;
@@ -56,6 +62,18 @@ export class PtyManager {
     const cwd = options.cwd ?? '/home/user';
     const env = options.env ?? {};
     const disconnectTimeout = options.disconnectTimeout ?? 30000;
+
+    // Validate terminal dimensions
+    if (cols > PtyManager.MAX_TERMINAL_SIZE || cols < 1) {
+      throw new Error(
+        `Invalid cols: ${cols}. Must be between 1 and ${PtyManager.MAX_TERMINAL_SIZE}`
+      );
+    }
+    if (rows > PtyManager.MAX_TERMINAL_SIZE || rows < 1) {
+      throw new Error(
+        `Invalid rows: ${rows}. Must be between 1 and ${PtyManager.MAX_TERMINAL_SIZE}`
+      );
+    }
 
     const dataListeners = new Set<(data: string) => void>();
     const exitListeners = new Set<(code: number) => void>();
@@ -88,7 +106,7 @@ export class PtyManager {
     const proc = Bun.spawn(command, {
       terminal,
       cwd,
-      env: { ...process.env, ...env }
+      env: { TERM: 'xterm-256color', ...process.env, ...env }
     } as Parameters<typeof Bun.spawn>[1]);
 
     const session: PtySession = {
@@ -113,6 +131,8 @@ export class PtyManager {
       .then((code) => {
         session.state = 'exited';
         session.exitCode = code;
+        session.exitInfo = getPtyExitInfo(code);
+
         for (const cb of exitListeners) {
           try {
             cb(code);
@@ -121,16 +141,32 @@ export class PtyManager {
           }
         }
 
+        // Clear listeners to prevent memory leaks
+        session.dataListeners.clear();
+        session.exitListeners.clear();
+
         // Clean up session-to-pty mapping
         if (session.sessionId) {
           this.sessionToPty.delete(session.sessionId);
         }
 
-        this.logger.debug('PTY exited', { ptyId: id, exitCode: code });
+        this.logger.debug('PTY exited', {
+          ptyId: id,
+          exitCode: code,
+          exitInfo: session.exitInfo
+        });
       })
       .catch((error) => {
         session.state = 'exited';
         session.exitCode = 1;
+        session.exitInfo = {
+          exitCode: 1,
+          reason: error instanceof Error ? error.message : 'Process error'
+        };
+
+        // Clear listeners to prevent memory leaks
+        session.dataListeners.clear();
+        session.exitListeners.clear();
 
         // Clean up session-to-pty mapping
         if (session.sessionId) {
@@ -140,7 +176,7 @@ export class PtyManager {
         this.logger.error(
           'PTY process error',
           error instanceof Error ? error : undefined,
-          { ptyId: id }
+          { ptyId: id, exitInfo: session.exitInfo }
         );
       });
 
@@ -211,6 +247,19 @@ export class PtyManager {
     if (session.state !== 'running') {
       this.logger.warn('Resize exited PTY', { ptyId: id });
       return { success: false, error: 'PTY has exited' };
+    }
+    // Validate dimensions
+    if (
+      cols > PtyManager.MAX_TERMINAL_SIZE ||
+      cols < 1 ||
+      rows > PtyManager.MAX_TERMINAL_SIZE ||
+      rows < 1
+    ) {
+      this.logger.warn('Invalid resize dimensions', { ptyId: id, cols, rows });
+      return {
+        success: false,
+        error: `Invalid dimensions. Must be between 1 and ${PtyManager.MAX_TERMINAL_SIZE}`
+      };
     }
     try {
       session.terminal.resize(cols, rows);
@@ -335,7 +384,8 @@ export class PtyManager {
       cwd: session.cwd,
       createdAt: session.createdAt.toISOString(),
       state: session.state,
-      exitCode: session.exitCode
+      exitCode: session.exitCode,
+      exitInfo: session.exitInfo
     };
   }
 }
