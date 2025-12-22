@@ -75,7 +75,11 @@ export class PtyManager {
       data: (_term: BunTerminal, data: Uint8Array) => {
         const text = new TextDecoder().decode(data);
         for (const cb of dataListeners) {
-          cb(text);
+          try {
+            cb(text);
+          } catch {
+            // Ignore callback errors to ensure all listeners are notified
+          }
         }
       }
     });
@@ -105,20 +109,40 @@ export class PtyManager {
     };
 
     // Track exit
-    proc.exited.then((code) => {
-      session.state = 'exited';
-      session.exitCode = code;
-      for (const cb of exitListeners) {
-        cb(code);
-      }
+    proc.exited
+      .then((code) => {
+        session.state = 'exited';
+        session.exitCode = code;
+        for (const cb of exitListeners) {
+          try {
+            cb(code);
+          } catch {
+            // Ignore callback errors to ensure cleanup happens
+          }
+        }
 
-      // Clean up session-to-pty mapping
-      if (session.sessionId) {
-        this.sessionToPty.delete(session.sessionId);
-      }
+        // Clean up session-to-pty mapping
+        if (session.sessionId) {
+          this.sessionToPty.delete(session.sessionId);
+        }
 
-      this.logger.debug('PTY exited', { ptyId: id, exitCode: code });
-    });
+        this.logger.debug('PTY exited', { ptyId: id, exitCode: code });
+      })
+      .catch((error) => {
+        session.state = 'exited';
+        session.exitCode = 1;
+
+        // Clean up session-to-pty mapping
+        if (session.sessionId) {
+          this.sessionToPty.delete(session.sessionId);
+        }
+
+        this.logger.error(
+          'PTY process error',
+          error instanceof Error ? error : undefined,
+          { ptyId: id }
+        );
+      });
 
     this.sessions.set(id, session);
 
@@ -160,8 +184,18 @@ export class PtyManager {
       this.logger.warn('Write to exited PTY', { ptyId: id });
       return { success: false, error: 'PTY has exited' };
     }
-    session.terminal.write(data);
-    return { success: true };
+    try {
+      session.terminal.write(data);
+      return { success: true };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error(
+        'PTY write failed',
+        error instanceof Error ? error : undefined,
+        { ptyId: id }
+      );
+      return { success: false, error: message };
+    }
   }
 
   resize(
@@ -178,11 +212,21 @@ export class PtyManager {
       this.logger.warn('Resize exited PTY', { ptyId: id });
       return { success: false, error: 'PTY has exited' };
     }
-    session.terminal.resize(cols, rows);
-    session.cols = cols;
-    session.rows = rows;
-    this.logger.debug('PTY resized', { ptyId: id, cols, rows });
-    return { success: true };
+    try {
+      session.terminal.resize(cols, rows);
+      session.cols = cols;
+      session.rows = rows;
+      this.logger.debug('PTY resized', { ptyId: id, cols, rows });
+      return { success: true };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error(
+        'PTY resize failed',
+        error instanceof Error ? error : undefined,
+        { ptyId: id, cols, rows }
+      );
+      return { success: false, error: message };
+    }
   }
 
   kill(id: string, signal?: string): void {
