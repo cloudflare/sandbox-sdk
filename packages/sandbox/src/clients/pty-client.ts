@@ -305,11 +305,8 @@ export class PtyClient extends BaseHttpClient {
       method: 'GET'
     });
 
-    const result: PtyGetResult = await response.json();
-
-    if (!result.success) {
-      throw new Error('PTY not found');
-    }
+    // Use handleResponse to properly parse ErrorResponse on failure
+    const result = await this.handleResponse<PtyGetResult>(response);
 
     this.logSuccess('PTY retrieved', id);
 
@@ -335,11 +332,8 @@ export class PtyClient extends BaseHttpClient {
       method: 'GET'
     });
 
-    const result: PtyListResult = await response.json();
-
-    if (!result.success) {
-      throw new Error('Failed to list PTYs');
-    }
+    // Use handleResponse to properly parse ErrorResponse on failure
+    const result = await this.handleResponse<PtyListResult>(response);
 
     this.logSuccess('PTYs listed', `${result.ptys.length} found`);
 
@@ -385,11 +379,8 @@ export class PtyClient extends BaseHttpClient {
       body: JSON.stringify({ cols, rows })
     });
 
-    const result: { success: boolean; error?: string } = await response.json();
-
-    if (!result.success) {
-      throw new Error(result.error || 'PTY resize failed');
-    }
+    // Use handleResponse to properly parse ErrorResponse on failure
+    await this.handleResponse<{ success: boolean }>(response);
 
     this.logSuccess('PTY resized', `${id} -> ${cols}x${rows}`);
   }
@@ -407,11 +398,8 @@ export class PtyClient extends BaseHttpClient {
       body: JSON.stringify({ data })
     });
 
-    const result: { success: boolean; error?: string } = await response.json();
-
-    if (!result.success) {
-      throw new Error(result.error || 'PTY write failed');
-    }
+    // Use handleResponse to properly parse ErrorResponse on failure
+    await this.handleResponse<{ success: boolean }>(response);
 
     this.logSuccess('PTY input sent', id);
   }
@@ -429,11 +417,8 @@ export class PtyClient extends BaseHttpClient {
       body: signal ? JSON.stringify({ signal }) : undefined
     });
 
-    const result: { success: boolean; error?: string } = await response.json();
-
-    if (!result.success) {
-      throw new Error(result.error || 'PTY kill failed');
-    }
+    // Use handleResponse to properly parse ErrorResponse on failure
+    await this.handleResponse<{ success: boolean }>(response);
 
     this.logSuccess('PTY killed', id);
   }
