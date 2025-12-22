@@ -100,20 +100,30 @@ export class HttpTransport extends BaseTransport {
   }
 
   sendPtyInput(_ptyId: string, _data: string): void {
-    // No-op for HTTP - use fetch to /api/pty/:id/input instead
+    throw new Error(
+      'sendPtyInput() not supported with HTTP transport. ' +
+        'Use pty.write() which routes to POST /api/pty/:id/input'
+    );
   }
 
   sendPtyResize(_ptyId: string, _cols: number, _rows: number): void {
-    // No-op for HTTP - use fetch to /api/pty/:id/resize instead
+    throw new Error(
+      'sendPtyResize() not supported with HTTP transport. ' +
+        'Use pty.resize() which routes to POST /api/pty/:id/resize'
+    );
   }
 
   onPtyData(_ptyId: string, _callback: (data: string) => void): () => void {
-    // Not supported for HTTP
+    // HTTP transport doesn't support real-time PTY data events.
+    // Data must be retrieved via SSE stream (GET /api/pty/:id/stream).
+    // Return no-op to allow PtyHandle construction, but callbacks won't fire.
     return () => {};
   }
 
   onPtyExit(_ptyId: string, _callback: (exitCode: number) => void): () => void {
-    // Not supported for HTTP
+    // HTTP transport doesn't support real-time PTY exit events.
+    // Exit must be detected via SSE stream (GET /api/pty/:id/stream).
+    // Return no-op to allow PtyHandle construction, but callbacks won't fire.
     return () => {};
   }
 }

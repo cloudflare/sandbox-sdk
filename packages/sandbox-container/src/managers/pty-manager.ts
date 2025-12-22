@@ -87,6 +87,9 @@ export class PtyManager {
       );
     }
 
+    // Capture logger for use in callbacks
+    const logger = this.logger;
+
     const terminal = new BunTerminalClass({
       cols,
       rows,
@@ -95,8 +98,13 @@ export class PtyManager {
         for (const cb of dataListeners) {
           try {
             cb(text);
-          } catch {
-            // Ignore callback errors to ensure all listeners are notified
+          } catch (error) {
+            // Log error so users can debug their onData handlers
+            logger.error(
+              'PTY data callback error - check your onData handler',
+              error instanceof Error ? error : new Error(String(error)),
+              { ptyId: id }
+            );
           }
         }
       }
@@ -136,8 +144,13 @@ export class PtyManager {
         for (const cb of exitListeners) {
           try {
             cb(code);
-          } catch {
-            // Ignore callback errors to ensure cleanup happens
+          } catch (error) {
+            // Log error so users can debug their onExit handlers
+            logger.error(
+              'PTY exit callback error - check your onExit handler',
+              error instanceof Error ? error : new Error(String(error)),
+              { ptyId: id, exitCode: code }
+            );
           }
         }
 

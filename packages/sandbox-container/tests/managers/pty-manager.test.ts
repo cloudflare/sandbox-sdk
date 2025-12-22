@@ -3,15 +3,8 @@ import { createNoOpLogger } from '@repo/shared';
 import { PtyManager } from '../../src/managers/pty-manager';
 
 // Note: These tests require Bun.Terminal (introduced in Bun v1.3.5+)
-// AND a working PTY device (not available in CI environments)
-// PTY tests are skipped in CI - they will be tested in E2E tests where Docker
-// provides a proper environment with PTY support.
-const hasBunTerminal =
-  typeof (Bun as { Terminal?: unknown }).Terminal !== 'undefined';
-const isCI = process.env.CI === 'true' || process.env.GITHUB_ACTIONS === 'true';
-const canRunPtyTests = hasBunTerminal && !isCI;
 
-describe.skipIf(!canRunPtyTests)('PtyManager', () => {
+describe('PtyManager', () => {
   let manager: PtyManager;
 
   beforeEach(() => {

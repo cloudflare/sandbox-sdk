@@ -626,23 +626,29 @@ export class WebSocketTransport extends BaseTransport {
   }
 
   /**
-   * Send PTY input (fire-and-forget)
+   * Send PTY input
+   * @throws Error if WebSocket is not connected
    */
   sendPtyInput(ptyId: string, data: string): void {
     if (!this.ws || this.state !== 'connected') {
-      this.logger.warn('Cannot send PTY input: not connected');
-      return;
+      throw new Error(
+        `Cannot send PTY input: WebSocket not connected (state: ${this.state}). ` +
+          'Reconnect or create a new PTY session.'
+      );
     }
     this.ws.send(JSON.stringify({ type: 'pty_input', ptyId, data }));
   }
 
   /**
-   * Send PTY resize (fire-and-forget)
+   * Send PTY resize
+   * @throws Error if WebSocket is not connected
    */
   sendPtyResize(ptyId: string, cols: number, rows: number): void {
     if (!this.ws || this.state !== 'connected') {
-      this.logger.warn('Cannot send PTY resize: not connected');
-      return;
+      throw new Error(
+        `Cannot send PTY resize: WebSocket not connected (state: ${this.state}). ` +
+          'Reconnect or create a new PTY session.'
+      );
     }
     this.ws.send(JSON.stringify({ type: 'pty_resize', ptyId, cols, rows }));
   }
