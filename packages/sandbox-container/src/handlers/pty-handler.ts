@@ -15,11 +15,13 @@ import { ErrorCode } from '@repo/shared/errors';
 
 import type { RequestContext } from '../core/types';
 import type { PtyManager } from '../managers/pty-manager';
+import type { SessionManager } from '../services/session-manager';
 import { BaseHandler } from './base-handler';
 
 export class PtyHandler extends BaseHandler<Request, Response> {
   constructor(
     private ptyManager: PtyManager,
+    private sessionManager: SessionManager,
     logger: Logger
   ) {
     super(logger);
@@ -132,12 +134,26 @@ export class PtyHandler extends BaseHandler<Request, Response> {
       );
     }
 
+    // Get session info for cwd/env inheritance
+    const sessionInfo = this.sessionManager.getSessionInfo(sessionId);
+    if (!sessionInfo) {
+      return this.createErrorResponse(
+        {
+          message: `Session '${sessionId}' not found`,
+          code: ErrorCode.VALIDATION_FAILED
+        },
+        context
+      );
+    }
+
     const body = await this.parseRequestBody<AttachPtyOptions>(request);
 
-    // Create PTY attached to session
+    // Create PTY attached to session with inherited cwd/env from session
     const session = this.ptyManager.create({
       ...body,
-      sessionId
+      sessionId,
+      cwd: sessionInfo.cwd,
+      env: sessionInfo.env
     });
 
     const response: PtyCreateResult = {
@@ -309,6 +325,10 @@ export class PtyHandler extends BaseHandler<Request, Response> {
       );
     }
 
+    // Track cleanup functions for proper unsubscription
+    let unsubData: (() => void) | null = null;
+    let unsubExit: (() => void) | null = null;
+
     const stream = new ReadableStream({
       start: (controller) => {
         const encoder = new TextEncoder();
@@ -324,31 +344,38 @@ export class PtyHandler extends BaseHandler<Request, Response> {
         controller.enqueue(encoder.encode(info));
 
         // Listen for data
-        const unsubData = this.ptyManager.onData(ptyId, (data) => {
-          const event = `data: ${JSON.stringify({
-            type: 'pty_data',
-            data,
-            timestamp: new Date().toISOString()
-          })}\n\n`;
-          controller.enqueue(encoder.encode(event));
+        unsubData = this.ptyManager.onData(ptyId, (data) => {
+          try {
+            const event = `data: ${JSON.stringify({
+              type: 'pty_data',
+              data,
+              timestamp: new Date().toISOString()
+            })}\n\n`;
+            controller.enqueue(encoder.encode(event));
+          } catch {
+            // Stream may be closed, ignore enqueue errors
+          }
         });
 
         // Listen for exit
-        const unsubExit = this.ptyManager.onExit(ptyId, (exitCode) => {
-          const event = `data: ${JSON.stringify({
-            type: 'pty_exit',
-            exitCode,
-            timestamp: new Date().toISOString()
-          })}\n\n`;
-          controller.enqueue(encoder.encode(event));
-          controller.close();
+        unsubExit = this.ptyManager.onExit(ptyId, (exitCode) => {
+          try {
+            const event = `data: ${JSON.stringify({
+              type: 'pty_exit',
+              exitCode,
+              timestamp: new Date().toISOString()
+            })}\n\n`;
+            controller.enqueue(encoder.encode(event));
+            controller.close();
+          } catch {
+            // Stream may be closed, ignore errors
+          }
         });
-
-        // Cleanup on cancel
-        return () => {
-          unsubData();
-          unsubExit();
-        };
+      },
+      cancel: () => {
+        // Clean up listeners when stream is cancelled
+        unsubData?.();
+        unsubExit?.();
       }
     });
 

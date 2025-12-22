@@ -14,8 +14,8 @@ import type { ITransport } from './transport/types';
  * PTY handle returned by create/attach/get
  *
  * Provides methods for interacting with a PTY session:
- * - write: Send input to the terminal
- * - resize: Change terminal dimensions
+ * - write: Send input to the terminal (returns Promise for error handling)
+ * - resize: Change terminal dimensions (returns Promise for error handling)
  * - kill: Terminate the PTY process
  * - onData: Listen for output data
  * - onExit: Listen for process exit
@@ -29,11 +29,27 @@ export interface Pty extends AsyncIterable<string> {
   /** Promise that resolves when PTY exits */
   readonly exited: Promise<{ exitCode: number }>;
 
-  /** Send input to PTY */
-  write(data: string): void;
+  /**
+   * Send input to PTY
+   *
+   * Returns a Promise that resolves on success or rejects on failure.
+   * For interactive typing, you can ignore the promise (fire-and-forget).
+   * For programmatic commands, await to catch errors.
+   *
+   * @note With HTTP transport, awaiting confirms delivery to the container.
+   * With WebSocket transport, the promise resolves immediately after sending
+   */
+  write(data: string): Promise<void>;
 
-  /** Resize terminal */
-  resize(cols: number, rows: number): void;
+  /**
+   * Resize terminal
+   *
+   * Returns a Promise that resolves on success or rejects on failure.
+   *
+   * @note With HTTP transport, awaiting confirms the resize completed.
+   * With WebSocket transport, the promise resolves immediately after sending.
+   */
+  resize(cols: number, rows: number): Promise<void>;
 
   /** Kill the PTY process */
   kill(signal?: string): Promise<void>;
@@ -61,7 +77,7 @@ class PtyHandle implements Pty {
     readonly id: string,
     readonly sessionId: string | undefined,
     private transport: ITransport,
-    private logger: Logger
+    _logger: Logger
   ) {
     // Setup exit promise
     this.exited = new Promise((resolve) => {
@@ -73,43 +89,51 @@ class PtyHandle implements Pty {
     });
   }
 
-  write(data: string): void {
-    if (this.closed) return;
+  async write(data: string): Promise<void> {
+    if (this.closed) {
+      throw new Error('PTY is closed');
+    }
 
     if (this.transport.getMode() === 'websocket') {
-      // WebSocket: use fire-and-forget message
+      // WebSocket: send and rely on transport-level error handling
       this.transport.sendPtyInput(this.id, data);
-    } else {
-      // HTTP: use POST endpoint (fire-and-forget, no await)
-      this.transport
-        .fetch(`/api/pty/${this.id}/input`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ data })
-        })
-        .catch((error: unknown) => {
-          this.logger.warn('PTY write failed', { ptyId: this.id, error });
-        });
+      return;
+    }
+
+    // HTTP: await the response to surface errors
+    const response = await this.transport.fetch(`/api/pty/${this.id}/input`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ data })
+    });
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => 'Unknown error');
+      throw new Error(`PTY write failed: HTTP ${response.status}: ${text}`);
     }
   }
 
-  resize(cols: number, rows: number): void {
-    if (this.closed) return;
+  async resize(cols: number, rows: number): Promise<void> {
+    if (this.closed) {
+      throw new Error('PTY is closed');
+    }
 
     if (this.transport.getMode() === 'websocket') {
-      // WebSocket: use fire-and-forget message
+      // WebSocket: send and rely on transport-level error handling
       this.transport.sendPtyResize(this.id, cols, rows);
-    } else {
-      // HTTP: use POST endpoint (fire-and-forget, no await)
-      this.transport
-        .fetch(`/api/pty/${this.id}/resize`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ cols, rows })
-        })
-        .catch((error: unknown) => {
-          this.logger.warn('PTY resize failed', { ptyId: this.id, error });
-        });
+      return;
+    }
+
+    // HTTP: await the response to surface errors
+    const response = await this.transport.fetch(`/api/pty/${this.id}/resize`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cols, rows })
+    });
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => 'Unknown error');
+      throw new Error(`PTY resize failed: HTTP ${response.status}: ${text}`);
     }
   }
 
