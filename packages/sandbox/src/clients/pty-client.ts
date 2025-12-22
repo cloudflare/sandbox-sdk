@@ -95,8 +95,14 @@ class PtyHandle implements Pty {
     }
 
     if (this.transport.getMode() === 'websocket') {
-      // WebSocket: send and rely on transport-level error handling
-      this.transport.sendPtyInput(this.id, data);
+      // WebSocket: capture synchronous throws from transport
+      try {
+        this.transport.sendPtyInput(this.id, data);
+      } catch (error) {
+        throw new Error(
+          `PTY write failed: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
       return;
     }
 
@@ -119,8 +125,14 @@ class PtyHandle implements Pty {
     }
 
     if (this.transport.getMode() === 'websocket') {
-      // WebSocket: send and rely on transport-level error handling
-      this.transport.sendPtyResize(this.id, cols, rows);
+      // WebSocket: capture synchronous throws from transport
+      try {
+        this.transport.sendPtyResize(this.id, cols, rows);
+      } catch (error) {
+        throw new Error(
+          `PTY resize failed: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
       return;
     }
 
