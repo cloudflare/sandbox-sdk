@@ -17,6 +17,19 @@ import { getSandbox, Sandbox } from '@cloudflare/sandbox';
 
 export { Sandbox };
 
+// Generate a cryptographically secure random base-36 string of the given length.
+function secureRandomBase36(length: number): string {
+  const array = new Uint32Array(1);
+  crypto.getRandomValues(array);
+  // Convert to base-36 and ensure we have enough characters.
+  let str = array[0].toString(36);
+  while (str.length < length) {
+    crypto.getRandomValues(array);
+    str += array[0].toString(36);
+  }
+  return str.slice(0, length);
+}
+
 interface Env {
   Sandbox: DurableObjectNamespace<Sandbox>;
 }
@@ -142,7 +155,7 @@ export default {
       const roomId = url.pathname.split('/')[3];
       const userName =
         url.searchParams.get('name') ||
-        `User-${Math.random().toString(36).slice(2, 6)}`;
+        `User-${secureRandomBase36(4)}`;
 
       // Get or create room state
       let room = rooms.get(roomId);
