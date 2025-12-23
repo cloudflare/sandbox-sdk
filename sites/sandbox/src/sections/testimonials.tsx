@@ -7,7 +7,6 @@ interface Testimonial {
   author: string;
   role: string;
   company: string;
-  logo?: string;
 }
 
 const testimonials: Testimonial[] = [
