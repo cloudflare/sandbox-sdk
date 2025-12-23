@@ -42,6 +42,8 @@ export class WebSocketAdapter {
   private router: Router;
   private ptyManager: PtyManager;
   private logger: Logger;
+  /** Cleanup functions per connection to prevent memory leaks */
+  private connectionCleanups = new Map<string, Array<() => void>>();
 
   constructor(router: Router, ptyManager: PtyManager, logger: Logger) {
     this.router = router;
@@ -62,8 +64,23 @@ export class WebSocketAdapter {
    * Handle WebSocket connection close
    */
   onClose(ws: ServerWebSocket<WSData>, code: number, reason: string): void {
+    const connectionId = ws.data.connectionId;
+
+    // Clean up any PTY listeners registered for this connection
+    const cleanups = this.connectionCleanups.get(connectionId);
+    if (cleanups) {
+      this.logger.debug('Cleaning up PTY listeners for closed connection', {
+        connectionId,
+        listenerCount: cleanups.length
+      });
+      for (const cleanup of cleanups) {
+        cleanup();
+      }
+      this.connectionCleanups.delete(connectionId);
+    }
+
     this.logger.debug('WebSocket connection closed', {
-      connectionId: ws.data.connectionId,
+      connectionId,
       code,
       reason
     });
@@ -91,13 +108,24 @@ export class WebSocketAdapter {
     if (isWSPtyInput(parsed)) {
       const result = this.ptyManager.write(parsed.ptyId, parsed.data);
       if (!result.success) {
-        this.sendError(
+        const errorSent = this.sendError(
           ws,
           parsed.ptyId,
           'PTY_ERROR',
           result.error ?? 'PTY write failed',
           400
         );
+        if (!errorSent) {
+          this.logger.error(
+            'PTY write failed AND error notification failed - client will not be notified',
+            undefined,
+            {
+              ptyId: parsed.ptyId,
+              error: result.error,
+              connectionId: ws.data.connectionId
+            }
+          );
+        }
       }
       return;
     }
@@ -110,13 +138,26 @@ export class WebSocketAdapter {
         parsed.rows
       );
       if (!result.success) {
-        this.sendError(
+        const errorSent = this.sendError(
           ws,
           parsed.ptyId,
           'PTY_ERROR',
           result.error ?? 'PTY resize failed',
           400
         );
+        if (!errorSent) {
+          this.logger.error(
+            'PTY resize failed AND error notification failed - client will not be notified',
+            undefined,
+            {
+              ptyId: parsed.ptyId,
+              cols: parsed.cols,
+              rows: parsed.rows,
+              error: result.error,
+              connectionId: ws.data.connectionId
+            }
+          );
+        }
       }
       return;
     }
@@ -384,6 +425,7 @@ export class WebSocketAdapter {
 
   /**
    * Send an error message over WebSocket
+   * @returns true if send succeeded, false if it failed
    */
   private sendError(
     ws: ServerWebSocket<WSData>,
@@ -391,7 +433,7 @@ export class WebSocketAdapter {
     code: string,
     message: string,
     status: number
-  ): void {
+  ): boolean {
     const error: WSError = {
       type: 'error',
       id: requestId,
@@ -399,7 +441,7 @@ export class WebSocketAdapter {
       message,
       status
     };
-    this.send(ws, error);
+    return this.send(ws, error);
   }
 
   /**
@@ -408,17 +450,41 @@ export class WebSocketAdapter {
    *
    * Auto-unsubscribes when send fails to prevent resource leaks
    * from repeatedly attempting to send to a dead connection.
+   * Also tracked per-connection for cleanup when connection closes.
    */
   registerPtyListener(ws: ServerWebSocket<WSData>, ptyId: string): () => void {
+    const connectionId = ws.data.connectionId;
     let unsubData: (() => void) | null = null;
     let unsubExit: (() => void) | null = null;
+    let cleanedUp = false;
 
     const cleanup = () => {
+      if (cleanedUp) return;
+      cleanedUp = true;
+
       unsubData?.();
       unsubExit?.();
       unsubData = null;
       unsubExit = null;
+
+      // Remove from connection cleanups to prevent double-cleanup
+      const cleanups = this.connectionCleanups.get(connectionId);
+      if (cleanups) {
+        const index = cleanups.indexOf(cleanup);
+        if (index !== -1) {
+          cleanups.splice(index, 1);
+        }
+        if (cleanups.length === 0) {
+          this.connectionCleanups.delete(connectionId);
+        }
+      }
     };
+
+    // Track cleanup for this connection
+    if (!this.connectionCleanups.has(connectionId)) {
+      this.connectionCleanups.set(connectionId, []);
+    }
+    this.connectionCleanups.get(connectionId)!.push(cleanup);
 
     unsubData = this.ptyManager.onData(ptyId, (data) => {
       const chunk: WSStreamChunk = {

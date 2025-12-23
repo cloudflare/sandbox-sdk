@@ -379,3 +379,120 @@ describe('WebSocket Integration', () => {
     expect(successMsg.status).toBe(200);
   });
 });
+
+describe('WebSocket PTY Listener Cleanup', () => {
+  let adapter: WebSocketAdapter;
+  let mockRouter: Router;
+  let mockPtyManager: PtyManager;
+  let mockLogger: Logger;
+  let childLogger: Logger;
+
+  beforeEach(() => {
+    mockRouter = createMockRouter();
+    mockPtyManager = createMockPtyManager();
+    // Create a child logger that we can track
+    childLogger = {
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      child: vi.fn(() => childLogger)
+    } as unknown as Logger;
+    mockLogger = {
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      child: vi.fn(() => childLogger)
+    } as unknown as Logger;
+    adapter = new WebSocketAdapter(mockRouter, mockPtyManager, mockLogger);
+  });
+
+  it('should register PTY listener and return cleanup function', () => {
+    const mockWs = new MockServerWebSocket({ connectionId: 'pty-test-1' });
+
+    const cleanup = adapter.registerPtyListener(mockWs as any, 'pty_123');
+
+    expect(typeof cleanup).toBe('function');
+    expect(mockPtyManager.onData).toHaveBeenCalledWith(
+      'pty_123',
+      expect.any(Function)
+    );
+    expect(mockPtyManager.onExit).toHaveBeenCalledWith(
+      'pty_123',
+      expect.any(Function)
+    );
+  });
+
+  it('should clean up PTY listeners when connection closes', () => {
+    const mockWs = new MockServerWebSocket({
+      connectionId: 'pty-cleanup-test'
+    });
+
+    // Register multiple PTY listeners
+    adapter.registerPtyListener(mockWs as any, 'pty_1');
+    adapter.registerPtyListener(mockWs as any, 'pty_2');
+
+    // Simulate connection close
+    adapter.onClose(mockWs as any, 1000, 'Normal closure');
+
+    // Should log cleanup (using childLogger since adapter calls logger.child())
+    expect(childLogger.debug).toHaveBeenCalledWith(
+      'Cleaning up PTY listeners for closed connection',
+      expect.objectContaining({
+        connectionId: 'pty-cleanup-test',
+        listenerCount: 2
+      })
+    );
+  });
+
+  it('should handle cleanup being called multiple times safely', () => {
+    const mockWs = new MockServerWebSocket({
+      connectionId: 'double-cleanup-test'
+    });
+
+    const cleanup = adapter.registerPtyListener(mockWs as any, 'pty_123');
+
+    // Call cleanup multiple times - should not throw
+    cleanup();
+    cleanup();
+    cleanup();
+  });
+
+  it('should not log cleanup when no listeners registered', () => {
+    const mockWs = new MockServerWebSocket({
+      connectionId: 'no-listeners-test'
+    });
+
+    // Close without registering any listeners
+    adapter.onClose(mockWs as any, 1000, 'Normal closure');
+
+    // Should not log cleanup message (only connection closed message)
+    expect(childLogger.debug).not.toHaveBeenCalledWith(
+      'Cleaning up PTY listeners for closed connection',
+      expect.anything()
+    );
+  });
+
+  it('should remove cleanup from tracking after manual cleanup', () => {
+    const mockWs = new MockServerWebSocket({
+      connectionId: 'manual-cleanup-test'
+    });
+
+    // Register and immediately cleanup
+    const cleanup = adapter.registerPtyListener(mockWs as any, 'pty_123');
+    cleanup();
+
+    // Reset the mock to clear any previous calls
+    (childLogger.debug as ReturnType<typeof vi.fn>).mockClear();
+
+    // Now close - should not have any listeners to clean
+    adapter.onClose(mockWs as any, 1000, 'Normal closure');
+
+    // Should not log cleanup message since we already cleaned up
+    expect(childLogger.debug).not.toHaveBeenCalledWith(
+      'Cleaning up PTY listeners for closed connection',
+      expect.anything()
+    );
+  });
+});
