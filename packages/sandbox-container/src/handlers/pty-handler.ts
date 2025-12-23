@@ -244,7 +244,18 @@ export class PtyHandler extends BaseHandler<Request, Response> {
       const body = await this.parseRequestBody<{ signal?: string }>(request);
       signal = body.signal;
     }
-    this.ptyManager.kill(ptyId, signal);
+
+    const result = this.ptyManager.kill(ptyId, signal);
+
+    if (!result.success) {
+      return this.createErrorResponse(
+        {
+          message: result.error ?? 'PTY kill failed',
+          code: ErrorCode.PROCESS_NOT_FOUND
+        },
+        context
+      );
+    }
 
     const response: PtyKillResult = {
       success: true,

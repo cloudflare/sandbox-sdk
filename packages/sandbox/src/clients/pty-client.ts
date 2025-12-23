@@ -177,11 +177,22 @@ class PtyHandle implements Pty {
 
   async kill(signal?: string): Promise<void> {
     const body = signal ? JSON.stringify({ signal }) : undefined;
-    await this.transport.fetch(`/api/pty/${this.id}`, {
+    const response = await this.transport.fetch(`/api/pty/${this.id}`, {
       method: 'DELETE',
       headers: body ? { 'Content-Type': 'application/json' } : undefined,
       body
     });
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => 'Unknown error');
+      this.logger.error('PTY kill failed', undefined, {
+        ptyId: this.id,
+        signal,
+        status: response.status,
+        error: text
+      });
+      throw new Error(`PTY kill failed: HTTP ${response.status}: ${text}`);
+    }
   }
 
   onData(callback: (data: string) => void): () => void {

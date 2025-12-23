@@ -291,22 +291,25 @@ export class PtyManager {
     }
   }
 
-  kill(id: string, signal?: string): void {
+  kill(id: string, signal?: string): { success: boolean; error?: string } {
     const session = this.sessions.get(id);
     if (!session) {
       this.logger.warn('Kill unknown PTY', { ptyId: id });
-      return;
+      return { success: false, error: 'PTY not found' };
     }
 
     try {
       session.process.kill(signal === 'SIGKILL' ? 9 : 15);
       this.logger.info('PTY killed', { ptyId: id, signal });
+      return { success: true };
     } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
       this.logger.error(
         'Failed to kill PTY',
         error instanceof Error ? error : undefined,
-        { ptyId: id }
+        { ptyId: id, signal }
       );
+      return { success: false, error: message };
     }
   }
 

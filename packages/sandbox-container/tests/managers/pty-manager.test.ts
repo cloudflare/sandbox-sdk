@@ -160,6 +160,12 @@ describe('PtyManager', () => {
   });
 
   describe('kill and cleanup operations', () => {
+    it('should return error when killing unknown PTY', () => {
+      const result = manager.kill('pty_nonexistent_12345');
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('PTY not found');
+    });
+
     it('should log warning when killing unknown PTY', () => {
       manager.kill('pty_nonexistent_12345');
       expect(mockLogger.warn).toHaveBeenCalledWith(

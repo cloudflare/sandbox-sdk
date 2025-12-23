@@ -397,6 +397,34 @@ describe('PtyClient', () => {
           })
         );
       });
+
+      it('should throw error on HTTP failure', async () => {
+        const pty = await client.create();
+
+        // Reset mock after create
+        mockFetch.mockClear();
+        mockFetch.mockResolvedValue(
+          new Response('PTY not found', { status: 404 })
+        );
+
+        await expect(pty.kill()).rejects.toThrow(
+          'PTY kill failed: HTTP 404: PTY not found'
+        );
+      });
+
+      it('should throw error on server error', async () => {
+        const pty = await client.create();
+
+        // Reset mock after create
+        mockFetch.mockClear();
+        mockFetch.mockResolvedValue(
+          new Response('Internal server error', { status: 500 })
+        );
+
+        await expect(pty.kill('SIGTERM')).rejects.toThrow(
+          'PTY kill failed: HTTP 500: Internal server error'
+        );
+      });
     });
 
     describe('close', () => {
