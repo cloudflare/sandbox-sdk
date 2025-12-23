@@ -7,6 +7,7 @@ interface Testimonial {
   author: string;
   role: string;
   company: string;
+  logo?: string;
 }
 
 const testimonials: Testimonial[] = [
@@ -26,10 +27,10 @@ const testimonials: Testimonial[] = [
   },
   {
     quote:
-      'Sandbox-sdk has made it possible to orchestrate and manage running insecure user apps so much easier. You can simply launch a sandbox, expose port and it would handle all the proxying, allocation for you.',
-    author: 'Ashish Kumar',
-    role: 'Engineer',
-    company: 'VibeSDK'
+      'Sandbox SDK let us to remove ~12k lines of orchestration code and significantly improved our sandbox startup times. The APIs + docs are best-in-class and their team has been an absolute joy to work with.',
+    author: 'Dominic Whyte',
+    role: 'Co-Founder',
+    company: 'Zite'
   }
 ];
 
@@ -68,7 +69,11 @@ export function Testimonials() {
       </div>
 
       <GridBox x={1} y={1} width={3} height={2} className="hidden lg:flex">
-        <TestimonialCard testimonial={testimonials[0]} size="md" />
+        <TestimonialCard
+          testimonial={testimonials[0]}
+          size="sm"
+          scrollable={false}
+        />
       </GridBox>
 
       <GridBox x={4} y={1} height={2} className="hidden lg:block">
@@ -108,7 +113,11 @@ export function Testimonials() {
       </div>
 
       <GridBox x={1} y={5} width={3} height={2} className="hidden lg:flex">
-        <TestimonialCard testimonial={testimonials[2]} size="md" />
+        <TestimonialCard
+          testimonial={testimonials[2]}
+          size="md"
+          scrollable={false}
+        />
       </GridBox>
 
       <GridBox x={4} y={5} height={2} className="hidden lg:block">
@@ -148,17 +157,29 @@ export function Testimonials() {
 
 function TestimonialCard({
   testimonial,
-  size
+  size,
+  scrollable = true
 }: {
   testimonial: Testimonial;
   size?: 'xl' | 'md' | 'sm';
+  scrollable?: boolean;
 }) {
+  const textSize =
+    size === 'sm' ? 'text-lg' : size === 'md' ? 'text-xl' : 'text-2xl';
+  const minH = scrollable ? 'min-h-0' : '';
+  const padding = scrollable ? 'p-8 pb-0' : 'p-6 pb-0';
+  const innerPadding = scrollable ? 'p-6' : 'p-4';
+  const gap = scrollable ? 'gap-6' : 'gap-4';
   return (
     <DotBox>
-      <div className="relative p-8 pb-0 h-full w-full flex flex-col min-h-0">
-        <div className="relative bg-background w-full border border-b-0 p-6 flex flex-col flex-1 gap-6 min-h-0">
-          <div className="flex flex-col flex-1 min-h-0">
-            <div className="mb-4">
+      <div
+        className={`relative ${padding} h-full w-full flex flex-col ${minH}`}
+      >
+        <div
+          className={`relative bg-background w-full border border-b-0 ${innerPadding} flex flex-col flex-1 ${gap} ${minH}`}
+        >
+          <div className={`flex flex-col flex-1 ${minH}`}>
+            <div className="mb-2 flex items-center justify-between">
               <svg
                 xmlns="http://www.w3.org/2000/svg"
                 viewBox="0 0 24 24"
@@ -170,15 +191,17 @@ function TestimonialCard({
                 <path d="M14.017 21v-7.391c0-5.704 3.731-9.57 8.983-10.609l.995 2.151c-2.432.917-3.995 3.638-3.995 5.849h4v10h-9.983zm-14.017 0v-7.391c0-5.704 3.748-9.57 9-10.609l.996 2.151c-2.433.917-3.996 3.638-3.996 5.849h3.983v10h-9.983z" />
               </svg>
             </div>
-            <div className="flex-1 min-h-0 overflow-y-auto pr-1">
-              <p className={`text-${size ?? 'xl'} leading-relaxed`}>
+            <div
+              className={`flex-1 ${minH} ${scrollable ? 'overflow-y-auto pr-1' : ''}`}
+            >
+              <p className={`${textSize} leading-relaxed`}>
                 {testimonial.quote}
               </p>
             </div>
           </div>
-          <div className="border-t pt-4">
-            <p className="font-semibold text-sm">{testimonial.author}</p>
-            <p className="text-xs text-foreground/60 font-mono">
+          <div className="border-t pt-3">
+            <p className="font-semibold text-base">{testimonial.author}</p>
+            <p className="text-sm text-foreground/60 font-mono">
               {testimonial.role} · {testimonial.company}
             </p>
           </div>
@@ -192,23 +215,25 @@ function TestimonialMobile({ testimonial }: { testimonial: Testimonial }) {
   return (
     <div className="p-6 space-y-4">
       <div>
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          viewBox="0 0 24 24"
-          fill="currentColor"
-          width="24"
-          className="opacity-30 mb-3"
-        >
-          <title>Testimonial</title>
-          <path d="M14.017 21v-7.391c0-5.704 3.731-9.57 8.983-10.609l.995 2.151c-2.432.917-3.995 3.638-3.995 5.849h4v10h-9.983zm-14.017 0v-7.391c0-5.704 3.748-9.57 9-10.609l.996 2.151c-2.433.917-3.996 3.638-3.996 5.849h3.983v10h-9.983z" />
-        </svg>
-        <p className="text-sm leading-relaxed text-foreground/90">
+        <div className="flex items-center justify-between mb-3">
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 24 24"
+            fill="currentColor"
+            width="24"
+            className="opacity-30"
+          >
+            <title>Testimonial</title>
+            <path d="M14.017 21v-7.391c0-5.704 3.731-9.57 8.983-10.609l.995 2.151c-2.432.917-3.995 3.638-3.995 5.849h4v10h-9.983zm-14.017 0v-7.391c0-5.704 3.748-9.57 9-10.609l.996 2.151c-2.433.917-3.996 3.638-3.996 5.849h3.983v10h-9.983z" />
+          </svg>
+        </div>
+        <p className="text-base leading-relaxed text-foreground/90">
           {testimonial.quote}
         </p>
       </div>
       <div className="border-t pt-4">
-        <p className="font-semibold text-sm">{testimonial.author}</p>
-        <p className="text-xs text-foreground/60 font-mono">
+        <p className="font-semibold text-base">{testimonial.author}</p>
+        <p className="text-sm text-foreground/60 font-mono">
           {testimonial.role} · {testimonial.company}
         </p>
       </div>
