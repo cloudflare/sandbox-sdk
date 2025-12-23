@@ -619,8 +619,14 @@ export class WebSocketTransport extends BaseTransport {
       if (pending.streamController) {
         try {
           pending.streamController.error(closeError);
-        } catch {
-          // Stream may already be closed/errored
+        } catch (error) {
+          // Stream may already be closed/errored - log for visibility
+          this.logger.debug(
+            'Stream controller already closed during WebSocket disconnect',
+            {
+              error: error instanceof Error ? error.message : String(error)
+            }
+          );
         }
       }
       pending.reject(closeError);

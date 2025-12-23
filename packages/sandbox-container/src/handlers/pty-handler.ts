@@ -356,13 +356,25 @@ export class PtyHandler extends BaseHandler<Request, Response> {
             })}\n\n`;
             controller.enqueue(encoder.encode(event));
           } catch (error) {
-            logger.debug(
-              'SSE stream enqueue failed (client likely disconnected)',
-              {
-                ptyId,
-                error: error instanceof Error ? error.message : String(error)
-              }
-            );
+            const errorMessage =
+              error instanceof Error ? error.message : String(error);
+            // TypeError with 'closed' or 'errored' indicates client disconnect (expected)
+            // Other errors may indicate infrastructure issues
+            const isExpectedDisconnect =
+              error instanceof TypeError &&
+              (errorMessage.includes('closed') ||
+                errorMessage.includes('errored'));
+            if (isExpectedDisconnect) {
+              logger.debug('SSE stream enqueue skipped (client disconnected)', {
+                ptyId
+              });
+            } else {
+              logger.error(
+                'SSE stream enqueue failed unexpectedly',
+                error instanceof Error ? error : new Error(errorMessage),
+                { ptyId }
+              );
+            }
           }
         });
 
@@ -377,14 +389,26 @@ export class PtyHandler extends BaseHandler<Request, Response> {
             controller.enqueue(encoder.encode(event));
             controller.close();
           } catch (error) {
-            logger.debug(
-              'SSE stream close failed (client likely disconnected)',
-              {
+            const errorMessage =
+              error instanceof Error ? error.message : String(error);
+            // TypeError with 'closed' or 'errored' indicates client disconnect (expected)
+            // Other errors may indicate infrastructure issues
+            const isExpectedDisconnect =
+              error instanceof TypeError &&
+              (errorMessage.includes('closed') ||
+                errorMessage.includes('errored'));
+            if (isExpectedDisconnect) {
+              logger.debug('SSE stream close skipped (client disconnected)', {
                 ptyId,
-                exitCode,
-                error: error instanceof Error ? error.message : String(error)
-              }
-            );
+                exitCode
+              });
+            } else {
+              logger.error(
+                'SSE stream close failed unexpectedly',
+                error instanceof Error ? error : new Error(errorMessage),
+                { ptyId, exitCode }
+              );
+            }
           }
         });
       },
