@@ -283,10 +283,16 @@ export function App() {
     return () => disposable.dispose();
   }, [state.hasActivePty]);
 
+  const generateRandomUserSuffix = () => {
+    const array = new Uint32Array(1);
+    window.crypto.getRandomValues(array);
+    return array[0].toString(36).slice(0, 4);
+  };
+
   // Create new room
   const createRoom = async () => {
     const name =
-      joinName.trim() || `User-${Math.random().toString(36).slice(2, 6)}`;
+      joinName.trim() || `User-${generateRandomUserSuffix()}`;
     const response = await fetch('/api/room', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -299,7 +305,7 @@ export function App() {
   // Join existing room
   const joinRoom = () => {
     const name =
-      joinName.trim() || `User-${Math.random().toString(36).slice(2, 6)}`;
+      joinName.trim() || `User-${generateRandomUserSuffix()}`;
     const roomId = joinRoomId.trim();
     if (roomId) {
       connectToRoom(roomId, name);
