@@ -623,6 +623,9 @@ export class WebSocketTransport extends BaseTransport {
       }
     }
     this.pendingRequests.clear();
+    // Clear PTY listeners to prevent accumulation across reconnections
+    this.ptyDataListeners.clear();
+    this.ptyExitListeners.clear();
   }
 
   /**
