@@ -7,9 +7,10 @@ import { PtyManager } from '../../src/managers/pty-manager';
  *
  * Tests dimension validation, exited PTY handling, and error handling.
  *
- * Note: Tests that require actual PTY creation are limited because
- * Bun.Terminal is only available in certain runtime environments.
- * Full PTY lifecycle testing is covered by E2E tests.
+ * Note: Tests that require actual PTY creation only run when the environment
+ * supports it (Bun.Terminal available AND /dev/pts accessible). This is typically
+ * only true inside the Docker container. Full PTY lifecycle testing is covered
+ * by E2E tests which run in the actual container environment.
  */
 
 function createMockLogger(): Logger {
@@ -22,6 +23,35 @@ function createMockLogger(): Logger {
   };
   return logger;
 }
+
+/**
+ * Check if the environment can actually create PTYs.
+ * Bun.Terminal may exist but fail if /dev/pts is not mounted.
+ */
+function canCreatePty(): boolean {
+  if (typeof Bun === 'undefined') return false;
+  const BunTerminal = (Bun as { Terminal?: unknown }).Terminal;
+  if (!BunTerminal) return false;
+
+  // Try to actually create a PTY to verify the environment supports it
+  try {
+    const testLogger = createMockLogger();
+    const testManager = new PtyManager(testLogger);
+    const session = testManager.create({
+      cols: 80,
+      rows: 24,
+      command: ['/bin/true']
+    });
+    testManager.kill(session.id);
+    return true;
+  } catch {
+    // PTY creation failed - likely missing /dev/pts or permissions
+    return false;
+  }
+}
+
+// Cache the result since it won't change during test run
+const ptySupported = canCreatePty();
 
 describe('PtyManager', () => {
   let manager: PtyManager;
@@ -148,12 +178,13 @@ describe('PtyManager', () => {
  * Dimension Validation Tests
  *
  * These tests verify the dimension validation logic in PtyManager.
- * Since we can't easily mock Bun.Terminal, we test the validation
- * by checking error messages when creating PTYs with invalid dimensions.
+ * They require actual PTY creation, so they only run in environments
+ * with full PTY support (typically the Docker container).
  *
- * Note: These tests only run when Bun.Terminal is available.
+ * Skipped in CI/local environments without /dev/pts access.
+ * Full coverage is provided by E2E tests.
  */
-describe('PtyManager - Dimension Validation', () => {
+describe.skipIf(!ptySupported)('PtyManager - Dimension Validation', () => {
   let manager: PtyManager;
   let mockLogger: Logger;
 
@@ -169,258 +200,208 @@ describe('PtyManager - Dimension Validation', () => {
     manager.killAll();
   });
 
-  // Check if Bun.Terminal is available
-  const hasBunTerminal =
-    typeof Bun !== 'undefined' &&
-    (Bun as { Terminal?: unknown }).Terminal !== undefined;
-
   describe('create - dimension validation', () => {
-    it.skipIf(!hasBunTerminal)('should reject cols below minimum (0)', () => {
+    it('should reject cols below minimum (0)', () => {
       expect(() => manager.create({ cols: 0, rows: 24 })).toThrow(
         /Invalid cols: 0.*Must be between 1 and 1000/
       );
     });
 
-    it.skipIf(!hasBunTerminal)(
-      'should reject cols above maximum (1001)',
-      () => {
-        expect(() => manager.create({ cols: 1001, rows: 24 })).toThrow(
-          /Invalid cols: 1001.*Must be between 1 and 1000/
-        );
-      }
-    );
+    it('should reject cols above maximum (1001)', () => {
+      expect(() => manager.create({ cols: 1001, rows: 24 })).toThrow(
+        /Invalid cols: 1001.*Must be between 1 and 1000/
+      );
+    });
 
-    it.skipIf(!hasBunTerminal)('should reject rows below minimum (0)', () => {
+    it('should reject rows below minimum (0)', () => {
       expect(() => manager.create({ cols: 80, rows: 0 })).toThrow(
         /Invalid rows: 0.*Must be between 1 and 1000/
       );
     });
 
-    it.skipIf(!hasBunTerminal)(
-      'should reject rows above maximum (1001)',
-      () => {
-        expect(() => manager.create({ cols: 80, rows: 1001 })).toThrow(
-          /Invalid rows: 1001.*Must be between 1 and 1000/
-        );
-      }
-    );
+    it('should reject rows above maximum (1001)', () => {
+      expect(() => manager.create({ cols: 80, rows: 1001 })).toThrow(
+        /Invalid rows: 1001.*Must be between 1 and 1000/
+      );
+    });
 
-    it.skipIf(!hasBunTerminal)(
-      'should accept minimum valid dimensions (1x1)',
-      () => {
-        const session = manager.create({
-          cols: 1,
-          rows: 1,
-          command: ['/bin/true']
-        });
-        expect(session.cols).toBe(1);
-        expect(session.rows).toBe(1);
-      }
-    );
+    it('should accept minimum valid dimensions (1x1)', () => {
+      const session = manager.create({
+        cols: 1,
+        rows: 1,
+        command: ['/bin/true']
+      });
+      expect(session.cols).toBe(1);
+      expect(session.rows).toBe(1);
+    });
 
-    it.skipIf(!hasBunTerminal)(
-      'should accept maximum valid dimensions (1000x1000)',
-      () => {
-        const session = manager.create({
-          cols: 1000,
-          rows: 1000,
-          command: ['/bin/true']
-        });
-        expect(session.cols).toBe(1000);
-        expect(session.rows).toBe(1000);
-      }
-    );
+    it('should accept maximum valid dimensions (1000x1000)', () => {
+      const session = manager.create({
+        cols: 1000,
+        rows: 1000,
+        command: ['/bin/true']
+      });
+      expect(session.cols).toBe(1000);
+      expect(session.rows).toBe(1000);
+    });
 
-    it.skipIf(!hasBunTerminal)(
-      'should accept typical terminal dimensions (80x24)',
-      () => {
-        const session = manager.create({
-          cols: 80,
-          rows: 24,
-          command: ['/bin/true']
-        });
-        expect(session.cols).toBe(80);
-        expect(session.rows).toBe(24);
-      }
-    );
+    it('should accept typical terminal dimensions (80x24)', () => {
+      const session = manager.create({
+        cols: 80,
+        rows: 24,
+        command: ['/bin/true']
+      });
+      expect(session.cols).toBe(80);
+      expect(session.rows).toBe(24);
+    });
   });
 
   describe('resize - dimension validation with running PTY', () => {
-    it.skipIf(!hasBunTerminal)(
-      'should reject resize with cols below minimum (0)',
-      async () => {
-        const session = manager.create({
-          cols: 80,
-          rows: 24,
-          command: ['/bin/sleep', '10']
-        });
-        const result = manager.resize(session.id, 0, 24);
-        expect(result.success).toBe(false);
-        expect(result.error).toMatch(
-          /Invalid dimensions.*Must be between 1 and 1000/
-        );
-        manager.kill(session.id);
-      }
-    );
+    it('should reject resize with cols below minimum (0)', async () => {
+      const session = manager.create({
+        cols: 80,
+        rows: 24,
+        command: ['/bin/sleep', '10']
+      });
+      const result = manager.resize(session.id, 0, 24);
+      expect(result.success).toBe(false);
+      expect(result.error).toMatch(
+        /Invalid dimensions.*Must be between 1 and 1000/
+      );
+      manager.kill(session.id);
+    });
 
-    it.skipIf(!hasBunTerminal)(
-      'should reject resize with cols above maximum (1001)',
-      async () => {
-        const session = manager.create({
-          cols: 80,
-          rows: 24,
-          command: ['/bin/sleep', '10']
-        });
-        const result = manager.resize(session.id, 1001, 24);
-        expect(result.success).toBe(false);
-        expect(result.error).toMatch(
-          /Invalid dimensions.*Must be between 1 and 1000/
-        );
-        manager.kill(session.id);
-      }
-    );
+    it('should reject resize with cols above maximum (1001)', async () => {
+      const session = manager.create({
+        cols: 80,
+        rows: 24,
+        command: ['/bin/sleep', '10']
+      });
+      const result = manager.resize(session.id, 1001, 24);
+      expect(result.success).toBe(false);
+      expect(result.error).toMatch(
+        /Invalid dimensions.*Must be between 1 and 1000/
+      );
+      manager.kill(session.id);
+    });
 
-    it.skipIf(!hasBunTerminal)(
-      'should reject resize with rows below minimum (0)',
-      async () => {
-        const session = manager.create({
-          cols: 80,
-          rows: 24,
-          command: ['/bin/sleep', '10']
-        });
-        const result = manager.resize(session.id, 80, 0);
-        expect(result.success).toBe(false);
-        expect(result.error).toMatch(
-          /Invalid dimensions.*Must be between 1 and 1000/
-        );
-        manager.kill(session.id);
-      }
-    );
+    it('should reject resize with rows below minimum (0)', async () => {
+      const session = manager.create({
+        cols: 80,
+        rows: 24,
+        command: ['/bin/sleep', '10']
+      });
+      const result = manager.resize(session.id, 80, 0);
+      expect(result.success).toBe(false);
+      expect(result.error).toMatch(
+        /Invalid dimensions.*Must be between 1 and 1000/
+      );
+      manager.kill(session.id);
+    });
 
-    it.skipIf(!hasBunTerminal)(
-      'should reject resize with rows above maximum (1001)',
-      async () => {
-        const session = manager.create({
-          cols: 80,
-          rows: 24,
-          command: ['/bin/sleep', '10']
-        });
-        const result = manager.resize(session.id, 80, 1001);
-        expect(result.success).toBe(false);
-        expect(result.error).toMatch(
-          /Invalid dimensions.*Must be between 1 and 1000/
-        );
-        manager.kill(session.id);
-      }
-    );
+    it('should reject resize with rows above maximum (1001)', async () => {
+      const session = manager.create({
+        cols: 80,
+        rows: 24,
+        command: ['/bin/sleep', '10']
+      });
+      const result = manager.resize(session.id, 80, 1001);
+      expect(result.success).toBe(false);
+      expect(result.error).toMatch(
+        /Invalid dimensions.*Must be between 1 and 1000/
+      );
+      manager.kill(session.id);
+    });
 
-    it.skipIf(!hasBunTerminal)(
-      'should accept resize with valid dimensions',
-      async () => {
-        const session = manager.create({
-          cols: 80,
-          rows: 24,
-          command: ['/bin/sleep', '10']
-        });
-        const result = manager.resize(session.id, 100, 50);
-        expect(result.success).toBe(true);
-        manager.kill(session.id);
-      }
-    );
+    it('should accept resize with valid dimensions', async () => {
+      const session = manager.create({
+        cols: 80,
+        rows: 24,
+        command: ['/bin/sleep', '10']
+      });
+      const result = manager.resize(session.id, 100, 50);
+      expect(result.success).toBe(true);
+      manager.kill(session.id);
+    });
 
-    it.skipIf(!hasBunTerminal)(
-      'should log warning for invalid dimensions',
-      async () => {
-        const session = manager.create({
-          cols: 80,
-          rows: 24,
-          command: ['/bin/sleep', '10']
-        });
-        manager.resize(session.id, 0, 24);
-        expect(mockLogger.warn).toHaveBeenCalledWith(
-          'Invalid resize dimensions',
-          expect.objectContaining({ ptyId: session.id, cols: 0, rows: 24 })
-        );
-        manager.kill(session.id);
-      }
-    );
+    it('should log warning for invalid dimensions', async () => {
+      const session = manager.create({
+        cols: 80,
+        rows: 24,
+        command: ['/bin/sleep', '10']
+      });
+      manager.resize(session.id, 0, 24);
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        'Invalid resize dimensions',
+        expect.objectContaining({ ptyId: session.id, cols: 0, rows: 24 })
+      );
+      manager.kill(session.id);
+    });
   });
 
   describe('write and resize on exited PTY', () => {
-    it.skipIf(!hasBunTerminal)(
-      'should return error when writing to exited PTY',
-      async () => {
-        // Create a PTY that exits immediately
-        const session = manager.create({
-          cols: 80,
-          rows: 24,
-          command: ['/bin/true']
-        });
+    it('should return error when writing to exited PTY', async () => {
+      // Create a PTY that exits immediately
+      const session = manager.create({
+        cols: 80,
+        rows: 24,
+        command: ['/bin/true']
+      });
 
-        // Wait for the process to exit
-        await session.process.exited;
+      // Wait for the process to exit
+      await session.process.exited;
 
-        // Try to write to the exited PTY
-        const result = manager.write(session.id, 'hello');
-        expect(result.success).toBe(false);
-        expect(result.error).toBe('PTY has exited');
-      }
-    );
+      // Try to write to the exited PTY
+      const result = manager.write(session.id, 'hello');
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('PTY has exited');
+    });
 
-    it.skipIf(!hasBunTerminal)(
-      'should return error when resizing exited PTY',
-      async () => {
-        // Create a PTY that exits immediately
-        const session = manager.create({
-          cols: 80,
-          rows: 24,
-          command: ['/bin/true']
-        });
+    it('should return error when resizing exited PTY', async () => {
+      // Create a PTY that exits immediately
+      const session = manager.create({
+        cols: 80,
+        rows: 24,
+        command: ['/bin/true']
+      });
 
-        // Wait for the process to exit
-        await session.process.exited;
+      // Wait for the process to exit
+      await session.process.exited;
 
-        // Try to resize the exited PTY
-        const result = manager.resize(session.id, 100, 50);
-        expect(result.success).toBe(false);
-        expect(result.error).toBe('PTY has exited');
-      }
-    );
+      // Try to resize the exited PTY
+      const result = manager.resize(session.id, 100, 50);
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('PTY has exited');
+    });
 
-    it.skipIf(!hasBunTerminal)(
-      'should log warning when writing to exited PTY',
-      async () => {
-        const session = manager.create({
-          cols: 80,
-          rows: 24,
-          command: ['/bin/true']
-        });
-        await session.process.exited;
+    it('should log warning when writing to exited PTY', async () => {
+      const session = manager.create({
+        cols: 80,
+        rows: 24,
+        command: ['/bin/true']
+      });
+      await session.process.exited;
 
-        manager.write(session.id, 'hello');
-        expect(mockLogger.warn).toHaveBeenCalledWith(
-          'Write to exited PTY',
-          expect.objectContaining({ ptyId: session.id })
-        );
-      }
-    );
+      manager.write(session.id, 'hello');
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        'Write to exited PTY',
+        expect.objectContaining({ ptyId: session.id })
+      );
+    });
 
-    it.skipIf(!hasBunTerminal)(
-      'should log warning when resizing exited PTY',
-      async () => {
-        const session = manager.create({
-          cols: 80,
-          rows: 24,
-          command: ['/bin/true']
-        });
-        await session.process.exited;
+    it('should log warning when resizing exited PTY', async () => {
+      const session = manager.create({
+        cols: 80,
+        rows: 24,
+        command: ['/bin/true']
+      });
+      await session.process.exited;
 
-        manager.resize(session.id, 100, 50);
-        expect(mockLogger.warn).toHaveBeenCalledWith(
-          'Resize exited PTY',
-          expect.objectContaining({ ptyId: session.id })
-        );
-      }
-    );
+      manager.resize(session.id, 100, 50);
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        'Resize exited PTY',
+        expect.objectContaining({ ptyId: session.id })
+      );
+    });
   });
 });
