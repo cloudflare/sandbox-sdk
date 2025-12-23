@@ -405,32 +405,46 @@ export class WebSocketAdapter {
   /**
    * Register PTY output listener for a WebSocket connection
    * Returns cleanup function to unsubscribe from PTY events
+   *
+   * Auto-unsubscribes when send fails to prevent resource leaks
+   * from repeatedly attempting to send to a dead connection.
    */
   registerPtyListener(ws: ServerWebSocket<WSData>, ptyId: string): () => void {
-    const unsubData = this.ptyManager.onData(ptyId, (data) => {
+    let unsubData: (() => void) | null = null;
+    let unsubExit: (() => void) | null = null;
+
+    const cleanup = () => {
+      unsubData?.();
+      unsubExit?.();
+      unsubData = null;
+      unsubExit = null;
+    };
+
+    unsubData = this.ptyManager.onData(ptyId, (data) => {
       const chunk: WSStreamChunk = {
         type: 'stream',
         id: ptyId,
         event: 'pty_data',
         data
       };
-      this.send(ws, chunk);
+      if (!this.send(ws, chunk)) {
+        cleanup(); // Send failed, stop trying
+      }
     });
 
-    const unsubExit = this.ptyManager.onExit(ptyId, (exitCode) => {
+    unsubExit = this.ptyManager.onExit(ptyId, (exitCode) => {
       const chunk: WSStreamChunk = {
         type: 'stream',
         id: ptyId,
         event: 'pty_exit',
         data: JSON.stringify({ exitCode })
       };
-      this.send(ws, chunk);
+      if (!this.send(ws, chunk)) {
+        cleanup(); // Send failed, stop trying
+      }
     });
 
-    return () => {
-      unsubData();
-      unsubExit();
-    };
+    return cleanup;
   }
 }
 

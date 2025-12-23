@@ -116,14 +116,18 @@ export class HttpTransport extends BaseTransport {
   onPtyData(_ptyId: string, _callback: (data: string) => void): () => void {
     // HTTP transport doesn't support real-time PTY data events.
     // Data must be retrieved via SSE stream (GET /api/pty/:id/stream).
-    // Return no-op to allow PtyHandle construction, but callbacks won't fire.
+    this.logger.warn(
+      'onPtyData() has no effect with HTTP transport. Use WebSocket transport for real-time events.'
+    );
     return () => {};
   }
 
   onPtyExit(_ptyId: string, _callback: (exitCode: number) => void): () => void {
     // HTTP transport doesn't support real-time PTY exit events.
     // Exit must be detected via SSE stream (GET /api/pty/:id/stream).
-    // Return no-op to allow PtyHandle construction, but callbacks won't fire.
+    this.logger.warn(
+      'onPtyExit() has no effect with HTTP transport. Use WebSocket transport for real-time events.'
+    );
     return () => {};
   }
 }

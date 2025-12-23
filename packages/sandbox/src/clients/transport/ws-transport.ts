@@ -462,7 +462,15 @@ export class WebSocketTransport extends BaseTransport {
         };
         if (msg.type === 'stream' && msg.event === 'pty_data' && msg.id) {
           this.ptyDataListeners.get(msg.id)?.forEach((cb) => {
-            cb(msg.data || '');
+            try {
+              cb(msg.data || '');
+            } catch (error) {
+              this.logger.error(
+                'PTY data callback error - check your onData handler',
+                error instanceof Error ? error : new Error(String(error)),
+                { ptyId: msg.id }
+              );
+            }
           });
           return;
         }
@@ -472,10 +480,26 @@ export class WebSocketTransport extends BaseTransport {
           msg.id &&
           msg.data
         ) {
-          const { exitCode } = JSON.parse(msg.data);
-          this.ptyExitListeners.get(msg.id)?.forEach((cb) => {
-            cb(exitCode);
-          });
+          try {
+            const { exitCode } = JSON.parse(msg.data);
+            this.ptyExitListeners.get(msg.id)?.forEach((cb) => {
+              try {
+                cb(exitCode);
+              } catch (error) {
+                this.logger.error(
+                  'PTY exit callback error - check your onExit handler',
+                  error instanceof Error ? error : new Error(String(error)),
+                  { ptyId: msg.id, exitCode }
+                );
+              }
+            });
+          } catch (error) {
+            this.logger.error(
+              'Failed to parse PTY exit message',
+              error instanceof Error ? error : new Error(String(error)),
+              { ptyId: msg.id }
+            );
+          }
           return;
         }
 
