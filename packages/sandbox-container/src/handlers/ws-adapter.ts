@@ -42,7 +42,6 @@ export class WebSocketAdapter {
   private router: Router;
   private ptyManager: PtyManager;
   private logger: Logger;
-  /** Cleanup functions per connection to prevent memory leaks */
   private connectionCleanups = new Map<string, Array<() => void>>();
 
   constructor(router: Router, ptyManager: PtyManager, logger: Logger) {
