@@ -39,6 +39,8 @@ export class WebSocketTransport extends BaseTransport {
   private state: WSTransportState = 'disconnected';
   private pendingRequests: Map<string, PendingRequest> = new Map();
   private connectPromise: Promise<void> | null = null;
+  private ptyDataListeners = new Map<string, Set<(data: string) => void>>();
+  private ptyExitListeners = new Map<string, Set<(code: number) => void>>();
 
   // Bound event handlers for proper add/remove
   private boundHandleMessage: (event: MessageEvent) => void;
@@ -451,6 +453,56 @@ export class WebSocketTransport extends BaseTransport {
       } else if (isWSError(message)) {
         this.handleError(message);
       } else {
+        // Check for PTY events
+        const msg = message as {
+          type?: string;
+          id?: string;
+          event?: string;
+          data?: string;
+        };
+        if (msg.type === 'stream' && msg.event === 'pty_data' && msg.id) {
+          this.ptyDataListeners.get(msg.id)?.forEach((cb) => {
+            try {
+              cb(msg.data || '');
+            } catch (error) {
+              this.logger.error(
+                'PTY data callback error - check your onData handler',
+                error instanceof Error ? error : new Error(String(error)),
+                { ptyId: msg.id }
+              );
+            }
+          });
+          return;
+        }
+        if (
+          msg.type === 'stream' &&
+          msg.event === 'pty_exit' &&
+          msg.id &&
+          msg.data
+        ) {
+          try {
+            const { exitCode } = JSON.parse(msg.data);
+            this.ptyExitListeners.get(msg.id)?.forEach((cb) => {
+              try {
+                cb(exitCode);
+              } catch (error) {
+                this.logger.error(
+                  'PTY exit callback error - check your onExit handler',
+                  error instanceof Error ? error : new Error(String(error)),
+                  { ptyId: msg.id, exitCode }
+                );
+              }
+            });
+          } catch (error) {
+            this.logger.error(
+              'Failed to parse PTY exit message',
+              error instanceof Error ? error : new Error(String(error)),
+              { ptyId: msg.id }
+            );
+          }
+          return;
+        }
+
         this.logger.warn('Unknown WebSocket message type', { message });
       }
     } catch (error) {
@@ -567,8 +619,14 @@ export class WebSocketTransport extends BaseTransport {
       if (pending.streamController) {
         try {
           pending.streamController.error(closeError);
-        } catch {
-          // Stream may already be closed/errored
+        } catch (error) {
+          // Stream may already be closed/errored - log for visibility
+          this.logger.debug(
+            'Stream controller already closed during WebSocket disconnect',
+            {
+              error: error instanceof Error ? error.message : String(error)
+            }
+          );
         }
       }
       pending.reject(closeError);
@@ -595,5 +653,58 @@ export class WebSocketTransport extends BaseTransport {
       }
     }
     this.pendingRequests.clear();
+    // Clear PTY listeners to prevent accumulation across reconnections
+    this.ptyDataListeners.clear();
+    this.ptyExitListeners.clear();
+  }
+
+  /**
+   * Send PTY input
+   * @throws Error if WebSocket is not connected
+   */
+  sendPtyInput(ptyId: string, data: string): void {
+    if (!this.ws || this.state !== 'connected') {
+      throw new Error(
+        `Cannot send PTY input: WebSocket not connected (state: ${this.state}). ` +
+          'Reconnect or create a new PTY session.'
+      );
+    }
+    this.ws.send(JSON.stringify({ type: 'pty_input', ptyId, data }));
+  }
+
+  /**
+   * Send PTY resize
+   * @throws Error if WebSocket is not connected
+   */
+  sendPtyResize(ptyId: string, cols: number, rows: number): void {
+    if (!this.ws || this.state !== 'connected') {
+      throw new Error(
+        `Cannot send PTY resize: WebSocket not connected (state: ${this.state}). ` +
+          'Reconnect or create a new PTY session.'
+      );
+    }
+    this.ws.send(JSON.stringify({ type: 'pty_resize', ptyId, cols, rows }));
+  }
+
+  /**
+   * Register PTY data listener
+   */
+  onPtyData(ptyId: string, callback: (data: string) => void): () => void {
+    if (!this.ptyDataListeners.has(ptyId)) {
+      this.ptyDataListeners.set(ptyId, new Set());
+    }
+    this.ptyDataListeners.get(ptyId)!.add(callback);
+    return () => this.ptyDataListeners.get(ptyId)?.delete(callback);
+  }
+
+  /**
+   * Register PTY exit listener
+   */
+  onPtyExit(ptyId: string, callback: (exitCode: number) => void): () => void {
+    if (!this.ptyExitListeners.has(ptyId)) {
+      this.ptyExitListeners.set(ptyId, new Set());
+    }
+    this.ptyExitListeners.get(ptyId)!.add(callback);
+    return () => this.ptyExitListeners.get(ptyId)?.delete(callback);
   }
 }

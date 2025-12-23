@@ -27,6 +27,16 @@ export abstract class BaseTransport implements ITransport {
   abstract connect(): Promise<void>;
   abstract disconnect(): void;
   abstract isConnected(): boolean;
+  abstract sendPtyInput(ptyId: string, data: string): void;
+  abstract sendPtyResize(ptyId: string, cols: number, rows: number): void;
+  abstract onPtyData(
+    ptyId: string,
+    callback: (data: string) => void
+  ): () => void;
+  abstract onPtyExit(
+    ptyId: string,
+    callback: (exitCode: number) => void
+  ): () => void;
 
   /**
    * Fetch with automatic retry for 503 (container starting)

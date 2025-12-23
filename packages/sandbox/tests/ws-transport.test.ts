@@ -11,7 +11,7 @@ import {
   isWSResponse,
   isWSStreamChunk
 } from '@repo/shared';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { WebSocketTransport } from '../src/clients/transport';
 
 /**
@@ -253,6 +253,87 @@ describe('WebSocketTransport', () => {
 
       // Stream request should fail because connection fails
       await expect(transport.fetchStream('/test')).rejects.toThrow();
+    });
+  });
+
+  describe('PTY operations without connection', () => {
+    it('should throw when sending PTY input without connection', () => {
+      const transport = new WebSocketTransport({
+        wsUrl: 'ws://localhost:3000/ws'
+      });
+
+      expect(() => transport.sendPtyInput('pty_123', 'test')).toThrow(
+        /WebSocket not connected/
+      );
+    });
+
+    it('should throw when sending PTY resize without connection', () => {
+      const transport = new WebSocketTransport({
+        wsUrl: 'ws://localhost:3000/ws'
+      });
+
+      expect(() => transport.sendPtyResize('pty_123', 100, 50)).toThrow(
+        /WebSocket not connected/
+      );
+    });
+
+    it('should allow PTY listener registration without connection', () => {
+      const transport = new WebSocketTransport({
+        wsUrl: 'ws://localhost:3000/ws'
+      });
+
+      // Listeners can be registered before connection
+      const unsubData = transport.onPtyData('pty_123', () => {});
+      const unsubExit = transport.onPtyExit('pty_123', () => {});
+
+      // Should return unsubscribe functions
+      expect(typeof unsubData).toBe('function');
+      expect(typeof unsubExit).toBe('function');
+
+      // Cleanup should not throw
+      unsubData();
+      unsubExit();
+    });
+
+    it('should handle multiple PTY listeners for same PTY', () => {
+      const transport = new WebSocketTransport({
+        wsUrl: 'ws://localhost:3000/ws'
+      });
+
+      const callbacks: Array<() => void> = [];
+
+      // Register multiple listeners
+      for (let i = 0; i < 5; i++) {
+        callbacks.push(transport.onPtyData('pty_123', () => {}));
+        callbacks.push(transport.onPtyExit('pty_123', () => {}));
+      }
+
+      // All should be unsubscribable
+      for (const unsub of callbacks) {
+        unsub();
+      }
+    });
+  });
+
+  describe('cleanup behavior', () => {
+    it('should clear PTY listeners on disconnect', () => {
+      const transport = new WebSocketTransport({
+        wsUrl: 'ws://localhost:3000/ws'
+      });
+
+      // Register listeners
+      const dataCallback = vi.fn();
+      const exitCallback = vi.fn();
+      transport.onPtyData('pty_123', dataCallback);
+      transport.onPtyExit('pty_123', exitCallback);
+
+      // Disconnect should clean up
+      transport.disconnect();
+
+      // Re-registering should work (new listener sets)
+      const unsub = transport.onPtyData('pty_123', () => {});
+      expect(typeof unsub).toBe('function');
+      unsub();
     });
   });
 });

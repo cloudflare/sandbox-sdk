@@ -13,6 +13,7 @@ import type {
   ServiceResult
 } from '../core/types';
 import { ProcessManager } from '../managers/process-manager';
+import type { PtyManager } from '../managers/pty-manager';
 import type { ProcessStore } from './process-store';
 import type { SessionManager } from './session-manager';
 
@@ -26,6 +27,7 @@ export interface ProcessFilters {
 
 export class ProcessService {
   private manager: ProcessManager;
+  private ptyManager: PtyManager | null = null;
 
   constructor(
     private store: ProcessStore,
@@ -33,6 +35,36 @@ export class ProcessService {
     private sessionManager: SessionManager
   ) {
     this.manager = new ProcessManager();
+  }
+
+  /**
+   * Set the PtyManager for exclusive control checking.
+   * Called after construction to avoid circular dependency.
+   */
+  setPtyManager(ptyManager: PtyManager): void {
+    this.ptyManager = ptyManager;
+  }
+
+  /**
+   * Check if session has active PTY and return error if so
+   */
+  private checkPtyExclusiveControl(
+    sessionId: string
+  ): ServiceResult<void> | null {
+    if (this.ptyManager?.hasActivePty(sessionId)) {
+      return {
+        success: false,
+        error: {
+          message: `Session '${sessionId}' has an active PTY. Close it with pty.close() or pty.kill() before running commands.`,
+          code: ErrorCode.PTY_EXCLUSIVE_CONTROL,
+          details: {
+            sessionId,
+            reason: 'PTY has exclusive control of session'
+          }
+        }
+      };
+    }
+    return null;
   }
 
   /**
@@ -54,6 +86,13 @@ export class ProcessService {
     try {
       // Always use SessionManager for execution (unified model)
       const sessionId = options.sessionId || 'default';
+
+      // Check for PTY exclusive control
+      const ptyCheck = this.checkPtyExclusiveControl(sessionId);
+      if (ptyCheck) {
+        return ptyCheck as ServiceResult<CommandResult>;
+      }
+
       const result = await this.sessionManager.executeInSession(
         sessionId,
         command,
@@ -110,6 +149,14 @@ export class ProcessService {
     options: ProcessOptions = {}
   ): Promise<ServiceResult<ProcessRecord>> {
     try {
+      const sessionId = options.sessionId || 'default';
+
+      // Check for PTY exclusive control
+      const ptyCheck = this.checkPtyExclusiveControl(sessionId);
+      if (ptyCheck) {
+        return ptyCheck as ServiceResult<ProcessRecord>;
+      }
+
       // 1. Validate command (business logic via manager)
       const validation = this.manager.validateCommand(command);
       if (!validation.valid) {
@@ -130,7 +177,6 @@ export class ProcessService {
       );
 
       // 3. Build full process record with commandHandle instead of subprocess
-      const sessionId = options.sessionId || 'default';
       const processRecord: ProcessRecord = {
         ...processRecordData,
         commandHandle: {

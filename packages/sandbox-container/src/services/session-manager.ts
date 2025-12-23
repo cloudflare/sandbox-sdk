@@ -218,6 +218,23 @@ export class SessionManager {
   }
 
   /**
+   * Get session info (cwd, env) for PTY attachment.
+   * Returns null if session doesn't exist.
+   */
+  getSessionInfo(
+    sessionId: string
+  ): { cwd: string; env?: Record<string, string> } | null {
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      return null;
+    }
+    return {
+      cwd: session.getInitialCwd(),
+      env: session.getInitialEnv()
+    };
+  }
+
+  /**
    * Execute a command in a session with per-session locking.
    * Commands to the same session are serialized; different sessions run in parallel.
    */
