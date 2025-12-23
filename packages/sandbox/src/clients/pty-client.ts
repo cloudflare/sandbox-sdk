@@ -77,7 +77,7 @@ class PtyHandle implements Pty {
     readonly id: string,
     readonly sessionId: string | undefined,
     private transport: ITransport,
-    _logger: Logger
+    private logger: Logger
   ) {
     // Setup exit promise
     this.exited = new Promise((resolve) => {
@@ -99,9 +99,15 @@ class PtyHandle implements Pty {
       try {
         this.transport.sendPtyInput(this.id, data);
       } catch (error) {
-        throw new Error(
-          `PTY write failed: ${error instanceof Error ? error.message : String(error)}`
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.error(
+          'PTY write failed',
+          error instanceof Error ? error : undefined,
+          {
+            ptyId: this.id
+          }
         );
+        throw new Error(`PTY write failed: ${message}`);
       }
       return;
     }
@@ -115,6 +121,11 @@ class PtyHandle implements Pty {
 
     if (!response.ok) {
       const text = await response.text().catch(() => 'Unknown error');
+      this.logger.error('PTY write failed', undefined, {
+        ptyId: this.id,
+        status: response.status,
+        error: text
+      });
       throw new Error(`PTY write failed: HTTP ${response.status}: ${text}`);
     }
   }
@@ -129,9 +140,17 @@ class PtyHandle implements Pty {
       try {
         this.transport.sendPtyResize(this.id, cols, rows);
       } catch (error) {
-        throw new Error(
-          `PTY resize failed: ${error instanceof Error ? error.message : String(error)}`
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.error(
+          'PTY resize failed',
+          error instanceof Error ? error : undefined,
+          {
+            ptyId: this.id,
+            cols,
+            rows
+          }
         );
+        throw new Error(`PTY resize failed: ${message}`);
       }
       return;
     }
@@ -145,6 +164,13 @@ class PtyHandle implements Pty {
 
     if (!response.ok) {
       const text = await response.text().catch(() => 'Unknown error');
+      this.logger.error('PTY resize failed', undefined, {
+        ptyId: this.id,
+        cols,
+        rows,
+        status: response.status,
+        error: text
+      });
       throw new Error(`PTY resize failed: HTTP ${response.status}: ${text}`);
     }
   }
@@ -194,12 +220,12 @@ class PtyHandle implements Pty {
     let resolve: (() => void) | null = null;
     let done = false;
 
-    const unsub = this.onData((data) => {
+    const unsubData = this.onData((data) => {
       queue.push(data);
       resolve?.();
     });
 
-    this.onExit(() => {
+    const unsubExit = this.onExit(() => {
       done = true;
       resolve?.();
     });
@@ -216,7 +242,8 @@ class PtyHandle implements Pty {
         }
       }
     } finally {
-      unsub();
+      unsubData();
+      unsubExit();
     }
   }
 }
