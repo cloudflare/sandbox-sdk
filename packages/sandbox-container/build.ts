@@ -62,9 +62,10 @@ console.log(
 console.log('Building standalone binary...');
 
 // Compile standalone binary (bundles Bun runtime)
+const bunExecutable = process.execPath;
 const proc = Bun.spawn(
   [
-    'bun',
+    bunExecutable,
     'build',
     'src/main.ts',
     '--compile',
