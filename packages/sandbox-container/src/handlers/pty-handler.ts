@@ -329,6 +329,9 @@ export class PtyHandler extends BaseHandler<Request, Response> {
     let unsubData: (() => void) | null = null;
     let unsubExit: (() => void) | null = null;
 
+    // Capture logger for use in stream callbacks
+    const logger = this.logger;
+
     const stream = new ReadableStream({
       start: (controller) => {
         const encoder = new TextEncoder();
@@ -352,8 +355,14 @@ export class PtyHandler extends BaseHandler<Request, Response> {
               timestamp: new Date().toISOString()
             })}\n\n`;
             controller.enqueue(encoder.encode(event));
-          } catch {
-            // Stream may be closed, ignore enqueue errors
+          } catch (error) {
+            logger.debug(
+              'SSE stream enqueue failed (client likely disconnected)',
+              {
+                ptyId,
+                error: error instanceof Error ? error.message : String(error)
+              }
+            );
           }
         });
 
@@ -367,8 +376,15 @@ export class PtyHandler extends BaseHandler<Request, Response> {
             })}\n\n`;
             controller.enqueue(encoder.encode(event));
             controller.close();
-          } catch {
-            // Stream may be closed, ignore errors
+          } catch (error) {
+            logger.debug(
+              'SSE stream close failed (client likely disconnected)',
+              {
+                ptyId,
+                exitCode,
+                error: error instanceof Error ? error.message : String(error)
+              }
+            );
           }
         });
       },

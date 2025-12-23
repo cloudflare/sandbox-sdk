@@ -109,6 +109,15 @@ describe('PtyManager', () => {
       unsubscribe(); // Should not throw
     });
 
+    it('should warn when registering onData for unknown PTY', () => {
+      const callback = vi.fn();
+      manager.onData('pty_nonexistent', callback);
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        'Registering onData listener for unknown PTY - callback will never fire',
+        expect.objectContaining({ ptyId: 'pty_nonexistent' })
+      );
+    });
+
     it('should return no-op unsubscribe for unknown PTY onExit', () => {
       const callback = vi.fn();
       const unsubscribe = manager.onExit('pty_nonexistent', callback);
@@ -116,6 +125,15 @@ describe('PtyManager', () => {
       // Should return a function that does nothing
       expect(typeof unsubscribe).toBe('function');
       unsubscribe(); // Should not throw
+    });
+
+    it('should warn when registering onExit for unknown PTY', () => {
+      const callback = vi.fn();
+      manager.onExit('pty_nonexistent', callback);
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        'Registering onExit listener for unknown PTY - callback will never fire',
+        expect.objectContaining({ ptyId: 'pty_nonexistent' })
+      );
     });
   });
 

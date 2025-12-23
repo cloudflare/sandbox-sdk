@@ -319,6 +319,12 @@ export class PtyManager {
   onData(id: string, callback: (data: string) => void): () => void {
     const session = this.sessions.get(id);
     if (!session) {
+      this.logger.warn(
+        'Registering onData listener for unknown PTY - callback will never fire',
+        {
+          ptyId: id
+        }
+      );
       return () => {};
     }
     session.dataListeners.add(callback);
@@ -328,6 +334,12 @@ export class PtyManager {
   onExit(id: string, callback: (code: number) => void): () => void {
     const session = this.sessions.get(id);
     if (!session) {
+      this.logger.warn(
+        'Registering onExit listener for unknown PTY - callback will never fire',
+        {
+          ptyId: id
+        }
+      );
       return () => {};
     }
 
@@ -335,8 +347,12 @@ export class PtyManager {
     if (session.state === 'exited' && session.exitCode !== undefined) {
       try {
         callback(session.exitCode);
-      } catch {
-        // Ignore callback errors to ensure registration completes
+      } catch (error) {
+        this.logger.error(
+          'PTY onExit callback error - check your onExit handler',
+          error instanceof Error ? error : new Error(String(error)),
+          { ptyId: id, exitCode: session.exitCode }
+        );
       }
       return () => {};
     }
@@ -355,8 +371,12 @@ export class PtyManager {
       try {
         this.logger.info('PTY disconnect timeout, killing', { ptyId: id });
         this.kill(id);
-      } catch {
-        // Ignore errors to prevent timer callback from crashing
+      } catch (error) {
+        this.logger.error(
+          'Failed to kill PTY on disconnect timeout',
+          error instanceof Error ? error : new Error(String(error)),
+          { ptyId: id }
+        );
       }
     }, session.disconnectTimeout);
   }

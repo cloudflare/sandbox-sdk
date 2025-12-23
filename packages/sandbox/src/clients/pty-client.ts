@@ -185,7 +185,15 @@ class PtyHandle implements Pty {
   }
 
   onData(callback: (data: string) => void): () => void {
-    if (this.closed) return () => {};
+    if (this.closed) {
+      this.logger.warn(
+        'Registering onData listener on closed PTY handle - callback will never fire',
+        {
+          ptyId: this.id
+        }
+      );
+      return () => {};
+    }
 
     const unsub = this.transport.onPtyData(this.id, callback);
     this.dataListeners.push(unsub);
@@ -193,7 +201,15 @@ class PtyHandle implements Pty {
   }
 
   onExit(callback: (exitCode: number) => void): () => void {
-    if (this.closed) return () => {};
+    if (this.closed) {
+      this.logger.warn(
+        'Registering onExit listener on closed PTY handle - callback will never fire',
+        {
+          ptyId: this.id
+        }
+      );
+      return () => {};
+    }
 
     const unsub = this.transport.onPtyExit(this.id, callback);
     this.exitListeners.push(unsub);
