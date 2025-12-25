@@ -61,5 +61,11 @@
       "new_sqlite_classes": ["Sandbox"],
       "tag": "v1"
     }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "SESSIONS_BUCKET",
+      "bucket_name": "opencode-sessions"
+    }
   ]
 }
