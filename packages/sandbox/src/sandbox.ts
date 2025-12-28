@@ -987,9 +987,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   override async onActivityExpired(): Promise<void> {
     if (this.keepAliveEnabled) {
       this.logger.debug(
-        'Activity expired but keepAlive is enabled - container will stay alive'
+        'Activity expired but keepAlive is enabled - renewing activity timeout'
       );
-      // Do nothing - don't call stop(), container stays alive
+      // Renew the activity timer so the container stays alive
+      this.renewActivityTimeout();
     } else {
       // Default behavior: stop the container
       this.logger.debug('Activity expired - stopping container');
