@@ -887,4 +887,80 @@ describe('Sandbox - Automatic Session Management', () => {
       ).resolves.toBeUndefined();
     });
   });
+
+  describe('keepAlive persistence', () => {
+    it('should persist keepAliveEnabled to storage when set', async () => {
+      await sandbox.setKeepAlive(true);
+
+      expect(mockCtx.storage?.put).toHaveBeenCalledWith(
+        'keepAliveEnabled',
+        true
+      );
+    });
+
+    it('should persist keepAliveEnabled=false to storage', async () => {
+      await sandbox.setKeepAlive(false);
+
+      expect(mockCtx.storage?.put).toHaveBeenCalledWith(
+        'keepAliveEnabled',
+        false
+      );
+    });
+
+    it('should load keepAliveEnabled from storage on initialization', async () => {
+      // Create a new sandbox with keepAliveEnabled already in storage
+      const getCalls: string[] = [];
+      const storageMock = {
+        get: vi.fn().mockImplementation((key: string) => {
+          getCalls.push(key);
+          if (key === 'keepAliveEnabled') return Promise.resolve(true);
+          if (key === 'sandboxName') return Promise.resolve('test-sandbox');
+          if (key === 'normalizeId') return Promise.resolve(false);
+          if (key === 'defaultSession') return Promise.resolve(null);
+          if (key === 'containerTimeouts') return Promise.resolve(null);
+          return Promise.resolve(null);
+        }),
+        put: vi.fn().mockResolvedValue(undefined),
+        delete: vi.fn().mockResolvedValue(undefined),
+        list: vi.fn().mockResolvedValue(new Map())
+      };
+
+      let blockConcurrencyCallback: (() => Promise<unknown>) | null = null;
+      const newCtx = {
+        storage: storageMock as any,
+        blockConcurrencyWhile: vi
+          .fn()
+          .mockImplementation(<T>(callback: () => Promise<T>): Promise<T> => {
+            blockConcurrencyCallback = callback;
+            return callback();
+          }),
+        waitUntil: vi.fn(),
+        id: {
+          toString: () => 'test-sandbox-id-2',
+          equals: vi.fn(),
+          name: 'test-sandbox-2'
+        } as any
+      };
+
+      const newSandbox = new Sandbox(
+        newCtx as unknown as DurableObjectState<{}>,
+        {}
+      );
+
+      // Wait for blockConcurrencyWhile callback to be captured and executed
+      await vi.waitFor(() => {
+        expect(newCtx.blockConcurrencyWhile).toHaveBeenCalled();
+      });
+
+      // Wait a tick for promises to settle
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Verify keepAliveEnabled was loaded from storage
+      // The order of calls should include keepAliveEnabled
+      expect(getCalls).toContain('keepAliveEnabled');
+
+      // The keepAliveEnabled should be loaded from storage (true)
+      expect((newSandbox as any).keepAliveEnabled).toBe(true);
+    });
+  });
 });
