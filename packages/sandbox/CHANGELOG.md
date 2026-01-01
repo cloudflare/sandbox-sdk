@@ -1,5 +1,11 @@
 # @cloudflare/sandbox
 
+## 0.6.8
+
+### Patch Changes
+
+- [#317](https://github.com/cloudflare/sandbox-sdk/pull/317) [`9e1d8f5`](https://github.com/cloudflare/sandbox-sdk/commit/9e1d8f50c95877e25ae6080d574a3683bbb0588e) Thanks [@sdan](https://github.com/sdan)! - fix: persist keepAlive setting to DO storage
+
 ## 0.6.7
 
 ### Patch Changes
@@ -111,10 +117,10 @@
 
   ```dockerfile
   # Before
-  FROM cloudflare/sandbox:0.6.7
+  FROM cloudflare/sandbox:0.6.8
 
   # After
-  FROM cloudflare/sandbox:0.6.7-python
+  FROM cloudflare/sandbox:0.6.8-python
   ```
 
   Without this change, Python execution will fail with `PYTHON_NOT_AVAILABLE` error.
