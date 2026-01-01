@@ -823,6 +823,136 @@ console.log('Terminal server on port ' + port);
         });
       }
 
+      // PTY create
+      if (url.pathname === '/api/pty' && request.method === 'POST') {
+        const info = await sandbox.createPty(body);
+        return new Response(
+          JSON.stringify({
+            success: true,
+            pty: info
+          }),
+          { headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      // PTY list
+      if (url.pathname === '/api/pty' && request.method === 'GET') {
+        const ptys = await sandbox.listPtys();
+        return new Response(
+          JSON.stringify({
+            success: true,
+            ptys
+          }),
+          { headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      // PTY attach to session
+      if (
+        url.pathname.startsWith('/api/pty/attach/') &&
+        request.method === 'POST'
+      ) {
+        const attachSessionId = url.pathname.split('/')[4];
+        const info = await sandbox.attachPty(attachSessionId, body);
+        return new Response(
+          JSON.stringify({
+            success: true,
+            pty: info
+          }),
+          { headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      // PTY routes with ID
+      if (url.pathname.startsWith('/api/pty/')) {
+        const pathParts = url.pathname.split('/');
+        const ptyId = pathParts[3];
+        const action = pathParts[4];
+
+        // GET /api/pty/:id - get PTY info
+        if (!action && request.method === 'GET') {
+          const info = await sandbox.getPtyInfo(ptyId);
+          return new Response(
+            JSON.stringify({
+              success: true,
+              pty: info
+            }),
+            { headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+
+        // DELETE /api/pty/:id - kill PTY
+        if (!action && request.method === 'DELETE') {
+          await sandbox.killPty(ptyId, body?.signal);
+          return new Response(
+            JSON.stringify({
+              success: true,
+              ptyId
+            }),
+            { headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+
+        // POST /api/pty/:id/input - send input
+        if (action === 'input' && request.method === 'POST') {
+          await sandbox.writeToPty(ptyId, body.data);
+          return new Response(
+            JSON.stringify({
+              success: true,
+              ptyId
+            }),
+            { headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+
+        // POST /api/pty/:id/resize - resize PTY
+        if (action === 'resize' && request.method === 'POST') {
+          await sandbox.resizePty(ptyId, body.cols, body.rows);
+          return new Response(
+            JSON.stringify({
+              success: true,
+              ptyId,
+              cols: body.cols,
+              rows: body.rows
+            }),
+            { headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+
+        // GET /api/pty/:id/stream - SSE stream
+        if (action === 'stream' && request.method === 'GET') {
+          const info = await sandbox.getPtyInfo(ptyId);
+
+          // Return a simple SSE stream with PTY info
+          const stream = new ReadableStream({
+            start(controller) {
+              const encoder = new TextEncoder();
+
+              // Send initial info
+              const infoEvent = `data: ${JSON.stringify({
+                type: 'pty_info',
+                ptyId: info.id,
+                cols: info.cols,
+                rows: info.rows,
+                timestamp: new Date().toISOString()
+              })}\n\n`;
+              controller.enqueue(encoder.encode(infoEvent));
+
+              // Note: Real-time streaming requires WebSocket or direct PTY handle access
+              // For E2E testing, we just return the initial info
+            }
+          });
+
+          return new Response(stream, {
+            headers: {
+              'Content-Type': 'text/event-stream',
+              'Cache-Control': 'no-cache',
+              Connection: 'keep-alive'
+            }
+          });
+        }
+      }
+
       return new Response('Not found', { status: 404 });
     } catch (error) {
       return new Response(

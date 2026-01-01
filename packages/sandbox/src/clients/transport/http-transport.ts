@@ -98,4 +98,36 @@ export class HttpTransport extends BaseTransport {
       body: body && method === 'POST' ? JSON.stringify(body) : undefined
     };
   }
+
+  sendPtyInput(_ptyId: string, _data: string): void {
+    throw new Error(
+      'sendPtyInput() not supported with HTTP transport. ' +
+        'Use pty.write() which routes to POST /api/pty/:id/input'
+    );
+  }
+
+  sendPtyResize(_ptyId: string, _cols: number, _rows: number): void {
+    throw new Error(
+      'sendPtyResize() not supported with HTTP transport. ' +
+        'Use pty.resize() which routes to POST /api/pty/:id/resize'
+    );
+  }
+
+  onPtyData(_ptyId: string, _callback: (data: string) => void): () => void {
+    // HTTP transport doesn't support real-time PTY data events.
+    // Data must be retrieved via SSE stream (GET /api/pty/:id/stream).
+    this.logger.warn(
+      'onPtyData() has no effect with HTTP transport. Use WebSocket transport for real-time events.'
+    );
+    return () => {};
+  }
+
+  onPtyExit(_ptyId: string, _callback: (exitCode: number) => void): () => void {
+    // HTTP transport doesn't support real-time PTY exit events.
+    // Exit must be detected via SSE stream (GET /api/pty/:id/stream).
+    this.logger.warn(
+      'onPtyExit() has no effect with HTTP transport. Use WebSocket transport for real-time events.'
+    );
+    return () => {};
+  }
 }

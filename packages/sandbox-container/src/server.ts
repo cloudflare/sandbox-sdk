@@ -33,7 +33,8 @@ async function createApplication(): Promise<{
   setupRoutes(router, container);
 
   // Create WebSocket adapter with the router for control plane multiplexing
-  const wsAdapter = new WebSocketAdapter(router, logger);
+  const ptyManager = container.get('ptyManager');
+  const wsAdapter = new WebSocketAdapter(router, ptyManager, logger);
 
   return {
     fetch: async (

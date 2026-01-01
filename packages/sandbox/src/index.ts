@@ -99,6 +99,8 @@ export type {
   ExecutionCallbacks,
   InterpreterClient
 } from './clients/interpreter-client.js';
+// Export PTY types
+export type { Pty } from './clients/pty-client.js';
 // Export process readiness errors
 export {
   ProcessExitedBeforeReadyError,

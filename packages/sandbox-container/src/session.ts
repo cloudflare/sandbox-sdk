@@ -136,6 +136,20 @@ export class Session {
   }
 
   /**
+   * Get the initial working directory configured for this session.
+   */
+  getInitialCwd(): string {
+    return this.options.cwd || CONFIG.DEFAULT_CWD;
+  }
+
+  /**
+   * Get the initial environment variables configured for this session.
+   */
+  getInitialEnv(): Record<string, string> | undefined {
+    return this.options.env;
+  }
+
+  /**
    * Initialize the session by spawning a persistent bash shell
    */
   async initialize(): Promise<void> {

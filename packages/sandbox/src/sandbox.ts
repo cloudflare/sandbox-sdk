@@ -32,7 +32,7 @@ import {
   shellEscape,
   TraceContext
 } from '@repo/shared';
-import { type ExecuteResponse, SandboxClient } from './clients';
+import { type ExecuteResponse, type PtyClient, SandboxClient } from './clients';
 import type { ErrorResponse } from './errors';
 import {
   CustomDomainRequiredError,
@@ -122,6 +122,24 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   client: SandboxClient;
   private codeInterpreter: CodeInterpreter;
+
+  /**
+   * PTY (pseudo-terminal) client for interactive terminal sessions
+   *
+   * Provides methods to create and manage interactive terminal sessions:
+   * - create() - Create a new PTY session
+   * - attach(sessionId) - Attach PTY to existing session
+   * - getById(id) - Get existing PTY by ID
+   * - list() - List all active PTY sessions
+   *
+   * @example
+   * const pty = await sandbox.pty.create({ cols: 80, rows: 24 });
+   * pty.onData((data) => terminal.write(data));
+   * pty.write('ls -la\n');
+   */
+  get pty(): PtyClient {
+    return this.client.pty;
+  }
   private sandboxName: string | null = null;
   private normalizeId: boolean = false;
   private baseUrl: string | null = null;
@@ -2504,5 +2522,91 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   async deleteCodeContext(contextId: string): Promise<void> {
     return this.codeInterpreter.deleteCodeContext(contextId);
+  }
+
+  // ============================================================================
+  // PTY methods - delegate to PtyClient for RPC access
+  // These methods return serializable data for RPC compatibility
+  // ============================================================================
+
+  /**
+   * Create a new PTY session
+   *
+   * @param options - PTY creation options (terminal size, command, cwd, etc.)
+   * @returns PTY info object (use getPtyById to get an interactive handle
+   */
+  async createPty(
+    options?: import('@repo/shared').CreatePtyOptions
+  ): Promise<import('@repo/shared').PtyInfo> {
+    const pty = await this.client.pty.create(options);
+    return this.client.pty.getInfo(pty.id);
+  }
+
+  /**
+   * List all active PTY sessions
+   *
+   * @returns Array of PTY info objects
+   */
+  async listPtys(): Promise<import('@repo/shared').PtyInfo[]> {
+    return this.client.pty.list();
+  }
+
+  /**
+   * Get PTY information by ID
+   *
+   * @param id - PTY ID
+   * @returns PTY info object
+   */
+  async getPtyInfo(id: string): Promise<import('@repo/shared').PtyInfo> {
+    return this.client.pty.getInfo(id);
+  }
+
+  /**
+   * Kill a PTY by ID
+   *
+   * @param id - PTY ID
+   * @param signal - Optional signal to send (e.g., 'SIGTERM', 'SIGKILL')
+   */
+  async killPty(id: string, signal?: string): Promise<void> {
+    await this.client.pty.kill(id, signal);
+  }
+
+  /**
+   * Send input to a PTY
+   *
+   * @param id - PTY ID
+   * @param data - Input data to send
+   */
+  async writeToPty(id: string, data: string): Promise<void> {
+    await this.client.pty.write(id, data);
+  }
+
+  /**
+   * Resize a PTY
+   *
+   * @param id - PTY ID
+   * @param cols - Number of columns
+   * @param rows - Number of rows
+   */
+  async resizePty(id: string, cols: number, rows: number): Promise<void> {
+    await this.client.pty.resize(id, cols, rows);
+  }
+
+  /**
+   * Attach a PTY to an existing session
+   *
+   * Creates a PTY that shares the working directory and environment
+   * of an existing session.
+   *
+   * @param sessionId - Session ID to attach to
+   * @param options - PTY options (terminal size)
+   * @returns PTY info object
+   */
+  async attachPty(
+    sessionId: string,
+    options?: import('@repo/shared').AttachPtyOptions
+  ): Promise<import('@repo/shared').PtyInfo> {
+    const pty = await this.client.pty.attach(sessionId, options);
+    return this.client.pty.getInfo(pty.id);
   }
 }
