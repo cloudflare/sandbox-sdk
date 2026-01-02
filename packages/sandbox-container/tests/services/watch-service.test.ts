@@ -322,10 +322,10 @@ describe('WatchService', () => {
       expect(args).not.toContain('-r');
     });
 
-    it('should include default excludes', () => {
+    it('should include default excludes as regex patterns', () => {
       const args = testBuildArgs(watchService, '/app', { path: '/app' });
       expect(args).toContain('--exclude');
-      // Default excludes: .git, node_modules, .DS_Store
+      // Default excludes: .git, node_modules, .DS_Store (converted to regex)
       const excludeIndices = args.reduce(
         (acc: number[], arg: string, i: number) => {
           if (arg === '--exclude') acc.push(i);
@@ -334,16 +334,21 @@ describe('WatchService', () => {
         []
       );
       expect(excludeIndices.length).toBe(3);
+      // Verify regex format: (^|/)pattern(/|$)
+      expect(args).toContain('(^|/)\\.git(/|$)');
+      expect(args).toContain('(^|/)node_modules(/|$)');
+      expect(args).toContain('(^|/)\\.DS_Store(/|$)');
     });
 
-    it('should use custom excludes when provided', () => {
+    it('should convert custom excludes to regex patterns', () => {
       const args = testBuildArgs(watchService, '/app', {
         path: '/app',
         exclude: ['*.log', 'temp']
       });
       expect(args).toContain('--exclude');
-      expect(args).toContain('*.log');
-      expect(args).toContain('temp');
+      // Patterns are escaped and wrapped in regex anchors
+      expect(args).toContain('(^|/)\\*\\.log(/|$)');
+      expect(args).toContain('(^|/)temp(/|$)');
     });
 
     it('should add path as last argument', () => {

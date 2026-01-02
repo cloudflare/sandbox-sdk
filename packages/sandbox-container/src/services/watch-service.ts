@@ -178,10 +178,13 @@ export class WatchService {
       args.push('-e', inotifyEvents.join(','));
     }
 
-    // Exclude patterns
+    // Exclude patterns - convert to regex for inotifywait
+    // inotifywait --exclude uses POSIX extended regex matching against full path
     const excludes = options.exclude || ['.git', 'node_modules', '.DS_Store'];
     for (const pattern of excludes) {
-      args.push('--exclude', pattern);
+      // Escape regex metacharacters and wrap to match anywhere in path
+      const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      args.push('--exclude', `(^|/)${escaped}(/|$)`);
     }
 
     // Add path last
