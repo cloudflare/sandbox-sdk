@@ -2003,12 +2003,19 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   async gitCheckout(
     repoUrl: string,
-    options?: { branch?: string; targetDir?: string; sessionId?: string }
+    options?: {
+      branch?: string;
+      targetDir?: string;
+      sessionId?: string;
+      /** Clone depth for shallow clones (e.g., 1 for latest commit only) */
+      depth?: number;
+    }
   ) {
     const session = options?.sessionId ?? (await this.ensureDefaultSession());
     return this.client.git.checkout(repoUrl, session, {
       branch: options?.branch,
-      targetDir: options?.targetDir
+      targetDir: options?.targetDir,
+      depth: options?.depth
     });
   }
 

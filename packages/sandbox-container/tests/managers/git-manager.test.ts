@@ -88,6 +88,59 @@ describe('GitManager', () => {
         '/tmp/target'
       ]);
     });
+
+    it('should build clone args with depth option for shallow clone', () => {
+      const args = manager.buildCloneArgs(
+        'https://github.com/user/repo.git',
+        '/tmp/target',
+        { depth: 1 }
+      );
+      expect(args).toEqual([
+        'git',
+        'clone',
+        '--depth',
+        '1',
+        'https://github.com/user/repo.git',
+        '/tmp/target'
+      ]);
+    });
+
+    it('should build clone args with both branch and depth options', () => {
+      const args = manager.buildCloneArgs(
+        'https://github.com/user/repo.git',
+        '/tmp/target',
+        { branch: 'main', depth: 10 }
+      );
+      expect(args).toEqual([
+        'git',
+        'clone',
+        '--branch',
+        'main',
+        '--depth',
+        '10',
+        'https://github.com/user/repo.git',
+        '/tmp/target'
+      ]);
+    });
+
+    it('should pass through depth value without validation (handler validates)', () => {
+      // GitManager trusts that the handler has already validated depth.
+      // It simply passes through the value. Invalid values like 0 or -1
+      // would be rejected by GitHandler's Zod validation before reaching here.
+      const args = manager.buildCloneArgs(
+        'https://github.com/user/repo.git',
+        '/tmp/target',
+        { depth: 5 }
+      );
+      expect(args).toEqual([
+        'git',
+        'clone',
+        '--depth',
+        '5',
+        'https://github.com/user/repo.git',
+        '/tmp/target'
+      ]);
+    });
   });
 
   describe('buildCheckoutArgs', () => {

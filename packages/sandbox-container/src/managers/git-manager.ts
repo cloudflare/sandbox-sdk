@@ -63,6 +63,9 @@ export class GitManager {
   /**
    * Build git clone command arguments
    * Returns array of args to pass to spawn (e.g., ['git', 'clone', '--branch', 'main', 'url', 'path'])
+   *
+   * Note: depth is validated at the handler level via Zod schema (positive integer only).
+   * Invalid values are rejected before reaching this method.
    */
   buildCloneArgs(
     repoUrl: string,
@@ -73,6 +76,10 @@ export class GitManager {
 
     if (options.branch) {
       args.push('--branch', options.branch);
+    }
+
+    if (options.depth !== undefined) {
+      args.push('--depth', String(options.depth));
     }
 
     args.push(repoUrl, targetDir);

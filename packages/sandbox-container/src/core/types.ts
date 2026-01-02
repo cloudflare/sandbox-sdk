@@ -328,6 +328,8 @@ export interface CloneOptions {
   branch?: string;
   targetDir?: string;
   sessionId?: string;
+  /** Clone depth for shallow clones (e.g., 1 for latest commit only) */
+  depth?: number;
 }
 
 // Import request types from Zod schemas - single source of truth!
