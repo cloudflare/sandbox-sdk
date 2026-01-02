@@ -83,7 +83,7 @@ export class WatchService {
       watchLogger.error('Failed to start inotifywait', error as Error);
       return serviceError({
         message: `Failed to start file watcher: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        code: ErrorCode.UNKNOWN_ERROR,
+        code: ErrorCode.WATCH_START_ERROR,
         details: { path }
       });
     }
@@ -97,7 +97,7 @@ export class WatchService {
     if (!watch) {
       return serviceError({
         message: `Watch not found: ${watchId}`,
-        code: ErrorCode.UNKNOWN_ERROR,
+        code: ErrorCode.WATCH_NOT_FOUND,
         details: { watchId }
       });
     }
@@ -125,8 +125,15 @@ export class WatchService {
       try {
         watch.process.kill();
         count++;
-      } catch {
-        this.logger.warn('Failed to kill watch process', { watchId });
+      } catch (error) {
+        // Log the actual error for debugging
+        // Expected case: process already exited (no longer running)
+        // Unexpected: permission errors, system issues
+        this.logger.warn('Failed to kill watch process', {
+          watchId,
+          error: error instanceof Error ? error.message : String(error),
+          path: watch.path
+        });
       }
     }
     this.activeWatches.clear();
@@ -244,6 +251,7 @@ export class WatchService {
     const includePatterns = options.include;
     const self = this;
     const stdout = proc.stdout;
+    const stderr = proc.stderr;
 
     if (!stdout || typeof stdout === 'number') {
       // Return a stream that immediately errors
@@ -272,6 +280,11 @@ export class WatchService {
         controller.enqueue(
           encoder.encode(`data: ${JSON.stringify(watchingEvent)}\n\n`)
         );
+
+        // Monitor stderr for errors in background
+        if (stderr && typeof stderr !== 'number') {
+          self.monitorStderr(stderr, controller, encoder, logger);
+        }
 
         // Read stdout line by line
         const reader = stdout.getReader();
@@ -343,13 +356,26 @@ export class WatchService {
           );
           controller.close();
         } finally {
+          // Ensure process is killed on any exit path
+          try {
+            proc.kill();
+          } catch {
+            // Process may already be dead
+          }
           self.activeWatches.delete(watchId);
         }
       },
 
       cancel() {
         // Clean up when stream is cancelled
-        proc.kill();
+        try {
+          proc.kill();
+        } catch (error) {
+          logger.warn('Failed to kill watch process on cancel', {
+            watchId,
+            error: error instanceof Error ? error.message : 'Unknown error'
+          });
+        }
         self.activeWatches.delete(watchId);
         logger.info('Watch cancelled', { watchId });
       }
@@ -357,22 +383,114 @@ export class WatchService {
   }
 
   /**
-   * Simple glob matching for include patterns
+   * Monitor stderr from inotifywait and emit error events
    */
-  private matchGlob(path: string, pattern: string): boolean {
-    // Convert glob to regex
-    const escapeRegex = (value: string): string =>
-      value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  private monitorStderr(
+    stderr: ReadableStream<Uint8Array>,
+    controller: ReadableStreamDefaultController<Uint8Array>,
+    encoder: TextEncoder,
+    logger: Logger
+  ): void {
+    const reader = stderr.getReader();
+    const decoder = new TextDecoder();
 
-    // First escape all regex metacharacters, then translate glob wildcards
-    const escaped = escapeRegex(pattern);
-    const regexPattern = escaped
-      .replace(/\\\*/g, '.*') // glob * -> regex .*
-      .replace(/\\\?/g, '.'); // glob ? -> regex .
+    (async () => {
+      try {
+        let buffer = '';
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
 
-    // Check if pattern matches the filename or path
-    const regex = new RegExp(regexPattern);
-    const filename = path.split('/').pop() || '';
-    return regex.test(filename) || regex.test(path);
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (trimmed) {
+              // Skip the "Watches established" info message
+              if (trimmed.includes('Watches established')) continue;
+
+              logger.warn('inotifywait stderr', { message: trimmed });
+              const errorEvent: FileWatchSSEEvent = {
+                type: 'error',
+                error: trimmed
+              };
+              try {
+                controller.enqueue(
+                  encoder.encode(`data: ${JSON.stringify(errorEvent)}\n\n`)
+                );
+              } catch {
+                // Controller may be closed
+                break;
+              }
+            }
+          }
+        }
+      } catch (error) {
+        // Stream closed or other error - expected when process terminates
+        logger.debug('stderr monitoring ended', {
+          error: error instanceof Error ? error.message : 'Unknown'
+        });
+      }
+    })();
+  }
+
+  /**
+   * Simple glob matching for include patterns
+   * Converts glob pattern to regex character-by-character for security
+   */
+  private matchGlob(filePath: string, pattern: string): boolean {
+    const regexParts: string[] = ['^'];
+
+    for (let i = 0; i < pattern.length; i++) {
+      const char = pattern[i];
+
+      switch (char) {
+        case '*':
+          // ** matches any path segments, * matches any chars except /
+          if (pattern[i + 1] === '*') {
+            regexParts.push('.*');
+            i++; // Skip next *
+          } else {
+            regexParts.push('[^/]*');
+          }
+          break;
+        case '?':
+          // ? matches single char except /
+          regexParts.push('[^/]');
+          break;
+        case '.':
+        case '+':
+        case '^':
+        case '$':
+        case '{':
+        case '}':
+        case '(':
+        case ')':
+        case '|':
+        case '\\':
+          // Escape regex metacharacters
+          regexParts.push('\\' + char);
+          break;
+        case '[':
+          // Character classes - find matching ] and treat literally
+          // to prevent [a-z] from being interpreted as regex range
+          regexParts.push('\\[');
+          break;
+        case ']':
+          regexParts.push('\\]');
+          break;
+        default:
+          regexParts.push(char);
+      }
+    }
+
+    regexParts.push('$');
+    const regex = new RegExp(regexParts.join(''));
+
+    // Match against filename only (for patterns like *.ts)
+    const filename = filePath.split('/').pop() || '';
+    return regex.test(filename);
   }
 }
