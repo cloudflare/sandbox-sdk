@@ -43,7 +43,12 @@ export type {
   StreamOptions,
   // Process readiness types
   WaitForLogResult,
-  WaitForPortOptions
+  WaitForPortOptions,
+  // File watch types
+  WatchEvent,
+  WatchEventType,
+  WatchHandle,
+  WatchOptions
 } from '@repo/shared';
 // Export type guards for runtime validation
 export { isExecResult, isProcess, isProcessStatus } from '@repo/shared';

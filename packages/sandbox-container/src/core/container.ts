@@ -8,6 +8,7 @@ import { MiscHandler } from '../handlers/misc-handler';
 import { PortHandler } from '../handlers/port-handler';
 import { ProcessHandler } from '../handlers/process-handler';
 import { SessionHandler } from '../handlers/session-handler';
+import { WatchHandler } from '../handlers/watch-handler';
 import { CorsMiddleware } from '../middleware/cors';
 import { LoggingMiddleware } from '../middleware/logging';
 import { SecurityServiceAdapter } from '../security/security-adapter';
@@ -19,6 +20,7 @@ import { InMemoryPortStore, PortService } from '../services/port-service';
 import { ProcessService } from '../services/process-service';
 import { ProcessStore } from '../services/process-store';
 import { SessionManager } from '../services/session-manager';
+import { WatchService } from '../services/watch-service';
 import { RequestValidator } from '../validation/request-validator';
 
 export interface Dependencies {
@@ -28,6 +30,7 @@ export interface Dependencies {
   portService: PortService;
   gitService: GitService;
   interpreterService: InterpreterService;
+  watchService: WatchService;
 
   // Infrastructure
   logger: Logger;
@@ -43,6 +46,7 @@ export interface Dependencies {
   interpreterHandler: InterpreterHandler;
   sessionHandler: SessionHandler;
   miscHandler: MiscHandler;
+  watchHandler: WatchHandler;
 
   // Middleware
   corsMiddleware: CorsMiddleware;
@@ -115,6 +119,7 @@ export class Container {
       sessionManager
     );
     const interpreterService = new InterpreterService(logger);
+    const watchService = new WatchService(logger);
 
     // Initialize handlers
     const sessionHandler = new SessionHandler(sessionManager, logger);
@@ -128,6 +133,7 @@ export class Container {
       logger
     );
     const miscHandler = new MiscHandler(logger);
+    const watchHandler = new WatchHandler(watchService, logger);
 
     // Initialize middleware
     const corsMiddleware = new CorsMiddleware();
@@ -141,6 +147,7 @@ export class Container {
       portService,
       gitService,
       interpreterService,
+      watchService,
 
       // Infrastructure
       logger,
@@ -156,6 +163,7 @@ export class Container {
       interpreterHandler,
       sessionHandler,
       miscHandler,
+      watchHandler,
 
       // Middleware
       corsMiddleware,

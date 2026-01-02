@@ -9,6 +9,7 @@ import type {
   ExecResult,
   ExecutionResult,
   ExecutionSession,
+  FileWatchSSEEvent,
   ISandbox,
   LogEvent,
   MountBucketOptions,
@@ -22,7 +23,11 @@ import type {
   StreamOptions,
   WaitForExitResult,
   WaitForLogResult,
-  WaitForPortOptions
+  WaitForPortOptions,
+  WatchEvent,
+  WatchEventType,
+  WatchHandle,
+  WatchOptions
 } from '@repo/shared';
 import {
   createLogger,
@@ -56,6 +61,258 @@ import {
 } from './storage-mount/errors';
 import type { MountInfo } from './storage-mount/types';
 import { SDK_VERSION } from './version';
+
+/** Watch lifecycle state */
+type WatchState = 'establishing' | 'active' | 'stopped';
+
+/**
+ * Encapsulates the entire file watch lifecycle with a single-loop state machine.
+ *
+ * States:
+ *   establishing -> active -> stopped
+ *
+ * The same read loop handles both establishment and event processing,
+ * transitioning state when the 'watching' confirmation arrives.
+ */
+class FileWatch implements WatchHandle {
+  readonly path: string;
+
+  private readonly abortController = new AbortController();
+  private readonly reader: ReadableStreamDefaultReader<Uint8Array>;
+  private readonly decoder = new TextDecoder();
+  private readonly logger: ReturnType<typeof createLogger>;
+  private readonly client: SandboxClient;
+  private readonly onEvent?: (event: WatchEvent) => void;
+  private readonly onError?: (error: Error) => void;
+
+  private state: WatchState = 'establishing';
+  private watchId = '';
+  private buffer = '';
+  private loopPromise: Promise<void>;
+
+  // Resolver for the establishment promise - called when state transitions
+  private establishedResolve?: () => void;
+  private establishedReject?: (error: Error) => void;
+
+  private constructor(
+    stream: ReadableStream<Uint8Array>,
+    path: string,
+    client: SandboxClient,
+    logger: ReturnType<typeof createLogger>,
+    externalSignal?: AbortSignal,
+    onEvent?: (event: WatchEvent) => void,
+    onError?: (error: Error) => void
+  ) {
+    this.path = path;
+    this.reader = stream.getReader();
+    this.client = client;
+    this.logger = logger;
+    this.onEvent = onEvent;
+    this.onError = onError;
+
+    // Link external abort signal
+    if (externalSignal) {
+      if (externalSignal.aborted) {
+        this.abortController.abort();
+      } else {
+        externalSignal.addEventListener(
+          'abort',
+          () => this.abortController.abort(),
+          { once: true }
+        );
+      }
+    }
+
+    // Start the single event loop
+    this.loopPromise = this.runLoop();
+  }
+
+  get id(): string {
+    return this.watchId;
+  }
+
+  /**
+   * Creates a FileWatch, waiting for the watch to be established before returning.
+   *
+   * @throws Error if watch cannot be established
+   */
+  static async create(
+    stream: ReadableStream<Uint8Array>,
+    path: string,
+    client: SandboxClient,
+    logger: ReturnType<typeof createLogger>,
+    options?: {
+      signal?: AbortSignal;
+      onEvent?: (event: WatchEvent) => void;
+      onError?: (error: Error) => void;
+    }
+  ): Promise<FileWatch> {
+    const watch = new FileWatch(
+      stream,
+      path,
+      client,
+      logger,
+      options?.signal,
+      options?.onEvent,
+      options?.onError
+    );
+
+    // Wait for establishment or failure
+    await watch.established();
+    return watch;
+  }
+
+  /**
+   * Returns a promise that resolves when watch is established, or rejects on failure.
+   */
+  private established(): Promise<void> {
+    // Already established
+    if (this.state === 'active') {
+      return Promise.resolve();
+    }
+    // Already failed
+    if (this.state === 'stopped') {
+      return Promise.reject(new Error('Watch failed to establish'));
+    }
+    // Wait for state transition
+    return new Promise<void>((resolve, reject) => {
+      this.establishedResolve = resolve;
+      this.establishedReject = reject;
+    });
+  }
+
+  /**
+   * Single event loop handling both establishment and event processing.
+   */
+  private async runLoop(): Promise<void> {
+    const signal = this.abortController.signal;
+
+    try {
+      while (!signal.aborted) {
+        const { done, value } = await this.reader.read();
+        if (done) {
+          if (this.state === 'establishing') {
+            throw new Error('Stream ended before watch was established');
+          }
+          break;
+        }
+
+        this.buffer += this.decoder.decode(value, { stream: true });
+        const lines = this.buffer.split('\n');
+        this.buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (signal.aborted) break;
+          if (line.startsWith('data: ')) {
+            this.handleEvent(line);
+          }
+        }
+      }
+    } catch (error) {
+      if (this.state === 'establishing') {
+        this.state = 'stopped';
+        this.establishedReject?.(error as Error);
+      }
+      this.onError?.(error as Error);
+      throw error;
+    } finally {
+      this.state = 'stopped';
+      await this.reader.cancel().catch(() => {});
+    }
+  }
+
+  /**
+   * Handles a single SSE event based on current state.
+   */
+  private handleEvent(line: string): void {
+    let event: FileWatchSSEEvent;
+    try {
+      event = JSON.parse(line.slice(6)) as FileWatchSSEEvent;
+    } catch {
+      return; // Ignore malformed JSON
+    }
+
+    switch (event.type) {
+      case 'watching':
+        if (this.state === 'establishing') {
+          this.watchId = event.watchId;
+          this.state = 'active';
+          this.establishedResolve?.();
+        }
+        break;
+
+      case 'event':
+        if (this.state === 'active') {
+          this.onEvent?.({
+            type: this.mapEventType(event.eventType),
+            path: event.path,
+            isDirectory: event.isDirectory
+          });
+        }
+        break;
+
+      case 'error': {
+        const error = new Error(event.error);
+        if (this.state === 'establishing') {
+          this.state = 'stopped';
+          this.abortController.abort();
+          this.establishedReject?.(error);
+        } else {
+          this.logger.error('Watch error from server', error);
+          this.onError?.(error);
+        }
+        break;
+      }
+
+      case 'stopped':
+        this.abortController.abort();
+        break;
+    }
+  }
+
+  private mapEventType(
+    sseType: 'create' | 'modify' | 'delete' | 'move_from' | 'move_to' | 'attrib'
+  ): WatchEventType {
+    switch (sseType) {
+      case 'create':
+        return 'create';
+      case 'modify':
+      case 'attrib':
+        return 'modify';
+      case 'delete':
+        return 'delete';
+      case 'move_from':
+      case 'move_to':
+        return 'rename';
+    }
+  }
+
+  /**
+   * Stops watching and releases all resources.
+   * Safe to call multiple times. Waits for full cleanup.
+   */
+  async stop(): Promise<void> {
+    if (this.state === 'stopped') {
+      await this.loopPromise.catch(() => {});
+      return;
+    }
+
+    this.abortController.abort();
+
+    if (this.watchId) {
+      try {
+        await this.client.watch.stopWatch(this.watchId);
+      } catch (error) {
+        this.logger.warn('Failed to stop watch on server', {
+          watchId: this.watchId,
+          error
+        });
+      }
+    }
+
+    await this.loopPromise.catch(() => {});
+  }
+}
 
 export function getSandbox<T extends Sandbox<any>>(
   ns: DurableObjectNamespace<T>,
@@ -2087,6 +2344,102 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   async exists(path: string, sessionId?: string) {
     const session = sessionId ?? (await this.ensureDefaultSession());
     return this.client.files.exists(path, session);
+  }
+
+  /**
+   * Watch a directory for file system changes using native inotify
+   *
+   * Returns a FileWatcher that emits events for file changes (create, modify, delete, move).
+   * The watcher uses inotify under the hood for efficient, real-time notifications.
+   *
+   * @param path - Path to watch (absolute or relative to /workspace)
+   * @param options - Watch options
+   * @returns FileWatcher instance for consuming events
+   *
+   * @example
+   * ```typescript
+   * // Watch for all changes in src directory
+   * const watcher = await sandbox.watch('/app/src', {
+   *   recursive: true,
+   *   onEvent: (event) => console.log(`${event.type}: ${event.path}`),
+   *   onError: (error) => console.error('Watch error:', error)
+   * });
+   *
+   * // With AbortController for cancellation
+   * const controller = new AbortController();
+   * const watcher = await sandbox.watch('/app', {
+   *   signal: controller.signal,
+   *   onEvent: (e) => console.log(e)
+   * });
+   * // Later: controller.abort();
+   *
+   * // Stop watching when done
+   * await watcher.stop();
+   * ```
+   */
+  async watch(
+    path: string,
+    options?: Omit<WatchOptions, 'sessionId'>
+  ): Promise<WatchHandle> {
+    const sessionId = await this.ensureDefaultSession();
+    const stream = await this.client.watch.watch({
+      path,
+      sessionId,
+      recursive: options?.recursive,
+      include: options?.include,
+      exclude: options?.exclude
+    });
+
+    return FileWatch.create(stream, path, this.client, this.logger, {
+      signal: options?.signal,
+      onEvent: options?.onEvent,
+      onError: options?.onError
+    });
+  }
+
+  /**
+   * Get raw SSE stream for file watching.
+   * This is a lower-level API for testing and advanced use cases.
+   * Most users should use watch() instead.
+   *
+   * @internal
+   */
+  async watchStream(
+    path: string,
+    options?: {
+      recursive?: boolean;
+      include?: string[];
+      exclude?: string[];
+    }
+  ): Promise<ReadableStream<Uint8Array>> {
+    const sessionId = await this.ensureDefaultSession();
+    return this.client.watch.watch({
+      path,
+      sessionId,
+      recursive: options?.recursive,
+      include: options?.include,
+      exclude: options?.exclude
+    });
+  }
+
+  /**
+   * Stop a watch by ID.
+   * @internal
+   */
+  async stopWatch(watchId: string): Promise<{ success: boolean }> {
+    return this.client.watch.stopWatch(watchId);
+  }
+
+  /**
+   * List all active watches.
+   * @internal
+   */
+  async listWatches(): Promise<{
+    success: boolean;
+    watches: Array<{ id: string; path: string; startedAt: string }>;
+    count: number;
+  }> {
+    return this.client.watch.listWatches();
   }
 
   async exposePort(port: number, options: { name?: string; hostname: string }) {
