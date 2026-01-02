@@ -180,6 +180,36 @@ describe('GitClient', () => {
       expect(requestBody.depth).toBe(10);
     });
 
+    it('should reject depth of zero', async () => {
+      await expect(
+        client.checkout('https://github.com/user/repo.git', 'test-session', {
+          depth: 0
+        })
+      ).rejects.toThrow('depth must be a positive integer');
+
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it('should reject negative depth values', async () => {
+      await expect(
+        client.checkout('https://github.com/user/repo.git', 'test-session', {
+          depth: -5
+        })
+      ).rejects.toThrow('depth must be a positive integer');
+
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it('should reject non-integer depth values', async () => {
+      await expect(
+        client.checkout('https://github.com/user/repo.git', 'test-session', {
+          depth: 1.5
+        })
+      ).rejects.toThrow('depth must be a positive integer');
+
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
     it('should handle SSH repository URLs', async () => {
       const mockResponse: GitCheckoutResult = {
         success: true,

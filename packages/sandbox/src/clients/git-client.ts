@@ -65,6 +65,9 @@ export class GitClient extends BaseHttpClient {
       }
 
       if (options?.depth !== undefined) {
+        if (!Number.isInteger(options.depth) || options.depth <= 0) {
+          throw new Error('depth must be a positive integer');
+        }
         data.depth = options.depth;
       }
 
