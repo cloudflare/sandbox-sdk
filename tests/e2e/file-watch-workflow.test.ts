@@ -375,4 +375,45 @@ describe('File Watch Workflow', () => {
       expect(response.ok).toBe(false);
     }
   }, 30000);
+
+  test('should exclude patterns from events', async () => {
+    testDir = uniqueTestPath('watch-exclude');
+    await createDir(testDir);
+    await createDir(`${testDir}/node_modules`);
+
+    const watchPromise = watchAndCollect(testDir, {
+      timeoutMs: 5000,
+      stopAfterEvents: 10
+    });
+
+    await new Promise((r) => setTimeout(r, 500));
+
+    // Create files in excluded and non-excluded directories
+    await createFile(`${testDir}/app.ts`, 'app code');
+    await createFile(`${testDir}/node_modules/dep.js`, 'dependency');
+    await createFile(`${testDir}/.git/config`, 'git config');
+    await createFile(`${testDir}/index.ts`, 'index');
+
+    const { events } = await watchPromise;
+
+    const fileEvents = events.filter((e) => e.type === 'event');
+
+    // Should see events for app.ts and index.ts
+    const appEvents = fileEvents.filter(
+      (e) => e.type === 'event' && e.path.includes('app.ts')
+    );
+    expect(appEvents.length).toBeGreaterThan(0);
+
+    // Should NOT see events for node_modules (default exclude)
+    const nodeModulesEvents = fileEvents.filter(
+      (e) => e.type === 'event' && e.path.includes('node_modules')
+    );
+    expect(nodeModulesEvents.length).toBe(0);
+
+    // Should NOT see events for .git (default exclude)
+    const gitEvents = fileEvents.filter(
+      (e) => e.type === 'event' && e.path.includes('.git')
+    );
+    expect(gitEvents.length).toBe(0);
+  }, 30000);
 });
