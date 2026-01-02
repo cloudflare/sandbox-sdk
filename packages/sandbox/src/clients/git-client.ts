@@ -13,6 +13,8 @@ export interface GitCheckoutRequest extends SessionRequest {
   repoUrl: string;
   branch?: string;
   targetDir?: string;
+  /** Clone depth for shallow clones (e.g., 1 for latest commit only) */
+  depth?: number;
 }
 
 /**
@@ -29,7 +31,7 @@ export class GitClient extends BaseHttpClient {
    * Clone a Git repository
    * @param repoUrl - URL of the Git repository to clone
    * @param sessionId - The session ID for this operation
-   * @param options - Optional settings (branch, targetDir)
+   * @param options - Optional settings (branch, targetDir, depth)
    */
   async checkout(
     repoUrl: string,
@@ -37,6 +39,8 @@ export class GitClient extends BaseHttpClient {
     options?: {
       branch?: string;
       targetDir?: string;
+      /** Clone depth for shallow clones (e.g., 1 for latest commit only) */
+      depth?: number;
     }
   ): Promise<GitCheckoutResult> {
     try {
@@ -58,6 +62,10 @@ export class GitClient extends BaseHttpClient {
       // This allows Git to use the repository's default branch
       if (options?.branch) {
         data.branch = options.branch;
+      }
+
+      if (options?.depth !== undefined) {
+        data.depth = options.depth;
       }
 
       const response = await this.post<GitCheckoutResult>(

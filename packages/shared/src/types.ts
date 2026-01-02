@@ -877,7 +877,12 @@ export interface ExecutionSession {
   // Git operations
   gitCheckout(
     repoUrl: string,
-    options?: { branch?: string; targetDir?: string }
+    options?: {
+      branch?: string;
+      targetDir?: string;
+      /** Clone depth for shallow clones (e.g., 1 for latest commit only) */
+      depth?: number;
+    }
   ): Promise<GitCheckoutResult>;
 
   // Environment management
@@ -1025,7 +1030,12 @@ export interface ISandbox {
   // Git operations
   gitCheckout(
     repoUrl: string,
-    options?: { branch?: string; targetDir?: string }
+    options?: {
+      branch?: string;
+      targetDir?: string;
+      /** Clone depth for shallow clones (e.g., 1 for latest commit only) */
+      depth?: number;
+    }
   ): Promise<GitCheckoutResult>;
 
   // Environment management

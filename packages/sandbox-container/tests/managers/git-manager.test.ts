@@ -88,6 +88,66 @@ describe('GitManager', () => {
         '/tmp/target'
       ]);
     });
+
+    it('should build clone args with depth option for shallow clone', () => {
+      const args = manager.buildCloneArgs(
+        'https://github.com/user/repo.git',
+        '/tmp/target',
+        { depth: 1 }
+      );
+      expect(args).toEqual([
+        'git',
+        'clone',
+        '--depth',
+        '1',
+        'https://github.com/user/repo.git',
+        '/tmp/target'
+      ]);
+    });
+
+    it('should build clone args with both branch and depth options', () => {
+      const args = manager.buildCloneArgs(
+        'https://github.com/user/repo.git',
+        '/tmp/target',
+        { branch: 'main', depth: 10 }
+      );
+      expect(args).toEqual([
+        'git',
+        'clone',
+        '--branch',
+        'main',
+        '--depth',
+        '10',
+        'https://github.com/user/repo.git',
+        '/tmp/target'
+      ]);
+    });
+
+    it('should ignore depth option when zero or negative', () => {
+      const argsZero = manager.buildCloneArgs(
+        'https://github.com/user/repo.git',
+        '/tmp/target',
+        { depth: 0 }
+      );
+      expect(argsZero).toEqual([
+        'git',
+        'clone',
+        'https://github.com/user/repo.git',
+        '/tmp/target'
+      ]);
+
+      const argsNegative = manager.buildCloneArgs(
+        'https://github.com/user/repo.git',
+        '/tmp/target',
+        { depth: -1 }
+      );
+      expect(argsNegative).toEqual([
+        'git',
+        'clone',
+        'https://github.com/user/repo.git',
+        '/tmp/target'
+      ]);
+    });
   });
 
   describe('buildCheckoutArgs', () => {

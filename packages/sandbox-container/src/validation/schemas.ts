@@ -97,7 +97,8 @@ export const GitCheckoutRequestSchema = z.object({
   repoUrl: z.string().min(1, 'Repository URL cannot be empty'),
   branch: z.string().optional(),
   targetDir: z.string().optional(),
-  sessionId: z.string().optional()
+  sessionId: z.string().optional(),
+  depth: z.number().int().positive().optional()
 });
 
 // Infer TypeScript types from schemas - single source of truth!

@@ -75,6 +75,10 @@ export class GitManager {
       args.push('--branch', options.branch);
     }
 
+    if (options.depth !== undefined && options.depth > 0) {
+      args.push('--depth', String(options.depth));
+    }
+
     args.push(repoUrl, targetDir);
 
     return args;

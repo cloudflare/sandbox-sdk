@@ -124,6 +124,62 @@ describe('GitClient', () => {
       expect(result.success).toBe(true);
     });
 
+    it('should clone repositories with shallow depth option', async () => {
+      const mockResponse: GitCheckoutResult = {
+        success: true,
+        repoUrl: 'https://github.com/torvalds/linux.git',
+        branch: 'master',
+        targetDir: '/workspace/linux',
+        timestamp: '2023-01-01T00:00:30Z'
+      };
+
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(mockResponse), { status: 200 })
+      );
+
+      const result = await client.checkout(
+        'https://github.com/torvalds/linux.git',
+        'test-session',
+        { depth: 1 }
+      );
+
+      expect(result.success).toBe(true);
+
+      // Verify the request included depth
+      const fetchCall = mockFetch.mock.calls[0];
+      const requestBody = JSON.parse(fetchCall[1].body as string);
+      expect(requestBody.depth).toBe(1);
+    });
+
+    it('should clone repositories with branch and depth options combined', async () => {
+      const mockResponse: GitCheckoutResult = {
+        success: true,
+        repoUrl: 'https://github.com/company/project.git',
+        branch: 'develop',
+        targetDir: '/workspace/project',
+        timestamp: '2023-01-01T00:00:00Z'
+      };
+
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(mockResponse), { status: 200 })
+      );
+
+      const result = await client.checkout(
+        'https://github.com/company/project.git',
+        'test-session',
+        { branch: 'develop', depth: 10 }
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.branch).toBe('develop');
+
+      // Verify the request included both branch and depth
+      const fetchCall = mockFetch.mock.calls[0];
+      const requestBody = JSON.parse(fetchCall[1].body as string);
+      expect(requestBody.branch).toBe('develop');
+      expect(requestBody.depth).toBe(10);
+    });
+
     it('should handle SSH repository URLs', async () => {
       const mockResponse: GitCheckoutResult = {
         success: true,
