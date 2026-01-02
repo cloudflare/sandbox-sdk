@@ -361,10 +361,14 @@ export class WatchService {
    */
   private matchGlob(path: string, pattern: string): boolean {
     // Convert glob to regex
-    const regexPattern = pattern
-      .replace(/\./g, '\\.')
-      .replace(/\*/g, '.*')
-      .replace(/\?/g, '.');
+    const escapeRegex = (value: string): string =>
+      value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+    // First escape all regex metacharacters, then translate glob wildcards
+    const escaped = escapeRegex(pattern);
+    const regexPattern = escaped
+      .replace(/\\\*/g, '.*') // glob * -> regex .*
+      .replace(/\\\?/g, '.'); // glob ? -> regex .
 
     // Check if pattern matches the filename or path
     const regex = new RegExp(regexPattern);
