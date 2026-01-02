@@ -361,18 +361,40 @@ describe('File Watch Workflow', () => {
       body: JSON.stringify({ path: '/nonexistent/path/that/does/not/exist' })
     });
 
-    // The response might be an error or an SSE stream with error event
-    if (response.ok && response.body) {
+    // Should get an error response (either 4xx/5xx or error in body)
+    if (!response.ok) {
+      // Non-OK response is expected - pass
+      expect(response.ok).toBe(false);
+      return;
+    }
+
+    // If we get a 200, it should be an SSE stream with an error event
+    if (response.body) {
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
-      const { value } = await reader.read();
-      const text = decoder.decode(value);
+      let text = '';
 
-      // Should contain an error
+      // Read multiple chunks in case the error comes later
+      const timeout = setTimeout(() => reader.cancel(), 3000);
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          text += decoder.decode(value, { stream: true });
+          // Check if we have an error indication
+          if (text.match(/error|not found|does not exist/i)) {
+            break;
+          }
+        }
+      } catch {
+        // Stream error or cancelled - check what we got
+      } finally {
+        clearTimeout(timeout);
+        reader.cancel();
+      }
+
+      // Should contain an error message
       expect(text).toMatch(/error|not found|does not exist/i);
-      reader.cancel();
-    } else {
-      expect(response.ok).toBe(false);
     }
   }, 30000);
 
