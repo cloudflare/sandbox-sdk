@@ -87,6 +87,9 @@ export type {
   FileInfo,
   FileMetadata,
   FileStreamEvent,
+  // File watch types
+  FileWatchEventType,
+  FileWatchSSEEvent,
   GitCheckoutResult,
   // Miscellaneous result types
   HealthCheckResult,
@@ -133,6 +136,16 @@ export type {
   WaitForExitResult,
   WaitForLogResult,
   WaitForPortOptions,
+  // File watch types (user-facing)
+  WatchErrorCallback,
+  WatchEvent,
+  WatchEventCallback,
+  WatchEventType,
+  WatchHandle,
+  WatchOptions,
+  // File watch types
+  WatchRequest,
+  WatchStopResult,
   WriteFileResult
 } from './types.js';
 export {
