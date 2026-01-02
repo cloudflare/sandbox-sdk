@@ -122,7 +122,7 @@ export class Container {
     const fileHandler = new FileHandler(fileService, logger);
     const processHandler = new ProcessHandler(processService, logger);
     const portHandler = new PortHandler(portService, processService, logger);
-    const gitHandler = new GitHandler(gitService, gitLogger);
+    const gitHandler = new GitHandler(gitService, validator, gitLogger);
     const interpreterHandler = new InterpreterHandler(
       interpreterService,
       logger

@@ -123,27 +123,20 @@ describe('GitManager', () => {
       ]);
     });
 
-    it('should ignore depth option when zero or negative', () => {
-      const argsZero = manager.buildCloneArgs(
+    it('should pass through depth value without validation (handler validates)', () => {
+      // GitManager trusts that the handler has already validated depth.
+      // It simply passes through the value. Invalid values like 0 or -1
+      // would be rejected by GitHandler's Zod validation before reaching here.
+      const args = manager.buildCloneArgs(
         'https://github.com/user/repo.git',
         '/tmp/target',
-        { depth: 0 }
+        { depth: 5 }
       );
-      expect(argsZero).toEqual([
+      expect(args).toEqual([
         'git',
         'clone',
-        'https://github.com/user/repo.git',
-        '/tmp/target'
-      ]);
-
-      const argsNegative = manager.buildCloneArgs(
-        'https://github.com/user/repo.git',
-        '/tmp/target',
-        { depth: -1 }
-      );
-      expect(argsNegative).toEqual([
-        'git',
-        'clone',
+        '--depth',
+        '5',
         'https://github.com/user/repo.git',
         '/tmp/target'
       ]);
