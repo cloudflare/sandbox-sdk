@@ -334,7 +334,7 @@ describe('WatchService', () => {
       const args = testBuildArgs(watchService, '/app', { path: '/app' });
       expect(args).toContain('-m');
       expect(args).toContain('--format');
-      expect(args).toContain('%e|%w%f|%:e');
+      expect(args).toContain('%e|%w%f');
     });
 
     it('should include recursive flag by default', () => {
@@ -350,33 +350,32 @@ describe('WatchService', () => {
       expect(args).not.toContain('-r');
     });
 
-    it('should include default excludes as regex patterns', () => {
+    it('should include default excludes as combined regex pattern', () => {
       const args = testBuildArgs(watchService, '/app', { path: '/app' });
       expect(args).toContain('--exclude');
-      // Default excludes: .git, node_modules, .DS_Store (converted to regex)
-      const excludeIndices = args.reduce(
-        (acc: number[], arg: string, i: number) => {
-          if (arg === '--exclude') acc.push(i);
-          return acc;
-        },
-        []
-      );
-      expect(excludeIndices.length).toBe(3);
-      // Verify regex format: (^|/)pattern(/|$)
-      expect(args).toContain('(^|/)\\.git(/|$)');
-      expect(args).toContain('(^|/)node_modules(/|$)');
-      expect(args).toContain('(^|/)\\.DS_Store(/|$)');
+      // inotifywait only supports a single --exclude, so patterns are combined with OR
+      const excludeIndex = args.indexOf('--exclude');
+      expect(excludeIndex).toBeGreaterThan(-1);
+      const excludePattern = args[excludeIndex + 1];
+      // Verify combined regex format: (^|/)pattern(/|$)|(^|/)pattern(/|$)|...
+      expect(excludePattern).toContain('(^|/)\\.git(/|$)');
+      expect(excludePattern).toContain('(^|/)node_modules(/|$)');
+      expect(excludePattern).toContain('(^|/)\\.DS_Store(/|$)');
+      // Patterns are joined with |
+      expect(excludePattern.split('|').length).toBeGreaterThanOrEqual(3);
     });
 
-    it('should convert custom excludes to regex patterns', () => {
+    it('should convert custom excludes to combined regex pattern', () => {
       const args = testBuildArgs(watchService, '/app', {
         path: '/app',
         exclude: ['*.log', 'temp']
       });
       expect(args).toContain('--exclude');
-      // Patterns are escaped and wrapped in regex anchors
-      expect(args).toContain('(^|/)\\*\\.log(/|$)');
-      expect(args).toContain('(^|/)temp(/|$)');
+      const excludeIndex = args.indexOf('--exclude');
+      const excludePattern = args[excludeIndex + 1];
+      // Patterns are escaped and wrapped in regex anchors, combined with OR
+      expect(excludePattern).toContain('(^|/)\\*\\.log(/|$)');
+      expect(excludePattern).toContain('(^|/)temp(/|$)');
     });
 
     it('should add path as last argument', () => {
