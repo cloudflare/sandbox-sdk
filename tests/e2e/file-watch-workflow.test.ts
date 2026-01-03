@@ -29,17 +29,22 @@ describe('File Watch Workflow', () => {
   }, 120000);
 
   /**
-   * Helper to start a watch and collect events until stopped or timeout.
+   * Helper to start a watch that allows performing actions after the watch is established.
    */
-  async function watchAndCollect(
+  async function watchWithActions<T>(
     path: string,
     options: {
       recursive?: boolean;
       include?: string[];
       timeoutMs?: number;
       stopAfterEvents?: number;
-    } = {}
-  ): Promise<{ events: FileWatchSSEEvent[]; watchId: string | null }> {
+    } = {},
+    actions: () => Promise<T>
+  ): Promise<{
+    events: FileWatchSSEEvent[];
+    watchId: string | null;
+    actionResult: T;
+  }> {
     const { timeoutMs = 5000, stopAfterEvents = 20 } = options;
 
     const response = await fetch(`${workerUrl}/api/watch`, {
@@ -58,9 +63,11 @@ describe('File Watch Workflow', () => {
 
     const events: FileWatchSSEEvent[] = [];
     let watchId: string | null = null;
+    let actionResult: T;
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
+    let actionsExecuted = false;
 
     const timeout = setTimeout(() => reader.cancel(), timeoutMs);
 
@@ -80,6 +87,14 @@ describe('File Watch Workflow', () => {
 
             if (event.type === 'watching') {
               watchId = event.watchId;
+              // Execute actions after the watch is confirmed ready
+              if (!actionsExecuted) {
+                actionsExecuted = true;
+                // inotifywait outputs "Setting up watches..." to stderr before it's ready
+                // We need to give it time to actually establish all watches before performing actions
+                await new Promise((r) => setTimeout(r, 1000));
+                actionResult = await actions();
+              }
             }
 
             if (
@@ -99,7 +114,23 @@ describe('File Watch Workflow', () => {
       clearTimeout(timeout);
     }
 
-    return { events, watchId };
+    return { events, watchId, actionResult: actionResult! };
+  }
+
+  /**
+   * Helper to start a watch and collect events until stopped or timeout.
+   */
+  async function watchAndCollect(
+    path: string,
+    options: {
+      recursive?: boolean;
+      include?: string[];
+      timeoutMs?: number;
+      stopAfterEvents?: number;
+    } = {}
+  ): Promise<{ events: FileWatchSSEEvent[]; watchId: string | null }> {
+    const result = await watchWithActions(path, options, async () => {});
+    return { events: result.events, watchId: result.watchId };
   }
 
   /**
@@ -157,17 +188,16 @@ describe('File Watch Workflow', () => {
     testDir = uniqueTestPath('watch-create');
     await createDir(testDir);
 
-    // Start watch in background, then create file
-    const watchPromise = watchAndCollect(testDir, {
-      timeoutMs: 5000,
-      stopAfterEvents: 5
-    });
+    // Start watch and create file after watch is confirmed ready
+    const { events } = await watchWithActions(
+      testDir,
+      { timeoutMs: 5000, stopAfterEvents: 5 },
+      async () => {
+        await createFile(`${testDir}/newfile.txt`, 'hello');
+      }
+    );
 
-    // Wait a bit for watch to establish, then create file
-    await new Promise((r) => setTimeout(r, 500));
-    await createFile(`${testDir}/newfile.txt`, 'hello');
-
-    const { events } = await watchPromise;
+    console.log('[DEBUG] Collected events:', JSON.stringify(events, null, 2));
 
     const createEvent = events.find(
       (e) => e.type === 'event' && e.eventType === 'create'
@@ -184,15 +214,14 @@ describe('File Watch Workflow', () => {
     await createDir(testDir);
     await createFile(`${testDir}/existing.txt`, 'initial');
 
-    const watchPromise = watchAndCollect(testDir, {
-      timeoutMs: 5000,
-      stopAfterEvents: 5
-    });
-
-    await new Promise((r) => setTimeout(r, 500));
-    await createFile(`${testDir}/existing.txt`, 'modified content');
-
-    const { events } = await watchPromise;
+    // Start watch and modify file after watch is confirmed ready
+    const { events } = await watchWithActions(
+      testDir,
+      { timeoutMs: 5000, stopAfterEvents: 5 },
+      async () => {
+        await createFile(`${testDir}/existing.txt`, 'modified content');
+      }
+    );
 
     // Modification might show as 'modify' or 'create' depending on how editor writes
     const modifyEvent = events.find(
@@ -209,15 +238,14 @@ describe('File Watch Workflow', () => {
     await createDir(testDir);
     await createFile(`${testDir}/todelete.txt`, 'delete me');
 
-    const watchPromise = watchAndCollect(testDir, {
-      timeoutMs: 5000,
-      stopAfterEvents: 5
-    });
-
-    await new Promise((r) => setTimeout(r, 500));
-    await deleteFile(`${testDir}/todelete.txt`);
-
-    const { events } = await watchPromise;
+    // Start watch and delete file after watch is confirmed ready
+    const { events } = await watchWithActions(
+      testDir,
+      { timeoutMs: 5000, stopAfterEvents: 5 },
+      async () => {
+        await deleteFile(`${testDir}/todelete.txt`);
+      }
+    );
 
     const deleteEvent = events.find(
       (e) => e.type === 'event' && e.eventType === 'delete'
@@ -233,20 +261,17 @@ describe('File Watch Workflow', () => {
     testDir = uniqueTestPath('watch-filter');
     await createDir(testDir);
 
-    const watchPromise = watchAndCollect(testDir, {
-      include: ['*.ts'],
-      timeoutMs: 5000,
-      stopAfterEvents: 10
-    });
-
-    await new Promise((r) => setTimeout(r, 500));
-
-    // Create both .ts and .js files
-    await createFile(`${testDir}/code.ts`, 'typescript');
-    await createFile(`${testDir}/code.js`, 'javascript');
-    await createFile(`${testDir}/another.ts`, 'more typescript');
-
-    const { events } = await watchPromise;
+    // Start watch and create files after watch is confirmed ready
+    const { events } = await watchWithActions(
+      testDir,
+      { include: ['*.ts'], timeoutMs: 5000, stopAfterEvents: 10 },
+      async () => {
+        // Create both .ts and .js files
+        await createFile(`${testDir}/code.ts`, 'typescript');
+        await createFile(`${testDir}/code.js`, 'javascript');
+        await createFile(`${testDir}/another.ts`, 'more typescript');
+      }
+    );
 
     const fileEvents = events.filter((e) => e.type === 'event');
 
@@ -402,21 +427,20 @@ describe('File Watch Workflow', () => {
     testDir = uniqueTestPath('watch-exclude');
     await createDir(testDir);
     await createDir(`${testDir}/node_modules`);
+    await createDir(`${testDir}/.git`);
 
-    const watchPromise = watchAndCollect(testDir, {
-      timeoutMs: 5000,
-      stopAfterEvents: 10
-    });
-
-    await new Promise((r) => setTimeout(r, 500));
-
-    // Create files in excluded and non-excluded directories
-    await createFile(`${testDir}/app.ts`, 'app code');
-    await createFile(`${testDir}/node_modules/dep.js`, 'dependency');
-    await createFile(`${testDir}/.git/config`, 'git config');
-    await createFile(`${testDir}/index.ts`, 'index');
-
-    const { events } = await watchPromise;
+    // Start watch and create files after watch is confirmed ready
+    const { events } = await watchWithActions(
+      testDir,
+      { timeoutMs: 5000, stopAfterEvents: 10 },
+      async () => {
+        // Create files in excluded and non-excluded directories
+        await createFile(`${testDir}/app.ts`, 'app code');
+        await createFile(`${testDir}/node_modules/dep.js`, 'dependency');
+        await createFile(`${testDir}/.git/config`, 'git config');
+        await createFile(`${testDir}/index.ts`, 'index');
+      }
+    );
 
     const fileEvents = events.filter((e) => e.type === 'event');
 
