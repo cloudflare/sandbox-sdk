@@ -673,6 +673,150 @@ export interface FileMetadata {
  */
 export type FileChunk = string | Uint8Array;
 
+// File Watch Types
+
+/**
+ * File system event types
+ */
+export type WatchEventType = 'create' | 'modify' | 'delete' | 'rename';
+
+/**
+ * A file system change event
+ */
+export interface WatchEvent {
+  /** The type of change that occurred */
+  type: WatchEventType;
+  /** Absolute path to the file or directory that changed */
+  path: string;
+  /** Whether the changed path is a directory */
+  isDirectory: boolean;
+}
+
+/**
+ * Callback for file watch events
+ */
+export type WatchEventCallback = (event: WatchEvent) => void;
+
+/**
+ * Callback for watch errors
+ */
+export type WatchErrorCallback = (error: Error) => void;
+
+/**
+ * Options for watching a directory
+ */
+export interface WatchOptions {
+  /**
+   * Watch subdirectories recursively
+   * @default true
+   */
+  recursive?: boolean;
+
+  /**
+   * Event types to watch for
+   * @default ['create', 'modify', 'delete', 'rename']
+   */
+  events?: WatchEventType[];
+
+  /**
+   * Glob patterns to include (e.g., '*.ts', '*.js')
+   * If not specified, all files are included
+   */
+  include?: string[];
+
+  /**
+   * Glob patterns to exclude (e.g., 'node_modules', '.git')
+   * @default ['.git', 'node_modules', '.DS_Store']
+   */
+  exclude?: string[];
+
+  /**
+   * AbortSignal to cancel the watch
+   */
+  signal?: AbortSignal;
+
+  /**
+   * Callback for file change events
+   */
+  onEvent?: WatchEventCallback;
+
+  /**
+   * Callback for errors (e.g., watch process died)
+   */
+  onError?: WatchErrorCallback;
+}
+
+/**
+ * Handle returned from watch() - use to stop watching
+ */
+export interface WatchHandle {
+  /** Stop watching and clean up resources */
+  stop(): Promise<void>;
+  /** The watch ID (for debugging) */
+  readonly id: string;
+  /** The path being watched */
+  readonly path: string;
+}
+
+// Internal types for SSE protocol (not user-facing)
+
+/**
+ * @internal SSE event types for container communication
+ */
+export type FileWatchEventType =
+  | 'create'
+  | 'modify'
+  | 'delete'
+  | 'move_from'
+  | 'move_to'
+  | 'attrib';
+
+/**
+ * @internal Request body for starting a file watch
+ */
+export interface WatchRequest {
+  path: string;
+  recursive?: boolean;
+  events?: FileWatchEventType[];
+  include?: string[];
+  exclude?: string[];
+  sessionId?: string;
+}
+
+/**
+ * @internal SSE events for file watching
+ */
+export type FileWatchSSEEvent =
+  | {
+      type: 'watching';
+      path: string;
+      watchId: string;
+    }
+  | {
+      type: 'event';
+      eventType: FileWatchEventType;
+      path: string;
+      isDirectory: boolean;
+      timestamp: string;
+    }
+  | {
+      type: 'error';
+      error: string;
+    }
+  | {
+      type: 'stopped';
+      reason: string;
+    };
+
+/**
+ * @internal Result from stopping a watch
+ */
+export interface WatchStopResult {
+  success: boolean;
+  watchId: string;
+  timestamp: string;
+}
+
 // Process management result types
 export interface ProcessStartResult {
   success: boolean;

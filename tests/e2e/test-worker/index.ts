@@ -810,6 +810,39 @@ console.log('Terminal server on port ' + port);
         });
       }
 
+      // File Watch - Start watching (SSE stream)
+      // Note: watches are container-wide, not session-specific
+      if (url.pathname === '/api/watch' && request.method === 'POST') {
+        const stream = await sandbox.watchStream(body.path, {
+          recursive: body.recursive,
+          include: body.include,
+          exclude: body.exclude
+        });
+        return new Response(stream, {
+          headers: {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            Connection: 'keep-alive'
+          }
+        });
+      }
+
+      // File Watch - Stop watching
+      if (url.pathname === '/api/watch/stop' && request.method === 'POST') {
+        const result = await sandbox.stopWatch(body.watchId);
+        return new Response(JSON.stringify(result), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      // File Watch - List active watches
+      if (url.pathname === '/api/watch/list' && request.method === 'GET') {
+        const result = await sandbox.listWatches();
+        return new Response(JSON.stringify(result), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
       // Cleanup endpoint - destroys the sandbox container
       // This is used by E2E tests to explicitly clean up after each test
       if (url.pathname === '/cleanup' && request.method === 'POST') {
