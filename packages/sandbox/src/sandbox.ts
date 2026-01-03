@@ -2089,7 +2089,34 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     return this.client.files.exists(path, session);
   }
 
-  async exposePort(port: number, options: { name?: string; hostname: string }) {
+  /**
+   * Expose a port and get a preview URL for accessing services running in the sandbox
+   *
+   * @param port - Port number to expose (1024-65535)
+   * @param options - Configuration options
+   * @param options.hostname - Your Worker's domain name (required for preview URL construction)
+   * @param options.name - Optional friendly name for the port
+   * @param options.token - Optional custom token for the preview URL (1-63 characters: lowercase letters, numbers, hyphens, underscores)
+   *                       If not provided, a random 16-character token will be generated automatically
+   * @returns Preview URL information including the full URL, port number, and optional name
+   *
+   * @example
+   * // With auto-generated token
+   * const { url } = await sandbox.exposePort(8080, { hostname: 'example.com' });
+   * // url: https://8080-sandbox-id-abc123random4567.example.com
+   *
+   * @example
+   * // With custom token for stable URLs across deployments
+   * const { url } = await sandbox.exposePort(8080, {
+   *   hostname: 'example.com',
+   *   token: 'my-stable-token'
+   * });
+   * // url: https://8080-sandbox-id-my-stable-token.example.com
+   */
+  async exposePort(
+    port: number,
+    options: { name?: string; hostname: string; token?: string }
+  ) {
     // Check if hostname is workers.dev domain (doesn't support wildcard subdomains)
     if (options.hostname.endsWith('.workers.dev')) {
       const errorResponse: ErrorResponse = {
@@ -2103,7 +2130,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
 
     const sessionId = await this.ensureDefaultSession();
-    await this.client.ports.exposePort(port, sessionId, options?.name);
+    await this.client.ports.exposePort(
+      port,
+      sessionId,
+      options?.name,
+      options?.token
+    );
 
     // We need the sandbox name to construct preview URLs
     if (!this.sandboxName) {
@@ -2112,8 +2144,17 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       );
     }
 
-    // Generate and store token for this port (storage is protected by input gates)
-    const token = this.generatePortToken();
+    // Use custom token or generate a random one
+    let token: string;
+    if (options.token) {
+      // Validate custom token
+      this.validateCustomToken(options.token);
+      token = options.token;
+    } else {
+      token = this.generatePortToken();
+    }
+
+    // Store token for this port (storage is protected by input gates)
     const tokens =
       (await this.ctx.storage.get<Record<string, string>>('portTokens')) || {};
     tokens[port.toString()] = token;
@@ -2226,6 +2267,27 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     // Constant-time comparison to prevent timing attacks
     return storedToken === token;
+  }
+
+  private validateCustomToken(token: string): void {
+    // Token must be at least 1 character
+    if (token.length === 0) {
+      throw new SecurityError(`Custom token cannot be empty.`);
+    }
+
+    // Token should have reasonable length for URL compatibility (max 63 chars for DNS subdomain)
+    if (token.length > 63) {
+      throw new SecurityError(
+        `Custom token too long. Maximum 63 characters allowed (DNS subdomain limit). Received: ${token.length} characters.`
+      );
+    }
+
+    // Token must only contain lowercase alphanumeric, hyphens, and underscores (URL-safe)
+    if (!/^[a-z0-9_-]+$/.test(token)) {
+      throw new SecurityError(
+        `Custom token must contain only lowercase letters (a-z), numbers (0-9), hyphens (-), and underscores (_). Invalid token provided.`
+      );
+    }
   }
 
   private generatePortToken(): string {
