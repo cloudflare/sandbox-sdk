@@ -209,12 +209,13 @@ class FileWatch implements WatchHandle {
         }
       }
     } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
       if (this.state === 'establishing') {
         this.state = 'stopped';
-        this.establishedReject?.(error as Error);
+        this.establishedReject?.(err);
       }
-      this.onError?.(error as Error);
-      throw error;
+      this.onError?.(err);
+      throw err;
     } finally {
       this.state = 'stopped';
       await this.reader.cancel().catch(() => {});
@@ -222,15 +223,31 @@ class FileWatch implements WatchHandle {
   }
 
   /**
+   * Type guard for FileWatchSSEEvent
+   */
+  private isFileWatchSSEEvent(value: unknown): value is FileWatchSSEEvent {
+    if (typeof value !== 'object' || value === null) return false;
+    const obj = value as Record<string, unknown>;
+    if (typeof obj.type !== 'string') return false;
+    return ['watching', 'event', 'error', 'stopped'].includes(obj.type);
+  }
+
+  /**
    * Handles a single SSE event based on current state.
    */
   private handleEvent(line: string): void {
-    let event: FileWatchSSEEvent;
+    let parsed: unknown;
     try {
-      event = JSON.parse(line.slice(6)) as FileWatchSSEEvent;
+      parsed = JSON.parse(line.slice(6));
     } catch {
       return; // Ignore malformed JSON
     }
+
+    if (!this.isFileWatchSSEEvent(parsed)) {
+      return; // Ignore invalid event structure
+    }
+
+    const event = parsed;
 
     switch (event.type) {
       case 'watching':

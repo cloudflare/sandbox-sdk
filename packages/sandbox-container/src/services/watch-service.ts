@@ -80,7 +80,8 @@ export class WatchService {
 
       return serviceSuccess(stream);
     } catch (error) {
-      watchLogger.error('Failed to start inotifywait', error as Error);
+      const err = error instanceof Error ? error : new Error(String(error));
+      watchLogger.error('Failed to start inotifywait', err);
       return serviceError({
         message: `Failed to start file watcher: ${error instanceof Error ? error.message : 'Unknown error'}`,
         code: ErrorCode.WATCH_START_ERROR,
@@ -155,7 +156,7 @@ export class WatchService {
     const args: string[] = [
       '-m', // Monitor mode (continuous)
       '--format',
-      '%e|%w%f|%:e' // event|path|is_dir
+      '%e|%w%f' // event|path (ISDIR is part of event flags)
     ];
 
     // Recursive watching
@@ -180,11 +181,16 @@ export class WatchService {
 
     // Exclude patterns - convert to regex for inotifywait
     // inotifywait --exclude uses POSIX extended regex matching against full path
+    // NOTE: inotifywait only supports a single --exclude option, so we combine all patterns
     const excludes = options.exclude || ['.git', 'node_modules', '.DS_Store'];
-    for (const pattern of excludes) {
-      // Escape regex metacharacters and wrap to match anywhere in path
-      const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      args.push('--exclude', `(^|/)${escaped}(/|$)`);
+    if (excludes.length > 0) {
+      // Escape regex metacharacters and wrap each pattern to match anywhere in path
+      const escapedPatterns = excludes.map((pattern) => {
+        const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        return `(^|/)${escaped}(/|$)`;
+      });
+      // Combine all patterns with OR operator
+      args.push('--exclude', escapedPatterns.join('|'));
     }
 
     // Add path last
@@ -210,12 +216,15 @@ export class WatchService {
     path: string;
     isDirectory: boolean;
   } | null {
-    // Format: EVENT|/path/to/file|ISDIR (or empty if not dir)
+    // Format: EVENT|/path/to/file|EVENT_FLAGS
+    // The third part (%:e) contains colon-separated flags like CREATE:ISDIR
     const parts = line.trim().split('|');
     if (parts.length < 2) return null;
 
-    const [rawEvent, filePath, isDirFlag] = parts;
-    const isDirectory = isDirFlag === 'ISDIR';
+    const [rawEvent, filePath, flagsPart] = parts;
+    // Check if ISDIR appears in either the event or the flags
+    const isDirectory =
+      rawEvent.includes('ISDIR') || (flagsPart?.includes('ISDIR') ?? false);
 
     // Map inotify event back to our type
     const eventType = this.parseEventType(rawEvent);
@@ -319,16 +328,26 @@ export class WatchService {
         };
 
         try {
+          logger.debug('Starting to read inotifywait stdout');
           while (true) {
             const { done, value } = await reader.read();
-            if (done) break;
+            if (done) {
+              logger.debug('inotifywait stdout stream ended');
+              break;
+            }
 
-            buffer += decoder.decode(value, { stream: true });
+            const chunk = decoder.decode(value, { stream: true });
+            logger.debug('Received chunk from inotifywait', {
+              chunkLength: chunk.length,
+              chunk: chunk.substring(0, 200)
+            });
+            buffer += chunk;
             const lines = buffer.split('\n');
             buffer = lines.pop() || '';
 
             for (const line of lines) {
               if (line.trim()) {
+                logger.debug('Processing inotifywait line', { line });
                 processLine(line);
               }
             }
@@ -349,7 +368,8 @@ export class WatchService {
           );
           controller.close();
         } catch (error) {
-          logger.error('Error reading watch output', error as Error);
+          const err = error instanceof Error ? error : new Error(String(error));
+          logger.error('Error reading watch output', err);
           const errorEvent: FileWatchSSEEvent = {
             type: 'error',
             error: error instanceof Error ? error.message : 'Unknown error'
@@ -411,8 +431,14 @@ export class WatchService {
           for (const line of lines) {
             const trimmed = line.trim();
             if (trimmed) {
-              // Skip the "Watches established" info message
-              if (trimmed.includes('Watches established')) continue;
+              // Skip inotifywait info messages (not actual errors)
+              if (
+                trimmed.includes('Watches established') ||
+                trimmed.includes('Setting up watches')
+              ) {
+                logger.debug('inotifywait info', { message: trimmed });
+                continue;
+              }
 
               logger.warn('inotifywait stderr', { message: trimmed });
               const errorEvent: FileWatchSSEEvent = {

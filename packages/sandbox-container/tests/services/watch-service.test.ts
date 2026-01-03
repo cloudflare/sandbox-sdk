@@ -1,17 +1,24 @@
 import { beforeEach, describe, expect, it, vi } from 'bun:test';
-import type { Logger } from '@repo/shared';
+import type { WatchRequest } from '@repo/shared';
+import { createNoOpLogger } from '@repo/shared';
 import { ErrorCode } from '@repo/shared/errors';
 import { WatchService } from '@sandbox-container/services/watch-service';
 
-// Mock logger
-const mockLogger = {
-  info: vi.fn(),
-  error: vi.fn(),
-  warn: vi.fn(),
-  debug: vi.fn(),
-  child: vi.fn()
-} as unknown as Logger;
-mockLogger.child = vi.fn(() => mockLogger);
+const mockLogger = createNoOpLogger();
+
+/**
+ * Type-safe accessor for testing private WatchService methods.
+ * Uses module augmentation to expose private methods for testing only.
+ */
+interface WatchServiceTestAccessor {
+  matchGlob(filePath: string, pattern: string): boolean;
+  parseInotifyEvent(line: string): {
+    eventType: string;
+    path: string;
+    isDirectory: boolean;
+  } | null;
+  buildInotifyArgs(path: string, options: WatchRequest): string[];
+}
 
 describe('WatchService', () => {
   let watchService: WatchService;
@@ -22,13 +29,16 @@ describe('WatchService', () => {
   });
 
   describe('matchGlob', () => {
-    // Access private method for testing
+    // Access private method for testing via type assertion
     const testMatchGlob = (
       service: WatchService,
       path: string,
       pattern: string
     ): boolean => {
-      return (service as any).matchGlob(path, pattern);
+      return (service as unknown as WatchServiceTestAccessor).matchGlob(
+        path,
+        pattern
+      );
     };
 
     describe('basic patterns', () => {
@@ -206,9 +216,11 @@ describe('WatchService', () => {
   });
 
   describe('parseInotifyEvent', () => {
-    // Access private method for testing
+    // Access private method for testing via type assertion
     const testParseEvent = (service: WatchService, line: string) => {
-      return (service as any).parseInotifyEvent(line);
+      return (service as unknown as WatchServiceTestAccessor).parseInotifyEvent(
+        line
+      );
     };
 
     it('should parse CREATE event', () => {
@@ -224,6 +236,19 @@ describe('WatchService', () => {
       const result = testParseEvent(
         watchService,
         'CREATE,ISDIR|/app/newdir|ISDIR'
+      );
+      expect(result).toEqual({
+        eventType: 'create',
+        path: '/app/newdir',
+        isDirectory: true
+      });
+    });
+
+    it('should parse CREATE,ISDIR with colon-separated flags from %:e format', () => {
+      // This is the actual output format from inotifywait with --format '%e|%w%f|%:e'
+      const result = testParseEvent(
+        watchService,
+        'CREATE,ISDIR|/app/newdir|CREATE:ISDIR'
       );
       expect(result).toEqual({
         eventType: 'create',
@@ -293,13 +318,16 @@ describe('WatchService', () => {
   });
 
   describe('buildInotifyArgs', () => {
-    // Access private method for testing
+    // Access private method for testing via type assertion
     const testBuildArgs = (
       service: WatchService,
       path: string,
-      options: any
+      options: WatchRequest
     ) => {
-      return (service as any).buildInotifyArgs(path, options);
+      return (service as unknown as WatchServiceTestAccessor).buildInotifyArgs(
+        path,
+        options
+      );
     };
 
     it('should include monitor mode and format', () => {
