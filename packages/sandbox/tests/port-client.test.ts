@@ -57,11 +57,11 @@ describe('PortClient', () => {
     });
 
     it('should expose ports with custom tokens', async () => {
-      const customToken = 'mycustomtoken123';
+      const customToken = 'my-custom-token';
       const mockResponse: PortExposeResult = {
         success: true,
         port: 8080,
-        url: 'https://8080-sandbox-mycustomtoken123.example.com',
+        url: 'https://8080-sandbox-my-custom-token.example.com',
         timestamp: '2023-01-01T00:00:00Z'
       };
 

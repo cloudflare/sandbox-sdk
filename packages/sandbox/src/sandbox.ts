@@ -2096,22 +2096,22 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * @param options - Configuration options
    * @param options.hostname - Your Worker's domain name (required for preview URL construction)
    * @param options.name - Optional friendly name for the port
-   * @param options.token - Optional custom token for the preview URL (must be exactly 16 characters: lowercase letters, numbers, hyphens, underscores)
-   *                       If not provided, a random token will be generated automatically
+   * @param options.token - Optional custom token for the preview URL (1-63 characters: lowercase letters, numbers, hyphens, underscores)
+   *                       If not provided, a random 16-character token will be generated automatically
    * @returns Preview URL information including the full URL, port number, and optional name
    *
    * @example
    * // With auto-generated token
    * const { url } = await sandbox.exposePort(8080, { hostname: 'example.com' });
-   * // url: https://8080-sandbox-id-randomtoken.example.com
+   * // url: https://8080-sandbox-id-abc123random4567.example.com
    *
    * @example
    * // With custom token for stable URLs across deployments
    * const { url } = await sandbox.exposePort(8080, {
    *   hostname: 'example.com',
-   *   token: 'my-stable-token1'
+   *   token: 'my-stable-token'
    * });
-   * // url: https://8080-sandbox-id-my-stable-token1.example.com
+   * // url: https://8080-sandbox-id-my-stable-token.example.com
    */
   async exposePort(
     port: number,
@@ -2270,16 +2270,20 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   private validateCustomToken(token: string): void {
-    // Token must be exactly 16 characters to match URL pattern in extractSandboxRoute
-    if (token.length !== 16) {
+    // Token must be at least 1 character
+    if (token.length === 0) {
+      throw new SecurityError(`Custom token cannot be empty.`);
+    }
+
+    // Token should have reasonable length for URL compatibility (max 63 chars for DNS subdomain)
+    if (token.length > 63) {
       throw new SecurityError(
-        `Custom token must be exactly 16 characters long. Received: ${token.length} characters.`
+        `Custom token too long. Maximum 63 characters allowed (DNS subdomain limit). Received: ${token.length} characters.`
       );
     }
 
-    // Token must only contain lowercase alphanumeric, hyphens, and underscores (URL-safe base64url charset)
-    // This matches the pattern in request-handler.ts: [a-z0-9_-]{16}
-    if (!/^[a-z0-9_-]{16}$/.test(token)) {
+    // Token must only contain lowercase alphanumeric, hyphens, and underscores (URL-safe)
+    if (!/^[a-z0-9_-]+$/.test(token)) {
       throw new SecurityError(
         `Custom token must contain only lowercase letters (a-z), numbers (0-9), hyphens (-), and underscores (_). Invalid token provided.`
       );

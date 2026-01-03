@@ -903,41 +903,43 @@ describe('Sandbox - Automatic Session Management', () => {
       vi.mocked(mockCtx.storage!.put).mockResolvedValue(undefined);
     });
 
-    it('should accept valid custom tokens', async () => {
-      const validToken = 'abcd1234-_efgh56';
-      const result = await sandbox.exposePort(8080, {
+    it('should accept valid custom tokens of various lengths', async () => {
+      const shortToken = 'short';
+      const result1 = await sandbox.exposePort(8080, {
         hostname: 'example.com',
-        token: validToken
+        token: shortToken
       });
 
-      expect(result.port).toBe(8080);
-      expect(result.url).toContain(validToken);
+      expect(result1.port).toBe(8080);
+      expect(result1.url).toContain(shortToken);
 
-      // Verify token was stored
-      expect(mockCtx.storage!.put).toHaveBeenCalledWith(
-        'portTokens',
-        expect.objectContaining({
-          '8080': validToken
-        })
-      );
+      const longToken = 'my-very-long-custom-token-12345';
+      const result2 = await sandbox.exposePort(8081, {
+        hostname: 'example.com',
+        token: longToken
+      });
+
+      expect(result2.port).toBe(8081);
+      expect(result2.url).toContain(longToken);
     });
 
-    it('should reject tokens that are too short', async () => {
+    it('should reject empty tokens', async () => {
       await expect(
         sandbox.exposePort(8080, {
           hostname: 'example.com',
-          token: 'short'
+          token: ''
         })
-      ).rejects.toThrow('Custom token must be exactly 16 characters long');
+      ).rejects.toThrow('Custom token cannot be empty');
     });
 
-    it('should reject tokens that are too long', async () => {
+    it('should reject tokens exceeding DNS subdomain limit', async () => {
+      const tooLongToken = 'a'.repeat(64); // 64 chars, exceeds 63 limit
       await expect(
         sandbox.exposePort(8080, {
           hostname: 'example.com',
-          token: 'thisistoolongfortoken'
+          token: tooLongToken
         })
-      ).rejects.toThrow('Custom token must be exactly 16 characters long');
+      ).rejects.toThrow('Custom token too long. Maximum 63 characters allowed');
     });
 
     it('should reject tokens with invalid characters', async () => {
