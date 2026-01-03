@@ -887,4 +887,102 @@ describe('Sandbox - Automatic Session Management', () => {
       ).resolves.toBeUndefined();
     });
   });
+
+  describe('custom token validation', () => {
+    beforeEach(() => {
+      // Mock the exposePort client call
+      vi.spyOn(sandbox.client.ports, 'exposePort').mockResolvedValue({
+        success: true,
+        port: 8080,
+        url: 'http://localhost:8080',
+        timestamp: new Date().toISOString()
+      });
+
+      // Mock storage for tokens
+      vi.mocked(mockCtx.storage!.get).mockResolvedValue({});
+      vi.mocked(mockCtx.storage!.put).mockResolvedValue(undefined);
+    });
+
+    it('should accept valid custom tokens', async () => {
+      const validToken = 'abcd1234-_efgh56';
+      const result = await sandbox.exposePort(8080, {
+        hostname: 'example.com',
+        token: validToken
+      });
+
+      expect(result.port).toBe(8080);
+      expect(result.url).toContain(validToken);
+
+      // Verify token was stored
+      expect(mockCtx.storage!.put).toHaveBeenCalledWith(
+        'portTokens',
+        expect.objectContaining({
+          '8080': validToken
+        })
+      );
+    });
+
+    it('should reject tokens that are too short', async () => {
+      await expect(
+        sandbox.exposePort(8080, {
+          hostname: 'example.com',
+          token: 'short'
+        })
+      ).rejects.toThrow('Custom token must be exactly 16 characters long');
+    });
+
+    it('should reject tokens that are too long', async () => {
+      await expect(
+        sandbox.exposePort(8080, {
+          hostname: 'example.com',
+          token: 'thisistoolongfortoken'
+        })
+      ).rejects.toThrow('Custom token must be exactly 16 characters long');
+    });
+
+    it('should reject tokens with invalid characters', async () => {
+      await expect(
+        sandbox.exposePort(8080, {
+          hostname: 'example.com',
+          token: 'ABCD1234efgh5678' // uppercase not allowed
+        })
+      ).rejects.toThrow('Custom token must contain only lowercase letters');
+    });
+
+    it('should reject tokens with special characters', async () => {
+      await expect(
+        sandbox.exposePort(8080, {
+          hostname: 'example.com',
+          token: 'abcd!@#$%^&*1234'
+        })
+      ).rejects.toThrow('Custom token must contain only lowercase letters');
+    });
+
+    it('should allow tokens with hyphens and underscores', async () => {
+      const validToken = 'abc-123_def-456';
+      const result = await sandbox.exposePort(8080, {
+        hostname: 'example.com',
+        token: validToken
+      });
+
+      expect(result.port).toBe(8080);
+      expect(result.url).toContain(validToken);
+    });
+
+    it('should generate random token when not provided', async () => {
+      const result = await sandbox.exposePort(8080, {
+        hostname: 'example.com'
+      });
+
+      expect(result.port).toBe(8080);
+
+      // Verify a token was stored
+      expect(mockCtx.storage!.put).toHaveBeenCalledWith(
+        'portTokens',
+        expect.objectContaining({
+          '8080': expect.stringMatching(/^[a-z0-9_-]{16}$/)
+        })
+      );
+    });
+  });
 });

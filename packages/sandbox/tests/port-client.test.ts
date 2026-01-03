@@ -56,6 +56,39 @@ describe('PortClient', () => {
       expect(result.url.startsWith('https://')).toBe(true);
     });
 
+    it('should expose ports with custom tokens', async () => {
+      const customToken = 'mycustomtoken123';
+      const mockResponse: PortExposeResult = {
+        success: true,
+        port: 8080,
+        url: 'https://8080-sandbox-mycustomtoken123.example.com',
+        timestamp: '2023-01-01T00:00:00Z'
+      };
+
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(mockResponse), { status: 200 })
+      );
+
+      const result = await client.exposePort(
+        8080,
+        'session-custom',
+        'api',
+        customToken
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.port).toBe(8080);
+      expect(result.url).toContain(customToken);
+
+      // Verify the token was sent in the request
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          body: expect.stringContaining(customToken)
+        })
+      );
+    });
+
     it('should expose API services on different ports', async () => {
       const mockResponse: PortExposeResult = {
         success: true,

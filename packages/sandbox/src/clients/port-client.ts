@@ -15,6 +15,12 @@ export type { PortExposeResult, PortCloseResult, PortListResult };
 export interface ExposePortRequest {
   port: number;
   name?: string;
+  /**
+   * Custom token for the preview URL (optional)
+   * If not provided, a random token will be generated
+   * Must be exactly 16 characters, containing only lowercase letters, numbers, hyphens, and underscores
+   */
+  token?: string;
 }
 
 /**
@@ -33,14 +39,16 @@ export class PortClient extends BaseHttpClient {
    * @param port - Port number to expose
    * @param sessionId - The session ID for this operation
    * @param name - Optional name for the port
+   * @param token - Optional custom token for the preview URL
    */
   async exposePort(
     port: number,
     sessionId: string,
-    name?: string
+    name?: string,
+    token?: string
   ): Promise<PortExposeResult> {
     try {
-      const data = { port, sessionId, name };
+      const data = { port, sessionId, name, token };
 
       const response = await this.post<PortExposeResult>(
         '/api/expose-port',
