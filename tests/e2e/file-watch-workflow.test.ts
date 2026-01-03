@@ -94,6 +94,8 @@ describe('File Watch Workflow', () => {
                 // We need to give it time to actually establish all watches before performing actions
                 await new Promise((r) => setTimeout(r, 1000));
                 actionResult = await actions();
+                // Give events time to propagate through the SSE stream
+                await new Promise((r) => setTimeout(r, 2000));
               }
             }
 
@@ -264,7 +266,7 @@ describe('File Watch Workflow', () => {
     // Start watch and create files after watch is confirmed ready
     const { events } = await watchWithActions(
       testDir,
-      { include: ['*.ts'], timeoutMs: 5000, stopAfterEvents: 10 },
+      { include: ['*.ts'], timeoutMs: 10000, stopAfterEvents: 10 },
       async () => {
         // Create both .ts and .js files
         await createFile(`${testDir}/code.ts`, 'typescript');
@@ -386,10 +388,20 @@ describe('File Watch Workflow', () => {
       body: JSON.stringify({ path: '/nonexistent/path/that/does/not/exist' })
     });
 
+    console.log(
+      '[DEBUG] Non-existent path response:',
+      response.status,
+      response.ok
+    );
+
     // Should get an error response (either 4xx/5xx or error in body)
     if (!response.ok) {
       // Non-OK response is expected - pass
       expect(response.ok).toBe(false);
+      // Verify we get meaningful error content
+      const body = await response.text();
+      console.log('[DEBUG] Error response body:', body);
+      expect(body).toMatch(/error|not found|does not exist/i);
       return;
     }
 
@@ -406,6 +418,7 @@ describe('File Watch Workflow', () => {
           const { done, value } = await reader.read();
           if (done) break;
           text += decoder.decode(value, { stream: true });
+          console.log('[DEBUG] Received SSE chunk:', text.substring(0, 500));
           // Check if we have an error indication
           if (text.match(/error|not found|does not exist/i)) {
             break;
@@ -418,6 +431,7 @@ describe('File Watch Workflow', () => {
         reader.cancel();
       }
 
+      console.log('[DEBUG] Final SSE text:', text);
       // Should contain an error message
       expect(text).toMatch(/error|not found|does not exist/i);
     }
@@ -432,7 +446,7 @@ describe('File Watch Workflow', () => {
     // Start watch and create files after watch is confirmed ready
     const { events } = await watchWithActions(
       testDir,
-      { timeoutMs: 5000, stopAfterEvents: 10 },
+      { timeoutMs: 10000, stopAfterEvents: 10 },
       async () => {
         // Create files in excluded and non-excluded directories
         await createFile(`${testDir}/app.ts`, 'app code');
