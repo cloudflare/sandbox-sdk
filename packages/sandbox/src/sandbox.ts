@@ -258,8 +258,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   // RPC method to set the sleep timeout
   async setSleepAfter(sleepAfter: string | number): Promise<void> {
     this.sleepAfter = sleepAfter;
-    // Reschedule activity timeout with new value - the Container constructor
-    // already called renewActivityTimeout() with the default before this RPC runs
+    // Reschedule activity timeout to apply the new sleepAfter value immediately
     this.renewActivityTimeout();
   }
 
