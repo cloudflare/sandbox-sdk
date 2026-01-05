@@ -30,16 +30,14 @@ export function extractRepoName(repoUrl: string): string {
     // Not a standard URL, try SSH format
   }
 
-  // Try SSH-style URLs (git@github.com:user/repo.git)
-  const sshMatch = repoUrl.match(/\/([^/]+?)(\.git)?$/);
-  if (sshMatch?.[1]) {
-    return sshMatch[1];
-  }
-
-  // Also try colon-based SSH format (git@host:path/repo.git)
-  const colonMatch = repoUrl.match(/:([^/]+\/)?([^/]+?)(\.git)?$/);
-  if (colonMatch?.[2]) {
-    return colonMatch[2];
+  // For SSH URLs (git@github.com:user/repo.git), split by : and / to get last segment
+  // Only process if the URL contains path delimiters
+  if (repoUrl.includes(':') || repoUrl.includes('/')) {
+    const segments = repoUrl.split(/[:/]/).filter(Boolean);
+    const lastSegment = segments[segments.length - 1];
+    if (lastSegment) {
+      return lastSegment.replace(/\.git$/, '');
+    }
   }
 
   return FALLBACK_REPO_NAME;
