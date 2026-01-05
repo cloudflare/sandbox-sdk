@@ -4,7 +4,6 @@ import type { ErrorResponse } from '@repo/shared/errors';
 import type { RequestContext } from '@sandbox-container/core/types';
 import { GitHandler } from '@sandbox-container/handlers/git-handler';
 import type { GitService } from '@sandbox-container/services/git-service';
-import { RequestValidator } from '@sandbox-container/validation/request-validator';
 
 // Mock the dependencies - use partial mock to avoid private property issues
 const mockGitService = {
@@ -37,15 +36,12 @@ const mockContext: RequestContext = {
 
 describe('GitHandler', () => {
   let gitHandler: GitHandler;
-  let validator: RequestValidator;
 
   beforeEach(async () => {
     // Reset all mocks before each test
     vi.clearAllMocks();
 
-    // Use real validator to test actual Zod schema validation
-    validator = new RequestValidator();
-    gitHandler = new GitHandler(mockGitService, validator, mockLogger);
+    gitHandler = new GitHandler(mockGitService, mockLogger);
   });
 
   describe('handleCheckout - POST /api/git/checkout', () => {
@@ -480,8 +476,8 @@ describe('GitHandler', () => {
     });
   });
 
-  describe('depth validation', () => {
-    it('should accept valid positive integer depth', async () => {
+  describe('depth option', () => {
+    it('should pass depth option to service', async () => {
       const gitCheckoutData = {
         repoUrl: 'https://github.com/user/repo.git',
         depth: 1
@@ -505,117 +501,6 @@ describe('GitHandler', () => {
         'https://github.com/user/repo.git',
         expect.objectContaining({ depth: 1 })
       );
-    });
-
-    it('should reject float depth values with validation error', async () => {
-      const gitCheckoutData = {
-        repoUrl: 'https://github.com/user/repo.git',
-        depth: 1.5
-      };
-
-      const request = new Request('http://localhost:3000/api/git/checkout', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(gitCheckoutData)
-      });
-
-      const response = await gitHandler.handle(request, mockContext);
-
-      expect(response.status).toBe(400);
-      const responseData = (await response.json()) as ErrorResponse;
-      expect(responseData.code).toBe('VALIDATION_FAILED');
-      expect(responseData.message).toContain('integer');
-
-      // Service should not be called for invalid requests
-      expect(mockGitService.cloneRepository).not.toHaveBeenCalled();
-    });
-
-    it('should reject zero depth with validation error', async () => {
-      const gitCheckoutData = {
-        repoUrl: 'https://github.com/user/repo.git',
-        depth: 0
-      };
-
-      const request = new Request('http://localhost:3000/api/git/checkout', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(gitCheckoutData)
-      });
-
-      const response = await gitHandler.handle(request, mockContext);
-
-      expect(response.status).toBe(400);
-      const responseData = (await response.json()) as ErrorResponse;
-      expect(responseData.code).toBe('VALIDATION_FAILED');
-
-      // Service should not be called for invalid requests
-      expect(mockGitService.cloneRepository).not.toHaveBeenCalled();
-    });
-
-    it('should reject negative depth with validation error', async () => {
-      const gitCheckoutData = {
-        repoUrl: 'https://github.com/user/repo.git',
-        depth: -1
-      };
-
-      const request = new Request('http://localhost:3000/api/git/checkout', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(gitCheckoutData)
-      });
-
-      const response = await gitHandler.handle(request, mockContext);
-
-      expect(response.status).toBe(400);
-      const responseData = (await response.json()) as ErrorResponse;
-      expect(responseData.code).toBe('VALIDATION_FAILED');
-
-      // Service should not be called for invalid requests
-      expect(mockGitService.cloneRepository).not.toHaveBeenCalled();
-    });
-
-    it('should reject string depth with validation error', async () => {
-      const gitCheckoutData = {
-        repoUrl: 'https://github.com/user/repo.git',
-        depth: '1'
-      };
-
-      const request = new Request('http://localhost:3000/api/git/checkout', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(gitCheckoutData)
-      });
-
-      const response = await gitHandler.handle(request, mockContext);
-
-      expect(response.status).toBe(400);
-      const responseData = (await response.json()) as ErrorResponse;
-      expect(responseData.code).toBe('VALIDATION_FAILED');
-
-      // Service should not be called for invalid requests
-      expect(mockGitService.cloneRepository).not.toHaveBeenCalled();
-    });
-
-    it('should reject empty repoUrl with validation error', async () => {
-      const gitCheckoutData = {
-        repoUrl: ''
-      };
-
-      const request = new Request('http://localhost:3000/api/git/checkout', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(gitCheckoutData)
-      });
-
-      const response = await gitHandler.handle(request, mockContext);
-
-      expect(response.status).toBe(400);
-      const responseData = (await response.json()) as ErrorResponse;
-      expect(responseData.code).toBe('VALIDATION_FAILED');
-      expect(responseData.message).toContain('cannot be empty');
-
-      // Service should not be called for invalid requests
-      expect(mockGitService.cloneRepository).not.toHaveBeenCalled();
     });
   });
 });

@@ -111,6 +111,20 @@ export interface GitCheckoutRequest {
   branch?: string;
   targetDir?: string;
   sessionId?: string;
+  /** Clone depth for shallow clones (e.g., 1 for latest commit only) */
+  depth?: number;
+}
+
+/**
+ * Request to list files in a directory
+ */
+export interface ListFilesRequest {
+  path: string;
+  options?: {
+    recursive?: boolean;
+    includeHidden?: boolean;
+  };
+  sessionId?: string;
 }
 
 /**

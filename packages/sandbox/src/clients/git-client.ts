@@ -1,5 +1,5 @@
 import type { GitCheckoutResult } from '@repo/shared';
-import { GitLogger } from '@repo/shared';
+import { extractRepoName, GitLogger } from '@repo/shared';
 import { BaseHttpClient } from './base-client';
 import type { HttpClientOptions, SessionRequest } from './types';
 
@@ -47,9 +47,7 @@ export class GitClient extends BaseHttpClient {
       // Determine target directory - use provided path or generate from repo name
       let targetDir = options?.targetDir;
       if (!targetDir) {
-        const repoName = this.extractRepoName(repoUrl);
-        // Ensure absolute path in /workspace
-        targetDir = `/workspace/${repoName}`;
+        targetDir = `/workspace/${extractRepoName(repoUrl)}`;
       }
 
       const data: GitCheckoutRequest = {
@@ -66,7 +64,9 @@ export class GitClient extends BaseHttpClient {
 
       if (options?.depth !== undefined) {
         if (!Number.isInteger(options.depth) || options.depth <= 0) {
-          throw new Error('depth must be a positive integer');
+          throw new Error(
+            `Invalid depth value: ${options.depth}. Must be a positive integer (e.g., 1, 5, 10).`
+          );
         }
         data.depth = options.depth;
       }
@@ -85,25 +85,6 @@ export class GitClient extends BaseHttpClient {
     } catch (error) {
       this.logError('checkout', error);
       throw error;
-    }
-  }
-
-  /**
-   * Extract repository name from URL for default directory name
-   */
-  private extractRepoName(repoUrl: string): string {
-    try {
-      const url = new URL(repoUrl);
-      const pathParts = url.pathname.split('/');
-      const repoName = pathParts[pathParts.length - 1];
-
-      // Remove .git extension if present
-      return repoName.replace(/\.git$/, '');
-    } catch {
-      // Fallback for invalid URLs
-      const parts = repoUrl.split('/');
-      const repoName = parts[parts.length - 1];
-      return repoName.replace(/\.git$/, '') || 'repo';
     }
   }
 }
