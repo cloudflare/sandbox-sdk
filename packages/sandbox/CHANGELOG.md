@@ -1,5 +1,13 @@
 # @cloudflare/sandbox
 
+## 0.6.9
+
+### Patch Changes
+
+- [#323](https://github.com/cloudflare/sandbox-sdk/pull/323) [`274ee4c`](https://github.com/cloudflare/sandbox-sdk/commit/274ee4cdb589cd34995539221a3445836cbe062f) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - Fix sleepAfter option passed to getSandbox() being ignored.
+
+  The custom sleepAfter timeout value is now correctly applied when specified in getSandbox() options.
+
 ## 0.6.8
 
 ### Patch Changes
@@ -117,10 +125,10 @@
 
   ```dockerfile
   # Before
-  FROM cloudflare/sandbox:0.6.8
+  FROM cloudflare/sandbox:0.6.9
 
   # After
-  FROM cloudflare/sandbox:0.6.8-python
+  FROM cloudflare/sandbox:0.6.9-python
   ```
 
   Without this change, Python execution will fail with `PYTHON_NOT_AVAILABLE` error.
