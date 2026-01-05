@@ -30,6 +30,22 @@ interface UserInfo {
   color: string;
 }
 
+// Generate a short, random suffix for default user names using
+// cryptographically secure randomness instead of Math.random().
+function generateRandomNameSuffix(): string {
+  const bytes = new Uint8Array(4);
+  crypto.getRandomValues(bytes);
+  // Convert bytes to a base-36 string and take 4 characters, similar length
+  // to the original Math.random().toString(36).slice(2, 6).
+  const num =
+    (bytes[0] << 24) |
+    (bytes[1] << 16) |
+    (bytes[2] << 8) |
+    bytes[3];
+  const str = Math.abs(num).toString(36);
+  return str.slice(0, 4).padEnd(4, '0');
+}
+
 // Client connection
 interface ClientConnection {
   ws: WebSocket;
@@ -307,8 +323,7 @@ export class Room implements DurableObject {
     // Handle WebSocket upgrade
     if (request.headers.get('Upgrade') === 'websocket') {
       const userName =
-        url.searchParams.get('name') ||
-        `User-${Math.random().toString(36).slice(2, 6)}`;
+        url.searchParams.get('name') || `User-${generateRandomNameSuffix()}`;
       this.roomId = url.searchParams.get('roomId') || 'default';
 
       // Create WebSocket pair
