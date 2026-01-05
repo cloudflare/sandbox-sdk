@@ -233,6 +233,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         (await this.ctx.storage.get<boolean>('normalizeId')) || false;
       this.defaultSession =
         (await this.ctx.storage.get<string>('defaultSession')) || null;
+      this.keepAliveEnabled =
+        (await this.ctx.storage.get<boolean>('keepAliveEnabled')) || false;
 
       // Load saved timeout configuration (highest priority)
       const storedTimeouts =
@@ -274,11 +276,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   // RPC method to set the sleep timeout
   async setSleepAfter(sleepAfter: string | number): Promise<void> {
     this.sleepAfter = sleepAfter;
+    // Reschedule activity timeout to apply the new sleepAfter value immediately
+    this.renewActivityTimeout();
   }
 
   // RPC method to enable keepAlive mode
   async setKeepAlive(keepAlive: boolean): Promise<void> {
     this.keepAliveEnabled = keepAlive;
+    await this.ctx.storage.put('keepAliveEnabled', keepAlive);
     if (keepAlive) {
       this.logger.info(
         'KeepAlive mode enabled - container will stay alive until explicitly destroyed'

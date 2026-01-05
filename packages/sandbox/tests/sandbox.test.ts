@@ -19,6 +19,7 @@ vi.mock('@cloudflare/containers', () => {
   const MockContainer = class Container {
     ctx: any;
     env: any;
+    sleepAfter: string | number = '10m';
     constructor(ctx: any, env: any) {
       this.ctx = ctx;
       this.env = env;
@@ -45,6 +46,9 @@ vi.mock('@cloudflare/containers', () => {
     async getState() {
       // Mock implementation - return healthy state
       return { status: 'healthy' };
+    }
+    renewActivityTimeout() {
+      // Mock implementation - reschedules activity timeout
     }
   };
 
@@ -885,6 +889,30 @@ describe('Sandbox - Automatic Session Management', () => {
           waitIntervalMS: 1000
         })
       ).resolves.toBeUndefined();
+    });
+  });
+
+  describe('sleepAfter configuration', () => {
+    it('should call renewActivityTimeout when setSleepAfter is called', async () => {
+      // Spy on renewActivityTimeout (inherited from Container)
+      const renewSpy = vi.spyOn(sandbox as any, 'renewActivityTimeout');
+
+      await sandbox.setSleepAfter('30m');
+
+      // Verify sleepAfter was updated
+      expect((sandbox as any).sleepAfter).toBe('30m');
+
+      // Verify renewActivityTimeout was called to reschedule with new value
+      expect(renewSpy).toHaveBeenCalled();
+    });
+
+    it('should accept numeric sleepAfter values', async () => {
+      const renewSpy = vi.spyOn(sandbox as any, 'renewActivityTimeout');
+
+      await sandbox.setSleepAfter(3600); // 1 hour in seconds
+
+      expect((sandbox as any).sleepAfter).toBe(3600);
+      expect(renewSpy).toHaveBeenCalled();
     });
   });
 });

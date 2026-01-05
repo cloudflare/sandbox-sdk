@@ -11,5 +11,6 @@
     "strict": true,
     "skipLibCheck": true,
     "noEmit": true
-  }
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx", "env.d.ts"]
 }
