@@ -913,14 +913,14 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(result1.port).toBe(8080);
       expect(result1.url).toContain(shortToken);
 
-      const longToken = 'my-very-long-custom-token-12345';
+      const maxLengthToken = 'a123456789012345'; // exactly 16 chars
       const result2 = await sandbox.exposePort(8081, {
         hostname: 'example.com',
-        token: longToken
+        token: maxLengthToken
       });
 
       expect(result2.port).toBe(8081);
-      expect(result2.url).toContain(longToken);
+      expect(result2.url).toContain(maxLengthToken);
     });
 
     it('should reject empty tokens', async () => {
@@ -932,14 +932,14 @@ describe('Sandbox - Automatic Session Management', () => {
       ).rejects.toThrow('Custom token cannot be empty');
     });
 
-    it('should reject tokens exceeding DNS subdomain limit', async () => {
-      const tooLongToken = 'a'.repeat(64); // 64 chars, exceeds 63 limit
+    it('should reject tokens exceeding 16 character limit', async () => {
+      const tooLongToken = 'a1234567890123456'; // 17 chars, exceeds 16 limit
       await expect(
         sandbox.exposePort(8080, {
           hostname: 'example.com',
           token: tooLongToken
         })
-      ).rejects.toThrow('Custom token too long. Maximum 63 characters allowed');
+      ).rejects.toThrow('Custom token too long. Maximum 16 characters allowed');
     });
 
     it('should reject tokens with invalid characters', async () => {

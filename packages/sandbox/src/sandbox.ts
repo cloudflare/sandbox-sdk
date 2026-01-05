@@ -2096,7 +2096,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * @param options - Configuration options
    * @param options.hostname - Your Worker's domain name (required for preview URL construction)
    * @param options.name - Optional friendly name for the port
-   * @param options.token - Optional custom token for the preview URL (1-63 characters: lowercase letters, numbers, hyphens, underscores)
+   * @param options.token - Optional custom token for the preview URL (1-16 characters: lowercase letters, numbers, hyphens, underscores)
    *                       If not provided, a random 16-character token will be generated automatically
    * @returns Preview URL information including the full URL, port number, and optional name
    *
@@ -2109,9 +2109,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * // With custom token for stable URLs across deployments
    * const { url } = await sandbox.exposePort(8080, {
    *   hostname: 'example.com',
-   *   token: 'my-stable-token'
+   *   token: 'my-token-v1'
    * });
-   * // url: https://8080-sandbox-id-my-stable-token.example.com
+   * // url: https://8080-sandbox-id-my-token-v1.example.com
    */
   async exposePort(
     port: number,
@@ -2275,10 +2275,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       throw new SecurityError(`Custom token cannot be empty.`);
     }
 
-    // Token should have reasonable length for URL compatibility (max 63 chars for DNS subdomain)
-    if (token.length > 63) {
+    // Token must not exceed 16 characters
+    if (token.length > 16) {
       throw new SecurityError(
-        `Custom token too long. Maximum 63 characters allowed (DNS subdomain limit). Received: ${token.length} characters.`
+        `Custom token too long. Maximum 16 characters allowed. Received: ${token.length} characters.`
       );
     }
 
