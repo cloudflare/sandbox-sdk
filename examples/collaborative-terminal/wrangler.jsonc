@@ -26,6 +26,10 @@
       {
         "class_name": "Sandbox",
         "name": "Sandbox"
+      },
+      {
+        "class_name": "Room",
+        "name": "Room"
       }
     ]
   },
@@ -33,6 +37,10 @@
     {
       "new_sqlite_classes": ["Sandbox"],
       "tag": "v1"
+    },
+    {
+      "new_classes": ["Room"],
+      "tag": "v2"
     }
   ]
 }

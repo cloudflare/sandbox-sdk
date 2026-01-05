@@ -53,6 +53,12 @@ interface AppState {
   typingUser: User | null;
 }
 
+function generateRandomUserSuffix(): string {
+  const array = new Uint32Array(1);
+  window.crypto.getRandomValues(array);
+  return array[0].toString(36).slice(0, 4);
+}
+
 export function App() {
   const [state, setState] = useState<AppState>({
     connected: false,
@@ -221,6 +227,9 @@ export function App() {
       ws.addEventListener('open', () => {
         wsRef.current = ws;
         setState((s) => ({ ...s, roomId }));
+        // Update URL with room ID so it can be shared
+        const newUrl = `${window.location.origin}?room=${roomId}`;
+        window.history.replaceState({}, '', newUrl);
       });
 
       ws.addEventListener('message', handleWsMessage);
@@ -271,6 +280,15 @@ export function App() {
 
     const disposable = term.onData((data: string) => {
       if (wsRef.current?.readyState === WebSocket.OPEN && state.hasActivePty) {
+        // Debug: log control characters
+        if (data.charCodeAt(0) < 32) {
+          console.log(
+            '[App] Sending control char:',
+            data.charCodeAt(0),
+            'hex:',
+            data.charCodeAt(0).toString(16)
+          );
+        }
         wsRef.current.send(
           JSON.stringify({
             type: 'pty_input',
@@ -283,16 +301,9 @@ export function App() {
     return () => disposable.dispose();
   }, [state.hasActivePty]);
 
-  const generateRandomUserSuffix = () => {
-    const array = new Uint32Array(1);
-    window.crypto.getRandomValues(array);
-    return array[0].toString(36).slice(0, 4);
-  };
-
   // Create new room
   const createRoom = async () => {
-    const name =
-      joinName.trim() || `User-${generateRandomUserSuffix()}`;
+    const name = joinName.trim() || `User-${generateRandomUserSuffix()}`;
     const response = await fetch('/api/room', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -304,8 +315,7 @@ export function App() {
 
   // Join existing room
   const joinRoom = () => {
-    const name =
-      joinName.trim() || `User-${generateRandomUserSuffix()}`;
+    const name = joinName.trim() || `User-${generateRandomUserSuffix()}`;
     const roomId = joinRoomId.trim();
     if (roomId) {
       connectToRoom(roomId, name);
@@ -320,12 +330,13 @@ export function App() {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  // Check for room in URL on mount
+  // Check for room in URL on mount - pre-fill room ID but let user enter name
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const roomFromUrl = params.get('room');
     if (roomFromUrl) {
       setJoinRoomId(roomFromUrl);
+      // Don't auto-join - let user enter their name first
     }
   }, []);
 

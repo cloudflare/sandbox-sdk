@@ -234,6 +234,28 @@ export class PtyManager {
       return { success: false, error: 'PTY has exited' };
     }
     try {
+      // Handle Ctrl+C (ETX, 0x03) - send SIGINT to process group
+      if (data === '\x03') {
+        this.logger.debug('Sending SIGINT to PTY process', { ptyId: id });
+        session.process.kill('SIGINT');
+        // Also write to terminal so it shows ^C
+        session.terminal.write(data);
+        return { success: true };
+      }
+      // Handle Ctrl+Z (SUB, 0x1A) - send SIGTSTP to process group
+      if (data === '\x1a') {
+        this.logger.debug('Sending SIGTSTP to PTY process', { ptyId: id });
+        session.process.kill('SIGTSTP');
+        session.terminal.write(data);
+        return { success: true };
+      }
+      // Handle Ctrl+\ (FS, 0x1C) - send SIGQUIT to process group
+      if (data === '\x1c') {
+        this.logger.debug('Sending SIGQUIT to PTY process', { ptyId: id });
+        session.process.kill('SIGQUIT');
+        session.terminal.write(data);
+        return { success: true };
+      }
       session.terminal.write(data);
       return { success: true };
     } catch (error) {

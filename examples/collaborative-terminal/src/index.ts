@@ -8,30 +8,19 @@
  * - Presence indicators show who's connected
  *
  * Architecture:
- * - Each terminal room is backed by a single Sandbox Durable Object
- * - Users connect via WebSocket for commands and presence
+ * - A separate Room Durable Object manages collaboration/presence
+ * - The Room DO uses getSandbox() to interact with a shared Sandbox
  * - PTY I/O uses WebSocket connection to container for low latency
  */
 
 import { getSandbox, Sandbox } from '@cloudflare/sandbox';
 
+// Re-export Sandbox for wrangler
 export { Sandbox };
-
-// Generate a cryptographically secure random base-36 string of the given length.
-function secureRandomBase36(length: number): string {
-  const array = new Uint32Array(1);
-  crypto.getRandomValues(array);
-  // Convert to base-36 and ensure we have enough characters.
-  let str = array[0].toString(36);
-  while (str.length < length) {
-    crypto.getRandomValues(array);
-    str += array[0].toString(36);
-  }
-  return str.slice(0, length);
-}
 
 interface Env {
   Sandbox: DurableObjectNamespace<Sandbox>;
+  Room: DurableObjectNamespace;
 }
 
 // User info for presence
@@ -41,23 +30,11 @@ interface UserInfo {
   color: string;
 }
 
-// Connected WebSocket with user info
-interface ConnectedClient {
+// Client connection
+interface ClientConnection {
   ws: WebSocket;
   info: UserInfo;
 }
-
-// Room state with container WebSocket for low-latency PTY I/O
-interface RoomState {
-  clients: Map<string, ConnectedClient>;
-  ptyId: string | null;
-  outputBuffer: string[];
-  // WebSocket connection to container for PTY messages
-  containerWs: WebSocket | null;
-}
-
-// Room registry
-const rooms = new Map<string, RoomState>();
 
 // Generate random user color
 function randomColor(): string {
@@ -76,72 +53,334 @@ function randomColor(): string {
   return colors[Math.floor(Math.random() * colors.length)];
 }
 
-// Broadcast to all clients in a room
-function broadcast(
-  roomId: string,
-  message: object,
-  excludeUserId?: string
-): void {
-  const room = rooms.get(roomId);
-  if (!room) return;
+// Room Durable Object - handles collaboration/presence separately from Sandbox
+export class Room implements DurableObject {
+  private clients: Map<string, ClientConnection> = new Map();
+  private ptyId: string | null = null;
+  private outputBuffer: string[] = [];
+  private containerWs: WebSocket | null = null;
+  private roomId: string = '';
+  private env: Env;
 
-  const data = JSON.stringify(message);
-  for (const [userId, client] of room.clients) {
-    if (userId !== excludeUserId) {
-      try {
-        client.ws.send(data);
-      } catch {
-        // Client disconnected
+  constructor(
+    private ctx: DurableObjectState,
+    env: Env
+  ) {
+    this.env = env;
+  }
+
+  // Get all connected users
+  private getConnectedUsers(): UserInfo[] {
+    return Array.from(this.clients.values()).map((c) => c.info);
+  }
+
+  // Broadcast to all connected WebSockets
+  private broadcast(message: object, excludeUserId?: string): void {
+    const data = JSON.stringify(message);
+    for (const [userId, client] of this.clients) {
+      if (userId !== excludeUserId) {
+        try {
+          client.ws.send(data);
+        } catch {
+          // Client disconnected
+        }
       }
     }
   }
-}
 
-// Get user list for a room
-function getUserList(roomId: string): UserInfo[] {
-  const room = rooms.get(roomId);
-  if (!room) return [];
-  return Array.from(room.clients.values()).map((c) => c.info);
+  // Handle PTY start
+  private async startPty(
+    ws: WebSocket,
+    cols: number,
+    rows: number
+  ): Promise<void> {
+    if (this.ptyId) {
+      // PTY already exists
+      ws.send(JSON.stringify({ type: 'pty_started', ptyId: this.ptyId }));
+      return;
+    }
+
+    try {
+      console.log(`[Room ${this.roomId}] Creating PTY...`);
+
+      // Get sandbox instance using helper
+      const sandbox = getSandbox(this.env.Sandbox, `shared-sandbox`);
+
+      // Colored prompt
+      const PS1 =
+        '\\[\\e[38;5;39m\\]\\u\\[\\e[0m\\]@\\[\\e[38;5;208m\\]sandbox\\[\\e[0m\\] \\[\\e[38;5;41m\\]\\w\\[\\e[0m\\] \\[\\e[38;5;208m\\]❯\\[\\e[0m\\] ';
+
+      // Create PTY session
+      // Use --norc --noprofile but run with 'set -m' to enable job control for Ctrl+C
+      const ptyInfo = await sandbox.createPty({
+        cols: cols || 80,
+        rows: rows || 24,
+        command: ['/bin/bash', '--norc', '--noprofile'],
+        cwd: '/home/user',
+        env: {
+          TERM: 'xterm-256color',
+          COLORTERM: 'truecolor',
+          LANG: 'en_US.UTF-8',
+          HOME: '/home/user',
+          USER: 'user',
+          PS1,
+          ROOM_ID: this.roomId,
+          CLICOLOR: '1',
+          CLICOLOR_FORCE: '1',
+          FORCE_COLOR: '3',
+          LS_COLORS:
+            'di=1;34:ln=1;36:so=1;35:pi=33:ex=1;32:bd=1;33:cd=1;33:su=1:sg=1:tw=1:ow=1;34',
+          // Enable job control
+          BASH_ENV: ''
+        }
+      });
+
+      console.log(`[Room ${this.roomId}] PTY created: ${ptyInfo.id}`);
+      this.ptyId = ptyInfo.id;
+
+      // Establish WebSocket connection to container for PTY streaming
+      console.log(`[Room ${this.roomId}] Connecting to container WebSocket...`);
+      const wsRequest = new Request('http://container/ws', {
+        headers: {
+          Upgrade: 'websocket',
+          Connection: 'Upgrade'
+        }
+      });
+      const wsResponse = await sandbox.fetch(wsRequest);
+
+      if (!wsResponse.webSocket) {
+        throw new Error(
+          'Failed to establish WebSocket connection to container'
+        );
+      }
+      this.containerWs = wsResponse.webSocket;
+      this.containerWs.accept();
+      console.log(`[Room ${this.roomId}] Container WebSocket connected`);
+
+      // Forward PTY output to all browser clients
+      this.containerWs.addEventListener('message', (wsEvent) => {
+        try {
+          const containerMsg = JSON.parse(wsEvent.data as string);
+          if (containerMsg.type === 'stream' && containerMsg.data) {
+            const streamData = JSON.parse(containerMsg.data);
+            if (streamData.type === 'pty_data' && streamData.data) {
+              this.outputBuffer.push(streamData.data);
+              if (this.outputBuffer.length > 1000) {
+                this.outputBuffer.shift();
+              }
+              this.broadcast({ type: 'pty_output', data: streamData.data });
+            } else if (streamData.type === 'pty_exit') {
+              this.broadcast({
+                type: 'pty_exit',
+                exitCode: streamData.exitCode
+              });
+              this.ptyId = null;
+              this.containerWs?.close();
+              this.containerWs = null;
+            }
+          }
+        } catch (e) {
+          console.error(
+            `[Room ${this.roomId}] Container message parse error:`,
+            e
+          );
+        }
+      });
+
+      this.containerWs.addEventListener('error', (e) => {
+        console.error(`[Room ${this.roomId}] Container WS error:`, e);
+      });
+
+      this.containerWs.addEventListener('close', () => {
+        console.log(`[Room ${this.roomId}] Container WS closed`);
+        this.containerWs = null;
+      });
+
+      // Subscribe to PTY output stream
+      this.containerWs.send(
+        JSON.stringify({
+          type: 'request',
+          id: `pty_stream_${ptyInfo.id}`,
+          method: 'GET',
+          path: `/api/pty/${ptyInfo.id}/stream`,
+          headers: { Accept: 'text/event-stream' }
+        })
+      );
+
+      // Broadcast pty_started to all clients
+      console.log(`[Room ${this.roomId}] Broadcasting pty_started`);
+      this.broadcast({ type: 'pty_started', ptyId: ptyInfo.id });
+    } catch (error) {
+      console.error(`[Room ${this.roomId}] PTY create error:`, error);
+      ws.send(
+        JSON.stringify({
+          type: 'error',
+          message:
+            error instanceof Error ? error.message : 'Failed to create PTY'
+        })
+      );
+    }
+  }
+
+  // Handle client message
+  private handleClientMessage(
+    userId: string,
+    ws: WebSocket,
+    data: string
+  ): void {
+    const client = this.clients.get(userId);
+    if (!client) return;
+
+    try {
+      const msg = JSON.parse(data) as {
+        type: string;
+        data?: string;
+        cols?: number;
+        rows?: number;
+      };
+
+      console.log(
+        `[Room ${this.roomId}] Client message: ${msg.type}`,
+        msg.type === 'pty_input' ? `data length: ${msg.data?.length}` : ''
+      );
+
+      switch (msg.type) {
+        case 'start_pty':
+          this.startPty(ws, msg.cols || 80, msg.rows || 24);
+          break;
+
+        case 'pty_input':
+          if (this.ptyId && this.containerWs && msg.data) {
+            // Debug: log control characters
+            if (msg.data.charCodeAt(0) < 32) {
+              console.log(
+                `[Room ${this.roomId}] Sending control char to container: ${msg.data.charCodeAt(0)} (0x${msg.data.charCodeAt(0).toString(16)})`
+              );
+            }
+            this.containerWs.send(
+              JSON.stringify({
+                type: 'pty_input',
+                ptyId: this.ptyId,
+                data: msg.data
+              })
+            );
+            this.broadcast({ type: 'user_typing', user: client.info }, userId);
+          } else {
+            console.log(
+              `[Room ${this.roomId}] Cannot send pty_input: ptyId=${this.ptyId}, containerWs=${!!this.containerWs}, data=${!!msg.data}`
+            );
+          }
+          break;
+
+        case 'pty_resize':
+          if (this.ptyId && this.containerWs && msg.cols && msg.rows) {
+            this.containerWs.send(
+              JSON.stringify({
+                type: 'pty_resize',
+                ptyId: this.ptyId,
+                cols: msg.cols,
+                rows: msg.rows
+              })
+            );
+          }
+          break;
+      }
+    } catch (error) {
+      console.error(`[Room ${this.roomId}] Message error:`, error);
+    }
+  }
+
+  // Handle client disconnect
+  private handleClientDisconnect(userId: string): void {
+    this.clients.delete(userId);
+    this.broadcast({
+      type: 'user_left',
+      userId,
+      users: this.getConnectedUsers()
+    });
+  }
+
+  // Handle incoming requests
+  async fetch(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+
+    // Handle WebSocket upgrade
+    if (request.headers.get('Upgrade') === 'websocket') {
+      const userName =
+        url.searchParams.get('name') ||
+        `User-${Math.random().toString(36).slice(2, 6)}`;
+      this.roomId = url.searchParams.get('roomId') || 'default';
+
+      // Create WebSocket pair
+      const pair = new WebSocketPair();
+      const [client, server] = Object.values(pair);
+      server.accept();
+
+      // Create user info
+      const userId = crypto.randomUUID();
+      const userInfo: UserInfo = {
+        id: userId,
+        name: userName,
+        color: randomColor()
+      };
+
+      // Store client
+      this.clients.set(userId, { ws: server, info: userInfo });
+
+      // Set up event handlers
+      server.addEventListener('message', (event) => {
+        this.handleClientMessage(userId, server, event.data as string);
+      });
+
+      server.addEventListener('close', () => {
+        this.handleClientDisconnect(userId);
+      });
+
+      server.addEventListener('error', () => {
+        this.handleClientDisconnect(userId);
+      });
+
+      // Send initial state
+      server.send(
+        JSON.stringify({
+          type: 'connected',
+          userId,
+          userName: userInfo.name,
+          userColor: userInfo.color,
+          users: this.getConnectedUsers(),
+          hasActivePty: this.ptyId !== null,
+          ptyId: this.ptyId,
+          history: this.outputBuffer.join('')
+        })
+      );
+
+      // Notify others
+      this.broadcast(
+        {
+          type: 'user_joined',
+          user: userInfo,
+          users: this.getConnectedUsers()
+        },
+        userId
+      );
+
+      return new Response(null, { status: 101, webSocket: client });
+    }
+
+    return new Response('Not found', { status: 404 });
+  }
 }
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
 
-    // API: Create or join a terminal room
+    // API: Create a new room
     if (url.pathname === '/api/room' && request.method === 'POST') {
-      const body = (await request.json()) as { roomId?: string };
-      const roomId = body.roomId || crypto.randomUUID().slice(0, 8);
-
-      if (!rooms.has(roomId)) {
-        rooms.set(roomId, {
-          clients: new Map(),
-          ptyId: null,
-          outputBuffer: [],
-          containerWs: null
-        });
-      }
-
+      const roomId = crypto.randomUUID().slice(0, 8);
       return Response.json({
         roomId,
         joinUrl: `${url.origin}?room=${roomId}`
-      });
-    }
-
-    // API: Get room info
-    if (url.pathname.startsWith('/api/room/') && request.method === 'GET') {
-      const roomId = url.pathname.split('/')[3];
-      const room = rooms.get(roomId);
-
-      if (!room) {
-        return Response.json({ error: 'Room not found' }, { status: 404 });
-      }
-
-      return Response.json({
-        roomId,
-        users: getUserList(roomId),
-        hasActivePty: room.ptyId !== null,
-        ptyId: room.ptyId
       });
     }
 
@@ -153,273 +392,21 @@ export default {
       }
 
       const roomId = url.pathname.split('/')[3];
-      const userName =
-        url.searchParams.get('name') ||
-        `User-${secureRandomBase36(4)}`;
+      const userName = url.searchParams.get('name') || 'Anonymous';
 
-      // Get or create room state
-      let room = rooms.get(roomId);
-      if (!room) {
-        room = {
-          clients: new Map(),
-          ptyId: null,
-          outputBuffer: [],
-          containerWs: null
-        };
-        rooms.set(roomId, room);
-      }
+      // Get Room DO for this room
+      const id = env.Room.idFromName(`room-${roomId}`);
+      const room = env.Room.get(id);
 
-      // Create WebSocket pair
-      const pair = new WebSocketPair();
-      const [client, server] = Object.values(pair);
-      server.accept();
+      // Forward WebSocket request to Room DO
+      const wsUrl = new URL(request.url);
+      wsUrl.searchParams.set('roomId', roomId);
+      wsUrl.searchParams.set('name', userName);
 
-      // Create user
-      const userId = crypto.randomUUID();
-      const userInfo: UserInfo = {
-        id: userId,
-        name: userName,
-        color: randomColor()
-      };
-
-      // Add client to room
-      room.clients.set(userId, { ws: server, info: userInfo });
-
-      // Send initial state
-      server.send(
-        JSON.stringify({
-          type: 'connected',
-          userId,
-          userName: userInfo.name,
-          userColor: userInfo.color,
-          users: getUserList(roomId),
-          hasActivePty: room.ptyId !== null,
-          ptyId: room.ptyId,
-          history: room.outputBuffer.join('')
-        })
-      );
-
-      // Notify others
-      broadcast(
-        roomId,
-        {
-          type: 'user_joined',
-          user: userInfo,
-          users: getUserList(roomId)
-        },
-        userId
-      );
-
-      // Handle messages
-      server.addEventListener('message', async (event) => {
-        try {
-          const message = JSON.parse(event.data as string) as {
-            type: string;
-            data?: string;
-            cols?: number;
-            rows?: number;
-          };
-
-          // Get fresh sandbox reference
-          const sandbox = getSandbox(env.Sandbox, `collab-terminal-${roomId}`);
-
-          switch (message.type) {
-            case 'start_pty':
-              if (!room.ptyId) {
-                try {
-                  console.log('[Room] Creating PTY...');
-
-                  // Nice zsh-style colored prompt
-                  const PS1 =
-                    '\\[\\e[38;5;39m\\]\\u\\[\\e[0m\\]@\\[\\e[38;5;208m\\]sandbox\\[\\e[0m\\] \\[\\e[38;5;41m\\]\\w\\[\\e[0m\\] \\[\\e[38;5;208m\\]❯\\[\\e[0m\\] ';
-
-                  // Use createPty() which is available via RPC
-                  const ptyInfo = await sandbox.createPty({
-                    cols: message.cols || 80,
-                    rows: message.rows || 24,
-                    command: ['/bin/bash', '--norc', '--noprofile'],
-                    cwd: '/home/user',
-                    env: {
-                      TERM: 'xterm-256color',
-                      COLORTERM: 'truecolor',
-                      LANG: 'en_US.UTF-8',
-                      HOME: '/home/user',
-                      USER: 'user',
-                      PS1,
-                      CLICOLOR: '1',
-                      CLICOLOR_FORCE: '1',
-                      FORCE_COLOR: '3',
-                      LS_COLORS:
-                        'di=1;34:ln=1;36:so=1;35:pi=33:ex=1;32:bd=1;33:cd=1;33:su=1;31:sg=1;31:tw=1:ow=1;34'
-                    }
-                  });
-
-                  console.log('[Room] PTY created:', ptyInfo.id);
-                  room.ptyId = ptyInfo.id;
-
-                  // Establish WebSocket connection to container for low-latency PTY I/O
-                  // Use fetch() with WebSocket upgrade - routes to container's /ws endpoint
-                  const wsRequest = new Request('http://container/ws', {
-                    headers: {
-                      Upgrade: 'websocket',
-                      Connection: 'Upgrade'
-                    }
-                  });
-                  const wsResponse = await sandbox.fetch(wsRequest);
-                  if (!wsResponse.webSocket) {
-                    throw new Error(
-                      'Failed to establish WebSocket connection to container'
-                    );
-                  }
-                  room.containerWs = wsResponse.webSocket;
-                  room.containerWs.accept();
-
-                  // Forward PTY output from container to all browser clients
-                  room.containerWs.addEventListener('message', (event) => {
-                    try {
-                      const msg = JSON.parse(event.data as string);
-                      // Handle stream chunks from the PTY stream subscription
-                      // The SSE data is JSON-encoded inside msg.data
-                      if (msg.type === 'stream' && msg.data) {
-                        const streamData = JSON.parse(msg.data);
-                        if (streamData.type === 'pty_data' && streamData.data) {
-                          // Buffer for history
-                          room.outputBuffer.push(streamData.data);
-                          // Keep buffer limited
-                          if (room.outputBuffer.length > 1000) {
-                            room.outputBuffer.shift();
-                          }
-                          broadcast(roomId, {
-                            type: 'pty_output',
-                            data: streamData.data
-                          });
-                        } else if (streamData.type === 'pty_exit') {
-                          broadcast(roomId, {
-                            type: 'pty_exit',
-                            exitCode: streamData.exitCode
-                          });
-                          room.ptyId = null;
-                          room.containerWs?.close();
-                          room.containerWs = null;
-                        }
-                      }
-                    } catch {
-                      // Ignore parse errors
-                    }
-                  });
-
-                  // Subscribe to PTY output stream via WebSocket protocol
-                  // This sends a GET request to /api/pty/:id/stream which triggers SSE streaming over WS
-                  const streamRequestId = `pty_stream_${ptyInfo.id}`;
-                  room.containerWs.send(
-                    JSON.stringify({
-                      type: 'request',
-                      id: streamRequestId,
-                      method: 'GET',
-                      path: `/api/pty/${ptyInfo.id}/stream`,
-                      headers: { Accept: 'text/event-stream' }
-                    })
-                  );
-
-                  // Tell all clients PTY started (no stream URL needed - output comes via WebSocket)
-                  broadcast(roomId, {
-                    type: 'pty_started',
-                    ptyId: ptyInfo.id
-                  });
-                } catch (error) {
-                  console.error('[Room] PTY create error:', error);
-                  server.send(
-                    JSON.stringify({
-                      type: 'error',
-                      message:
-                        error instanceof Error
-                          ? error.message
-                          : 'Failed to create PTY'
-                    })
-                  );
-                }
-              } else {
-                // PTY already exists - notify client
-                server.send(
-                  JSON.stringify({
-                    type: 'pty_started',
-                    ptyId: room.ptyId
-                  })
-                );
-              }
-              break;
-
-            case 'pty_input':
-              // Send PTY input via WebSocket for low latency (fire-and-forget)
-              if (room.ptyId && room.containerWs && message.data) {
-                room.containerWs.send(
-                  JSON.stringify({
-                    type: 'pty_input',
-                    ptyId: room.ptyId,
-                    data: message.data
-                  })
-                );
-                broadcast(
-                  roomId,
-                  { type: 'user_typing', user: userInfo },
-                  userId
-                );
-              }
-              break;
-
-            case 'pty_resize':
-              // Send PTY resize via WebSocket for low latency (fire-and-forget)
-              if (
-                room.ptyId &&
-                room.containerWs &&
-                message.cols &&
-                message.rows
-              ) {
-                room.containerWs.send(
-                  JSON.stringify({
-                    type: 'pty_resize',
-                    ptyId: room.ptyId,
-                    cols: message.cols,
-                    rows: message.rows
-                  })
-                );
-              }
-              break;
-          }
-        } catch (error) {
-          console.error('[Room] Message error:', error);
-        }
-      });
-
-      // Handle disconnect
-      server.addEventListener('close', () => {
-        room.clients.delete(userId);
-        broadcast(roomId, {
-          type: 'user_left',
-          userId,
-          users: getUserList(roomId)
-        });
-
-        // Clean up empty rooms
-        if (room.clients.size === 0) {
-          setTimeout(() => {
-            const currentRoom = rooms.get(roomId);
-            if (currentRoom && currentRoom.clients.size === 0) {
-              // Close container WebSocket when room is empty
-              currentRoom.containerWs?.close();
-              rooms.delete(roomId);
-            }
-          }, 30000);
-        }
-      });
-
-      return new Response(null, {
-        status: 101,
-        webSocket: client
-      });
+      return room.fetch(new Request(wsUrl.toString(), request));
     }
 
-    // Serve static files
+    // Serve static files (handled by assets binding)
     return new Response('Not found', { status: 404 });
   }
 };
