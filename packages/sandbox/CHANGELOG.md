@@ -1,5 +1,11 @@
 # @cloudflare/sandbox
 
+## 0.6.10
+
+### Patch Changes
+
+- [#326](https://github.com/cloudflare/sandbox-sdk/pull/326) [`9344a4d`](https://github.com/cloudflare/sandbox-sdk/commit/9344a4dc0d9daa3cf9435c29f391da164b393455) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - Add shallow clone support via `depth` option in `gitCheckout()`. Use `depth: 1` to clone only the latest commit, reducing clone time and disk usage for large repositories.
+
 ## 0.6.9
 
 ### Patch Changes
@@ -125,10 +131,10 @@
 
   ```dockerfile
   # Before
-  FROM cloudflare/sandbox:0.6.9
+  FROM cloudflare/sandbox:0.6.10
 
   # After
-  FROM cloudflare/sandbox:0.6.9-python
+  FROM cloudflare/sandbox:0.6.10-python
   ```
 
   Without this change, Python execution will fail with `PYTHON_NOT_AVAILABLE` error.
