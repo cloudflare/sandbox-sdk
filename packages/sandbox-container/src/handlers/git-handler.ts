@@ -1,8 +1,12 @@
 // Git Handler
-import type { GitCheckoutResult, Logger } from '@repo/shared';
+import type {
+  GitCheckoutRequest,
+  GitCheckoutResult,
+  Logger
+} from '@repo/shared';
 import { ErrorCode } from '@repo/shared/errors';
 
-import type { GitCheckoutRequest, RequestContext } from '../core/types';
+import type { RequestContext } from '../core/types';
 import type { GitService } from '../services/git-service';
 import { BaseHandler } from './base-handler';
 
@@ -42,7 +46,8 @@ export class GitHandler extends BaseHandler<Request, Response> {
     const result = await this.gitService.cloneRepository(body.repoUrl, {
       branch: body.branch,
       targetDir: body.targetDir,
-      sessionId
+      sessionId,
+      depth: body.depth
     });
 
     if (result.success) {

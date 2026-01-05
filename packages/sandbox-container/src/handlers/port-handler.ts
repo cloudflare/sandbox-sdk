@@ -1,5 +1,6 @@
 // Port Handler
 import type {
+  ExposePortRequest,
   Logger,
   PortCloseResult,
   PortExposeResult,
@@ -9,7 +10,7 @@ import type {
 } from '@repo/shared';
 import { ErrorCode } from '@repo/shared/errors';
 
-import type { ExposePortRequest, RequestContext } from '../core/types';
+import type { RequestContext } from '../core/types';
 import type { PortService } from '../services/port-service';
 import type { ProcessService } from '../services/process-service';
 import { BaseHandler } from './base-handler';

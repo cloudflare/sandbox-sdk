@@ -5,7 +5,6 @@
  * Extracted from GitService to enable fast unit testing.
  *
  * Responsibilities:
- * - URL parsing and repository name extraction
  * - Command argument building
  * - Branch output parsing
  * - Branch name validation
@@ -15,6 +14,7 @@
  * NO I/O operations - all infrastructure delegated to SessionManager via GitService
  */
 
+import { extractRepoName } from '@repo/shared';
 import { ErrorCode } from '@repo/shared/errors';
 import type { CloneOptions } from '../core/types';
 
@@ -24,31 +24,6 @@ import type { CloneOptions } from '../core/types';
  */
 export class GitManager {
   /**
-   * Extract repository name from git URL
-   * Examples:
-   * - https://github.com/user/repo.git → repo
-   * - https://gitlab.com/org/project.git → project
-   * - git@github.com:user/repo.git → repo
-   */
-  extractRepoName(repoUrl: string): string {
-    try {
-      // Try parsing as URL
-      const url = new URL(repoUrl);
-      const pathParts = url.pathname.split('/');
-      const lastPart = pathParts[pathParts.length - 1];
-      return lastPart.replace(/\.git$/, '');
-    } catch {
-      // Fallback for SSH-style URLs (git@github.com:user/repo.git)
-      const match = repoUrl.match(/\/([^/]+?)(\.git)?$/);
-      if (match?.[1]) {
-        return match[1];
-      }
-      // Ultimate fallback
-      return 'repository';
-    }
-  }
-
-  /**
    * Generate target directory for cloning
    * Format: /workspace/{repoName}
    *
@@ -56,8 +31,7 @@ export class GitManager {
    * Clones to /workspace to match user expectations and keep files accessible.
    */
   generateTargetDirectory(repoUrl: string): string {
-    const repoName = this.extractRepoName(repoUrl);
-    return `/workspace/${repoName}`;
+    return `/workspace/${extractRepoName(repoUrl)}`;
   }
 
   /**
@@ -73,6 +47,10 @@ export class GitManager {
 
     if (options.branch) {
       args.push('--branch', options.branch);
+    }
+
+    if (options.depth !== undefined) {
+      args.push('--depth', String(options.depth));
     }
 
     args.push(repoUrl, targetDir);
