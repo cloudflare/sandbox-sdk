@@ -185,7 +185,7 @@ describe('GitClient', () => {
         client.checkout('https://github.com/user/repo.git', 'test-session', {
           depth: 0
         })
-      ).rejects.toThrow('depth must be a positive integer');
+      ).rejects.toThrow('Invalid depth value: 0');
 
       expect(mockFetch).not.toHaveBeenCalled();
     });
@@ -195,7 +195,7 @@ describe('GitClient', () => {
         client.checkout('https://github.com/user/repo.git', 'test-session', {
           depth: -5
         })
-      ).rejects.toThrow('depth must be a positive integer');
+      ).rejects.toThrow('Invalid depth value: -5');
 
       expect(mockFetch).not.toHaveBeenCalled();
     });
@@ -205,7 +205,7 @@ describe('GitClient', () => {
         client.checkout('https://github.com/user/repo.git', 'test-session', {
           depth: 1.5
         })
-      ).rejects.toThrow('depth must be a positive integer');
+      ).rejects.toThrow('Invalid depth value: 1.5');
 
       expect(mockFetch).not.toHaveBeenCalled();
     });

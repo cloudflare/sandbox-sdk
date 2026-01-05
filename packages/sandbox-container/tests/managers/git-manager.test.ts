@@ -9,28 +9,6 @@ describe('GitManager', () => {
     manager = new GitManager();
   });
 
-  describe('extractRepoName', () => {
-    it('should extract repo name from various URL formats', () => {
-      expect(manager.extractRepoName('https://github.com/user/repo.git')).toBe(
-        'repo'
-      );
-      expect(manager.extractRepoName('https://github.com/user/my-repo')).toBe(
-        'my-repo'
-      );
-      expect(manager.extractRepoName('git@github.com:user/repo.git')).toBe(
-        'repo'
-      );
-      expect(
-        manager.extractRepoName('https://github.com/user/my-awesome_repo.git')
-      ).toBe('my-awesome_repo');
-    });
-
-    it('should return fallback for invalid URLs', () => {
-      expect(manager.extractRepoName('not-a-valid-url')).toBe('repository');
-      expect(manager.extractRepoName('')).toBe('repository');
-    });
-  });
-
   describe('generateTargetDirectory', () => {
     it('should generate directory in /workspace with repo name', () => {
       const dir = manager.generateTargetDirectory(
@@ -123,10 +101,7 @@ describe('GitManager', () => {
       ]);
     });
 
-    it('should pass through depth value without validation (handler validates)', () => {
-      // GitManager trusts that the handler has already validated depth.
-      // It simply passes through the value. Invalid values like 0 or -1
-      // would be rejected by GitHandler's Zod validation before reaching here.
+    it('should pass through depth value to git command', () => {
       const args = manager.buildCloneArgs(
         'https://github.com/user/repo.git',
         '/tmp/target',
