@@ -1,9 +1,6 @@
 /**
  * Request types for API calls to the container
- * These types enforce the contract between the Durable Object client and container handlers
- *
- * IMPORTANT: These types must match the Zod schemas in:
- * @repo/sandbox-container/src/validation/schemas.ts
+ * Single source of truth for the contract between SDK clients and container handlers
  */
 
 /**
