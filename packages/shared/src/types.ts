@@ -976,6 +976,16 @@ export interface MountBucketOptions {
    * - 'no_check_certificate' - Skip SSL certificate validation (dev/testing only)
    */
   s3fsOptions?: string[];
+
+  /**
+   * Optional prefix/subdirectory within the bucket to mount
+   *
+   * When specified, only the contents under this prefix will be visible
+   * at the mount point, rather than the entire bucket.
+   *
+   * Must start and end with '/' (e.g., '/data/uploads/')
+   */
+  prefix?: string;
 }
 
 // Main Sandbox interface
