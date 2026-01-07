@@ -899,7 +899,7 @@ describe('Sandbox - Automatic Session Management', () => {
       });
 
       // Mock storage for tokens
-      vi.mocked(mockCtx.storage!.get).mockResolvedValue({});
+      vi.mocked(mockCtx.storage!.get).mockResolvedValue({} as any);
       vi.mocked(mockCtx.storage!.put).mockResolvedValue(undefined);
     });
 
@@ -985,6 +985,72 @@ describe('Sandbox - Automatic Session Management', () => {
           '8080': expect.stringMatching(/^[a-z0-9_-]{16}$/)
         })
       );
+    });
+
+    it('should store custom tokens correctly', async () => {
+      const customToken = 'my-custom-token';
+      const result = await sandbox.exposePort(8080, {
+        hostname: 'example.com',
+        token: customToken
+      });
+
+      expect(result.port).toBe(8080);
+      expect(result.url).toContain(customToken);
+
+      // Verify the custom token was stored
+      expect(mockCtx.storage!.put).toHaveBeenCalledWith(
+        'portTokens',
+        expect.objectContaining({
+          '8080': customToken
+        })
+      );
+    });
+
+    it('should reject exposing different ports with same custom token', async () => {
+      const sharedToken = 'shared-token';
+
+      // First exposure succeeds (empty storage mocked in beforeEach)
+      await sandbox.exposePort(8080, {
+        hostname: 'example.com',
+        token: sharedToken
+      });
+
+      // Second exposure - mock storage to return the token from first exposure
+      vi.mocked(mockCtx.storage!.get).mockResolvedValueOnce({
+        '8080': sharedToken
+      } as any);
+
+      // Second port exposure with same token should fail
+      await expect(
+        sandbox.exposePort(8081, {
+          hostname: 'example.com',
+          token: sharedToken
+        })
+      ).rejects.toThrow(/already in use by port 8080/);
+    });
+
+    it('should allow re-exposing same port with same custom token', async () => {
+      const token = 'reuse-token';
+
+      // First exposure
+      await sandbox.exposePort(8080, {
+        hostname: 'example.com',
+        token: token
+      });
+
+      // Mock storage to return the existing token
+      vi.mocked(mockCtx.storage!.get).mockResolvedValueOnce({
+        '8080': token
+      } as any);
+
+      // Re-exposing same port with same token should succeed (no collision)
+      const result = await sandbox.exposePort(8080, {
+        hostname: 'example.com',
+        token: token
+      });
+
+      expect(result.port).toBe(8080);
+      expect(result.url).toContain(token);
     });
   });
 });

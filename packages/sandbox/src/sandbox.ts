@@ -2129,14 +2129,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       throw new CustomDomainRequiredError(errorResponse);
     }
 
-    const sessionId = await this.ensureDefaultSession();
-    await this.client.ports.exposePort(
-      port,
-      sessionId,
-      options?.name,
-      options?.token
-    );
-
     // We need the sandbox name to construct preview URLs
     if (!this.sandboxName) {
       throw new Error(
@@ -2144,7 +2136,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       );
     }
 
-    // Use custom token or generate a random one
+    // Validate and generate/use token BEFORE making any API calls
     let token: string;
     if (options.token) {
       // Validate custom token
@@ -2154,9 +2146,27 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       token = this.generatePortToken();
     }
 
-    // Store token for this port (storage is protected by input gates)
+    // Check for token collision - ensure this token isn't already used by another port
     const tokens =
       (await this.ctx.storage.get<Record<string, string>>('portTokens')) || {};
+    const existingPort = Object.entries(tokens).find(
+      ([p, t]) => t === token && p !== port.toString()
+    );
+    if (existingPort) {
+      throw new SecurityError(
+        `Token '${token}' is already in use by port ${existingPort[0]}. Please use a different token.`
+      );
+    }
+
+    const sessionId = await this.ensureDefaultSession();
+    await this.client.ports.exposePort(
+      port,
+      sessionId,
+      options?.name,
+      options?.token
+    );
+
+    // Store token for this port (storage is protected by input gates)
     tokens[port.toString()] = token;
     await this.ctx.storage.put('portTokens', tokens);
 

@@ -116,7 +116,7 @@ export async function proxyToSandbox<
 
 function extractSandboxRoute(url: URL): RouteInfo | null {
   // Parse subdomain pattern: port-sandboxId-token.domain (tokens mandatory)
-  // Token can be any length (1-63 chars) containing only [a-z0-9_-]
+  // Token can be 1-16 chars (SDK validates) or up to 63 chars (DNS limit for forward compatibility)
   const subdomainMatch = url.hostname.match(
     /^(\d{4,5})-([^.-][^.]*?[^.-]|[^.-])-([a-z0-9_-]+)\.(.+)$/
   );
