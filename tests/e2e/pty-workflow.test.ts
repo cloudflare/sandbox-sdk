@@ -242,8 +242,8 @@ describe('PTY Workflow', () => {
     });
 
     expect(response.status).toBe(404);
-    const data = (await response.json()) as { error: string };
-    expect(data.error).toMatch(/not found/i);
+    const data = (await response.json()) as { message: string };
+    expect(data.message).toMatch(/not found/i);
   }, 90000);
 
   test('should resize PTY via HTTP endpoint', async () => {
@@ -583,9 +583,9 @@ describe('PTY Workflow', () => {
     );
     expect(secondAttachResponse.status).toBe(409);
     const secondAttachData = (await secondAttachResponse.json()) as {
-      error: string;
+      message: string;
     };
-    expect(secondAttachData.error).toMatch(/already has active PTY/i);
+    expect(secondAttachData.message).toMatch(/already has active PTY/i);
 
     // Cleanup
     await fetch(`${workerUrl}/api/pty/${firstAttachData.pty.id}`, {
