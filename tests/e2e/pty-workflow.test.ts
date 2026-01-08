@@ -241,7 +241,7 @@ describe('PTY Workflow', () => {
       headers
     });
 
-    expect(response.status).toBe(500);
+    expect(response.status).toBe(404);
     const data = (await response.json()) as { error: string };
     expect(data.error).toMatch(/not found/i);
   }, 90000);
@@ -581,7 +581,7 @@ describe('PTY Workflow', () => {
         body: JSON.stringify({ command: ['/bin/sh'], cwd: '/tmp' })
       }
     );
-    expect(secondAttachResponse.status).toBe(500);
+    expect(secondAttachResponse.status).toBe(409);
     const secondAttachData = (await secondAttachResponse.json()) as {
       error: string;
     };
