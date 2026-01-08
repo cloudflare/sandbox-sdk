@@ -33,10 +33,14 @@ export interface TransportConfig {
 }
 
 /**
- * Transport interface - all transports must implement this
+ * Core transport interface - all transports must implement this
  *
  * Provides a unified abstraction over HTTP and WebSocket communication.
  * Both transports support fetch-compatible requests and streaming.
+ *
+ * For real-time bidirectional communication (like PTY), use the generic
+ * sendMessage() and onStreamEvent() methods which WebSocket implements.
+ * HTTP transport throws clear errors for these operations.
  */
 export interface ITransport {
   /**
@@ -76,22 +80,31 @@ export interface ITransport {
   isConnected(): boolean;
 
   /**
-   * Send PTY input (WebSocket only, no-op for HTTP)
+   * Send a message over the transport (WebSocket only)
+   *
+   * Used for real-time bidirectional communication like PTY input/resize.
+   * HTTP transport throws an error - use fetch() for HTTP operations.
+   *
+   * @param message - Message object to send (will be JSON serialized)
+   * @throws Error if transport doesn't support real-time messaging
    */
-  sendPtyInput(ptyId: string, data: string): void;
+  sendMessage(message: object): void;
 
   /**
-   * Send PTY resize (WebSocket only, no-op for HTTP)
+   * Register a listener for stream events (WebSocket only)
+   *
+   * Used for real-time bidirectional communication like PTY data/exit events.
+   * HTTP transport throws an error - use fetchStream() for SSE streams.
+   *
+   * @param streamId - Stream identifier (e.g., PTY ID)
+   * @param event - Event type to listen for (e.g., 'pty_data', 'pty_exit')
+   * @param callback - Callback function to invoke when event is received
+   * @returns Unsubscribe function
+   * @throws Error if transport doesn't support real-time messaging
    */
-  sendPtyResize(ptyId: string, cols: number, rows: number): void;
-
-  /**
-   * Register PTY data listener (WebSocket only)
-   */
-  onPtyData(ptyId: string, callback: (data: string) => void): () => void;
-
-  /**
-   * Register PTY exit listener (WebSocket only)
-   */
-  onPtyExit(ptyId: string, callback: (exitCode: number) => void): () => void;
+  onStreamEvent(
+    streamId: string,
+    event: string,
+    callback: (data: string) => void
+  ): () => void;
 }

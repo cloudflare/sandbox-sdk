@@ -29,18 +29,30 @@ interface PendingRequest {
 type WSTransportState = 'disconnected' | 'connecting' | 'connected' | 'error';
 
 /**
+ * Stream event listener key: "streamId:event"
+ */
+type StreamEventKey = string;
+
+/**
  * WebSocket transport implementation
  *
  * Multiplexes HTTP-like requests over a single WebSocket connection.
  * Useful when running inside Workers/DO where sub-request limits apply.
+ *
+ * Supports real-time bidirectional communication via sendMessage() and
+ * onStreamEvent() - used by PTY for input/output streaming.
  */
 export class WebSocketTransport extends BaseTransport {
   private ws: WebSocket | null = null;
   private state: WSTransportState = 'disconnected';
   private pendingRequests: Map<string, PendingRequest> = new Map();
   private connectPromise: Promise<void> | null = null;
-  private ptyDataListeners = new Map<string, Set<(data: string) => void>>();
-  private ptyExitListeners = new Map<string, Set<(code: number) => void>>();
+
+  /** Generic stream event listeners keyed by "streamId:event" */
+  private streamEventListeners = new Map<
+    StreamEventKey,
+    Set<(data: string) => void>
+  >();
 
   // Bound event handlers for proper add/remove
   private boundHandleMessage: (event: MessageEvent) => void;
@@ -453,53 +465,15 @@ export class WebSocketTransport extends BaseTransport {
       } else if (isWSError(message)) {
         this.handleError(message);
       } else {
-        // Check for PTY events
+        // Check for stream events (used by PTY and other real-time features)
         const msg = message as {
           type?: string;
           id?: string;
           event?: string;
           data?: string;
         };
-        if (msg.type === 'stream' && msg.event === 'pty_data' && msg.id) {
-          this.ptyDataListeners.get(msg.id)?.forEach((cb) => {
-            try {
-              cb(msg.data || '');
-            } catch (error) {
-              this.logger.error(
-                'PTY data callback error - check your onData handler',
-                error instanceof Error ? error : new Error(String(error)),
-                { ptyId: msg.id }
-              );
-            }
-          });
-          return;
-        }
-        if (
-          msg.type === 'stream' &&
-          msg.event === 'pty_exit' &&
-          msg.id &&
-          msg.data
-        ) {
-          try {
-            const { exitCode } = JSON.parse(msg.data);
-            this.ptyExitListeners.get(msg.id)?.forEach((cb) => {
-              try {
-                cb(exitCode);
-              } catch (error) {
-                this.logger.error(
-                  'PTY exit callback error - check your onExit handler',
-                  error instanceof Error ? error : new Error(String(error)),
-                  { ptyId: msg.id, exitCode }
-                );
-              }
-            });
-          } catch (error) {
-            this.logger.error(
-              'Failed to parse PTY exit message',
-              error instanceof Error ? error : new Error(String(error)),
-              { ptyId: msg.id }
-            );
-          }
+        if (msg.type === 'stream' && msg.event && msg.id) {
+          this.dispatchStreamEvent(msg.id, msg.event, msg.data || '');
           return;
         }
 
@@ -510,6 +484,38 @@ export class WebSocketTransport extends BaseTransport {
         'Failed to parse WebSocket message',
         error instanceof Error ? error : new Error(String(error))
       );
+    }
+  }
+
+  /**
+   * Dispatch a stream event to registered listeners
+   */
+  private dispatchStreamEvent(
+    streamId: string,
+    event: string,
+    data: string
+  ): void {
+    const key = `${streamId}:${event}`;
+    const listeners = this.streamEventListeners.get(key);
+
+    if (!listeners || listeners.size === 0) {
+      this.logger.debug('No listeners for stream event', {
+        streamId,
+        event
+      });
+      return;
+    }
+
+    for (const callback of listeners) {
+      try {
+        callback(data);
+      } catch (error) {
+        this.logger.error(
+          `Stream event callback error - check your ${event} handler`,
+          error instanceof Error ? error : new Error(String(error)),
+          { streamId, event }
+        );
+      }
     }
   }
 
@@ -653,58 +659,60 @@ export class WebSocketTransport extends BaseTransport {
       }
     }
     this.pendingRequests.clear();
-    // Clear PTY listeners to prevent accumulation across reconnections
-    this.ptyDataListeners.clear();
-    this.ptyExitListeners.clear();
+    // Clear stream event listeners to prevent accumulation across reconnections
+    this.streamEventListeners.clear();
   }
 
   /**
-   * Send PTY input
+   * Send a message over the WebSocket connection
+   *
+   * Used for real-time bidirectional communication (e.g., PTY input/resize).
+   * The message is JSON-serialized before sending.
+   *
+   * @param message - Message object to send
    * @throws Error if WebSocket is not connected
    */
-  sendPtyInput(ptyId: string, data: string): void {
+  sendMessage(message: object): void {
     if (!this.ws || this.state !== 'connected') {
       throw new Error(
-        `Cannot send PTY input: WebSocket not connected (state: ${this.state}). ` +
-          'Reconnect or create a new PTY session.'
+        `Cannot send message: WebSocket not connected (state: ${this.state}). ` +
+          'Call connect() first or create a new connection.'
       );
     }
-    this.ws.send(JSON.stringify({ type: 'pty_input', ptyId, data }));
+    this.ws.send(JSON.stringify(message));
   }
 
   /**
-   * Send PTY resize
-   * @throws Error if WebSocket is not connected
+   * Register a listener for stream events
+   *
+   * Stream events are server-pushed messages with a specific streamId and event type.
+   * Used for real-time features like PTY data/exit events.
+   *
+   * @param streamId - Stream identifier (e.g., PTY ID)
+   * @param event - Event type to listen for (e.g., 'pty_data', 'pty_exit')
+   * @param callback - Callback function to invoke when event is received
+   * @returns Unsubscribe function
    */
-  sendPtyResize(ptyId: string, cols: number, rows: number): void {
-    if (!this.ws || this.state !== 'connected') {
-      throw new Error(
-        `Cannot send PTY resize: WebSocket not connected (state: ${this.state}). ` +
-          'Reconnect or create a new PTY session.'
-      );
-    }
-    this.ws.send(JSON.stringify({ type: 'pty_resize', ptyId, cols, rows }));
-  }
+  onStreamEvent(
+    streamId: string,
+    event: string,
+    callback: (data: string) => void
+  ): () => void {
+    const key = `${streamId}:${event}`;
 
-  /**
-   * Register PTY data listener
-   */
-  onPtyData(ptyId: string, callback: (data: string) => void): () => void {
-    if (!this.ptyDataListeners.has(ptyId)) {
-      this.ptyDataListeners.set(ptyId, new Set());
+    if (!this.streamEventListeners.has(key)) {
+      this.streamEventListeners.set(key, new Set());
     }
-    this.ptyDataListeners.get(ptyId)!.add(callback);
-    return () => this.ptyDataListeners.get(ptyId)?.delete(callback);
-  }
+    this.streamEventListeners.get(key)!.add(callback);
 
-  /**
-   * Register PTY exit listener
-   */
-  onPtyExit(ptyId: string, callback: (exitCode: number) => void): () => void {
-    if (!this.ptyExitListeners.has(ptyId)) {
-      this.ptyExitListeners.set(ptyId, new Set());
-    }
-    this.ptyExitListeners.get(ptyId)!.add(callback);
-    return () => this.ptyExitListeners.get(ptyId)?.delete(callback);
+    return () => {
+      const listeners = this.streamEventListeners.get(key);
+      if (listeners) {
+        listeners.delete(callback);
+        if (listeners.size === 0) {
+          this.streamEventListeners.delete(key);
+        }
+      }
+    };
   }
 }

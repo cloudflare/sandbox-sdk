@@ -143,16 +143,6 @@ describe('PtyManager', () => {
       expect(result).toBeNull();
     });
 
-    it('should return null for unknown session ID', () => {
-      const result = manager.getBySessionId('session_nonexistent');
-      expect(result).toBeNull();
-    });
-
-    it('should return false for hasActivePty with unknown session', () => {
-      const result = manager.hasActivePty('session_nonexistent');
-      expect(result).toBe(false);
-    });
-
     it('should return empty list when no PTYs exist', () => {
       const result = manager.list();
       expect(result).toEqual([]);
@@ -182,18 +172,6 @@ describe('PtyManager', () => {
     it('should handle killAll with no PTYs gracefully', () => {
       // Should not throw
       manager.killAll();
-    });
-  });
-
-  describe('disconnect timer operations', () => {
-    it('should handle startDisconnectTimer for unknown PTY gracefully', () => {
-      // Should not throw
-      manager.startDisconnectTimer('pty_nonexistent_12345');
-    });
-
-    it('should handle cancelDisconnectTimer for unknown PTY gracefully', () => {
-      // Should not throw
-      manager.cancelDisconnectTimer('pty_nonexistent_12345');
     });
   });
 

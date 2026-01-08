@@ -1,5 +1,4 @@
 import type {
-  AttachPtyOptions,
   CreatePtyOptions,
   Logger,
   PtyCreateResult,
@@ -7,11 +6,13 @@ import type {
   PtyInfo,
   PtyListResult
 } from '@repo/shared';
+import { createNoOpLogger } from '@repo/shared';
 import { BaseHttpClient } from './base-client';
 import type { ITransport } from './transport/types';
+import { WebSocketTransport } from './transport/ws-transport';
 
 /**
- * PTY handle returned by create/attach/get
+ * PTY handle returned by create/get
  *
  * Provides methods for interacting with a PTY session:
  * - write: Send input to the terminal (returns Promise for error handling)
@@ -24,8 +25,6 @@ import type { ITransport } from './transport/types';
 export interface Pty extends AsyncIterable<string> {
   /** Unique PTY identifier */
   readonly id: string;
-  /** Associated session ID (if attached to session) */
-  readonly sessionId?: string;
   /** Promise that resolves when PTY exits */
   readonly exited: Promise<{ exitCode: number }>;
 
@@ -35,9 +34,6 @@ export interface Pty extends AsyncIterable<string> {
    * Returns a Promise that resolves on success or rejects on failure.
    * For interactive typing, you can ignore the promise (fire-and-forget).
    * For programmatic commands, await to catch errors.
-   *
-   * @note With HTTP transport, awaiting confirms delivery to the container.
-   * With WebSocket transport, the promise resolves immediately after sending
    */
   write(data: string): Promise<void>;
 
@@ -45,9 +41,6 @@ export interface Pty extends AsyncIterable<string> {
    * Resize terminal
    *
    * Returns a Promise that resolves on success or rejects on failure.
-   *
-   * @note With HTTP transport, awaiting confirms the resize completed.
-   * With WebSocket transport, the promise resolves immediately after sending.
    */
   resize(cols: number, rows: number): Promise<void>;
 
@@ -60,12 +53,16 @@ export interface Pty extends AsyncIterable<string> {
   /** Register exit listener */
   onExit(callback: (exitCode: number) => void): () => void;
 
-  /** Detach from PTY (PTY keeps running per disconnect timeout) */
+  /** Detach from PTY (PTY keeps running) */
   close(): void;
 }
 
 /**
  * Internal PTY handle implementation
+ *
+ * Uses WebSocket transport for real-time PTY I/O via generic sendMessage()
+ * and onStreamEvent() methods. PTY requires WebSocket for bidirectional
+ * real-time communication.
  */
 class PtyHandle implements Pty {
   readonly exited: Promise<{ exitCode: number }>;
@@ -75,16 +72,25 @@ class PtyHandle implements Pty {
 
   constructor(
     readonly id: string,
-    readonly sessionId: string | undefined,
     private transport: ITransport,
     private logger: Logger
   ) {
-    // Setup exit promise
+    // Setup exit promise using generic stream event listener
     this.exited = new Promise((resolve) => {
-      const unsub = this.transport.onPtyExit(this.id, (exitCode) => {
-        unsub(); // Clean up immediately
-        resolve({ exitCode });
-      });
+      const unsub = this.transport.onStreamEvent(
+        this.id,
+        'pty_exit',
+        (data: string) => {
+          unsub();
+          try {
+            const { exitCode } = JSON.parse(data);
+            resolve({ exitCode });
+          } catch {
+            // If parse fails, resolve with default exit code
+            resolve({ exitCode: 1 });
+          }
+        }
+      );
       this.exitListeners.push(unsub);
     });
   }
@@ -94,39 +100,17 @@ class PtyHandle implements Pty {
       throw new Error('PTY is closed');
     }
 
-    if (this.transport.getMode() === 'websocket') {
-      // WebSocket: capture synchronous throws from transport
-      try {
-        this.transport.sendPtyInput(this.id, data);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        this.logger.error(
-          'PTY write failed',
-          error instanceof Error ? error : undefined,
-          {
-            ptyId: this.id
-          }
-        );
-        throw new Error(`PTY write failed: ${message}`);
-      }
-      return;
-    }
-
-    // HTTP: await the response to surface errors
-    const response = await this.transport.fetch(`/api/pty/${this.id}/input`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ data })
-    });
-
-    if (!response.ok) {
-      const text = await response.text().catch(() => 'Unknown error');
-      this.logger.error('PTY write failed', undefined, {
-        ptyId: this.id,
-        status: response.status,
-        error: text
-      });
-      throw new Error(`PTY write failed: HTTP ${response.status}: ${text}`);
+    try {
+      // Use generic sendMessage with PTY input payload
+      this.transport.sendMessage({ type: 'pty_input', ptyId: this.id, data });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(
+        'PTY write failed',
+        error instanceof Error ? error : undefined,
+        { ptyId: this.id }
+      );
+      throw new Error(`PTY write failed: ${message}`);
     }
   }
 
@@ -135,43 +119,22 @@ class PtyHandle implements Pty {
       throw new Error('PTY is closed');
     }
 
-    if (this.transport.getMode() === 'websocket') {
-      // WebSocket: capture synchronous throws from transport
-      try {
-        this.transport.sendPtyResize(this.id, cols, rows);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        this.logger.error(
-          'PTY resize failed',
-          error instanceof Error ? error : undefined,
-          {
-            ptyId: this.id,
-            cols,
-            rows
-          }
-        );
-        throw new Error(`PTY resize failed: ${message}`);
-      }
-      return;
-    }
-
-    // HTTP: await the response to surface errors
-    const response = await this.transport.fetch(`/api/pty/${this.id}/resize`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ cols, rows })
-    });
-
-    if (!response.ok) {
-      const text = await response.text().catch(() => 'Unknown error');
-      this.logger.error('PTY resize failed', undefined, {
+    try {
+      // Use generic sendMessage with PTY resize payload
+      this.transport.sendMessage({
+        type: 'pty_resize',
         ptyId: this.id,
         cols,
-        rows,
-        status: response.status,
-        error: text
+        rows
       });
-      throw new Error(`PTY resize failed: HTTP ${response.status}: ${text}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(
+        'PTY resize failed',
+        error instanceof Error ? error : undefined,
+        { ptyId: this.id, cols, rows }
+      );
+      throw new Error(`PTY resize failed: ${message}`);
     }
   }
 
@@ -199,14 +162,13 @@ class PtyHandle implements Pty {
     if (this.closed) {
       this.logger.warn(
         'Registering onData listener on closed PTY handle - callback will never fire',
-        {
-          ptyId: this.id
-        }
+        { ptyId: this.id }
       );
       return () => {};
     }
 
-    const unsub = this.transport.onPtyData(this.id, callback);
+    // Use generic stream event listener
+    const unsub = this.transport.onStreamEvent(this.id, 'pty_data', callback);
     this.dataListeners.push(unsub);
     return unsub;
   }
@@ -215,14 +177,24 @@ class PtyHandle implements Pty {
     if (this.closed) {
       this.logger.warn(
         'Registering onExit listener on closed PTY handle - callback will never fire',
-        {
-          ptyId: this.id
-        }
+        { ptyId: this.id }
       );
       return () => {};
     }
 
-    const unsub = this.transport.onPtyExit(this.id, callback);
+    // Use generic stream event listener, parse exitCode from JSON data
+    const unsub = this.transport.onStreamEvent(
+      this.id,
+      'pty_exit',
+      (data: string) => {
+        try {
+          const { exitCode } = JSON.parse(data);
+          callback(exitCode);
+        } catch {
+          callback(1); // Default exit code on parse failure
+        }
+      }
+    );
     this.exitListeners.push(unsub);
     return unsub;
   }
@@ -279,8 +251,62 @@ class PtyHandle implements Pty {
  * Client for PTY operations
  *
  * Provides methods to create and manage pseudo-terminal sessions in the sandbox.
+ * PTY operations require WebSocket transport for real-time bidirectional communication.
+ * The client automatically creates and manages a dedicated WebSocket connection.
  */
 export class PtyClient extends BaseHttpClient {
+  /** Dedicated WebSocket transport for PTY real-time communication */
+  private ptyTransport: WebSocketTransport | null = null;
+
+  /**
+   * Get or create the dedicated WebSocket transport for PTY operations
+   *
+   * PTY requires WebSocket for continuous bidirectional communication.
+   * This method lazily creates a WebSocket connection on first use.
+   */
+  private async getPtyTransport(): Promise<WebSocketTransport> {
+    if (this.ptyTransport && this.ptyTransport.isConnected()) {
+      return this.ptyTransport;
+    }
+
+    // Build WebSocket URL from HTTP client options
+    const wsUrl = this.options.wsUrl ?? this.buildWsUrl();
+
+    this.ptyTransport = new WebSocketTransport({
+      wsUrl,
+      baseUrl: this.options.baseUrl,
+      logger: this.options.logger ?? createNoOpLogger(),
+      stub: this.options.stub,
+      port: this.options.port
+    });
+
+    await this.ptyTransport.connect();
+    this.logger.debug('PTY WebSocket transport connected', { wsUrl });
+
+    return this.ptyTransport;
+  }
+
+  /**
+   * Build WebSocket URL from HTTP base URL
+   */
+  private buildWsUrl(): string {
+    const baseUrl = this.options.baseUrl ?? 'http://localhost:3000';
+    // Convert http(s) to ws(s)
+    const wsUrl = baseUrl.replace(/^http/, 'ws');
+    return `${wsUrl}/ws`;
+  }
+
+  /**
+   * Disconnect the PTY WebSocket transport
+   * Called when the sandbox is destroyed or PTY operations are no longer needed.
+   */
+  disconnectPtyTransport(): void {
+    if (this.ptyTransport) {
+      this.ptyTransport.disconnect();
+      this.ptyTransport = null;
+    }
+  }
+
   /**
    * Create a new PTY session
    *
@@ -293,6 +319,9 @@ export class PtyClient extends BaseHttpClient {
    * pty.write('ls -la\n');
    */
   async create(options?: CreatePtyOptions): Promise<Pty> {
+    // Ensure WebSocket transport is connected for real-time PTY I/O
+    const ptyTransport = await this.getPtyTransport();
+
     const response = await this.post<PtyCreateResult>(
       '/api/pty',
       options ?? {}
@@ -304,45 +333,8 @@ export class PtyClient extends BaseHttpClient {
 
     this.logSuccess('PTY created', response.pty.id);
 
-    return new PtyHandle(
-      response.pty.id,
-      response.pty.sessionId,
-      this.transport,
-      this.logger
-    );
-  }
-
-  /**
-   * Attach a PTY to an existing session
-   *
-   * Creates a PTY that shares the working directory and environment
-   * of an existing session.
-   *
-   * @param sessionId - Session ID to attach to
-   * @param options - PTY options (terminal size)
-   * @returns PTY handle for interacting with the terminal
-   *
-   * @example
-   * const pty = await client.attach('session_123', { cols: 100, rows: 30 });
-   */
-  async attach(sessionId: string, options?: AttachPtyOptions): Promise<Pty> {
-    const response = await this.post<PtyCreateResult>(
-      `/api/pty/attach/${sessionId}`,
-      options ?? {}
-    );
-
-    if (!response.success) {
-      throw new Error('Failed to attach PTY to session');
-    }
-
-    this.logSuccess('PTY attached to session', sessionId);
-
-    return new PtyHandle(
-      response.pty.id,
-      response.pty.sessionId,
-      this.transport,
-      this.logger
-    );
+    // Pass the dedicated WebSocket transport to the PTY handle
+    return new PtyHandle(response.pty.id, ptyTransport, this.logger);
   }
 
   /**
@@ -355,6 +347,9 @@ export class PtyClient extends BaseHttpClient {
    * const pty = await client.getById('pty_123');
    */
   async getById(id: string): Promise<Pty> {
+    // Ensure WebSocket transport is connected for real-time PTY I/O
+    const ptyTransport = await this.getPtyTransport();
+
     const response = await this.doFetch(`/api/pty/${id}`, {
       method: 'GET'
     });
@@ -364,12 +359,7 @@ export class PtyClient extends BaseHttpClient {
 
     this.logSuccess('PTY retrieved', id);
 
-    return new PtyHandle(
-      result.pty.id,
-      result.pty.sessionId,
-      this.transport,
-      this.logger
-    );
+    return new PtyHandle(result.pty.id, ptyTransport, this.logger);
   }
 
   /**
@@ -417,63 +407,5 @@ export class PtyClient extends BaseHttpClient {
     this.logSuccess('PTY info retrieved', id);
 
     return result.pty;
-  }
-
-  /**
-   * Resize a PTY (synchronous - waits for completion)
-   *
-   * @param id - PTY ID
-   * @param cols - Number of columns
-   * @param rows - Number of rows
-   */
-  async resize(id: string, cols: number, rows: number): Promise<void> {
-    const response = await this.doFetch(`/api/pty/${id}/resize`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ cols, rows })
-    });
-
-    // Use handleResponse to properly parse ErrorResponse on failure
-    await this.handleResponse<{ success: boolean }>(response);
-
-    this.logSuccess('PTY resized', `${id} -> ${cols}x${rows}`);
-  }
-
-  /**
-   * Send input to a PTY (synchronous - waits for completion)
-   *
-   * @param id - PTY ID
-   * @param data - Input data to send
-   */
-  async write(id: string, data: string): Promise<void> {
-    const response = await this.doFetch(`/api/pty/${id}/input`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ data })
-    });
-
-    // Use handleResponse to properly parse ErrorResponse on failure
-    await this.handleResponse<{ success: boolean }>(response);
-
-    this.logSuccess('PTY input sent', id);
-  }
-
-  /**
-   * Kill a PTY (synchronous - waits for completion)
-   *
-   * @param id - PTY ID
-   * @param signal - Optional signal to send (e.g., 'SIGTERM', 'SIGKILL')
-   */
-  async kill(id: string, signal?: string): Promise<void> {
-    const response = await this.doFetch(`/api/pty/${id}`, {
-      method: 'DELETE',
-      headers: signal ? { 'Content-Type': 'application/json' } : undefined,
-      body: signal ? JSON.stringify({ signal }) : undefined
-    });
-
-    // Use handleResponse to properly parse ErrorResponse on failure
-    await this.handleResponse<{ success: boolean }>(response);
-
-    this.logSuccess('PTY killed', id);
   }
 }

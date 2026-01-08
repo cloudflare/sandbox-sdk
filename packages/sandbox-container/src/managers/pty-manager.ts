@@ -27,7 +27,6 @@ type BunTerminalConstructor = new (options: BunTerminalOptions) => BunTerminal;
 
 export interface PtySession {
   id: string;
-  sessionId?: string;
   terminal: BunTerminal;
   process: ReturnType<typeof Bun.spawn>;
   cols: number;
@@ -40,28 +39,24 @@ export interface PtySession {
   exitInfo?: PtyExitInfo;
   dataListeners: Set<(data: string) => void>;
   exitListeners: Set<(code: number) => void>;
-  disconnectTimer?: Timer;
-  disconnectTimeout: number;
   createdAt: Date;
 }
 
 export class PtyManager {
   private sessions = new Map<string, PtySession>();
-  private sessionToPty = new Map<string, string>(); // sessionId -> ptyId
 
   constructor(private logger: Logger) {}
 
   /** Maximum terminal dimensions (matches Daytona's limits) */
   private static readonly MAX_TERMINAL_SIZE = 1000;
 
-  create(options: CreatePtyOptions & { sessionId?: string }): PtySession {
+  create(options: CreatePtyOptions): PtySession {
     const id = this.generateId();
     const cols = options.cols ?? 80;
     const rows = options.rows ?? 24;
     const command = options.command ?? ['/bin/bash'];
     const cwd = options.cwd ?? '/home/user';
     const env = options.env ?? {};
-    const disconnectTimeout = options.disconnectTimeout ?? 30000;
 
     // Validate terminal dimensions
     if (cols > PtyManager.MAX_TERMINAL_SIZE || cols < 1) {
@@ -119,7 +114,6 @@ export class PtyManager {
 
     const session: PtySession = {
       id,
-      sessionId: options.sessionId,
       terminal,
       process: proc,
       cols,
@@ -130,7 +124,6 @@ export class PtyManager {
       state: 'running',
       dataListeners,
       exitListeners,
-      disconnectTimeout,
       createdAt: new Date()
     };
 
@@ -158,11 +151,6 @@ export class PtyManager {
         session.dataListeners.clear();
         session.exitListeners.clear();
 
-        // Clean up session-to-pty mapping
-        if (session.sessionId) {
-          this.sessionToPty.delete(session.sessionId);
-        }
-
         this.logger.debug('PTY exited', {
           ptyId: id,
           exitCode: code,
@@ -181,11 +169,6 @@ export class PtyManager {
         session.dataListeners.clear();
         session.exitListeners.clear();
 
-        // Clean up session-to-pty mapping
-        if (session.sessionId) {
-          this.sessionToPty.delete(session.sessionId);
-        }
-
         this.logger.error(
           'PTY process error',
           error instanceof Error ? error : undefined,
@@ -195,10 +178,6 @@ export class PtyManager {
 
     this.sessions.set(id, session);
 
-    if (options.sessionId) {
-      this.sessionToPty.set(options.sessionId, id);
-    }
-
     this.logger.info('PTY created', { ptyId: id, command, cols, rows });
 
     return session;
@@ -206,17 +185,6 @@ export class PtyManager {
 
   get(id: string): PtySession | null {
     return this.sessions.get(id) ?? null;
-  }
-
-  getBySessionId(sessionId: string): PtySession | null {
-    const ptyId = this.sessionToPty.get(sessionId);
-    if (!ptyId) return null;
-    return this.get(ptyId);
-  }
-
-  hasActivePty(sessionId: string): boolean {
-    const pty = this.getBySessionId(sessionId);
-    return pty !== null && pty.state === 'running';
   }
 
   list(): PtyInfo[] {
@@ -234,28 +202,9 @@ export class PtyManager {
       return { success: false, error: 'PTY has exited' };
     }
     try {
-      // Handle Ctrl+C (ETX, 0x03) - send SIGINT to process group
-      if (data === '\x03') {
-        this.logger.debug('Sending SIGINT to PTY process', { ptyId: id });
-        session.process.kill('SIGINT');
-        // Also write to terminal so it shows ^C
-        session.terminal.write(data);
-        return { success: true };
-      }
-      // Handle Ctrl+Z (SUB, 0x1A) - send SIGTSTP to process group
-      if (data === '\x1a') {
-        this.logger.debug('Sending SIGTSTP to PTY process', { ptyId: id });
-        session.process.kill('SIGTSTP');
-        session.terminal.write(data);
-        return { success: true };
-      }
-      // Handle Ctrl+\ (FS, 0x1C) - send SIGQUIT to process group
-      if (data === '\x1c') {
-        this.logger.debug('Sending SIGQUIT to PTY process', { ptyId: id });
-        session.process.kill('SIGQUIT');
-        session.terminal.write(data);
-        return { success: true };
-      }
+      // Write data directly to terminal - the PTY's line discipline handles
+      // control characters (Ctrl+C → SIGINT, Ctrl+Z → SIGTSTP, etc.) and
+      // sends signals to the foreground process group automatically.
       session.terminal.write(data);
       return { success: true };
     } catch (error) {
@@ -386,43 +335,9 @@ export class PtyManager {
     return () => session.exitListeners.delete(callback);
   }
 
-  startDisconnectTimer(id: string): void {
-    const session = this.sessions.get(id);
-    if (!session) return;
-
-    this.cancelDisconnectTimer(id);
-
-    session.disconnectTimer = setTimeout(() => {
-      try {
-        this.logger.info('PTY disconnect timeout, killing', { ptyId: id });
-        this.kill(id);
-      } catch (error) {
-        this.logger.error(
-          'Failed to kill PTY on disconnect timeout',
-          error instanceof Error ? error : new Error(String(error)),
-          { ptyId: id }
-        );
-      }
-    }, session.disconnectTimeout);
-  }
-
-  cancelDisconnectTimer(id: string): void {
-    const session = this.sessions.get(id);
-    if (!session?.disconnectTimer) return;
-
-    clearTimeout(session.disconnectTimer);
-    session.disconnectTimer = undefined;
-  }
-
   cleanup(id: string): void {
     const session = this.sessions.get(id);
     if (!session) return;
-
-    this.cancelDisconnectTimer(id);
-
-    if (session.sessionId) {
-      this.sessionToPty.delete(session.sessionId);
-    }
 
     this.sessions.delete(id);
     this.logger.debug('PTY cleaned up', { ptyId: id });
@@ -435,7 +350,6 @@ export class PtyManager {
   private toInfo(session: PtySession): PtyInfo {
     return {
       id: session.id,
-      sessionId: session.sessionId,
       cols: session.cols,
       rows: session.rows,
       command: session.command,

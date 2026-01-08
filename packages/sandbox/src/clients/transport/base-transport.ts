@@ -13,6 +13,9 @@ const MIN_TIME_FOR_RETRY_MS = 15_000; // Need at least 15s remaining to retry
  *
  * Handles 503 retry for container startup - shared by all transports.
  * Subclasses implement the transport-specific fetch and stream logic.
+ *
+ * For real-time messaging (sendMessage, onStreamEvent), WebSocket implements
+ * these methods while HTTP throws clear errors explaining WebSocket is required.
  */
 export abstract class BaseTransport implements ITransport {
   protected config: TransportConfig;
@@ -27,15 +30,11 @@ export abstract class BaseTransport implements ITransport {
   abstract connect(): Promise<void>;
   abstract disconnect(): void;
   abstract isConnected(): boolean;
-  abstract sendPtyInput(ptyId: string, data: string): void;
-  abstract sendPtyResize(ptyId: string, cols: number, rows: number): void;
-  abstract onPtyData(
-    ptyId: string,
+  abstract sendMessage(message: object): void;
+  abstract onStreamEvent(
+    streamId: string,
+    event: string,
     callback: (data: string) => void
-  ): () => void;
-  abstract onPtyExit(
-    ptyId: string,
-    callback: (exitCode: number) => void
   ): () => void;
 
   /**

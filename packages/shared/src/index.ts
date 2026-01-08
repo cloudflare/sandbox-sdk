@@ -47,7 +47,6 @@ export type {
 export { shellEscape } from './shell-escape.js';
 // Export all types from types.ts
 export type {
-  AttachPtyOptions,
   BaseExecOptions,
   // Bucket mounting types
   BucketCredentials,

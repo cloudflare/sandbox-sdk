@@ -212,13 +212,6 @@ export function setupRoutes(router: Router, container: Container): void {
   });
 
   router.register({
-    method: 'POST',
-    path: '/api/pty/attach/{sessionId}',
-    handler: async (req, ctx) => container.get('ptyHandler').handle(req, ctx),
-    middleware: [container.get('loggingMiddleware')]
-  });
-
-  router.register({
     method: 'GET',
     path: '/api/pty/{id}',
     handler: async (req, ctx) => container.get('ptyHandler').handle(req, ctx),
@@ -232,19 +225,8 @@ export function setupRoutes(router: Router, container: Container): void {
     middleware: [container.get('loggingMiddleware')]
   });
 
-  router.register({
-    method: 'POST',
-    path: '/api/pty/{id}/input',
-    handler: async (req, ctx) => container.get('ptyHandler').handle(req, ctx),
-    middleware: [container.get('loggingMiddleware')]
-  });
-
-  router.register({
-    method: 'POST',
-    path: '/api/pty/{id}/resize',
-    handler: async (req, ctx) => container.get('ptyHandler').handle(req, ctx),
-    middleware: [container.get('loggingMiddleware')]
-  });
+  // Note: /api/pty/{id}/input and /api/pty/{id}/resize removed
+  // PTY input/resize use WebSocket transport via sendMessage()
 
   router.register({
     method: 'GET',

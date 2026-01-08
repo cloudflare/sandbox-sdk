@@ -125,9 +125,6 @@ export class Container {
     // Initialize managers
     const ptyManager = new PtyManager(logger);
 
-    // Wire up PTY exclusive control check
-    processService.setPtyManager(ptyManager);
-
     // Initialize handlers
     const sessionHandler = new SessionHandler(sessionManager, logger);
     const executeHandler = new ExecuteHandler(processService, logger);
@@ -139,7 +136,7 @@ export class Container {
       interpreterService,
       logger
     );
-    const ptyHandler = new PtyHandler(ptyManager, sessionManager, logger);
+    const ptyHandler = new PtyHandler(ptyManager, logger);
     const miscHandler = new MiscHandler(logger);
 
     // Initialize middleware

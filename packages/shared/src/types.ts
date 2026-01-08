@@ -1109,18 +1109,6 @@ export interface CreatePtyOptions {
   cwd?: string;
   /** Environment variables */
   env?: Record<string, string>;
-  /** Time in ms before orphaned PTY is killed (default: 30000) */
-  disconnectTimeout?: number;
-}
-
-/**
- * Options for attaching PTY to existing session
- */
-export interface AttachPtyOptions {
-  /** Terminal width in columns (default: 80) */
-  cols?: number;
-  /** Terminal height in rows (default: 24) */
-  rows?: number;
 }
 
 /**
@@ -1184,8 +1172,6 @@ export function getPtyExitInfo(exitCode: number): PtyExitInfo {
 export interface PtyInfo {
   /** Unique PTY identifier */
   id: string;
-  /** Associated session ID (if attached to session) */
-  sessionId?: string;
   /** Terminal width */
   cols: number;
   /** Terminal height */

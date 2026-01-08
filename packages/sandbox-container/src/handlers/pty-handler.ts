@@ -1,27 +1,20 @@
 import type {
-  AttachPtyOptions,
   CreatePtyOptions,
   Logger,
   PtyCreateResult,
   PtyGetResult,
-  PtyInputRequest,
-  PtyInputResult,
   PtyKillResult,
-  PtyListResult,
-  PtyResizeRequest,
-  PtyResizeResult
+  PtyListResult
 } from '@repo/shared';
 import { ErrorCode } from '@repo/shared/errors';
 
 import type { RequestContext } from '../core/types';
 import type { PtyManager } from '../managers/pty-manager';
-import type { SessionManager } from '../services/session-manager';
 import { BaseHandler } from './base-handler';
 
 export class PtyHandler extends BaseHandler<Request, Response> {
   constructor(
     private ptyManager: PtyManager,
-    private sessionManager: SessionManager,
     logger: Logger
   ) {
     super(logger);
@@ -41,19 +34,13 @@ export class PtyHandler extends BaseHandler<Request, Response> {
       return this.handleList(request, context);
     }
 
-    // POST /api/pty/attach/:sessionId - Attach PTY to session
-    if (pathname.startsWith('/api/pty/attach/') && request.method === 'POST') {
-      const sessionId = pathname.split('/')[4];
-      return this.handleAttach(request, context, sessionId);
-    }
-
     // Routes with PTY ID
     if (pathname.startsWith('/api/pty/')) {
       const segments = pathname.split('/');
       const ptyId = segments[3];
       const action = segments[4];
 
-      if (!ptyId || ptyId === 'attach') {
+      if (!ptyId) {
         return this.createErrorResponse(
           { message: 'PTY ID required', code: ErrorCode.VALIDATION_FAILED },
           context
@@ -70,17 +57,9 @@ export class PtyHandler extends BaseHandler<Request, Response> {
         return this.handleKill(request, context, ptyId);
       }
 
-      // POST /api/pty/:id/input - Send input (HTTP fallback)
-      if (action === 'input' && request.method === 'POST') {
-        return this.handleInput(request, context, ptyId);
-      }
+      // Note: /input and /resize endpoints removed - PTY uses WebSocket for real-time I/O
 
-      // POST /api/pty/:id/resize - Resize PTY (HTTP fallback)
-      if (action === 'resize' && request.method === 'POST') {
-        return this.handleResize(request, context, ptyId);
-      }
-
-      // GET /api/pty/:id/stream - SSE output stream (HTTP fallback)
+      // GET /api/pty/:id/stream - SSE output stream
       if (action === 'stream' && request.method === 'GET') {
         return this.handleStream(request, context, ptyId);
       }
@@ -97,77 +76,19 @@ export class PtyHandler extends BaseHandler<Request, Response> {
     context: RequestContext
   ): Promise<Response> {
     const body = await this.parseRequestBody<CreatePtyOptions>(request);
-    const session = this.ptyManager.create(body);
+    const ptySession = this.ptyManager.create(body);
 
     const response: PtyCreateResult = {
       success: true,
       pty: {
-        id: session.id,
-        sessionId: session.sessionId,
-        cols: session.cols,
-        rows: session.rows,
-        command: session.command,
-        cwd: session.cwd,
-        createdAt: session.createdAt.toISOString(),
-        state: session.state,
-        exitCode: session.exitCode
-      },
-      timestamp: new Date().toISOString()
-    };
-
-    return this.createTypedResponse(response, context);
-  }
-
-  private async handleAttach(
-    request: Request,
-    context: RequestContext,
-    sessionId: string
-  ): Promise<Response> {
-    // Check if session already has active PTY
-    if (this.ptyManager.hasActivePty(sessionId)) {
-      return this.createErrorResponse(
-        {
-          message: 'Session already has active PTY',
-          code: ErrorCode.SESSION_ALREADY_EXISTS
-        },
-        context
-      );
-    }
-
-    // Get session info for cwd/env inheritance
-    const sessionInfo = this.sessionManager.getSessionInfo(sessionId);
-    if (!sessionInfo) {
-      return this.createErrorResponse(
-        {
-          message: `Session '${sessionId}' not found`,
-          code: ErrorCode.VALIDATION_FAILED
-        },
-        context
-      );
-    }
-
-    const body = await this.parseRequestBody<AttachPtyOptions>(request);
-
-    // Create PTY attached to session with inherited cwd/env from session
-    const session = this.ptyManager.create({
-      ...body,
-      sessionId,
-      cwd: sessionInfo.cwd,
-      env: sessionInfo.env
-    });
-
-    const response: PtyCreateResult = {
-      success: true,
-      pty: {
-        id: session.id,
-        sessionId: session.sessionId,
-        cols: session.cols,
-        rows: session.rows,
-        command: session.command,
-        cwd: session.cwd,
-        createdAt: session.createdAt.toISOString(),
-        state: session.state,
-        exitCode: session.exitCode
+        id: ptySession.id,
+        cols: ptySession.cols,
+        rows: ptySession.rows,
+        command: ptySession.command,
+        cwd: ptySession.cwd,
+        createdAt: ptySession.createdAt.toISOString(),
+        state: ptySession.state,
+        exitCode: ptySession.exitCode
       },
       timestamp: new Date().toISOString()
     };
@@ -195,11 +116,11 @@ export class PtyHandler extends BaseHandler<Request, Response> {
     context: RequestContext,
     ptyId: string
   ): Promise<Response> {
-    const session = this.ptyManager.get(ptyId);
+    const ptySession = this.ptyManager.get(ptyId);
 
-    if (!session) {
+    if (!ptySession) {
       return this.createErrorResponse(
-        { message: 'PTY not found', code: ErrorCode.PROCESS_NOT_FOUND },
+        { message: 'PTY not found', code: ErrorCode.PTY_NOT_FOUND },
         context
       );
     }
@@ -207,15 +128,14 @@ export class PtyHandler extends BaseHandler<Request, Response> {
     const response: PtyGetResult = {
       success: true,
       pty: {
-        id: session.id,
-        sessionId: session.sessionId,
-        cols: session.cols,
-        rows: session.rows,
-        command: session.command,
-        cwd: session.cwd,
-        createdAt: session.createdAt.toISOString(),
-        state: session.state,
-        exitCode: session.exitCode
+        id: ptySession.id,
+        cols: ptySession.cols,
+        rows: ptySession.rows,
+        command: ptySession.command,
+        cwd: ptySession.cwd,
+        createdAt: ptySession.createdAt.toISOString(),
+        state: ptySession.state,
+        exitCode: ptySession.exitCode
       },
       timestamp: new Date().toISOString()
     };
@@ -232,7 +152,7 @@ export class PtyHandler extends BaseHandler<Request, Response> {
 
     if (!session) {
       return this.createErrorResponse(
-        { message: 'PTY not found', code: ErrorCode.PROCESS_NOT_FOUND },
+        { message: 'PTY not found', code: ErrorCode.PTY_NOT_FOUND },
         context
       );
     }
@@ -251,7 +171,7 @@ export class PtyHandler extends BaseHandler<Request, Response> {
       return this.createErrorResponse(
         {
           message: result.error ?? 'PTY kill failed',
-          code: ErrorCode.PROCESS_NOT_FOUND
+          code: ErrorCode.PTY_OPERATION_ERROR
         },
         context
       );
@@ -266,61 +186,7 @@ export class PtyHandler extends BaseHandler<Request, Response> {
     return this.createTypedResponse(response, context);
   }
 
-  private async handleInput(
-    request: Request,
-    context: RequestContext,
-    ptyId: string
-  ): Promise<Response> {
-    const body = await this.parseRequestBody<PtyInputRequest>(request);
-    const result = this.ptyManager.write(ptyId, body.data);
-
-    if (!result.success) {
-      return this.createErrorResponse(
-        {
-          message: result.error ?? 'PTY write failed',
-          code: ErrorCode.PROCESS_NOT_FOUND
-        },
-        context
-      );
-    }
-
-    const response: PtyInputResult = {
-      success: true,
-      ptyId,
-      timestamp: new Date().toISOString()
-    };
-
-    return this.createTypedResponse(response, context);
-  }
-
-  private async handleResize(
-    request: Request,
-    context: RequestContext,
-    ptyId: string
-  ): Promise<Response> {
-    const body = await this.parseRequestBody<PtyResizeRequest>(request);
-    const result = this.ptyManager.resize(ptyId, body.cols, body.rows);
-
-    if (!result.success) {
-      return this.createErrorResponse(
-        {
-          message: result.error ?? 'PTY resize failed',
-          code: ErrorCode.PROCESS_NOT_FOUND
-        },
-        context
-      );
-    }
-
-    const response: PtyResizeResult = {
-      success: true,
-      ptyId,
-      cols: body.cols,
-      rows: body.rows,
-      timestamp: new Date().toISOString()
-    };
-
-    return this.createTypedResponse(response, context);
-  }
+  // Note: handleInput and handleResize removed - PTY uses WebSocket for real-time I/O
 
   private async handleStream(
     _request: Request,
@@ -331,7 +197,7 @@ export class PtyHandler extends BaseHandler<Request, Response> {
 
     if (!session) {
       return this.createErrorResponse(
-        { message: 'PTY not found', code: ErrorCode.PROCESS_NOT_FOUND },
+        { message: 'PTY not found', code: ErrorCode.PTY_NOT_FOUND },
         context
       );
     }

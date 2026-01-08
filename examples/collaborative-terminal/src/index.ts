@@ -37,11 +37,7 @@ function generateRandomNameSuffix(): string {
   crypto.getRandomValues(bytes);
   // Convert bytes to a base-36 string and take 4 characters, similar length
   // to the original Math.random().toString(36).slice(2, 6).
-  const num =
-    (bytes[0] << 24) |
-    (bytes[1] << 16) |
-    (bytes[2] << 8) |
-    bytes[3];
+  const num = (bytes[0] << 24) | (bytes[1] << 16) | (bytes[2] << 8) | bytes[3];
   const str = Math.abs(num).toString(36);
   return str.slice(0, 4).padEnd(4, '0');
 }
@@ -128,7 +124,7 @@ export class Room implements DurableObject {
 
       // Create PTY session
       // Use --norc --noprofile but run with 'set -m' to enable job control for Ctrl+C
-      const ptyInfo = await sandbox.createPty({
+      const pty = await sandbox.pty.create({
         cols: cols || 80,
         rows: rows || 24,
         command: ['/bin/bash', '--norc', '--noprofile'],
@@ -151,8 +147,8 @@ export class Room implements DurableObject {
         }
       });
 
-      console.log(`[Room ${this.roomId}] PTY created: ${ptyInfo.id}`);
-      this.ptyId = ptyInfo.id;
+      console.log(`[Room ${this.roomId}] PTY created: ${pty.id}`);
+      this.ptyId = pty.id;
 
       // Establish WebSocket connection to container for PTY streaming
       console.log(`[Room ${this.roomId}] Connecting to container WebSocket...`);
@@ -216,16 +212,16 @@ export class Room implements DurableObject {
       this.containerWs.send(
         JSON.stringify({
           type: 'request',
-          id: `pty_stream_${ptyInfo.id}`,
+          id: `pty_stream_${pty.id}`,
           method: 'GET',
-          path: `/api/pty/${ptyInfo.id}/stream`,
+          path: `/api/pty/${pty.id}/stream`,
           headers: { Accept: 'text/event-stream' }
         })
       );
 
       // Broadcast pty_started to all clients
       console.log(`[Room ${this.roomId}] Broadcasting pty_started`);
-      this.broadcast({ type: 'pty_started', ptyId: ptyInfo.id });
+      this.broadcast({ type: 'pty_started', ptyId: pty.id });
     } catch (error) {
       console.error(`[Room ${this.roomId}] PTY create error:`, error);
       ws.send(

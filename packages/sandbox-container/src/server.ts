@@ -135,6 +135,10 @@ export async function startServer(): Promise<ServerInstance> {
       try {
         const processService = app.container.get('processService');
         const portService = app.container.get('portService');
+        const ptyManager = app.container.get('ptyManager');
+
+        // Kill all PTY sessions
+        ptyManager.killAll();
 
         await processService.destroy();
         portService.destroy();

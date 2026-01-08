@@ -6,6 +6,10 @@ import type { TransportConfig, TransportMode } from './types';
  *
  * Uses standard fetch API for communication with the container.
  * HTTP is stateless, so connect/disconnect are no-ops.
+ *
+ * Real-time messaging (sendMessage, onStreamEvent) is NOT supported.
+ * Features requiring real-time bidirectional communication (like PTY)
+ * must use WebSocket transport.
  */
 export class HttpTransport extends BaseTransport {
   private baseUrl: string;
@@ -29,6 +33,36 @@ export class HttpTransport extends BaseTransport {
 
   isConnected(): boolean {
     return true; // HTTP is always "connected"
+  }
+
+  /**
+   * HTTP does not support real-time messaging.
+   * @throws Error explaining WebSocket is required
+   */
+  sendMessage(_message: object): void {
+    throw new Error(
+      'Real-time messaging requires WebSocket transport. ' +
+        'PTY operations need continuous bidirectional communication. ' +
+        'Use useWebSocket: true in sandbox options, or call sandbox.pty.create() ' +
+        'which automatically uses WebSocket.'
+    );
+  }
+
+  /**
+   * HTTP does not support real-time event streaming.
+   * @throws Error explaining WebSocket is required
+   */
+  onStreamEvent(
+    _streamId: string,
+    _event: string,
+    _callback: (data: string) => void
+  ): () => void {
+    throw new Error(
+      'Real-time event streaming requires WebSocket transport. ' +
+        'PTY data/exit events need continuous bidirectional communication. ' +
+        'Use useWebSocket: true in sandbox options, or call sandbox.pty.create() ' +
+        'which automatically uses WebSocket.'
+    );
   }
 
   protected async doFetch(
@@ -97,37 +131,5 @@ export class HttpTransport extends BaseTransport {
           : undefined,
       body: body && method === 'POST' ? JSON.stringify(body) : undefined
     };
-  }
-
-  sendPtyInput(_ptyId: string, _data: string): void {
-    throw new Error(
-      'sendPtyInput() not supported with HTTP transport. ' +
-        'Use pty.write() which routes to POST /api/pty/:id/input'
-    );
-  }
-
-  sendPtyResize(_ptyId: string, _cols: number, _rows: number): void {
-    throw new Error(
-      'sendPtyResize() not supported with HTTP transport. ' +
-        'Use pty.resize() which routes to POST /api/pty/:id/resize'
-    );
-  }
-
-  onPtyData(_ptyId: string, _callback: (data: string) => void): () => void {
-    // HTTP transport doesn't support real-time PTY data events.
-    // Data must be retrieved via SSE stream (GET /api/pty/:id/stream).
-    this.logger.warn(
-      'onPtyData() has no effect with HTTP transport. Use WebSocket transport for real-time events.'
-    );
-    return () => {};
-  }
-
-  onPtyExit(_ptyId: string, _callback: (exitCode: number) => void): () => void {
-    // HTTP transport doesn't support real-time PTY exit events.
-    // Exit must be detected via SSE stream (GET /api/pty/:id/stream).
-    this.logger.warn(
-      'onPtyExit() has no effect with HTTP transport. Use WebSocket transport for real-time events.'
-    );
-    return () => {};
   }
 }
