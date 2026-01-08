@@ -286,7 +286,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     if (this.defaultSession) {
       // Set environment variables by executing export commands in the existing session
       for (const [key, value] of Object.entries(envVars)) {
-        const escapedValue = value.replace(/'/g, "'\\''");
+        const escapedValue = value?.replace(/'/g, "'\\''");
         const exportCommand = `export ${key}='${escapedValue}'`;
 
         const result = await this.client.commands.execute(
