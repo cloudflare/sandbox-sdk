@@ -243,19 +243,65 @@ export class WebSocketAdapter {
       // Handle SSE streaming response
       await this.handleStreamingResponse(ws, request.id, httpResponse);
     } else {
-      // Handle regular response
-      await this.handleRegularResponse(ws, request.id, httpResponse);
+      // Handle regular response and check for PTY operations
+      const body = await this.handleRegularResponse(
+        ws,
+        request.id,
+        httpResponse
+      );
+
+      // Register PTY listener for successful PTY create/get operations
+      // This enables real-time PTY output streaming over WebSocket
+      if (httpResponse.status === 200 && body) {
+        const ptyId = this.extractPtyId(request.path, request.method, body);
+        if (ptyId) {
+          this.registerPtyListener(ws, ptyId);
+          this.logger.debug('Registered PTY listener for WebSocket streaming', {
+            ptyId,
+            connectionId: ws.data.connectionId
+          });
+        }
+      }
     }
   }
 
   /**
+   * Extract PTY ID from successful PTY create/get responses
+   */
+  private extractPtyId(
+    path: string,
+    method: string,
+    body: unknown
+  ): string | null {
+    // PTY create: POST /api/pty
+    if (path === '/api/pty' && method === 'POST') {
+      const response = body as { success?: boolean; pty?: { id?: string } };
+      if (response?.success && response?.pty?.id) {
+        return response.pty.id;
+      }
+    }
+
+    // PTY get: GET /api/pty/:id
+    const getPtyMatch = path.match(/^\/api\/pty\/([^/]+)$/);
+    if (getPtyMatch && method === 'GET') {
+      const response = body as { success?: boolean; pty?: { id?: string } };
+      if (response?.success && response?.pty?.id) {
+        return response.pty.id;
+      }
+    }
+
+    return null;
+  }
+
+  /**
    * Handle a regular (non-streaming) HTTP response
+   * Returns the parsed body for further processing (e.g., PTY listener registration)
    */
   private async handleRegularResponse(
     ws: ServerWebSocket<WSData>,
     requestId: string,
     response: Response
-  ): Promise<void> {
+  ): Promise<unknown> {
     let body: unknown;
 
     try {
@@ -274,6 +320,7 @@ export class WebSocketAdapter {
     };
 
     this.send(ws, wsResponse);
+    return body;
   }
 
   /**
