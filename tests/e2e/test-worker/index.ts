@@ -823,28 +823,34 @@ console.log('Terminal server on port ' + port);
         });
       }
 
+      // PTY operations - use sandbox.fetch() to forward to container HTTP API
+
       // PTY create
       if (url.pathname === '/api/pty' && request.method === 'POST') {
-        const info = await sandbox.createPty(body);
-        return new Response(
-          JSON.stringify({
-            success: true,
-            pty: info
-          }),
-          { headers: { 'Content-Type': 'application/json' } }
+        const ptyResponse = await sandbox.fetch(
+          new Request('http://container/api/pty', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+          })
         );
+        const data = await ptyResponse.json();
+        return new Response(JSON.stringify(data), {
+          status: ptyResponse.status,
+          headers: { 'Content-Type': 'application/json' }
+        });
       }
 
       // PTY list
       if (url.pathname === '/api/pty' && request.method === 'GET') {
-        const ptys = await sandbox.listPtys();
-        return new Response(
-          JSON.stringify({
-            success: true,
-            ptys
-          }),
-          { headers: { 'Content-Type': 'application/json' } }
+        const ptyResponse = await sandbox.fetch(
+          new Request('http://container/api/pty', { method: 'GET' })
         );
+        const data = await ptyResponse.json();
+        return new Response(JSON.stringify(data), {
+          status: ptyResponse.status,
+          headers: { 'Content-Type': 'application/json' }
+        });
       }
 
       // PTY attach to session
@@ -853,14 +859,18 @@ console.log('Terminal server on port ' + port);
         request.method === 'POST'
       ) {
         const attachSessionId = url.pathname.split('/')[4];
-        const info = await sandbox.attachPty(attachSessionId, body);
-        return new Response(
-          JSON.stringify({
-            success: true,
-            pty: info
-          }),
-          { headers: { 'Content-Type': 'application/json' } }
+        const ptyResponse = await sandbox.fetch(
+          new Request(`http://container/api/pty/attach/${attachSessionId}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+          })
         );
+        const data = await ptyResponse.json();
+        return new Response(JSON.stringify(data), {
+          status: ptyResponse.status,
+          headers: { 'Content-Type': 'application/json' }
+        });
       }
 
       // PTY routes with ID
@@ -871,79 +881,76 @@ console.log('Terminal server on port ' + port);
 
         // GET /api/pty/:id - get PTY info
         if (!action && request.method === 'GET') {
-          const info = await sandbox.getPtyInfo(ptyId);
-          return new Response(
-            JSON.stringify({
-              success: true,
-              pty: info
-            }),
-            { headers: { 'Content-Type': 'application/json' } }
+          const ptyResponse = await sandbox.fetch(
+            new Request(`http://container/api/pty/${ptyId}`, { method: 'GET' })
           );
+          const data = await ptyResponse.json();
+          return new Response(JSON.stringify(data), {
+            status: ptyResponse.status,
+            headers: { 'Content-Type': 'application/json' }
+          });
         }
 
         // DELETE /api/pty/:id - kill PTY
         if (!action && request.method === 'DELETE') {
-          await sandbox.killPty(ptyId, body?.signal);
-          return new Response(
-            JSON.stringify({
-              success: true,
-              ptyId
-            }),
-            { headers: { 'Content-Type': 'application/json' } }
+          const ptyResponse = await sandbox.fetch(
+            new Request(`http://container/api/pty/${ptyId}`, {
+              method: 'DELETE',
+              headers: { 'Content-Type': 'application/json' },
+              body: body?.signal
+                ? JSON.stringify({ signal: body.signal })
+                : undefined
+            })
           );
+          const data = await ptyResponse.json();
+          return new Response(JSON.stringify(data), {
+            status: ptyResponse.status,
+            headers: { 'Content-Type': 'application/json' }
+          });
         }
 
         // POST /api/pty/:id/input - send input
         if (action === 'input' && request.method === 'POST') {
-          await sandbox.writeToPty(ptyId, body.data);
-          return new Response(
-            JSON.stringify({
-              success: true,
-              ptyId
-            }),
-            { headers: { 'Content-Type': 'application/json' } }
+          const ptyResponse = await sandbox.fetch(
+            new Request(`http://container/api/pty/${ptyId}/input`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ data: body.data })
+            })
           );
+          const data = await ptyResponse.json();
+          return new Response(JSON.stringify(data), {
+            status: ptyResponse.status,
+            headers: { 'Content-Type': 'application/json' }
+          });
         }
 
         // POST /api/pty/:id/resize - resize PTY
         if (action === 'resize' && request.method === 'POST') {
-          await sandbox.resizePty(ptyId, body.cols, body.rows);
-          return new Response(
-            JSON.stringify({
-              success: true,
-              ptyId,
-              cols: body.cols,
-              rows: body.rows
-            }),
-            { headers: { 'Content-Type': 'application/json' } }
+          const ptyResponse = await sandbox.fetch(
+            new Request(`http://container/api/pty/${ptyId}/resize`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ cols: body.cols, rows: body.rows })
+            })
           );
+          const data = await ptyResponse.json();
+          return new Response(JSON.stringify(data), {
+            status: ptyResponse.status,
+            headers: { 'Content-Type': 'application/json' }
+          });
         }
 
         // GET /api/pty/:id/stream - SSE stream
         if (action === 'stream' && request.method === 'GET') {
-          const info = await sandbox.getPtyInfo(ptyId);
-
-          // Return a simple SSE stream with PTY info
-          const stream = new ReadableStream({
-            start(controller) {
-              const encoder = new TextEncoder();
-
-              // Send initial info
-              const infoEvent = `data: ${JSON.stringify({
-                type: 'pty_info',
-                ptyId: info.id,
-                cols: info.cols,
-                rows: info.rows,
-                timestamp: new Date().toISOString()
-              })}\n\n`;
-              controller.enqueue(encoder.encode(infoEvent));
-
-              // Note: Real-time streaming requires WebSocket or direct PTY handle access
-              // For E2E testing, we just return the initial info
-            }
-          });
-
-          return new Response(stream, {
+          const ptyResponse = await sandbox.fetch(
+            new Request(`http://container/api/pty/${ptyId}/stream`, {
+              method: 'GET',
+              headers: { Accept: 'text/event-stream' }
+            })
+          );
+          return new Response(ptyResponse.body, {
+            status: ptyResponse.status,
             headers: {
               'Content-Type': 'text/event-stream',
               'Cache-Control': 'no-cache',

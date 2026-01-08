@@ -7,9 +7,7 @@
   "observability": {
     "enabled": true
   },
-  "vars": {
-    "SANDBOX_TRANSPORT": "websocket"
-  },
+  "vars": {},
   "assets": {
     "directory": "public"
   },

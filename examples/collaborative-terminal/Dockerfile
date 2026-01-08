@@ -8,7 +8,7 @@
 #
 # The wrangler dev server will then use this Dockerfile which extends sandbox-pty-local.
 #
-FROM docker.io/cloudflare/sandbox:0.0.0-pr-310-ad66e85
+FROM sandbox-local
 
 # Create home directory for terminal sessions
 RUN mkdir -p /home/user && chmod 777 /home/user

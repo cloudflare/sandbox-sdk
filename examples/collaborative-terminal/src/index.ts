@@ -118,37 +118,51 @@ export class Room implements DurableObject {
       // Get sandbox instance using helper
       const sandbox = getSandbox(this.env.Sandbox, `shared-sandbox`);
 
-      // Colored prompt
+      // Colored prompt - user@sandbox with orange accent
       const PS1 =
-        '\\[\\e[38;5;39m\\]\\u\\[\\e[0m\\]@\\[\\e[38;5;208m\\]sandbox\\[\\e[0m\\] \\[\\e[38;5;41m\\]\\w\\[\\e[0m\\] \\[\\e[38;5;208m\\]❯\\[\\e[0m\\] ';
+        '\\[\\e[38;5;39m\\]user\\[\\e[0m\\]@\\[\\e[38;5;208m\\]sandbox\\[\\e[0m\\] \\[\\e[38;5;41m\\]\\w\\[\\e[0m\\] \\[\\e[38;5;208m\\]❯\\[\\e[0m\\] ';
 
-      // Create PTY session
-      // Use --norc --noprofile but run with 'set -m' to enable job control for Ctrl+C
-      const pty = await sandbox.pty.create({
-        cols: cols || 80,
-        rows: rows || 24,
-        command: ['/bin/bash', '--norc', '--noprofile'],
-        cwd: '/home/user',
-        env: {
-          TERM: 'xterm-256color',
-          COLORTERM: 'truecolor',
-          LANG: 'en_US.UTF-8',
-          HOME: '/home/user',
-          USER: 'user',
-          PS1,
-          ROOM_ID: this.roomId,
-          CLICOLOR: '1',
-          CLICOLOR_FORCE: '1',
-          FORCE_COLOR: '3',
-          LS_COLORS:
-            'di=1;34:ln=1;36:so=1;35:pi=33:ex=1;32:bd=1;33:cd=1;33:su=1:sg=1:tw=1:ow=1;34',
-          // Enable job control
-          BASH_ENV: ''
-        }
-      });
+      // Create PTY session via HTTP API
+      const ptyResponse = await sandbox.fetch(
+        new Request('http://container/api/pty', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            cols: cols || 80,
+            rows: rows || 24,
+            command: ['/bin/bash', '--norc', '--noprofile'],
+            cwd: '/home/user',
+            env: {
+              TERM: 'xterm-256color',
+              COLORTERM: 'truecolor',
+              LANG: 'en_US.UTF-8',
+              HOME: '/home/user',
+              USER: 'user',
+              PS1,
+              ROOM_ID: this.roomId,
+              CLICOLOR: '1',
+              CLICOLOR_FORCE: '1',
+              FORCE_COLOR: '3',
+              LS_COLORS:
+                'di=1;34:ln=1;36:so=1:35:pi=33:ex=1;32:bd=1;33:cd=1;33:su=1:sg=1:tw=1:ow=1;34'
+            }
+          })
+        })
+      );
 
-      console.log(`[Room ${this.roomId}] PTY created: ${pty.id}`);
-      this.ptyId = pty.id;
+      if (!ptyResponse.ok) {
+        const errorText = await ptyResponse.text();
+        throw new Error(`Failed to create PTY: ${errorText}`);
+      }
+
+      const ptyResult = (await ptyResponse.json()) as {
+        success: boolean;
+        pty: { id: string };
+      };
+      const ptyId = ptyResult.pty.id;
+
+      console.log(`[Room ${this.roomId}] PTY created: ${ptyId}`);
+      this.ptyId = ptyId;
 
       // Establish WebSocket connection to container for PTY streaming
       console.log(`[Room ${this.roomId}] Connecting to container WebSocket...`);
@@ -212,16 +226,16 @@ export class Room implements DurableObject {
       this.containerWs.send(
         JSON.stringify({
           type: 'request',
-          id: `pty_stream_${pty.id}`,
+          id: `pty_stream_${ptyId}`,
           method: 'GET',
-          path: `/api/pty/${pty.id}/stream`,
+          path: `/api/pty/${ptyId}/stream`,
           headers: { Accept: 'text/event-stream' }
         })
       );
 
       // Broadcast pty_started to all clients
       console.log(`[Room ${this.roomId}] Broadcasting pty_started`);
-      this.broadcast({ type: 'pty_started', ptyId: pty.id });
+      this.broadcast({ type: 'pty_started', ptyId });
     } catch (error) {
       console.error(`[Room ${this.roomId}] PTY create error:`, error);
       ws.send(

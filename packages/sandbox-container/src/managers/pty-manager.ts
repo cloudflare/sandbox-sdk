@@ -202,9 +202,11 @@ export class PtyManager {
       return { success: false, error: 'PTY has exited' };
     }
     try {
-      // Write data directly to terminal - the PTY's line discipline handles
-      // control characters (Ctrl+C → SIGINT, Ctrl+Z → SIGTSTP, etc.) and
-      // sends signals to the foreground process group automatically.
+      // Write data directly to the terminal.
+      // The PTY's line discipline should handle control characters:
+      // - Ctrl+C (0x03) -> SIGINT to foreground process group
+      // - Ctrl+Z (0x1A) -> SIGTSTP to foreground process group
+      // - Ctrl+\ (0x1C) -> SIGQUIT to foreground process group
       session.terminal.write(data);
       return { success: true };
     } catch (error) {
