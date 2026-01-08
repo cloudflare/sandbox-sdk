@@ -794,6 +794,8 @@ export class Session {
         script += `  if cd ${safeCwd}; then\n`;
         script += `    # Execute command in BACKGROUND (runs in subshell, enables concurrency)\n`;
         script += `    {\n`;
+        script += `      # Propagate SIGTERM to child processes when killed\n`;
+        script += `      trap 'kill 0' TERM\n`;
         script += `${buildCommandBlock('CMD_EXIT', 6)}\n`;
         script += `      # Write exit code\n`;
         script += `      echo "$CMD_EXIT" > ${safeExitCodeFile}.tmp\n`;
@@ -826,6 +828,8 @@ export class Session {
       } else {
         script += `  # Execute command in BACKGROUND (runs in subshell, enables concurrency)\n`;
         script += `  {\n`;
+        script += `    # Propagate SIGTERM to child processes when killed\n`;
+        script += `    trap 'kill 0' TERM\n`;
         script += `${buildCommandBlock('CMD_EXIT', 4)}\n`;
         script += `    # Write exit code\n`;
         script += `    echo "$CMD_EXIT" > ${safeExitCodeFile}.tmp\n`;
