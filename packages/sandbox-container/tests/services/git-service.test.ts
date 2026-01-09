@@ -65,7 +65,7 @@ describe('GitService', () => {
         try {
           const mockExec = async (
             cmd: string,
-            options?: { cwd?: string; env?: Record<string, string> }
+            options?: { cwd?: string; env?: Record<string, string | undefined> }
           ) => {
             // Delegate to executeInSession mock for compatibility with existing tests
             // Only pass cwd if it's defined to match test expectations

@@ -135,6 +135,80 @@ describe('SessionManager Locking', () => {
     });
   });
 
+  describe('setEnvVars key validation', () => {
+    it('should reject invalid environment variable names', async () => {
+      const sessionId = 'env-validation-session';
+      await sessionManager.createSession({ id: sessionId, cwd: testDir });
+
+      const result = await sessionManager.setEnvVars(sessionId, {
+        'INVALID-NAME': 'value'
+      });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.code).toBe('VALIDATION_FAILED');
+        expect(result.error.message).toContain(
+          'Invalid environment variable name'
+        );
+      }
+    });
+
+    it('should reject env var names with spaces', async () => {
+      const sessionId = 'env-space-session';
+      await sessionManager.createSession({ id: sessionId, cwd: testDir });
+
+      const result = await sessionManager.setEnvVars(sessionId, {
+        'HAS SPACE': 'value'
+      });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.code).toBe('VALIDATION_FAILED');
+      }
+    });
+
+    it('should reject env var names starting with numbers', async () => {
+      const sessionId = 'env-number-session';
+      await sessionManager.createSession({ id: sessionId, cwd: testDir });
+
+      const result = await sessionManager.setEnvVars(sessionId, {
+        '123VAR': 'value'
+      });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.code).toBe('VALIDATION_FAILED');
+      }
+    });
+
+    it('should accept valid POSIX environment variable names', async () => {
+      const sessionId = 'env-valid-session';
+      await sessionManager.createSession({ id: sessionId, cwd: testDir });
+
+      const result = await sessionManager.setEnvVars(sessionId, {
+        VALID_NAME: 'value',
+        _UNDERSCORE: 'value2',
+        mixedCase123: 'value3'
+      });
+
+      expect(result.success).toBe(true);
+    });
+
+    it('should validate keys for unset operations too', async () => {
+      const sessionId = 'env-unset-validation';
+      await sessionManager.createSession({ id: sessionId, cwd: testDir });
+
+      const result = await sessionManager.setEnvVars(sessionId, {
+        'INVALID;rm -rf /': undefined
+      });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.code).toBe('VALIDATION_FAILED');
+      }
+    });
+  });
+
   describe('streaming execution locking', () => {
     it('should hold lock during foreground streaming until complete', async () => {
       const sessionId = 'stream-fg-session';

@@ -16,8 +16,9 @@ export interface BaseExecOptions {
    * Environment variables for this command invocation.
    * Values temporarily override session-level/container-level env for the
    * duration of the command but do not persist after it completes.
+   * Undefined values are skipped (treated as "not configured").
    */
-  env?: Record<string, string>;
+  env?: Record<string, string | undefined>;
 
   /**
    * Working directory for command execution
@@ -400,9 +401,10 @@ export interface SessionOptions {
   name?: string;
 
   /**
-   * Environment variables for this session
+   * Environment variables for this session.
+   * Undefined values are skipped (treated as "not configured").
    */
-  env?: Record<string, string>;
+  env?: Record<string, string | undefined>;
 
   /**
    * Working directory
@@ -886,7 +888,7 @@ export interface ExecutionSession {
   ): Promise<GitCheckoutResult>;
 
   // Environment management
-  setEnvVars(envVars: Record<string, string>): Promise<void>;
+  setEnvVars(envVars: Record<string, string | undefined>): Promise<void>;
 
   // Code interpreter methods
   createCodeContext(options?: CreateContextOptions): Promise<CodeContext>;
@@ -1049,7 +1051,7 @@ export interface ISandbox {
   ): Promise<GitCheckoutResult>;
 
   // Environment management
-  setEnvVars(envVars: Record<string, string>): Promise<void>;
+  setEnvVars(envVars: Record<string, string | undefined>): Promise<void>;
 
   // Bucket mounting operations
   mountBucket(

@@ -13,9 +13,10 @@ export interface CreateContextOptions {
   cwd?: string;
 
   /**
-   * Environment variables for the context
+   * Environment variables for the context.
+   * Undefined values are skipped (treated as "not configured").
    */
-  envVars?: Record<string, string>;
+  envVars?: Record<string, string | undefined>;
 
   /**
    * Request timeout in milliseconds
@@ -65,9 +66,10 @@ export interface RunCodeOptions {
   language?: 'python' | 'javascript' | 'typescript';
 
   /**
-   * Environment variables for this execution
+   * Environment variables for this execution.
+   * Undefined values are skipped (treated as "not configured").
    */
-  envVars?: Record<string, string>;
+  envVars?: Record<string, string | undefined>;
 
   /**
    * Execution timeout in milliseconds

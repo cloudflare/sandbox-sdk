@@ -34,7 +34,7 @@ export class CommandClient extends BaseHttpClient {
     sessionId: string,
     options?: {
       timeoutMs?: number;
-      env?: Record<string, string>;
+      env?: Record<string, string | undefined>;
       cwd?: string;
     }
   ): Promise<ExecuteResponse> {
@@ -90,7 +90,7 @@ export class CommandClient extends BaseHttpClient {
     sessionId: string,
     options?: {
       timeoutMs?: number;
-      env?: Record<string, string>;
+      env?: Record<string, string | undefined>;
       cwd?: string;
     }
   ): Promise<ReadableStream<Uint8Array>> {
