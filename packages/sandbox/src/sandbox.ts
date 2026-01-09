@@ -46,9 +46,12 @@ import { isLocalhostPattern } from './request-handler';
 import { SecurityError, sanitizeSandboxId, validatePort } from './security';
 import { parseSSEStream } from './sse-parser';
 import {
+  buildS3fsSource,
   detectCredentials,
   detectProviderFromUrl,
-  resolveS3fsOptions
+  resolveS3fsOptions,
+  validateBucketName,
+  validatePrefix
 } from './storage-mount';
 import {
   InvalidMountConfigError,
@@ -445,15 +448,20 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   ): Promise<void> {
     this.logger.info(`Mounting bucket ${bucket} to ${mountPath}`);
 
-    // Validate options
-    this.validateMountOptions(bucket, mountPath, options);
+    const prefix = options.prefix || undefined;
+
+    this.validateMountOptions(bucket, mountPath, { ...options, prefix });
+
+    // Build s3fs source: bucket name with optional prefix (e.g., "mybucket:/prefix/")
+    const s3fsSource = buildS3fsSource(bucket, prefix);
 
     // Detect provider from explicit option or URL pattern
     const provider: BucketProvider | null =
       options.provider || detectProviderFromUrl(options.endpoint);
 
     this.logger.debug(`Detected provider: ${provider || 'unknown'}`, {
-      explicitProvider: options.provider
+      explicitProvider: options.provider,
+      prefix
     });
 
     // Detect credentials
@@ -464,7 +472,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     // Reserve mount path before async operations so concurrent mounts see it
     this.activeMounts.set(mountPath, {
-      bucket,
+      bucket: s3fsSource,
       mountPath,
       endpoint: options.endpoint,
       provider,
@@ -473,15 +481,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     });
 
     try {
-      // Create password file with credentials
+      // Create password file with credentials (uses bucket name only, not prefix)
       await this.createPasswordFile(passwordFilePath, bucket, credentials);
 
       // Create mount directory
       await this.exec(`mkdir -p ${shellEscape(mountPath)}`);
 
-      // Execute S3FS mount with password file
+      // Execute S3FS mount with password file (uses full s3fs source with prefix)
       await this.executeS3FSMount(
-        bucket,
+        s3fsSource,
         mountPath,
         options,
         provider,
@@ -490,7 +498,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
       // Mark as successfully mounted
       this.activeMounts.set(mountPath, {
-        bucket,
+        bucket: s3fsSource,
         mountPath,
         endpoint: options.endpoint,
         provider,
@@ -567,14 +575,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       );
     }
 
-    // Validate bucket name (S3-compatible naming rules)
-    const bucketNameRegex = /^[a-z0-9]([a-z0-9.-]{0,61}[a-z0-9])?$/;
-    if (!bucketNameRegex.test(bucket)) {
-      throw new InvalidMountConfigError(
-        `Invalid bucket name: "${bucket}". Bucket names must be 3-63 characters, ` +
-          `lowercase alphanumeric, dots, or hyphens, and cannot start/end with dots or hyphens.`
-      );
-    }
+    validateBucketName(bucket, mountPath);
 
     // Validate mount path is absolute
     if (!mountPath.startsWith('/')) {
@@ -590,6 +591,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         `Mount path "${mountPath}" is already in use by bucket "${existingMount?.bucket}". ` +
           `Unmount the existing bucket first or use a different mount path.`
       );
+    }
+
+    // Validate prefix format if provided
+    if (options.prefix !== undefined) {
+      validatePrefix(options.prefix);
     }
   }
 
