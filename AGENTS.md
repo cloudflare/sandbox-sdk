@@ -1,10 +1,10 @@
-# CLAUDE.md
+# Cloudflare Sandbox SDK
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance for AI coding assistants working with this repository.
 
 ## Documentation Resources
 
-**Always consult the Cloudflare Docs MCP when working on this repository.** The MCP provides comprehensive documentation about:
+**Always consult Cloudflare documentation** when working on this repository. Key topics:
 
 - API usage patterns and examples
 - Architecture concepts and best practices
@@ -12,21 +12,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Troubleshooting guides
 - Production deployment requirements
 
-Use the MCP tools (e.g., `mcp__cloudflare-docs__search_cloudflare_documentation`) to search for specific topics before making changes.
-
-**Exa MCP is available for code search.** Use the exa-code tool when you need real-world code examples or patterns from GitHub repositories, documentation, or Stack Overflow to inform your implementation decisions and avoid hallucinations.
-
-**Always use the `gh` CLI for GitHub interactions.** When you need to access GitHub issues, PRs, repository information, or any GitHub-related data, use the gh CLI tool (e.g., `gh issue view`, `gh pr view`, `gh repo view`) instead of trying to fetch GitHub URLs directly. The CLI provides structured, reliable output and better access to GitHub data.
+**Use the `gh` CLI for GitHub interactions.** When you need to access GitHub issues, PRs, repository information, or any GitHub-related data, use the gh CLI tool (e.g., `gh issue view`, `gh pr view`, `gh repo view`) instead of trying to fetch GitHub URLs directly.
 
 ## Project Skills
 
-This repository includes project-specific skills in `.claude/skills/`:
+This repository includes project-specific skills in `.opencode/skill/`:
 
 - **session-execution**: Use when working on command execution, shell state, or stdout/stderr handling
 - **git-commit**: Use when creating commits to follow project commit message standards
 - **testing**: Use when writing or running tests - covers unit vs E2E decisions and project conventions
-
-These skills provide focused guidance for specific areas of the codebase. Check the skills directory when working in these areas.
 
 ## Project Overview
 
@@ -169,7 +163,7 @@ npm run dev                # Start wrangler dev server (builds Docker on first r
 
 ## Testing Architecture
 
-See the **testing** skill (`.claude/skills/testing/SKILL.md`) for detailed testing guidance including unit vs E2E decisions, test locations, mock patterns, and conventions.
+See the **testing** skill (`.opencode/skill/testing/SKILL.md`) for detailed testing guidance including unit vs E2E decisions, test locations, mock patterns, and conventions.
 
 **Quick reference**: After any meaningful code change:
 
@@ -227,7 +221,7 @@ Turbo handles task orchestration (`turbo.json`) with dependency-aware builds.
 
 ### Git Commits
 
-See the **git-commit** skill (`.claude/skills/git-commit/SKILL.md`) for detailed commit message guidelines.
+See the **git-commit** skill (`.opencode/skill/git-commit/SKILL.md`) for detailed commit message guidelines.
 
 **Quick reference**: Use imperative mood, ≤50 char subject, explain why not how, no bullet points.
 
