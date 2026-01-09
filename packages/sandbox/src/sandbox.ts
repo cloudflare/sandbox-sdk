@@ -457,11 +457,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   ): Promise<void> {
     this.logger.info(`Mounting bucket ${bucket} to ${mountPath}`);
 
-    // Validate options
-    this.validateMountOptions(bucket, mountPath, options);
+    const prefix = options.prefix || undefined;
+
+    this.validateMountOptions(bucket, mountPath, { ...options, prefix });
 
     // Build s3fs source: bucket name with optional prefix (e.g., "mybucket:/prefix/")
-    const s3fsSource = buildS3fsSource(bucket, options.prefix);
+    const s3fsSource = buildS3fsSource(bucket, prefix);
 
     // Detect provider from explicit option or URL pattern
     const provider: BucketProvider | null =
@@ -469,7 +470,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     this.logger.debug(`Detected provider: ${provider || 'unknown'}`, {
       explicitProvider: options.provider,
-      prefix: options.prefix
+      prefix
     });
 
     // Detect credentials

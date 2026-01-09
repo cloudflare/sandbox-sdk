@@ -1,5 +1,5 @@
 ---
-"@cloudflare/sandbox": patch
+'@cloudflare/sandbox': patch
 ---
 
-Add S3FS prefix validation and source building functions
+Mount subdirectories of S3 buckets using the `prefix` option in `mountBucket()`.
