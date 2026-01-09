@@ -1,7 +1,7 @@
 # Test the standalone binary pattern with an arbitrary base image
 # This validates that users can add sandbox capabilities to any Docker image
 
-ARG BASE_IMAGE=cloudflare/sandbox-test:0.6.8
+ARG BASE_IMAGE=cloudflare/sandbox-test:0.6.11
 FROM ${BASE_IMAGE} AS sandbox-source
 
 FROM node:20-slim

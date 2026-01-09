@@ -1,4 +1,4 @@
-name: Documentation Sync with Claude Code
+name: Documentation Sync
 
 on:
   pull_request:
@@ -7,7 +7,9 @@ on:
 jobs:
   sync-docs:
     runs-on: ubuntu-latest
-    if: "!startsWith(github.event.pull_request.title, 'Version Packages')"
+    if: |
+      !startsWith(github.event.pull_request.title, 'Version Packages') &&
+      github.event.pull_request.head.repo.full_name == github.repository
     permissions:
       contents: write
       pull-requests: write
@@ -49,7 +51,7 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git checkout -b sync-docs-pr-${{ github.event.pull_request.number }}
 
-      - name: Create prompt for Claude Code
+      - name: Create prompt for OpenCode
         id: create-prompt
         env:
           PR_BODY: ${{ github.event.pull_request.body }}
@@ -233,5 +235,4 @@ jobs:
           OPENCODE_PROMPT: ${{ steps.create-prompt.outputs.prompt }}
         run: |
           # Pass prompt via environment variable to avoid shell escaping issues
-          # Using printf with %s to avoid any interpretation of special characters
           opencode run -m anthropic/claude-sonnet-4-20250514 "$OPENCODE_PROMPT"

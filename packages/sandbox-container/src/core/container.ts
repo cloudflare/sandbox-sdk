@@ -21,7 +21,6 @@ import { InMemoryPortStore, PortService } from '../services/port-service';
 import { ProcessService } from '../services/process-service';
 import { ProcessStore } from '../services/process-store';
 import { SessionManager } from '../services/session-manager';
-import { RequestValidator } from '../validation/request-validator';
 
 export interface Dependencies {
   // Services
@@ -37,7 +36,6 @@ export interface Dependencies {
   // Infrastructure
   logger: Logger;
   security: SecurityService;
-  validator: RequestValidator;
 
   // Handlers
   executeHandler: ExecuteHandler;
@@ -91,7 +89,6 @@ export class Container {
     const logger = createLogger({ component: 'container' });
     const security = new SecurityService(logger);
     const securityAdapter = new SecurityServiceAdapter(security);
-    const validator = new RequestValidator();
 
     // Initialize stores
     const processStore = new ProcessStore(logger);
@@ -158,7 +155,6 @@ export class Container {
       // Infrastructure
       logger,
       security,
-      validator,
 
       // Handlers
       executeHandler,

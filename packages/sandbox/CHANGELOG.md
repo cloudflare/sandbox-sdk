@@ -1,5 +1,27 @@
 # @cloudflare/sandbox
 
+## 0.6.11
+
+### Patch Changes
+
+- [#339](https://github.com/cloudflare/sandbox-sdk/pull/339) [`35f1fbc`](https://github.com/cloudflare/sandbox-sdk/commit/35f1fbce2214bcb5df9fab1ec980d7316419d1d7) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Fix killProcess() not terminating child processes spawned by background commands.
+
+  Previously, killing a background process would only terminate the wrapper subshell while child processes continued running as orphans. Now background commands run in their own process group, allowing killProcess() to terminate the entire process tree.
+
+## 0.6.10
+
+### Patch Changes
+
+- [#326](https://github.com/cloudflare/sandbox-sdk/pull/326) [`9344a4d`](https://github.com/cloudflare/sandbox-sdk/commit/9344a4dc0d9daa3cf9435c29f391da164b393455) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - Add shallow clone support via `depth` option in `gitCheckout()`. Use `depth: 1` to clone only the latest commit, reducing clone time and disk usage for large repositories.
+
+## 0.6.9
+
+### Patch Changes
+
+- [#323](https://github.com/cloudflare/sandbox-sdk/pull/323) [`274ee4c`](https://github.com/cloudflare/sandbox-sdk/commit/274ee4cdb589cd34995539221a3445836cbe062f) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - Fix sleepAfter option passed to getSandbox() being ignored.
+
+  The custom sleepAfter timeout value is now correctly applied when specified in getSandbox() options.
+
 ## 0.6.8
 
 ### Patch Changes
@@ -117,10 +139,10 @@
 
   ```dockerfile
   # Before
-  FROM cloudflare/sandbox:0.6.8
+  FROM cloudflare/sandbox:0.6.11
 
   # After
-  FROM cloudflare/sandbox:0.6.8-python
+  FROM cloudflare/sandbox:0.6.11-python
   ```
 
   Without this change, Python execution will fail with `PYTHON_NOT_AVAILABLE` error.
