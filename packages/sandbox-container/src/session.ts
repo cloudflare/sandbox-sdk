@@ -55,8 +55,8 @@ export interface SessionOptions {
    */
   cwd?: string;
 
-  /** Environment variables for the session */
-  env?: Record<string, string>;
+  /** Environment variables for the session. Undefined values are skipped. */
+  env?: Record<string, string | undefined>;
 
   /** Legacy isolation flag (ignored - kept for compatibility) */
   isolation?: boolean;
@@ -91,8 +91,8 @@ export interface RawExecResult {
 interface ExecOptions {
   /** Override working directory for this command only */
   cwd?: string;
-  /** Environment variables for this command only (does not persist in session) */
-  env?: Record<string, string>;
+  /** Environment variables for this command only (does not persist in session). Undefined values are skipped. */
+  env?: Record<string, string | undefined>;
 }
 
 /** Command handle for tracking and killing running commands */
@@ -704,7 +704,7 @@ export class Session {
     exitCodeFile: string,
     cwd?: string,
     isBackground = false,
-    env?: Record<string, string>,
+    env?: Record<string, string | undefined>,
     pidPipe?: string
   ): string {
     // Create unique FIFO names to prevent collisions
@@ -900,7 +900,7 @@ export class Session {
   }
 
   private buildScopedEnvBlocks(
-    env: Record<string, string> | undefined,
+    env: Record<string, string | undefined> | undefined,
     cmdId: string,
     options: { restore: boolean }
   ): { setup: string; cleanup: string } {
@@ -915,7 +915,12 @@ export class Session {
     const cleanupLines: string[] = [];
     const cmdSuffix = sanitizeIdentifier(cmdId);
 
-    Object.entries(env).forEach(([key, value], index) => {
+    let validIndex = 0;
+    Object.entries(env).forEach(([key, value]) => {
+      if (value == null) {
+        return;
+      }
+
       if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
         throw new Error(`Invalid environment variable name: ${key}`);
       }
@@ -923,7 +928,7 @@ export class Session {
       const escapedValue = value.replace(/'/g, "'\\''");
 
       if (options.restore) {
-        const stateSuffix = `${cmdSuffix}_${index}`;
+        const stateSuffix = `${cmdSuffix}_${validIndex}`;
         const hasVar = `__SANDBOX_HAS_${stateSuffix}`;
         const prevVar = `__SANDBOX_PREV_${stateSuffix}`;
 
@@ -943,6 +948,8 @@ export class Session {
       } else {
         setupLines.push(`  export ${key}='${escapedValue}'`);
       }
+
+      validIndex++;
     });
 
     return {

@@ -237,4 +237,109 @@ describe('Environment Variables', () => {
     const grepData = (await grepResponse.json()) as ExecResult;
     expect(grepData.success).toBe(true);
   }, 90000);
+
+  test('should handle null as unset in setEnvVars', async () => {
+    const setResponse = await fetch(`${workerUrl}/api/env/set`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        envVars: {
+          UNSET_DEFINED: 'test-value',
+          UNSET_NULL: null,
+          UNSET_EMPTY: ''
+        }
+      })
+    });
+
+    expect(setResponse.status).toBe(200);
+
+    const definedResponse = await fetch(`${workerUrl}/api/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ command: 'echo $UNSET_DEFINED' })
+    });
+    expect(definedResponse.status).toBe(200);
+    const definedData = (await definedResponse.json()) as ExecResult;
+    expect(definedData.stdout.trim()).toBe('test-value');
+
+    const nullResponse = await fetch(`${workerUrl}/api/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        command: 'printenv UNSET_NULL || echo "not set"'
+      })
+    });
+    expect(nullResponse.status).toBe(200);
+    const nullData = (await nullResponse.json()) as ExecResult;
+    expect(nullData.stdout.trim()).toBe('not set');
+
+    const emptyResponse = await fetch(`${workerUrl}/api/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ command: 'echo "[$UNSET_EMPTY]"' })
+    });
+    expect(emptyResponse.status).toBe(200);
+    const emptyData = (await emptyResponse.json()) as ExecResult;
+    expect(emptyData.stdout.trim()).toBe('[]');
+  }, 30000);
+
+  test('should unset previously set env var when passed null', async () => {
+    const setResponse = await fetch(`${workerUrl}/api/env/set`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ envVars: { TO_REMOVE: 'initial-value' } })
+    });
+    expect(setResponse.status).toBe(200);
+
+    const beforeResponse = await fetch(`${workerUrl}/api/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ command: 'echo $TO_REMOVE' })
+    });
+    expect(beforeResponse.status).toBe(200);
+    const beforeData = (await beforeResponse.json()) as ExecResult;
+    expect(beforeData.stdout.trim()).toBe('initial-value');
+
+    const unsetResponse = await fetch(`${workerUrl}/api/env/set`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ envVars: { TO_REMOVE: null } })
+    });
+    expect(unsetResponse.status).toBe(200);
+
+    const afterResponse = await fetch(`${workerUrl}/api/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ command: 'printenv TO_REMOVE || echo "not set"' })
+    });
+    expect(afterResponse.status).toBe(200);
+    const afterData = (await afterResponse.json()) as ExecResult;
+    expect(afterData.stdout.trim()).toBe('not set');
+  }, 30000);
+
+  test('should filter null env vars in per-command execution', async () => {
+    const validResponse = await fetch(`${workerUrl}/api/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        command: 'echo $CMD_VALID',
+        env: { CMD_VALID: 'valid-value', CMD_INVALID: null }
+      })
+    });
+    expect(validResponse.status).toBe(200);
+    const validData = (await validResponse.json()) as ExecResult;
+    expect(validData.stdout.trim()).toBe('valid-value');
+
+    const invalidResponse = await fetch(`${workerUrl}/api/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        command: 'printenv CMD_INVALID || echo "not set"',
+        env: { CMD_VALID: 'valid-value', CMD_INVALID: null }
+      })
+    });
+    expect(invalidResponse.status).toBe(200);
+    const invalidData = (await invalidResponse.json()) as ExecResult;
+    expect(invalidData.stdout.trim()).toBe('not set');
+  }, 30000);
 });
