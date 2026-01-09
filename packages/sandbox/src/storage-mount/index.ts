@@ -15,4 +15,8 @@ export {
   resolveS3fsOptions
 } from './provider-detection';
 export type { MountInfo } from './types';
-export { buildS3fsSource, validatePrefix } from './validation';
+export {
+  buildS3fsSource,
+  validateBucketName,
+  validatePrefix
+} from './validation';

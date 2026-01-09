@@ -978,12 +978,12 @@ export interface MountBucketOptions {
   s3fsOptions?: string[];
 
   /**
-   * Optional prefix/subdirectory within the bucket to mount
+   * Optional prefix/subdirectory within the bucket to mount.
    *
    * When specified, only the contents under this prefix will be visible
-   * at the mount point, rather than the entire bucket.
+   * at the mount point, enabling multi-tenant isolation within a single bucket.
    *
-   * Must start and end with '/' (e.g., '/data/uploads/')
+   * Must start with '/' (e.g., '/sessions/user123' or '/data/uploads/')
    */
   prefix?: string;
 }

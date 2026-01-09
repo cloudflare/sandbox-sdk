@@ -1,24 +1,28 @@
-/**
- * Pure validation functions for bucket mounting
- */
-
 import { InvalidMountConfigError } from './errors';
 
-/**
- * Validates that a prefix follows s3fs format requirements.
- * Prefix must start and end with '/' (e.g., '/path/to/data/')
- *
- * @param prefix - The prefix to validate
- * @throws InvalidMountConfigError if prefix format is invalid
- */
 export function validatePrefix(prefix: string): void {
   if (!prefix.startsWith('/')) {
     throw new InvalidMountConfigError(
       `Prefix must start with '/': "${prefix}"`
     );
   }
-  if (!prefix.endsWith('/')) {
-    throw new InvalidMountConfigError(`Prefix must end with '/': "${prefix}"`);
+}
+
+export function validateBucketName(bucket: string, mountPath: string): void {
+  if (bucket.includes(':')) {
+    const [bucketName, prefixPart] = bucket.split(':');
+    throw new InvalidMountConfigError(
+      `Bucket name cannot contain ':'. To mount a prefix, use the 'prefix' option:\n` +
+        `  mountBucket('${bucketName}', '${mountPath}', { ...options, prefix: '${prefixPart}' })`
+    );
+  }
+
+  const bucketNameRegex = /^[a-z0-9]([a-z0-9.-]{0,61}[a-z0-9])?$/;
+  if (!bucketNameRegex.test(bucket)) {
+    throw new InvalidMountConfigError(
+      `Invalid bucket name: "${bucket}". Bucket names must be 3-63 characters, ` +
+        `lowercase alphanumeric, dots, or hyphens, and cannot start/end with dots or hyphens.`
+    );
   }
 }
 
