@@ -331,6 +331,18 @@ console.log("Line 3");
     // Both child processes should be killed
     expect(afterResult.stdout.trim()).toBe('NOT_RUNNING');
 
+    // Verify idempotency: killing an already-killed process should not crash
+    const secondKillResponse = await fetch(
+      `${workerUrl}/api/process/${processId}`,
+      {
+        method: 'DELETE',
+        headers
+      }
+    );
+    // Should either succeed (200) or return a "not found" error (4xx/5xx)
+    // The key is it should NOT crash the server
+    expect([200, 404, 500]).toContain(secondKillResponse.status);
+
     // Cleanup marker file
     await fetch(`${workerUrl}/api/execute`, {
       method: 'POST',
