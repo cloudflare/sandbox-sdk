@@ -1,5 +1,13 @@
 # @cloudflare/sandbox
 
+## 0.6.12
+
+### Patch Changes
+
+- [`cdb015c`](https://github.com/cloudflare/sandbox-sdk/commit/cdb015c434cc936d4c75ef4624f9fef71ceb3d3e) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Fix processes getting stuck in 'running' status when killed after naturally exiting. Previously, if a process exited on its own but the kill request came before status updates were processed, the process would remain marked as 'running' indefinitely.
+
+- [#335](https://github.com/cloudflare/sandbox-sdk/pull/335) [`0d2e199`](https://github.com/cloudflare/sandbox-sdk/commit/0d2e199dba9c3a5bc384b27d50e614fcb3311681) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - Mount subdirectories of S3 buckets using the `prefix` option in `mountBucket()`.
+
 ## 0.6.11
 
 ### Patch Changes
@@ -139,10 +147,10 @@
 
   ```dockerfile
   # Before
-  FROM cloudflare/sandbox:0.6.11
+  FROM cloudflare/sandbox:0.6.12
 
   # After
-  FROM cloudflare/sandbox:0.6.11-python
+  FROM cloudflare/sandbox:0.6.12-python
   ```
 
   Without this change, Python execution will fail with `PYTHON_NOT_AVAILABLE` error.
