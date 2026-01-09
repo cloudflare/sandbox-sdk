@@ -25,6 +25,10 @@ export class Router {
    * Register a route with optional middleware
    */
   register(definition: RouteDefinition): void {
+    this.logger.debug('Registering route', {
+      method: definition.method,
+      path: definition.path
+    });
     this.routes.push(definition);
   }
 
@@ -60,7 +64,13 @@ export class Router {
     const route = this.matchRoute(method, pathname);
 
     if (!route) {
-      this.logger.debug('No route found', { method, pathname });
+      this.logger.debug('No route found', {
+        method,
+        pathname,
+        registeredRoutes: this.routes
+          .map((r) => `${r.method} ${r.path}`)
+          .join(', ')
+      });
       return this.createNotFoundResponse();
     }
 
