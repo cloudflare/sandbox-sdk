@@ -46,6 +46,7 @@ export const ERROR_STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.PORT_IN_USE]: 409,
   [ErrorCode.RESOURCE_BUSY]: 409,
   [ErrorCode.SESSION_ALREADY_EXISTS]: 409,
+  [ErrorCode.PTY_ALREADY_ATTACHED]: 409,
 
   // 502 Bad Gateway
   [ErrorCode.SERVICE_NOT_RESPONDING]: 502,

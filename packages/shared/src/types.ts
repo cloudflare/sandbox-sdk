@@ -1109,6 +1109,8 @@ export interface CreatePtyOptions {
   cwd?: string;
   /** Environment variables */
   env?: Record<string, string>;
+  /** Session ID to attach PTY to (for session attachment) */
+  sessionId?: string;
 }
 
 /**
@@ -1188,6 +1190,8 @@ export interface PtyInfo {
   exitCode?: number;
   /** Structured exit information (populated when state is 'exited') */
   exitInfo?: PtyExitInfo;
+  /** Session ID this PTY is attached to (if any) */
+  sessionId?: string;
 }
 
 /**

@@ -40,6 +40,7 @@ export interface PtySession {
   dataListeners: Set<(data: string) => void>;
   exitListeners: Set<(code: number) => void>;
   createdAt: Date;
+  sessionId?: string;
 }
 
 export class PtyManager {
@@ -124,7 +125,8 @@ export class PtyManager {
       state: 'running',
       dataListeners,
       exitListeners,
-      createdAt: new Date()
+      createdAt: new Date(),
+      sessionId: options.sessionId
     };
 
     // Track exit
@@ -359,7 +361,8 @@ export class PtyManager {
       createdAt: session.createdAt.toISOString(),
       state: session.state,
       exitCode: session.exitCode,
-      exitInfo: session.exitInfo
+      exitInfo: session.exitInfo,
+      sessionId: session.sessionId
     };
   }
 }

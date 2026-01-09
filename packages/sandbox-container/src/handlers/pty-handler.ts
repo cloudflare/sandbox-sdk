@@ -3,8 +3,12 @@ import type {
   Logger,
   PtyCreateResult,
   PtyGetResult,
+  PtyInputRequest,
+  PtyInputResult,
   PtyKillResult,
-  PtyListResult
+  PtyListResult,
+  PtyResizeRequest,
+  PtyResizeResult
 } from '@repo/shared';
 import { ErrorCode } from '@repo/shared/errors';
 
@@ -57,12 +61,32 @@ export class PtyHandler extends BaseHandler<Request, Response> {
         return this.handleKill(request, context, ptyId);
       }
 
-      // Note: /input and /resize endpoints removed - PTY uses WebSocket for real-time I/O
+      // POST /api/pty/:id/input - Send input to PTY
+      if (action === 'input' && request.method === 'POST') {
+        return this.handleInput(request, context, ptyId);
+      }
+
+      // POST /api/pty/:id/resize - Resize PTY
+      if (action === 'resize' && request.method === 'POST') {
+        return this.handleResize(request, context, ptyId);
+      }
 
       // GET /api/pty/:id/stream - SSE output stream
       if (action === 'stream' && request.method === 'GET') {
         return this.handleStream(request, context, ptyId);
       }
+    }
+
+    // POST /api/pty/attach/:sessionId - Attach PTY to existing session
+    if (pathname.startsWith('/api/pty/attach/') && request.method === 'POST') {
+      const sessionId = pathname.split('/')[4];
+      if (!sessionId) {
+        return this.createErrorResponse(
+          { message: 'Session ID required', code: ErrorCode.VALIDATION_FAILED },
+          context
+        );
+      }
+      return this.handleAttach(request, context, sessionId);
     }
 
     return this.createErrorResponse(
@@ -186,7 +210,143 @@ export class PtyHandler extends BaseHandler<Request, Response> {
     return this.createTypedResponse(response, context);
   }
 
-  // Note: handleInput and handleResize removed - PTY uses WebSocket for real-time I/O
+  private async handleInput(
+    request: Request,
+    context: RequestContext,
+    ptyId: string
+  ): Promise<Response> {
+    const session = this.ptyManager.get(ptyId);
+
+    if (!session) {
+      return this.createErrorResponse(
+        { message: 'PTY not found', code: ErrorCode.PTY_NOT_FOUND },
+        context
+      );
+    }
+
+    const body = await this.parseRequestBody<PtyInputRequest>(request);
+
+    if (!body.data) {
+      return this.createErrorResponse(
+        { message: 'Input data required', code: ErrorCode.VALIDATION_FAILED },
+        context
+      );
+    }
+
+    const result = this.ptyManager.write(ptyId, body.data);
+
+    if (!result.success) {
+      return this.createErrorResponse(
+        {
+          message: result.error ?? 'PTY input failed',
+          code: ErrorCode.PTY_OPERATION_ERROR
+        },
+        context
+      );
+    }
+
+    const response: PtyInputResult = {
+      success: true,
+      ptyId,
+      timestamp: new Date().toISOString()
+    };
+
+    return this.createTypedResponse(response, context);
+  }
+
+  private async handleResize(
+    request: Request,
+    context: RequestContext,
+    ptyId: string
+  ): Promise<Response> {
+    const session = this.ptyManager.get(ptyId);
+
+    if (!session) {
+      return this.createErrorResponse(
+        { message: 'PTY not found', code: ErrorCode.PTY_NOT_FOUND },
+        context
+      );
+    }
+
+    const body = await this.parseRequestBody<PtyResizeRequest>(request);
+
+    if (body.cols === undefined || body.rows === undefined) {
+      return this.createErrorResponse(
+        {
+          message: 'Both cols and rows are required',
+          code: ErrorCode.VALIDATION_FAILED
+        },
+        context
+      );
+    }
+
+    const result = this.ptyManager.resize(ptyId, body.cols, body.rows);
+
+    if (!result.success) {
+      return this.createErrorResponse(
+        {
+          message: result.error ?? 'PTY resize failed',
+          code: ErrorCode.PTY_OPERATION_ERROR
+        },
+        context
+      );
+    }
+
+    const response: PtyResizeResult = {
+      success: true,
+      ptyId,
+      cols: body.cols,
+      rows: body.rows,
+      timestamp: new Date().toISOString()
+    };
+
+    return this.createTypedResponse(response, context);
+  }
+
+  private async handleAttach(
+    request: Request,
+    context: RequestContext,
+    sessionId: string
+  ): Promise<Response> {
+    // Check if session already has a PTY attached
+    const existingPtys = this.ptyManager.list();
+    const existingPty = existingPtys.find((p) => p.sessionId === sessionId);
+
+    if (existingPty && existingPty.state === 'running') {
+      return this.createErrorResponse(
+        {
+          message: `Session already has active PTY: ${existingPty.id}`,
+          code: ErrorCode.PTY_ALREADY_ATTACHED
+        },
+        context
+      );
+    }
+
+    // Create a PTY attached to the session
+    const body = await this.parseRequestBody<CreatePtyOptions>(request);
+    const ptySession = this.ptyManager.create({
+      ...body,
+      sessionId
+    });
+
+    const response: PtyCreateResult = {
+      success: true,
+      pty: {
+        id: ptySession.id,
+        cols: ptySession.cols,
+        rows: ptySession.rows,
+        command: ptySession.command,
+        cwd: ptySession.cwd,
+        createdAt: ptySession.createdAt.toISOString(),
+        state: ptySession.state,
+        exitCode: ptySession.exitCode,
+        sessionId
+      },
+      timestamp: new Date().toISOString()
+    };
+
+    return this.createTypedResponse(response, context);
+  }
 
   private async handleStream(
     _request: Request,
