@@ -599,8 +599,11 @@ export class Session {
         const pid = parseInt(pidText.trim(), 10);
 
         if (!Number.isNaN(pid)) {
-          // Send SIGTERM for graceful termination
-          process.kill(pid, 'SIGTERM');
+          // Send SIGTERM to the entire process group for graceful termination.
+          // Background commands run with job control enabled (set -m), which puts
+          // them in their own process group where PID equals PGID. Using negative
+          // PID kills all processes in the group, including any child processes.
+          process.kill(-pid, 'SIGTERM');
 
           // Clean up
           this.runningCommands.delete(commandId);
@@ -774,6 +777,13 @@ export class Session {
     if (isBackground) {
       // BACKGROUND PATTERN (for execStream/startProcess)
       // Command runs in subshell, shell continues immediately
+
+      // Enable job control so background jobs get their own process group.
+      // This allows killCommand() to terminate the entire process tree by
+      // sending SIGTERM to the process group (kill -PID).
+      script += `  set -m\n`;
+      script += `  \n`;
+
       // Create FIFOs and start labelers (background mode)
       script += `  # Pre-cleanup and create FIFOs with error handling\n`;
       script += `  rm -f "$sp" "$ep" && mkfifo "$sp" "$ep" || exit 1\n`;
