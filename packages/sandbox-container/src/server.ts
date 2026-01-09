@@ -33,7 +33,8 @@ async function createApplication(): Promise<{
   setupRoutes(router, container);
 
   // Create WebSocket adapter with the router for control plane multiplexing
-  const wsAdapter = new WebSocketAdapter(router, logger);
+  const ptyManager = container.get('ptyManager');
+  const wsAdapter = new WebSocketAdapter(router, ptyManager, logger);
 
   return {
     fetch: async (
@@ -134,6 +135,10 @@ export async function startServer(): Promise<ServerInstance> {
       try {
         const processService = app.container.get('processService');
         const portService = app.container.get('portService');
+        const ptyManager = app.container.get('ptyManager');
+
+        // Kill all PTY sessions
+        ptyManager.killAll();
 
         await processService.destroy();
         portService.destroy();
