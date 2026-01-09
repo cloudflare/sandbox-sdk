@@ -581,9 +581,10 @@ export class Session {
    * so they cannot be killed mid-execution (use timeout instead).
    *
    * @param commandId - The unique command identifier
+   * @param waitForExit - Whether to wait for the process to actually exit (default true)
    * @returns true if command was killed, false if not found or already completed
    */
-  async killCommand(commandId: string): Promise<boolean> {
+  async killCommand(commandId: string, waitForExit = true): Promise<boolean> {
     const handle = this.runningCommands.get(commandId);
     if (!handle) {
       return false; // Command not found or already completed
@@ -599,8 +600,33 @@ export class Session {
         const pid = parseInt(pidText.trim(), 10);
 
         if (!Number.isNaN(pid)) {
-          // Send SIGTERM for graceful termination
-          process.kill(pid, 'SIGTERM');
+          // Send SIGTERM to the entire process group for graceful termination.
+          // Background commands run with job control enabled (set -m), which puts
+          // them in their own process group where PID equals PGID. Using negative
+          // PID kills all processes in the group, including any child processes.
+          process.kill(-pid, 'SIGTERM');
+
+          // Wait for the process to actually exit before returning.
+          // The shell script writes an exit code file when the process exits.
+          // Use a 5 second timeout - if process doesn't respond to SIGTERM,
+          // escalate to SIGKILL.
+          if (waitForExit) {
+            try {
+              await Promise.race([
+                this.waitForExitCode(handle.exitCodeFile),
+                new Promise((_, reject) =>
+                  setTimeout(() => reject(new Error('kill timeout')), 5000)
+                )
+              ]);
+            } catch {
+              // Timeout or error - process might be ignoring SIGTERM, escalate to SIGKILL
+              try {
+                process.kill(-pid, 'SIGKILL');
+              } catch {
+                // Process already dead, ignore
+              }
+            }
+          }
 
           // Clean up
           this.runningCommands.delete(commandId);
@@ -632,10 +658,10 @@ export class Session {
     // Mark as destroying to prevent shell exit monitor from logging errors
     this.isDestroying = true;
 
-    // Kill all running commands first
+    // Kill all running commands first (don't wait for graceful exit during destroy)
     const runningCommandIds = Array.from(this.runningCommands.keys());
     await Promise.all(
-      runningCommandIds.map((commandId) => this.killCommand(commandId))
+      runningCommandIds.map((commandId) => this.killCommand(commandId, false))
     );
 
     if (this.shell && !this.shell.killed) {
@@ -774,6 +800,13 @@ export class Session {
     if (isBackground) {
       // BACKGROUND PATTERN (for execStream/startProcess)
       // Command runs in subshell, shell continues immediately
+
+      // Enable job control so background jobs get their own process group.
+      // This allows killCommand() to terminate the entire process tree by
+      // sending SIGTERM to the process group (kill -PID).
+      script += `  set -m\n`;
+      script += `  \n`;
+
       // Create FIFOs and start labelers (background mode)
       script += `  # Pre-cleanup and create FIFOs with error handling\n`;
       script += `  rm -f "$sp" "$ep" && mkfifo "$sp" "$ep" || exit 1\n`;

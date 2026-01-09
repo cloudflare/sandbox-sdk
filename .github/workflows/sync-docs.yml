@@ -1,4 +1,4 @@
-name: Documentation Sync with Claude Code
+name: Documentation Sync
 
 on:
   pull_request:
@@ -7,7 +7,9 @@ on:
 jobs:
   sync-docs:
     runs-on: ubuntu-latest
-    if: "!startsWith(github.event.pull_request.title, 'Version Packages')"
+    if: |
+      !startsWith(github.event.pull_request.title, 'Version Packages') &&
+      github.event.pull_request.head.repo.full_name == github.repository
     permissions:
       contents: write
       pull-requests: write
@@ -49,7 +51,7 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git checkout -b sync-docs-pr-${{ github.event.pull_request.number }}
 
-      - name: Create prompt for Claude Code
+      - name: Create prompt for OpenCode
         id: create-prompt
         run: |
           # Store PR metadata in environment variables to avoid shell escaping issues
@@ -226,12 +228,12 @@ jobs:
           cat /tmp/claude_prompt.md >> $GITHUB_OUTPUT
           echo "PROMPT_EOF" >> $GITHUB_OUTPUT
 
-      - name: Run Claude Code to create adapted PR
-        uses: anthropics/claude-code-action@v1
-        with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          github_token: ${{ steps.generate-token.outputs.token }}
-          prompt: ${{ steps.create-prompt.outputs.prompt }}
-          claude_args: '--allowed-tools "Read,Edit,Write,Bash"'
+      - name: Install OpenCode
+        run: curl -fsSL https://opencode.ai/install | bash
+
+      - name: Run OpenCode to create adapted PR
         env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GH_TOKEN: ${{ steps.generate-token.outputs.token }}
+        run: |
+          opencode run -m anthropic/claude-sonnet-4-20250514 "${{ steps.create-prompt.outputs.prompt }}"

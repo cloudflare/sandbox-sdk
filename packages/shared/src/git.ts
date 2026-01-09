@@ -1,6 +1,49 @@
 import type { LogContext, Logger } from './logger';
 
 /**
+ * Fallback repository name used when URL parsing fails
+ */
+export const FALLBACK_REPO_NAME = 'repository';
+
+/**
+ * Extract repository name from a Git URL
+ *
+ * Supports multiple URL formats:
+ * - HTTPS: https://github.com/user/repo.git → repo
+ * - HTTPS without .git: https://github.com/user/repo → repo
+ * - SSH: git@github.com:user/repo.git → repo
+ * - GitLab/others: https://gitlab.com/org/project.git → project
+ *
+ * @param repoUrl - Git repository URL (HTTPS or SSH format)
+ * @returns Repository name extracted from URL, or 'repository' as fallback
+ */
+export function extractRepoName(repoUrl: string): string {
+  // Try parsing as standard URL (https://, http://)
+  try {
+    const url = new URL(repoUrl);
+    const pathParts = url.pathname.split('/');
+    const lastPart = pathParts[pathParts.length - 1];
+    if (lastPart) {
+      return lastPart.replace(/\.git$/, '');
+    }
+  } catch {
+    // Not a standard URL, try SSH format
+  }
+
+  // For SSH URLs (git@github.com:user/repo.git), split by : and / to get last segment
+  // Only process if the URL contains path delimiters
+  if (repoUrl.includes(':') || repoUrl.includes('/')) {
+    const segments = repoUrl.split(/[:/]/).filter(Boolean);
+    const lastSegment = segments[segments.length - 1];
+    if (lastSegment) {
+      return lastSegment.replace(/\.git$/, '');
+    }
+  }
+
+  return FALLBACK_REPO_NAME;
+}
+
+/**
  * Redact credentials from URLs for secure logging
  *
  * Replaces any credentials (username:password, tokens, etc.) embedded

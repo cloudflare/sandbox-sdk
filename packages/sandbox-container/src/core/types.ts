@@ -269,7 +269,16 @@ export interface ProcessRecord {
 // Export ProcessRecord as ProcessInfo for consistency with test usage
 export type ProcessInfo = ProcessRecord;
 
-export type { ProcessOptions } from '../validation/schemas';
+// Process options for container-internal execution (includes session routing)
+export interface ProcessOptions {
+  sessionId?: string;
+  processId?: string;
+  timeoutMs?: number;
+  env?: Record<string, string>;
+  cwd?: string;
+  encoding?: string;
+  autoCleanup?: boolean;
+}
 
 export interface CommandResult {
   success: boolean;
@@ -328,10 +337,9 @@ export interface CloneOptions {
   branch?: string;
   targetDir?: string;
   sessionId?: string;
+  /** Clone depth for shallow clones (e.g., 1 for latest commit only) */
+  depth?: number;
 }
-
-// Import request types from Zod schemas - single source of truth!
-export type { ExecuteRequest } from '../validation/schemas';
 
 export interface ExecuteResponse {
   success: boolean;
@@ -340,8 +348,6 @@ export interface ExecuteResponse {
   stderr?: string;
   processId?: string;
 }
-
-export type { ReadFileRequest } from '../validation/schemas';
 
 export interface ReadFileResponse {
   success: boolean;
@@ -352,8 +358,6 @@ export interface ReadFileResponse {
   timestamp: string;
 }
 
-export type { WriteFileRequest } from '../validation/schemas';
-
 export interface WriteFileResponse {
   success: boolean;
   exitCode: number;
@@ -361,16 +365,12 @@ export interface WriteFileResponse {
   timestamp: string;
 }
 
-export type { DeleteFileRequest } from '../validation/schemas';
-
 export interface DeleteFileResponse {
   success: boolean;
   exitCode: number;
   path: string;
   timestamp: string;
 }
-
-export type { RenameFileRequest } from '../validation/schemas';
 
 export interface RenameFileResponse {
   success: boolean;
@@ -380,8 +380,6 @@ export interface RenameFileResponse {
   timestamp: string;
 }
 
-export type { MoveFileRequest } from '../validation/schemas';
-
 export interface MoveFileResponse {
   success: boolean;
   exitCode: number;
@@ -389,8 +387,6 @@ export interface MoveFileResponse {
   newPath: string;
   timestamp: string;
 }
-
-export type { GitCheckoutRequest } from '../validation/schemas';
 
 export interface GitCheckoutResponse {
   success: boolean;
@@ -402,8 +398,6 @@ export interface GitCheckoutResponse {
   targetDir: string;
   timestamp: string;
 }
-
-export type { ListFilesRequest, MkdirRequest } from '../validation/schemas';
 
 export interface MkdirResponse {
   success: boolean;
@@ -417,10 +411,3 @@ export interface MkdirResponse {
 
 // Import StartProcessRequest from @repo/shared for type safety across client/container boundary
 export type { StartProcessRequest } from '@repo/shared';
-
-// Import union types from Zod schemas
-export type {
-  ExposePortRequest,
-  FileOperation,
-  FileRequest
-} from '../validation/schemas';

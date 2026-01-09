@@ -877,7 +877,12 @@ export interface ExecutionSession {
   // Git operations
   gitCheckout(
     repoUrl: string,
-    options?: { branch?: string; targetDir?: string }
+    options?: {
+      branch?: string;
+      targetDir?: string;
+      /** Clone depth for shallow clones (e.g., 1 for latest commit only) */
+      depth?: number;
+    }
   ): Promise<GitCheckoutResult>;
 
   // Environment management
@@ -971,6 +976,16 @@ export interface MountBucketOptions {
    * - 'no_check_certificate' - Skip SSL certificate validation (dev/testing only)
    */
   s3fsOptions?: string[];
+
+  /**
+   * Optional prefix/subdirectory within the bucket to mount.
+   *
+   * When specified, only the contents under this prefix will be visible
+   * at the mount point, enabling multi-tenant isolation within a single bucket.
+   *
+   * Must start with '/' (e.g., '/sessions/user123' or '/data/uploads/')
+   */
+  prefix?: string;
 }
 
 // Main Sandbox interface
@@ -1025,7 +1040,12 @@ export interface ISandbox {
   // Git operations
   gitCheckout(
     repoUrl: string,
-    options?: { branch?: string; targetDir?: string }
+    options?: {
+      branch?: string;
+      targetDir?: string;
+      /** Clone depth for shallow clones (e.g., 1 for latest commit only) */
+      depth?: number;
+    }
   ): Promise<GitCheckoutResult>;
 
   // Environment management
