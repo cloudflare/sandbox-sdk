@@ -32,9 +32,6 @@ async function createApplication(): Promise<{
   router.use(container.get('corsMiddleware'));
   setupRoutes(router, container);
 
-  // Log registered routes for debugging container caching issues
-  router.logRegisteredRoutes();
-
   // Create WebSocket adapter with the router for control plane multiplexing
   const ptyManager = container.get('ptyManager');
   const wsAdapter = new WebSocketAdapter(router, ptyManager, logger);

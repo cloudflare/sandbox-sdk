@@ -39,21 +39,6 @@ export class Router {
     this.globalMiddleware.push(middleware);
   }
 
-  /**
-   * Log all registered routes at startup (INFO level for visibility)
-   */
-  logRegisteredRoutes(): void {
-    const ptyRoutes = this.routes
-      .filter((r) => r.path.includes('/pty'))
-      .map((r) => `${r.method} ${r.path}`);
-
-    this.logger.info('Routes registered at startup', {
-      totalRoutes: this.routes.length,
-      ptyRouteCount: ptyRoutes.length,
-      ptyRoutes: ptyRoutes.join(', ')
-    });
-  }
-
   private validateHttpMethod(method: string): HttpMethod {
     const validMethods: HttpMethod[] = [
       'GET',
@@ -79,20 +64,7 @@ export class Router {
     const route = this.matchRoute(method, pathname);
 
     if (!route) {
-      // Log at INFO for PTY routes to help debug 404 issues in CI
-      const isPtyRoute = pathname.includes('/pty');
-      const logLevel = isPtyRoute ? 'info' : 'debug';
-      const ptyRoutes = this.routes
-        .filter((r) => r.path.includes('/pty'))
-        .map((r) => `${r.method} ${r.path}`);
-
-      this.logger[logLevel]('No route found', {
-        method,
-        pathname,
-        totalRoutes: this.routes.length,
-        ptyRouteCount: ptyRoutes.length,
-        ptyRoutes: ptyRoutes.join(', ')
-      });
+      this.logger.debug('No route found', { method, pathname });
       return this.createNotFoundResponse();
     }
 
