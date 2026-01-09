@@ -266,15 +266,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   async setKeepAlive(keepAlive: boolean): Promise<void> {
     this.keepAliveEnabled = keepAlive;
     await this.ctx.storage.put('keepAliveEnabled', keepAlive);
-    if (keepAlive) {
-      this.logger.info(
-        'KeepAlive mode enabled - container will stay alive until explicitly destroyed'
-      );
-    } else {
-      this.logger.info(
-        'KeepAlive mode disabled - container will timeout normally'
-      );
-    }
   }
 
   // RPC method to set environment variables
