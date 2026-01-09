@@ -249,12 +249,12 @@ console.log("Line 3");
     const marker = `KILL_TEST_${Date.now()}`;
 
     // Start a process that spawns child processes
-    // The script writes a marker file, starts background sleep processes, and waits
+    // The script writes child PIDs to a marker file, echoes CHILDREN_READY, then waits
     const startResponse = await fetch(`${workerUrl}/api/process/start`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        command: `bash -c "sleep 300 & CHILD1=\\$!; sleep 300 & CHILD2=\\$!; echo \\$CHILD1 \\$CHILD2 > /tmp/${marker}; wait"`
+        command: `bash -c "sleep 300 & CHILD1=\\$!; sleep 300 & CHILD2=\\$!; echo \\$CHILD1 \\$CHILD2 > /tmp/${marker}; echo CHILDREN_READY; wait"`
       })
     });
 
@@ -262,8 +262,19 @@ console.log("Line 3");
     const startData = (await startResponse.json()) as Process;
     const processId = startData.id;
 
-    // Wait for the children to start and marker file to be written
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+    // Wait for CHILDREN_READY to appear in process output
+    const waitLogResponse = await fetch(
+      `${workerUrl}/api/process/${processId}/waitForLog`,
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          pattern: 'CHILDREN_READY',
+          timeout: 10000
+        })
+      }
+    );
+    expect(waitLogResponse.status).toBe(200);
 
     // Read the child PIDs from marker file
     const readPidsResponse = await fetch(`${workerUrl}/api/execute`, {
@@ -296,8 +307,16 @@ console.log("Line 3");
     });
     expect(killResponse.status).toBe(200);
 
-    // Wait for processes to be killed
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+    // Wait for the process to exit
+    const waitExitResponse = await fetch(
+      `${workerUrl}/api/process/${processId}/waitForExit`,
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ timeout: 5000 })
+      }
+    );
+    expect(waitExitResponse.status).toBe(200);
 
     // Verify the child processes are gone (killed with the parent)
     const checkAfter = await fetch(`${workerUrl}/api/execute`, {
