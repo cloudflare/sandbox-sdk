@@ -100,32 +100,35 @@ jobs:
           echo "tag=pr-${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
 
       # Build base, python, opencode in parallel (independent targets)
+      # Use PR-specific cache scope to avoid cross-PR cache pollution
       - name: Build base, python, opencode images in parallel
         run: |
           set -e
           VERSION="${{ needs.unit-tests.outputs.version }}"
+          PR_NUM="${{ github.event.pull_request.number }}"
+          CACHE_SCOPE="pr-${PR_NUM}"
 
-          echo "Starting parallel builds..."
+          echo "Starting parallel builds with cache scope: ${CACHE_SCOPE}"
 
           docker buildx build \
-            --cache-from type=gha,scope=sandbox-base \
-            --cache-to type=gha,mode=max,scope=sandbox-base \
+            --cache-from type=gha,scope=${CACHE_SCOPE}-sandbox-base \
+            --cache-to type=gha,mode=max,scope=${CACHE_SCOPE}-sandbox-base \
             --load -t sandbox:local \
             --build-arg SANDBOX_VERSION=$VERSION \
             -f packages/sandbox/Dockerfile --target default . &
           PID_BASE=$!
 
           docker buildx build \
-            --cache-from type=gha,scope=sandbox-python \
-            --cache-to type=gha,mode=max,scope=sandbox-python \
+            --cache-from type=gha,scope=${CACHE_SCOPE}-sandbox-python \
+            --cache-to type=gha,mode=max,scope=${CACHE_SCOPE}-sandbox-python \
             --load -t sandbox-python:local \
             --build-arg SANDBOX_VERSION=$VERSION \
             -f packages/sandbox/Dockerfile --target python . &
           PID_PYTHON=$!
 
           docker buildx build \
-            --cache-from type=gha,scope=sandbox-opencode \
-            --cache-to type=gha,mode=max,scope=sandbox-opencode \
+            --cache-from type=gha,scope=${CACHE_SCOPE}-sandbox-opencode \
+            --cache-to type=gha,mode=max,scope=${CACHE_SCOPE}-sandbox-opencode \
             --load -t sandbox-opencode:local \
             --build-arg SANDBOX_VERSION=$VERSION \
             -f packages/sandbox/Dockerfile --target opencode . &
@@ -150,9 +153,12 @@ jobs:
       # Build standalone (references base from registry)
       - name: Build standalone image
         run: |
+          PR_NUM="${{ github.event.pull_request.number }}"
+          CACHE_SCOPE="pr-${PR_NUM}"
+
           docker buildx build \
-            --cache-from type=gha,scope=sandbox-standalone \
-            --cache-to type=gha,mode=max,scope=sandbox-standalone \
+            --cache-from type=gha,scope=${CACHE_SCOPE}-sandbox-standalone \
+            --cache-to type=gha,mode=max,scope=${CACHE_SCOPE}-sandbox-standalone \
             --load -t sandbox-standalone:local \
             --build-arg BASE_IMAGE=registry.cloudflare.com/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/sandbox:${{ steps.tags.outputs.tag }} \
             -f tests/e2e/test-worker/Dockerfile.standalone tests/e2e/test-worker
