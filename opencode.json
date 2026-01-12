@@ -1,12 +1,6 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": ["oh-my-opencode"],
-
-  "model": "anthropic/claude-sonnet-4-20250514",
-  "small_model": "anthropic/claude-haiku-4-5-20250514",
-
   "instructions": ["docs/ARCHITECTURE.md", "docs/CONCURRENCY.md"],
-
   "mcp": {
     "cloudflare-docs": {
       "type": "remote",
@@ -14,7 +8,6 @@
       "enabled": true
     }
   },
-
   "formatter": {
     "biome": {
       "command": ["npx", "biome", "check", "--write"],
