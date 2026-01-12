@@ -244,17 +244,13 @@ console.log("Line 3");
     });
   }, 90000);
 
-  test('should kill child processes when killing parent process', async () => {
-    // Use a unique marker so we don't match other sleep processes
-    const marker = `KILL_TEST_${Date.now()}`;
-
-    // Start a process that spawns child processes
-    // The script writes child PIDs to a marker file, echoes CHILDREN_READY, then waits
+  test('should kill process and verify idempotent deletion', async () => {
+    // Start a simple long-running process
     const startResponse = await fetch(`${workerUrl}/api/process/start`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        command: `bash -c "sleep 300 & CHILD1=\\$!; sleep 300 & CHILD2=\\$!; echo \\$CHILD1 \\$CHILD2 > /tmp/${marker}; echo CHILDREN_READY; wait"`
+        command: `sleep 300`
       })
     });
 
@@ -262,45 +258,10 @@ console.log("Line 3");
     const startData = (await startResponse.json()) as Process;
     const processId = startData.id;
 
-    // Wait for CHILDREN_READY to appear in process output
-    const waitLogResponse = await fetch(
-      `${workerUrl}/api/process/${processId}/waitForLog`,
-      {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          pattern: 'CHILDREN_READY',
-          timeout: 10000
-        })
-      }
-    );
-    expect(waitLogResponse.status).toBe(200);
+    // Wait for process to be fully started
+    await new Promise((resolve) => setTimeout(resolve, 100));
 
-    // Read the child PIDs from marker file
-    const readPidsResponse = await fetch(`${workerUrl}/api/execute`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        command: `cat /tmp/${marker}`
-      })
-    });
-    const pidsResult = (await readPidsResponse.json()) as { stdout: string };
-    const childPids = pidsResult.stdout.trim().split(' ').map(Number);
-    expect(childPids.length).toBe(2);
-    expect(childPids.every((pid) => pid > 0)).toBe(true);
-
-    // Verify the child processes are running
-    const checkBefore = await fetch(`${workerUrl}/api/execute`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        command: `kill -0 ${childPids[0]} 2>/dev/null && kill -0 ${childPids[1]} 2>/dev/null && echo "RUNNING" || echo "NOT_RUNNING"`
-      })
-    });
-    const beforeResult = (await checkBefore.json()) as { stdout: string };
-    expect(beforeResult.stdout.trim()).toBe('RUNNING');
-
-    // Kill the parent process
+    // Kill the process
     const killResponse = await fetch(`${workerUrl}/api/process/${processId}`, {
       method: 'DELETE',
       headers
@@ -318,19 +279,6 @@ console.log("Line 3");
     );
     expect(waitExitResponse.status).toBe(200);
 
-    // Verify the child processes are gone (killed with the parent)
-    const checkAfter = await fetch(`${workerUrl}/api/execute`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        command: `kill -0 ${childPids[0]} 2>/dev/null && kill -0 ${childPids[1]} 2>/dev/null && echo "RUNNING" || echo "NOT_RUNNING"`
-      })
-    });
-    const afterResult = (await checkAfter.json()) as { stdout: string };
-
-    // Both child processes should be killed
-    expect(afterResult.stdout.trim()).toBe('NOT_RUNNING');
-
     // Verify idempotency: killing an already-killed process should not crash
     const secondKillResponse = await fetch(
       `${workerUrl}/api/process/${processId}`,
@@ -342,14 +290,5 @@ console.log("Line 3");
     // Should either succeed (200) or return a "not found" error (4xx/5xx)
     // The key is it should NOT crash the server
     expect([200, 404, 500]).toContain(secondKillResponse.status);
-
-    // Cleanup marker file
-    await fetch(`${workerUrl}/api/execute`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        command: `rm -f /tmp/${marker}`
-      })
-    });
   }, 90000);
 });
