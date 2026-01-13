@@ -1,4 +1,5 @@
 import type {
+  ExposePortRequest,
   PortCloseResult,
   PortExposeResult,
   PortListResult,
@@ -7,15 +8,12 @@ import type {
 import { BaseHttpClient } from './base-client';
 
 // Re-export for convenience
-export type { PortExposeResult, PortCloseResult, PortListResult };
-
-/**
- * Request interface for exposing ports
- */
-export interface ExposePortRequest {
-  port: number;
-  name?: string;
-}
+export type {
+  ExposePortRequest,
+  PortExposeResult,
+  PortCloseResult,
+  PortListResult
+};
 
 /**
  * Request interface for unexposing ports

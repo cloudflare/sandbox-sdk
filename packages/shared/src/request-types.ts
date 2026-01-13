@@ -11,7 +11,7 @@ export interface ExecuteRequest {
   sessionId?: string;
   background?: boolean;
   timeoutMs?: number;
-  env?: Record<string, string>;
+  env?: Record<string, string | undefined>;
   cwd?: string;
 }
 
@@ -24,7 +24,7 @@ export interface StartProcessRequest {
   sessionId?: string;
   processId?: string;
   timeoutMs?: number;
-  env?: Record<string, string>;
+  env?: Record<string, string | undefined>;
   cwd?: string;
   encoding?: string;
   autoCleanup?: boolean;
@@ -130,7 +130,7 @@ export interface ListFilesRequest {
 export interface SessionCreateRequest {
   id?: string;
   name?: string;
-  env?: Record<string, string>;
+  env?: Record<string, string | undefined>;
   cwd?: string;
 }
 

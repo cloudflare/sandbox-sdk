@@ -892,6 +892,77 @@ describe('Sandbox - Automatic Session Management', () => {
     });
   });
 
+  describe('custom token validation', () => {
+    beforeEach(async () => {
+      await sandbox.setSandboxName('test-sandbox', false);
+
+      vi.spyOn(sandbox.client.ports, 'exposePort').mockResolvedValue({
+        success: true,
+        port: 8080,
+        url: 'http://localhost:8080',
+        timestamp: new Date().toISOString()
+      });
+
+      vi.mocked(mockCtx.storage!.get).mockResolvedValue({} as any);
+      vi.mocked(mockCtx.storage!.put).mockResolvedValue(undefined);
+    });
+
+    it('should validate token format and length', async () => {
+      const result = await sandbox.exposePort(8080, {
+        hostname: 'example.com',
+        token: 'abc-123_xyz'
+      });
+      expect(result.url).toContain('abc-123_xyz');
+
+      await expect(
+        sandbox.exposePort(8080, { hostname: 'example.com', token: '' })
+      ).rejects.toThrow('Custom token cannot be empty');
+
+      await expect(
+        sandbox.exposePort(8080, {
+          hostname: 'example.com',
+          token: 'a1234567890123456'
+        })
+      ).rejects.toThrow('Maximum 16 characters');
+
+      await expect(
+        sandbox.exposePort(8080, { hostname: 'example.com', token: 'ABC123' })
+      ).rejects.toThrow('lowercase letters');
+    });
+
+    it('should prevent token collision across different ports', async () => {
+      await sandbox.exposePort(8080, {
+        hostname: 'example.com',
+        token: 'shared'
+      });
+
+      vi.mocked(mockCtx.storage!.get).mockResolvedValueOnce({
+        '8080': 'shared'
+      } as any);
+
+      await expect(
+        sandbox.exposePort(8081, { hostname: 'example.com', token: 'shared' })
+      ).rejects.toThrow(/already in use by port 8080/);
+    });
+
+    it('should allow re-exposing same port with same token', async () => {
+      await sandbox.exposePort(8080, {
+        hostname: 'example.com',
+        token: 'stable'
+      });
+
+      vi.mocked(mockCtx.storage!.get).mockResolvedValueOnce({
+        '8080': 'stable'
+      } as any);
+
+      const result = await sandbox.exposePort(8080, {
+        hostname: 'example.com',
+        token: 'stable'
+      });
+      expect(result.url).toContain('stable');
+    });
+  });
+
   describe('sleepAfter configuration', () => {
     it('should call renewActivityTimeout when setSleepAfter is called', async () => {
       // Spy on renewActivityTimeout (inherited from Container)

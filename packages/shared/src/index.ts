@@ -4,7 +4,7 @@
  */
 
 // Export environment utilities
-export { getEnvString } from './env.js';
+export { filterEnvVars, getEnvString, partitionEnvVars } from './env.js';
 // Export git utilities
 export {
   extractRepoName,

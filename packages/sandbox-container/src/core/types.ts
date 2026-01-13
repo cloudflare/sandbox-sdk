@@ -227,7 +227,7 @@ export interface SessionData {
   activeProcess: string | null;
   createdAt: Date;
   expiresAt?: Date;
-  env?: Record<string, string>;
+  env?: Record<string, string | undefined>;
   cwd?: string;
 }
 
@@ -274,7 +274,7 @@ export interface ProcessOptions {
   sessionId?: string;
   processId?: string;
   timeoutMs?: number;
-  env?: Record<string, string>;
+  env?: Record<string, string | undefined>;
   cwd?: string;
   encoding?: string;
   autoCleanup?: boolean;

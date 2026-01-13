@@ -232,7 +232,5 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GH_TOKEN: ${{ steps.generate-token.outputs.token }}
-          OPENCODE_PROMPT: ${{ steps.create-prompt.outputs.prompt }}
         run: |
-          # Pass prompt via environment variable to avoid shell escaping issues
-          opencode run -m anthropic/claude-sonnet-4-20250514 "$OPENCODE_PROMPT"
+          opencode run -m anthropic/claude-sonnet-4-20250514 < /tmp/claude_prompt.md

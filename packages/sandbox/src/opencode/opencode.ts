@@ -175,6 +175,10 @@ async function startOpencodeServer(
       for (const [providerId, providerConfig] of Object.entries(
         config.provider
       )) {
+        if (providerId === 'cloudflareAIGateway') {
+          continue;
+        }
+
         // Try options.apiKey first (official Config type)
         let apiKey = providerConfig?.options?.apiKey;
         // Fall back to top-level apiKey for convenience
@@ -185,6 +189,23 @@ async function startOpencodeServer(
         if (typeof apiKey === 'string') {
           const envVar = `${providerId.toUpperCase()}_API_KEY`;
           env[envVar] = apiKey;
+        }
+      }
+
+      const aiGatewayConfig = config.provider.cloudflareAIGateway;
+      if (aiGatewayConfig?.options) {
+        const options = aiGatewayConfig.options as Record<string, unknown>;
+
+        if (typeof options.accountId === 'string') {
+          env.CLOUDFLARE_ACCOUNT_ID = options.accountId;
+        }
+
+        if (typeof options.gatewayId === 'string') {
+          env.CLOUDFLARE_GATEWAY_ID = options.gatewayId;
+        }
+
+        if (typeof options.apiToken === 'string') {
+          env.CLOUDFLARE_API_TOKEN = options.apiToken;
         }
       }
     }
@@ -244,7 +265,21 @@ async function startOpencodeServer(
  * const sandbox = getSandbox(env.Sandbox, 'my-agent')
  * const server = await createOpencodeServer(sandbox, {
  *   directory: '/home/user/my-project',
- *   config: { provider: { anthropic: { options: { apiKey: env.ANTHROPIC_KEY } } } }
+ *   config: {
+ *     provider: {
+ *       anthropic: {
+ *         options: { apiKey: env.ANTHROPIC_KEY }
+ *       },
+ *       // Optional: Route all providers through Cloudflare AI Gateway
+ *       cloudflareAIGateway: {
+ *         options: {
+ *           accountId: env.CF_ACCOUNT_ID,
+ *           gatewayId: env.CF_GATEWAY_ID,
+ *           apiToken: env.CF_API_TOKEN
+ *         }
+ *       }
+ *     }
+ *   }
  * })
  *
  * // Proxy requests to the web UI
@@ -295,7 +330,21 @@ export async function createOpencodeServer(
  * const sandbox = getSandbox(env.Sandbox, 'my-agent')
  * const { client, server } = await createOpencode(sandbox, {
  *   directory: '/home/user/my-project',
- *   config: { provider: { anthropic: { options: { apiKey: env.ANTHROPIC_KEY } } } }
+ *   config: {
+ *     provider: {
+ *       anthropic: {
+ *         options: { apiKey: env.ANTHROPIC_KEY }
+ *       },
+ *       // Optional: Route all providers through Cloudflare AI Gateway
+ *       cloudflareAIGateway: {
+ *         options: {
+ *           accountId: env.CF_ACCOUNT_ID,
+ *           gatewayId: env.CF_GATEWAY_ID,
+ *           apiToken: env.CF_API_TOKEN
+ *         }
+ *       }
+ *     }
+ *   }
  * })
  *
  * // Use the SDK client for programmatic access
@@ -354,7 +403,21 @@ export async function createOpencode<TClient = unknown>(
  *     const sandbox = getSandbox(env.Sandbox, 'opencode')
  *     const server = await createOpencodeServer(sandbox, {
  *       directory: '/home/user/project',
- *       config: { provider: { anthropic: { options: { apiKey: env.ANTHROPIC_KEY } } } }
+ *       config: {
+ *         provider: {
+ *           anthropic: {
+ *             options: { apiKey: env.ANTHROPIC_KEY }
+ *           },
+ *           // Optional: Route all providers through Cloudflare AI Gateway
+ *           cloudflareAIGateway: {
+ *             options: {
+ *               accountId: env.CF_ACCOUNT_ID,
+ *               gatewayId: env.CF_GATEWAY_ID,
+ *               apiToken: env.CF_API_TOKEN
+ *             }
+ *           }
+ *         }
+ *       }
  *     })
  *     return proxyToOpencode(request, sandbox, server)
  *   }
