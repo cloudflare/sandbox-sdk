@@ -23,7 +23,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { watch } from 'node:fs';
+import { readFileSync, watch } from 'node:fs';
 import { mkdir, open, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
@@ -600,16 +600,29 @@ export class Session {
         const pid = parseInt(pidText.trim(), 10);
 
         if (!Number.isNaN(pid)) {
-          // Send SIGTERM to the entire process group for graceful termination.
-          // Background commands run with job control enabled (set -m), which puts
-          // them in their own process group where PID equals PGID. Using negative
-          // PID kills all processes in the group, including any child processes.
-          process.kill(-pid, 'SIGTERM');
+          // Recursively kill process and all descendants via /proc tree walking.
+          const killTree = (targetPid: number, signal: NodeJS.Signals) => {
+            try {
+              const childrenFile = `/proc/${targetPid}/task/${targetPid}/children`;
+              for (const childPid of readFileSync(childrenFile, 'utf8')
+                .trim()
+                .split(/\s+/)
+                .filter(Boolean)) {
+                killTree(parseInt(childPid, 10), signal);
+              }
+            } catch {
+              // Process exited or /proc unavailable
+            }
+            try {
+              process.kill(targetPid, signal);
+            } catch {
+              // Process already exited
+            }
+          };
 
-          // Wait for the process to actually exit before returning.
-          // The shell script writes an exit code file when the process exits.
-          // Use a 5 second timeout - if process doesn't respond to SIGTERM,
-          // escalate to SIGKILL.
+          killTree(pid, 'SIGTERM');
+
+          // Wait for the main process to exit with timeout
           if (waitForExit) {
             try {
               await Promise.race([
@@ -619,12 +632,8 @@ export class Session {
                 )
               ]);
             } catch {
-              // Timeout or error - process might be ignoring SIGTERM, escalate to SIGKILL
-              try {
-                process.kill(-pid, 'SIGKILL');
-              } catch {
-                // Process already dead, ignore
-              }
+              // Timeout - escalate to SIGKILL
+              killTree(pid, 'SIGKILL');
             }
           }
 
@@ -801,12 +810,6 @@ export class Session {
       // BACKGROUND PATTERN (for execStream/startProcess)
       // Command runs in subshell, shell continues immediately
 
-      // Enable job control so background jobs get their own process group.
-      // This allows killCommand() to terminate the entire process tree by
-      // sending SIGTERM to the process group (kill -PID).
-      script += `  set -m\n`;
-      script += `  \n`;
-
       // Create FIFOs and start labelers (background mode)
       script += `  # Pre-cleanup and create FIFOs with error handling\n`;
       script += `  rm -f "$sp" "$ep" && mkfifo "$sp" "$ep" || exit 1\n`;
@@ -822,25 +825,20 @@ export class Session {
       script += `  \n`;
       if (cwd) {
         const safeCwd = this.escapeShellPath(cwd);
-        script += `  # Save and change directory\n`;
         script += `  PREV_DIR=$(pwd)\n`;
         script += `  if cd ${safeCwd}; then\n`;
-        script += `    # Execute command in BACKGROUND (runs in subshell, enables concurrency)\n`;
         script += `    {\n`;
         script += `${buildCommandBlock('CMD_EXIT', 6)}\n`;
-        script += `      # Write exit code\n`;
         script += `      echo "$CMD_EXIT" > ${safeExitCodeFile}.tmp\n`;
         script += `      mv ${safeExitCodeFile}.tmp ${safeExitCodeFile}\n`;
         script += `    } < /dev/null > "$sp" 2> "$ep" & CMD_PID=$!\n`;
-        script += `    # Write PID for process killing\n`;
         script += `    echo "$CMD_PID" > ${safePidFile}.tmp\n`;
         script += `    mv ${safePidFile}.tmp ${safePidFile}\n`;
         if (safePidPipe) {
           script += `    # Notify PID via FIFO (unblocks waitForPidViaPipe)\n`;
           script += `    echo "$CMD_PID" > ${safePidPipe}\n`;
         }
-        script += `    # Background monitor: waits for labelers to finish (after FIFO EOF)\n`;
-        script += `    # and then removes the FIFOs. PID file is cleaned up by TypeScript.\n`;
+        script += `    # Background monitor: waits for labelers to finish, then cleans up FIFOs\n`;
         script += `    (\n`;
         script += `      wait "$r1" "$r2" 2>/dev/null\n`;
         script += `      rm -f "$sp" "$ep"\n`;
@@ -857,22 +855,18 @@ export class Session {
         }
         script += `  fi\n`;
       } else {
-        script += `  # Execute command in BACKGROUND (runs in subshell, enables concurrency)\n`;
         script += `  {\n`;
         script += `${buildCommandBlock('CMD_EXIT', 4)}\n`;
-        script += `    # Write exit code\n`;
         script += `    echo "$CMD_EXIT" > ${safeExitCodeFile}.tmp\n`;
         script += `    mv ${safeExitCodeFile}.tmp ${safeExitCodeFile}\n`;
         script += `  } < /dev/null > "$sp" 2> "$ep" & CMD_PID=$!\n`;
-        script += `  # Write PID for process killing\n`;
         script += `  echo "$CMD_PID" > ${safePidFile}.tmp\n`;
         script += `  mv ${safePidFile}.tmp ${safePidFile}\n`;
         if (safePidPipe) {
           script += `  # Notify PID via FIFO (unblocks waitForPidViaPipe)\n`;
           script += `  echo "$CMD_PID" > ${safePidPipe}\n`;
         }
-        script += `  # Background monitor: waits for labelers to finish (after FIFO EOF)\n`;
-        script += `  # and then removes the FIFOs. PID file is cleaned up by TypeScript.\n`;
+        script += `  # Background monitor: waits for labelers to finish, then cleans up FIFOs\n`;
         script += `  (\n`;
         script += `    wait "$r1" "$r2" 2>/dev/null\n`;
         script += `    rm -f "$sp" "$ep"\n`;
