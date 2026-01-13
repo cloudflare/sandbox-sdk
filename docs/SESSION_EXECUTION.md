@@ -1,100 +1,198 @@
 # Session Execution Architecture
 
-This document explains how the container session executes commands reliably while preserving shell state and separating stdout/stderr.
+This document explains the **architecture and design decisions** for command execution in the container session. For implementation details (bash idioms, data flow diagrams, annotated code patterns), see the source file:
+
+📁 **Implementation**: [`packages/sandbox-container/src/session.ts`](../packages/sandbox-container/src/session.ts)
 
 ## Goals
 
-- Preserve session state across commands (cwd, env vars, shell functions)
-- Cleanly separate stdout and stderr for each command
-- Be robust to commands that produce no output (e.g., `cd`, `mkdir`, variable assignment)
-- Provide deterministic completion signaling (exit code file) without hanging
+1. **Preserve session state** across commands (cwd, env vars, shell functions)
+2. **Separate stdout and stderr** reliably for each command
+3. **Handle silent commands** (e.g., `cd`, `mkdir`, variable assignment) without hanging
+4. **Signal completion deterministically** via exit code files
+5. **Support process termination** including all descendant processes
 
 ## Two Execution Modes
 
+We use two distinct patterns because they have fundamentally different requirements:
+
+| Mode           | API                              | State Persists? | Streaming? | Killable?           |
+| -------------- | -------------------------------- | --------------- | ---------- | ------------------- |
+| **Foreground** | `exec()`                         | ✅ Yes          | ❌ No      | ❌ No (use timeout) |
+| **Background** | `execStream()`, `startProcess()` | ❌ No           | ✅ Yes     | ✅ Yes              |
+
 ### Foreground (`exec`)
 
-- Runs in the main bash shell so state persists across commands.
-- Writes stdout/stderr to temporary files, then prefixes and merges them into the log.
-- Bash waits for file redirects to complete before continuing, ensuring the log is fully written before the exit code is published.
-- This avoids race conditions from process substitution buffering where log reads could happen before writes complete.
+**Design goal**: Run commands in the main shell so state changes (cd, export, functions) persist.
 
-Pseudo:
+**Approach**: Temp files + synchronous prefixing
 
 ```
-# Foreground
-{ command; } > "$log.stdout" 2> "$log.stderr"
-EXIT_CODE=$?
-# Prefix and merge into main log
-(while read line; do printf "\x01\x01\x01%s\n" "$line"; done < "$log.stdout") >> "$log"
-(while read line; do printf "\x02\x02\x02%s\n" "$line"; done < "$log.stderr") >> "$log"
-rm -f "$log.stdout" "$log.stderr"
-# Atomically publish exit code
-echo "$EXIT_CODE" > "$exit.tmp" && mv "$exit.tmp" "$exit"
+Command ──▶ stdout.tmp, stderr.tmp ──▶ Prefix lines ──▶ log file ──▶ exit code
+            (file redirects)           (synchronous)     (merged)     (atomic write)
 ```
+
+**Why temp files instead of FIFOs?**
+
+- File redirects are synchronous - bash waits for all writes before continuing
+- FIFOs/process substitution are asynchronous - writes may be buffered when we try to read
+- This eliminates race conditions with large outputs (e.g., base64-encoded files)
+
+**Why this works for state persistence**:
+
+- Uses `{ cmd }` (group command) not `( cmd )` (subshell)
+- Group commands run in the current shell, so `cd`, `export`, etc. affect subsequent commands
 
 ### Background (`execStream` / `startProcess`)
 
-- Uses named FIFOs and background labelers:
-  - Create two FIFOs (stdout/stderr)
-  - Start two background readers (labelers) that read each FIFO and prepend a binary prefix per line, appending to the log
-  - Run the command in a subshell redirected to the FIFOs
-  - Write the exit code file after command completes
-  - A background monitor waits for labelers to finish, removes FIFOs, and creates a `labelers.done` marker file
-  - The reader waits for this marker before reading final output, ensuring all log content is captured
-- This pattern works well for concurrent streaming and avoids blocking the main shell.
+**Design goal**: Stream output in real-time while the command runs, support cancellation.
 
-Pseudo:
+**Approach**: FIFOs + background labelers + monitor
 
 ```
-mkfifo "$sp" "$ep"
-( while read; printf "\x01\x01\x01%s\n" "$REPLY"; done < "$sp" ) >> "$log" & r1=$!
-( while read; printf "\x02\x02\x02%s\n" "$REPLY"; done < "$ep" ) >> "$log" & r2=$!
-{
-  command
-  CMD_EXIT=$?
-  echo "$CMD_EXIT" > "$exit.tmp" && mv "$exit.tmp" "$exit"
-} > "$sp" 2> "$ep" & CMD_PID=$!
-# Monitor waits for labelers to finish, removes FIFOs, signals completion
-( wait "$r1" "$r2" 2>/dev/null; rm -f "$sp" "$ep"; touch "$labelers_done" ) &
+Command ──▶ stdout.pipe (FIFO) ──▶ Labeler r1 ──┐
+        ──▶ stderr.pipe (FIFO) ──▶ Labeler r2 ──┼──▶ log file
+                                                │
+Monitor: wait for labelers, cleanup FIFOs ──────┘
 ```
+
+**Why FIFOs for background?**
+
+- Enable concurrent streaming (TypeScript reads log while command writes)
+- Command runs in subshell, doesn't block main shell
+- PID is captured for process management
+
+**Why not use FIFOs for foreground?**
+
+- FIFOs require background labelers, which introduce async timing
+- Silent commands (no output) can cause FIFO blocking issues
+- State wouldn't persist (subshell isolation)
 
 ## Binary Prefix Contract
 
-- We use short binary prefixes per line to distinguish streams:
-  - Stdout lines: `\x01\x01\x01`
-  - Stderr lines: `\x02\x02\x02`
-- The log parser splits the log by these prefixes to reconstruct stdout/stderr.
-- Unprefixed lines (should not occur) are ignored.
+Each line in the log file is prefixed to identify its source:
+
+| Stream | Prefix         | Bytes |
+| ------ | -------------- | ----- |
+| stdout | `\x01\x01\x01` | 3     |
+| stderr | `\x02\x02\x02` | 3     |
+
+The TypeScript `parseLogFile()` method strips these prefixes to reconstruct separate streams.
+
+**Why 3 bytes?** Minimizes collision probability with actual output while keeping overhead small.
 
 ## Completion Signaling
 
-- For each command we write an exit code file: `<id>.exit` with the numeric exit code.
-- The container waits for this file using a hybrid `fs.watch` + polling approach to be robust on tmpfs/overlayfs where rename events may be missed.
-- Exit file writes are performed via `tmp` + `mv` for atomicity.
+**Problem**: How does TypeScript know when a bash command has finished?
 
-## Error Handling and Limits
+**Solution**: Exit code file with hybrid detection
 
-- Invalid `cwd` (foreground): we write a prefixed stderr line (binary prefix) indicating the failure and return exit code `1`.
-- Timeouts: foreground commands can be configured to time out; an error is raised if the exit file does not appear in time.
+1. Command writes exit code to `<id>.exit.tmp`
+2. Atomic rename: `mv <id>.exit.tmp <id>.exit`
+3. TypeScript detects via `fs.watch` + polling fallback
 
-## Why Two Patterns?
+**Why hybrid detection?**
 
-- Foreground requires state persistence in the main shell. Process substitution provides reliable separation without cross-process FIFO races.
-- Background requires concurrent streaming and process tracking (PID etc.), which is well-served by FIFOs + labelers without blocking the main shell.
+- `fs.watch` is fast but unreliable on tmpfs/overlayfs (misses rename events)
+- Polling is reliable but slow
+- Hybrid gives fast detection with reliable fallback
 
-## Testing Notes
+## Process Termination
 
-- Foreground tests cover silent commands (`cd`, variable assignment), error scenarios, and multiline output.
-- Background/streaming tests cover concurrent output, stderr separation, and completion events.
-- The previous hang class was caused by FIFO open/close races in foreground on silent commands; process substitution removes this class entirely.
+**Problem**: Killing a process doesn't kill its children. Commands like `bash -c "sleep 100 &"` spawn children that escape normal termination.
+
+**Solution**: /proc tree walking (depth-first)
+
+```
+bash(100) ──▶ python(101) ──▶ worker(102)
+
+Kill order: worker(102), python(101), bash(100)
+```
+
+**Why depth-first?**
+
+- If parent dies first, children get re-parented to init (PID 1)
+- We lose track of orphaned children
+- Killing children first ensures complete cleanup
+
+**Why not process groups?**
+
+- `bash -c "cmd &"` creates new process groups
+- `kill(-pgid)` misses children in different groups
+- /proc traversal finds ALL descendants regardless of groups
+
+**Implementation**: See `killCommand()` in session.ts
+
+## TypeScript Patterns
+
+The session uses several TypeScript patterns that may be unfamiliar:
+
+### Shell Death Detection (`shellExitedPromise`)
+
+A Promise that **never resolves, only rejects** when the shell dies:
+
+```typescript
+// Used in Promise.race to detect shell termination during command execution
+await Promise.race([
+  this.waitForExitCode(exitCodeFile), // Normal completion
+  this.shellExitedPromise // Shell died (rejects)
+]);
+```
+
+This allows immediate detection if the shell terminates unexpectedly (e.g., user runs `exit`).
+
+### Hybrid File Detection (`waitForExitCode`)
+
+Combines multiple detection mechanisms for reliability:
+
+1. `fs.watch` on directory (fast, but unreliable on some filesystems)
+2. Polling fallback every 50ms (reliable, but slower)
+3. Timeout if configured
+4. Initial existence check (file may already exist)
+
+### PID Synchronization (`waitForPidViaPipe`)
+
+Reliable PID capture using FIFOs:
+
+1. **Primary**: Read PID from FIFO (blocking, guaranteed synchronization)
+2. **Fallback**: If FIFO times out, poll PID file
+
+**Why FIFO for PID?** File polling has race conditions - the PID file might not exist yet or might be partially written. FIFO read blocks until the shell writes, guaranteeing we get the complete PID.
+
+## Error Handling
+
+| Scenario        | Behavior                                  |
+| --------------- | ----------------------------------------- |
+| Invalid cwd     | Write prefixed stderr, return exit code 1 |
+| Command timeout | Reject with timeout error                 |
+| Shell death     | Reject with "shell terminated" error      |
+| Kill timeout    | Escalate SIGTERM → SIGKILL                |
 
 ## FAQ
 
-- Why not unify on a single mechanism?
-  - Foreground needs state persistence and deterministic completion without cross-process scheduling hazards; process substitution is ideal.
-  - Background needs streaming and concurrency; FIFOs provide clean decoupling.
-- Why not tee? Tee doesn’t split stdout/stderr into separate channels with stable ordering without extra plumbing; our prefixes are simple and explicit.
-- Is process substitution portable?
-  - It is supported by bash (we spawn bash with `--norc`). The container environment supports it; if portability constraints change, we can revisit.
-- Why use temp files instead of process substitution for foreground?
-  Process substitutions run asynchronously - bash returns when the substitution processes close, but their writes to the log file may still be buffered. With large output (e.g., base64-encoded files), the log file can be incomplete when we try to read it. Using direct file redirects ensures bash waits for all writes to complete before continuing, eliminating this race condition.
+**Why two execution patterns instead of one?**
+
+They solve different problems:
+
+- Foreground needs state persistence and synchronous completion
+- Background needs streaming and process control
+
+Unifying them would compromise one set of requirements.
+
+**Why not use `tee` for stdout/stderr separation?**
+
+`tee` doesn't split streams with stable ordering. Our binary prefixes are simpler and more explicit.
+
+**Is this bash-specific?**
+
+Yes. We spawn `bash --norc` and rely on bash features (group commands, FIFOs work reliably). If portability constraints change, we'd need to revisit.
+
+**Why temp files over process substitution for foreground?**
+
+Process substitution (`>(cmd)`) runs asynchronously. Bash returns when the substitution _starts_, not when it _finishes writing_. With large outputs, reads can happen before writes complete. Temp files with direct redirects ensure bash waits for all writes.
+
+## Related Files
+
+- [`packages/sandbox-container/src/session.ts`](../packages/sandbox-container/src/session.ts) - Implementation with detailed comments
+- [`packages/sandbox-container/tests/session.test.ts`](../packages/sandbox-container/tests/session.test.ts) - Unit tests
+- [`tests/e2e/process-lifecycle-workflow.test.ts`](../tests/e2e/process-lifecycle-workflow.test.ts) - E2E process tests

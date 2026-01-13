@@ -1,29 +1,115 @@
 /**
  * Session - Persistent shell execution with reliable stdout/stderr separation
  *
+ * Architecture docs: docs/SESSION_EXECUTION.md (design decisions, trade-offs, FAQ)
+ * This file contains implementation details and bash concept glossary.
+ *
  * Overview
- * - Maintains a persistent bash shell so session state (cwd, env vars, shell
- *   functions) persists across commands.
- * - Separates stdout and stderr by writing binary prefixes to a shared log,
- *   which we later parse to reconstruct the streams.
+ * =========
+ * Maintains a persistent bash shell so session state (cwd, env vars, shell
+ * functions) persists across commands. Separates stdout and stderr by writing
+ * binary prefixes to a shared log, which we later parse to reconstruct streams.
  *
  * Execution Modes
+ * ===============
  * - Foreground (exec): Runs in the main shell (state persists). Writes stdout
  *   and stderr to temp files, then prefixes and merges them into the log.
  *   Bash waits for file redirects to complete before continuing, ensuring
  *   the log is fully written before the exit code is published.
+ *
  * - Background (execStream/startProcess): Uses FIFOs + background labelers.
  *   The command runs in a subshell redirected to FIFOs; labelers read from
  *   FIFOs and prefix lines into the log; we write an exit code file and a
  *   monitor waits for labelers to finish before signaling completion.
  *
  * Exit Detection
- * - We write the exit code to a file and detect completion via a hybrid
- *   fs.watch + polling approach to be robust on tmpfs/overlayfs.
+ * ==============
+ * We write the exit code to a file and detect completion via a hybrid
+ * fs.watch + polling approach to be robust on tmpfs/overlayfs.
+ *
+ * ============================================================================
+ * BASH CONCEPTS GLOSSARY (for non-bash experts)
+ * ============================================================================
+ *
+ * FIFOs (Named Pipes)
+ * -------------------
+ * A FIFO is a special file that acts as a pipe between processes. Created with
+ * `mkfifo`. One process writes, another reads. Key behaviors:
+ * - Reading from a FIFO blocks until data arrives
+ * - Writing to a FIFO blocks until someone reads
+ * - When all writers close the FIFO, readers get EOF (end-of-file)
+ * - Must be deleted after use (they persist on disk unlike anonymous pipes)
+ *
+ * Backgrounding & Process IDs
+ * ---------------------------
+ * - `{ cmd } &`  : Run `cmd` in a background subshell. The `&` returns control
+ *                  immediately while the command continues executing.
+ * - `$!`         : The PID (process ID) of the most recently backgrounded process.
+ *                  Must capture immediately after `&` since it changes with each bg.
+ * - `wait $PID`  : Block until the process with given PID exits.
+ *
+ * Exit Codes & Status
+ * -------------------
+ * - `$?`         : The exit code of the most recently completed command.
+ *                  0 = success, non-zero = failure. Must capture immediately.
+ *
+ * I/O Redirection
+ * ---------------
+ * - `> file`     : Redirect stdout to file (overwrites).
+ * - `2> file`    : Redirect stderr to file (fd 2 is stderr).
+ * - `>> file`    : Redirect stdout to file (appends).
+ * - `< /dev/null`: Redirect stdin from /dev/null (empty input, prevents hangs).
+ *
+ * Signal Handling
+ * ---------------
+ * - `trap 'cmd' EXIT HUP INT TERM` : Run `cmd` when shell exits or receives
+ *   signals. Used for cleanup (removing temp files, FIFOs). EXIT fires on
+ *   normal exit; HUP/INT/TERM fire on hangup/interrupt/terminate signals.
+ *
+ * Reading Lines
+ * -------------
+ * - `IFS= read -r line` : Read a line preserving whitespace and backslashes.
+ *   - `IFS=` : Don't trim leading/trailing whitespace
+ *   - `-r`   : Don't interpret backslashes as escapes
+ * - `|| [[ -n "$line" ]]` : Handle the final line if it lacks a trailing newline.
+ *   `read` returns false on EOF even if it read data; this catches that case.
+ *
+ * Atomic File Writes
+ * ------------------
+ * Pattern: Write to `file.tmp`, then `mv file.tmp file`
+ * - `mv` is atomic on POSIX filesystems (rename syscall)
+ * - Readers never see partial/corrupted content
+ * - We use this for exit codes and PIDs to prevent race conditions
+ *
+ * Subshells
+ * ---------
+ * - `( cmd )`    : Run `cmd` in a subshell (child process).
+ *                  Changes to cwd, env vars don't affect parent.
+ * - `{ cmd }`    : Run `cmd` in current shell (a "group command").
+ *                  Changes DO affect current shell.
+ *
+ * ============================================================================
+ * LINUX PROCESS CONCEPTS
+ * ============================================================================
+ *
+ * /proc Filesystem
+ * ----------------
+ * Linux exposes process info as files in /proc/PID/. Key file:
+ * - `/proc/PID/task/PID/children` : Space-separated list of child PIDs
+ *
+ * Process Tree Killing
+ * --------------------
+ * To kill a process and ALL its descendants (children, grandchildren, etc.):
+ * 1. Read `/proc/PID/task/PID/children` to find direct children
+ * 2. Recursively kill each child's subtree first (depth-first)
+ * 3. Then kill the parent
+ *
+ * Why depth-first? If you kill a parent first, orphaned children get
+ * re-parented to init (PID 1) and you lose track of them.
  */
 
 import { randomUUID } from 'node:crypto';
-import { watch } from 'node:fs';
+import { readFileSync, watch } from 'node:fs';
 import { mkdir, open, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
@@ -177,9 +263,13 @@ export class Session {
       stderr: 'ignore' // Ignore bash diagnostics
     });
 
-    // Set up shell exit monitor - rejects if shell dies unexpectedly
-    // This Promise will reject when the shell process exits, allowing us to detect
-    // shell death immediately and provide clear error messages to users
+    // Shell death sentinel: a Promise<never> that NEVER resolves, only rejects.
+    //
+    // Used in Promise.race to detect unexpected shell termination:
+    //   await Promise.race([waitForExitCode(...), this.shellExitedPromise])
+    //
+    // If shell dies (e.g., user runs `exit`), this rejects immediately,
+    // letting us report "shell terminated" instead of hanging forever.
     this.shellExitedPromise = new Promise<never>((_, reject) => {
       this.shell!.exited.then((exitCode) => {
         // If we're intentionally destroying the session, don't log error or reject
@@ -580,6 +670,11 @@ export class Session {
    * Foreground commands from exec() run synchronously and complete before returning,
    * so they cannot be killed mid-execution (use timeout instead).
    *
+   * Kill Strategy:
+   * 1. Send SIGTERM to entire process tree (gives processes chance to cleanup)
+   * 2. Wait up to 5s for graceful exit
+   * 3. If still running, escalate to SIGKILL (force kill, no cleanup)
+   *
    * @param commandId - The unique command identifier
    * @param waitForExit - Whether to wait for the process to actually exit (default true)
    * @returns true if command was killed, false if not found or already completed
@@ -600,16 +695,38 @@ export class Session {
         const pid = parseInt(pidText.trim(), 10);
 
         if (!Number.isNaN(pid)) {
-          // Send SIGTERM to the entire process group for graceful termination.
-          // Background commands run with job control enabled (set -m), which puts
-          // them in their own process group where PID equals PGID. Using negative
-          // PID kills all processes in the group, including any child processes.
-          process.kill(-pid, 'SIGTERM');
+          // Kill process tree via /proc traversal. Depth-first: kill children
+          // before parent to prevent orphans from escaping to init (PID 1).
+          //
+          // Example tree:  bash(100) -> python(101) -> worker(102)
+          // Kill order:    worker(102), python(101), bash(100)
+          //
+          // Why not process groups? Commands like `bash -c "cmd &"` create new
+          // process groups, so kill(-pgid) misses those children. /proc traversal
+          // finds ALL descendants regardless of process group.
+          const killTree = (targetPid: number, signal: NodeJS.Signals) => {
+            try {
+              // Read direct children from Linux /proc filesystem
+              const childrenFile = `/proc/${targetPid}/task/${targetPid}/children`;
+              for (const childPid of readFileSync(childrenFile, 'utf8')
+                .trim()
+                .split(/\s+/)
+                .filter(Boolean)) {
+                killTree(parseInt(childPid, 10), signal); // Recurse into children first
+              }
+            } catch {
+              // Process exited or /proc unavailable (non-Linux)
+            }
+            try {
+              process.kill(targetPid, signal); // Kill this process after its children
+            } catch {
+              // Process already exited
+            }
+          };
 
-          // Wait for the process to actually exit before returning.
-          // The shell script writes an exit code file when the process exits.
-          // Use a 5 second timeout - if process doesn't respond to SIGTERM,
-          // escalate to SIGKILL.
+          killTree(pid, 'SIGTERM');
+
+          // Wait for the main process to exit with timeout
           if (waitForExit) {
             try {
               await Promise.race([
@@ -619,12 +736,8 @@ export class Session {
                 )
               ]);
             } catch {
-              // Timeout or error - process might be ignoring SIGTERM, escalate to SIGKILL
-              try {
-                process.kill(-pid, 'SIGKILL');
-              } catch {
-                // Process already dead, ignore
-              }
+              // Timeout - escalate to SIGKILL
+              killTree(pid, 'SIGKILL');
             }
           }
 
@@ -712,12 +825,42 @@ export class Session {
   /**
    * Build FIFO-based bash script for command execution
    *
-   * This is the core of the FIFO approach:
-   * 1. Create two FIFO pipes (stdout.pipe, stderr.pipe)
-   * 2. Start background processes that read from pipes and label with binary prefixes
-   * 3. Execute command (foreground or background based on isBackground flag)
-   * 4. Write exit code to file
-   * 5. Wait for background processes and cleanup
+   * This generates a bash script that handles stdout/stderr separation using
+   * binary prefixes. The approach differs based on execution mode:
+   *
+   * BACKGROUND MODE (execStream/startProcess) - Data Flow:
+   * -------------------------------------------------------
+   *
+   *   ┌─────────────┐
+   *   │   Command   │ ──stdout──▶ ┌──────────────┐     ┌─────────────┐
+   *   │  (subshell) │             │ stdout.pipe  │ ──▶ │ Labeler r1  │ ──┐
+   *   │    { }  &   │ ──stderr──▶ ├──────────────┤     ├─────────────┤   │
+   *   └─────────────┘             │ stderr.pipe  │ ──▶ │ Labeler r2  │ ──┼──▶ log file
+   *         │                     └──────────────┘     └─────────────┘   │
+   *         │ $?                        FIFOs         (prefix \x01/\x02) │
+   *         ▼                                                            │
+   *   exit_code.tmp ──mv──▶ exit_code                                    │
+   *                                                                      │
+   *   Monitor ( ) & : waits for r1,r2 to finish, removes FIFOs ──────────┘
+   *
+   *   Key: Command runs async, shell returns immediately.
+   *        PID captured via $! after backgrounding the subshell.
+   *
+   * FOREGROUND MODE (exec) - Data Flow:
+   * ------------------------------------
+   *
+   *   ┌─────────────┐
+   *   │   Command   │ ──stdout──▶ log.stdout (temp file)
+   *   │   { }       │ ──stderr──▶ log.stderr (temp file)
+   *   └─────────────┘
+   *         │ $?
+   *         ▼
+   *   Then: Read temp files, prefix each line, append to log file
+   *   Then: Write exit code (atomic)
+   *   Then: Shell continues (state changes like cd/export persist!)
+   *
+   *   Key: Command runs synchronously in main shell.
+   *        State persists because { } runs in current shell, not ( ).
    *
    * @param isBackground - If true, command runs in background (for execStream/startProcess)
    *                       If false, command runs in foreground (for exec) - state persists!
@@ -801,46 +944,44 @@ export class Session {
       // BACKGROUND PATTERN (for execStream/startProcess)
       // Command runs in subshell, shell continues immediately
 
-      // Enable job control so background jobs get their own process group.
-      // This allows killCommand() to terminate the entire process tree by
-      // sending SIGTERM to the process group (kill -PID).
-      script += `  set -m\n`;
-      script += `  \n`;
-
       // Create FIFOs and start labelers (background mode)
+      // Labeler pattern explanation:
+      //   (while IFS= read -r line || [[ -n "$line" ]]; do printf '\x01..%s\n' "$line"; done < FIFO) >> log & r1=$!
+      //   │     │                    │                        │                          │      │    │
+      //   │     │                    │                        │                          │      │    └─ Capture labeler PID
+      //   │     │                    │                        │                          │      └─ Run in background
+      //   │     │                    │                        │                          └─ Read from FIFO (blocks until data)
+      //   │     │                    │                        └─ Prepend binary prefix to line
+      //   │     │                    └─ Handle final line without newline (read returns false but $line has data)
+      //   │     └─ Read line preserving whitespace (IFS=) and backslashes (-r)
+      //   └─ Run in subshell so it can be backgrounded
       script += `  # Pre-cleanup and create FIFOs with error handling\n`;
       script += `  rm -f "$sp" "$ep" && mkfifo "$sp" "$ep" || exit 1\n`;
       script += `  \n`;
-      script += `  # Label stdout with binary prefix in background (capture PID)\n`;
+      script += `  # Labeler r1: reads stdout FIFO, prefixes with \\x01\\x01\\x01, appends to log\n`;
       script += `  (while IFS= read -r line || [[ -n "$line" ]]; do printf '\\x01\\x01\\x01%s\\n' "$line"; done < "$sp") >> "$log" & r1=$!\n`;
       script += `  \n`;
-      script += `  # Label stderr with binary prefix in background (capture PID)\n`;
+      script += `  # Labeler r2: reads stderr FIFO, prefixes with \\x02\\x02\\x02, appends to log\n`;
       script += `  (while IFS= read -r line || [[ -n "$line" ]]; do printf '\\x02\\x02\\x02%s\\n' "$line"; done < "$ep") >> "$log" & r2=$!\n`;
-      script += `  # EOF note: labelers stop when all writers to the FIFOs close.\n`;
-      script += `  # The subshell writing to >"$sp" 2>"$ep" controls EOF; after it exits,\n`;
-      script += `  # we wait for labelers and then remove the FIFOs.\n`;
+      script += `  # Labelers exit when FIFO writers close (EOF). The command subshell is the\n`;
+      script += `  # only writer; when it exits, labelers get EOF, finish, and monitor cleans up.\n`;
       script += `  \n`;
       if (cwd) {
         const safeCwd = this.escapeShellPath(cwd);
-        script += `  # Save and change directory\n`;
         script += `  PREV_DIR=$(pwd)\n`;
         script += `  if cd ${safeCwd}; then\n`;
-        script += `    # Execute command in BACKGROUND (runs in subshell, enables concurrency)\n`;
         script += `    {\n`;
         script += `${buildCommandBlock('CMD_EXIT', 6)}\n`;
-        script += `      # Write exit code\n`;
         script += `      echo "$CMD_EXIT" > ${safeExitCodeFile}.tmp\n`;
         script += `      mv ${safeExitCodeFile}.tmp ${safeExitCodeFile}\n`;
         script += `    } < /dev/null > "$sp" 2> "$ep" & CMD_PID=$!\n`;
-        script += `    # Write PID for process killing\n`;
         script += `    echo "$CMD_PID" > ${safePidFile}.tmp\n`;
         script += `    mv ${safePidFile}.tmp ${safePidFile}\n`;
         if (safePidPipe) {
           script += `    # Notify PID via FIFO (unblocks waitForPidViaPipe)\n`;
           script += `    echo "$CMD_PID" > ${safePidPipe}\n`;
         }
-        script += `    # Background monitor: waits for labelers to finish (after FIFO EOF)\n`;
-        script += `    # and then removes the FIFOs. PID file is cleaned up by TypeScript.\n`;
+        script += `    # Background monitor: waits for labelers to finish, then cleans up FIFOs\n`;
         script += `    (\n`;
         script += `      wait "$r1" "$r2" 2>/dev/null\n`;
         script += `      rm -f "$sp" "$ep"\n`;
@@ -857,22 +998,18 @@ export class Session {
         }
         script += `  fi\n`;
       } else {
-        script += `  # Execute command in BACKGROUND (runs in subshell, enables concurrency)\n`;
         script += `  {\n`;
         script += `${buildCommandBlock('CMD_EXIT', 4)}\n`;
-        script += `    # Write exit code\n`;
         script += `    echo "$CMD_EXIT" > ${safeExitCodeFile}.tmp\n`;
         script += `    mv ${safeExitCodeFile}.tmp ${safeExitCodeFile}\n`;
         script += `  } < /dev/null > "$sp" 2> "$ep" & CMD_PID=$!\n`;
-        script += `  # Write PID for process killing\n`;
         script += `  echo "$CMD_PID" > ${safePidFile}.tmp\n`;
         script += `  mv ${safePidFile}.tmp ${safePidFile}\n`;
         if (safePidPipe) {
           script += `  # Notify PID via FIFO (unblocks waitForPidViaPipe)\n`;
           script += `  echo "$CMD_PID" > ${safePidPipe}\n`;
         }
-        script += `  # Background monitor: waits for labelers to finish (after FIFO EOF)\n`;
-        script += `  # and then removes the FIFOs. PID file is cleaned up by TypeScript.\n`;
+        script += `  # Background monitor: waits for labelers to finish, then cleans up FIFOs\n`;
         script += `  (\n`;
         script += `    wait "$r1" "$r2" 2>/dev/null\n`;
         script += `    rm -f "$sp" "$ep"\n`;
@@ -987,16 +1124,21 @@ export class Session {
   /**
    * Wait for exit code file to appear using hybrid fs.watch + polling
    *
-   * Uses fs.watch for fast detection, with polling fallback for systems where
-   * fs.watch doesn't reliably detect rename() operations (common on tmpfs, overlayfs).
+   * Detection strategy (multiple mechanisms for reliability):
+   *   1. fs.watch on directory  → Fast, but unreliable on tmpfs/overlayfs
+   *   2. Polling every 50ms     → Reliable fallback
+   *   3. Timeout (if configured)→ Prevents infinite hangs
+   *   4. Initial existence check→ File may already exist
+   *
+   * Any mechanism that detects the file first wins (via `resolved` flag).
    */
   private async waitForExitCode(exitCodeFile: string): Promise<number> {
     return new Promise((resolve, reject) => {
       const dir = dirname(exitCodeFile);
       const filename = basename(exitCodeFile);
-      let resolved = false;
+      let resolved = false; // First detector wins, others bail out
 
-      // STEP 1: Set up fs.watch for fast detection
+      // STEP 1: fs.watch for fast detection (may miss rename events on some filesystems)
       const watcher = watch(dir, async (_eventType, changedFile) => {
         if (resolved) return;
 
@@ -1193,9 +1335,14 @@ export class Session {
   /**
    * Wait for PID via FIFO with fallback to file polling
    *
-   * Uses a FIFO for reliable synchronization: the shell writes the PID to the pipe,
-   * and we do a blocking read. This eliminates race conditions from file polling.
-   * Falls back to file polling if FIFO read fails (e.g., pipe broken).
+   * Fallback chain:
+   *   1. FIFO read (primary)  → Blocking read guarantees shell has written PID
+   *   2. Timeout + unblock    → If FIFO hangs, unblock it to prevent fd leak
+   *   3. File polling (fallback) → Less reliable but works if FIFO fails
+   *
+   * Why FIFO over file polling?
+   * File polling has race conditions - file might not exist yet or be partially
+   * written. FIFO read blocks until shell writes, guaranteeing complete PID.
    *
    * @param pidPipe - Path to the PID notification FIFO
    * @param pidFile - Path to the PID file (fallback)
