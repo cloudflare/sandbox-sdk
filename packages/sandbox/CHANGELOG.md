@@ -1,5 +1,11 @@
 # @cloudflare/sandbox
 
+## 0.6.11
+
+### Patch Changes
+
+- [#335](https://github.com/cloudflare/sandbox-sdk/pull/335) [`0d2e199`](https://github.com/cloudflare/sandbox-sdk/commit/0d2e199dba9c3a5bc384b27d50e614fcb3311681) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - Mount subdirectories of S3 buckets using the `prefix` option in `mountBucket()`.
+
 ## 0.6.10
 
 ### Patch Changes
