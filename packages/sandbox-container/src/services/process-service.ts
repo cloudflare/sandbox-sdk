@@ -349,20 +349,27 @@ export class ProcessService {
         };
       }
 
-      if (process.commandHandle) {
-        await this.sessionManager.killCommand(
-          process.commandHandle.sessionId,
-          process.commandHandle.commandId
-        );
+      // All processes use SessionManager for unified execution model
+      if (!process.commandHandle) {
+        // Process has no commandHandle - likely already completed or malformed
+        return {
+          success: true
+        };
       }
 
-      // Always update status - the process may have already exited but
-      // streaming hasn't caught up yet
-      if (process.status === 'running') {
-        await this.store.update(id, { status: 'killed', endTime: new Date() });
+      const result = await this.sessionManager.killCommand(
+        process.commandHandle.sessionId,
+        process.commandHandle.commandId
+      );
+
+      if (result.success) {
+        await this.store.update(id, {
+          status: 'killed',
+          endTime: new Date()
+        });
       }
 
-      return { success: true };
+      return result;
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
@@ -558,7 +565,9 @@ export class ProcessService {
     }
   }
 
+  // Cleanup method for graceful shutdown
   async destroy(): Promise<void> {
+    // Kill all running processes
     await this.killAllProcesses();
   }
 }
