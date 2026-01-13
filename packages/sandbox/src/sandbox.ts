@@ -2142,7 +2142,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       );
     }
 
-    // Validate and generate/use token BEFORE making any API calls
     let token: string;
     if (options.token !== undefined) {
       this.validateCustomToken(options.token);
@@ -2151,7 +2150,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       token = this.generatePortToken();
     }
 
-    // Check for token collision - ensure this token isn't already used by another port
+    // Allow re-exposing same port with same token, but reject if another port uses this token
     const tokens =
       (await this.ctx.storage.get<Record<string, string>>('portTokens')) || {};
     const existingPort = Object.entries(tokens).find(
@@ -2166,7 +2165,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     const sessionId = await this.ensureDefaultSession();
     await this.client.ports.exposePort(port, sessionId, options?.name);
 
-    // Store token for this port (storage is protected by input gates)
     tokens[port.toString()] = token;
     await this.ctx.storage.put('portTokens', tokens);
 
@@ -2286,19 +2284,16 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   private validateCustomToken(token: string): void {
-    // Token must be at least 1 character
     if (token.length === 0) {
       throw new SecurityError(`Custom token cannot be empty.`);
     }
 
-    // Token must not exceed 16 characters
     if (token.length > 16) {
       throw new SecurityError(
         `Custom token too long. Maximum 16 characters allowed. Received: ${token.length} characters.`
       );
     }
 
-    // Token must only contain lowercase alphanumeric, hyphens, and underscores (URL-safe)
     if (!/^[a-z0-9_-]+$/.test(token)) {
       throw new SecurityError(
         `Custom token must contain only lowercase letters (a-z), numbers (0-9), hyphens (-), and underscores (_). Invalid token provided.`
