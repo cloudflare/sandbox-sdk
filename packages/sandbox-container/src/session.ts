@@ -88,28 +88,10 @@
  * - `{ cmd }`    : Run `cmd` in current shell (a "group command").
  *                  Changes DO affect current shell.
  *
- * ============================================================================
- * LINUX PROCESS CONCEPTS
- * ============================================================================
- *
- * /proc Filesystem
- * ----------------
- * Linux exposes process info as files in /proc/PID/. Key file:
- * - `/proc/PID/task/PID/children` : Space-separated list of child PIDs
- *
- * Process Tree Killing
- * --------------------
- * To kill a process and ALL its descendants (children, grandchildren, etc.):
- * 1. Read `/proc/PID/task/PID/children` to find direct children
- * 2. Recursively kill each child's subtree first (depth-first)
- * 3. Then kill the parent
- *
- * Why depth-first? If you kill a parent first, orphaned children get
- * re-parented to init (PID 1) and you lose track of them.
  */
 
 import { randomUUID } from 'node:crypto';
-import { readFileSync, watch } from 'node:fs';
+import { watch } from 'node:fs';
 import { mkdir, open, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
@@ -670,16 +652,10 @@ export class Session {
    * Foreground commands from exec() run synchronously and complete before returning,
    * so they cannot be killed mid-execution (use timeout instead).
    *
-   * Kill Strategy:
-   * 1. Send SIGTERM to entire process tree (gives processes chance to cleanup)
-   * 2. Wait up to 5s for graceful exit
-   * 3. If still running, escalate to SIGKILL (force kill, no cleanup)
-   *
    * @param commandId - The unique command identifier
-   * @param waitForExit - Whether to wait for the process to actually exit (default true)
    * @returns true if command was killed, false if not found or already completed
    */
-  async killCommand(commandId: string, waitForExit = true): Promise<boolean> {
+  async killCommand(commandId: string): Promise<boolean> {
     const handle = this.runningCommands.get(commandId);
     if (!handle) {
       return false; // Command not found or already completed
@@ -695,51 +671,8 @@ export class Session {
         const pid = parseInt(pidText.trim(), 10);
 
         if (!Number.isNaN(pid)) {
-          // Kill process tree via /proc traversal. Depth-first: kill children
-          // before parent to prevent orphans from escaping to init (PID 1).
-          //
-          // Example tree:  bash(100) -> python(101) -> worker(102)
-          // Kill order:    worker(102), python(101), bash(100)
-          //
-          // Why not process groups? Commands like `bash -c "cmd &"` create new
-          // process groups, so kill(-pgid) misses those children. /proc traversal
-          // finds ALL descendants regardless of process group.
-          const killTree = (targetPid: number, signal: NodeJS.Signals) => {
-            try {
-              // Read direct children from Linux /proc filesystem
-              const childrenFile = `/proc/${targetPid}/task/${targetPid}/children`;
-              for (const childPid of readFileSync(childrenFile, 'utf8')
-                .trim()
-                .split(/\s+/)
-                .filter(Boolean)) {
-                killTree(parseInt(childPid, 10), signal); // Recurse into children first
-              }
-            } catch {
-              // Process exited or /proc unavailable (non-Linux)
-            }
-            try {
-              process.kill(targetPid, signal); // Kill this process after its children
-            } catch {
-              // Process already exited
-            }
-          };
-
-          killTree(pid, 'SIGTERM');
-
-          // Wait for the main process to exit with timeout
-          if (waitForExit) {
-            try {
-              await Promise.race([
-                this.waitForExitCode(handle.exitCodeFile),
-                new Promise((_, reject) =>
-                  setTimeout(() => reject(new Error('kill timeout')), 5000)
-                )
-              ]);
-            } catch {
-              // Timeout - escalate to SIGKILL
-              killTree(pid, 'SIGKILL');
-            }
-          }
+          // Send SIGTERM for graceful termination
+          process.kill(pid, 'SIGTERM');
 
           // Clean up
           this.runningCommands.delete(commandId);
@@ -771,10 +704,10 @@ export class Session {
     // Mark as destroying to prevent shell exit monitor from logging errors
     this.isDestroying = true;
 
-    // Kill all running commands first (don't wait for graceful exit during destroy)
+    // Kill all running commands first
     const runningCommandIds = Array.from(this.runningCommands.keys());
     await Promise.all(
-      runningCommandIds.map((commandId) => this.killCommand(commandId, false))
+      runningCommandIds.map((commandId) => this.killCommand(commandId))
     );
 
     if (this.shell && !this.shell.killed) {

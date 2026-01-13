@@ -10,7 +10,7 @@ This document explains the **architecture and design decisions** for command exe
 2. **Separate stdout and stderr** reliably for each command
 3. **Handle silent commands** (e.g., `cd`, `mkdir`, variable assignment) without hanging
 4. **Signal completion deterministically** via exit code files
-5. **Support process termination** including all descendant processes
+5. **Support process termination** for background processes
 
 ## Two Execution Modes
 
@@ -99,29 +99,9 @@ The TypeScript `parseLogFile()` method strips these prefixes to reconstruct sepa
 
 ## Process Termination
 
-**Problem**: Killing a process doesn't kill its children. Commands like `bash -c "sleep 100 &"` spawn children that escape normal termination.
+Background processes can be killed using `killProcess()`. The implementation sends `SIGTERM` to the process for graceful termination.
 
-**Solution**: /proc tree walking (depth-first)
-
-```
-bash(100) ──▶ python(101) ──▶ worker(102)
-
-Kill order: worker(102), python(101), bash(100)
-```
-
-**Why depth-first?**
-
-- If parent dies first, children get re-parented to init (PID 1)
-- We lose track of orphaned children
-- Killing children first ensures complete cleanup
-
-**Why not process groups?**
-
-- `bash -c "cmd &"` creates new process groups
-- `kill(-pgid)` misses children in different groups
-- /proc traversal finds ALL descendants regardless of groups
-
-**Implementation**: See `killCommand()` in session.ts
+**Limitation**: Child processes spawned by the command may not be killed automatically. This is a known limitation - only the direct process receives the signal.
 
 ## TypeScript Patterns
 
@@ -166,7 +146,7 @@ Reliable PID capture using FIFOs:
 | Invalid cwd     | Write prefixed stderr, return exit code 1 |
 | Command timeout | Reject with timeout error                 |
 | Shell death     | Reject with "shell terminated" error      |
-| Kill timeout    | Escalate SIGTERM → SIGKILL                |
+| Kill request    | Send SIGTERM for graceful termination     |
 
 ## FAQ
 

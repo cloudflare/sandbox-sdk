@@ -1,13 +1,5 @@
 # @cloudflare/sandbox
 
-## 0.6.11
-
-### Patch Changes
-
-- [#339](https://github.com/cloudflare/sandbox-sdk/pull/339) [`35f1fbc`](https://github.com/cloudflare/sandbox-sdk/commit/35f1fbce2214bcb5df9fab1ec980d7316419d1d7) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Fix killProcess() not terminating child processes spawned by background commands.
-
-  Previously, killing a background process would only terminate the wrapper subshell while child processes continued running as orphans. Now background commands run in their own process group, allowing killProcess() to terminate the entire process tree.
-
 ## 0.6.10
 
 ### Patch Changes
