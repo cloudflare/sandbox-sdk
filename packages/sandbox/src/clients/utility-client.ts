@@ -29,7 +29,7 @@ export interface VersionResponse extends BaseApiResponse {
  */
 export interface CreateSessionRequest {
   id: string;
-  env?: Record<string, string>;
+  env?: Record<string, string | undefined>;
   cwd?: string;
 }
 

@@ -26,8 +26,10 @@ import type {
 } from '@repo/shared';
 import {
   createLogger,
+  filterEnvVars,
   getEnvString,
   isTerminalStatus,
+  partitionEnvVars,
   type SessionDeleteResult,
   shellEscape,
   TraceContext
@@ -271,17 +273,32 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     await this.ctx.storage.put('keepAliveEnabled', keepAlive);
   }
 
-  // RPC method to set environment variables
-  async setEnvVars(envVars: Record<string, string>): Promise<void> {
-    // Update local state for new sessions
-    this.envVars = { ...this.envVars, ...envVars };
+  async setEnvVars(envVars: Record<string, string | undefined>): Promise<void> {
+    const { toSet, toUnset } = partitionEnvVars(envVars);
 
-    // If default session already exists, update it directly
+    for (const key of toUnset) {
+      delete this.envVars[key];
+    }
+    this.envVars = { ...this.envVars, ...toSet };
+
     if (this.defaultSession) {
-      // Set environment variables by executing export commands in the existing session
-      for (const [key, value] of Object.entries(envVars)) {
-        const escapedValue = value.replace(/'/g, "'\\''");
-        const exportCommand = `export ${key}='${escapedValue}'`;
+      for (const key of toUnset) {
+        const unsetCommand = `unset ${key}`;
+
+        const result = await this.client.commands.execute(
+          unsetCommand,
+          this.defaultSession
+        );
+
+        if (result.exitCode !== 0) {
+          throw new Error(
+            `Failed to unset ${key}: ${result.stderr || 'Unknown error'}`
+          );
+        }
+      }
+
+      for (const [key, value] of Object.entries(toSet)) {
+        const exportCommand = `export ${key}=${shellEscape(value)}`;
 
         const result = await this.client.commands.execute(
           exportCommand,
@@ -1771,7 +1788,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           processId: options.processId
         }),
         ...(options?.timeout !== undefined && { timeoutMs: options.timeout }),
-        ...(options?.env !== undefined && { env: options.env }),
+        ...(options?.env !== undefined && { env: filterEnvVars(options.env) }),
         ...(options?.cwd !== undefined && { cwd: options.cwd }),
         ...(options?.encoding !== undefined && { encoding: options.encoding }),
         ...(options?.autoCleanup !== undefined && {
@@ -2327,8 +2344,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       ...this.envVars,
       ...(options?.env ?? {})
     };
+    const filteredEnv = filterEnvVars(mergedEnv);
     const envPayload =
-      Object.keys(mergedEnv).length > 0 ? mergedEnv : undefined;
+      Object.keys(filteredEnv).length > 0 ? filteredEnv : undefined;
 
     // Create session in container
     await this.client.utils.createSession({
@@ -2430,13 +2448,27 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       gitCheckout: (repoUrl, options) =>
         this.gitCheckout(repoUrl, { ...options, sessionId }),
 
-      // Environment management - needs special handling
-      setEnvVars: async (envVars: Record<string, string>) => {
+      setEnvVars: async (envVars: Record<string, string | undefined>) => {
+        const { toSet, toUnset } = partitionEnvVars(envVars);
+
         try {
-          // Set environment variables by executing export commands
-          for (const [key, value] of Object.entries(envVars)) {
-            const escapedValue = value.replace(/'/g, "'\\''");
-            const exportCommand = `export ${key}='${escapedValue}'`;
+          for (const key of toUnset) {
+            const unsetCommand = `unset ${key}`;
+
+            const result = await this.client.commands.execute(
+              unsetCommand,
+              sessionId
+            );
+
+            if (result.exitCode !== 0) {
+              throw new Error(
+                `Failed to unset ${key}: ${result.stderr || 'Unknown error'}`
+              );
+            }
+          }
+
+          for (const [key, value] of Object.entries(toSet)) {
+            const exportCommand = `export ${key}=${shellEscape(value)}`;
 
             const result = await this.client.commands.execute(
               exportCommand,

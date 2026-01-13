@@ -1,6 +1,11 @@
 // SessionManager Service - Manages persistent execution sessions
 
-import type { ExecEvent, Logger } from '@repo/shared';
+import {
+  type ExecEvent,
+  type Logger,
+  partitionEnvVars,
+  shellEscape
+} from '@repo/shared';
 import type {
   CommandErrorContext,
   CommandNotFoundContext,
@@ -226,7 +231,7 @@ export class SessionManager {
     command: string,
     cwd?: string,
     timeoutMs?: number,
-    env?: Record<string, string>
+    env?: Record<string, string | undefined>
   ): Promise<ServiceResult<RawExecResult>> {
     const lock = this.getSessionLock(sessionId);
 
@@ -298,7 +303,7 @@ export class SessionManager {
     fn: (
       exec: (
         command: string,
-        options?: { cwd?: string; env?: Record<string, string> }
+        options?: { cwd?: string; env?: Record<string, string | undefined> }
       ) => Promise<RawExecResult>
     ) => Promise<T>,
     cwd?: string
@@ -321,7 +326,7 @@ export class SessionManager {
         // Provide exec function that uses the session directly (already under lock)
         const exec = async (
           command: string,
-          options?: { cwd?: string; env?: Record<string, string> }
+          options?: { cwd?: string; env?: Record<string, string | undefined> }
         ): Promise<RawExecResult> => {
           return session.exec(command, options);
         };
@@ -391,7 +396,7 @@ export class SessionManager {
     sessionId: string,
     command: string,
     onEvent: (event: ExecEvent) => Promise<void>,
-    options: { cwd?: string; env?: Record<string, string> } = {},
+    options: { cwd?: string; env?: Record<string, string | undefined> } = {},
     commandId: string,
     lockOptions: { background?: boolean } = {}
   ): Promise<ServiceResult<{ continueStreaming: Promise<void> }>> {
@@ -428,7 +433,7 @@ export class SessionManager {
     sessionId: string,
     command: string,
     onEvent: (event: ExecEvent) => Promise<void>,
-    options: { cwd?: string; env?: Record<string, string> },
+    options: { cwd?: string; env?: Record<string, string | undefined> },
     commandId: string,
     lock: Mutex
   ): Promise<ServiceResult<{ continueStreaming: Promise<void> }>> {
@@ -508,7 +513,7 @@ export class SessionManager {
     sessionId: string,
     command: string,
     onEvent: (event: ExecEvent) => Promise<void>,
-    options: { cwd?: string; env?: Record<string, string> },
+    options: { cwd?: string; env?: Record<string, string | undefined> },
     commandId: string,
     lock: Mutex
   ): Promise<ServiceResult<{ continueStreaming: Promise<void> }>> {
@@ -695,18 +700,48 @@ export class SessionManager {
 
   /**
    * Set environment variables on a session atomically.
-   * All exports are executed under a single lock acquisition.
+   * All exports/unsets are executed under a single lock acquisition.
+   * - String values are exported
+   * - undefined/null values are unset
    */
   async setEnvVars(
     sessionId: string,
-    envVars: Record<string, string>
+    envVars: Record<string, string | undefined>
   ): Promise<ServiceResult<void>> {
-    return this.withSession(sessionId, async (exec) => {
-      for (const [key, value] of Object.entries(envVars)) {
-        // Escape the value for safe bash usage
-        const escapedValue = value.replace(/'/g, "'\\''");
-        const exportCommand = `export ${key}='${escapedValue}'`;
+    const { toSet, toUnset } = partitionEnvVars(envVars);
 
+    return this.withSession(sessionId, async (exec) => {
+      // Validate all keys first (POSIX portable character set)
+      const allKeys = [...toUnset, ...Object.keys(toSet)];
+      for (const key of allKeys) {
+        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+          throw {
+            code: ErrorCode.VALIDATION_FAILED,
+            message: `Invalid environment variable name: ${key}`,
+            details: { key }
+          };
+        }
+      }
+
+      for (const key of toUnset) {
+        const unsetCommand = `unset ${key}`;
+        const result = await exec(unsetCommand);
+
+        if (result.exitCode !== 0) {
+          throw {
+            code: ErrorCode.COMMAND_EXECUTION_ERROR,
+            message: `Failed to unset environment variable '${key}': ${result.stderr}`,
+            details: {
+              command: unsetCommand,
+              exitCode: result.exitCode,
+              stderr: result.stderr
+            } satisfies CommandErrorContext
+          };
+        }
+      }
+
+      for (const [key, value] of Object.entries(toSet)) {
+        const exportCommand = `export ${key}=${shellEscape(value)}`;
         const result = await exec(exportCommand);
 
         if (result.exitCode !== 0) {
