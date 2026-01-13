@@ -74,10 +74,7 @@ export class Room implements DurableObject {
   private roomId: string = '';
   private env: Env;
 
-  constructor(
-    private ctx: DurableObjectState,
-    env: Env
-  ) {
+  constructor(_ctx: DurableObjectState, env: Env) {
     this.env = env;
   }
 

@@ -213,7 +213,7 @@ export class Session {
   /**
    * Get the initial environment variables configured for this session.
    */
-  getInitialEnv(): Record<string, string> | undefined {
+  getInitialEnv(): Record<string, string | undefined> | undefined {
     return this.options.env;
   }
 

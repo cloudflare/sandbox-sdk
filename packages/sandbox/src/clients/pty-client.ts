@@ -265,7 +265,7 @@ export class PtyClient extends BaseHttpClient {
    * This method lazily creates a WebSocket connection on first use.
    */
   private async getPtyTransport(): Promise<WebSocketTransport> {
-    if (this.ptyTransport && this.ptyTransport.isConnected()) {
+    if (this.ptyTransport?.isConnected()) {
       return this.ptyTransport;
     }
 

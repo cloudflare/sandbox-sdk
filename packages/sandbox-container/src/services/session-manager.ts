@@ -228,7 +228,7 @@ export class SessionManager {
    */
   getSessionInfo(
     sessionId: string
-  ): { cwd: string; env?: Record<string, string> } | null {
+  ): { cwd: string; env?: Record<string, string | undefined> } | null {
     const session = this.sessions.get(sessionId);
     if (!session) {
       return null;
