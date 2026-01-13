@@ -2275,7 +2275,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       return false;
     }
 
-    // Constant-time comparison to prevent timing attacks
     return storedToken === token;
   }
 
