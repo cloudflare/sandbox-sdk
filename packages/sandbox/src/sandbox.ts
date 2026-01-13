@@ -2266,7 +2266,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       (await this.ctx.storage.get<Record<string, string>>('portTokens')) || {};
     const storedToken = tokens[port.toString()];
     if (!storedToken) {
-      // This should not happen - all exposed ports must have tokens
       this.logger.error(
         'Port is exposed but has no token - bug detected',
         undefined,
@@ -2275,7 +2274,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       return false;
     }
 
-    return storedToken === token;
+    if (storedToken.length !== token.length) {
+      return false;
+    }
+
+    const encoder = new TextEncoder();
+    const a = encoder.encode(storedToken);
+    const b = encoder.encode(token);
+
+    return crypto.subtle.timingSafeEqual(a, b);
   }
 
   private validateCustomToken(token: string): void {
