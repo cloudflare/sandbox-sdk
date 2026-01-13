@@ -704,40 +704,74 @@ export class Session {
           // Why not process groups? Commands like `bash -c "cmd &"` create new
           // process groups, so kill(-pgid) misses those children. /proc traversal
           // finds ALL descendants regardless of process group.
-          const killTree = (targetPid: number, signal: NodeJS.Signals) => {
+          const collectDescendants = (targetPid: number, pids: Set<number>) => {
+            pids.add(targetPid);
             try {
-              // Read direct children from Linux /proc filesystem
               const childrenFile = `/proc/${targetPid}/task/${targetPid}/children`;
-              for (const childPid of readFileSync(childrenFile, 'utf8')
+              const children = readFileSync(childrenFile, 'utf8')
                 .trim()
                 .split(/\s+/)
-                .filter(Boolean)) {
-                killTree(parseInt(childPid, 10), signal); // Recurse into children first
+                .filter(Boolean)
+                .map((p) => parseInt(p, 10));
+              for (const childPid of children) {
+                if (!pids.has(childPid)) {
+                  collectDescendants(childPid, pids);
+                }
               }
             } catch {
-              // Process exited or /proc unavailable (non-Linux)
-            }
-            try {
-              process.kill(targetPid, signal); // Kill this process after its children
-            } catch {
-              // Process already exited
+              // Process exited or /proc unavailable
             }
           };
 
-          killTree(pid, 'SIGTERM');
+          const killPids = (pids: number[], signal: NodeJS.Signals) => {
+            for (const p of pids) {
+              try {
+                process.kill(p, signal);
+              } catch {
+                // Process already exited
+              }
+            }
+          };
 
-          // Wait for the main process to exit with timeout
+          const waitForPidsDeath = async (
+            pids: number[],
+            timeoutMs: number
+          ): Promise<boolean> => {
+            const deadline = Date.now() + timeoutMs;
+            while (Date.now() < deadline) {
+              const anyAlive = pids.some((p) => {
+                try {
+                  process.kill(p, 0);
+                  return true;
+                } catch {
+                  return false;
+                }
+              });
+              if (!anyAlive) return true;
+              await new Promise((r) => setTimeout(r, 10));
+            }
+            return false;
+          };
+
+          const pidSet = new Set<number>();
+          collectDescendants(pid, pidSet);
+          const allPids = Array.from(pidSet);
+
+          this.logger.info('Killing process tree', {
+            rootPid: pid,
+            allPids,
+            signal: 'SIGKILL'
+          });
+
+          killPids(allPids, 'SIGKILL');
+
           if (waitForExit) {
-            try {
-              await Promise.race([
-                this.waitForExitCode(handle.exitCodeFile),
-                new Promise((_, reject) =>
-                  setTimeout(() => reject(new Error('kill timeout')), 5000)
-                )
-              ]);
-            } catch {
-              // Timeout - escalate to SIGKILL
-              killTree(pid, 'SIGKILL');
+            const allDead = await waitForPidsDeath(allPids, 2000);
+            if (!allDead) {
+              pidSet.clear();
+              collectDescendants(pid, pidSet);
+              killPids(Array.from(pidSet), 'SIGKILL');
+              await waitForPidsDeath(Array.from(pidSet), 3000);
             }
           }
 

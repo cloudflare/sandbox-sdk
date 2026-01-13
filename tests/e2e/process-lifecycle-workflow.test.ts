@@ -318,6 +318,9 @@ console.log("Line 3");
     );
     expect(waitExitResponse.status).toBe(200);
 
+    // Small delay to ensure kernel has completed process cleanup
+    await new Promise((r) => setTimeout(r, 200));
+
     // Verify the child processes are gone (killed with the parent)
     const checkAfter = await fetch(`${workerUrl}/api/execute`, {
       method: 'POST',
