@@ -2144,8 +2144,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     // Validate and generate/use token BEFORE making any API calls
     let token: string;
-    if (options.token) {
-      // Validate custom token
+    if (options.token !== undefined) {
       this.validateCustomToken(options.token);
       token = options.token;
     } else {
@@ -2165,12 +2164,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
 
     const sessionId = await this.ensureDefaultSession();
-    await this.client.ports.exposePort(
-      port,
-      sessionId,
-      options?.name,
-      options?.token
-    );
+    await this.client.ports.exposePort(port, sessionId, options?.name);
 
     // Store token for this port (storage is protected by input gates)
     tokens[port.toString()] = token;

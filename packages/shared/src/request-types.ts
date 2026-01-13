@@ -98,12 +98,6 @@ export interface FileExistsRequest {
 export interface ExposePortRequest {
   port: number;
   name?: string;
-  /**
-   * Custom token for the preview URL (optional)
-   * If not provided, a random 16-character token will be generated
-   * Must be 1-16 characters, containing only lowercase letters, numbers, hyphens, and underscores
-   */
-  token?: string;
 }
 
 /**

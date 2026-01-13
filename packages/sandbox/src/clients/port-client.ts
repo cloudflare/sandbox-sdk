@@ -1,4 +1,5 @@
 import type {
+  ExposePortRequest,
   PortCloseResult,
   PortExposeResult,
   PortListResult,
@@ -7,21 +8,12 @@ import type {
 import { BaseHttpClient } from './base-client';
 
 // Re-export for convenience
-export type { PortExposeResult, PortCloseResult, PortListResult };
-
-/**
- * Request interface for exposing ports
- */
-export interface ExposePortRequest {
-  port: number;
-  name?: string;
-  /**
-   * Custom token for the preview URL (optional)
-   * If not provided, a random 16-character token will be generated
-   * Must be 1-16 characters, containing only lowercase letters, numbers, hyphens, and underscores
-   */
-  token?: string;
-}
+export type {
+  ExposePortRequest,
+  PortExposeResult,
+  PortCloseResult,
+  PortListResult
+};
 
 /**
  * Request interface for unexposing ports
@@ -39,16 +31,14 @@ export class PortClient extends BaseHttpClient {
    * @param port - Port number to expose
    * @param sessionId - The session ID for this operation
    * @param name - Optional name for the port
-   * @param token - Optional custom token for the preview URL
    */
   async exposePort(
     port: number,
     sessionId: string,
-    name?: string,
-    token?: string
+    name?: string
   ): Promise<PortExposeResult> {
     try {
-      const data = { port, sessionId, name, token };
+      const data = { port, sessionId, name };
 
       const response = await this.post<PortExposeResult>(
         '/api/expose-port',

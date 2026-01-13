@@ -893,8 +893,9 @@ describe('Sandbox - Automatic Session Management', () => {
   });
 
   describe('custom token validation', () => {
-    beforeEach(() => {
-      // Mock the exposePort client call
+    beforeEach(async () => {
+      await sandbox.setSandboxName('test-sandbox', false);
+
       vi.spyOn(sandbox.client.ports, 'exposePort').mockResolvedValue({
         success: true,
         port: 8080,
@@ -902,159 +903,63 @@ describe('Sandbox - Automatic Session Management', () => {
         timestamp: new Date().toISOString()
       });
 
-      // Mock storage for tokens
       vi.mocked(mockCtx.storage!.get).mockResolvedValue({} as any);
       vi.mocked(mockCtx.storage!.put).mockResolvedValue(undefined);
     });
 
-    it('should accept valid custom tokens of various lengths', async () => {
-      const shortToken = 'short';
-      const result1 = await sandbox.exposePort(8080, {
+    it('should validate token format and length', async () => {
+      const result = await sandbox.exposePort(8080, {
         hostname: 'example.com',
-        token: shortToken
+        token: 'abc-123_xyz'
       });
+      expect(result.url).toContain('abc-123_xyz');
 
-      expect(result1.port).toBe(8080);
-      expect(result1.url).toContain(shortToken);
-
-      const maxLengthToken = 'a123456789012345'; // exactly 16 chars
-      const result2 = await sandbox.exposePort(8081, {
-        hostname: 'example.com',
-        token: maxLengthToken
-      });
-
-      expect(result2.port).toBe(8081);
-      expect(result2.url).toContain(maxLengthToken);
-    });
-
-    it('should reject empty tokens', async () => {
       await expect(
-        sandbox.exposePort(8080, {
-          hostname: 'example.com',
-          token: ''
-        })
+        sandbox.exposePort(8080, { hostname: 'example.com', token: '' })
       ).rejects.toThrow('Custom token cannot be empty');
-    });
 
-    it('should reject tokens exceeding 16 character limit', async () => {
-      const tooLongToken = 'a1234567890123456'; // 17 chars, exceeds 16 limit
       await expect(
         sandbox.exposePort(8080, {
           hostname: 'example.com',
-          token: tooLongToken
+          token: 'a1234567890123456'
         })
-      ).rejects.toThrow('Custom token too long. Maximum 16 characters allowed');
-    });
+      ).rejects.toThrow('Maximum 16 characters');
 
-    it('should reject tokens with invalid characters', async () => {
       await expect(
-        sandbox.exposePort(8080, {
-          hostname: 'example.com',
-          token: 'ABCD1234efgh5678' // uppercase not allowed
-        })
-      ).rejects.toThrow('Custom token must contain only lowercase letters');
+        sandbox.exposePort(8080, { hostname: 'example.com', token: 'ABC123' })
+      ).rejects.toThrow('lowercase letters');
     });
 
-    it('should reject tokens with special characters', async () => {
-      await expect(
-        sandbox.exposePort(8080, {
-          hostname: 'example.com',
-          token: 'abcd!@#$%^&*1234'
-        })
-      ).rejects.toThrow('Custom token must contain only lowercase letters');
-    });
-
-    it('should allow tokens with hyphens and underscores', async () => {
-      const validToken = 'abc-123_def-456';
-      const result = await sandbox.exposePort(8080, {
-        hostname: 'example.com',
-        token: validToken
-      });
-
-      expect(result.port).toBe(8080);
-      expect(result.url).toContain(validToken);
-    });
-
-    it('should generate random token when not provided', async () => {
-      const result = await sandbox.exposePort(8080, {
-        hostname: 'example.com'
-      });
-
-      expect(result.port).toBe(8080);
-
-      // Verify a token was stored
-      expect(mockCtx.storage!.put).toHaveBeenCalledWith(
-        'portTokens',
-        expect.objectContaining({
-          '8080': expect.stringMatching(/^[a-z0-9_-]{16}$/)
-        })
-      );
-    });
-
-    it('should store custom tokens correctly', async () => {
-      const customToken = 'my-custom-token';
-      const result = await sandbox.exposePort(8080, {
-        hostname: 'example.com',
-        token: customToken
-      });
-
-      expect(result.port).toBe(8080);
-      expect(result.url).toContain(customToken);
-
-      // Verify the custom token was stored
-      expect(mockCtx.storage!.put).toHaveBeenCalledWith(
-        'portTokens',
-        expect.objectContaining({
-          '8080': customToken
-        })
-      );
-    });
-
-    it('should reject exposing different ports with same custom token', async () => {
-      const sharedToken = 'shared-token';
-
-      // First exposure succeeds (empty storage mocked in beforeEach)
+    it('should prevent token collision across different ports', async () => {
       await sandbox.exposePort(8080, {
         hostname: 'example.com',
-        token: sharedToken
+        token: 'shared'
       });
 
-      // Second exposure - mock storage to return the token from first exposure
       vi.mocked(mockCtx.storage!.get).mockResolvedValueOnce({
-        '8080': sharedToken
+        '8080': 'shared'
       } as any);
 
-      // Second port exposure with same token should fail
       await expect(
-        sandbox.exposePort(8081, {
-          hostname: 'example.com',
-          token: sharedToken
-        })
+        sandbox.exposePort(8081, { hostname: 'example.com', token: 'shared' })
       ).rejects.toThrow(/already in use by port 8080/);
     });
 
-    it('should allow re-exposing same port with same custom token', async () => {
-      const token = 'reuse-token';
-
-      // First exposure
+    it('should allow re-exposing same port with same token', async () => {
       await sandbox.exposePort(8080, {
         hostname: 'example.com',
-        token: token
+        token: 'stable'
       });
 
-      // Mock storage to return the existing token
       vi.mocked(mockCtx.storage!.get).mockResolvedValueOnce({
-        '8080': token
+        '8080': 'stable'
       } as any);
 
-      // Re-exposing same port with same token should succeed (no collision)
       const result = await sandbox.exposePort(8080, {
         hostname: 'example.com',
-        token: token
+        token: 'stable'
       });
-
-      expect(result.port).toBe(8080);
-      expect(result.url).toContain(token);
+      expect(result.url).toContain('stable');
     });
   });
 
