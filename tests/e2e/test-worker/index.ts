@@ -703,11 +703,11 @@ console.log('Terminal server on port ' + port);
             }
           );
         }
-        // Extract hostname from the request
         const hostname = url.hostname + (url.port ? `:${url.port}` : '');
         const preview = await sandbox.exposePort(body.port, {
           name: body.name,
-          hostname: hostname
+          hostname: hostname,
+          token: body.token
         });
         return new Response(JSON.stringify(preview), {
           headers: { 'Content-Type': 'application/json' }
