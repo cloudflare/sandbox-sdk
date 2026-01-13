@@ -1,6 +1,9 @@
 /**
  * Session - Persistent shell execution with reliable stdout/stderr separation
  *
+ * Architecture docs: docs/SESSION_EXECUTION.md (design decisions, trade-offs, FAQ)
+ * This file contains implementation details and bash concept glossary.
+ *
  * Overview
  * =========
  * Maintains a persistent bash shell so session state (cwd, env vars, shell
@@ -260,9 +263,13 @@ export class Session {
       stderr: 'ignore' // Ignore bash diagnostics
     });
 
-    // Set up shell exit monitor - rejects if shell dies unexpectedly
-    // This Promise will reject when the shell process exits, allowing us to detect
-    // shell death immediately and provide clear error messages to users
+    // Shell death sentinel: a Promise<never> that NEVER resolves, only rejects.
+    //
+    // Used in Promise.race to detect unexpected shell termination:
+    //   await Promise.race([waitForExitCode(...), this.shellExitedPromise])
+    //
+    // If shell dies (e.g., user runs `exit`), this rejects immediately,
+    // letting us report "shell terminated" instead of hanging forever.
     this.shellExitedPromise = new Promise<never>((_, reject) => {
       this.shell!.exited.then((exitCode) => {
         // If we're intentionally destroying the session, don't log error or reject
@@ -1117,16 +1124,21 @@ export class Session {
   /**
    * Wait for exit code file to appear using hybrid fs.watch + polling
    *
-   * Uses fs.watch for fast detection, with polling fallback for systems where
-   * fs.watch doesn't reliably detect rename() operations (common on tmpfs, overlayfs).
+   * Detection strategy (multiple mechanisms for reliability):
+   *   1. fs.watch on directory  → Fast, but unreliable on tmpfs/overlayfs
+   *   2. Polling every 50ms     → Reliable fallback
+   *   3. Timeout (if configured)→ Prevents infinite hangs
+   *   4. Initial existence check→ File may already exist
+   *
+   * Any mechanism that detects the file first wins (via `resolved` flag).
    */
   private async waitForExitCode(exitCodeFile: string): Promise<number> {
     return new Promise((resolve, reject) => {
       const dir = dirname(exitCodeFile);
       const filename = basename(exitCodeFile);
-      let resolved = false;
+      let resolved = false; // First detector wins, others bail out
 
-      // STEP 1: Set up fs.watch for fast detection
+      // STEP 1: fs.watch for fast detection (may miss rename events on some filesystems)
       const watcher = watch(dir, async (_eventType, changedFile) => {
         if (resolved) return;
 
@@ -1323,9 +1335,14 @@ export class Session {
   /**
    * Wait for PID via FIFO with fallback to file polling
    *
-   * Uses a FIFO for reliable synchronization: the shell writes the PID to the pipe,
-   * and we do a blocking read. This eliminates race conditions from file polling.
-   * Falls back to file polling if FIFO read fails (e.g., pipe broken).
+   * Fallback chain:
+   *   1. FIFO read (primary)  → Blocking read guarantees shell has written PID
+   *   2. Timeout + unblock    → If FIFO hangs, unblock it to prevent fd leak
+   *   3. File polling (fallback) → Less reliable but works if FIFO fails
+   *
+   * Why FIFO over file polling?
+   * File polling has race conditions - file might not exist yet or be partially
+   * written. FIFO read blocks until shell writes, guaranteeing complete PID.
    *
    * @param pidPipe - Path to the PID notification FIFO
    * @param pidFile - Path to the PID file (fallback)
