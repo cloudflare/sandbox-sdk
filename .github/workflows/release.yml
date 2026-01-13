@@ -17,6 +17,8 @@ env:
   # Account subdomain for workers.dev URLs (found in Cloudflare dashboard)
   CF_ACCOUNT_SUBDOMAIN: agents-b8a
   E2E_WORKER_NAME: sandbox-e2e-test-worker-main
+  # Use short SHA for unique E2E image tags (ensures fresh container on each run)
+  E2E_IMAGE_TAG: e2e-${{ github.sha }}
 
 jobs:
   # Unit tests run in parallel
@@ -153,8 +155,8 @@ jobs:
       # Push base first (standalone needs it in registry)
       - name: Push base image to Cloudflare
         run: |
-          docker tag sandbox:local sandbox:main
-          wrangler containers push sandbox:main
+          docker tag sandbox:local sandbox:${{ env.E2E_IMAGE_TAG }}
+          wrangler containers push sandbox:${{ env.E2E_IMAGE_TAG }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -166,7 +168,7 @@ jobs:
             --cache-from type=gha,scope=release-standalone \
             --cache-to type=gha,mode=max,scope=release-standalone \
             --load -t sandbox-standalone:local \
-            --build-arg BASE_IMAGE=registry.cloudflare.com/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/sandbox:main \
+            --build-arg BASE_IMAGE=registry.cloudflare.com/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/sandbox:${{ env.E2E_IMAGE_TAG }} \
             -f tests/e2e/test-worker/Dockerfile.standalone tests/e2e/test-worker
 
       # Push remaining images in parallel
@@ -174,16 +176,16 @@ jobs:
         run: |
           set -e
 
-          docker tag sandbox-python:local sandbox-python:main
-          wrangler containers push sandbox-python:main &
+          docker tag sandbox-python:local sandbox-python:${{ env.E2E_IMAGE_TAG }}
+          wrangler containers push sandbox-python:${{ env.E2E_IMAGE_TAG }} &
           PID1=$!
 
-          docker tag sandbox-opencode:local sandbox-opencode:main
-          wrangler containers push sandbox-opencode:main &
+          docker tag sandbox-opencode:local sandbox-opencode:${{ env.E2E_IMAGE_TAG }}
+          wrangler containers push sandbox-opencode:${{ env.E2E_IMAGE_TAG }} &
           PID2=$!
 
-          docker tag sandbox-standalone:local sandbox-standalone:main
-          wrangler containers push sandbox-standalone:main &
+          docker tag sandbox-standalone:local sandbox-standalone:${{ env.E2E_IMAGE_TAG }}
+          wrangler containers push sandbox-standalone:${{ env.E2E_IMAGE_TAG }} &
           PID3=$!
 
           wait $PID1 $PID2 $PID3
@@ -195,7 +197,7 @@ jobs:
       - name: Generate wrangler config
         run: |
           cd tests/e2e/test-worker
-          ./generate-config.sh ${{ env.E2E_WORKER_NAME }} ${{ env.E2E_WORKER_NAME }} http "registry:main"
+          ./generate-config.sh ${{ env.E2E_WORKER_NAME }} ${{ env.E2E_WORKER_NAME }} http "registry:${{ env.E2E_IMAGE_TAG }}"
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
