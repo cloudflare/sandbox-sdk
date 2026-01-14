@@ -1,5 +1,56 @@
 # @cloudflare/sandbox
 
+## 0.7.0
+
+### Minor Changes
+
+- [#329](https://github.com/cloudflare/sandbox-sdk/pull/329) [`fc1a8ea`](https://github.com/cloudflare/sandbox-sdk/commit/fc1a8ea29cd1fe872ce1c08eabca083601aae5c3) Thanks [@mikenomitch](https://github.com/mikenomitch)! - Add support for custom tokens in `exposePort()` to enable stable preview URLs across deployments.
+
+  You can now pass a custom token when exposing ports to maintain consistent preview URLs between container restarts and deployments. This is useful for sharing URLs with users or maintaining stable references in production environments.
+
+  ```typescript
+  // With custom token - URL stays the same across restarts
+  const { url } = await sandbox.exposePort(8080, {
+    hostname: 'example.com',
+    token: 'my_token_v1' // 1-16 chars: a-z, 0-9, _
+  });
+  // url: https://8080-sandbox-id-my-token-v1.example.com
+
+  // Without token - generates random 16-char token (existing behavior)
+  const { url } = await sandbox.exposePort(8080, {
+    hostname: 'example.com'
+  });
+  // url: https://8080-sandbox-id-abc123random4567.example.com
+  ```
+
+  Custom tokens must be 1-16 characters containing only lowercase letters, numbers, and underscores.
+
+  **Breaking change:** Tokens can no longer contain hyphens. Existing preview URLs with hyphenated tokens (including some auto-generated ones) will stop working until the port is re-exposed.
+
+### Patch Changes
+
+- [#347](https://github.com/cloudflare/sandbox-sdk/pull/347) [`efdd0d7`](https://github.com/cloudflare/sandbox-sdk/commit/efdd0d779a8a225da5c26c5ac53011a37ab24315) Thanks [@roerohan](https://github.com/roerohan)! - Add Cloudflare AI Gateway support to OpenCode integration. Users can now route AI provider requests through Cloudflare AI Gateway for monitoring, caching, and rate limiting by adding a `cloudflareAIGateway` provider configuration with `accountId`, `gatewayId`, and optional `apiToken`.
+
+- [#342](https://github.com/cloudflare/sandbox-sdk/pull/342) [`7da85c0`](https://github.com/cloudflare/sandbox-sdk/commit/7da85c069543847633c32cedc0ef8329bf31478e) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Handle undefined environment variables as "unset" in setEnvVars
+
+  Environment variable APIs now properly handle undefined values:
+  - String values are exported as before
+  - undefined/null values now **unset** the variable (runs `unset VAR`)
+
+  This enables idiomatic JavaScript patterns:
+
+  ```typescript
+  await sandbox.setEnvVars({
+    API_KEY: 'new-key',
+    OLD_SECRET: undefined // unsets OLD_SECRET
+  });
+  ```
+
+  **Before**: `sandbox.setEnvVars({ KEY: undefined })` threw a runtime error
+  **After**: `sandbox.setEnvVars({ KEY: undefined })` runs `unset KEY`
+
+  TypeScript types now honestly accept `Record<string, string | undefined>`.
+
 ## 0.6.11
 
 ### Patch Changes
@@ -137,10 +188,10 @@
 
   ```dockerfile
   # Before
-  FROM cloudflare/sandbox:0.6.11
+  FROM cloudflare/sandbox:0.7.0
 
   # After
-  FROM cloudflare/sandbox:0.6.11-python
+  FROM cloudflare/sandbox:0.7.0-python
   ```
 
   Without this change, Python execution will fail with `PYTHON_NOT_AVAILABLE` error.
