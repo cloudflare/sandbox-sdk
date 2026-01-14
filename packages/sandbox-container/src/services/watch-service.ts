@@ -415,6 +415,8 @@ export class WatchService {
    * Wait for inotifywait to output "Watches established" on stderr.
    * This ensures the watch is ready to detect file changes before we signal readiness to clients.
    * After watches are established, continues monitoring stderr for errors in background.
+   *
+   * Has a timeout to prevent hanging if inotifywait behaves unexpectedly.
    */
   private async waitForWatchesEstablished(
     stderr: ReadableStream<Uint8Array>,
@@ -425,64 +427,92 @@ export class WatchService {
     const reader = stderr.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
+    let established = false;
 
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) {
-          logger.debug('stderr ended before watches established');
-          break;
-        }
+    // Timeout after 10 seconds - inotifywait should establish watches quickly
+    const timeoutMs = 10000;
+    const timeoutPromise = new Promise<'timeout'>((resolve) =>
+      setTimeout(() => resolve('timeout'), timeoutMs)
+    );
 
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
+    const readLoop = async (): Promise<'done' | 'established'> => {
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) {
+            logger.debug('stderr ended before watches established');
+            return 'done';
+          }
 
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (trimmed) {
-            if (trimmed.includes('Watches established')) {
-              logger.debug('inotifywait watches established');
-              // Continue monitoring stderr for errors in background
-              this.continueStderrMonitoring(
-                reader,
-                decoder,
-                buffer,
-                controller,
-                encoder,
-                logger
-              );
-              return;
-            }
-            if (trimmed.includes('Setting up watches')) {
-              logger.debug('inotifywait setting up watches', {
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (trimmed) {
+              if (trimmed.includes('Watches established')) {
+                logger.debug('inotifywait watches established');
+                established = true;
+                return 'established';
+              }
+              if (trimmed.includes('Setting up watches')) {
+                logger.debug('inotifywait setting up watches', {
+                  message: trimmed
+                });
+                continue;
+              }
+              // Actual error from inotifywait
+              logger.warn('inotifywait stderr during setup', {
                 message: trimmed
               });
-              continue;
-            }
-            // Actual error
-            logger.warn('inotifywait stderr during setup', {
-              message: trimmed
-            });
-            const errorEvent: FileWatchSSEEvent = {
-              type: 'error',
-              error: trimmed
-            };
-            try {
-              controller.enqueue(
-                encoder.encode(`data: ${JSON.stringify(errorEvent)}\n\n`)
-              );
-            } catch {
-              // Controller may be closed
-              break;
+              const errorEvent: FileWatchSSEEvent = {
+                type: 'error',
+                error: trimmed
+              };
+              try {
+                controller.enqueue(
+                  encoder.encode(`data: ${JSON.stringify(errorEvent)}\n\n`)
+                );
+              } catch {
+                // Controller may be closed
+                return 'done';
+              }
             }
           }
         }
+      } catch (error) {
+        logger.debug('stderr reading ended during setup', {
+          error: error instanceof Error ? error.message : 'Unknown'
+        });
+        return 'done';
       }
-    } catch (error) {
-      logger.debug('stderr reading ended during setup', {
-        error: error instanceof Error ? error.message : 'Unknown'
-      });
+    };
+
+    const result = await Promise.race([readLoop(), timeoutPromise]);
+
+    if (result === 'timeout') {
+      logger.warn('Timeout waiting for inotifywait to establish watches');
+      // Continue anyway - watches might still work
+    }
+
+    if (established) {
+      // Continue monitoring stderr for errors in background
+      this.continueStderrMonitoring(
+        reader,
+        decoder,
+        buffer,
+        controller,
+        encoder,
+        logger
+      );
+    } else {
+      // Release the reader if we're not continuing to monitor
+      try {
+        reader.releaseLock();
+      } catch {
+        // Reader may already be released
+      }
     }
   }
 
