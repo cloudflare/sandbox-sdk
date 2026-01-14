@@ -1,0 +1,42 @@
+name: OpenCode
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  issues:
+    types: [opened, assigned]
+  pull_request_review:
+    types: [submitted]
+
+jobs:
+  opencode:
+    if: |
+      contains(fromJson('["OWNER","MEMBER"]'), github.event.comment.author_association || github.event.issue.author_association || github.event.review.author_association) &&
+      (
+        (github.event_name == 'issue_comment' && (contains(github.event.comment.body, '/oc') || contains(github.event.comment.body, '/opencode'))) ||
+        (github.event_name == 'pull_request_review_comment' && (contains(github.event.comment.body, '/oc') || contains(github.event.comment.body, '/opencode'))) ||
+        (github.event_name == 'pull_request_review' && (contains(github.event.review.body, '/oc') || contains(github.event.review.body, '/opencode'))) ||
+        (github.event_name == 'issues' && (contains(github.event.issue.body, '/oc') || contains(github.event.issue.body, '/opencode') || contains(github.event.issue.title, '/oc') || contains(github.event.issue.title, '/opencode')))
+      )
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Run OpenCode
+        uses: anomalyco/opencode/github@latest
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        with:
+          model: anthropic/claude-sonnet-4-20250514

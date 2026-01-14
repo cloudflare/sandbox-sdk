@@ -350,12 +350,12 @@ console.log('Terminal server on port ' + port);
 
       // Git clone
       if (url.pathname === '/api/git/clone' && request.method === 'POST') {
-        await executor.gitCheckout(body.repoUrl, {
+        const result = await executor.gitCheckout(body.repoUrl, {
           branch: body.branch,
-          targetDir: body.targetDir
+          targetDir: body.targetDir,
+          depth: body.depth
         });
-        const response: SuccessResponse = { success: true };
-        return new Response(JSON.stringify(response), {
+        return new Response(JSON.stringify(result), {
           headers: { 'Content-Type': 'application/json' }
         });
       }
@@ -703,11 +703,11 @@ console.log('Terminal server on port ' + port);
             }
           );
         }
-        // Extract hostname from the request
         const hostname = url.hostname + (url.port ? `:${url.port}` : '');
         const preview = await sandbox.exposePort(body.port, {
           name: body.name,
-          hostname: hostname
+          hostname: hostname,
+          token: body.token
         });
         return new Response(JSON.stringify(preview), {
           headers: { 'Content-Type': 'application/json' }

@@ -475,4 +475,32 @@ describe('GitHandler', () => {
       expect(response.headers.get('Content-Type')).toBe('application/json');
     });
   });
+
+  describe('depth option', () => {
+    it('should pass depth option to service', async () => {
+      const gitCheckoutData = {
+        repoUrl: 'https://github.com/user/repo.git',
+        depth: 1
+      };
+
+      (mockGitService.cloneRepository as any).mockResolvedValue({
+        success: true,
+        data: { path: '/workspace/repo', branch: 'main' }
+      });
+
+      const request = new Request('http://localhost:3000/api/git/checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(gitCheckoutData)
+      });
+
+      const response = await gitHandler.handle(request, mockContext);
+
+      expect(response.status).toBe(200);
+      expect(mockGitService.cloneRepository).toHaveBeenCalledWith(
+        'https://github.com/user/repo.git',
+        expect.objectContaining({ depth: 1 })
+      );
+    });
+  });
 });

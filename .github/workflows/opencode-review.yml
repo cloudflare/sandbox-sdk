@@ -1,0 +1,400 @@
+name: OpenCode Review
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+concurrency:
+  group: opencode-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  opencode-review:
+    # Skip review for automated "Version Packages" PRs created by changesets
+    if: github.event.pull_request.title != 'Version Packages'
+
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Fetch review threads
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Pre-fetch review threads so OpenCode doesn't have to execute GraphQL
+          gh api graphql -f query='
+            query($owner: String!, $name: String!, $pr: Int!) {
+              repository(owner: $owner, name: $name) {
+                pullRequest(number: $pr) {
+                  reviewThreads(first: 100) {
+                    nodes {
+                      id
+                      isResolved
+                      path
+                      line
+                      comments(first: 10) {
+                        nodes {
+                          id
+                          databaseId
+                          body
+                          author { login }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }' \
+            -f owner="${{ github.repository_owner }}" \
+            -f name="${{ github.event.repository.name }}" \
+            -F pr=${{ github.event.pull_request.number }} \
+          | jq '[.data.repository.pullRequest.reviewThreads.nodes[] |
+              select(.comments.nodes[0].author.login == "opencode" or .comments.nodes[0].author.login == "github-actions[bot]") |
+              {
+                threadId: .id,
+                isResolved: .isResolved,
+                path: .path,
+                line: .line,
+                firstCommentId: .comments.nodes[0].databaseId,
+                firstCommentBody: .comments.nodes[0].body,
+                allComments: [.comments.nodes[] | {author: .author.login, body: .body}]
+              }]' > /tmp/review-threads.json
+
+          echo "Found $(jq length /tmp/review-threads.json) OpenCode review threads"
+          cat /tmp/review-threads.json
+
+      - name: Fetch previous review context
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Pre-fetch previous OpenCode comments
+          gh pr view ${{ github.event.pull_request.number }} --json comments \
+            --jq '[.comments[] | select(.author.login == "opencode" or .author.login == "github-actions[bot]") | {author: .author.login, body: .body, createdAt: .createdAt}]' \
+            > /tmp/previous-comments.json
+
+          # Get commits since last push (for incremental reviews)
+          BEFORE="${{ github.event.before }}"
+          AFTER="${{ github.event.after }}"
+
+          # Check if this is the first push (before will be all zeros)
+          if [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+            echo '{"isFirstPush": true, "commits": [], "historyRewritten": false}' > /tmp/review-context.json
+          else
+            # Check if history was rewritten (before commit no longer exists)
+            if git cat-file -t "$BEFORE" 2>/dev/null; then
+              HISTORY_REWRITTEN="false"
+              COMMITS=$(git log --oneline "$BEFORE".."$AFTER" 2>/dev/null | head -20 | jq -R -s 'split("\n") | map(select(length > 0))')
+            else
+              HISTORY_REWRITTEN="true"
+              COMMITS="[]"
+            fi
+
+            jq -n \
+              --argjson historyRewritten "$HISTORY_REWRITTEN" \
+              --argjson commits "$COMMITS" \
+              '{isFirstPush: false, commits: $commits, historyRewritten: $historyRewritten}' \
+              > /tmp/review-context.json
+          fi
+
+          echo "Previous comments: $(jq length /tmp/previous-comments.json)"
+          echo "Review context:"
+          cat /tmp/review-context.json
+
+      - name: Fetch PR metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Pre-fetch PR metadata
+          gh pr view ${{ github.event.pull_request.number }} \
+            --json title,body,baseRefName,headRefName,author \
+            --jq '{
+              title: .title,
+              body: .body,
+              baseBranch: .baseRefName,
+              headBranch: .headRefName,
+              author: .author.login
+            }' > /tmp/pr-metadata.json
+
+          echo "PR metadata:"
+          cat /tmp/pr-metadata.json
+
+      - name: Fetch PR diff
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Pre-fetch the full PR diff
+          gh pr diff ${{ github.event.pull_request.number }} > /tmp/pr-diff.patch
+          echo "PR diff: $(wc -l < /tmp/pr-diff.patch) lines"
+
+      - name: Install OpenCode
+        run: curl -fsSL https://opencode.ai/install | bash
+
+      - name: Run OpenCode Review
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GH_TOKEN: ${{ github.token }}
+          OPENCODE_PERMISSION: '{ "bash": { "*": "deny", "gh api *": "allow" }, "external_directory": { "/tmp/*": "allow" } }'
+        run: |
+          opencode run -m anthropic/claude-sonnet-4-20250514 "You are reviewing PRs for the Cloudflare Sandbox SDK.
+
+          Repository: ${{ github.repository }}
+          PR Number: ${{ github.event.pull_request.number }}
+
+          **Read these docs first**:
+          - AGENTS.md - development workflow and coding standards
+          - docs/ARCHITECTURE.md - three-layer architecture and request flow
+          - docs/CONCURRENCY.md - concurrency model (read before flagging any race conditions)
+
+          **BE CONCISE**: Only report actual issues worth addressing. Skip generic praise and obvious observations. If PR looks good, say so briefly.
+
+          ### 1. Build Context (Before Looking at Diff)
+
+          **Understand the domain first**:
+          - Use mcp__cloudflare-docs__search_cloudflare_documentation to understand relevant Cloudflare concepts related to this change
+          - Ask: 'What files/modules interact with the changed code? How is this pattern used elsewhere?'
+
+          **Then review the diff with that context.**
+
+          ### 2. Check for Previous Review (Internal Context Only)
+
+          Your previous feedback has been pre-fetched in two places:
+
+          **Top-level review comments** (your main '## OpenCode Review' posts):
+          Read /tmp/previous-comments.json
+
+          **Inline code comments** (your comments on specific lines):
+          Read /tmp/review-threads.json
+
+          **What changed since your last review:**
+          Read /tmp/review-context.json
+
+          Read all three to understand what you've already said and what's changed.
+          **Don't announce 'Update N'** - just write naturally, like continuing a conversation.
+
+          ### 3. Gather Context
+
+          PR metadata and diff have been pre-fetched. Read these files:
+          Read /tmp/pr-metadata.json   # title, body, baseBranch, headBranch, author
+          Read /tmp/pr-diff.patch      # Full PR diff
+
+          Also read AGENTS.md for repo-specific conventions and architecture patterns.
+
+          ### 4. Check Documentation Impact
+          Use mcp__cloudflare-docs__search_cloudflare_documentation to check if this PR requires doc updates:
+          - Does it change existing documented behavior?
+          - Does it add new features needing documentation?
+          - Does it have security implications needing best practices docs?
+          - If yes, call out specific doc sections that need updates
+
+          ### 5. Internal Analysis
+          Before writing your review, analyze:
+          a. What is this PR accomplishing?
+          b. Which packages/layers are affected?
+          c. Are there architectural or security implications? (If flagging race conditions, verify against docs/CONCURRENCY.md first)
+          d. What tests are needed?
+          e. Does this need documentation updates?
+
+          ### 6. Decide What to Do With Your Previous Inline Comments
+
+          You already read /tmp/review-threads.json in step 2. Now decide for each thread: was it fixed, or does it need follow-up?
+
+          This decision informs your new review - mention progress naturally:
+          - 'The encoding issue is fixed, thanks!'
+          - 'Still seeing the over-mocking - I'll follow up on that thread.'
+
+          Don't duplicate thread content in your new review. Reference it instead.
+
+          ### 7. Post Review
+
+          **Writing style**:
+          - Be direct. One clear point per issue.
+          - Skip praise, acknowledgments, and preambles.
+          - If PR is good: 'Looks good' and stop.
+          - If issues found: State the issue, reference location, explain why it matters. Move on.
+
+          **Format**:
+          - **Inline comments**: Use for specific line-by-line code issues (file path, line number, comment)
+          - **Main comment**: Summary only - overall assessment, architectural concerns, testing strategy, verdict. Do NOT duplicate inline comments here.
+
+          **Main comment - write like a human reviewer:**
+          - Start with '## OpenCode Review'
+          - Acknowledge progress on previous feedback: 'The encoding issue is fixed, nice!'
+          - Reference ongoing threads: 'Still discussing the mocking approach in that thread.'
+          - Raise new concerns: 'New issue: error handling in container.ts doesn't cover...'
+          - Give a clear verdict: 'Looks good to merge' or 'A few things to address first'
+
+          **Submit your review**
+
+          Create review.json with your main comment and any NEW inline comments (don't re-comment on existing threads):
+          {
+            \"body\": \"## OpenCode Review\n\nYour overall assessment...\",
+            \"event\": \"COMMENT\",
+            \"commit_id\": \"${{ github.event.pull_request.head.sha }}\",
+            \"comments\": [
+              {\"path\": \"path/to/file.ts\", \"line\": 42, \"body\": \"New issue here\"}
+            ]
+          }
+
+          Post it:
+          gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews --method POST --input review.json
+
+          **Handle your existing inline threads**
+
+          For each thread from step 6, decide: is the issue fixed or does it need follow-up?
+
+          **If fixed** -> resolve it using Write tool:
+          Write /tmp/threads-to-resolve.txt with thread IDs (one per line)
+
+          **If needs follow-up** -> reply using Write tool:
+          Write /tmp/thread-replies.json with JSON array: [{\"commentId\": 123456789, \"body\": \"...\"}]
+
+          You can also reply AND resolve (e.g., 'Fixed, thanks!' then resolve).
+          Subsequent workflow steps will submit these automatically."
+
+      - name: Resolve review threads
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Resolve threads that OpenCode marked for resolution
+          if [ -f /tmp/threads-to-resolve.txt ]; then
+            while read -r thread_id; do
+              if [ -n "$thread_id" ]; then
+                echo "Resolving thread: $thread_id"
+                gh api graphql -f query='
+                  mutation($threadId: ID!) {
+                    resolveReviewThread(input: {threadId: $threadId}) {
+                      thread { id isResolved }
+                    }
+                  }' -f threadId="$thread_id" || echo "Failed to resolve $thread_id (may already be resolved)"
+              fi
+            done < /tmp/threads-to-resolve.txt
+            echo "Done resolving $(wc -l < /tmp/threads-to-resolve.txt | tr -d ' ') threads"
+          else
+            echo "No threads to resolve"
+          fi
+
+      - name: Submit thread replies
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Submit replies that OpenCode wrote to thread-replies.json
+          if [ -f /tmp/thread-replies.json ]; then
+            REPLY_COUNT=$(jq length /tmp/thread-replies.json)
+            if [ "$REPLY_COUNT" -gt 0 ]; then
+              echo "Submitting $REPLY_COUNT thread replies"
+              jq -c '.[]' /tmp/thread-replies.json | while read -r reply; do
+                COMMENT_ID=$(echo "$reply" | jq -r '.commentId')
+                BODY=$(echo "$reply" | jq -r '.body')
+                echo "Replying to comment $COMMENT_ID"
+                gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments/"$COMMENT_ID"/replies \
+                  --method POST \
+                  -f body="$BODY" || echo "Failed to reply to $COMMENT_ID"
+              done
+              echo "Done submitting replies"
+            else
+              echo "No replies to submit"
+            fi
+          else
+            echo "No thread replies file found"
+          fi
+
+      - name: Minimize outdated reviews
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Minimize reviews that are outdated:
+          # 1. Reviews where ALL inline threads are resolved
+          # 2. Older reviews with NO threads (keep only the latest threadless review)
+
+          QUERY='query($owner: String!, $name: String!, $pr: Int!) {
+            repository(owner: $owner, name: $name) {
+              pullRequest(number: $pr) {
+                reviews(first: 100) {
+                  nodes {
+                    id
+                    isMinimized
+                    createdAt
+                    author { login }
+                  }
+                }
+                reviewThreads(first: 100) {
+                  nodes {
+                    isResolved
+                    comments(first: 1) {
+                      nodes {
+                        pullRequestReview { id }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }'
+
+          # Fetch data
+          DATA=$(gh api graphql \
+            -F owner="${{ github.repository_owner }}" \
+            -F name="${{ github.event.repository.name }}" \
+            -F pr=${{ github.event.pull_request.number }} \
+            -f query="$QUERY")
+
+          # Write jq filter to file to avoid escaping issues
+          cat > /tmp/minimize-filter.jq << 'JQEOF'
+          .data.repository.pullRequest as $pr |
+          # Only consider reviews from OpenCode bot
+          ($pr.reviews.nodes | map(select(.author.login == "opencode" or .author.login == "github-actions[bot]"))) as $opencodeReviews |
+          # Build set of review IDs that have threads
+          ($pr.reviewThreads.nodes | map(
+            select(.comments.nodes[0].pullRequestReview != null) |
+            .comments.nodes[0].pullRequestReview.id
+          ) | unique) as $reviewsWithThreads |
+          # Build map of review_id -> { allResolved: bool }
+          ($pr.reviewThreads.nodes | map(
+            select(.comments.nodes[0].pullRequestReview != null) |
+            {
+              reviewId: .comments.nodes[0].pullRequestReview.id,
+              isResolved: .isResolved
+            }
+          ) | group_by(.reviewId) | map({
+            key: .[0].reviewId,
+            value: { allResolved: (map(.isResolved) | all) }
+          }) | from_entries) as $threadStatusByReview |
+          # Find the latest OpenCode review (by createdAt) that has no threads
+          (($opencodeReviews | map(select(. as $r | $reviewsWithThreads | any(. == $r.id) | not)) | sort_by(.createdAt) | last) // null) as $latestThreadless |
+          ($latestThreadless | if . then .id else null end) as $latestThreadlessId |
+          # Select OpenCode reviews to minimize
+          $opencodeReviews[] |
+          select(.isMinimized == false) |
+          . as $review |
+          select(
+            # Case 1: Has threads and all are resolved
+            ($threadStatusByReview[$review.id] != null and $threadStatusByReview[$review.id].allResolved == true) or
+            # Case 2: No threads and not the latest threadless review
+            (($reviewsWithThreads | any(. == $review.id) | not) and $review.id != $latestThreadlessId)
+          ) |
+          .id
+          JQEOF
+
+          # Minimize each review
+          echo "$DATA" | jq -r -f /tmp/minimize-filter.jq | while read -r id; do
+            if [ -n "$id" ]; then
+              echo "Minimizing review: $id"
+              gh api graphql -f query='
+                mutation($id: ID!) {
+                  minimizeComment(input: {subjectId: $id, classifier: OUTDATED}) {
+                    minimizedComment { isMinimized }
+                  }
+                }' -f id="$id" || true
+            fi
+          done
+
+          echo "Done minimizing outdated reviews"

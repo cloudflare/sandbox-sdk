@@ -1,0 +1,17 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "instructions": ["docs/ARCHITECTURE.md", "docs/CONCURRENCY.md"],
+  "mcp": {
+    "cloudflare-docs": {
+      "type": "remote",
+      "url": "https://docs.mcp.cloudflare.com/mcp",
+      "enabled": true
+    }
+  },
+  "formatter": {
+    "biome": {
+      "command": ["npx", "biome", "check", "--write"],
+      "extensions": [".ts", ".tsx", ".js", ".jsx", ".json"]
+    }
+  }
+}

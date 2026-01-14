@@ -1,9 +1,6 @@
 /**
  * Request types for API calls to the container
- * These types enforce the contract between the Durable Object client and container handlers
- *
- * IMPORTANT: These types must match the Zod schemas in:
- * @repo/sandbox-container/src/validation/schemas.ts
+ * Single source of truth for the contract between SDK clients and container handlers
  */
 
 /**
@@ -14,7 +11,7 @@ export interface ExecuteRequest {
   sessionId?: string;
   background?: boolean;
   timeoutMs?: number;
-  env?: Record<string, string>;
+  env?: Record<string, string | undefined>;
   cwd?: string;
 }
 
@@ -27,7 +24,7 @@ export interface StartProcessRequest {
   sessionId?: string;
   processId?: string;
   timeoutMs?: number;
-  env?: Record<string, string>;
+  env?: Record<string, string | undefined>;
   cwd?: string;
   encoding?: string;
   autoCleanup?: boolean;
@@ -111,6 +108,20 @@ export interface GitCheckoutRequest {
   branch?: string;
   targetDir?: string;
   sessionId?: string;
+  /** Clone depth for shallow clones (e.g., 1 for latest commit only) */
+  depth?: number;
+}
+
+/**
+ * Request to list files in a directory
+ */
+export interface ListFilesRequest {
+  path: string;
+  options?: {
+    recursive?: boolean;
+    includeHidden?: boolean;
+  };
+  sessionId?: string;
 }
 
 /**
@@ -119,7 +130,7 @@ export interface GitCheckoutRequest {
 export interface SessionCreateRequest {
   id?: string;
   name?: string;
-  env?: Record<string, string>;
+  env?: Record<string, string | undefined>;
   cwd?: string;
 }
 

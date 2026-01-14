@@ -1,5 +1,5 @@
 import type { GitCheckoutResult } from '@repo/shared';
-import { GitLogger } from '@repo/shared';
+import { extractRepoName, GitLogger } from '@repo/shared';
 import { BaseHttpClient } from './base-client';
 import type { HttpClientOptions, SessionRequest } from './types';
 
@@ -13,6 +13,8 @@ export interface GitCheckoutRequest extends SessionRequest {
   repoUrl: string;
   branch?: string;
   targetDir?: string;
+  /** Clone depth for shallow clones (e.g., 1 for latest commit only) */
+  depth?: number;
 }
 
 /**
@@ -29,7 +31,7 @@ export class GitClient extends BaseHttpClient {
    * Clone a Git repository
    * @param repoUrl - URL of the Git repository to clone
    * @param sessionId - The session ID for this operation
-   * @param options - Optional settings (branch, targetDir)
+   * @param options - Optional settings (branch, targetDir, depth)
    */
   async checkout(
     repoUrl: string,
@@ -37,15 +39,15 @@ export class GitClient extends BaseHttpClient {
     options?: {
       branch?: string;
       targetDir?: string;
+      /** Clone depth for shallow clones (e.g., 1 for latest commit only) */
+      depth?: number;
     }
   ): Promise<GitCheckoutResult> {
     try {
       // Determine target directory - use provided path or generate from repo name
       let targetDir = options?.targetDir;
       if (!targetDir) {
-        const repoName = this.extractRepoName(repoUrl);
-        // Ensure absolute path in /workspace
-        targetDir = `/workspace/${repoName}`;
+        targetDir = `/workspace/${extractRepoName(repoUrl)}`;
       }
 
       const data: GitCheckoutRequest = {
@@ -58,6 +60,15 @@ export class GitClient extends BaseHttpClient {
       // This allows Git to use the repository's default branch
       if (options?.branch) {
         data.branch = options.branch;
+      }
+
+      if (options?.depth !== undefined) {
+        if (!Number.isInteger(options.depth) || options.depth <= 0) {
+          throw new Error(
+            `Invalid depth value: ${options.depth}. Must be a positive integer (e.g., 1, 5, 10).`
+          );
+        }
+        data.depth = options.depth;
       }
 
       const response = await this.post<GitCheckoutResult>(
@@ -74,25 +85,6 @@ export class GitClient extends BaseHttpClient {
     } catch (error) {
       this.logError('checkout', error);
       throw error;
-    }
-  }
-
-  /**
-   * Extract repository name from URL for default directory name
-   */
-  private extractRepoName(repoUrl: string): string {
-    try {
-      const url = new URL(repoUrl);
-      const pathParts = url.pathname.split('/');
-      const repoName = pathParts[pathParts.length - 1];
-
-      // Remove .git extension if present
-      return repoName.replace(/\.git$/, '');
-    } catch {
-      // Fallback for invalid URLs
-      const parts = repoUrl.split('/');
-      const repoName = parts[parts.length - 1];
-      return repoName.replace(/\.git$/, '') || 'repo';
     }
   }
 }

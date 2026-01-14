@@ -37,7 +37,7 @@ export class ProcessClient extends BaseHttpClient {
     options?: {
       processId?: string;
       timeoutMs?: number;
-      env?: Record<string, string>;
+      env?: Record<string, string | undefined>;
       cwd?: string;
       encoding?: string;
       autoCleanup?: boolean;
