@@ -161,8 +161,17 @@ export class WebSocketAdapter {
     const isStreaming = contentType.includes('text/event-stream');
 
     if (isStreaming && httpResponse.body) {
-      // Handle SSE streaming response
-      await this.handleStreamingResponse(ws, request.id, httpResponse);
+      // Handle SSE streaming response - don't await to avoid blocking message handler
+      // The streaming loop runs in the background and sends chunks as they arrive
+      this.handleStreamingResponse(ws, request.id, httpResponse).catch(
+        (error) => {
+          this.logger.error(
+            'Error in streaming response',
+            error instanceof Error ? error : new Error(String(error)),
+            { requestId: request.id }
+          );
+        }
+      );
     } else {
       // Handle regular response
       await this.handleRegularResponse(ws, request.id, httpResponse);

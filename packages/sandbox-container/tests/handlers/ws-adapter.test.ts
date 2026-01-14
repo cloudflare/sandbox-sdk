@@ -229,6 +229,21 @@ describe('WebSocketAdapter', () => {
 
       await adapter.onMessage(mockWs as any, JSON.stringify(request));
 
+      // Streaming runs in background to avoid blocking the message handler.
+      // Wait for the final response which indicates streaming completed.
+      const waitForFinalResponse = async (maxWait = 1000) => {
+        const start = Date.now();
+        while (Date.now() - start < maxWait) {
+          const messages = mockWs.getSentMessages<any>();
+          const finalResponse = messages.find(
+            (m) => m.type === 'response' && m.done === true
+          );
+          if (finalResponse) return;
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+      };
+      await waitForFinalResponse();
+
       // Should have received stream chunks and final response
       const messages = mockWs.getSentMessages<any>();
 
