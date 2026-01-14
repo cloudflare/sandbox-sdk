@@ -1,5 +1,5 @@
 ---
-'@cloudflare/sandbox': patch
+'@cloudflare/sandbox': minor
 ---
 
 Add support for custom tokens in `exposePort()` to enable stable preview URLs across deployments.
