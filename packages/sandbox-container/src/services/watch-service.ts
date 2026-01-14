@@ -283,7 +283,18 @@ export class WatchService {
 
     return new ReadableStream({
       async start(controller) {
-        // Send initial watching event
+        // Wait for inotifywait to establish watches before sending watching event
+        // This ensures clients know the watch is truly ready to detect changes
+        if (stderr && typeof stderr !== 'number') {
+          await self.waitForWatchesEstablished(
+            stderr,
+            controller,
+            encoder,
+            logger
+          );
+        }
+
+        // Send watching event only after watches are established
         const watchingEvent: FileWatchSSEEvent = {
           type: 'watching',
           path,
@@ -292,11 +303,6 @@ export class WatchService {
         controller.enqueue(
           encoder.encode(`data: ${JSON.stringify(watchingEvent)}\n\n`)
         );
-
-        // Monitor stderr for errors in background
-        if (stderr && typeof stderr !== 'number') {
-          self.monitorStderr(stderr, controller, encoder, logger);
-        }
 
         // Read stdout line by line
         const reader = stdout.getReader();
@@ -406,20 +412,95 @@ export class WatchService {
   }
 
   /**
-   * Monitor stderr from inotifywait and emit error events
+   * Wait for inotifywait to output "Watches established" on stderr.
+   * This ensures the watch is ready to detect file changes before we signal readiness to clients.
+   * After watches are established, continues monitoring stderr for errors in background.
    */
-  private monitorStderr(
+  private async waitForWatchesEstablished(
     stderr: ReadableStream<Uint8Array>,
     controller: ReadableStreamDefaultController<Uint8Array>,
     encoder: TextEncoder,
     logger: Logger
-  ): void {
+  ): Promise<void> {
     const reader = stderr.getReader();
     const decoder = new TextDecoder();
+    let buffer = '';
 
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          logger.debug('stderr ended before watches established');
+          break;
+        }
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (trimmed) {
+            if (trimmed.includes('Watches established')) {
+              logger.debug('inotifywait watches established');
+              // Continue monitoring stderr for errors in background
+              this.continueStderrMonitoring(
+                reader,
+                decoder,
+                buffer,
+                controller,
+                encoder,
+                logger
+              );
+              return;
+            }
+            if (trimmed.includes('Setting up watches')) {
+              logger.debug('inotifywait setting up watches', {
+                message: trimmed
+              });
+              continue;
+            }
+            // Actual error
+            logger.warn('inotifywait stderr during setup', {
+              message: trimmed
+            });
+            const errorEvent: FileWatchSSEEvent = {
+              type: 'error',
+              error: trimmed
+            };
+            try {
+              controller.enqueue(
+                encoder.encode(`data: ${JSON.stringify(errorEvent)}\n\n`)
+              );
+            } catch {
+              // Controller may be closed
+              break;
+            }
+          }
+        }
+      }
+    } catch (error) {
+      logger.debug('stderr reading ended during setup', {
+        error: error instanceof Error ? error.message : 'Unknown'
+      });
+    }
+  }
+
+  /**
+   * Continue monitoring stderr for errors after watches are established.
+   * Runs in background without blocking.
+   */
+  private continueStderrMonitoring(
+    reader: { read(): Promise<{ done: boolean; value?: Uint8Array }> },
+    decoder: TextDecoder,
+    initialBuffer: string,
+    controller: ReadableStreamDefaultController<Uint8Array>,
+    encoder: TextEncoder,
+    logger: Logger
+  ): void {
     (async () => {
+      let buffer = initialBuffer;
       try {
-        let buffer = '';
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
@@ -431,7 +512,7 @@ export class WatchService {
           for (const line of lines) {
             const trimmed = line.trim();
             if (trimmed) {
-              // Skip inotifywait info messages (not actual errors)
+              // Skip info messages
               if (
                 trimmed.includes('Watches established') ||
                 trimmed.includes('Setting up watches')
