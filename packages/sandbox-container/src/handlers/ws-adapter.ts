@@ -38,6 +38,8 @@ export interface WSData {
 export class WebSocketAdapter {
   private router: Router;
   private logger: Logger;
+  /** Track active streaming responses to prevent garbage collection */
+  private activeStreams: Map<string, Promise<void>> = new Map();
 
   constructor(router: Router, logger: Logger) {
     this.router = router;
@@ -163,15 +165,23 @@ export class WebSocketAdapter {
     if (isStreaming && httpResponse.body) {
       // Handle SSE streaming response - don't await to avoid blocking message handler
       // The streaming loop runs in the background and sends chunks as they arrive
-      this.handleStreamingResponse(ws, request.id, httpResponse).catch(
-        (error) => {
+      // Track the promise to prevent garbage collection of the response
+      const streamPromise = this.handleStreamingResponse(
+        ws,
+        request.id,
+        httpResponse
+      )
+        .catch((error) => {
           this.logger.error(
             'Error in streaming response',
             error instanceof Error ? error : new Error(String(error)),
             { requestId: request.id }
           );
-        }
-      );
+        })
+        .finally(() => {
+          this.activeStreams.delete(request.id);
+        });
+      this.activeStreams.set(request.id, streamPromise);
     } else {
       // Handle regular response
       await this.handleRegularResponse(ws, request.id, httpResponse);
@@ -219,27 +229,50 @@ export class WebSocketAdapter {
       return;
     }
 
+    this.logger.debug('Starting streaming response handler', { requestId });
+
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
     // Track partial event state across chunks
     let currentEvent: { event?: string; data: string[] } = { data: [] };
+    let chunkCount = 0;
 
     try {
       while (true) {
+        this.logger.debug('Waiting for stream chunk', {
+          requestId,
+          chunkCount
+        });
         const { done, value } = await reader.read();
 
         if (done) {
+          this.logger.debug('Stream ended', { requestId, chunkCount });
           break;
         }
 
+        chunkCount++;
+
         // Decode chunk and add to buffer
-        buffer += decoder.decode(value, { stream: true });
+        const chunkText = decoder.decode(value, { stream: true });
+        this.logger.debug('Received stream chunk', {
+          requestId,
+          chunkCount,
+          chunkLength: chunkText.length,
+          chunkPreview: chunkText.substring(0, 100)
+        });
+        buffer += chunkText;
 
         // Parse SSE events from buffer, preserving partial event state
         const result = this.parseSSEEvents(buffer, currentEvent);
         buffer = result.remaining;
         currentEvent = result.currentEvent;
+
+        this.logger.debug('Parsed SSE events', {
+          requestId,
+          eventCount: result.events.length,
+          remainingBuffer: result.remaining.length
+        });
 
         // Send each parsed event as a stream chunk
         for (const event of result.events) {
