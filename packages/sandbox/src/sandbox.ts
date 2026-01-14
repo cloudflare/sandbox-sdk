@@ -22,7 +22,9 @@ import type {
   StreamOptions,
   WaitForExitResult,
   WaitForLogResult,
-  WaitForPortOptions
+  WaitForPortOptions,
+  WatchHandle,
+  WatchOptions
 } from '@repo/shared';
 import {
   createLogger,
@@ -43,6 +45,7 @@ import {
   ProcessReadyTimeoutError,
   SessionAlreadyExistsError
 } from './errors';
+import { FileWatch } from './file-watch';
 import { CodeInterpreter } from './interpreter';
 import { isLocalhostPattern } from './request-handler';
 import { SecurityError, sanitizeSandboxId, validatePort } from './security';
@@ -2110,6 +2113,102 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   async exists(path: string, sessionId?: string) {
     const session = sessionId ?? (await this.ensureDefaultSession());
     return this.client.files.exists(path, session);
+  }
+
+  /**
+   * Watch a directory for file system changes using native inotify
+   *
+   * Returns a FileWatcher that emits events for file changes (create, modify, delete, move).
+   * The watcher uses inotify under the hood for efficient, real-time notifications.
+   *
+   * @param path - Path to watch (absolute or relative to /workspace)
+   * @param options - Watch options
+   * @returns FileWatcher instance for consuming events
+   *
+   * @example
+   * ```typescript
+   * // Watch for all changes in src directory
+   * const watcher = await sandbox.watch('/app/src', {
+   *   recursive: true,
+   *   onEvent: (event) => console.log(`${event.type}: ${event.path}`),
+   *   onError: (error) => console.error('Watch error:', error)
+   * });
+   *
+   * // With AbortController for cancellation
+   * const controller = new AbortController();
+   * const watcher = await sandbox.watch('/app', {
+   *   signal: controller.signal,
+   *   onEvent: (e) => console.log(e)
+   * });
+   * // Later: controller.abort();
+   *
+   * // Stop watching when done
+   * await watcher.stop();
+   * ```
+   */
+  async watch(
+    path: string,
+    options?: Omit<WatchOptions, 'sessionId'>
+  ): Promise<WatchHandle> {
+    const sessionId = await this.ensureDefaultSession();
+    const stream = await this.client.watch.watch({
+      path,
+      sessionId,
+      recursive: options?.recursive,
+      include: options?.include,
+      exclude: options?.exclude
+    });
+
+    return FileWatch.create(stream, path, this.client, this.logger, {
+      signal: options?.signal,
+      onEvent: options?.onEvent,
+      onError: options?.onError
+    });
+  }
+
+  /**
+   * Get raw SSE stream for file watching.
+   * This is a lower-level API for testing and advanced use cases.
+   * Most users should use watch() instead.
+   *
+   * @internal
+   */
+  async watchStream(
+    path: string,
+    options?: {
+      recursive?: boolean;
+      include?: string[];
+      exclude?: string[];
+    }
+  ): Promise<ReadableStream<Uint8Array>> {
+    const sessionId = await this.ensureDefaultSession();
+    return this.client.watch.watch({
+      path,
+      sessionId,
+      recursive: options?.recursive,
+      include: options?.include,
+      exclude: options?.exclude
+    });
+  }
+
+  /**
+   * Stop a watch by ID.
+   * @internal
+   */
+  async stopWatch(watchId: string): Promise<{ success: boolean }> {
+    return this.client.watch.stopWatch(watchId);
+  }
+
+  /**
+   * List all active watches.
+   * @internal
+   */
+  async listWatches(): Promise<{
+    success: boolean;
+    watches: Array<{ id: string; path: string; startedAt: string }>;
+    count: number;
+  }> {
+    return this.client.watch.listWatches();
   }
 
   /**
