@@ -7,7 +7,9 @@ import { InterpreterHandler } from '../handlers/interpreter-handler';
 import { MiscHandler } from '../handlers/misc-handler';
 import { PortHandler } from '../handlers/port-handler';
 import { ProcessHandler } from '../handlers/process-handler';
+import { PtyHandler } from '../handlers/pty-handler';
 import { SessionHandler } from '../handlers/session-handler';
+import { PtyManager } from '../managers/pty-manager';
 import { CorsMiddleware } from '../middleware/cors';
 import { LoggingMiddleware } from '../middleware/logging';
 import { SecurityServiceAdapter } from '../security/security-adapter';
@@ -28,6 +30,9 @@ export interface Dependencies {
   gitService: GitService;
   interpreterService: InterpreterService;
 
+  // Managers
+  ptyManager: PtyManager;
+
   // Infrastructure
   logger: Logger;
   security: SecurityService;
@@ -40,6 +45,7 @@ export interface Dependencies {
   gitHandler: GitHandler;
   interpreterHandler: InterpreterHandler;
   sessionHandler: SessionHandler;
+  ptyHandler: PtyHandler;
   miscHandler: MiscHandler;
 
   // Middleware
@@ -113,6 +119,9 @@ export class Container {
     );
     const interpreterService = new InterpreterService(logger);
 
+    // Initialize managers
+    const ptyManager = new PtyManager(logger);
+
     // Initialize handlers
     const sessionHandler = new SessionHandler(sessionManager, logger);
     const executeHandler = new ExecuteHandler(processService, logger);
@@ -124,6 +133,7 @@ export class Container {
       interpreterService,
       logger
     );
+    const ptyHandler = new PtyHandler(ptyManager, logger);
     const miscHandler = new MiscHandler(logger);
 
     // Initialize middleware
@@ -139,6 +149,9 @@ export class Container {
       gitService,
       interpreterService,
 
+      // Managers
+      ptyManager,
+
       // Infrastructure
       logger,
       security,
@@ -151,6 +164,7 @@ export class Container {
       gitHandler,
       interpreterHandler,
       sessionHandler,
+      ptyHandler,
       miscHandler,
 
       // Middleware

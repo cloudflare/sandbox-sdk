@@ -35,7 +35,7 @@ async function ensureSdkLoaded(): Promise<void> {
   } catch {
     throw new Error(
       '@opencode-ai/sdk is required for OpenCode integration. ' +
-      'Install it with: npm install @opencode-ai/sdk'
+        'Install it with: npm install @opencode-ai/sdk'
     );
   }
 }

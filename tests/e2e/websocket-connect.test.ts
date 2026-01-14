@@ -6,6 +6,53 @@ import {
 } from './helpers/global-sandbox';
 
 /**
+ * Helper to wait for WebSocket server to be ready with retries
+ */
+async function waitForWebSocketServer(
+  wsUrl: string,
+  sandboxId: string,
+  maxRetries = 5,
+  retryDelay = 1000
+): Promise<void> {
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      const ws = new WebSocket(wsUrl, {
+        headers: { 'X-Sandbox-Id': sandboxId }
+      });
+
+      await new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          ws.close();
+          reject(new Error('Connection timeout'));
+        }, 5000);
+
+        ws.on('open', () => {
+          clearTimeout(timeout);
+          ws.close();
+          resolve();
+        });
+
+        ws.on('error', (err) => {
+          clearTimeout(timeout);
+          reject(err);
+        });
+      });
+
+      // Server is ready
+      return;
+    } catch {
+      if (i < maxRetries - 1) {
+        // Wait before retry
+        await new Promise((r) => setTimeout(r, retryDelay));
+      }
+    }
+  }
+  throw new Error(
+    `WebSocket server not ready after ${maxRetries} retries at ${wsUrl}`
+  );
+}
+
+/**
  * WebSocket Connection Tests
  *
  * Tests WebSocket routing via wsConnect(). Uses SHARED sandbox.
@@ -19,11 +66,15 @@ describe('WebSocket Connections', () => {
     workerUrl = sandbox.workerUrl;
     sandboxId = sandbox.sandboxId;
 
-    // Initialize sandbox (container echo server is built-in)
+    // Initialize sandbox (starts echo server on port 8080)
     await fetch(`${workerUrl}/api/init`, {
       method: 'POST',
       headers: { 'X-Sandbox-Id': sandboxId }
     });
+
+    // Wait for WebSocket echo server to be ready
+    const wsUrl = `${workerUrl.replace(/^http/, 'ws')}/ws/echo`;
+    await waitForWebSocketServer(wsUrl, sandboxId);
   }, 120000);
 
   test('should establish WebSocket connection and echo messages', async () => {
