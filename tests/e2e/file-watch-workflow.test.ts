@@ -300,7 +300,10 @@ describe('File Watch Workflow', () => {
       body: JSON.stringify({ path: testDir })
     });
 
-    const reader = response.body!.getReader();
+    expect(response.body).toBeTruthy();
+    if (!response.body) return;
+
+    const reader = response.body.getReader();
     const decoder = new TextDecoder();
 
     // Read until we get the watching event
@@ -340,7 +343,10 @@ describe('File Watch Workflow', () => {
     });
 
     // Wait for watch to establish
-    const reader = response.body!.getReader();
+    expect(response.body).toBeTruthy();
+    if (!response.body) return;
+
+    const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let watchId: string | null = null;
 

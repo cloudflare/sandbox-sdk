@@ -500,7 +500,7 @@ export class WatchService {
         case '|':
         case '\\':
           // Escape regex metacharacters
-          regexParts.push('\\' + char);
+          regexParts.push(`\\${char}`);
           break;
         case '[':
           // Character classes - find matching ] and treat literally
