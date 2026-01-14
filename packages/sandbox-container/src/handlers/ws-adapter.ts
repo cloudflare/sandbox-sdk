@@ -163,15 +163,20 @@ export class WebSocketAdapter {
     const isStreaming = contentType.includes('text/event-stream');
 
     if (isStreaming && httpResponse.body) {
-      // Handle SSE streaming response - don't await to avoid blocking message handler
-      // The streaming loop runs in the background and sends chunks as they arrive
-      // Track the promise to prevent garbage collection of the response
-      const streamPromise = this.handleStreamingResponse(
+      // Handle SSE streaming response
+      // CRITICAL: We must capture the Response body reader BEFORE the promise starts executing
+      // asynchronously. If we call getReader() inside handleStreamingResponse after an await,
+      // Bun's WebSocket handler may GC or invalidate the Response body when onMessage returns.
+      // By getting the reader synchronously here, we ensure the stream remains valid.
+      const reader =
+        httpResponse.body.getReader() as ReadableStreamDefaultReader<Uint8Array>;
+      const streamPromise = this.handleStreamingResponseWithReader(
         ws,
         request.id,
-        httpResponse
+        httpResponse.status,
+        reader
       )
-        .catch((error) => {
+        .catch((error: unknown) => {
           this.logger.error(
             'Error in streaming response',
             error instanceof Error ? error : new Error(String(error)),
@@ -217,21 +222,21 @@ export class WebSocketAdapter {
   }
 
   /**
-   * Handle a streaming (SSE) HTTP response
+   * Handle a streaming (SSE) HTTP response with a pre-acquired reader
+   *
+   * This variant receives the reader instead of the Response, allowing the caller
+   * to acquire the reader synchronously before any await points. This is critical
+   * for WebSocket streaming because Bun's message handler may invalidate the
+   * Response body if the reader is acquired after the handler returns.
    */
-  private async handleStreamingResponse(
+  private async handleStreamingResponseWithReader(
     ws: ServerWebSocket<WSData>,
     requestId: string,
-    response: Response
+    status: number,
+    reader: ReadableStreamDefaultReader<Uint8Array>
   ): Promise<void> {
-    if (!response.body) {
-      this.sendError(ws, requestId, 'STREAM_ERROR', 'No response body', 500);
-      return;
-    }
-
     this.logger.debug('Starting streaming response handler', { requestId });
 
-    const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
     // Track partial event state across chunks
@@ -292,7 +297,7 @@ export class WebSocketAdapter {
       const wsResponse: WSResponse = {
         type: 'response',
         id: requestId,
-        status: response.status,
+        status,
         done: true
       };
       this.send(ws, wsResponse);
