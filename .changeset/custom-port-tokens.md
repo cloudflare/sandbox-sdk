@@ -22,3 +22,5 @@ const { url } = await sandbox.exposePort(8080, {
 ```
 
 Custom tokens must be 1-16 characters containing only lowercase letters, numbers, and underscores.
+
+**Breaking change:** Tokens can no longer contain hyphens. Existing preview URLs with hyphenated tokens (including some auto-generated ones) will stop working until the port is re-exposed.
