@@ -910,9 +910,9 @@ describe('Sandbox - Automatic Session Management', () => {
     it('should validate token format and length', async () => {
       const result = await sandbox.exposePort(8080, {
         hostname: 'example.com',
-        token: 'abc-123_xyz'
+        token: 'abc_123_xyz'
       });
-      expect(result.url).toContain('abc-123_xyz');
+      expect(result.url).toContain('abc_123_xyz');
 
       await expect(
         sandbox.exposePort(8080, { hostname: 'example.com', token: '' })
@@ -928,6 +928,10 @@ describe('Sandbox - Automatic Session Management', () => {
       await expect(
         sandbox.exposePort(8080, { hostname: 'example.com', token: 'ABC123' })
       ).rejects.toThrow('lowercase letters');
+
+      await expect(
+        sandbox.exposePort(8080, { hostname: 'example.com', token: 'abc-123' })
+      ).rejects.toThrow('underscores (_)');
     });
 
     it('should prevent token collision across different ports', async () => {

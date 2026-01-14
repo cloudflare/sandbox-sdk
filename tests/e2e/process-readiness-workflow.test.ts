@@ -497,12 +497,12 @@ Bun.serve({
       const exposeResponse = await fetch(`${workerUrl}/api/port/expose`, {
         method: 'POST',
         headers: portHeaders,
-        body: JSON.stringify({ port: 9093, token: 'my-stable-token' })
+        body: JSON.stringify({ port: 9093, token: 'my_stable_token' })
       });
 
       expect(exposeResponse.status).toBe(200);
       const { url } = (await exposeResponse.json()) as PortExposeResult;
-      expect(url).toContain('my-stable-token');
+      expect(url).toContain('my_stable_token');
 
       const apiResponse = await fetch(url);
       expect(apiResponse.status).toBe(200);
