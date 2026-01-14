@@ -412,10 +412,12 @@ describe('File Watch Workflow', () => {
     }
 
     // If we get a 200, it should be an SSE stream with an error event
+    // Over WebSocket transport, errors may throw instead of returning data
     if (response.body) {
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let text = '';
+      let streamError: Error | null = null;
 
       // Read multiple chunks in case the error comes later
       const timeout = setTimeout(() => reader.cancel(), 3000);
@@ -430,16 +432,21 @@ describe('File Watch Workflow', () => {
             break;
           }
         }
-      } catch {
-        // Stream error or cancelled - check what we got
+      } catch (e) {
+        // Stream error or cancelled - capture the error
+        streamError = e instanceof Error ? e : new Error(String(e));
+        console.log('[DEBUG] Stream error:', streamError.message);
       } finally {
         clearTimeout(timeout);
-        reader.cancel();
+        reader.cancel().catch(() => {});
       }
 
       console.log('[DEBUG] Final SSE text:', text);
-      // Should contain an error message
-      expect(text).toMatch(/error|not found|does not exist/i);
+      console.log('[DEBUG] Stream error:', streamError?.message);
+
+      // Should contain an error message in either the text or the stream error
+      const errorContent = text || streamError?.message || '';
+      expect(errorContent).toMatch(/error|not found|does not exist/i);
     }
   }, 30000);
 

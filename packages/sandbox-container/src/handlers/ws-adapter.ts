@@ -213,6 +213,8 @@ export class WebSocketAdapter {
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
+    // Track partial event state across chunks
+    let currentEvent: { event?: string; data: string[] } = { data: [] };
 
     try {
       while (true) {
@@ -225,12 +227,13 @@ export class WebSocketAdapter {
         // Decode chunk and add to buffer
         buffer += decoder.decode(value, { stream: true });
 
-        // Parse SSE events from buffer
-        const events = this.parseSSEEvents(buffer);
-        buffer = events.remaining;
+        // Parse SSE events from buffer, preserving partial event state
+        const result = this.parseSSEEvents(buffer, currentEvent);
+        buffer = result.remaining;
+        currentEvent = result.currentEvent;
 
         // Send each parsed event as a stream chunk
-        for (const event of events.events) {
+        for (const event of result.events) {
           const chunk: WSStreamChunk = {
             type: 'stream',
             id: requestId,
@@ -272,8 +275,8 @@ export class WebSocketAdapter {
   /**
    * Parse SSE events from a buffer
    *
-   * Returns parsed events and any remaining unparsed content (incomplete lines
-   * waiting for more data from the next chunk).
+   * Returns parsed events, remaining unparsed content, and current partial event state.
+   * The currentEvent parameter allows preserving state across chunk boundaries.
    *
    * Note: This is a minimal SSE parser that only handles `event:` and `data:`
    * fields - sufficient for our streaming handlers which only emit these.
@@ -282,12 +285,15 @@ export class WebSocketAdapter {
    * - `retry:` field (reconnection timing hints)
    * - Comment lines (starting with `:`)
    */
-  private parseSSEEvents(buffer: string): {
+  private parseSSEEvents(
+    buffer: string,
+    currentEvent: { event?: string; data: string[] } = { data: [] }
+  ): {
     events: Array<{ event?: string; data: string }>;
     remaining: string;
+    currentEvent: { event?: string; data: string[] };
   } {
     const events: Array<{ event?: string; data: string }> = [];
-    let currentEvent: { event?: string; data: string[] } = { data: [] };
     let i = 0;
 
     while (i < buffer.length) {
@@ -317,7 +323,8 @@ export class WebSocketAdapter {
 
     return {
       events,
-      remaining: buffer.substring(i)
+      remaining: buffer.substring(i),
+      currentEvent
     };
   }
 
