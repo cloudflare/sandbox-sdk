@@ -192,9 +192,10 @@ describe('File Watch Workflow', () => {
     await createDir(testDir);
 
     // Start watch and create file after watch is confirmed ready
+    // timeoutMs must exceed: ~1s setup + 1500ms pre-action wait + action time + 3000ms post-action wait
     const { events } = await watchWithActions(
       testDir,
-      { timeoutMs: 5000, stopAfterEvents: 5 },
+      { timeoutMs: 8000, stopAfterEvents: 5 },
       async () => {
         await createFile(`${testDir}/newfile.txt`, 'hello');
       }
@@ -218,9 +219,10 @@ describe('File Watch Workflow', () => {
     await createFile(`${testDir}/existing.txt`, 'initial');
 
     // Start watch and modify file after watch is confirmed ready
+    // timeoutMs must exceed: ~1s setup + 1500ms pre-action wait + action time + 3000ms post-action wait
     const { events } = await watchWithActions(
       testDir,
-      { timeoutMs: 5000, stopAfterEvents: 5 },
+      { timeoutMs: 8000, stopAfterEvents: 5 },
       async () => {
         await createFile(`${testDir}/existing.txt`, 'modified content');
       }
