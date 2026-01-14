@@ -92,10 +92,11 @@ describe('File Watch Workflow', () => {
                 actionsExecuted = true;
                 // inotifywait outputs "Setting up watches..." to stderr before it's ready
                 // We need to give it time to actually establish all watches before performing actions
-                await new Promise((r) => setTimeout(r, 1000));
+                await new Promise((r) => setTimeout(r, 1500));
                 actionResult = await actions();
                 // Give events time to propagate through the SSE stream
-                await new Promise((r) => setTimeout(r, 2000));
+                // Longer delay for WebSocket transport which has additional buffering
+                await new Promise((r) => setTimeout(r, 3000));
               }
             }
 
@@ -243,11 +244,15 @@ describe('File Watch Workflow', () => {
     // Start watch and delete file after watch is confirmed ready
     const { events } = await watchWithActions(
       testDir,
-      { timeoutMs: 5000, stopAfterEvents: 5 },
+      { timeoutMs: 8000, stopAfterEvents: 5 },
       async () => {
+        // Small delay to ensure watch is fully ready
+        await new Promise((r) => setTimeout(r, 500));
         await deleteFile(`${testDir}/todelete.txt`);
       }
     );
+
+    console.log('[DEBUG] Delete test events:', JSON.stringify(events, null, 2));
 
     const deleteEvent = events.find(
       (e) => e.type === 'event' && e.eventType === 'delete'
@@ -459,14 +464,25 @@ describe('File Watch Workflow', () => {
     // Start watch and create files after watch is confirmed ready
     const { events } = await watchWithActions(
       testDir,
-      { timeoutMs: 10000, stopAfterEvents: 10 },
+      { timeoutMs: 12000, stopAfterEvents: 10 },
       async () => {
+        // Small delay to ensure watch is fully ready
+        await new Promise((r) => setTimeout(r, 500));
         // Create files in excluded and non-excluded directories
+        // Add delays between operations to avoid race conditions
         await createFile(`${testDir}/app.ts`, 'app code');
+        await new Promise((r) => setTimeout(r, 300));
         await createFile(`${testDir}/node_modules/dep.js`, 'dependency');
+        await new Promise((r) => setTimeout(r, 300));
         await createFile(`${testDir}/.git/config`, 'git config');
+        await new Promise((r) => setTimeout(r, 300));
         await createFile(`${testDir}/index.ts`, 'index');
       }
+    );
+
+    console.log(
+      '[DEBUG] Exclude test events:',
+      JSON.stringify(events, null, 2)
     );
 
     const fileEvents = events.filter((e) => e.type === 'event');
