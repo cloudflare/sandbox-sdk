@@ -713,12 +713,6 @@ export interface WatchOptions {
   recursive?: boolean;
 
   /**
-   * Event types to watch for
-   * @default ['create', 'modify', 'delete', 'rename']
-   */
-  events?: WatchEventType[];
-
-  /**
    * Glob patterns to include (e.g., '*.ts', '*.js')
    * If not specified, all files are included
    */
