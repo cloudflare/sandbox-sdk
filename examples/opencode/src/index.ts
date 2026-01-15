@@ -5,8 +5,6 @@
  * 1. Web UI - Browse to / for the full OpenCode web experience
  * 2. Programmatic - POST to /api/test for SDK-based automation
  */
-
-import { switchPort } from '@cloudflare/containers';
 import { getSandbox } from '@cloudflare/sandbox';
 import {
   createOpencode,
@@ -42,36 +40,7 @@ export default {
       directory: '/home/user/agents',
       config: getConfig(env)
     });
-    // WebSocket requests need DO stub fetch (containerFetch can't serialize WebSocket)
-    if (request.headers.get('Upgrade') === 'websocket') {
-      const id = env.Sandbox.idFromName('opencode');
-      const stub = env.Sandbox.get(id);
-      return stub.fetch(switchPort(request, server.port));
-    }
-
-    // HTTP requests use containerFetch with explicit port
-    const response = await proxyToOpencode(request, sandbox, server);
-
-    // Modify CSP to allow Ghostty WASM loading (skip for WebSocket responses)
-    if (response.status !== 101) {
-      const csp = response.headers.get('Content-Security-Policy');
-      if (csp) {
-        const newCsp = csp
-          .replace(/connect-src\s+'self'/, "connect-src 'self' data:")
-          .replace(
-            /script-src\s+'self'/,
-            "script-src 'self' 'wasm-unsafe-eval'"
-          );
-        const newHeaders = new Headers(response.headers);
-        newHeaders.set('Content-Security-Policy', newCsp);
-        return new Response(response.body, {
-          status: response.status,
-          statusText: response.statusText,
-          headers: newHeaders
-        });
-      }
-    }
-    return response;
+    return proxyToOpencode(request, sandbox, server);
   }
 };
 
