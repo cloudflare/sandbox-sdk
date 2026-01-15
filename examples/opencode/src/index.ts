@@ -52,11 +52,6 @@ async function handleSdkTest(
   env: Env
 ): Promise<Response> {
   try {
-    // Clone a repo to give the agent something to work with
-    await sandbox.gitCheckout('https://github.com/cloudflare/agents.git', {
-      targetDir: '/home/user/agents'
-    });
-
     // Get typed SDK client
     const { client } = await createOpencode<OpencodeClient>(sandbox, {
       directory: '/home/user/agents',
