@@ -1,3 +1,4 @@
+import { switchPort } from '@cloudflare/containers';
 import type { Config } from '@opencode-ai/sdk';
 import { createLogger, type Logger, type Process } from '@repo/shared';
 import type { Sandbox } from '../sandbox';
@@ -35,7 +36,7 @@ async function ensureSdkLoaded(): Promise<void> {
   } catch {
     throw new Error(
       '@opencode-ai/sdk is required for OpenCode integration. ' +
-      'Install it with: npm install @opencode-ai/sdk'
+        'Install it with: npm install @opencode-ai/sdk'
     );
   }
 }
@@ -424,11 +425,16 @@ export async function createOpencode<TClient = unknown>(
  * }
  * ```
  */
-export function proxyToOpencode(
+export async function proxyToOpencode(
   request: Request,
   sandbox: Sandbox<unknown>,
   server: OpencodeServer
-): Response | Promise<Response> {
+): Promise<Response> {
+  // WebSocket requests need to use native fetch (containerFetch can't serialize WebSocket responses)
+  if (request.headers.get('Upgrade') === 'websocket') {
+    return sandbox.fetch(switchPort(request, server.port));
+  }
+
   const url = new URL(request.url);
 
   // OpenCode's frontend defaults to http://127.0.0.1:4096 when hostname includes
@@ -445,5 +451,21 @@ export function proxyToOpencode(
     }
   }
 
-  return sandbox.containerFetch(request, server.port);
+  const response = await sandbox.containerFetch(request, server.port);
+
+  // Modify CSP headers to allow Ghostty WASM loading (skip for WebSocket responses)
+  const csp = response.headers.get('Content-Security-Policy');
+  if (csp) {
+    const newCsp = csp
+      .replace(/connect-src\s+'self'/, "connect-src 'self' data:")
+      .replace(/script-src\s+'self'/, "script-src 'self' 'wasm-unsafe-eval'");
+    const newHeaders = new Headers(response.headers);
+    newHeaders.set('Content-Security-Policy', newCsp);
+    return new Response(response.body, {
+      ...response,
+      headers: newHeaders
+    });
+  }
+
+  return response;
 }
