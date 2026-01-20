@@ -73,7 +73,8 @@ class PtyHandle implements Pty {
   constructor(
     readonly id: string,
     private transport: ITransport,
-    private logger: Logger
+    private logger: Logger,
+    private onCloseCallback?: () => void
   ) {
     // Setup exit promise using generic stream event listener
     this.exited = new Promise((resolve) => {
@@ -88,6 +89,11 @@ class PtyHandle implements Pty {
           } catch {
             // If parse fails, resolve with default exit code
             resolve({ exitCode: 1 });
+          }
+          // Notify client when PTY process exits (unless already closed)
+          if (!this.closed) {
+            this.closed = true;
+            this.onCloseCallback?.();
           }
         }
       );
@@ -212,6 +218,9 @@ class PtyHandle implements Pty {
     }
     this.dataListeners = [];
     this.exitListeners = [];
+
+    // Notify client that this PTY handle is closed
+    this.onCloseCallback?.();
   }
 
   async *[Symbol.asyncIterator](): AsyncIterator<string> {
@@ -248,15 +257,33 @@ class PtyHandle implements Pty {
 }
 
 /**
+ * Default keepalive interval for PTY connections (5 minutes)
+ *
+ * This should be less than the default sleepAfter (10 minutes) to ensure
+ * the activity timer is refreshed before the container sleeps.
+ */
+const DEFAULT_PTY_KEEPALIVE_INTERVAL_MS = 5 * 60 * 1000;
+
+/**
  * Client for PTY operations
  *
  * Provides methods to create and manage pseudo-terminal sessions in the sandbox.
  * PTY operations require WebSocket transport for real-time bidirectional communication.
  * The client automatically creates and manages a dedicated WebSocket connection.
+ *
+ * **Activity Timeout**: PTY WebSocket messages don't reset the container's activity
+ * timeout (they bypass the DO's fetch path). To prevent the container from sleeping
+ * during active PTY sessions, this client sends periodic keepalive pings via HTTP.
  */
 export class PtyClient extends BaseHttpClient {
   /** Dedicated WebSocket transport for PTY real-time communication */
   private ptyTransport: WebSocketTransport | null = null;
+
+  /** Keepalive interval ID for resetting container activity timeout */
+  private keepaliveInterval: ReturnType<typeof setInterval> | null = null;
+
+  /** Number of active PTY handles - keepalive runs when > 0 */
+  private activePtyCount = 0;
 
   /**
    * Get or create the dedicated WebSocket transport for PTY operations
@@ -297,13 +324,95 @@ export class PtyClient extends BaseHttpClient {
   }
 
   /**
-   * Disconnect the PTY WebSocket transport
+   * Disconnect the PTY WebSocket transport and stop keepalive
    * Called when the sandbox is destroyed or PTY operations are no longer needed.
    */
   disconnectPtyTransport(): void {
+    this.stopKeepalive();
+    this.activePtyCount = 0;
+
     if (this.ptyTransport) {
       this.ptyTransport.disconnect();
       this.ptyTransport = null;
+    }
+  }
+
+  /**
+   * Start the keepalive interval if not already running
+   *
+   * Sends periodic HTTP pings to reset the container's activity timeout.
+   * This ensures the container stays alive during active PTY sessions,
+   * since WebSocket messages don't trigger activity timeout renewal.
+   */
+  private startKeepalive(): void {
+    if (this.keepaliveInterval) {
+      return; // Already running
+    }
+
+    this.logger.debug('Starting PTY keepalive');
+
+    // Send keepalive ping immediately, then at regular intervals
+    this.sendKeepalivePing();
+
+    this.keepaliveInterval = setInterval(() => {
+      this.sendKeepalivePing();
+    }, DEFAULT_PTY_KEEPALIVE_INTERVAL_MS);
+  }
+
+  /**
+   * Stop the keepalive interval
+   */
+  private stopKeepalive(): void {
+    if (this.keepaliveInterval) {
+      this.logger.debug('Stopping PTY keepalive');
+      clearInterval(this.keepaliveInterval);
+      this.keepaliveInterval = null;
+    }
+  }
+
+  /**
+   * Send a keepalive ping via HTTP
+   *
+   * This goes through the normal fetch path which resets the activity timeout.
+   * Errors are logged but don't throw - keepalive is best-effort.
+   */
+  private sendKeepalivePing(): void {
+    // Use doFetch which goes through the HTTP path (resets activity timeout)
+    this.doFetch('/api/ping', { method: 'GET' })
+      .then((response) => {
+        if (!response.ok) {
+          this.logger.warn('PTY keepalive ping failed', {
+            status: response.status
+          });
+        } else {
+          this.logger.debug('PTY keepalive ping sent');
+        }
+      })
+      .catch((error) => {
+        // Log but don't throw - keepalive is best-effort
+        this.logger.warn('PTY keepalive ping error', {
+          error: error instanceof Error ? error.message : String(error)
+        });
+      });
+  }
+
+  /**
+   * Track PTY creation and start keepalive if needed
+   */
+  private onPtyCreated(): void {
+    this.activePtyCount++;
+    if (this.activePtyCount === 1) {
+      this.startKeepalive();
+    }
+  }
+
+  /**
+   * Track PTY closure and stop keepalive if no more active PTYs
+   */
+  private onPtyClosed(): void {
+    this.activePtyCount = Math.max(0, this.activePtyCount - 1);
+    if (this.activePtyCount === 0) {
+      this.stopKeepalive();
     }
   }
 
@@ -333,8 +442,13 @@ export class PtyClient extends BaseHttpClient {
 
     this.logSuccess('PTY created', response.pty.id);
 
-    // Pass the dedicated WebSocket transport to the PTY handle
-    return new PtyHandle(response.pty.id, ptyTransport, this.logger);
+    // Track PTY creation for keepalive management
+    this.onPtyCreated();
+
+    // Pass the dedicated WebSocket transport and close callback to the PTY handle
+    return new PtyHandle(response.pty.id, ptyTransport, this.logger, () =>
+      this.onPtyClosed()
+    );
   }
 
   /**
@@ -359,7 +473,12 @@ export class PtyClient extends BaseHttpClient {
 
     this.logSuccess('PTY retrieved', id);
 
-    return new PtyHandle(result.pty.id, ptyTransport, this.logger);
+    // Track PTY retrieval for keepalive management (each handle counts)
+    this.onPtyCreated();
+
+    return new PtyHandle(result.pty.id, ptyTransport, this.logger, () =>
+      this.onPtyClosed()
+    );
   }
 
   /**

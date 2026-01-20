@@ -501,4 +501,253 @@ describe('PtyClient', () => {
       expect(mockWebSocketTransport.disconnect).toHaveBeenCalled();
     });
   });
+
+  describe('keepalive', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('should start keepalive when first PTY is created', async () => {
+      const mockResponse: PtyCreateResult = {
+        success: true,
+        pty: {
+          id: 'pty_123',
+          cols: 80,
+          rows: 24,
+          command: ['bash'],
+          cwd: '/home/user',
+          createdAt: '2023-01-01T00:00:00Z',
+          state: 'running'
+        },
+        timestamp: '2023-01-01T00:00:00Z'
+      };
+
+      // First fetch is for creating PTY, subsequent ones are keepalive pings
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(mockResponse), { status: 200 })
+      );
+
+      await client.create();
+
+      // Keepalive sends an immediate ping
+      expect(mockFetch).toHaveBeenCalledWith(
+        'http://test.com/api/ping',
+        expect.objectContaining({ method: 'GET' })
+      );
+    });
+
+    it('should send keepalive pings at regular intervals', async () => {
+      const mockResponse: PtyCreateResult = {
+        success: true,
+        pty: {
+          id: 'pty_123',
+          cols: 80,
+          rows: 24,
+          command: ['bash'],
+          cwd: '/home/user',
+          createdAt: '2023-01-01T00:00:00Z',
+          state: 'running'
+        },
+        timestamp: '2023-01-01T00:00:00Z'
+      };
+
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(mockResponse), { status: 200 })
+      );
+
+      await client.create();
+
+      // Clear mock to only count keepalive pings
+      const pingCalls = mockFetch.mock.calls.filter(
+        (call) => call[0] === 'http://test.com/api/ping'
+      );
+      expect(pingCalls.length).toBe(1); // Initial immediate ping
+
+      // Advance time by 5 minutes (keepalive interval)
+      await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+
+      const afterIntervalPingCalls = mockFetch.mock.calls.filter(
+        (call) => call[0] === 'http://test.com/api/ping'
+      );
+      expect(afterIntervalPingCalls.length).toBe(2); // Initial + 1 interval
+    });
+
+    it('should stop keepalive when last PTY is closed', async () => {
+      const mockResponse: PtyCreateResult = {
+        success: true,
+        pty: {
+          id: 'pty_123',
+          cols: 80,
+          rows: 24,
+          command: ['bash'],
+          cwd: '/home/user',
+          createdAt: '2023-01-01T00:00:00Z',
+          state: 'running'
+        },
+        timestamp: '2023-01-01T00:00:00Z'
+      };
+
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(mockResponse), { status: 200 })
+      );
+
+      const pty = await client.create();
+
+      // Close the PTY
+      pty.close();
+
+      // Clear mock calls
+      mockFetch.mockClear();
+
+      // Advance time by 5 minutes
+      await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+
+      // No keepalive pings should be sent after PTY is closed
+      const pingCalls = mockFetch.mock.calls.filter(
+        (call) => call[0] === 'http://test.com/api/ping'
+      );
+      expect(pingCalls.length).toBe(0);
+    });
+
+    it('should keep keepalive running with multiple PTYs', async () => {
+      const mockResponse1: PtyCreateResult = {
+        success: true,
+        pty: {
+          id: 'pty_1',
+          cols: 80,
+          rows: 24,
+          command: ['bash'],
+          cwd: '/home/user',
+          createdAt: '2023-01-01T00:00:00Z',
+          state: 'running'
+        },
+        timestamp: '2023-01-01T00:00:00Z'
+      };
+
+      const mockResponse2: PtyCreateResult = {
+        success: true,
+        pty: {
+          id: 'pty_2',
+          cols: 80,
+          rows: 24,
+          command: ['bash'],
+          cwd: '/home/user',
+          createdAt: '2023-01-01T00:00:01Z',
+          state: 'running'
+        },
+        timestamp: '2023-01-01T00:00:01Z'
+      };
+
+      mockFetch
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify(mockResponse1), { status: 200 })
+        )
+        .mockResolvedValue(
+          new Response(JSON.stringify(mockResponse2), { status: 200 })
+        );
+
+      const pty1 = await client.create();
+      const pty2 = await client.create();
+
+      // Close first PTY
+      pty1.close();
+
+      // Clear mock calls
+      mockFetch.mockClear();
+
+      // Advance time by 5 minutes
+      await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+
+      // Keepalive should still be running (pty2 is active)
+      const pingCalls = mockFetch.mock.calls.filter(
+        (call) => call[0] === 'http://test.com/api/ping'
+      );
+      expect(pingCalls.length).toBe(1);
+
+      // Close second PTY
+      pty2.close();
+
+      // Clear mock calls
+      mockFetch.mockClear();
+
+      // Advance time by another 5 minutes
+      await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+
+      // No more keepalive pings
+      const finalPingCalls = mockFetch.mock.calls.filter(
+        (call) => call[0] === 'http://test.com/api/ping'
+      );
+      expect(finalPingCalls.length).toBe(0);
+    });
+
+    it('should stop keepalive when disconnectPtyTransport is called', async () => {
+      const mockResponse: PtyCreateResult = {
+        success: true,
+        pty: {
+          id: 'pty_123',
+          cols: 80,
+          rows: 24,
+          command: ['bash'],
+          cwd: '/home/user',
+          createdAt: '2023-01-01T00:00:00Z',
+          state: 'running'
+        },
+        timestamp: '2023-01-01T00:00:00Z'
+      };
+
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(mockResponse), { status: 200 })
+      );
+
+      await client.create();
+
+      // Disconnect transport (simulating sandbox destroy)
+      client.disconnectPtyTransport();
+
+      // Clear mock calls
+      mockFetch.mockClear();
+
+      // Advance time by 5 minutes
+      await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+
+      // No keepalive pings should be sent
+      const pingCalls = mockFetch.mock.calls.filter(
+        (call) => call[0] === 'http://test.com/api/ping'
+      );
+      expect(pingCalls.length).toBe(0);
+    });
+
+    it('should handle keepalive ping failures gracefully', async () => {
+      const mockResponse: PtyCreateResult = {
+        success: true,
+        pty: {
+          id: 'pty_123',
+          cols: 80,
+          rows: 24,
+          command: ['bash'],
+          cwd: '/home/user',
+          createdAt: '2023-01-01T00:00:00Z',
+          state: 'running'
+        },
+        timestamp: '2023-01-01T00:00:00Z'
+      };
+
+      // First call succeeds (PTY create), then ping fails
+      mockFetch
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify(mockResponse), { status: 200 })
+        )
+        .mockRejectedValue(new Error('Network error'));
+
+      // Should not throw
+      const pty = await client.create();
+
+      // The PTY handle should still be usable
+      expect(pty.id).toBe('pty_123');
+    });
+  });
 });
