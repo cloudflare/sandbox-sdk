@@ -58,7 +58,7 @@ jobs:
             -f name="${{ github.event.repository.name }}" \
             -F pr=${{ github.event.pull_request.number }} \
           | jq '[.data.repository.pullRequest.reviewThreads.nodes[] |
-              select(.comments.nodes[0].author.login == "opencode" or .comments.nodes[0].author.login == "github-actions[bot]") |
+              select(.comments.nodes[0].author.login == "opencode" or .comments.nodes[0].author.login == "github-actions" or .comments.nodes[0].author.login == "claude") |
               {
                 threadId: .id,
                 isResolved: .isResolved,
@@ -78,7 +78,7 @@ jobs:
         run: |
           # Pre-fetch previous OpenCode comments
           gh pr view ${{ github.event.pull_request.number }} --json comments \
-            --jq '[.comments[] | select(.author.login == "opencode" or .author.login == "github-actions[bot]") | {author: .author.login, body: .body, createdAt: .createdAt}]' \
+            --jq '[.comments[] | select(.author.login == "opencode" or .author.login == "github-actions" or .author.login == "claude") | {author: .author.login, body: .body, createdAt: .createdAt}]' \
             > /tmp/previous-comments.json
 
           # Get commits since last push (for incremental reviews)
@@ -351,7 +351,7 @@ jobs:
           cat > /tmp/minimize-filter.jq << 'JQEOF'
           .data.repository.pullRequest as $pr |
           # Only consider reviews from OpenCode bot
-          ($pr.reviews.nodes | map(select(.author.login == "opencode" or .author.login == "github-actions[bot]"))) as $opencodeReviews |
+          ($pr.reviews.nodes | map(select(.author.login == "opencode" or .author.login == "github-actions" or .author.login == "claude"))) as $opencodeReviews |
           # Build set of review IDs that have threads
           ($pr.reviewThreads.nodes | map(
             select(.comments.nodes[0].pullRequestReview != null) |
