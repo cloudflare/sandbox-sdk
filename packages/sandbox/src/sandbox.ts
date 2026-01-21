@@ -26,8 +26,10 @@ import type {
 } from '@repo/shared';
 import {
   createLogger,
+  filterEnvVars,
   getEnvString,
   isTerminalStatus,
+  partitionEnvVars,
   type SessionDeleteResult,
   shellEscape,
   TraceContext
@@ -46,9 +48,12 @@ import { isLocalhostPattern } from './request-handler';
 import { SecurityError, sanitizeSandboxId, validatePort } from './security';
 import { parseSSEStream } from './sse-parser';
 import {
+  buildS3fsSource,
   detectCredentials,
   detectProviderFromUrl,
-  resolveS3fsOptions
+  resolveS3fsOptions,
+  validateBucketName,
+  validatePrefix
 } from './storage-mount';
 import {
   InvalidMountConfigError,
@@ -215,6 +220,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         (await this.ctx.storage.get<boolean>('normalizeId')) || false;
       this.defaultSession =
         (await this.ctx.storage.get<string>('defaultSession')) || null;
+      this.keepAliveEnabled =
+        (await this.ctx.storage.get<boolean>('keepAliveEnabled')) || false;
 
       // Load saved timeout configuration (highest priority)
       const storedTimeouts =
@@ -256,33 +263,42 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   // RPC method to set the sleep timeout
   async setSleepAfter(sleepAfter: string | number): Promise<void> {
     this.sleepAfter = sleepAfter;
+    // Reschedule activity timeout to apply the new sleepAfter value immediately
+    this.renewActivityTimeout();
   }
 
   // RPC method to enable keepAlive mode
   async setKeepAlive(keepAlive: boolean): Promise<void> {
     this.keepAliveEnabled = keepAlive;
-    if (keepAlive) {
-      this.logger.info(
-        'KeepAlive mode enabled - container will stay alive until explicitly destroyed'
-      );
-    } else {
-      this.logger.info(
-        'KeepAlive mode disabled - container will timeout normally'
-      );
-    }
+    await this.ctx.storage.put('keepAliveEnabled', keepAlive);
   }
 
-  // RPC method to set environment variables
-  async setEnvVars(envVars: Record<string, string>): Promise<void> {
-    // Update local state for new sessions
-    this.envVars = { ...this.envVars, ...envVars };
+  async setEnvVars(envVars: Record<string, string | undefined>): Promise<void> {
+    const { toSet, toUnset } = partitionEnvVars(envVars);
 
-    // If default session already exists, update it directly
+    for (const key of toUnset) {
+      delete this.envVars[key];
+    }
+    this.envVars = { ...this.envVars, ...toSet };
+
     if (this.defaultSession) {
-      // Set environment variables by executing export commands in the existing session
-      for (const [key, value] of Object.entries(envVars)) {
-        const escapedValue = value.replace(/'/g, "'\\''");
-        const exportCommand = `export ${key}='${escapedValue}'`;
+      for (const key of toUnset) {
+        const unsetCommand = `unset ${key}`;
+
+        const result = await this.client.commands.execute(
+          unsetCommand,
+          this.defaultSession
+        );
+
+        if (result.exitCode !== 0) {
+          throw new Error(
+            `Failed to unset ${key}: ${result.stderr || 'Unknown error'}`
+          );
+        }
+      }
+
+      for (const [key, value] of Object.entries(toSet)) {
+        const exportCommand = `export ${key}=${shellEscape(value)}`;
 
         const result = await this.client.commands.execute(
           exportCommand,
@@ -449,15 +465,20 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   ): Promise<void> {
     this.logger.info(`Mounting bucket ${bucket} to ${mountPath}`);
 
-    // Validate options
-    this.validateMountOptions(bucket, mountPath, options);
+    const prefix = options.prefix || undefined;
+
+    this.validateMountOptions(bucket, mountPath, { ...options, prefix });
+
+    // Build s3fs source: bucket name with optional prefix (e.g., "mybucket:/prefix/")
+    const s3fsSource = buildS3fsSource(bucket, prefix);
 
     // Detect provider from explicit option or URL pattern
     const provider: BucketProvider | null =
       options.provider || detectProviderFromUrl(options.endpoint);
 
     this.logger.debug(`Detected provider: ${provider || 'unknown'}`, {
-      explicitProvider: options.provider
+      explicitProvider: options.provider,
+      prefix
     });
 
     // Detect credentials
@@ -468,7 +489,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     // Reserve mount path before async operations so concurrent mounts see it
     this.activeMounts.set(mountPath, {
-      bucket,
+      bucket: s3fsSource,
       mountPath,
       endpoint: options.endpoint,
       provider,
@@ -477,15 +498,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     });
 
     try {
-      // Create password file with credentials
+      // Create password file with credentials (uses bucket name only, not prefix)
       await this.createPasswordFile(passwordFilePath, bucket, credentials);
 
       // Create mount directory
       await this.exec(`mkdir -p ${shellEscape(mountPath)}`);
 
-      // Execute S3FS mount with password file
+      // Execute S3FS mount with password file (uses full s3fs source with prefix)
       await this.executeS3FSMount(
-        bucket,
+        s3fsSource,
         mountPath,
         options,
         provider,
@@ -494,7 +515,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
       // Mark as successfully mounted
       this.activeMounts.set(mountPath, {
-        bucket,
+        bucket: s3fsSource,
         mountPath,
         endpoint: options.endpoint,
         provider,
@@ -571,14 +592,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       );
     }
 
-    // Validate bucket name (S3-compatible naming rules)
-    const bucketNameRegex = /^[a-z0-9]([a-z0-9.-]{0,61}[a-z0-9])?$/;
-    if (!bucketNameRegex.test(bucket)) {
-      throw new InvalidMountConfigError(
-        `Invalid bucket name: "${bucket}". Bucket names must be 3-63 characters, ` +
-          `lowercase alphanumeric, dots, or hyphens, and cannot start/end with dots or hyphens.`
-      );
-    }
+    validateBucketName(bucket, mountPath);
 
     // Validate mount path is absolute
     if (!mountPath.startsWith('/')) {
@@ -594,6 +608,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         `Mount path "${mountPath}" is already in use by bucket "${existingMount?.bucket}". ` +
           `Unmount the existing bucket first or use a different mount path.`
       );
+    }
+
+    // Validate prefix format if provided
+    if (options.prefix !== undefined) {
+      validatePrefix(options.prefix);
     }
   }
 
@@ -1769,7 +1788,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           processId: options.processId
         }),
         ...(options?.timeout !== undefined && { timeoutMs: options.timeout }),
-        ...(options?.env !== undefined && { env: options.env }),
+        ...(options?.env !== undefined && { env: filterEnvVars(options.env) }),
         ...(options?.cwd !== undefined && { cwd: options.cwd }),
         ...(options?.encoding !== undefined && { encoding: options.encoding }),
         ...(options?.autoCleanup !== undefined && {
@@ -2000,12 +2019,19 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   async gitCheckout(
     repoUrl: string,
-    options?: { branch?: string; targetDir?: string; sessionId?: string }
+    options?: {
+      branch?: string;
+      targetDir?: string;
+      sessionId?: string;
+      /** Clone depth for shallow clones (e.g., 1 for latest commit only) */
+      depth?: number;
+    }
   ) {
     const session = options?.sessionId ?? (await this.ensureDefaultSession());
     return this.client.git.checkout(repoUrl, session, {
       branch: options?.branch,
-      targetDir: options?.targetDir
+      targetDir: options?.targetDir,
+      depth: options?.depth
     });
   }
 
@@ -2086,7 +2112,34 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     return this.client.files.exists(path, session);
   }
 
-  async exposePort(port: number, options: { name?: string; hostname: string }) {
+  /**
+   * Expose a port and get a preview URL for accessing services running in the sandbox
+   *
+   * @param port - Port number to expose (1024-65535)
+   * @param options - Configuration options
+   * @param options.hostname - Your Worker's domain name (required for preview URL construction)
+   * @param options.name - Optional friendly name for the port
+   * @param options.token - Optional custom token for the preview URL (1-16 characters: lowercase letters, numbers, hyphens, underscores)
+   *                       If not provided, a random 16-character token will be generated automatically
+   * @returns Preview URL information including the full URL, port number, and optional name
+   *
+   * @example
+   * // With auto-generated token
+   * const { url } = await sandbox.exposePort(8080, { hostname: 'example.com' });
+   * // url: https://8080-sandbox-id-abc123random4567.example.com
+   *
+   * @example
+   * // With custom token for stable URLs across deployments
+   * const { url } = await sandbox.exposePort(8080, {
+   *   hostname: 'example.com',
+   *   token: 'my-token-v1'
+   * });
+   * // url: https://8080-sandbox-id-my-token-v1.example.com
+   */
+  async exposePort(
+    port: number,
+    options: { name?: string; hostname: string; token?: string }
+  ) {
     // Check if hostname is workers.dev domain (doesn't support wildcard subdomains)
     if (options.hostname.endsWith('.workers.dev')) {
       const errorResponse: ErrorResponse = {
@@ -2099,9 +2152,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       throw new CustomDomainRequiredError(errorResponse);
     }
 
-    const sessionId = await this.ensureDefaultSession();
-    await this.client.ports.exposePort(port, sessionId, options?.name);
-
     // We need the sandbox name to construct preview URLs
     if (!this.sandboxName) {
       throw new Error(
@@ -2109,10 +2159,29 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       );
     }
 
-    // Generate and store token for this port (storage is protected by input gates)
-    const token = this.generatePortToken();
+    let token: string;
+    if (options.token !== undefined) {
+      this.validateCustomToken(options.token);
+      token = options.token;
+    } else {
+      token = this.generatePortToken();
+    }
+
+    // Allow re-exposing same port with same token, but reject if another port uses this token
     const tokens =
       (await this.ctx.storage.get<Record<string, string>>('portTokens')) || {};
+    const existingPort = Object.entries(tokens).find(
+      ([p, t]) => t === token && p !== port.toString()
+    );
+    if (existingPort) {
+      throw new SecurityError(
+        `Token '${token}' is already in use by port ${existingPort[0]}. Please use a different token.`
+      );
+    }
+
+    const sessionId = await this.ensureDefaultSession();
+    await this.client.ports.exposePort(port, sessionId, options?.name);
+
     tokens[port.toString()] = token;
     await this.ctx.storage.put('portTokens', tokens);
 
@@ -2212,7 +2281,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       (await this.ctx.storage.get<Record<string, string>>('portTokens')) || {};
     const storedToken = tokens[port.toString()];
     if (!storedToken) {
-      // This should not happen - all exposed ports must have tokens
       this.logger.error(
         'Port is exposed but has no token - bug detected',
         undefined,
@@ -2221,8 +2289,33 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       return false;
     }
 
-    // Constant-time comparison to prevent timing attacks
-    return storedToken === token;
+    if (storedToken.length !== token.length) {
+      return false;
+    }
+
+    const encoder = new TextEncoder();
+    const a = encoder.encode(storedToken);
+    const b = encoder.encode(token);
+
+    return crypto.subtle.timingSafeEqual(a, b);
+  }
+
+  private validateCustomToken(token: string): void {
+    if (token.length === 0) {
+      throw new SecurityError(`Custom token cannot be empty.`);
+    }
+
+    if (token.length > 16) {
+      throw new SecurityError(
+        `Custom token too long. Maximum 16 characters allowed. Received: ${token.length} characters.`
+      );
+    }
+
+    if (!/^[a-z0-9_]+$/.test(token)) {
+      throw new SecurityError(
+        `Custom token must contain only lowercase letters (a-z), numbers (0-9), and underscores (_). Invalid token provided.`
+      );
+    }
   }
 
   private generatePortToken(): string {
@@ -2231,10 +2324,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     const array = new Uint8Array(12); // 12 bytes = 16 base64url chars (after padding removal)
     crypto.getRandomValues(array);
 
-    // Convert to base64url format (URL-safe, no padding, lowercase)
     const base64 = btoa(String.fromCharCode(...array));
     return base64
-      .replace(/\+/g, '-')
+      .replace(/\+/g, '_')
       .replace(/\//g, '_')
       .replace(/=/g, '')
       .toLowerCase();
@@ -2318,8 +2410,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       ...this.envVars,
       ...(options?.env ?? {})
     };
+    const filteredEnv = filterEnvVars(mergedEnv);
     const envPayload =
-      Object.keys(mergedEnv).length > 0 ? mergedEnv : undefined;
+      Object.keys(filteredEnv).length > 0 ? filteredEnv : undefined;
 
     // Create session in container
     await this.client.utils.createSession({
@@ -2421,13 +2514,27 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       gitCheckout: (repoUrl, options) =>
         this.gitCheckout(repoUrl, { ...options, sessionId }),
 
-      // Environment management - needs special handling
-      setEnvVars: async (envVars: Record<string, string>) => {
+      setEnvVars: async (envVars: Record<string, string | undefined>) => {
+        const { toSet, toUnset } = partitionEnvVars(envVars);
+
         try {
-          // Set environment variables by executing export commands
-          for (const [key, value] of Object.entries(envVars)) {
-            const escapedValue = value.replace(/'/g, "'\\''");
-            const exportCommand = `export ${key}='${escapedValue}'`;
+          for (const key of toUnset) {
+            const unsetCommand = `unset ${key}`;
+
+            const result = await this.client.commands.execute(
+              unsetCommand,
+              sessionId
+            );
+
+            if (result.exitCode !== 0) {
+              throw new Error(
+                `Failed to unset ${key}: ${result.stderr || 'Unknown error'}`
+              );
+            }
+          }
+
+          for (const [key, value] of Object.entries(toSet)) {
+            const exportCommand = `export ${key}=${shellEscape(value)}`;
 
             const result = await this.client.commands.execute(
               exportCommand,

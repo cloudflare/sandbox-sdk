@@ -42,4 +42,33 @@ OpenCode handles everything:
 - **Isolated execution** - Code runs in secure sandbox containers
 - **Persistent sessions** - Sessions survive across requests
 
+## Advanced: Cloudflare AI Gateway
+
+You can optionally route all AI provider requests through [Cloudflare AI Gateway](https://developers.cloudflare.com/ai-gateway/) for monitoring, caching, and rate limiting. Add these variables to `.dev.vars`:
+
+```bash
+CLOUDFLARE_ACCOUNT_ID=your-account-id
+CLOUDFLARE_GATEWAY_ID=your-gateway-id
+CLOUDFLARE_API_TOKEN=your-api-token  # Optional, for authenticated gateways
+```
+
+Then uncomment the `cloudflareAIGateway` section in `src/index.ts`:
+
+```typescript
+const getConfig = (env: Env): Config => ({
+  provider: {
+    anthropic: {
+      options: { apiKey: env.ANTHROPIC_API_KEY }
+    },
+    cloudflareAIGateway: {
+      options: {
+        accountId: env.CLOUDFLARE_ACCOUNT_ID,
+        gatewayId: env.CLOUDFLARE_GATEWAY_ID,
+        apiToken: env.CLOUDFLARE_API_TOKEN
+      }
+    }
+  }
+});
+```
+
 Happy hacking!

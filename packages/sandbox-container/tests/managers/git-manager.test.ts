@@ -9,28 +9,6 @@ describe('GitManager', () => {
     manager = new GitManager();
   });
 
-  describe('extractRepoName', () => {
-    it('should extract repo name from various URL formats', () => {
-      expect(manager.extractRepoName('https://github.com/user/repo.git')).toBe(
-        'repo'
-      );
-      expect(manager.extractRepoName('https://github.com/user/my-repo')).toBe(
-        'my-repo'
-      );
-      expect(manager.extractRepoName('git@github.com:user/repo.git')).toBe(
-        'repo'
-      );
-      expect(
-        manager.extractRepoName('https://github.com/user/my-awesome_repo.git')
-      ).toBe('my-awesome_repo');
-    });
-
-    it('should return fallback for invalid URLs', () => {
-      expect(manager.extractRepoName('not-a-valid-url')).toBe('repository');
-      expect(manager.extractRepoName('')).toBe('repository');
-    });
-  });
-
   describe('generateTargetDirectory', () => {
     it('should generate directory in /workspace with repo name', () => {
       const dir = manager.generateTargetDirectory(
@@ -84,6 +62,56 @@ describe('GitManager', () => {
         'clone',
         '--branch',
         'develop',
+        'https://github.com/user/repo.git',
+        '/tmp/target'
+      ]);
+    });
+
+    it('should build clone args with depth option for shallow clone', () => {
+      const args = manager.buildCloneArgs(
+        'https://github.com/user/repo.git',
+        '/tmp/target',
+        { depth: 1 }
+      );
+      expect(args).toEqual([
+        'git',
+        'clone',
+        '--depth',
+        '1',
+        'https://github.com/user/repo.git',
+        '/tmp/target'
+      ]);
+    });
+
+    it('should build clone args with both branch and depth options', () => {
+      const args = manager.buildCloneArgs(
+        'https://github.com/user/repo.git',
+        '/tmp/target',
+        { branch: 'main', depth: 10 }
+      );
+      expect(args).toEqual([
+        'git',
+        'clone',
+        '--branch',
+        'main',
+        '--depth',
+        '10',
+        'https://github.com/user/repo.git',
+        '/tmp/target'
+      ]);
+    });
+
+    it('should pass through depth value to git command', () => {
+      const args = manager.buildCloneArgs(
+        'https://github.com/user/repo.git',
+        '/tmp/target',
+        { depth: 5 }
+      );
+      expect(args).toEqual([
+        'git',
+        'clone',
+        '--depth',
+        '5',
         'https://github.com/user/repo.git',
         '/tmp/target'
       ]);

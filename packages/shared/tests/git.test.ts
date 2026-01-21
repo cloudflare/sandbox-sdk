@@ -1,6 +1,42 @@
 import { describe, expect, it, vi } from 'vitest';
-import { GitLogger, redactCredentials, sanitizeGitData } from '../src/git';
+import {
+  extractRepoName,
+  FALLBACK_REPO_NAME,
+  GitLogger,
+  redactCredentials,
+  sanitizeGitData
+} from '../src/git';
 import { createNoOpLogger } from '../src/logger';
+
+describe('extractRepoName', () => {
+  it('should extract repo name from HTTPS URLs with .git suffix', () => {
+    expect(extractRepoName('https://github.com/user/repo.git')).toBe('repo');
+    expect(extractRepoName('https://gitlab.com/org/project.git')).toBe(
+      'project'
+    );
+  });
+
+  it('should extract repo name from HTTPS URLs without .git suffix', () => {
+    expect(extractRepoName('https://github.com/user/my-repo')).toBe('my-repo');
+    expect(extractRepoName('https://github.com/user/my-awesome_repo')).toBe(
+      'my-awesome_repo'
+    );
+  });
+
+  it('should extract repo name from SSH URLs', () => {
+    expect(extractRepoName('git@github.com:user/repo.git')).toBe('repo');
+    expect(extractRepoName('git@gitlab.com:org/project.git')).toBe('project');
+  });
+
+  it('should return fallback for invalid URLs', () => {
+    expect(extractRepoName('not-a-valid-url')).toBe(FALLBACK_REPO_NAME);
+    expect(extractRepoName('')).toBe(FALLBACK_REPO_NAME);
+  });
+
+  it('should have FALLBACK_REPO_NAME equal to "repository"', () => {
+    expect(FALLBACK_REPO_NAME).toBe('repository');
+  });
+});
 
 describe('redactCredentials', () => {
   it('should redact credentials from URLs embedded in text', () => {

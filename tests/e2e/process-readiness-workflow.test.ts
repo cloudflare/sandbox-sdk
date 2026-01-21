@@ -459,4 +459,64 @@ console.log("Server listening on port 9092");
     },
     90000
   );
+
+  test.skipIf(skipPortExposureTests)(
+    'should expose port with custom token for stable URL',
+    async () => {
+      const serverCode = `
+Bun.serve({
+  port: 9093,
+  fetch() {
+    return new Response("token-test-ok");
+  },
+});
+      `.trim();
+
+      await fetch(`${workerUrl}/api/file/write`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          path: '/workspace/token-server.js',
+          content: serverCode
+        })
+      });
+
+      const startResponse = await fetch(`${workerUrl}/api/process/start`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ command: 'bun run /workspace/token-server.js' })
+      });
+      const { id: processId } = (await startResponse.json()) as Process;
+
+      await fetch(`${workerUrl}/api/process/${processId}/waitForPort`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ port: 9093, timeout: 30000 })
+      });
+
+      const exposeResponse = await fetch(`${workerUrl}/api/port/expose`, {
+        method: 'POST',
+        headers: portHeaders,
+        body: JSON.stringify({ port: 9093, token: 'my_stable_token' })
+      });
+
+      expect(exposeResponse.status).toBe(200);
+      const { url } = (await exposeResponse.json()) as PortExposeResult;
+      expect(url).toContain('my_stable_token');
+
+      const apiResponse = await fetch(url);
+      expect(apiResponse.status).toBe(200);
+      expect(await apiResponse.text()).toBe('token-test-ok');
+
+      await fetch(`${workerUrl}/api/exposed-ports/9093`, {
+        method: 'DELETE',
+        headers: portHeaders
+      });
+      await fetch(`${workerUrl}/api/process/${processId}`, {
+        method: 'DELETE',
+        headers
+      });
+    },
+    90000
+  );
 });

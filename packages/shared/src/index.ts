@@ -4,9 +4,15 @@
  */
 
 // Export environment utilities
-export { getEnvString } from './env.js';
+export { filterEnvVars, getEnvString, partitionEnvVars } from './env.js';
 // Export git utilities
-export { GitLogger, redactCredentials, sanitizeGitData } from './git.js';
+export {
+  extractRepoName,
+  FALLBACK_REPO_NAME,
+  GitLogger,
+  redactCredentials,
+  sanitizeGitData
+} from './git.js';
 // Export all interpreter types
 export type {
   ChartData,
@@ -34,6 +40,7 @@ export type {
   ExposePortRequest,
   FileExistsRequest,
   GitCheckoutRequest,
+  ListFilesRequest,
   MkdirRequest,
   MoveFileRequest,
   ReadFileRequest,

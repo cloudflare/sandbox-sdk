@@ -35,10 +35,10 @@ jobs:
           CURRENT_TIME=$(date +%s)
           STALE_THRESHOLD=$((24 * 60 * 60)) # 24 hours in seconds
 
-          # List all workers and filter for PR test workers
-          WORKERS=$(npx wrangler workers list --json 2>/dev/null || echo "[]")
+          # List all containers and extract unique worker names for PR test workers
+          CONTAINERS=$(npx wrangler containers list 2>/dev/null || echo "")
 
-          echo "$WORKERS" | jq -r '.[] | select(.name | test("^sandbox-e2e-test-worker-pr-[0-9]+(-http|-websocket)?$")) | .name' | while read -r WORKER_NAME; do
+          echo "$CONTAINERS" | grep -E 'sandbox-e2e-test-worker-pr-[0-9]+(-http|-websocket)?' | sed 's/.*"name": "\([^"]*\)".*/\1/' | sed 's/-python$//' | sed 's/-opencode$//' | sed 's/-standalone$//' | sort -u | while read -r WORKER_NAME; do
             if [ -z "$WORKER_NAME" ]; then
               continue
             fi
