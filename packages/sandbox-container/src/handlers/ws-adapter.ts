@@ -38,6 +38,8 @@ export interface WSData {
 export class WebSocketAdapter {
   private router: Router;
   private logger: Logger;
+  /** Track active streaming responses to prevent garbage collection */
+  private activeStreams: Map<string, Promise<void>> = new Map();
 
   constructor(router: Router, logger: Logger) {
     this.router = router;
@@ -162,7 +164,29 @@ export class WebSocketAdapter {
 
     if (isStreaming && httpResponse.body) {
       // Handle SSE streaming response
-      await this.handleStreamingResponse(ws, request.id, httpResponse);
+      // CRITICAL: We must capture the Response body reader BEFORE the promise starts executing
+      // asynchronously. If we call getReader() inside handleStreamingResponse after an await,
+      // Bun's WebSocket handler may GC or invalidate the Response body when onMessage returns.
+      // By getting the reader synchronously here, we ensure the stream remains valid.
+      const reader =
+        httpResponse.body.getReader() as ReadableStreamDefaultReader<Uint8Array>;
+      const streamPromise = this.handleStreamingResponseWithReader(
+        ws,
+        request.id,
+        httpResponse.status,
+        reader
+      )
+        .catch((error: unknown) => {
+          this.logger.error(
+            'Error in streaming response',
+            error instanceof Error ? error : new Error(String(error)),
+            { requestId: request.id }
+          );
+        })
+        .finally(() => {
+          this.activeStreams.delete(request.id);
+        });
+      this.activeStreams.set(request.id, streamPromise);
     } else {
       // Handle regular response
       await this.handleRegularResponse(ws, request.id, httpResponse);
@@ -198,39 +222,65 @@ export class WebSocketAdapter {
   }
 
   /**
-   * Handle a streaming (SSE) HTTP response
+   * Handle a streaming (SSE) HTTP response with a pre-acquired reader
+   *
+   * This variant receives the reader instead of the Response, allowing the caller
+   * to acquire the reader synchronously before any await points. This is critical
+   * for WebSocket streaming because Bun's message handler may invalidate the
+   * Response body if the reader is acquired after the handler returns.
    */
-  private async handleStreamingResponse(
+  private async handleStreamingResponseWithReader(
     ws: ServerWebSocket<WSData>,
     requestId: string,
-    response: Response
+    status: number,
+    reader: ReadableStreamDefaultReader<Uint8Array>
   ): Promise<void> {
-    if (!response.body) {
-      this.sendError(ws, requestId, 'STREAM_ERROR', 'No response body', 500);
-      return;
-    }
+    this.logger.debug('Starting streaming response handler', { requestId });
 
-    const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
+    // Track partial event state across chunks
+    let currentEvent: { event?: string; data: string[] } = { data: [] };
+    let chunkCount = 0;
 
     try {
       while (true) {
+        this.logger.debug('Waiting for stream chunk', {
+          requestId,
+          chunkCount
+        });
         const { done, value } = await reader.read();
 
         if (done) {
+          this.logger.debug('Stream ended', { requestId, chunkCount });
           break;
         }
 
-        // Decode chunk and add to buffer
-        buffer += decoder.decode(value, { stream: true });
+        chunkCount++;
 
-        // Parse SSE events from buffer
-        const events = this.parseSSEEvents(buffer);
-        buffer = events.remaining;
+        // Decode chunk and add to buffer
+        const chunkText = decoder.decode(value, { stream: true });
+        this.logger.debug('Received stream chunk', {
+          requestId,
+          chunkCount,
+          chunkLength: chunkText.length,
+          chunkPreview: chunkText.substring(0, 100)
+        });
+        buffer += chunkText;
+
+        // Parse SSE events from buffer, preserving partial event state
+        const result = this.parseSSEEvents(buffer, currentEvent);
+        buffer = result.remaining;
+        currentEvent = result.currentEvent;
+
+        this.logger.debug('Parsed SSE events', {
+          requestId,
+          eventCount: result.events.length,
+          remainingBuffer: result.remaining.length
+        });
 
         // Send each parsed event as a stream chunk
-        for (const event of events.events) {
+        for (const event of result.events) {
           const chunk: WSStreamChunk = {
             type: 'stream',
             id: requestId,
@@ -247,7 +297,7 @@ export class WebSocketAdapter {
       const wsResponse: WSResponse = {
         type: 'response',
         id: requestId,
-        status: response.status,
+        status,
         done: true
       };
       this.send(ws, wsResponse);
@@ -272,8 +322,8 @@ export class WebSocketAdapter {
   /**
    * Parse SSE events from a buffer
    *
-   * Returns parsed events and any remaining unparsed content (incomplete lines
-   * waiting for more data from the next chunk).
+   * Returns parsed events, remaining unparsed content, and current partial event state.
+   * The currentEvent parameter allows preserving state across chunk boundaries.
    *
    * Note: This is a minimal SSE parser that only handles `event:` and `data:`
    * fields - sufficient for our streaming handlers which only emit these.
@@ -282,12 +332,15 @@ export class WebSocketAdapter {
    * - `retry:` field (reconnection timing hints)
    * - Comment lines (starting with `:`)
    */
-  private parseSSEEvents(buffer: string): {
+  private parseSSEEvents(
+    buffer: string,
+    currentEvent: { event?: string; data: string[] } = { data: [] }
+  ): {
     events: Array<{ event?: string; data: string }>;
     remaining: string;
+    currentEvent: { event?: string; data: string[] };
   } {
     const events: Array<{ event?: string; data: string }> = [];
-    let currentEvent: { event?: string; data: string[] } = { data: [] };
     let i = 0;
 
     while (i < buffer.length) {
@@ -317,7 +370,8 @@ export class WebSocketAdapter {
 
     return {
       events,
-      remaining: buffer.substring(i)
+      remaining: buffer.substring(i),
+      currentEvent
     };
   }
 
