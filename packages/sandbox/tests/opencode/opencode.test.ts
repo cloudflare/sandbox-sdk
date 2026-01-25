@@ -137,6 +137,48 @@ describe('createOpencode', () => {
     );
   });
 
+  it('should pass custom env vars to the process', async () => {
+    await createOpencode(mockSandbox as unknown as Sandbox, {
+      env: {
+        OTEL_EXPORTER_OTLP_ENDPOINT: 'http://127.0.0.1:4318',
+        TRACEPARENT: '00-abc123-def456-01'
+      }
+    });
+
+    expect(mockSandbox.startProcess).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        env: expect.objectContaining({
+          OTEL_EXPORTER_OTLP_ENDPOINT: 'http://127.0.0.1:4318',
+          TRACEPARENT: '00-abc123-def456-01'
+        })
+      })
+    );
+  });
+
+  it('should allow custom env vars to override config-extracted env vars', async () => {
+    const config = {
+      provider: {
+        anthropic: { options: { apiKey: 'config-key' } }
+      }
+    };
+    await createOpencode(mockSandbox as unknown as Sandbox, {
+      config,
+      env: {
+        ANTHROPIC_API_KEY: 'custom-override-key'
+      }
+    });
+
+    expect(mockSandbox.startProcess).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        env: expect.objectContaining({
+          ANTHROPIC_API_KEY: 'custom-override-key'
+        })
+      })
+    );
+  });
+
   it('should wait for port to be ready', async () => {
     await createOpencode(mockSandbox as unknown as Sandbox);
 
