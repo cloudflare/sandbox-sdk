@@ -278,6 +278,8 @@ export interface ProcessOptions {
   cwd?: string;
   encoding?: string;
   autoCleanup?: boolean;
+  /** Data to pass to the command's standard input */
+  stdin?: string;
 }
 
 export interface CommandResult {

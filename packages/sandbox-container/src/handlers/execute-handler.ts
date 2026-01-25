@@ -55,7 +55,8 @@ export class ExecuteHandler extends BaseHandler<Request, Response> {
           sessionId,
           timeoutMs: body.timeoutMs,
           env: body.env,
-          cwd: body.cwd
+          cwd: body.cwd,
+          stdin: body.stdin
         }
       );
 
@@ -81,7 +82,8 @@ export class ExecuteHandler extends BaseHandler<Request, Response> {
       sessionId,
       timeoutMs: body.timeoutMs,
       env: body.env,
-      cwd: body.cwd
+      cwd: body.cwd,
+      stdin: body.stdin
     });
 
     if (!result.success) {
@@ -116,7 +118,8 @@ export class ExecuteHandler extends BaseHandler<Request, Response> {
     const processResult = await this.processService.startProcess(body.command, {
       sessionId,
       env: body.env,
-      cwd: body.cwd
+      cwd: body.cwd,
+      stdin: body.stdin
     });
 
     if (!processResult.success) {

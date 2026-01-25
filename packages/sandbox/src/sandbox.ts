@@ -1174,11 +1174,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           options &&
           (options.timeout !== undefined ||
             options.env !== undefined ||
-            options.cwd !== undefined)
+            options.cwd !== undefined ||
+            options.stdin !== undefined)
             ? {
                 timeoutMs: options.timeout,
                 env: options.env,
-                cwd: options.cwd
+                cwd: options.cwd,
+                stdin: options.stdin
               }
             : undefined;
 
@@ -1231,7 +1233,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         {
           timeoutMs: options.timeout,
           env: options.env,
-          cwd: options.cwd
+          cwd: options.cwd,
+          stdin: options.stdin
         }
       );
 

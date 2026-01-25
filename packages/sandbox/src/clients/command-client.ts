@@ -25,9 +25,7 @@ export class CommandClient extends BaseHttpClient {
    * Execute a command and return the complete result
    * @param command - The command to execute
    * @param sessionId - The session ID for this command execution
-   * @param timeoutMs - Optional timeout in milliseconds (unlimited by default)
-   * @param env - Optional environment variables for this command
-   * @param cwd - Optional working directory for this command
+   * @param options - Optional per-command execution settings
    */
   async execute(
     command: string,
@@ -36,6 +34,7 @@ export class CommandClient extends BaseHttpClient {
       timeoutMs?: number;
       env?: Record<string, string | undefined>;
       cwd?: string;
+      stdin?: string;
     }
   ): Promise<ExecuteResponse> {
     try {
@@ -46,7 +45,8 @@ export class CommandClient extends BaseHttpClient {
           timeoutMs: options.timeoutMs
         }),
         ...(options?.env !== undefined && { env: options.env }),
-        ...(options?.cwd !== undefined && { cwd: options.cwd })
+        ...(options?.cwd !== undefined && { cwd: options.cwd }),
+        ...(options?.stdin !== undefined && { stdin: options.stdin })
       };
 
       const response = await this.post<ExecuteResponse>('/api/execute', data);
@@ -92,6 +92,7 @@ export class CommandClient extends BaseHttpClient {
       timeoutMs?: number;
       env?: Record<string, string | undefined>;
       cwd?: string;
+      stdin?: string;
     }
   ): Promise<ReadableStream<Uint8Array>> {
     try {
@@ -102,7 +103,8 @@ export class CommandClient extends BaseHttpClient {
           timeoutMs: options.timeoutMs
         }),
         ...(options?.env !== undefined && { env: options.env }),
-        ...(options?.cwd !== undefined && { cwd: options.cwd })
+        ...(options?.cwd !== undefined && { cwd: options.cwd }),
+        ...(options?.stdin !== undefined && { stdin: options.stdin })
       };
 
       // Use doStreamFetch which handles both WebSocket and HTTP streaming

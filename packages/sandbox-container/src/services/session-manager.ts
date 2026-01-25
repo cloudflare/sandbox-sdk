@@ -231,7 +231,8 @@ export class SessionManager {
     command: string,
     cwd?: string,
     timeoutMs?: number,
-    env?: Record<string, string | undefined>
+    env?: Record<string, string | undefined>,
+    stdin?: string
   ): Promise<ServiceResult<RawExecResult>> {
     const lock = this.getSessionLock(sessionId);
 
@@ -249,9 +250,11 @@ export class SessionManager {
 
         const session = sessionResult.data;
 
+        const hasOptions =
+          cwd !== undefined || env !== undefined || stdin !== undefined;
         const result = await session.exec(
           command,
-          cwd || env ? { cwd, env } : undefined
+          hasOptions ? { cwd, env, stdin } : undefined
         );
 
         return {
@@ -385,7 +388,7 @@ export class SessionManager {
    * @param sessionId - The session identifier
    * @param command - The command to execute
    * @param onEvent - Callback for streaming events
-   * @param options - Optional cwd and env overrides
+   * @param options - Optional cwd, env, and stdin overrides
    * @param commandId - Required command identifier for tracking and killing
    * @param lockOptions - Lock behavior options
    * @param lockOptions.background - If true, release lock after 'start' event (for startProcess).
@@ -396,7 +399,11 @@ export class SessionManager {
     sessionId: string,
     command: string,
     onEvent: (event: ExecEvent) => Promise<void>,
-    options: { cwd?: string; env?: Record<string, string | undefined> } = {},
+    options: {
+      cwd?: string;
+      env?: Record<string, string | undefined>;
+      stdin?: string;
+    } = {},
     commandId: string,
     lockOptions: { background?: boolean } = {}
   ): Promise<ServiceResult<{ continueStreaming: Promise<void> }>> {
@@ -433,13 +440,17 @@ export class SessionManager {
     sessionId: string,
     command: string,
     onEvent: (event: ExecEvent) => Promise<void>,
-    options: { cwd?: string; env?: Record<string, string | undefined> },
+    options: {
+      cwd?: string;
+      env?: Record<string, string | undefined>;
+      stdin?: string;
+    },
     commandId: string,
     lock: Mutex
   ): Promise<ServiceResult<{ continueStreaming: Promise<void> }>> {
     return lock.runExclusive(async () => {
       try {
-        const { cwd, env } = options;
+        const { cwd, env, stdin } = options;
 
         const sessionResult = await this.getOrCreateSession(sessionId, {
           cwd: cwd || '/workspace'
@@ -452,7 +463,12 @@ export class SessionManager {
         }
 
         const session = sessionResult.data;
-        const generator = session.execStream(command, { commandId, cwd, env });
+        const generator = session.execStream(command, {
+          commandId,
+          cwd,
+          env,
+          stdin
+        });
 
         // Process ALL events under lock
         for await (const event of generator) {
@@ -513,14 +529,18 @@ export class SessionManager {
     sessionId: string,
     command: string,
     onEvent: (event: ExecEvent) => Promise<void>,
-    options: { cwd?: string; env?: Record<string, string | undefined> },
+    options: {
+      cwd?: string;
+      env?: Record<string, string | undefined>;
+      stdin?: string;
+    },
     commandId: string,
     lock: Mutex
   ): Promise<ServiceResult<{ continueStreaming: Promise<void> }>> {
     // Acquire lock for startup phase only
     const startupResult = await lock.runExclusive(async () => {
       try {
-        const { cwd, env } = options;
+        const { cwd, env, stdin } = options;
 
         const sessionResult = await this.getOrCreateSession(sessionId, {
           cwd: cwd || '/workspace'
@@ -531,7 +551,12 @@ export class SessionManager {
         }
 
         const session = sessionResult.data;
-        const generator = session.execStream(command, { commandId, cwd, env });
+        const generator = session.execStream(command, {
+          commandId,
+          cwd,
+          env,
+          stdin
+        });
 
         // Process 'start' event under lock
         const firstResult = await generator.next();
