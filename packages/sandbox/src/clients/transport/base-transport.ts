@@ -9,9 +9,24 @@ const TIMEOUT_MS = 120_000; // 2 minutes total retry budget
 const MIN_TIME_FOR_RETRY_MS = 15_000; // Need at least 15s remaining to retry
 
 /**
+ * HTTP status codes that indicate the container is not yet ready.
+ *
+ * 503: The standard "service unavailable" code returned by the SDK's
+ *      containerFetch when the container is still starting up.
+ * 500: The container binary (/container-server/sandbox) returns 500
+ *      when its internal API hasn't finished initializing, even though
+ *      the TCP port is already accepting connections. This creates a
+ *      window after startAndWaitForPorts() succeeds where API calls
+ *      fail with 500 until the binary is fully ready.
+ *
+ * See: https://github.com/cloudflare/sandbox-sdk/issues/201
+ */
+const RETRYABLE_STATUS_CODES = new Set([500, 503]);
+
+/**
  * Abstract base transport with shared retry logic
  *
- * Handles 503 retry for container startup - shared by all transports.
+ * Handles retries for container startup - shared by all transports.
  * Subclasses implement the transport-specific fetch and stream logic.
  */
 export abstract class BaseTransport implements ITransport {
@@ -29,10 +44,16 @@ export abstract class BaseTransport implements ITransport {
   abstract isConnected(): boolean;
 
   /**
-   * Fetch with automatic retry for 503 (container starting)
+   * Fetch with automatic retry for transient container startup errors
    *
    * This is the primary entry point for making requests. It wraps the
    * transport-specific doFetch() with retry logic for container startup.
+   *
+   * Retries on both 503 (container starting) and 500 (container binary
+   * not yet initialized). The container binary returns HTTP 500 during
+   * a brief window after the TCP port opens but before the API is ready.
+   * Without retrying 500, all API calls fail permanently even though the
+   * container will become ready within seconds.
    */
   async fetch(path: string, options?: RequestInit): Promise<Response> {
     const startTime = Date.now();
@@ -41,8 +62,8 @@ export abstract class BaseTransport implements ITransport {
     while (true) {
       const response = await this.doFetch(path, options);
 
-      // Check for retryable 503 (container starting)
-      if (response.status === 503) {
+      // Check for retryable status (container starting or binary not ready)
+      if (RETRYABLE_STATUS_CODES.has(response.status)) {
         const elapsed = Date.now() - startTime;
         const remaining = TIMEOUT_MS - elapsed;
 

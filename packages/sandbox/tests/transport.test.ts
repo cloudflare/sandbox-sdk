@@ -140,6 +140,114 @@ describe('Transport', () => {
     });
   });
 
+  describe('Startup retry logic', () => {
+    it('should retry on HTTP 503 (container starting)', async () => {
+      const transport = createTransport({
+        mode: 'http',
+        baseUrl: 'http://localhost:3000'
+      });
+
+      // First call returns 503, second returns 200
+      mockFetch
+        .mockResolvedValueOnce(
+          new Response('Container starting', { status: 503 })
+        )
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ ok: true }), { status: 200 })
+        );
+
+      const response = await transport.fetch('/api/list-files', {
+        method: 'POST'
+      });
+
+      expect(response.status).toBe(200);
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+    });
+
+    it('should retry on HTTP 500 (container binary not ready)', async () => {
+      const transport = createTransport({
+        mode: 'http',
+        baseUrl: 'http://localhost:3000'
+      });
+
+      // First call returns 500 (binary not initialized), second returns 200
+      mockFetch
+        .mockResolvedValueOnce(
+          new Response('Internal Server Error', { status: 500 })
+        )
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ ok: true }), { status: 200 })
+        );
+
+      const response = await transport.fetch('/api/list-files', {
+        method: 'POST'
+      });
+
+      expect(response.status).toBe(200);
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+    });
+
+    it('should retry on mixed 500/503 responses during startup', async () => {
+      const transport = createTransport({
+        mode: 'http',
+        baseUrl: 'http://localhost:3000'
+      });
+
+      // Sequence: 500 → 503 → 200
+      mockFetch
+        .mockResolvedValueOnce(
+          new Response('Internal Server Error', { status: 500 })
+        )
+        .mockResolvedValueOnce(
+          new Response('Container starting', { status: 503 })
+        )
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ ok: true }), { status: 200 })
+        );
+
+      const response = await transport.fetch('/api/list-files', {
+        method: 'POST'
+      });
+
+      expect(response.status).toBe(200);
+      expect(mockFetch).toHaveBeenCalledTimes(3);
+    });
+
+    it('should NOT retry on HTTP 404', async () => {
+      const transport = createTransport({
+        mode: 'http',
+        baseUrl: 'http://localhost:3000'
+      });
+
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify({ error: 'Not found' }), { status: 404 })
+      );
+
+      const response = await transport.fetch('/api/missing', {
+        method: 'GET'
+      });
+
+      expect(response.status).toBe(404);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('should NOT retry on HTTP 400', async () => {
+      const transport = createTransport({
+        mode: 'http',
+        baseUrl: 'http://localhost:3000'
+      });
+
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify({ error: 'Bad request' }), { status: 400 })
+      );
+
+      const response = await transport.fetch('/api/test', { method: 'POST' });
+
+      expect(response.status).toBe(400);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe('WebSocket mode', () => {
     // Note: Full WebSocket tests are in ws-transport.test.ts
     // These tests verify the Transport wrapper behavior
