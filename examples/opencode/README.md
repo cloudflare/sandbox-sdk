@@ -71,4 +71,25 @@ const getConfig = (env: Env): Config => ({
 });
 ```
 
+## Advanced: Custom Environment Variables
+
+You can pass additional environment variables to the OpenCode process using the `env` option. This is useful for:
+
+- **OTEL telemetry** - Configure OpenTelemetry exporters
+- **Distributed tracing** - Propagate W3C trace context (`TRACEPARENT`)
+- **Custom configuration** - Any other env vars your setup requires
+
+```typescript
+const server = await createOpencodeServer(sandbox, {
+  config: getConfig(env),
+  env: {
+    TRACEPARENT: request.headers.get('traceparent') ?? undefined,
+    OTEL_EXPORTER_OTLP_ENDPOINT: 'http://127.0.0.1:4318',
+    OTEL_EXPORTER_OTLP_PROTOCOL: 'http/protobuf'
+  }
+});
+```
+
+Custom env vars are merged with config-extracted variables (like API keys) and can override them if needed.
+
 Happy hacking!

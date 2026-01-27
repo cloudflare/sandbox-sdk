@@ -11,6 +11,8 @@ export interface OpencodeOptions {
   directory?: string;
   /** OpenCode configuration */
   config?: Config;
+  /** Additional environment variables to pass to the OpenCode process */
+  env?: Record<string, string>;
 }
 
 /**

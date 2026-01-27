@@ -25,6 +25,38 @@ const getConfig = (env: Env): Config => ({
   }
 });
 
+/**
+ * Optional: Build custom environment variables to pass to OpenCode.
+ * Useful for OTEL telemetry, distributed tracing, or other custom needs.
+ *
+ * @example
+ * const customEnv = getCustomEnv(env, request);
+ * const server = await createOpencodeServer(sandbox, {
+ *   config: getConfig(env),
+ *   env: customEnv,
+ * });
+ */
+const getCustomEnv = (
+  env: Env,
+  request: Request
+): Record<string, string> | undefined => {
+  const customEnv: Record<string, string> = {};
+
+  // Propagate W3C trace context for distributed tracing
+  const traceparent = request.headers.get('traceparent');
+  if (traceparent) {
+    customEnv.TRACEPARENT = traceparent;
+  }
+
+  // Example: Configure OTEL telemetry endpoint
+  // if (env.OTEL_ENDPOINT) {
+  //   customEnv.OTEL_EXPORTER_OTLP_ENDPOINT = env.OTEL_ENDPOINT;
+  //   customEnv.OTEL_EXPORTER_OTLP_PROTOCOL = 'http/protobuf';
+  // }
+
+  return Object.keys(customEnv).length > 0 ? customEnv : undefined;
+};
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -39,6 +71,8 @@ export default {
     const server = await createOpencodeServer(sandbox, {
       directory: '/home/user/agents',
       config: getConfig(env)
+      // Optional: Pass custom environment variables (e.g., for tracing/telemetry)
+      // env: getCustomEnv(env, request),
     });
     return proxyToOpencode(request, sandbox, server);
   }
