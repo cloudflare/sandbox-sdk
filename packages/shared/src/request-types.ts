@@ -13,6 +13,11 @@ export interface ExecuteRequest {
   timeoutMs?: number;
   env?: Record<string, string | undefined>;
   cwd?: string;
+  /**
+   * Data to pass to the command's standard input.
+   * Enables passing arbitrary user input without shell injection risks.
+   */
+  stdin?: string;
 }
 
 /**

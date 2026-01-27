@@ -369,6 +369,66 @@ describe('Session', () => {
     });
   });
 
+  describe('stdin support', () => {
+    beforeEach(async () => {
+      session = new Session({
+        id: 'test-stdin',
+        cwd: testDir
+      });
+      await session.initialize();
+    });
+
+    it('should pass stdin data to command', async () => {
+      const result = await session.exec('cat', { stdin: 'hello world' });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toBe('hello world');
+    });
+
+    it('should handle multiline stdin', async () => {
+      const input = 'line1\nline2\nline3';
+      const result = await session.exec('cat', { stdin: input });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toBe(input);
+    });
+
+    it('should handle stdin with special characters', async () => {
+      const input = 'Hello $USER! @#$%^&*() "quotes" \'single\' `backticks`';
+      const result = await session.exec('cat', { stdin: input });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toBe(input);
+    });
+
+    it('should pass stdin to piped commands', async () => {
+      const input = 'hello world';
+      const result = await session.exec('cat | tr a-z A-Z', { stdin: input });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout.trim()).toBe('HELLO WORLD');
+    });
+
+    it('should handle empty stdin', async () => {
+      const result = await session.exec('cat', { stdin: '' });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toBe('');
+    });
+
+    it('should work with stdin and env together', async () => {
+      // Use newline in stdin so cat outputs it properly, then echo adds its own newline
+      const result = await session.exec('cat; echo $MY_VAR', {
+        stdin: 'from stdin\n',
+        env: { MY_VAR: 'from env' }
+      });
+
+      expect(result.exitCode).toBe(0);
+      // stdout may or may not have trailing newline depending on shell behavior
+      expect(result.stdout.trim()).toBe('from stdin\nfrom env');
+    });
+  });
+
   describe('execStream', () => {
     beforeEach(async () => {
       session = new Session({

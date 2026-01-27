@@ -59,7 +59,8 @@ export class ProcessService {
         command,
         options.cwd,
         options.timeoutMs,
-        options.env
+        options.env,
+        options.stdin
       );
 
       if (!result.success) {
@@ -208,7 +209,8 @@ export class ProcessService {
         },
         {
           cwd: options.cwd,
-          env: options.env
+          env: options.env,
+          stdin: options.stdin
         },
         processRecordData.id, // Pass process ID as commandId for tracking and killing
         { background: true } // Release lock after startup
