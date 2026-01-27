@@ -3,7 +3,6 @@ import type { Process, ProcessStatus } from '@repo/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createOpencode, proxyToOpencode } from '../../src/opencode/opencode';
 import type { OpencodeServer } from '../../src/opencode/types';
-import { OpencodeStartupError } from '../../src/opencode/types';
 import type { Sandbox } from '../../src/sandbox';
 
 // Mock the dynamic import of @opencode-ai/sdk
@@ -299,17 +298,17 @@ describe('proxyToOpencode', () => {
     } as unknown as Sandbox;
   }
 
-  it('should redirect GET html requests to add ?url= parameter', () => {
+  it('should redirect GET html requests to add ?url= parameter', async () => {
     const sandbox = createMockSandboxForProxy();
     const request = new Request('http://example.com/', {
       headers: { accept: 'text/html' }
     });
 
-    const response = proxyToOpencode(request, sandbox, server);
+    const response = await proxyToOpencode(request, sandbox, server);
 
     expect(response).toBeInstanceOf(Response);
-    expect((response as Response).status).toBe(302);
-    expect((response as Response).headers.get('location')).toBe(
+    expect(response.status).toBe(302);
+    expect(response.headers.get('location')).toBe(
       'http://example.com/?url=http%3A%2F%2Fexample.com'
     );
   });
