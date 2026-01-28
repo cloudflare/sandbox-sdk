@@ -6,8 +6,8 @@ import type { OpencodeServer } from '../../src/opencode/types';
 import { OpencodeStartupError } from '../../src/opencode/types';
 import type { Sandbox } from '../../src/sandbox';
 
-// Mock the dynamic import of @opencode-ai/sdk
-vi.mock('@opencode-ai/sdk', () => ({
+// Mock the dynamic import of @opencode-ai/sdk/v2/client
+vi.mock('@opencode-ai/sdk/v2/client', () => ({
   createOpencodeClient: vi.fn().mockReturnValue({ session: {} })
 }));
 
