@@ -1,45 +1,12 @@
 import { getSandbox } from '@cloudflare/sandbox';
-import type OpenAI from 'openai';
+import { generateText, stepCountIs, tool } from 'ai';
+import { createWorkersAI } from 'workers-ai-provider';
+import { z } from 'zod';
 
 export { Sandbox } from '@cloudflare/sandbox';
 
-const API_PATH = '/foo';
-const MODEL = '@cf/openai/gpt-oss-120b';
-
-type AIResponse = OpenAI.Responses.Response;
-type ResponseInputItem = OpenAI.Responses.ResponseInputItem;
-type FunctionTool = OpenAI.Responses.FunctionTool;
-type FunctionCall = OpenAI.Responses.ResponseFunctionToolCall;
-
-async function callCloudflareAPI(
-  env: Env,
-  input: ResponseInputItem[],
-  tools?: FunctionTool[],
-  toolChoice: string = 'auto'
-): Promise<AIResponse> {
-  const response = await fetch(
-    `https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/ai/v1/responses`,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${env.CLOUDFLARE_API_KEY}`
-      },
-      body: JSON.stringify({
-        model: MODEL,
-        input,
-        ...(tools && { tools, tool_choice: toolChoice })
-      })
-    }
-  );
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`API call failed: ${response.status} - ${errorText}`);
-  }
-
-  return response.json() as Promise<AIResponse>;
-}
+const API_PATH = '/run';
+const MODEL = '@cf/openai/gpt-oss-120b' as const;
 
 async function executePythonCode(env: Env, code: string): Promise<string> {
   const sandboxId = env.Sandbox.idFromName('default');
@@ -73,67 +40,27 @@ async function executePythonCode(env: Env, code: string): Promise<string> {
 }
 
 async function handleAIRequest(input: string, env: Env): Promise<string> {
-  const pythonTool: FunctionTool = {
-    type: 'function',
-    name: 'execute_python',
-    description: 'Execute Python code and return the output',
-    parameters: {
-      type: 'object',
-      properties: {
-        code: {
-          type: 'string',
-          description: 'The Python code to execute'
+  const workersai = createWorkersAI({ binding: env.AI });
+
+  const result = await generateText({
+    // @ts-expect-error - gpt-oss-120b is a valid Workers AI model but not yet in the type definitions
+    model: workersai(MODEL),
+    messages: [{ role: 'user', content: input }],
+    tools: {
+      execute_python: tool({
+        description: 'Execute Python code and return the output',
+        inputSchema: z.object({
+          code: z.string().describe('The Python code to execute')
+        }),
+        execute: async ({ code }) => {
+          return executePythonCode(env, code);
         }
-      },
-      required: ['code']
+      })
     },
-    strict: null
-  };
+    stopWhen: stepCountIs(5)
+  });
 
-  // Initial AI request with Python execution tool
-  let response = await callCloudflareAPI(
-    env,
-    [{ role: 'user', content: input }],
-    [pythonTool]
-  );
-
-  // Check for function call
-  const functionCall = response.output?.find(
-    (item): item is FunctionCall =>
-      item.type === 'function_call' && item.name === 'execute_python'
-  );
-
-  if (functionCall?.arguments) {
-    try {
-      const { code } = JSON.parse(functionCall.arguments) as { code: string };
-      const output = await executePythonCode(env, code);
-
-      const functionResult: ResponseInputItem = {
-        type: 'function_call_output',
-        call_id: functionCall.call_id,
-        output
-      } as OpenAI.Responses.ResponseInputItem.FunctionCallOutput;
-
-      // Get final response with execution result
-      response = await callCloudflareAPI(env, [
-        { role: 'user', content: input },
-        functionCall as ResponseInputItem,
-        functionResult
-      ]);
-    } catch (error) {
-      console.error('Sandbox execution failed:', error);
-    }
-  }
-
-  // Extract final response text
-  const message = response.output?.find((item) => item.type === 'message');
-  const textContent = message?.content?.find(
-    (c: any) => c.type === 'output_text'
-  );
-  const text =
-    textContent && 'text' in textContent ? textContent.text : undefined;
-
-  return text || 'No response generated';
+  return result.text || 'No response generated';
 }
 
 export default {
