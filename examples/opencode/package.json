@@ -12,7 +12,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@opencode-ai/sdk": "^1.0.137"
+    "@opencode-ai/sdk": "^1.1.40"
   },
   "devDependencies": {
     "@cloudflare/sandbox": "*",

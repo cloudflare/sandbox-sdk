@@ -11,7 +11,8 @@ import {
   createOpencodeServer,
   proxyToOpencode
 } from '@cloudflare/sandbox/opencode';
-import type { Config, OpencodeClient } from '@opencode-ai/sdk';
+import type { Config, Part } from '@opencode-ai/sdk/v2';
+import type { OpencodeClient } from '@opencode-ai/sdk/v2/client';
 
 export { Sandbox } from '@cloudflare/sandbox';
 
@@ -65,8 +66,8 @@ async function handleSdkTest(
 
     // Create a session
     const session = await client.session.create({
-      body: { title: 'Test Session' },
-      query: { directory: '/home/user/agents' }
+      title: 'Test Session',
+      directory: '/home/user/agents'
     });
 
     if (!session.data) {
@@ -75,27 +76,22 @@ async function handleSdkTest(
 
     // Send a prompt using the SDK
     const promptResult = await client.session.prompt({
-      path: { id: session.data.id },
-      query: { directory: '/home/user/agents' },
-      body: {
-        model: {
-          providerID: 'anthropic',
-          modelID: 'claude-haiku-4-5'
-        },
-        parts: [
-          {
-            type: 'text',
-            text: 'Summarize the README.md file in 2-3 sentences. Be concise.'
-          }
-        ]
-      }
+      sessionID: session.data.id,
+      directory: '/home/user/agents',
+      parts: [
+        {
+          type: 'text',
+          text: 'Summarize the README.md file in 2-3 sentences. Be concise.'
+        }
+      ]
     });
 
     // Extract text response from result
     const parts = promptResult.data?.parts ?? [];
-    const textPart = parts.find((p: { type: string }) => p.type === 'text') as
-      | { text?: string }
-      | undefined;
+    const textPart = parts.find(
+      (part): part is Part & { type: 'text'; text: string } =>
+        part.type === 'text' && typeof part.text === 'string'
+    );
 
     return new Response(textPart?.text ?? 'No response', {
       headers: { 'Content-Type': 'text/plain' }

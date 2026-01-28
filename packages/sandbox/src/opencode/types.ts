@@ -1,4 +1,5 @@
-import type { Config } from '@opencode-ai/sdk';
+import type { Config } from '@opencode-ai/sdk/v2';
+import type { OpencodeClient } from '@opencode-ai/sdk/v2/client';
 import { ErrorCode, type OpencodeStartupContext } from '@repo/shared/errors';
 
 /**
@@ -29,7 +30,7 @@ export interface OpencodeServer {
  * Result from createOpencode()
  * Client type comes from @opencode-ai/sdk (user's version)
  */
-export interface OpencodeResult<TClient = unknown> {
+export interface OpencodeResult<TClient = OpencodeClient> {
   /** OpenCode SDK client with Sandbox transport */
   client: TClient;
   /** Server lifecycle management */
