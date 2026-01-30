@@ -138,6 +138,18 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private transport: 'http' | 'websocket' = 'http';
 
   /**
+   * Interval for keepAlive heartbeat in seconds.
+   * The DO hibernates after ~10s of inactivity, so we use 30s to stay well within
+   * typical container eviction windows while minimizing overhead.
+   */
+  private static readonly KEEP_ALIVE_INTERVAL_SECONDS = 30;
+
+  /**
+   * Name of the scheduled callback for keepAlive heartbeat
+   */
+  private static readonly KEEP_ALIVE_CALLBACK = 'keepAliveHeartbeat';
+
+  /**
    * Default container startup timeouts (conservative for production)
    * Based on Cloudflare docs: "Containers take several minutes to provision"
    */
@@ -234,6 +246,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           ...storedTimeouts
         };
       }
+
+      // Ensure keepAlive heartbeat is scheduled if enabled.
+      // This handles the case where the DO woke from hibernation.
+      // The scheduleKeepAliveHeartbeat method is idempotent - it clears existing
+      // schedules before creating a new one to avoid duplicates.
+      if (this.keepAliveEnabled) {
+        await this.scheduleKeepAliveHeartbeat();
+      }
     });
   }
 
@@ -269,8 +289,88 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   // RPC method to enable keepAlive mode
   async setKeepAlive(keepAlive: boolean): Promise<void> {
+    const wasEnabled = this.keepAliveEnabled;
     this.keepAliveEnabled = keepAlive;
     await this.ctx.storage.put('keepAliveEnabled', keepAlive);
+
+    // Schedule or cancel keepAlive heartbeat based on state change
+    if (keepAlive && !wasEnabled) {
+      await this.scheduleKeepAliveHeartbeat();
+    } else if (!keepAlive && wasEnabled) {
+      await this.cancelKeepAliveHeartbeat();
+    }
+  }
+
+  /**
+   * Schedule the next keepAlive heartbeat alarm.
+   * Uses the Container class's schedule() method which persists through hibernation.
+   * Idempotent: clears any existing heartbeat schedules before creating a new one.
+   */
+  private async scheduleKeepAliveHeartbeat(): Promise<void> {
+    this.logger.debug('Scheduling keepAlive heartbeat', {
+      intervalSeconds: Sandbox.KEEP_ALIVE_INTERVAL_SECONDS
+    });
+
+    try {
+      // Clear any existing heartbeat schedules to avoid duplicates
+      this.deleteSchedules(Sandbox.KEEP_ALIVE_CALLBACK);
+
+      await this.schedule(
+        Sandbox.KEEP_ALIVE_INTERVAL_SECONDS,
+        Sandbox.KEEP_ALIVE_CALLBACK
+      );
+    } catch (error) {
+      this.logger.error(
+        'Failed to schedule keepAlive heartbeat',
+        error instanceof Error ? error : new Error(String(error))
+      );
+    }
+  }
+
+  /**
+   * Cancel any pending keepAlive heartbeat alarms.
+   */
+  private async cancelKeepAliveHeartbeat(): Promise<void> {
+    this.logger.debug('Cancelling keepAlive heartbeat');
+
+    try {
+      this.deleteSchedules(Sandbox.KEEP_ALIVE_CALLBACK);
+    } catch (error) {
+      this.logger.warn('Failed to cancel keepAlive heartbeat', {
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  /**
+   * Callback method invoked by the Container's alarm system for keepAlive heartbeat.
+   * Makes a lightweight request to the container to prevent eviction, then reschedules.
+   */
+  async keepAliveHeartbeat(): Promise<void> {
+    // Re-check flag in case it was disabled since scheduling
+    if (!this.keepAliveEnabled) {
+      this.logger.debug(
+        'keepAlive heartbeat fired but keepAlive is disabled, not rescheduling'
+      );
+      return;
+    }
+
+    this.logger.debug('keepAlive heartbeat - pinging container');
+
+    try {
+      // Make a lightweight request to keep the container alive
+      // The ping endpoint is fast and doesn't require session setup
+      await this.client.utils.ping();
+    } catch (error) {
+      // Container might be starting up or temporarily unavailable
+      // Log but don't fail - the heartbeat will retry on next interval
+      this.logger.debug('keepAlive heartbeat ping failed', {
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+
+    // Reschedule the next heartbeat
+    await this.scheduleKeepAliveHeartbeat();
   }
 
   async setEnvVars(envVars: Record<string, string | undefined>): Promise<void> {
@@ -1000,15 +1100,19 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   /**
-   * Override onActivityExpired to prevent automatic shutdown when keepAlive is enabled
-   * When keepAlive is disabled, calls parent implementation which stops the container
+   * Override onActivityExpired to prevent automatic shutdown when keepAlive is enabled.
+   * When keepAlive is enabled, renews the activity timeout and ensures heartbeat continues.
+   * When keepAlive is disabled, calls parent implementation which stops the container.
    */
   override async onActivityExpired(): Promise<void> {
     if (this.keepAliveEnabled) {
       this.logger.debug(
-        'Activity expired but keepAlive is enabled - container will stay alive'
+        'Activity expired but keepAlive is enabled - renewing timeout'
       );
-      // Do nothing - don't call stop(), container stays alive
+      // Renew the activity timeout to prevent the Container class from thinking
+      // we're inactive. This works in conjunction with the keepAlive heartbeat
+      // which periodically pings the container.
+      this.renewActivityTimeout();
     } else {
       // Default behavior: stop the container
       this.logger.debug('Activity expired - stopping container');
