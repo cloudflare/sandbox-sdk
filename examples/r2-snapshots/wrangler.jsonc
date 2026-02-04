@@ -1,0 +1,34 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "sandbox-r2-snapshots-example",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-05-06",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true
+  },
+  "containers": [
+    {
+      "class_name": "Sandbox",
+      // Uses local Dockerfile which pulls from cloudflare/sandbox-test:0.7.0
+      // Run `npm run docker:rebuild` from repo root before deploying
+      "image": "./Dockerfile",
+      "instance_type": "standard-2",
+      "max_instances": 5
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "class_name": "Sandbox",
+        "name": "Sandbox"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "new_sqlite_classes": ["Sandbox"],
+      "tag": "v1"
+    }
+  ]
+}

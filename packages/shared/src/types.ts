@@ -829,6 +829,83 @@ export interface ShutdownResult {
   timestamp: string;
 }
 
+// =============================================================================
+// Snapshot types for R2/S3 directory snapshots
+// =============================================================================
+
+/**
+ * Event emitted during snapshot operations (create or apply)
+ */
+export type SnapshotEvent =
+  | SnapshotStartEvent
+  | SnapshotProgressEvent
+  | SnapshotCompleteEvent
+  | SnapshotErrorEvent;
+
+export interface SnapshotStartEvent {
+  type: 'start';
+  operation: 'create' | 'apply';
+  directory: string;
+  timestamp: string;
+}
+
+export interface SnapshotProgressEvent {
+  type: 'progress';
+  operation: 'create' | 'apply';
+  /** Current phase of the operation */
+  phase:
+    | 'scanning'
+    | 'compressing'
+    | 'uploading'
+    | 'downloading'
+    | 'extracting';
+  /** Bytes processed so far */
+  bytesProcessed: number;
+  /** Total bytes (if known) */
+  totalBytes?: number;
+  /** Percentage complete (0-100, if calculable) */
+  percent?: number;
+  /** Human-readable status message */
+  message?: string;
+  timestamp: string;
+}
+
+export interface SnapshotCompleteEvent {
+  type: 'complete';
+  operation: 'create' | 'apply';
+  /** Final size in bytes (compressed for create, extracted for apply) */
+  sizeBytes: number;
+  /** Total operation duration in milliseconds */
+  durationMs: number;
+  timestamp: string;
+}
+
+export interface SnapshotErrorEvent {
+  type: 'error';
+  operation: 'create' | 'apply';
+  /** Error message */
+  message: string;
+  /** Error code for programmatic handling */
+  code?: string;
+  timestamp: string;
+}
+
+/**
+ * Result of a snapshot creation operation
+ */
+export interface SnapshotResult {
+  /** Unique snapshot ID (used to reference this snapshot later) */
+  id: string;
+  /** R2/S3 bucket name */
+  bucket: string;
+  /** Full object key in the bucket */
+  key: string;
+  /** Compressed snapshot size in bytes */
+  sizeBytes: number;
+  /** ISO timestamp when snapshot was created */
+  createdAt: string;
+}
+
 export interface ExecutionSession {
   /** Unique session identifier */
   readonly id: string;

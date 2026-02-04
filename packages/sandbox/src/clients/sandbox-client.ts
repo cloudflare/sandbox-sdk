@@ -4,6 +4,7 @@ import { GitClient } from './git-client';
 import { InterpreterClient } from './interpreter-client';
 import { PortClient } from './port-client';
 import { ProcessClient } from './process-client';
+import { SnapshotClient } from './snapshot-client';
 import {
   createTransport,
   type ITransport,
@@ -29,6 +30,7 @@ export class SandboxClient {
   public readonly ports: PortClient;
   public readonly git: GitClient;
   public readonly interpreter: InterpreterClient;
+  public readonly snapshots: SnapshotClient;
   public readonly utils: UtilityClient;
 
   private transport: ITransport | null = null;
@@ -61,6 +63,7 @@ export class SandboxClient {
     this.ports = new PortClient(clientOptions);
     this.git = new GitClient(clientOptions);
     this.interpreter = new InterpreterClient(clientOptions);
+    this.snapshots = new SnapshotClient(clientOptions);
     this.utils = new UtilityClient(clientOptions);
   }
 

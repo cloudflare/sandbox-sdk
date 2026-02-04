@@ -140,3 +140,29 @@ export interface SessionCreateRequest {
 export interface SessionDeleteRequest {
   sessionId: string;
 }
+
+/**
+ * Request to create a snapshot of a directory and upload to R2/S3
+ */
+export interface CreateSnapshotRequest {
+  /** Directory to snapshot (relative or absolute path) */
+  directory: string;
+  /** Presigned PUT URL for uploading the snapshot */
+  presignedPutUrl: string;
+  /** zstd compression level (1-19, default 3) */
+  compressionLevel?: number;
+  /** Session context for resolving relative paths */
+  sessionId?: string;
+}
+
+/**
+ * Request to download and apply a snapshot from R2/S3
+ */
+export interface ApplySnapshotRequest {
+  /** Presigned GET URL to download the snapshot */
+  presignedGetUrl: string;
+  /** Target directory to extract snapshot contents into */
+  targetDirectory: string;
+  /** Session context for resolving relative paths */
+  sessionId?: string;
+}

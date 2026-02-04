@@ -15,6 +15,7 @@ export { GitClient } from './git-client';
 export { InterpreterClient } from './interpreter-client';
 export { PortClient } from './port-client';
 export { ProcessClient } from './process-client';
+export { SnapshotClient } from './snapshot-client';
 export { UtilityClient } from './utility-client';
 
 // =============================================================================

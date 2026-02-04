@@ -19,6 +19,8 @@ import type {
   RunCodeOptions,
   SandboxOptions,
   SessionOptions,
+  SnapshotEvent,
+  SnapshotResult,
   StreamOptions,
   WaitForExitResult,
   WaitForLogResult,
@@ -60,6 +62,15 @@ import {
   S3FSMountError
 } from './storage-mount/errors';
 import type { MountInfo } from './storage-mount/types';
+import type {
+  ApplySnapshotR2Options,
+  SnapshotR2Options
+} from './storage-snapshot';
+import {
+  createS3Client,
+  generatePresignedGetUrl,
+  generatePresignedPutUrl
+} from './storage-snapshot';
 import { SDK_VERSION } from './version';
 
 export function getSandbox<T extends Sandbox<any>>(
@@ -2575,6 +2586,259 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         this.mountBucket(bucket, mountPath, options),
       unmountBucket: (mountPath) => this.unmountBucket(mountPath)
     };
+  }
+
+  // ============================================================================
+  // R2/S3 snapshot methods - directory backup and restore
+  // ============================================================================
+
+  /**
+   * Create a snapshot of a directory and upload to R2/S3
+   *
+   * The snapshot is compressed with zstd and uploaded to the specified bucket.
+   * A unique snapshot ID is generated and returned for later retrieval.
+   *
+   * @param directory - Directory to snapshot (relative to /workspace or absolute)
+   * @param options - R2/S3 bucket configuration and credentials
+   * @returns Snapshot metadata including ID for later retrieval
+   *
+   * @example
+   * ```typescript
+   * const snapshot = await sandbox.snapshotDirectoryR2('/workspace/myproject', {
+   *   bucket: 'my-bucket',
+   *   endpoint: 'https://ACCOUNT_ID.r2.cloudflarestorage.com',
+   *   credentials: {
+   *     accessKeyId: env.R2_ACCESS_KEY_ID,
+   *     secretAccessKey: env.R2_SECRET_ACCESS_KEY
+   *   }
+   * });
+   * console.log('Snapshot ID:', snapshot.id);
+   * ```
+   */
+  async snapshotDirectoryR2(
+    directory: string,
+    options: SnapshotR2Options
+  ): Promise<SnapshotResult> {
+    const session = await this.ensureDefaultSession();
+
+    // Generate snapshot ID: snapshot-<dir-hash>-<timestamp>
+    const dirHash = this.hashString(directory).slice(0, 8);
+    const timestamp = Date.now();
+    const snapshotId = `snapshot-${dirHash}-${timestamp}`;
+
+    const keyPrefix = options.keyPrefix ?? 'snapshots/';
+    const key = `${keyPrefix}${snapshotId}.tar.zst`;
+
+    this.logger.info('Creating R2 snapshot', {
+      directory,
+      snapshotId,
+      bucket: options.bucket
+    });
+
+    // Create S3 client and generate presigned URL
+    const s3Client = createS3Client(options.endpoint, options.credentials);
+    const presignedPutUrl = await generatePresignedPutUrl(
+      s3Client,
+      options.bucket,
+      key
+    );
+
+    // Execute snapshot via container
+    let sizeBytes = 0;
+    for await (const event of this.client.snapshots.createSnapshot({
+      directory,
+      presignedPutUrl,
+      compressionLevel: options.compressionLevel ?? 3,
+      sessionId: session
+    })) {
+      if (event.type === 'error') {
+        this.logger.error('Snapshot creation failed', undefined, {
+          directory,
+          snapshotId,
+          error: event.message
+        });
+        throw new Error(`Snapshot failed: ${event.message}`);
+      }
+      if (event.type === 'complete') {
+        sizeBytes = event.sizeBytes;
+      }
+    }
+
+    this.logger.info('R2 snapshot created', {
+      directory,
+      snapshotId,
+      sizeBytes
+    });
+
+    return {
+      id: snapshotId,
+      bucket: options.bucket,
+      key,
+      sizeBytes,
+      createdAt: new Date().toISOString()
+    };
+  }
+
+  /**
+   * Create a snapshot with streaming progress events
+   *
+   * Use this for real-time progress monitoring during snapshot creation.
+   *
+   * @param directory - Directory to snapshot
+   * @param options - R2/S3 bucket configuration and credentials
+   * @yields SnapshotEvent - Progress events (start, progress, complete, error)
+   *
+   * @example
+   * ```typescript
+   * for await (const event of sandbox.snapshotDirectoryR2Stream('/workspace', options)) {
+   *   console.log(event.type, event.message);
+   * }
+   * ```
+   */
+  async *snapshotDirectoryR2Stream(
+    directory: string,
+    options: SnapshotR2Options
+  ): AsyncGenerator<SnapshotEvent> {
+    const session = await this.ensureDefaultSession();
+
+    const dirHash = this.hashString(directory).slice(0, 8);
+    const timestamp = Date.now();
+    const snapshotId = `snapshot-${dirHash}-${timestamp}`;
+
+    const keyPrefix = options.keyPrefix ?? 'snapshots/';
+    const key = `${keyPrefix}${snapshotId}.tar.zst`;
+
+    this.logger.debug('Starting streaming R2 snapshot', {
+      directory,
+      snapshotId
+    });
+
+    const s3Client = createS3Client(options.endpoint, options.credentials);
+    const presignedPutUrl = await generatePresignedPutUrl(
+      s3Client,
+      options.bucket,
+      key
+    );
+
+    yield* this.client.snapshots.createSnapshot({
+      directory,
+      presignedPutUrl,
+      compressionLevel: options.compressionLevel ?? 3,
+      sessionId: session
+    });
+  }
+
+  /**
+   * Apply a snapshot from R2/S3 to a directory
+   *
+   * Downloads the snapshot and extracts it to the target directory.
+   *
+   * @param snapshotId - Snapshot ID returned from snapshotDirectoryR2
+   * @param options - R2/S3 bucket configuration (must match snapshot source)
+   *
+   * @example
+   * ```typescript
+   * await sandbox.applyR2Snapshot('snapshot-abc12345-1234567890', {
+   *   bucket: 'my-bucket',
+   *   endpoint: 'https://ACCOUNT_ID.r2.cloudflarestorage.com',
+   *   credentials: { ... },
+   *   targetDirectory: '/workspace/restored'
+   * });
+   * ```
+   */
+  async applyR2Snapshot(
+    snapshotId: string,
+    options: ApplySnapshotR2Options
+  ): Promise<void> {
+    const session = await this.ensureDefaultSession();
+
+    const keyPrefix = options.keyPrefix ?? 'snapshots/';
+    const key = `${keyPrefix}${snapshotId}.tar.zst`;
+    const targetDirectory = options.targetDirectory ?? '/workspace';
+
+    this.logger.info('Applying R2 snapshot', {
+      snapshotId,
+      targetDirectory,
+      bucket: options.bucket
+    });
+
+    const s3Client = createS3Client(options.endpoint, options.credentials);
+    const presignedGetUrl = await generatePresignedGetUrl(
+      s3Client,
+      options.bucket,
+      key
+    );
+
+    for await (const event of this.client.snapshots.applySnapshot({
+      presignedGetUrl,
+      targetDirectory,
+      sessionId: session
+    })) {
+      if (event.type === 'error') {
+        this.logger.error('Snapshot apply failed', undefined, {
+          snapshotId,
+          targetDirectory,
+          error: event.message
+        });
+        throw new Error(`Apply snapshot failed: ${event.message}`);
+      }
+    }
+
+    this.logger.info('R2 snapshot applied', {
+      snapshotId,
+      targetDirectory
+    });
+  }
+
+  /**
+   * Apply a snapshot with streaming progress events
+   *
+   * Use this for real-time progress monitoring during snapshot restoration.
+   *
+   * @param snapshotId - Snapshot ID to restore
+   * @param options - R2/S3 bucket configuration and target directory
+   * @yields SnapshotEvent - Progress events (start, progress, complete, error)
+   */
+  async *applyR2SnapshotStream(
+    snapshotId: string,
+    options: ApplySnapshotR2Options
+  ): AsyncGenerator<SnapshotEvent> {
+    const session = await this.ensureDefaultSession();
+
+    const keyPrefix = options.keyPrefix ?? 'snapshots/';
+    const key = `${keyPrefix}${snapshotId}.tar.zst`;
+    const targetDirectory = options.targetDirectory ?? '/workspace';
+
+    this.logger.debug('Starting streaming R2 snapshot apply', {
+      snapshotId,
+      targetDirectory
+    });
+
+    const s3Client = createS3Client(options.endpoint, options.credentials);
+    const presignedGetUrl = await generatePresignedGetUrl(
+      s3Client,
+      options.bucket,
+      key
+    );
+
+    yield* this.client.snapshots.applySnapshot({
+      presignedGetUrl,
+      targetDirectory,
+      sessionId: session
+    });
+  }
+
+  /**
+   * Simple hash function for generating snapshot IDs
+   */
+  private hashString(str: string): string {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      const char = str.charCodeAt(i);
+      hash = (hash << 5) - hash + char;
+      hash = hash & hash; // Convert to 32-bit integer
+    }
+    return Math.abs(hash).toString(16);
   }
 
   // ============================================================================

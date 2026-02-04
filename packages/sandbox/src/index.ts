@@ -8,6 +8,7 @@ export {
   PortClient,
   ProcessClient,
   SandboxClient,
+  SnapshotClient,
   UtilityClient
 } from './clients';
 export { getSandbox, Sandbox } from './sandbox';
@@ -40,6 +41,13 @@ export type {
   RunCodeOptions,
   SandboxOptions,
   SessionOptions,
+  // Snapshot types
+  SnapshotCompleteEvent,
+  SnapshotErrorEvent,
+  SnapshotEvent,
+  SnapshotProgressEvent,
+  SnapshotResult,
+  SnapshotStartEvent,
   StreamOptions,
   // Process readiness types
   WaitForLogResult,
@@ -127,3 +135,8 @@ export {
   MissingCredentialsError,
   S3FSMountError
 } from './storage-mount/errors';
+// Export snapshot types
+export type {
+  ApplySnapshotR2Options,
+  SnapshotR2Options
+} from './storage-snapshot';

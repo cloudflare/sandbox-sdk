@@ -35,6 +35,8 @@ export {
 } from './logger/index.js';
 // Export all request types (enforce contract between client and container)
 export type {
+  ApplySnapshotRequest,
+  CreateSnapshotRequest,
   DeleteFileRequest,
   ExecuteRequest,
   ExposePortRequest,
@@ -113,6 +115,13 @@ export type {
   SessionDeleteResult,
   SessionOptions,
   ShutdownResult,
+  // Snapshot types
+  SnapshotCompleteEvent,
+  SnapshotErrorEvent,
+  SnapshotEvent,
+  SnapshotProgressEvent,
+  SnapshotResult,
+  SnapshotStartEvent,
   StreamOptions,
   // Process readiness types
   WaitForExitResult,

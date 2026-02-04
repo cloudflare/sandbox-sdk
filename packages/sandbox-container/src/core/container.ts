@@ -8,6 +8,7 @@ import { MiscHandler } from '../handlers/misc-handler';
 import { PortHandler } from '../handlers/port-handler';
 import { ProcessHandler } from '../handlers/process-handler';
 import { SessionHandler } from '../handlers/session-handler';
+import { SnapshotHandler } from '../handlers/snapshot-handler';
 import { CorsMiddleware } from '../middleware/cors';
 import { LoggingMiddleware } from '../middleware/logging';
 import { SecurityServiceAdapter } from '../security/security-adapter';
@@ -19,6 +20,7 @@ import { InMemoryPortStore, PortService } from '../services/port-service';
 import { ProcessService } from '../services/process-service';
 import { ProcessStore } from '../services/process-store';
 import { SessionManager } from '../services/session-manager';
+import { SnapshotService } from '../services/snapshot-service';
 
 export interface Dependencies {
   // Services
@@ -27,6 +29,7 @@ export interface Dependencies {
   portService: PortService;
   gitService: GitService;
   interpreterService: InterpreterService;
+  snapshotService: SnapshotService;
 
   // Infrastructure
   logger: Logger;
@@ -40,6 +43,7 @@ export interface Dependencies {
   gitHandler: GitHandler;
   interpreterHandler: InterpreterHandler;
   sessionHandler: SessionHandler;
+  snapshotHandler: SnapshotHandler;
   miscHandler: MiscHandler;
 
   // Middleware
@@ -112,6 +116,7 @@ export class Container {
       sessionManager
     );
     const interpreterService = new InterpreterService(logger);
+    const snapshotService = new SnapshotService(logger, sessionManager);
 
     // Initialize handlers
     const sessionHandler = new SessionHandler(sessionManager, logger);
@@ -124,6 +129,7 @@ export class Container {
       interpreterService,
       logger
     );
+    const snapshotHandler = new SnapshotHandler(snapshotService, logger);
     const miscHandler = new MiscHandler(logger);
 
     // Initialize middleware
@@ -138,6 +144,7 @@ export class Container {
       portService,
       gitService,
       interpreterService,
+      snapshotService,
 
       // Infrastructure
       logger,
@@ -151,6 +158,7 @@ export class Container {
       gitHandler,
       interpreterHandler,
       sessionHandler,
+      snapshotHandler,
       miscHandler,
 
       // Middleware
