@@ -858,7 +858,8 @@ export interface SnapshotProgressEvent {
     | 'compressing'
     | 'uploading'
     | 'downloading'
-    | 'extracting';
+    | 'extracting'
+    | 'mounting';
   /** Bytes processed so far */
   bytesProcessed: number;
   /** Total bytes (if known) */

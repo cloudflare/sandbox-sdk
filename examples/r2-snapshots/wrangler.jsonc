@@ -10,10 +10,10 @@
   "containers": [
     {
       "class_name": "Sandbox",
-      // Uses local Dockerfile which pulls from cloudflare/sandbox-test:0.7.0
-      // Run `npm run docker:rebuild` from repo root before deploying
-      "image": "./Dockerfile",
-      "instance_type": "standard-2",
+      // Builds from monorepo source to include latest container optimizations
+      // The Dockerfile is relative to this dir, but build context is repo root
+      "image": "../../Dockerfile.r2-snapshots",
+      "instance_type": "standard-3",
       "max_instances": 5
     }
   ],

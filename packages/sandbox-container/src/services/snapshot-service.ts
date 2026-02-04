@@ -2,7 +2,15 @@
  * Snapshot Service
  *
  * Handles creating and applying directory snapshots to/from R2/S3
- * using tar + zstd compression with streaming progress feedback.
+ * using SquashFS for instant mounts instead of slow tar extraction.
+ *
+ * Why SquashFS?
+ * - Traditional tar+zstd extraction suffers from ext4 journal contention
+ *   when extracting many files (20k+ in node_modules) to a location where
+ *   files were recently deleted. This causes 10-30x slowdown (25-50s vs 2-3s).
+ * - SquashFS mounts the compressed image directly - no file extraction needed.
+ * - Mount is instant (~200ms) regardless of how many times you restore.
+ * - SquashFS is read-only, which is ideal for restoring known state.
  */
 
 import type {
@@ -15,6 +23,21 @@ import { shellEscape } from '@repo/shared';
 import { ErrorCode } from '@repo/shared/errors';
 import type { SessionManager } from './session-manager';
 
+/**
+ * Helper to extract error message from session execution result
+ */
+function getErrorMessage(
+  result:
+    | { success: false; error: { message: string } }
+    | { success: true; data: { stderr?: string } },
+  fallback: string
+): string {
+  if (!result.success) {
+    return result.error.message;
+  }
+  return result.data.stderr || fallback;
+}
+
 export class SnapshotService {
   constructor(
     private logger: Logger,
@@ -23,7 +46,7 @@ export class SnapshotService {
 
   /**
    * Create a snapshot of a directory and upload to R2/S3 via presigned URL
-   * Yields progress events for monitoring
+   * Uses mksquashfs with zstd compression for fast mounting on restore.
    */
   async *createSnapshot(
     request: CreateSnapshotRequest
@@ -96,21 +119,52 @@ export class SnapshotService {
       bytesProcessed: 0,
       totalBytes,
       percent: 0,
-      message: `Compressing ${directory} (${this.formatBytes(totalBytes)})...`,
+      message: `Creating SquashFS image of ${directory} (${this.formatBytes(totalBytes)})...`,
       timestamp: new Date().toISOString()
     };
 
-    // Build the command:
-    // 1. tar creates archive from directory
-    // 2. zstd compresses with specified level (-T0 uses all cores)
-    // 3. curl uploads to presigned URL
-    //
-    // We use curl's --write-out to capture the uploaded size
-    // The -f flag makes curl fail on HTTP errors
-    const tarZstdCmd = `tar -cf - -C ${shellEscape(directory)} .`;
-    const zstdCmd = `zstd -${compressionLevel} -T0`;
-    const curlCmd = `curl -sf -X PUT -H "Content-Type: application/octet-stream" --data-binary @- ${shellEscape(presignedPutUrl)} -w "%{size_upload}" -o /dev/null`;
-    const fullCommand = `${tarZstdCmd} | ${zstdCmd} | ${curlCmd}`;
+    // Create SquashFS image with zstd compression
+    const tempFile = `/tmp/snapshot-${Date.now()}.sqsh`;
+    const mksquashfsCmd = `mksquashfs ${shellEscape(directory)} ${tempFile} -comp zstd -Xcompression-level ${compressionLevel} -no-progress -quiet 2>&1`;
+
+    const createResult = await this.sessionManager.executeInSession(
+      sessionId,
+      mksquashfsCmd
+    );
+
+    if (!createResult.success) {
+      const errorMsg = createResult.error.message;
+      this.logger.error('SquashFS creation failed', undefined, {
+        directory,
+        error: errorMsg
+      });
+      yield {
+        type: 'error',
+        operation: 'create',
+        message: `Failed to create snapshot: ${errorMsg}`,
+        code: ErrorCode.UNKNOWN_ERROR,
+        timestamp: new Date().toISOString()
+      };
+      return;
+    }
+
+    if (createResult.data.exitCode !== 0) {
+      const errorMsg =
+        createResult.data.stderr || 'Failed to create SquashFS image';
+      this.logger.error('SquashFS creation failed', undefined, {
+        directory,
+        error: errorMsg,
+        exitCode: createResult.data.exitCode
+      });
+      yield {
+        type: 'error',
+        operation: 'create',
+        message: `Failed to create snapshot: ${errorMsg}`,
+        code: ErrorCode.UNKNOWN_ERROR,
+        timestamp: new Date().toISOString()
+      };
+      return;
+    }
 
     yield {
       type: 'progress',
@@ -122,18 +176,24 @@ export class SnapshotService {
       timestamp: new Date().toISOString()
     };
 
-    // Execute the upload
+    // Upload the SquashFS image to R2/S3
+    const curlCmd = `curl -sf -X PUT -H "Content-Type: application/octet-stream" -T ${tempFile} ${shellEscape(presignedPutUrl)} -w "%{size_upload}" -o /dev/null && rm -f ${tempFile}`;
+
     const uploadResult = await this.sessionManager.executeInSession(
       sessionId,
-      fullCommand
+      curlCmd
     );
 
     if (!uploadResult.success) {
-      const errorMsg = uploadResult.error?.message || 'Upload failed';
+      const errorMsg = uploadResult.error.message;
       this.logger.error('Snapshot upload failed', undefined, {
         directory,
         error: errorMsg
       });
+      await this.sessionManager.executeInSession(
+        sessionId,
+        `rm -f ${tempFile}`
+      );
       yield {
         type: 'error',
         operation: 'create',
@@ -144,13 +204,17 @@ export class SnapshotService {
       return;
     }
 
-    if (uploadResult.data?.exitCode !== 0) {
-      const errorMsg = uploadResult.data?.stderr || 'Upload failed';
+    if (uploadResult.data.exitCode !== 0) {
+      const errorMsg = uploadResult.data.stderr || 'Upload failed';
       this.logger.error('Snapshot upload failed', undefined, {
         directory,
         error: errorMsg,
-        exitCode: uploadResult.data?.exitCode
+        exitCode: uploadResult.data.exitCode
       });
+      await this.sessionManager.executeInSession(
+        sessionId,
+        `rm -f ${tempFile}`
+      );
       yield {
         type: 'error',
         operation: 'create',
@@ -162,16 +226,14 @@ export class SnapshotService {
     }
 
     // Parse the uploaded bytes from stdout (curl's write-out)
-    const uploadedBytes = parseInt(
-      uploadResult.data?.stdout?.trim() || '0',
-      10
-    );
+    const uploadedBytes = parseInt(uploadResult.data.stdout?.trim() || '0', 10);
 
     const durationMs = Date.now() - startTime;
     this.logger.info('Snapshot creation complete', {
       directory,
       uploadedBytes,
-      durationMs
+      durationMs,
+      format: 'squashfs'
     });
 
     yield {
@@ -185,7 +247,11 @@ export class SnapshotService {
 
   /**
    * Download and apply a snapshot from R2/S3 via presigned URL
-   * Yields progress events for monitoring
+   * Uses squashfuse to mount the image directly - no extraction needed.
+   *
+   * The mounted filesystem is read-only (SquashFS limitation), which is
+   * appropriate for restoring a known state. If writes are needed, the
+   * caller should copy files to a writable location.
    */
   async *applySnapshot(
     request: ApplySnapshotRequest
@@ -202,36 +268,43 @@ export class SnapshotService {
       timestamp: new Date().toISOString()
     };
 
-    // Ensure target directory exists
+    // Unmount if already mounted (idempotent restore)
+    await this.sessionManager.executeInSession(
+      sessionId,
+      `fusermount -u ${shellEscape(targetDirectory)} 2>/dev/null || true`
+    );
+
+    // Clear and recreate mount point (squashfuse requires empty directory)
+    // We remove and recreate to ensure clean state
     const mkdirResult = await this.sessionManager.executeInSession(
       sessionId,
-      `mkdir -p ${shellEscape(targetDirectory)}`
+      `rm -rf ${shellEscape(targetDirectory)} && mkdir -p ${shellEscape(targetDirectory)}`
     );
 
     if (!mkdirResult.success) {
-      this.logger.error('Failed to create target directory', undefined, {
+      this.logger.error('Failed to create mount point', undefined, {
         targetDirectory,
-        error: mkdirResult.error?.message
+        error: mkdirResult.error.message
       });
       yield {
         type: 'error',
         operation: 'apply',
-        message: `Failed to create target directory: ${mkdirResult.error?.message || 'Unknown error'}`,
+        message: `Failed to create mount point: ${mkdirResult.error.message}`,
         code: ErrorCode.FILESYSTEM_ERROR,
         timestamp: new Date().toISOString()
       };
       return;
     }
 
-    if (mkdirResult.data?.exitCode !== 0) {
-      this.logger.error('Failed to create target directory', undefined, {
+    if (mkdirResult.data.exitCode !== 0) {
+      this.logger.error('Failed to create mount point', undefined, {
         targetDirectory,
-        error: mkdirResult.data?.stderr
+        error: mkdirResult.data.stderr
       });
       yield {
         type: 'error',
         operation: 'apply',
-        message: `Failed to create target directory: ${mkdirResult.data?.stderr || 'Unknown error'}`,
+        message: `Failed to create mount point: ${mkdirResult.data.stderr || 'Unknown error'}`,
         code: ErrorCode.FILESYSTEM_ERROR,
         timestamp: new Date().toISOString()
       };
@@ -243,48 +316,52 @@ export class SnapshotService {
       operation: 'apply',
       phase: 'downloading',
       bytesProcessed: 0,
-      message: `Downloading and extracting to ${targetDirectory}...`,
+      message: 'Downloading snapshot...',
       timestamp: new Date().toISOString()
     };
 
-    // Stream download through zstd decompression and tar extraction
-    // curl -f fails on HTTP errors, streams to stdout
-    // zstd -d decompresses
-    // tar -x extracts to target directory
-    const extractCmd = `curl -sf ${shellEscape(presignedGetUrl)} | zstd -d | tar -xf - -C ${shellEscape(targetDirectory)}`;
+    // Download SquashFS image to a persistent location
+    const snapshotDir = '/var/snapshots';
+    const snapshotFile = `${snapshotDir}/snapshot-${Date.now()}.sqsh`;
 
-    const result = await this.sessionManager.executeInSession(
+    // Ensure snapshot storage directory exists
+    await this.sessionManager.executeInSession(
       sessionId,
-      extractCmd
+      `mkdir -p ${snapshotDir}`
     );
 
-    if (!result.success) {
-      const errorMsg = result.error?.message || 'Extraction failed';
-      this.logger.error('Snapshot apply failed', undefined, {
+    // Download the SquashFS image
+    const downloadCmd = `curl -sf -o ${snapshotFile} ${shellEscape(presignedGetUrl)}`;
+    const downloadResult = await this.sessionManager.executeInSession(
+      sessionId,
+      downloadCmd
+    );
+
+    if (!downloadResult.success) {
+      this.logger.error('Snapshot download failed', undefined, {
         targetDirectory,
-        error: errorMsg
+        error: downloadResult.error.message
       });
       yield {
         type: 'error',
         operation: 'apply',
-        message: `Failed to apply snapshot: ${errorMsg}`,
+        message: `Failed to download snapshot: ${downloadResult.error.message}`,
         code: ErrorCode.UNKNOWN_ERROR,
         timestamp: new Date().toISOString()
       };
       return;
     }
 
-    if (result.data?.exitCode !== 0) {
-      const errorMsg = result.data?.stderr || 'Extraction failed';
-      this.logger.error('Snapshot apply failed', undefined, {
+    if (downloadResult.data.exitCode !== 0) {
+      const errorMsg = downloadResult.data.stderr || 'Download failed';
+      this.logger.error('Snapshot download failed', undefined, {
         targetDirectory,
-        error: errorMsg,
-        exitCode: result.data?.exitCode
+        error: errorMsg
       });
       yield {
         type: 'error',
         operation: 'apply',
-        message: `Failed to apply snapshot: ${errorMsg}`,
+        message: `Failed to download snapshot: ${errorMsg}`,
         code: ErrorCode.UNKNOWN_ERROR,
         timestamp: new Date().toISOString()
       };
@@ -294,33 +371,78 @@ export class SnapshotService {
     yield {
       type: 'progress',
       operation: 'apply',
-      phase: 'extracting',
+      phase: 'mounting',
       bytesProcessed: 0,
-      message: 'Calculating extracted size...',
+      message: `Mounting snapshot at ${targetDirectory}...`,
       timestamp: new Date().toISOString()
     };
 
-    // Get extracted size
-    const sizeResult = await this.sessionManager.executeInSession(
+    // Mount the SquashFS image using squashfuse
+    // This is instant (~200ms) regardless of file count!
+    const mountCmd = `squashfuse ${snapshotFile} ${shellEscape(targetDirectory)}`;
+    const mountResult = await this.sessionManager.executeInSession(
       sessionId,
-      `du -sb ${shellEscape(targetDirectory)} 2>/dev/null | cut -f1`
+      mountCmd
     );
-    const extractedBytes =
-      sizeResult.success && sizeResult.data
-        ? parseInt(sizeResult.data.stdout?.trim() || '0', 10)
-        : 0;
+
+    if (!mountResult.success) {
+      this.logger.error('Snapshot mount failed', undefined, {
+        targetDirectory,
+        error: mountResult.error.message
+      });
+      await this.sessionManager.executeInSession(
+        sessionId,
+        `rm -f ${snapshotFile}`
+      );
+      yield {
+        type: 'error',
+        operation: 'apply',
+        message: `Failed to mount snapshot: ${mountResult.error.message}`,
+        code: ErrorCode.UNKNOWN_ERROR,
+        timestamp: new Date().toISOString()
+      };
+      return;
+    }
+
+    if (mountResult.data.exitCode !== 0) {
+      const errorMsg = mountResult.data.stderr || 'Mount failed';
+      this.logger.error('Snapshot mount failed', undefined, {
+        targetDirectory,
+        error: errorMsg
+      });
+      await this.sessionManager.executeInSession(
+        sessionId,
+        `rm -f ${snapshotFile}`
+      );
+      yield {
+        type: 'error',
+        operation: 'apply',
+        message: `Failed to mount snapshot: ${errorMsg}`,
+        code: ErrorCode.UNKNOWN_ERROR,
+        timestamp: new Date().toISOString()
+      };
+      return;
+    }
+
+    // Clean up old snapshot files (keep only the current one)
+    await this.sessionManager.executeInSession(
+      sessionId,
+      `find ${snapshotDir} -name "*.sqsh" ! -name "$(basename ${snapshotFile})" -delete 2>/dev/null || true`
+    );
 
     const durationMs = Date.now() - startTime;
     this.logger.info('Snapshot apply complete', {
       targetDirectory,
-      extractedBytes,
-      durationMs
+      durationMs,
+      format: 'squashfs',
+      mountPoint: targetDirectory,
+      snapshotFile
     });
 
     yield {
       type: 'complete',
       operation: 'apply',
-      sizeBytes: extractedBytes,
+      sizeBytes: 0,
       durationMs,
       timestamp: new Date().toISOString()
     };

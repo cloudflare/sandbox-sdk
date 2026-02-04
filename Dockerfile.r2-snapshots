@@ -1,0 +1,98 @@
+# Build from monorepo source to get latest container code
+# This Dockerfile must be built from the repo root with:
+#   docker build -f examples/r2-snapshots/Dockerfile .
+
+# ============================================================================
+# Stage 1: Prune monorepo to only include necessary packages
+# ============================================================================
+FROM node:20-slim AS pruner
+
+WORKDIR /app
+
+RUN npm install -g turbo
+
+COPY . .
+
+# Prune to only @repo/sandbox-container and its dependencies (@repo/shared)
+RUN turbo prune @repo/sandbox-container --docker
+
+# ============================================================================
+# Stage 2: Install dependencies and build packages
+# ============================================================================
+FROM node:20-slim AS builder
+
+WORKDIR /app
+
+# Install Bun runtime
+COPY --from=oven/bun:1 /usr/local/bin/bun /usr/local/bin/bun
+
+# Copy pruned lockfile and package.json files
+COPY --from=pruner /app/out/json/ .
+COPY --from=pruner /app/out/package-lock.json ./package-lock.json
+
+# Install dependencies
+RUN --mount=type=cache,target=/root/.npm \
+    CI=true npm ci
+
+COPY --from=pruner /app/out/full/ .
+
+# Build all packages
+RUN npx turbo run build
+
+# ============================================================================
+# Stage 3: Runtime image
+# ============================================================================
+FROM ubuntu:22.04 AS runtime
+
+# Prevent interactive prompts
+ARG DEBIAN_FRONTEND=noninteractive
+
+# Install runtime dependencies including squashfs for fast snapshot mounting
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    rm -f /etc/apt/apt.conf.d/docker-clean && \
+    echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' >/etc/apt/apt.conf.d/keep-cache && \
+    apt-get update && apt-get install -y --no-install-recommends \
+    zstd \
+    s3fs fuse \
+    squashfs-tools squashfuse \
+    ca-certificates curl wget procps git unzip zip jq file \
+    libssl3 zlib1g libbz2-1.0 libreadline8 libsqlite3-0 \
+    libncursesw6 libtinfo6 libxml2 libxmlsec1 libffi8 liblzma5 libtk8.6 && \
+    update-ca-certificates
+
+# Configure FUSE for s3fs
+RUN sed -i 's/#user_allow_other/user_allow_other/' /etc/fuse.conf
+
+# Install Node.js
+COPY --from=node:20-slim /usr/local/bin/node /usr/local/bin/node
+COPY --from=node:20-slim /usr/local/lib/node_modules /usr/local/lib/node_modules
+RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm && \
+    ln -s /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
+
+# Install Bun
+COPY --from=oven/bun:1 /usr/local/bin/bun /usr/local/bin/bun
+
+# Copy the built container server
+COPY --from=builder /app/packages/sandbox-container/dist/sandbox /container-server/sandbox
+
+WORKDIR /container-server
+
+# Copy JS executor
+COPY --from=builder /app/packages/sandbox-container/dist/runtime/executors/javascript/node_executor.js ./dist/runtime/executors/javascript/
+
+# Copy the legacy JS bundle (fallback)
+COPY --from=builder /app/packages/sandbox-container/dist/index.js ./dist/
+
+# Create workspace directory
+RUN mkdir -p /workspace
+
+# Version marker for debugging
+RUN echo "r2-snapshots-v5-squashfs" > /snapshot-version
+
+# Required during local development to access exposed ports
+EXPOSE 8080
+
+# Start the container server
+ENV PORT=3000
+CMD ["./sandbox"]

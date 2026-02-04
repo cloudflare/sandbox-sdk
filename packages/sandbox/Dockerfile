@@ -97,7 +97,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 ENV SANDBOX_VERSION=${SANDBOX_VERSION}
 
-# Install runtime packages and S3FS-FUSE for bucket mounting
+# Install runtime packages, S3FS-FUSE for bucket mounting, and SquashFS for snapshots
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     rm -f /etc/apt/apt.conf.d/docker-clean && \
@@ -105,6 +105,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
     zstd \
     s3fs fuse \
+    squashfs-tools squashfuse \
     ca-certificates curl wget procps git unzip zip jq file \
     libssl3 zlib1g libbz2-1.0 libreadline8 libsqlite3-0 \
     libncursesw6 libtinfo6 libxml2 libxmlsec1 libffi8 liblzma5 libtk8.6 && \

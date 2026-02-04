@@ -2644,11 +2644,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     );
 
     // Execute snapshot via container
+    // Default compression level 1 for fastest decompression during restore
+    // Level 1 still achieves ~5-6x compression ratio but decompresses 2-3x faster than level 3
     let sizeBytes = 0;
     for await (const event of this.client.snapshots.createSnapshot({
       directory,
       presignedPutUrl,
-      compressionLevel: options.compressionLevel ?? 3,
+      compressionLevel: options.compressionLevel ?? 1,
       sessionId: session
     })) {
       if (event.type === 'error') {
@@ -2723,7 +2725,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     yield* this.client.snapshots.createSnapshot({
       directory,
       presignedPutUrl,
-      compressionLevel: options.compressionLevel ?? 3,
+      compressionLevel: options.compressionLevel ?? 1,
       sessionId: session
     });
   }
