@@ -13,17 +13,22 @@
   "devDependencies": {
     "@openai/agents": "^0.3.3",
     "@opencode-ai/sdk": "^1.0.137",
-    "@repo/shared": "*"
+    "@repo/shared": "*",
+    "@xterm/xterm": "^6.0.0"
   },
   "peerDependencies": {
     "@openai/agents": "^0.3.3",
-    "@opencode-ai/sdk": "^1.0.137"
+    "@opencode-ai/sdk": "^1.0.137",
+    "@xterm/xterm": ">=5.0.0"
   },
   "peerDependenciesMeta": {
     "@openai/agents": {
       "optional": true
     },
     "@opencode-ai/sdk": {
+      "optional": true
+    },
+    "@xterm/xterm": {
       "optional": true
     }
   },
@@ -59,6 +64,11 @@
       "types": "./dist/opencode/index.d.ts",
       "import": "./dist/opencode/index.js",
       "require": "./dist/opencode/index.js"
+    },
+    "./xterm": {
+      "types": "./dist/xterm/index.d.ts",
+      "import": "./dist/xterm/index.js",
+      "require": "./dist/xterm/index.js"
     }
   },
   "keywords": [],

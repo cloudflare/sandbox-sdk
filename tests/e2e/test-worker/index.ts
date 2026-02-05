@@ -12,7 +12,9 @@
  *
  * Use X-Sandbox-Type header to select: 'python', 'opencode', 'standalone', or default
  */
+
 import { getSandbox, proxyToSandbox, Sandbox } from '@cloudflare/sandbox';
+
 import type {
   BucketDeleteResponse,
   BucketGetResponse,
@@ -63,10 +65,12 @@ export default {
     const url = new URL(request.url);
     const body = await parseBody(request);
 
-    // Get sandbox ID from header
+    // Get sandbox ID from header or query param (WebSocket can't send headers)
     // Sandbox ID determines which container instance (Durable Object)
     const sandboxId =
-      request.headers.get('X-Sandbox-Id') || 'default-test-sandbox';
+      request.headers.get('X-Sandbox-Id') ||
+      url.searchParams.get('sandboxId') ||
+      'default-test-sandbox';
 
     // Check if keepAlive is requested
     const keepAliveHeader = request.headers.get('X-Sandbox-KeepAlive');
@@ -821,6 +825,33 @@ console.log('Terminal server on port ' + port);
         return new Response(JSON.stringify(response), {
           headers: { 'Content-Type': 'application/json' }
         });
+      }
+
+      // PTY: WebSocket terminal proxy
+      if (
+        url.pathname === '/terminal' ||
+        url.pathname.startsWith('/terminal/')
+      ) {
+        const upgradeHeader = request.headers.get('Upgrade');
+        if (upgradeHeader?.toLowerCase() !== 'websocket') {
+          return new Response('WebSocket upgrade required', { status: 426 });
+        }
+
+        const pathParts = url.pathname.split('/').filter(Boolean);
+
+        if (pathParts.length === 1) {
+          return sandbox.terminal(request, {
+            cols: parseInt(url.searchParams.get('cols') || '80', 10),
+            rows: parseInt(url.searchParams.get('rows') || '24', 10)
+          });
+        } else {
+          const ptySessionId = pathParts[1];
+          const session = await sandbox.getSession(ptySessionId);
+          return session.terminal(request, {
+            cols: parseInt(url.searchParams.get('cols') || '80', 10),
+            rows: parseInt(url.searchParams.get('rows') || '24', 10)
+          });
+        }
       }
 
       return new Response('Not found', { status: 404 });
