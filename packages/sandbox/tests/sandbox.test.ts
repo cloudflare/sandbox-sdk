@@ -691,21 +691,21 @@ describe('Sandbox - Automatic Session Management', () => {
 
       // Invalid port values
       await expect(sandbox.wsConnect(request, -1)).rejects.toThrow(
-        'Invalid or restricted port'
+        'Invalid port number'
       );
       await expect(sandbox.wsConnect(request, 0)).rejects.toThrow(
-        'Invalid or restricted port'
+        'Invalid port number'
       );
       await expect(sandbox.wsConnect(request, 70000)).rejects.toThrow(
-        'Invalid or restricted port'
+        'Invalid port number'
       );
 
       // Privileged ports
       await expect(sandbox.wsConnect(request, 80)).rejects.toThrow(
-        'Invalid or restricted port'
+        'Invalid port number'
       );
       await expect(sandbox.wsConnect(request, 443)).rejects.toThrow(
-        'Invalid or restricted port'
+        'Invalid port number'
       );
     });
 
