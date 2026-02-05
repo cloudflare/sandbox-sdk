@@ -208,10 +208,16 @@ jobs:
           workingDirectory: tests/e2e/test-worker
           command: deploy --name ${{ env.E2E_WORKER_NAME }}
 
+      - name: Install Playwright browsers
+        run: npx playwright install chromium
+
       - name: Run E2E tests
         env:
           TEST_WORKER_URL: https://${{ env.E2E_WORKER_NAME }}.${{ env.CF_ACCOUNT_SUBDOMAIN }}.workers.dev
-        run: npm run test:e2e
+          TEST_SANDBOX_ID: browser-test-release-${{ github.run_id }}
+        run: |
+          npx vitest run --config vitest.e2e.config.ts
+          npx playwright test --config tests/e2e/browser/playwright.config.ts
 
       - name: Cleanup test deployment
         if: always()
