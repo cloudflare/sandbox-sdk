@@ -67,14 +67,17 @@ npm run build:clean        # Force rebuild without cache
 See the **testing** skill for detailed guidance on unit vs E2E tests.
 
 ```bash
-npm test                                    # All unit tests
-npm test -w @cloudflare/sandbox             # SDK unit tests only
-npm test -w @repo/sandbox-container         # Container unit tests only
+npm test                                           # All unit tests
+npm test -w @cloudflare/sandbox                    # SDK unit tests only
+npm test -w @repo/sandbox-container                # Container unit tests only
 
-npm run test:e2e                            # All E2E tests (requires Docker)
-npm run test:e2e -- -- tests/e2e/file.ts    # Single E2E file
-npm run test:e2e -- -- tests/e2e/file.ts -t 'test name'  # Single test
+npm run test:e2e                                   # All E2E tests (vitest + browser, requires Docker)
+npm run test:e2e:vitest -- -- tests/e2e/file.ts   # Single vitest E2E file
+npm run test:e2e:vitest -- -- tests/e2e/file.ts -t 'test name'  # Single vitest E2E test
+npm run test:e2e:browser                           # Browser E2E tests only (Playwright)
 ```
+
+**Note**: Use `test:e2e:vitest` when filtering tests. The `test:e2e` wrapper doesn't support argument passthrough.
 
 ### Code Quality
 

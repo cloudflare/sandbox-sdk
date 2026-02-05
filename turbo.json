@@ -74,12 +74,13 @@
     "clean": {
       "cache": false
     },
-    "test:e2e": {
+    "test:e2e:vitest": {
       "dependsOn": ["^build", "docker:local"],
       "cache": false,
       "outputs": [],
       "inputs": [
         "tests/e2e/**/*.ts",
+        "!tests/e2e/browser/**",
         "vitest.e2e.config.ts",
         "packages/sandbox/Dockerfile"
       ]
@@ -91,6 +92,16 @@
       "inputs": [
         "tests/perf/**/*.ts",
         "vitest.perf.config.ts",
+        "packages/sandbox/Dockerfile"
+      ]
+    },
+    "test:e2e:browser": {
+      "dependsOn": ["^build", "docker:local"],
+      "cache": false,
+      "outputs": [],
+      "inputs": [
+        "tests/e2e/browser/**/*.ts",
+        "tests/e2e/test-worker/**/*.ts",
         "packages/sandbox/Dockerfile"
       ]
     }
