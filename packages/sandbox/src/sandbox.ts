@@ -2329,9 +2329,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       );
     }
 
-    if (!/^[a-z0-9_-]+$/.test(token)) {
+    if (!/^[a-z0-9_]+$/.test(token)) {
       throw new SecurityError(
-        `Custom token must contain only lowercase letters (a-z), numbers (0-9), hyphens (-), and underscores (_). Invalid token provided.`
+        `Custom token must contain only lowercase letters (a-z), numbers (0-9), and underscores (_). Invalid token provided.`
       );
     }
   }
@@ -2342,10 +2342,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     const array = new Uint8Array(12); // 12 bytes = 16 base64url chars (after padding removal)
     crypto.getRandomValues(array);
 
-    // Convert to base64url format (URL-safe, no padding, lowercase)
     const base64 = btoa(String.fromCharCode(...array));
     return base64
-      .replace(/\+/g, '-')
+      .replace(/\+/g, '_')
       .replace(/\//g, '_')
       .replace(/=/g, '')
       .toLowerCase();

@@ -1,15 +1,19 @@
 {
-  "name": "@cloudflare/sandbox-minimal-example",
+  "name": "@cloudflare/sandbox-authentication-example",
   "version": "1.0.0",
   "type": "module",
   "private": true,
-  "description": "A minimal example of using the Sandbox SDK",
+  "description": "Zero-trust authentication proxy for Sandbox SDK",
   "scripts": {
     "deploy": "wrangler deploy",
     "dev": "wrangler dev",
     "start": "wrangler dev",
     "cf-typegen": "wrangler types",
     "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "aws4fetch": "^1.0.20",
+    "jose": "^5.2.0"
   },
   "devDependencies": {
     "@cloudflare/sandbox": "*",
