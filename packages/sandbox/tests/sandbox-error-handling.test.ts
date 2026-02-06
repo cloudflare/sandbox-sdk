@@ -1,4 +1,3 @@
-import type { DurableObjectState } from '@cloudflare/workers-types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Sandbox } from '../src/sandbox';
 
@@ -119,7 +118,10 @@ describe('Sandbox.containerFetch() error classification', () => {
     mockEnv = {};
 
     // Create Sandbox instance
-    sandbox = new Sandbox(mockCtx as DurableObjectState<{}>, mockEnv);
+    sandbox = new Sandbox(
+      mockCtx as unknown as ConstructorParameters<typeof Sandbox>[0],
+      mockEnv
+    );
 
     // Wait for blockConcurrencyWhile to complete
     await vi.waitFor(() => {

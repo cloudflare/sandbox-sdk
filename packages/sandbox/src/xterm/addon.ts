@@ -1,6 +1,10 @@
 import type { PtyStatusMessage } from '@repo/shared';
 import type { IDisposable, ITerminalAddon, Terminal } from '@xterm/xterm';
-import type { ConnectionState, SandboxAddonOptions } from './types';
+import type {
+  ConnectionState,
+  ConnectionTarget,
+  SandboxAddonOptions
+} from './types';
 
 const DEFAULT_RECONNECT_DELAY = 1000;
 const MAX_RECONNECT_ATTEMPTS = 10;
@@ -18,23 +22,20 @@ export class SandboxAddon implements ITerminalAddon {
   private textEncoder = new TextEncoder();
 
   private _state: ConnectionState = 'disconnected';
-  private _sandboxId: string;
+  private _sandboxId: string | undefined;
   private _sessionId: string | undefined;
 
   get state(): ConnectionState {
     return this._state;
   }
-  get sandboxId(): string {
+  get sandboxId(): string | undefined {
     return this._sandboxId;
   }
   get sessionId(): string | undefined {
     return this._sessionId;
   }
 
-  constructor(private options: SandboxAddonOptions) {
-    this._sandboxId = options.sandboxId;
-    this._sessionId = options.sessionId;
-  }
+  constructor(private options: SandboxAddonOptions) {}
 
   activate(terminal: Terminal): void {
     this.terminal = terminal;
@@ -47,9 +48,29 @@ export class SandboxAddon implements ITerminalAddon {
     this.terminal = null;
   }
 
-  connect(): void {
-    if (this._state !== 'disconnected' || !this.terminal) return;
+  connect(target: ConnectionTarget): void {
+    if (!this.terminal) return;
+
+    const isSameTarget =
+      target.sandboxId === this._sandboxId &&
+      target.sessionId === this._sessionId;
+
+    if (isSameTarget && this._state !== 'disconnected') {
+      return;
+    }
+
+    this._sandboxId = target.sandboxId;
+    this._sessionId = target.sessionId;
+
+    this.cancelReconnect();
+    this.closeSocket();
+    this.reconnectAttempts = 0;
     this.intentionalDisconnect = false;
+
+    if (this._state !== 'disconnected') {
+      this.terminal.clear();
+    }
+
     this.doConnect();
   }
 
@@ -60,18 +81,6 @@ export class SandboxAddon implements ITerminalAddon {
     this.setState('disconnected');
   }
 
-  setSandbox(sandboxId: string): void {
-    if (sandboxId === this._sandboxId) return;
-    this._sandboxId = sandboxId;
-    this.reconnectToNew();
-  }
-
-  setSession(sessionId: string | undefined): void {
-    if (sessionId === this._sessionId) return;
-    this._sessionId = sessionId;
-    this.reconnectToNew();
-  }
-
   private setState(state: ConnectionState, error?: Error): void {
     if (this._state === state) return;
     this._state = state;
@@ -79,14 +88,18 @@ export class SandboxAddon implements ITerminalAddon {
   }
 
   private doConnect(): void {
-    if (!this.terminal) return;
+    if (!this.terminal || !this._sandboxId) return;
 
     this.setState('connecting');
     this.hasReceivedBuffer = false;
 
+    const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const origin = `${wsProtocol}//${location.host}`;
+
     const url = this.options.getWebSocketUrl({
       sandboxId: this._sandboxId,
-      sessionId: this._sessionId
+      sessionId: this._sessionId,
+      origin
     });
 
     const socket = new WebSocket(url);
@@ -222,17 +235,6 @@ export class SandboxAddon implements ITerminalAddon {
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
-    }
-  }
-
-  private reconnectToNew(): void {
-    this.cancelReconnect();
-    this.closeSocket();
-    this.reconnectAttempts = 0;
-
-    if (!this.intentionalDisconnect && this.terminal) {
-      this.terminal.clear();
-      this.doConnect();
     }
   }
 
