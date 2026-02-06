@@ -1,0 +1,48 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "sandbox-collaborative-terminal",
+  "compatibility_date": "2025-11-15",
+  "main": "./workers/app.ts",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true
+  },
+  "containers": [
+    {
+      "class_name": "Sandbox",
+      "image": "./Dockerfile",
+      "instance_type": "standard-4",
+      "max_instances": 1
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "class_name": "Sandbox",
+        "name": "Sandbox"
+      },
+      {
+        "class_name": "Room",
+        "name": "Room"
+      },
+      {
+        "class_name": "RoomRegistry",
+        "name": "RoomRegistry"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "new_sqlite_classes": ["Sandbox"],
+      "tag": "v1"
+    },
+    {
+      "new_classes": ["Room"],
+      "tag": "v2"
+    },
+    {
+      "new_classes": ["RoomRegistry"],
+      "tag": "v3"
+    }
+  ]
+}

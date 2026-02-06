@@ -50,10 +50,13 @@ npm test -w @repo/sandbox-container   # Container tests only
 **Commands**:
 
 ```bash
-npm run test:e2e                                                    # All E2E tests
-npm run test:e2e -- -- tests/e2e/process-lifecycle-workflow.test.ts # Single file
-npm run test:e2e -- -- tests/e2e/git-clone-workflow.test.ts -t 'test name'  # Single test
+npm run test:e2e                                                           # All E2E tests (vitest + browser)
+npm run test:e2e:vitest -- -- tests/e2e/process-lifecycle-workflow.test.ts # Single vitest file
+npm run test:e2e:vitest -- -- tests/e2e/git-clone-workflow.test.ts -t 'test name'  # Single vitest test
+npm run test:e2e:browser                                                   # Browser tests only (Playwright)
 ```
+
+**Note**: Use `test:e2e:vitest` when filtering tests. The `test:e2e` wrapper doesn't support argument passthrough.
 
 **Key patterns**:
 

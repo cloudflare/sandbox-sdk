@@ -4,7 +4,6 @@
  * Tests the waitForLog() and waitForPort() functionality
  */
 
-import type { DurableObjectState } from '@cloudflare/workers-types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ProcessExitedBeforeReadyError,
@@ -73,7 +72,10 @@ describe('Process Readiness Feature', () => {
 
     mockEnv = {};
 
-    sandbox = new Sandbox(mockCtx as DurableObjectState<{}>, mockEnv);
+    sandbox = new Sandbox(
+      mockCtx as unknown as ConstructorParameters<typeof Sandbox>[0],
+      mockEnv
+    );
 
     await vi.waitFor(() => {
       expect(mockCtx.blockConcurrencyWhile).toHaveBeenCalled();
