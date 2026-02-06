@@ -1,2 +1,6 @@
 export { SandboxAddon } from './addon';
-export type { ConnectionState, SandboxAddonOptions } from './types';
+export type {
+  ConnectionState,
+  ConnectionTarget,
+  SandboxAddonOptions
+} from './types';

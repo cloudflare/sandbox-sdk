@@ -4,6 +4,14 @@
 export type ConnectionState = 'disconnected' | 'connecting' | 'connected';
 
 /**
+ * Connection target for the SandboxAddon.
+ */
+export interface ConnectionTarget {
+  sandboxId: string;
+  sessionId?: string;
+}
+
+/**
  * Options for creating a SandboxAddon.
  */
 export interface SandboxAddonOptions {
@@ -13,25 +21,16 @@ export interface SandboxAddonOptions {
    *
    * @example
    * ```typescript
-   * getWebSocketUrl: ({ sandboxId, sessionId }) =>
-   *   `/ws/terminal?sandboxId=${sandboxId}&sessionId=${sessionId ?? ''}`
+   * getWebSocketUrl: ({ origin, sessionId }) =>
+   *   `${origin}/ws/terminal/${sessionId ?? ''}`
    * ```
    */
   getWebSocketUrl: (params: {
     sandboxId: string;
     sessionId?: string;
+    /** WebSocket origin derived from `window.location` (e.g. `wss://example.com`). */
+    origin: string;
   }) => string;
-
-  /**
-   * Sandbox ID to connect to.
-   */
-  sandboxId: string;
-
-  /**
-   * Session ID (optional).
-   * If omitted, uses the sandbox's default session.
-   */
-  sessionId?: string;
 
   /**
    * Whether to automatically reconnect on disconnection.
