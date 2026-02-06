@@ -1,0 +1,38 @@
+{
+  "name": "@cloudflare/sandbox-collaborative-terminal-example",
+  "version": "1.0.0",
+  "description": "Collaborative terminal - Google Docs for bash using PTY support",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "react-router build",
+    "cf-typegen": "wrangler types",
+    "deploy": "npm run build && wrangler deploy",
+    "dev": "react-router dev",
+    "preview": "npm run build && vite preview",
+    "typecheck": "npm run cf-typegen && react-router typegen && tsc -b"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/addon-web-links": "^0.12.0",
+    "@xterm/xterm": "^5.5.0",
+    "isbot": "^5.1.31",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "react-router": "^7.10.0"
+  },
+  "devDependencies": {
+    "@cloudflare/sandbox": "*",
+    "@cloudflare/vite-plugin": "^1.13.5",
+    "@react-router/dev": "^7.10.0",
+    "@tailwindcss/vite": "^4.1.13",
+    "@types/node": "^22.19.8",
+    "@types/react": "^19.1.13",
+    "@types/react-dom": "^19.1.9",
+    "tailwindcss": "^4.1.13",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.7",
+    "vite-tsconfig-paths": "^5.1.4",
+    "wrangler": "^4.63.0"
+  }
+}
