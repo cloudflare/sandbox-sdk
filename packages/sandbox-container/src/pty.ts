@@ -50,7 +50,8 @@ export class Pty {
       env: {
         ...process.env,
         ...this.env,
-        TERM: 'xterm-256color'
+        TERM: 'xterm-256color',
+        PROMPT_COMMAND: 'clear; unset PROMPT_COMMAND'
       }
     });
 
