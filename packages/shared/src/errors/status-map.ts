@@ -13,7 +13,6 @@ export const ERROR_STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.GIT_REPOSITORY_NOT_FOUND]: 404,
   [ErrorCode.GIT_BRANCH_NOT_FOUND]: 404,
   [ErrorCode.CONTEXT_NOT_FOUND]: 404,
-  [ErrorCode.PTY_NOT_FOUND]: 404,
 
   // 400 Bad Request
   [ErrorCode.IS_DIRECTORY]: 400,
@@ -28,8 +27,6 @@ export const ERROR_STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.VALIDATION_FAILED]: 400,
   [ErrorCode.MISSING_CREDENTIALS]: 400,
   [ErrorCode.INVALID_MOUNT_CONFIG]: 400,
-  [ErrorCode.PTY_INVALID_DIMENSIONS]: 400,
-  [ErrorCode.PTY_EXITED]: 400,
 
   // 401 Unauthorized
   [ErrorCode.GIT_AUTH_FAILED]: 401,
@@ -46,7 +43,6 @@ export const ERROR_STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.PORT_IN_USE]: 409,
   [ErrorCode.RESOURCE_BUSY]: 409,
   [ErrorCode.SESSION_ALREADY_EXISTS]: 409,
-  [ErrorCode.PTY_ALREADY_ATTACHED]: 409,
 
   // 502 Bad Gateway
   [ErrorCode.SERVICE_NOT_RESPONDING]: 502,
@@ -79,8 +75,6 @@ export const ERROR_STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.CODE_EXECUTION_ERROR]: 500,
   [ErrorCode.BUCKET_MOUNT_ERROR]: 500,
   [ErrorCode.S3FS_MOUNT_ERROR]: 500,
-  [ErrorCode.PTY_CREATE_ERROR]: 500,
-  [ErrorCode.PTY_OPERATION_ERROR]: 500,
   [ErrorCode.UNKNOWN_ERROR]: 500,
   [ErrorCode.INTERNAL_ERROR]: 500
 };

@@ -54,7 +54,6 @@ export class ProcessService {
     try {
       // Always use SessionManager for execution (unified model)
       const sessionId = options.sessionId || 'default';
-
       const result = await this.sessionManager.executeInSession(
         sessionId,
         command,
@@ -111,8 +110,6 @@ export class ProcessService {
     options: ProcessOptions = {}
   ): Promise<ServiceResult<ProcessRecord>> {
     try {
-      const sessionId = options.sessionId || 'default';
-
       // 1. Validate command (business logic via manager)
       const validation = this.manager.validateCommand(command);
       if (!validation.valid) {
@@ -133,6 +130,7 @@ export class ProcessService {
       );
 
       // 3. Build full process record with commandHandle instead of subprocess
+      const sessionId = options.sessionId || 'default';
       const processRecord: ProcessRecord = {
         ...processRecordData,
         commandHandle: {

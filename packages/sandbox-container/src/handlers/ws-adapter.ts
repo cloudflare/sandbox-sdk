@@ -8,8 +8,6 @@
 
 import type { Logger } from '@repo/shared';
 import {
-  isWSPtyInput,
-  isWSPtyResize,
   isWSRequest,
   type WSError,
   type WSRequest,
@@ -19,7 +17,6 @@ import {
 } from '@repo/shared';
 import type { ServerWebSocket } from 'bun';
 import type { Router } from '../core/router';
-import type { PtyManager } from '../managers/pty-manager';
 
 /** Container server port - must match SERVER_PORT in server.ts */
 const SERVER_PORT = 3000;
@@ -40,13 +37,10 @@ export interface WSData {
  */
 export class WebSocketAdapter {
   private router: Router;
-  private ptyManager: PtyManager;
   private logger: Logger;
-  private connectionCleanups = new Map<string, Array<() => void>>();
 
-  constructor(router: Router, ptyManager: PtyManager, logger: Logger) {
+  constructor(router: Router, logger: Logger) {
     this.router = router;
-    this.ptyManager = ptyManager;
     this.logger = logger.child({ component: 'container' });
   }
 
@@ -63,23 +57,8 @@ export class WebSocketAdapter {
    * Handle WebSocket connection close
    */
   onClose(ws: ServerWebSocket<WSData>, code: number, reason: string): void {
-    const connectionId = ws.data.connectionId;
-
-    // Clean up any PTY listeners registered for this connection
-    const cleanups = this.connectionCleanups.get(connectionId);
-    if (cleanups) {
-      this.logger.debug('Cleaning up PTY listeners for closed connection', {
-        connectionId,
-        listenerCount: cleanups.length
-      });
-      for (const cleanup of cleanups) {
-        cleanup();
-      }
-      this.connectionCleanups.delete(connectionId);
-    }
-
     this.logger.debug('WebSocket connection closed', {
-      connectionId,
+      connectionId: ws.data.connectionId,
       code,
       reason
     });
@@ -100,64 +79,6 @@ export class WebSocketAdapter {
       parsed = JSON.parse(messageStr);
     } catch (error) {
       this.sendError(ws, undefined, 'PARSE_ERROR', 'Invalid JSON message', 400);
-      return;
-    }
-
-    // Handle PTY input messages
-    if (isWSPtyInput(parsed)) {
-      const result = this.ptyManager.write(parsed.ptyId, parsed.data);
-      if (!result.success) {
-        const errorSent = this.sendError(
-          ws,
-          parsed.ptyId,
-          'PTY_ERROR',
-          result.error ?? 'PTY write failed',
-          400
-        );
-        if (!errorSent) {
-          this.logger.error(
-            'PTY write failed AND error notification failed - client will not be notified',
-            undefined,
-            {
-              ptyId: parsed.ptyId,
-              error: result.error,
-              connectionId: ws.data.connectionId
-            }
-          );
-        }
-      }
-      return;
-    }
-
-    // Handle PTY resize messages
-    if (isWSPtyResize(parsed)) {
-      const result = this.ptyManager.resize(
-        parsed.ptyId,
-        parsed.cols,
-        parsed.rows
-      );
-      if (!result.success) {
-        const errorSent = this.sendError(
-          ws,
-          parsed.ptyId,
-          'PTY_ERROR',
-          result.error ?? 'PTY resize failed',
-          400
-        );
-        if (!errorSent) {
-          this.logger.error(
-            'PTY resize failed AND error notification failed - client will not be notified',
-            undefined,
-            {
-              ptyId: parsed.ptyId,
-              cols: parsed.cols,
-              rows: parsed.rows,
-              error: result.error,
-              connectionId: ws.data.connectionId
-            }
-          );
-        }
-      }
       return;
     }
 
@@ -243,65 +164,19 @@ export class WebSocketAdapter {
       // Handle SSE streaming response
       await this.handleStreamingResponse(ws, request.id, httpResponse);
     } else {
-      // Handle regular response and check for PTY operations
-      const body = await this.handleRegularResponse(
-        ws,
-        request.id,
-        httpResponse
-      );
-
-      // Register PTY listener for successful PTY create/get operations
-      // This enables real-time PTY output streaming over WebSocket
-      if (httpResponse.status === 200 && body) {
-        const ptyId = this.extractPtyId(request.path, request.method, body);
-        if (ptyId) {
-          this.registerPtyListener(ws, ptyId);
-          this.logger.debug('Registered PTY listener for WebSocket streaming', {
-            ptyId,
-            connectionId: ws.data.connectionId
-          });
-        }
-      }
+      // Handle regular response
+      await this.handleRegularResponse(ws, request.id, httpResponse);
     }
-  }
-
-  /**
-   * Extract PTY ID from successful PTY create/get responses
-   */
-  private extractPtyId(
-    path: string,
-    method: string,
-    body: unknown
-  ): string | null {
-    // PTY create: POST /api/pty
-    if (path === '/api/pty' && method === 'POST') {
-      const response = body as { success?: boolean; pty?: { id?: string } };
-      if (response?.success && response?.pty?.id) {
-        return response.pty.id;
-      }
-    }
-
-    // PTY get: GET /api/pty/:id
-    const getPtyMatch = path.match(/^\/api\/pty\/([^/]+)$/);
-    if (getPtyMatch && method === 'GET') {
-      const response = body as { success?: boolean; pty?: { id?: string } };
-      if (response?.success && response?.pty?.id) {
-        return response.pty.id;
-      }
-    }
-
-    return null;
   }
 
   /**
    * Handle a regular (non-streaming) HTTP response
-   * Returns the parsed body for further processing (e.g., PTY listener registration)
    */
   private async handleRegularResponse(
     ws: ServerWebSocket<WSData>,
     requestId: string,
     response: Response
-  ): Promise<unknown> {
+  ): Promise<void> {
     let body: unknown;
 
     try {
@@ -320,7 +195,6 @@ export class WebSocketAdapter {
     };
 
     this.send(ws, wsResponse);
-    return body;
   }
 
   /**
@@ -471,7 +345,6 @@ export class WebSocketAdapter {
 
   /**
    * Send an error message over WebSocket
-   * @returns true if send succeeded, false if it failed
    */
   private sendError(
     ws: ServerWebSocket<WSData>,
@@ -479,7 +352,7 @@ export class WebSocketAdapter {
     code: string,
     message: string,
     status: number
-  ): boolean {
+  ): void {
     const error: WSError = {
       type: 'error',
       id: requestId,
@@ -487,76 +360,7 @@ export class WebSocketAdapter {
       message,
       status
     };
-    return this.send(ws, error);
-  }
-
-  /**
-   * Register PTY output listener for a WebSocket connection
-   * Returns cleanup function to unsubscribe from PTY events
-   *
-   * Auto-unsubscribes when send fails to prevent resource leaks
-   * from repeatedly attempting to send to a dead connection.
-   * Also tracked per-connection for cleanup when connection closes.
-   */
-  registerPtyListener(ws: ServerWebSocket<WSData>, ptyId: string): () => void {
-    const connectionId = ws.data.connectionId;
-    let unsubData: (() => void) | null = null;
-    let unsubExit: (() => void) | null = null;
-    let cleanedUp = false;
-
-    const cleanup = () => {
-      if (cleanedUp) return;
-      cleanedUp = true;
-
-      unsubData?.();
-      unsubExit?.();
-      unsubData = null;
-      unsubExit = null;
-
-      // Remove from connection cleanups to prevent double-cleanup
-      const cleanups = this.connectionCleanups.get(connectionId);
-      if (cleanups) {
-        const index = cleanups.indexOf(cleanup);
-        if (index !== -1) {
-          cleanups.splice(index, 1);
-        }
-        if (cleanups.length === 0) {
-          this.connectionCleanups.delete(connectionId);
-        }
-      }
-    };
-
-    // Track cleanup for this connection
-    if (!this.connectionCleanups.has(connectionId)) {
-      this.connectionCleanups.set(connectionId, []);
-    }
-    this.connectionCleanups.get(connectionId)!.push(cleanup);
-
-    unsubData = this.ptyManager.onData(ptyId, (data) => {
-      const chunk: WSStreamChunk = {
-        type: 'stream',
-        id: ptyId,
-        event: 'pty_data',
-        data
-      };
-      if (!this.send(ws, chunk)) {
-        cleanup(); // Send failed, stop trying
-      }
-    });
-
-    unsubExit = this.ptyManager.onExit(ptyId, (exitCode) => {
-      const chunk: WSStreamChunk = {
-        type: 'stream',
-        id: ptyId,
-        event: 'pty_exit',
-        data: JSON.stringify({ exitCode })
-      };
-      if (!this.send(ws, chunk)) {
-        cleanup(); // Send failed, stop trying
-      }
-    });
-
-    return cleanup;
+    this.send(ws, error);
   }
 }
 

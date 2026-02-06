@@ -29,30 +29,16 @@ interface PendingRequest {
 type WSTransportState = 'disconnected' | 'connecting' | 'connected' | 'error';
 
 /**
- * Stream event listener key: "streamId:event"
- */
-type StreamEventKey = string;
-
-/**
  * WebSocket transport implementation
  *
  * Multiplexes HTTP-like requests over a single WebSocket connection.
  * Useful when running inside Workers/DO where sub-request limits apply.
- *
- * Supports real-time bidirectional communication via sendMessage() and
- * onStreamEvent() - used by PTY for input/output streaming.
  */
 export class WebSocketTransport extends BaseTransport {
   private ws: WebSocket | null = null;
   private state: WSTransportState = 'disconnected';
   private pendingRequests: Map<string, PendingRequest> = new Map();
   private connectPromise: Promise<void> | null = null;
-
-  /** Generic stream event listeners keyed by "streamId:event" */
-  private streamEventListeners = new Map<
-    StreamEventKey,
-    Set<(data: string) => void>
-  >();
 
   // Bound event handlers for proper add/remove
   private boundHandleMessage: (event: MessageEvent) => void;
@@ -465,18 +451,6 @@ export class WebSocketTransport extends BaseTransport {
       } else if (isWSError(message)) {
         this.handleError(message);
       } else {
-        // Check for stream events (used by PTY and other real-time features)
-        const msg = message as {
-          type?: string;
-          id?: string;
-          event?: string;
-          data?: string;
-        };
-        if (msg.type === 'stream' && msg.event && msg.id) {
-          this.dispatchStreamEvent(msg.id, msg.event, msg.data || '');
-          return;
-        }
-
         this.logger.warn('Unknown WebSocket message type', { message });
       }
     } catch (error) {
@@ -484,38 +458,6 @@ export class WebSocketTransport extends BaseTransport {
         'Failed to parse WebSocket message',
         error instanceof Error ? error : new Error(String(error))
       );
-    }
-  }
-
-  /**
-   * Dispatch a stream event to registered listeners
-   */
-  private dispatchStreamEvent(
-    streamId: string,
-    event: string,
-    data: string
-  ): void {
-    const key = `${streamId}:${event}`;
-    const listeners = this.streamEventListeners.get(key);
-
-    if (!listeners || listeners.size === 0) {
-      this.logger.debug('No listeners for stream event', {
-        streamId,
-        event
-      });
-      return;
-    }
-
-    for (const callback of listeners) {
-      try {
-        callback(data);
-      } catch (error) {
-        this.logger.error(
-          `Stream event callback error - check your ${event} handler`,
-          error instanceof Error ? error : new Error(String(error)),
-          { streamId, event }
-        );
-      }
     }
   }
 
@@ -625,14 +567,8 @@ export class WebSocketTransport extends BaseTransport {
       if (pending.streamController) {
         try {
           pending.streamController.error(closeError);
-        } catch (error) {
-          // Stream may already be closed/errored - log for visibility
-          this.logger.debug(
-            'Stream controller already closed during WebSocket disconnect',
-            {
-              error: error instanceof Error ? error.message : String(error)
-            }
-          );
+        } catch {
+          // Stream may already be closed/errored
         }
       }
       pending.reject(closeError);
@@ -659,60 +595,5 @@ export class WebSocketTransport extends BaseTransport {
       }
     }
     this.pendingRequests.clear();
-    // Clear stream event listeners to prevent accumulation across reconnections
-    this.streamEventListeners.clear();
-  }
-
-  /**
-   * Send a message over the WebSocket connection
-   *
-   * Used for real-time bidirectional communication (e.g., PTY input/resize).
-   * The message is JSON-serialized before sending.
-   *
-   * @param message - Message object to send
-   * @throws Error if WebSocket is not connected
-   */
-  sendMessage(message: object): void {
-    if (!this.ws || this.state !== 'connected') {
-      throw new Error(
-        `Cannot send message: WebSocket not connected (state: ${this.state}). ` +
-          'Call connect() first or create a new connection.'
-      );
-    }
-    this.ws.send(JSON.stringify(message));
-  }
-
-  /**
-   * Register a listener for stream events
-   *
-   * Stream events are server-pushed messages with a specific streamId and event type.
-   * Used for real-time features like PTY data/exit events.
-   *
-   * @param streamId - Stream identifier (e.g., PTY ID)
-   * @param event - Event type to listen for (e.g., 'pty_data', 'pty_exit')
-   * @param callback - Callback function to invoke when event is received
-   * @returns Unsubscribe function
-   */
-  onStreamEvent(
-    streamId: string,
-    event: string,
-    callback: (data: string) => void
-  ): () => void {
-    const key = `${streamId}:${event}`;
-
-    if (!this.streamEventListeners.has(key)) {
-      this.streamEventListeners.set(key, new Set());
-    }
-    this.streamEventListeners.get(key)!.add(callback);
-
-    return () => {
-      const listeners = this.streamEventListeners.get(key);
-      if (listeners) {
-        listeners.delete(callback);
-        if (listeners.size === 0) {
-          this.streamEventListeners.delete(key);
-        }
-      }
-    };
   }
 }

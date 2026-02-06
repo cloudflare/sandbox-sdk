@@ -107,6 +107,8 @@ jobs:
           set -e
           VERSION="${{ needs.unit-tests.outputs.version }}"
 
+          echo "Starting parallel builds..."
+
           docker buildx build \
             --cache-from type=gha,scope=sandbox-base \
             --cache-to type=gha,mode=max,scope=sandbox-base \

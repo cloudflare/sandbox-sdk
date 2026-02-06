@@ -4,6 +4,15 @@ import type {
   ExecutionResult,
   RunCodeOptions
 } from './interpreter-types';
+import type { PtyOptions } from './pty-types';
+
+/**
+ * Represents a disposable resource with a cleanup function.
+ * Common pattern used by VS Code, xterm.js, RxJS, and others.
+ */
+export interface Disposable {
+  dispose(): void;
+}
 
 // Base execution options shared across command types
 export interface BaseExecOptions {
@@ -907,6 +916,9 @@ export interface ExecutionSession {
     options: MountBucketOptions
   ): Promise<void>;
   unmountBucket(mountPath: string): Promise<void>;
+
+  // Terminal access (browser WebSocket passthrough)
+  terminal(request: Request, options?: PtyOptions): Promise<Response>;
 }
 
 // Bucket mounting types
@@ -1108,185 +1120,6 @@ export function isProcessStatus(value: string): value is ProcessStatus {
     'killed',
     'error'
   ].includes(value);
-}
-
-// PTY (Pseudo-Terminal) Types
-
-/**
- * PTY session state
- */
-export type PtyState = 'running' | 'exited';
-
-/**
- * Options for creating a new PTY session
- */
-export interface CreatePtyOptions {
-  /** Terminal width in columns (default: 80) */
-  cols?: number;
-  /** Terminal height in rows (default: 24) */
-  rows?: number;
-  /** Command to run (default: ['bash']) */
-  command?: string[];
-  /** Working directory (default: /home/user) */
-  cwd?: string;
-  /** Environment variables */
-  env?: Record<string, string>;
-  /** Session ID to attach PTY to (for session attachment) */
-  sessionId?: string;
-}
-
-/**
- * Structured exit information for PTY sessions
- * Maps exit codes to human-readable signal names (matches Daytona's pattern)
- */
-export interface PtyExitInfo {
-  /** Process exit code */
-  exitCode: number;
-  /** Signal name if killed by signal (e.g., 'SIGKILL', 'SIGTERM') */
-  signal?: string;
-  /** Human-readable exit reason */
-  reason: string;
-}
-
-/**
- * Get structured exit information from an exit code
- * Exit codes > 128 indicate the process was killed by a signal (128 + signal number)
- */
-export function getPtyExitInfo(exitCode: number): PtyExitInfo {
-  // Common signal mappings (128 + signal number)
-  const signalMap: Record<number, { signal: string; reason: string }> = {
-    130: { signal: 'SIGINT', reason: 'Interrupted (Ctrl+C)' },
-    137: { signal: 'SIGKILL', reason: 'Killed' },
-    143: { signal: 'SIGTERM', reason: 'Terminated' },
-    131: { signal: 'SIGQUIT', reason: 'Quit' },
-    134: { signal: 'SIGABRT', reason: 'Aborted' },
-    136: { signal: 'SIGFPE', reason: 'Floating point exception' },
-    139: { signal: 'SIGSEGV', reason: 'Segmentation fault' },
-    141: { signal: 'SIGPIPE', reason: 'Broken pipe' },
-    142: { signal: 'SIGALRM', reason: 'Alarm' },
-    129: { signal: 'SIGHUP', reason: 'Hangup' }
-  };
-
-  if (exitCode === 0) {
-    return { exitCode, reason: 'Exited normally' };
-  }
-
-  const signalInfo = signalMap[exitCode];
-  if (signalInfo) {
-    return { exitCode, signal: signalInfo.signal, reason: signalInfo.reason };
-  }
-
-  // Unknown signal (exitCode > 128)
-  if (exitCode > 128) {
-    const signalNum = exitCode - 128;
-    return {
-      exitCode,
-      signal: `SIG${signalNum}`,
-      reason: `Killed by signal ${signalNum}`
-    };
-  }
-
-  // Non-zero exit without signal
-  return { exitCode, reason: `Exited with code ${exitCode}` };
-}
-
-/**
- * PTY session information
- */
-export interface PtyInfo {
-  /** Unique PTY identifier */
-  id: string;
-  /** Terminal width */
-  cols: number;
-  /** Terminal height */
-  rows: number;
-  /** Command running in PTY */
-  command: string[];
-  /** Working directory */
-  cwd: string;
-  /** When the PTY was created */
-  createdAt: string;
-  /** Current state */
-  state: PtyState;
-  /** Exit code if exited */
-  exitCode?: number;
-  /** Structured exit information (populated when state is 'exited') */
-  exitInfo?: PtyExitInfo;
-  /** Session ID this PTY is attached to (if any) */
-  sessionId?: string;
-}
-
-/**
- * Request to send input to PTY
- */
-export interface PtyInputRequest {
-  data: string;
-}
-
-/**
- * Result from sending input to PTY
- */
-export interface PtyInputResult {
-  success: boolean;
-  ptyId: string;
-  error?: string;
-  timestamp: string;
-}
-
-/**
- * Request to resize PTY
- */
-export interface PtyResizeRequest {
-  cols: number;
-  rows: number;
-}
-
-/**
- * Result from creating a PTY
- */
-export interface PtyCreateResult {
-  success: boolean;
-  pty: PtyInfo;
-  timestamp: string;
-}
-
-/**
- * Result from listing PTYs
- */
-export interface PtyListResult {
-  success: boolean;
-  ptys: PtyInfo[];
-  timestamp: string;
-}
-
-/**
- * Result from getting a PTY
- */
-export interface PtyGetResult {
-  success: boolean;
-  pty: PtyInfo;
-  timestamp: string;
-}
-
-/**
- * Result from killing a PTY
- */
-export interface PtyKillResult {
-  success: boolean;
-  ptyId: string;
-  timestamp: string;
-}
-
-/**
- * Result from resizing a PTY
- */
-export interface PtyResizeResult {
-  success: boolean;
-  ptyId: string;
-  cols: number;
-  rows: number;
-  error?: string;
-  timestamp: string;
 }
 
 export type {

@@ -99,6 +99,7 @@ import type { ExecEvent, Logger } from '@repo/shared';
 import { createNoOpLogger } from '@repo/shared';
 import type { Subprocess } from 'bun';
 import { CONFIG } from './config';
+import type { Pty } from './pty';
 
 // Binary prefixes for output labeling (won't appear in normal text)
 // Using three bytes to minimize collision probability
@@ -194,6 +195,8 @@ export class Session {
   /** Map of running commands for tracking and killing */
   private runningCommands = new Map<string, CommandHandle>();
 
+  pty: Pty | null = null;
+
   constructor(options: SessionOptions) {
     this.id = options.id;
     this.options = options;
@@ -201,20 +204,6 @@ export class Session {
       options.commandTimeoutMs ?? CONFIG.COMMAND_TIMEOUT_MS;
     // Use provided logger or create no-op logger (for backward compatibility/tests)
     this.logger = options.logger ?? createNoOpLogger();
-  }
-
-  /**
-   * Get the initial working directory configured for this session.
-   */
-  getInitialCwd(): string {
-    return this.options.cwd || CONFIG.DEFAULT_CWD;
-  }
-
-  /**
-   * Get the initial environment variables configured for this session.
-   */
-  getInitialEnv(): Record<string, string | undefined> | undefined {
-    return this.options.env;
   }
 
   /**
@@ -717,6 +706,11 @@ export class Session {
   async destroy(): Promise<void> {
     // Mark as destroying to prevent shell exit monitor from logging errors
     this.isDestroying = true;
+
+    if (this.pty) {
+      await this.pty.destroy();
+      this.pty = null;
+    }
 
     // Kill all running commands first
     const runningCommandIds = Array.from(this.runningCommands.keys());

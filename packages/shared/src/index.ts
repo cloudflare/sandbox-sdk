@@ -33,6 +33,12 @@ export {
   LogLevelEnum,
   TraceContext
 } from './logger/index.js';
+// Export PTY types
+export type {
+  PtyControlMessage,
+  PtyOptions,
+  PtyStatusMessage
+} from './pty-types.js';
 // Export all request types (enforce contract between client and container)
 export type {
   DeleteFileRequest,
@@ -61,8 +67,8 @@ export type {
   ContextCreateResult,
   ContextDeleteResult,
   ContextListResult,
-  CreatePtyOptions,
   DeleteFileResult,
+  Disposable,
   EnvSetResult,
   ExecEvent,
   ExecOptions,
@@ -105,18 +111,6 @@ export type {
   // Process management result types
   ProcessStartResult,
   ProcessStatus,
-  PtyCreateResult,
-  // PTY exit info
-  PtyExitInfo,
-  PtyGetResult,
-  PtyInfo,
-  PtyInputRequest,
-  PtyInputResult,
-  PtyKillResult,
-  PtyListResult,
-  PtyResizeRequest,
-  PtyResizeResult,
-  PtyState,
   ReadFileResult,
   RenameFileResult,
   // Sandbox configuration options
@@ -134,7 +128,6 @@ export type {
   WriteFileResult
 } from './types.js';
 export {
-  getPtyExitInfo,
   isExecResult,
   isProcess,
   isProcessStatus,
@@ -145,8 +138,6 @@ export type {
   WSClientMessage,
   WSError,
   WSMethod,
-  WSPtyInput,
-  WSPtyResize,
   WSRequest,
   WSResponse,
   WSServerMessage,
@@ -155,8 +146,6 @@ export type {
 export {
   generateRequestId,
   isWSError,
-  isWSPtyInput,
-  isWSPtyResize,
   isWSRequest,
   isWSResponse,
   isWSStreamChunk

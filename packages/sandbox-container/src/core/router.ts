@@ -25,10 +25,6 @@ export class Router {
    * Register a route with optional middleware
    */
   register(definition: RouteDefinition): void {
-    this.logger.debug('Registering route', {
-      method: definition.method,
-      path: definition.path
-    });
     this.routes.push(definition);
   }
 

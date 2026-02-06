@@ -1,0 +1,1 @@
+export { proxyTerminal } from './proxy';

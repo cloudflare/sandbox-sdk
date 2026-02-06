@@ -15,7 +15,6 @@ export { GitClient } from './git-client';
 export { InterpreterClient } from './interpreter-client';
 export { PortClient } from './port-client';
 export { ProcessClient } from './process-client';
-export { PtyClient } from './pty-client';
 export { UtilityClient } from './utility-client';
 
 // =============================================================================
@@ -39,7 +38,6 @@ export {
 // Client types and interfaces
 // =============================================================================
 
-export type { PtyInfo } from '@repo/shared';
 // Command client types
 export type { ExecuteRequest, ExecuteResponse } from './command-client';
 // File client types
@@ -71,8 +69,6 @@ export type {
   ProcessStartResult,
   StartProcessRequest
 } from './process-client';
-// PTY client types
-export type { Pty } from './pty-client';
 // Core types
 export type {
   BaseApiResponse,

@@ -1,12 +1,17 @@
 import { createLogger } from '@repo/shared';
+import type { ServerWebSocket } from 'bun';
 import { serve } from 'bun';
 import { Container } from './core/container';
 import { Router } from './core/router';
+import type { PtyWSData } from './handlers/pty-ws-handler';
 import {
+  type WSData as ControlWSData,
   generateConnectionId,
-  WebSocketAdapter,
-  type WSData
+  WebSocketAdapter
 } from './handlers/ws-adapter';
+
+export type WSData = (ControlWSData & { type: 'control' }) | PtyWSData;
+
 import { setupRoutes } from './routes/setup';
 
 const logger = createLogger({ component: 'container' });
@@ -33,27 +38,52 @@ async function createApplication(): Promise<{
   setupRoutes(router, container);
 
   // Create WebSocket adapter with the router for control plane multiplexing
-  const ptyManager = container.get('ptyManager');
-  const wsAdapter = new WebSocketAdapter(router, ptyManager, logger);
+  const wsAdapter = new WebSocketAdapter(router, logger);
 
   return {
     fetch: async (
       req: Request,
       server: ReturnType<typeof serve<WSData>>
     ): Promise<Response> => {
-      // Check for WebSocket upgrade request
       const upgradeHeader = req.headers.get('Upgrade');
       if (upgradeHeader?.toLowerCase() === 'websocket') {
-        // Handle WebSocket upgrade for control plane
         const url = new URL(req.url);
+
+        if (url.pathname === '/ws/pty') {
+          const sessionId = url.searchParams.get('sessionId');
+          if (!sessionId) {
+            return new Response('sessionId query parameter required', {
+              status: 400
+            });
+          }
+
+          const colsParam = url.searchParams.get('cols');
+          const rowsParam = url.searchParams.get('rows');
+
+          const upgraded = server.upgrade(req, {
+            data: {
+              type: 'pty' as const,
+              sessionId,
+              connectionId: generateConnectionId(),
+              cols: colsParam ? Number.parseInt(colsParam, 10) : undefined,
+              rows: rowsParam ? Number.parseInt(rowsParam, 10) : undefined
+            }
+          });
+          if (upgraded) {
+            return undefined as unknown as Response;
+          }
+          return new Response('WebSocket upgrade failed', { status: 500 });
+        }
+
         if (url.pathname === '/ws' || url.pathname === '/api/ws') {
           const upgraded = server.upgrade(req, {
             data: {
+              type: 'control' as const,
               connectionId: generateConnectionId()
             }
           });
           if (upgraded) {
-            return undefined as unknown as Response; // Bun handles the upgrade
+            return undefined as unknown as Response;
           }
           return new Response('WebSocket upgrade failed', { status: 500 });
         }
@@ -79,11 +109,25 @@ export async function startServer(): Promise<ServerInstance> {
     fetch: (req, server) => app.fetch(req, server),
     hostname: '0.0.0.0',
     port: SERVER_PORT,
-    // WebSocket adapter for control plane multiplexing
     websocket: {
       open(ws) {
         try {
-          app.wsAdapter.onOpen(ws);
+          if (ws.data.type === 'pty') {
+            void app.container
+              .get('ptyWsHandler')
+              .onOpen(ws as ServerWebSocket<PtyWSData>)
+              .catch((err) => {
+                logger.error(
+                  'PTY onOpen failed',
+                  err instanceof Error ? err : new Error(String(err))
+                );
+                try {
+                  ws.close(1011, 'Internal error');
+                } catch {}
+              });
+          } else {
+            app.wsAdapter.onOpen(ws);
+          }
         } catch (error) {
           logger.error(
             'Error in WebSocket open handler',
@@ -93,7 +137,13 @@ export async function startServer(): Promise<ServerInstance> {
       },
       close(ws, code, reason) {
         try {
-          app.wsAdapter.onClose(ws, code, reason);
+          if (ws.data.type === 'pty') {
+            app.container
+              .get('ptyWsHandler')
+              .onClose(ws as ServerWebSocket<PtyWSData>, code, reason);
+          } else {
+            app.wsAdapter.onClose(ws, code, reason);
+          }
         } catch (error) {
           logger.error(
             'Error in WebSocket close handler',
@@ -103,7 +153,13 @@ export async function startServer(): Promise<ServerInstance> {
       },
       async message(ws, message) {
         try {
-          await app.wsAdapter.onMessage(ws, message);
+          if (ws.data.type === 'pty') {
+            app.container
+              .get('ptyWsHandler')
+              .onMessage(ws as ServerWebSocket<PtyWSData>, message);
+          } else {
+            await app.wsAdapter.onMessage(ws, message);
+          }
         } catch (error) {
           logger.error(
             'Error in WebSocket message handler',
@@ -112,7 +168,7 @@ export async function startServer(): Promise<ServerInstance> {
           try {
             ws.close(1011, 'Internal error');
           } catch {
-            // Connection already closed
+            // Ignored - connection already closed
           }
         }
       }
@@ -135,10 +191,6 @@ export async function startServer(): Promise<ServerInstance> {
       try {
         const processService = app.container.get('processService');
         const portService = app.container.get('portService');
-        const ptyManager = app.container.get('ptyManager');
-
-        // Kill all PTY sessions
-        ptyManager.killAll();
 
         await processService.destroy();
         portService.destroy();
