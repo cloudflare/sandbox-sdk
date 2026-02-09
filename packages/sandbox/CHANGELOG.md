@@ -1,5 +1,35 @@
 # @cloudflare/sandbox
 
+## 0.7.1
+
+### Patch Changes
+
+- [#310](https://github.com/cloudflare/sandbox-sdk/pull/310) [`3c03587`](https://github.com/cloudflare/sandbox-sdk/commit/3c035872aee5c2481527d9d23e62c8f4b6818815) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - Add terminal support for browser-based terminal UIs.
+
+  Build interactive terminal experiences by connecting xterm.js to container PTYs via WebSocket. Terminals reconnect automatically with output history preserved, and each session gets its own isolated terminal.
+
+  ```typescript
+  // Proxy WebSocket to container terminal
+  return sandbox.terminal(request, { cols: 80, rows: 24 });
+
+  // Multiple isolated terminals in the same sandbox
+  const session = await sandbox.getSession('dev');
+  return session.terminal(request);
+  ```
+
+  Also exports `@cloudflare/sandbox/xterm` with a `SandboxAddon` for xterm.js — handles WebSocket connection, reconnection with exponential backoff, and terminal resize forwarding.
+
+  ```typescript
+  import { SandboxAddon } from '@cloudflare/sandbox/xterm';
+
+  const addon = new SandboxAddon({
+    getWebSocketUrl: ({ sandboxId, origin }) =>
+      `${origin}/ws/terminal?id=${sandboxId}`
+  });
+  terminal.loadAddon(addon);
+  addon.connect({ sandboxId: 'my-sandbox' });
+  ```
+
 ## 0.7.0
 
 ### Minor Changes
@@ -188,10 +218,10 @@
 
   ```dockerfile
   # Before
-  FROM cloudflare/sandbox:0.7.0
+  FROM cloudflare/sandbox:0.7.1
 
   # After
-  FROM cloudflare/sandbox:0.7.0-python
+  FROM cloudflare/sandbox:0.7.1-python
   ```
 
   Without this change, Python execution will fail with `PYTHON_NOT_AVAILABLE` error.
