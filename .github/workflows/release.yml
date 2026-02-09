@@ -215,6 +215,10 @@ jobs:
         env:
           TEST_WORKER_URL: https://${{ env.E2E_WORKER_NAME }}.${{ env.CF_ACCOUNT_SUBDOMAIN }}.workers.dev
           TEST_SANDBOX_ID: browser-test-release-${{ github.run_id }}
+          CI: true
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: |
           npx vitest run --config vitest.e2e.config.ts
           npx playwright test --config tests/e2e/browser/playwright.config.ts
