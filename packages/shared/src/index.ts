@@ -33,6 +33,12 @@ export {
   LogLevelEnum,
   TraceContext
 } from './logger/index.js';
+// Export PTY types
+export type {
+  PtyControlMessage,
+  PtyOptions,
+  PtyStatusMessage
+} from './pty-types.js';
 // Export all request types (enforce contract between client and container)
 export type {
   DeleteFileRequest,
@@ -62,6 +68,7 @@ export type {
   ContextDeleteResult,
   ContextListResult,
   DeleteFileResult,
+  Disposable,
   EnvSetResult,
   ExecEvent,
   ExecOptions,

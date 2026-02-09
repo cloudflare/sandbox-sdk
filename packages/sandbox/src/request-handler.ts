@@ -90,15 +90,19 @@ export async function proxyToSandbox<
       proxyUrl = `http://localhost:3000${path}${url.search}`;
     }
 
+    const headers: Record<string, string> = {
+      'X-Original-URL': request.url,
+      'X-Forwarded-Host': url.hostname,
+      'X-Forwarded-Proto': url.protocol.replace(':', ''),
+      'X-Sandbox-Name': sandboxId
+    };
+    request.headers.forEach((value, key) => {
+      headers[key] = value;
+    });
+
     const proxyRequest = new Request(proxyUrl, {
       method: request.method,
-      headers: {
-        ...Object.fromEntries(request.headers),
-        'X-Original-URL': request.url,
-        'X-Forwarded-Host': url.hostname,
-        'X-Forwarded-Proto': url.protocol.replace(':', ''),
-        'X-Sandbox-Name': sandboxId // Pass the friendly name
-      },
+      headers,
       body: request.body,
       // @ts-expect-error - duplex required for body streaming in modern runtimes
       duplex: 'half'

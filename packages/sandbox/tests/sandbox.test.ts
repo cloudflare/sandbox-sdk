@@ -1,5 +1,4 @@
 import { Container } from '@cloudflare/containers';
-import type { DurableObjectState } from '@cloudflare/workers-types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { connect, Sandbox } from '../src/sandbox';
 
@@ -59,10 +58,28 @@ vi.mock('@cloudflare/containers', () => {
   };
 });
 
+interface MockStorage {
+  get: ReturnType<typeof vi.fn>;
+  put: ReturnType<typeof vi.fn>;
+  delete: ReturnType<typeof vi.fn>;
+  list: ReturnType<typeof vi.fn>;
+}
+
+interface MockCtx {
+  storage: MockStorage;
+  blockConcurrencyWhile: ReturnType<typeof vi.fn>;
+  waitUntil: ReturnType<typeof vi.fn>;
+  id: {
+    toString: () => string;
+    equals: ReturnType<typeof vi.fn>;
+    name: string;
+  };
+}
+
 describe('Sandbox - Automatic Session Management', () => {
   let sandbox: Sandbox;
-  let mockCtx: Partial<DurableObjectState<{}>>;
-  let mockEnv: any;
+  let mockCtx: MockCtx;
+  let mockEnv: Record<string, unknown>;
 
   beforeEach(async () => {
     vi.clearAllMocks();
@@ -91,7 +108,10 @@ describe('Sandbox - Automatic Session Management', () => {
     mockEnv = {};
 
     // Create Sandbox instance - SandboxClient is created internally
-    const stub = new Sandbox(mockCtx as DurableObjectState<{}>, mockEnv);
+    const stub = new Sandbox(
+      mockCtx as unknown as ConstructorParameters<typeof Sandbox>[0],
+      mockEnv
+    );
 
     // Wait for blockConcurrencyWhile to complete
     await vi.waitFor(() => {

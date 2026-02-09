@@ -7,6 +7,7 @@ import { InterpreterHandler } from '../handlers/interpreter-handler';
 import { MiscHandler } from '../handlers/misc-handler';
 import { PortHandler } from '../handlers/port-handler';
 import { ProcessHandler } from '../handlers/process-handler';
+import { PtyWebSocketHandler } from '../handlers/pty-ws-handler';
 import { SessionHandler } from '../handlers/session-handler';
 import { CorsMiddleware } from '../middleware/cors';
 import { LoggingMiddleware } from '../middleware/logging';
@@ -41,6 +42,7 @@ export interface Dependencies {
   interpreterHandler: InterpreterHandler;
   sessionHandler: SessionHandler;
   miscHandler: MiscHandler;
+  ptyWsHandler: PtyWebSocketHandler;
 
   // Middleware
   corsMiddleware: CorsMiddleware;
@@ -125,6 +127,7 @@ export class Container {
       logger
     );
     const miscHandler = new MiscHandler(logger);
+    const ptyWsHandler = new PtyWebSocketHandler(sessionManager, logger);
 
     // Initialize middleware
     const corsMiddleware = new CorsMiddleware();
@@ -152,6 +155,7 @@ export class Container {
       interpreterHandler,
       sessionHandler,
       miscHandler,
+      ptyWsHandler,
 
       // Middleware
       corsMiddleware,
