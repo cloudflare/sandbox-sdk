@@ -375,7 +375,7 @@ export function Features() {
               </div>
               <p className="text-xs font-mono bg-background px-1">Worker</p>
             </div>
-            <div className="flex flex-col gap-2 items-center">
+            <div className="flex flex-col gap-2 items-center bg-background rounded-lg px-3 py-2">
               <div className="flex gap-1">
                 <div
                   className="w-2 h-2 rounded-full bg-foreground animate-bounce"
@@ -524,7 +524,7 @@ export function Features() {
                 </svg>
                 <p className="text-xs font-mono">R2 / S3</p>
               </div>
-              <div className="flex flex-col gap-1">
+              <div className="flex flex-col gap-1 bg-background rounded-lg px-3 py-2">
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
                   viewBox="0 0 24 24"
