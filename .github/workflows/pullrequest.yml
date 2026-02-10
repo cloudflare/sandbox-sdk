@@ -159,6 +159,16 @@ jobs:
             --build-arg BASE_IMAGE=registry.cloudflare.com/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/sandbox:${{ steps.tags.outputs.tag }} \
             -f tests/e2e/test-worker/Dockerfile.standalone tests/e2e/test-worker
 
+      # Build standalone Alpine (references base from registry)
+      - name: Build standalone Alpine image
+        run: |
+          docker buildx build \
+            --cache-from type=gha,scope=sandbox-standalone-alpine \
+            --cache-to type=gha,mode=max,scope=sandbox-standalone-alpine \
+            --load -t sandbox-standalone-alpine:local \
+            --build-arg BASE_IMAGE=registry.cloudflare.com/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/sandbox:${{ steps.tags.outputs.tag }} \
+            -f tests/e2e/test-worker/Dockerfile.standalone-alpine tests/e2e/test-worker
+
       # Push remaining images in parallel
       - name: Push python, opencode, standalone images to Cloudflare
         run: |
@@ -177,7 +187,11 @@ jobs:
           wrangler containers push sandbox-standalone:$TAG &
           PID3=$!
 
-          wait $PID1 $PID2 $PID3
+          docker tag sandbox-standalone-alpine:local sandbox-standalone-alpine:$TAG
+          wrangler containers push sandbox-standalone-alpine:$TAG &
+          PID4=$!
+
+          wait $PID1 $PID2 $PID3 $PID4
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
