@@ -7,10 +7,9 @@ FROM ${BASE_IMAGE} AS sandbox-source
 FROM alpine:3.21
 
 # Install dependencies required by the SDK
-# - gcompat: glibc compatibility layer for the sandbox binary
 # - file: MIME type detection for file operations
 # - git: git clone/checkout operations
-RUN apk add --no-cache gcompat file git
+RUN apk add --no-cache file git
 
 # Copy musl-compatible standalone binary from sandbox image
 COPY --from=sandbox-source /container-server/sandbox-musl /sandbox
