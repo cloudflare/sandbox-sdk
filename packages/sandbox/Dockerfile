@@ -121,9 +121,8 @@ RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm && \
 # Install Bun runtime from official image
 COPY --from=oven/bun:1 /usr/local/bin/bun /usr/local/bin/bun
 
-# Copy standalone binaries (glibc + musl for arbitrary base image support)
+# Copy standalone binary
 COPY --from=builder /app/packages/sandbox-container/dist/sandbox /container-server/sandbox
-COPY --from=builder /app/packages/sandbox-container/dist/sandbox-musl /container-server/sandbox-musl
 
 # Set up container server directory for executors
 WORKDIR /container-server
@@ -200,5 +199,33 @@ ENV TYPESCRIPT_POOL_MIN_SIZE=3
 
 # Expose OpenCode server port (in addition to 3000 from runtime-base)
 EXPOSE 4096
+
+ENTRYPOINT ["/container-server/sandbox"]
+
+# ============================================================================
+# Stage 5d: Musl image - Alpine-based with musl-linked binary
+# ============================================================================
+FROM alpine:3.21 AS musl
+
+ARG SANDBOX_VERSION=unknown
+
+ENV SANDBOX_VERSION=${SANDBOX_VERSION}
+
+RUN apk add --no-cache file git ca-certificates curl
+
+COPY --from=builder /app/packages/sandbox-container/dist/sandbox-musl /container-server/sandbox
+
+WORKDIR /container-server
+
+COPY --from=builder /app/packages/sandbox-container/dist/runtime/executors/javascript/node_executor.js ./dist/runtime/executors/javascript/
+COPY --from=builder /app/packages/sandbox-container/dist/index.js ./dist/
+
+RUN mkdir -p /workspace
+
+EXPOSE 3000
+
+ENV PYTHON_POOL_MIN_SIZE=0
+ENV JAVASCRIPT_POOL_MIN_SIZE=3
+ENV TYPESCRIPT_POOL_MIN_SIZE=3
 
 ENTRYPOINT ["/container-server/sandbox"]
