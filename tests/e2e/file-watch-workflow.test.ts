@@ -69,7 +69,10 @@ describe('File Watch Workflow', () => {
     let buffer = '';
     let actionsExecuted = false;
 
-    const timeout = setTimeout(() => reader.cancel(), timeoutMs);
+    // Use a cancellable timeout that resets after actions complete.
+    // The initial timeout covers watch establishment; after actions run,
+    // a fresh timeout gives the full timeoutMs for events to arrive.
+    let timeoutHandle = setTimeout(() => reader.cancel(), timeoutMs);
 
     try {
       while (true) {
@@ -87,16 +90,17 @@ describe('File Watch Workflow', () => {
 
             if (event.type === 'watching') {
               watchId = event.watchId;
-              // Execute actions after the watch is confirmed ready
               if (!actionsExecuted) {
                 actionsExecuted = true;
-                // inotifywait outputs "Setting up watches..." to stderr before it's ready
-                // We need to give it time to actually establish all watches before performing actions
+                // Pause the timeout while executing actions so the full
+                // timeoutMs window is available for collecting events afterward
+                clearTimeout(timeoutHandle);
                 await new Promise((r) => setTimeout(r, 1500));
                 actionResult = await actions();
                 // Give events time to propagate through the SSE stream
-                // Longer delay for WebSocket transport which has additional buffering
                 await new Promise((r) => setTimeout(r, 3000));
+                // Reset the timeout so we have the full window to read events
+                timeoutHandle = setTimeout(() => reader.cancel(), timeoutMs);
               }
             }
 
@@ -114,7 +118,7 @@ describe('File Watch Workflow', () => {
     } catch (e) {
       // Reader cancelled - expected
     } finally {
-      clearTimeout(timeout);
+      clearTimeout(timeoutHandle);
     }
 
     return { events, watchId, actionResult: actionResult! };
