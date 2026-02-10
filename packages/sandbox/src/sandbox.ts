@@ -16,6 +16,7 @@ import type {
   Process,
   ProcessOptions,
   ProcessStatus,
+  PtyOptions,
   RunCodeOptions,
   SandboxOptions,
   SessionOptions,
@@ -44,6 +45,7 @@ import {
   SessionAlreadyExistsError
 } from './errors';
 import { CodeInterpreter } from './interpreter';
+import { proxyTerminal } from './pty';
 import { isLocalhostPattern } from './request-handler';
 import { SecurityError, sanitizeSandboxId, validatePort } from './security';
 import { parseSSEStream } from './sse-parser';
@@ -102,9 +104,47 @@ export function getSandbox<T extends Sandbox<any>>(
     stub.setContainerTimeouts(options.containerTimeouts);
   }
 
-  return Object.assign(stub, {
+  const defaultSessionId = `sandbox-${effectiveId}`;
+
+  // IMPORTANT: Any method that returns ExecutionSession must be listed here
+  // to ensure the returned session uses proxyTerminal instead of RPC's terminal.
+  const enhancedMethods = {
+    createSession: async (opts?: SessionOptions): Promise<ExecutionSession> => {
+      const rpcSession = await stub.createSession(opts);
+      return enhanceSession(stub, rpcSession as ExecutionSession);
+    },
+    getSession: async (sessionId: string): Promise<ExecutionSession> => {
+      const rpcSession = await stub.getSession(sessionId);
+      return enhanceSession(stub, rpcSession as ExecutionSession);
+    },
+    terminal: (request: Request, opts?: PtyOptions) =>
+      proxyTerminal(stub, defaultSessionId, request, opts),
     wsConnect: connect(stub)
+  };
+
+  // Proxy intercepts enhanced methods, passes all others to stub directly.
+  // We must access target[prop] directly (not via Reflect.get with receiver)
+  // to preserve the RPC stub's internal Proxy handling.
+  return new Proxy(stub, {
+    get(target, prop) {
+      if (typeof prop === 'string' && prop in enhancedMethods) {
+        return enhancedMethods[prop as keyof typeof enhancedMethods];
+      }
+      // @ts-expect-error - RPC stub methods are Proxy-trapped, not visible to TypeScript
+      return target[prop];
+    }
   }) as T;
+}
+
+function enhanceSession(
+  stub: { fetch: (request: Request) => Promise<Response> },
+  rpcSession: ExecutionSession
+): ExecutionSession {
+  return {
+    ...rpcSession,
+    terminal: (request: Request, opts?: PtyOptions) =>
+      proxyTerminal(stub, rpcSession.id, request, opts)
+  };
 }
 
 export function connect(stub: {
@@ -2297,7 +2337,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     const a = encoder.encode(storedToken);
     const b = encoder.encode(token);
 
-    return crypto.subtle.timingSafeEqual(a, b);
+    // Workers runtime extends SubtleCrypto with timingSafeEqual
+    return (
+      crypto.subtle as SubtleCrypto & {
+        timingSafeEqual(a: ArrayBufferView, b: ArrayBufferView): boolean;
+      }
+    ).timingSafeEqual(a, b);
   }
 
   private validateCustomToken(token: string): void {
@@ -2468,15 +2513,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     };
   }
 
-  /**
-   * Internal helper to create ExecutionSession wrapper for a given sessionId
-   * Used by both createSession and getSession
-   */
   private getSessionWrapper(sessionId: string): ExecutionSession {
+    // terminal: null here, added client-side by getSandbox() (WebSockets can't cross RPC)
     return {
       id: sessionId,
+      terminal: null as unknown as ExecutionSession['terminal'],
 
-      // Command execution - delegate to internal session-aware methods
       exec: (command, options) =>
         this.execWithSession(command, sessionId, options),
       execStream: (command, options) =>

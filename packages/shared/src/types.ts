@@ -4,6 +4,15 @@ import type {
   ExecutionResult,
   RunCodeOptions
 } from './interpreter-types';
+import type { PtyOptions } from './pty-types';
+
+/**
+ * Represents a disposable resource with a cleanup function.
+ * Common pattern used by VS Code, xterm.js, RxJS, and others.
+ */
+export interface Disposable {
+  dispose(): void;
+}
 
 // Base execution options shared across command types
 export interface BaseExecOptions {
@@ -907,6 +916,9 @@ export interface ExecutionSession {
     options: MountBucketOptions
   ): Promise<void>;
   unmountBucket(mountPath: string): Promise<void>;
+
+  // Terminal access (browser WebSocket passthrough)
+  terminal(request: Request, options?: PtyOptions): Promise<Response>;
 }
 
 // Bucket mounting types

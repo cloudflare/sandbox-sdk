@@ -1,6 +1,6 @@
 {
   "name": "@cloudflare/sandbox",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "repository": {
     "type": "git",
     "url": "https://github.com/cloudflare/sandbox-sdk"
@@ -13,17 +13,22 @@
   "devDependencies": {
     "@openai/agents": "^0.3.3",
     "@opencode-ai/sdk": "^1.0.137",
-    "@repo/shared": "*"
+    "@repo/shared": "*",
+    "@xterm/xterm": "^6.0.0"
   },
   "peerDependencies": {
     "@openai/agents": "^0.3.3",
-    "@opencode-ai/sdk": "^1.0.137"
+    "@opencode-ai/sdk": "^1.0.137",
+    "@xterm/xterm": ">=5.0.0"
   },
   "peerDependenciesMeta": {
     "@openai/agents": {
       "optional": true
     },
     "@opencode-ai/sdk": {
+      "optional": true
+    },
+    "@xterm/xterm": {
       "optional": true
     }
   },
@@ -41,7 +46,9 @@
     "typecheck": "tsc --noEmit",
     "docker:local": "cd ../.. && docker build -f packages/sandbox/Dockerfile --target default --platform linux/amd64 --build-arg SANDBOX_VERSION=$npm_package_version -t cloudflare/sandbox-test:$npm_package_version . && docker build -f packages/sandbox/Dockerfile --target python --platform linux/amd64 --build-arg SANDBOX_VERSION=$npm_package_version -t cloudflare/sandbox-test:$npm_package_version-python . && docker build -f packages/sandbox/Dockerfile --target opencode --platform linux/amd64 --build-arg SANDBOX_VERSION=$npm_package_version -t cloudflare/sandbox-test:$npm_package_version-opencode . && cd tests/e2e/test-worker && sed -E \"s|cloudflare/sandbox-test:[0-9]+\\.[0-9]+\\.[0-9]+|cloudflare/sandbox-test:$npm_package_version|g\" Dockerfile.standalone > Dockerfile.standalone.tmp && docker build -f Dockerfile.standalone.tmp --platform linux/amd64 -t cloudflare/sandbox-test:$npm_package_version-standalone . && rm Dockerfile.standalone.tmp",
     "test": "vitest run --config vitest.config.ts \"$@\"",
-    "test:e2e": "cd ../../tests/e2e/test-worker && ./generate-config.sh && cd ../../.. && vitest run --config vitest.e2e.config.ts \"$@\"",
+    "test:e2e": "npm run test:e2e:vitest && npm run test:e2e:browser",
+    "test:e2e:vitest": "cd ../../tests/e2e/test-worker && ./generate-config.sh && cd ../../.. && vitest run --config vitest.e2e.config.ts \"$@\"",
+    "test:e2e:browser": "cd ../../tests/e2e/test-worker && ./generate-config.sh && cd ../../.. && npx playwright install chromium && playwright test --config tests/e2e/browser/playwright.config.ts",
     "test:perf": "cd ../.. && vitest run --config vitest.perf.config.ts \"$@\""
   },
   "exports": {
@@ -59,6 +66,11 @@
       "types": "./dist/opencode/index.d.ts",
       "import": "./dist/opencode/index.js",
       "require": "./dist/opencode/index.js"
+    },
+    "./xterm": {
+      "types": "./dist/xterm/index.d.ts",
+      "import": "./dist/xterm/index.js",
+      "require": "./dist/xterm/index.js"
     }
   },
   "keywords": [],

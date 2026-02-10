@@ -3,6 +3,7 @@
 import {
   type ExecEvent,
   type Logger,
+  type PtyOptions,
   partitionEnvVars,
   shellEscape
 } from '@repo/shared';
@@ -13,11 +14,13 @@ import type {
 } from '@repo/shared/errors';
 import { ErrorCode } from '@repo/shared/errors';
 import { Mutex } from 'async-mutex';
+import { CONFIG } from '../config';
 import {
   type ServiceResult,
   serviceError,
   serviceSuccess
 } from '../core/types';
+import { Pty } from '../pty';
 import { type RawExecResult, Session, type SessionOptions } from '../session';
 
 /**
@@ -634,6 +637,57 @@ export class SessionManager {
       success: true,
       data: { continueStreaming }
     };
+  }
+
+  async getPty(
+    sessionId: string,
+    options?: PtyOptions
+  ): Promise<ServiceResult<Pty>> {
+    const lock = this.getSessionLock(sessionId);
+
+    return lock.runExclusive(async () => {
+      const sessionResult = await this.getOrCreateSession(sessionId);
+      if (!sessionResult.success) {
+        return sessionResult as ServiceResult<Pty>;
+      }
+
+      const session = sessionResult.data;
+
+      if (session.pty) {
+        return { success: true, data: session.pty };
+      }
+
+      const pty = new Pty({
+        cwd: CONFIG.DEFAULT_CWD,
+        logger: this.logger
+      });
+
+      try {
+        await pty.initialize(options);
+
+        session.pty = pty;
+        return { success: true, data: pty };
+      } catch (error) {
+        await pty.destroy().catch(() => {});
+
+        const errorMessage =
+          error instanceof Error ? error.message : 'Unknown error';
+        this.logger.error(
+          'Failed to create PTY',
+          error instanceof Error ? error : undefined,
+          { sessionId }
+        );
+
+        return {
+          success: false,
+          error: {
+            message: `Failed to create PTY: ${errorMessage}`,
+            code: ErrorCode.INTERNAL_ERROR,
+            details: { sessionId }
+          }
+        };
+      }
+    });
   }
 
   /**

@@ -37,11 +37,11 @@ export type {
   Process,
   ProcessOptions,
   ProcessStatus,
+  PtyOptions,
   RunCodeOptions,
   SandboxOptions,
   SessionOptions,
   StreamOptions,
-  // Process readiness types
   WaitForLogResult,
   WaitForPortOptions
 } from '@repo/shared';
@@ -108,6 +108,7 @@ export {
 export { collectFile, streamFile } from './file-stream';
 // Export interpreter functionality
 export { CodeInterpreter } from './interpreter.js';
+export { proxyTerminal } from './pty';
 // Re-export request handler utilities
 export {
   proxyToSandbox,
