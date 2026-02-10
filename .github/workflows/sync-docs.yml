@@ -1,8 +1,7 @@
 name: Documentation Sync
 
 on:
-  pull_request:
-    types: [opened, synchronize, edited]
+  workflow_dispatch: {}
 
 jobs:
   sync-docs:
