@@ -59,11 +59,12 @@ console.log(
   `  dist/runtime/executors/javascript/node_executor.js (${(executorResult.outputs[0].size / 1024).toFixed(1)} KB)`
 );
 
-console.log('Building standalone binary...');
+console.log('Building standalone binaries...');
 
-// Compile standalone binary (bundles Bun runtime)
+// Compile both glibc and musl standalone binaries in parallel
 const bunExecutable = process.execPath;
-const proc = Bun.spawn(
+
+const glibcProc = Bun.spawn(
   [
     bunExecutable,
     'build',
@@ -79,15 +80,44 @@ const proc = Bun.spawn(
   }
 );
 
-const exitCode = await proc.exited;
-if (exitCode !== 0) {
-  console.error('Standalone binary build failed');
+const muslProc = Bun.spawn(
+  [
+    bunExecutable,
+    'build',
+    'src/main.ts',
+    '--compile',
+    '--target=bun-linux-x64-musl',
+    '--outfile=dist/sandbox-musl',
+    '--minify'
+  ],
+  {
+    cwd: process.cwd(),
+    stdio: ['inherit', 'inherit', 'inherit']
+  }
+);
+
+const [glibcExit, muslExit] = await Promise.all([
+  glibcProc.exited,
+  muslProc.exited
+]);
+
+if (glibcExit !== 0) {
+  console.error('Standalone binary build failed (glibc)');
   process.exit(1);
 }
 
-// Get file size
-const file = Bun.file('dist/sandbox');
-const size = file.size;
-console.log(`  dist/sandbox (${(size / 1024 / 1024).toFixed(1)} MB)`);
+if (muslExit !== 0) {
+  console.error('Standalone binary build failed (musl)');
+  process.exit(1);
+}
+
+// Report file sizes
+const glibcFile = Bun.file('dist/sandbox');
+console.log(`  dist/sandbox (${(glibcFile.size / 1024 / 1024).toFixed(1)} MB)`);
+
+const muslFile = Bun.file('dist/sandbox-musl');
+console.log(
+  `  dist/sandbox-musl (${(muslFile.size / 1024 / 1024).toFixed(1)} MB)`
+);
 
 console.log('Build complete!');
