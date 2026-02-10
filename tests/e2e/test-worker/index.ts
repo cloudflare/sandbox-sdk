@@ -35,12 +35,14 @@ export { Sandbox };
 export { Sandbox as SandboxPython };
 export { Sandbox as SandboxOpencode };
 export { Sandbox as SandboxStandalone };
+export { Sandbox as SandboxStandaloneAlpine };
 
 interface Env {
   Sandbox: DurableObjectNamespace<Sandbox>;
   SandboxPython: DurableObjectNamespace<Sandbox>;
   SandboxOpencode: DurableObjectNamespace<Sandbox>;
   SandboxStandalone: DurableObjectNamespace<Sandbox>;
+  SandboxStandaloneAlpine: DurableObjectNamespace<Sandbox>;
   TEST_BUCKET: R2Bucket;
   // R2 credentials for bucket mounting tests
   CLOUDFLARE_ACCOUNT_ID?: string;
@@ -85,6 +87,8 @@ export default {
       sandboxNamespace = env.SandboxOpencode;
     } else if (sandboxType === 'standalone') {
       sandboxNamespace = env.SandboxStandalone;
+    } else if (sandboxType === 'standalone-alpine') {
+      sandboxNamespace = env.SandboxStandaloneAlpine;
     } else {
       sandboxNamespace = env.Sandbox;
     }
