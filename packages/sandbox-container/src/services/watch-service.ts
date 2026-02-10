@@ -111,7 +111,7 @@ export class WatchService {
     } catch (error) {
       return serviceError({
         message: `Failed to stop watch: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        code: ErrorCode.UNKNOWN_ERROR,
+        code: ErrorCode.WATCH_STOP_ERROR,
         details: { watchId }
       });
     }
@@ -127,9 +127,6 @@ export class WatchService {
         watch.process.kill();
         count++;
       } catch (error) {
-        // Log the actual error for debugging
-        // Expected case: process already exited (no longer running)
-        // Unexpected: permission errors, system issues
         this.logger.warn('Failed to kill watch process', {
           watchId,
           error: error instanceof Error ? error.message : String(error),
@@ -388,8 +385,21 @@ export class WatchService {
           // Ensure process is killed on any exit path
           try {
             proc.kill();
-          } catch {
-            // Process may already be dead
+          } catch (killError) {
+            const code =
+              killError instanceof Error
+                ? (killError as NodeJS.ErrnoException).code
+                : undefined;
+            // ESRCH means the process already exited, which is expected
+            if (code !== 'ESRCH') {
+              logger.warn('Failed to kill watch process during cleanup', {
+                watchId,
+                error:
+                  killError instanceof Error
+                    ? killError.message
+                    : String(killError)
+              });
+            }
           }
           self.activeWatches.delete(watchId);
         }
@@ -474,8 +484,13 @@ export class WatchService {
                 controller.enqueue(
                   encoder.encode(`data: ${JSON.stringify(errorEvent)}\n\n`)
                 );
-              } catch {
-                // Controller may be closed
+              } catch (enqueueError) {
+                logger.debug('Could not enqueue error event during setup', {
+                  error:
+                    enqueueError instanceof Error
+                      ? enqueueError.message
+                      : String(enqueueError)
+                });
                 return 'done';
               }
             }
@@ -510,8 +525,13 @@ export class WatchService {
       // Release the reader if we're not continuing to monitor
       try {
         reader.releaseLock();
-      } catch {
-        // Reader may already be released
+      } catch (releaseError) {
+        logger.debug('Could not release stderr reader lock', {
+          error:
+            releaseError instanceof Error
+              ? releaseError.message
+              : String(releaseError)
+        });
       }
     }
   }
@@ -560,8 +580,16 @@ export class WatchService {
                 controller.enqueue(
                   encoder.encode(`data: ${JSON.stringify(errorEvent)}\n\n`)
                 );
-              } catch {
-                // Controller may be closed
+              } catch (enqueueError) {
+                logger.debug(
+                  'Could not enqueue stderr error event, stream likely closed',
+                  {
+                    error:
+                      enqueueError instanceof Error
+                        ? enqueueError.message
+                        : String(enqueueError)
+                  }
+                );
                 break;
               }
             }

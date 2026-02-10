@@ -191,6 +191,14 @@ export async function startServer(): Promise<ServerInstance> {
       try {
         const processService = app.container.get('processService');
         const portService = app.container.get('portService');
+        const watchService = app.container.get('watchService');
+
+        const stoppedWatches = await watchService.stopAllWatches();
+        if (stoppedWatches > 0) {
+          logger.info('Stopped file watches during shutdown', {
+            count: stoppedWatches
+          });
+        }
 
         await processService.destroy();
         portService.destroy();

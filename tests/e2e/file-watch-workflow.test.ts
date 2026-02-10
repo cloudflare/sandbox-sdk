@@ -201,8 +201,6 @@ describe('File Watch Workflow', () => {
       }
     );
 
-    console.log('[DEBUG] Collected events:', JSON.stringify(events, null, 2));
-
     const createEvent = events.find(
       (e) => e.type === 'event' && e.eventType === 'create'
     );
@@ -253,8 +251,6 @@ describe('File Watch Workflow', () => {
         await deleteFile(`${testDir}/todelete.txt`);
       }
     );
-
-    console.log('[DEBUG] Delete test events:', JSON.stringify(events, null, 2));
 
     const deleteEvent = events.find(
       (e) => e.type === 'event' && e.eventType === 'delete'
@@ -401,19 +397,12 @@ describe('File Watch Workflow', () => {
       body: JSON.stringify({ path: '/nonexistent/path/that/does/not/exist' })
     });
 
-    console.log(
-      '[DEBUG] Non-existent path response:',
-      response.status,
-      response.ok
-    );
-
     // Should get an error response (either 4xx/5xx or error in body)
     if (!response.ok) {
       // Non-OK response is expected - pass
       expect(response.ok).toBe(false);
       // Verify we get meaningful error content
       const body = await response.text();
-      console.log('[DEBUG] Error response body:', body);
       expect(body).toMatch(/error|not found|does not exist/i);
       return;
     }
@@ -433,7 +422,6 @@ describe('File Watch Workflow', () => {
           const { done, value } = await reader.read();
           if (done) break;
           text += decoder.decode(value, { stream: true });
-          console.log('[DEBUG] Received SSE chunk:', text.substring(0, 500));
           // Check if we have an error indication
           if (text.match(/error|not found|does not exist/i)) {
             break;
@@ -442,14 +430,10 @@ describe('File Watch Workflow', () => {
       } catch (e) {
         // Stream error or cancelled - capture the error
         streamError = e instanceof Error ? e : new Error(String(e));
-        console.log('[DEBUG] Stream error:', streamError.message);
       } finally {
         clearTimeout(timeout);
         reader.cancel().catch(() => {});
       }
-
-      console.log('[DEBUG] Final SSE text:', text);
-      console.log('[DEBUG] Stream error:', streamError?.message);
 
       // Should contain an error message in either the text or the stream error
       const errorContent = text || streamError?.message || '';
@@ -480,11 +464,6 @@ describe('File Watch Workflow', () => {
         await new Promise((r) => setTimeout(r, 300));
         await createFile(`${testDir}/index.ts`, 'index');
       }
-    );
-
-    console.log(
-      '[DEBUG] Exclude test events:',
-      JSON.stringify(events, null, 2)
     );
 
     const fileEvents = events.filter((e) => e.type === 'event');

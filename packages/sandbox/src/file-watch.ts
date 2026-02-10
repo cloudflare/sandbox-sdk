@@ -111,20 +111,49 @@ export class FileWatch implements WatchHandle {
 
   /**
    * Returns a promise that resolves when watch is established, or rejects on failure.
+   * Rejects if the abort signal fires before establishment completes.
    */
   private established(): Promise<void> {
     // Already established
     if (this.state === 'active') {
       return Promise.resolve();
     }
-    // Already failed
+    // Already failed or aborted
     if (this.state === 'stopped') {
       return Promise.reject(new Error('Watch failed to establish'));
     }
-    // Wait for state transition
+    if (this.abortController.signal.aborted) {
+      return Promise.reject(
+        new Error('Watch was aborted before establishment')
+      );
+    }
+    // Wait for state transition, with abort signal rejection
     return new Promise<void>((resolve, reject) => {
       this.establishedResolve = resolve;
       this.establishedReject = reject;
+
+      // If abort fires during establishment, reject immediately
+      const signal = this.abortController.signal;
+      if (signal.aborted) {
+        reject(new Error('Watch was aborted before establishment'));
+        return;
+      }
+      const onAbort = () => {
+        reject(new Error('Watch was aborted during establishment'));
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+
+      // Store original resolve/reject so they also clean up the abort listener
+      const originalResolve = this.establishedResolve;
+      const originalReject = this.establishedReject;
+      this.establishedResolve = () => {
+        signal.removeEventListener('abort', onAbort);
+        originalResolve?.();
+      };
+      this.establishedReject = (err: Error) => {
+        signal.removeEventListener('abort', onAbort);
+        originalReject?.(err);
+      };
     });
   }
 
@@ -165,18 +194,42 @@ export class FileWatch implements WatchHandle {
       throw err;
     } finally {
       this.state = 'stopped';
-      await this.reader.cancel().catch(() => {});
+      await this.reader.cancel().catch((cancelError) => {
+        this.logger.debug('Reader cancel during cleanup', {
+          error:
+            cancelError instanceof Error
+              ? cancelError.message
+              : String(cancelError)
+        });
+      });
     }
   }
 
   /**
-   * Type guard for FileWatchSSEEvent
+   * Type guard for FileWatchSSEEvent.
+   * Validates required fields for each event type to prevent undefined access.
    */
   private isFileWatchSSEEvent(value: unknown): value is FileWatchSSEEvent {
     if (typeof value !== 'object' || value === null) return false;
     const obj = value as Record<string, unknown>;
     if (typeof obj.type !== 'string') return false;
-    return ['watching', 'event', 'error', 'stopped'].includes(obj.type);
+
+    switch (obj.type) {
+      case 'watching':
+        return typeof obj.path === 'string' && typeof obj.watchId === 'string';
+      case 'event':
+        return (
+          typeof obj.eventType === 'string' &&
+          typeof obj.path === 'string' &&
+          typeof obj.isDirectory === 'boolean'
+        );
+      case 'error':
+        return typeof obj.error === 'string';
+      case 'stopped':
+        return typeof obj.reason === 'string';
+      default:
+        return false;
+    }
   }
 
   /**
@@ -187,11 +240,17 @@ export class FileWatch implements WatchHandle {
     try {
       parsed = JSON.parse(line.slice(6));
     } catch {
-      return; // Ignore malformed JSON
+      this.logger.debug('Malformed JSON in watch SSE event', {
+        line: line.substring(0, 200)
+      });
+      return;
     }
 
     if (!this.isFileWatchSSEEvent(parsed)) {
-      return; // Ignore invalid event structure
+      this.logger.debug('Invalid watch SSE event structure', {
+        type: (parsed as Record<string, unknown>)?.type
+      });
+      return;
     }
 
     const event = parsed;

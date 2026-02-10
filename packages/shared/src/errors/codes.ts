@@ -113,6 +113,7 @@ export const ErrorCode = {
 
   // File Watch Errors (500)
   WATCH_START_ERROR: 'WATCH_START_ERROR',
+  WATCH_STOP_ERROR: 'WATCH_STOP_ERROR',
 
   // Validation Errors (400)
   VALIDATION_FAILED: 'VALIDATION_FAILED',
