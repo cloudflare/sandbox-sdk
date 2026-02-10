@@ -257,11 +257,16 @@ jobs:
         run: |
           echo "worker_url=https://${{ steps.env-name.outputs.worker_name }}.${{ env.CF_ACCOUNT_SUBDOMAIN }}.workers.dev" >> $GITHUB_OUTPUT
 
-      # Run E2E tests against deployed worker
+      - name: Install Playwright browsers
+        run: npx playwright install chromium
+
       - name: Run E2E tests
-        run: npx vitest run --config vitest.e2e.config.ts
+        run: |
+          npx vitest run --config vitest.e2e.config.ts
+          npx playwright test --config tests/e2e/browser/playwright.config.ts
         env:
           TEST_WORKER_URL: ${{ steps.get-url.outputs.worker_url }}
+          TEST_SANDBOX_ID: browser-test-${{ github.run_id }}-${{ matrix.transport }}
           CI: true
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}

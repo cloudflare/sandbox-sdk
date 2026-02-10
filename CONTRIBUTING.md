@@ -171,12 +171,17 @@ Located in `tests/e2e/`:
 Run with: `npm run test:e2e`
 
 ```bash
-# Run a single E2E test file
-npm run test:e2e -- -- tests/e2e/process-lifecycle-workflow.test.ts
+# Run a single vitest E2E test file
+npm run test:e2e:vitest -- -- tests/e2e/process-lifecycle-workflow.test.ts
 
-# Run a specific test within a file
-npm run test:e2e -- -- tests/e2e/git-clone-workflow.test.ts -t 'should handle cloning to default directory'
+# Run a specific vitest E2E test within a file
+npm run test:e2e:vitest -- -- tests/e2e/git-clone-workflow.test.ts -t 'should handle cloning to default directory'
+
+# Run browser E2E tests only (Playwright)
+npm run test:e2e:browser
 ```
+
+**Note**: Use `test:e2e:vitest` when filtering tests. The `test:e2e` wrapper runs both vitest and browser tests sequentially but doesn't support argument passthrough.
 
 **See `docs/E2E_TESTING.md` for the complete guide on writing E2E tests.**
 

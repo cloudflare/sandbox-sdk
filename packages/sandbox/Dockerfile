@@ -189,13 +189,8 @@ ENTRYPOINT ["/container-server/sandbox"]
 # ============================================================================
 FROM runtime-base AS opencode
 
-# Add opencode to PATH
-ENV PATH="/root/.opencode/bin:${PATH}"
-
-# Install OpenCode CLI
-RUN curl -fsSL https://opencode.ai/install -o /tmp/install-opencode.sh \
-    && bash /tmp/install-opencode.sh \
-    && rm /tmp/install-opencode.sh \
+# Install OpenCode CLI via npm (avoids GitHub API rate limits)
+RUN npm i -g opencode-ai \
     && opencode --version
 
 # Disable Python pool (Python not available in this image)

@@ -12,7 +12,9 @@
  *
  * Use X-Sandbox-Type header to select: 'python', 'opencode', 'standalone', or default
  */
+
 import { getSandbox, proxyToSandbox, Sandbox } from '@cloudflare/sandbox';
+
 import type {
   BucketDeleteResponse,
   BucketGetResponse,
@@ -63,10 +65,12 @@ export default {
     const url = new URL(request.url);
     const body = await parseBody(request);
 
-    // Get sandbox ID from header
+    // Get sandbox ID from header or query param (WebSocket can't send headers)
     // Sandbox ID determines which container instance (Durable Object)
     const sandboxId =
-      request.headers.get('X-Sandbox-Id') || 'default-test-sandbox';
+      request.headers.get('X-Sandbox-Id') ||
+      url.searchParams.get('sandboxId') ||
+      'default-test-sandbox';
 
     // Check if keepAlive is requested
     const keepAliveHeader = request.headers.get('X-Sandbox-KeepAlive');
@@ -856,6 +860,42 @@ console.log('Terminal server on port ' + port);
         });
       }
 
+      // PTY: Browser test page for Playwright tests
+      if (url.pathname === '/terminal-test') {
+        const sessionId =
+          url.searchParams.get('sessionId') || `browser-test-${Date.now()}`;
+        return new Response(getTerminalTestPage(sandboxId, sessionId), {
+          headers: { 'Content-Type': 'text/html' }
+        });
+      }
+
+      // PTY: WebSocket terminal proxy
+      if (
+        url.pathname === '/terminal' ||
+        url.pathname.startsWith('/terminal/')
+      ) {
+        const upgradeHeader = request.headers.get('Upgrade');
+        if (upgradeHeader?.toLowerCase() !== 'websocket') {
+          return new Response('WebSocket upgrade required', { status: 426 });
+        }
+
+        const pathParts = url.pathname.split('/').filter(Boolean);
+
+        if (pathParts.length === 1) {
+          return sandbox.terminal(request, {
+            cols: parseInt(url.searchParams.get('cols') || '80', 10),
+            rows: parseInt(url.searchParams.get('rows') || '24', 10)
+          });
+        } else {
+          const ptySessionId = pathParts[1];
+          const session = await sandbox.getSession(ptySessionId);
+          return session.terminal(request, {
+            cols: parseInt(url.searchParams.get('cols') || '80', 10),
+            rows: parseInt(url.searchParams.get('rows') || '24', 10)
+          });
+        }
+      }
+
       return new Response('Not found', { status: 404 });
     } catch (error) {
       return new Response(
@@ -870,3 +910,106 @@ console.log('Terminal server on port ' + port);
     }
   }
 };
+
+function getTerminalTestPage(sandboxId: string, sessionId: string): string {
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <title>Terminal Test</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css">
+  <style>
+    body { margin: 0; padding: 20px; background: #1e1e1e; }
+    #terminal { width: 100%; height: 400px; }
+    #status { color: white; margin-bottom: 10px; font-family: monospace; }
+  </style>
+</head>
+<body>
+  <div id="status" data-testid="connection-status">disconnected</div>
+  <div id="terminal" data-testid="terminal-container"></div>
+
+  <script type="module">
+    import { Terminal } from 'https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/+esm';
+    import { FitAddon } from 'https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/+esm';
+
+    const term = new Terminal({ cursorBlink: true, fontSize: 14 });
+    const fitAddon = new FitAddon();
+    term.loadAddon(fitAddon);
+    term.open(document.getElementById('terminal'));
+    fitAddon.fit();
+
+    const statusEl = document.getElementById('status');
+    const sandboxId = '${sandboxId}';
+    const sessionId = '${sessionId}';
+
+    let ws = null;
+    let reconnectAttempts = 0;
+    const maxReconnectAttempts = 10;
+
+    function updateStatus(status) {
+      statusEl.textContent = status;
+      statusEl.dataset.testid = 'connection-status';
+    }
+
+    function connect() {
+      updateStatus('connecting');
+      const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = protocol + '//' + location.host + '/terminal/' + sessionId + '?sandboxId=' + sandboxId;
+      
+      ws = new WebSocket(wsUrl);
+      ws.binaryType = 'arraybuffer';
+
+      ws.onopen = () => {
+        term.onData(data => {
+          if (ws?.readyState === WebSocket.OPEN) {
+            ws.send(new TextEncoder().encode(data));
+          }
+        });
+
+        term.onResize(({ cols, rows }) => {
+          if (ws?.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'resize', cols, rows }));
+          }
+        });
+      };
+
+      ws.onmessage = (event) => {
+        if (event.data instanceof ArrayBuffer) {
+          term.write(new Uint8Array(event.data));
+        } else if (typeof event.data === 'string') {
+          try {
+            const msg = JSON.parse(event.data);
+            if (msg.type === 'ready') {
+              reconnectAttempts = 0;
+              updateStatus('connected');
+              ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+            } else if (msg.type === 'error') {
+              console.error('Server error:', msg.message);
+            }
+          } catch {}
+        }
+      };
+
+      ws.onclose = () => {
+        updateStatus('disconnected');
+        if (reconnectAttempts < maxReconnectAttempts) {
+          const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
+          reconnectAttempts++;
+          setTimeout(connect, delay);
+        }
+      };
+
+      ws.onerror = () => {
+        console.error('WebSocket error');
+      };
+    }
+
+    window.addEventListener('resize', () => fitAddon.fit());
+    window.terminalConnect = connect;
+    window.terminalDisconnect = () => { ws?.close(); ws = null; };
+    window.testCloseWs = () => { ws?.close(); };
+
+    connect();
+  </script>
+</body>
+</html>`;
+}

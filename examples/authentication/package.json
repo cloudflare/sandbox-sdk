@@ -1,0 +1,26 @@
+{
+  "name": "@cloudflare/sandbox-authentication-example",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "description": "Zero-trust authentication proxy for Sandbox SDK",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "start": "wrangler dev",
+    "cf-typegen": "wrangler types",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "aws4fetch": "^1.0.20",
+    "jose": "^5.2.0"
+  },
+  "devDependencies": {
+    "@cloudflare/sandbox": "*",
+    "@types/node": "^24.10.1",
+    "typescript": "^5.9.3",
+    "wrangler": "^4.59.3"
+  },
+  "author": "",
+  "license": "MIT"
+}
