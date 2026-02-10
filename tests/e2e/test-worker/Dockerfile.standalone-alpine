@@ -1,0 +1,27 @@
+# Test the standalone musl binary pattern with an Alpine base image
+# This validates that users can add sandbox capabilities to Alpine Docker images
+
+ARG BASE_IMAGE=cloudflare/sandbox-test:0.7.1
+FROM ${BASE_IMAGE} AS sandbox-source
+
+FROM alpine:3.21
+
+# Install dependencies required by the SDK
+# - gcompat: glibc compatibility layer for the sandbox binary
+# - file: MIME type detection for file operations
+# - git: git clone/checkout operations
+RUN apk add --no-cache gcompat file git
+
+# Copy musl-compatible standalone binary from sandbox image
+COPY --from=sandbox-source /container-server/sandbox-musl /sandbox
+
+# Copy startup script for CMD passthrough testing
+COPY startup-test.sh /startup-test.sh
+RUN chmod +x /startup-test.sh
+
+WORKDIR /workspace
+
+EXPOSE 3000 8080
+
+ENTRYPOINT ["/sandbox"]
+CMD ["/startup-test.sh"]
