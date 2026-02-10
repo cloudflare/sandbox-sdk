@@ -121,8 +121,9 @@ RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm && \
 # Install Bun runtime from official image
 COPY --from=oven/bun:1 /usr/local/bin/bun /usr/local/bin/bun
 
-# Copy standalone binary
+# Copy standalone binaries (glibc + musl for arbitrary base image support)
 COPY --from=builder /app/packages/sandbox-container/dist/sandbox /container-server/sandbox
+COPY --from=builder /app/packages/sandbox-container/dist/sandbox-musl /container-server/sandbox-musl
 
 # Set up container server directory for executors
 WORKDIR /container-server
