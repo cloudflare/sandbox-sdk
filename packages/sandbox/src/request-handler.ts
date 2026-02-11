@@ -155,7 +155,8 @@ function extractSandboxRoute(url: URL): RouteInfo | null {
   const sandboxId = rest.slice(0, lastHyphen);
   const token = rest.slice(lastHyphen + 1);
 
-  // Validate token format (no hyphens allowed)
+  // No hyphens in tokens: URL is {port}-{sandboxId}-{token}.{domain}
+  // We split at the LAST hyphen, so hyphens in tokens would be ambiguous
   if (!/^[a-z0-9_]+$/.test(token) || token.length === 0 || token.length > 63) {
     return null;
   }

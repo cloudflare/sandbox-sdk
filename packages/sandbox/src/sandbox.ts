@@ -153,7 +153,7 @@ export function connect(stub: {
   return async (request: Request, port: number) => {
     if (!validatePort(port)) {
       throw new SecurityError(
-        `Invalid or restricted port: ${port}. Ports must be in range 1024-65535 and not reserved.`
+        `Invalid port number: ${port}. Must be 1024-65535, excluding 3000 (sandbox control plane).`
       );
     }
     const portSwitchedRequest = switchPort(request, port);
@@ -2180,7 +2180,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     port: number,
     options: { name?: string; hostname: string; token?: string }
   ) {
-    // Check if hostname is workers.dev domain (doesn't support wildcard subdomains)
+    if (!validatePort(port)) {
+      throw new SecurityError(
+        `Invalid port number: ${port}. Must be 1024-65535, excluding 3000 (sandbox control plane).`
+      );
+    }
+
     if (options.hostname.endsWith('.workers.dev')) {
       const errorResponse: ErrorResponse = {
         code: ErrorCode.CUSTOM_DOMAIN_REQUIRED,
@@ -2242,7 +2247,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   async unexposePort(port: number) {
     if (!validatePort(port)) {
       throw new SecurityError(
-        `Invalid port number: ${port}. Must be between 1024-65535 and not reserved.`
+        `Invalid port number: ${port}. Must be 1024-65535, excluding 3000 (sandbox control plane).`
       );
     }
 
@@ -2329,20 +2334,20 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       return false;
     }
 
-    if (storedToken.length !== token.length) {
-      return false;
-    }
-
     const encoder = new TextEncoder();
     const a = encoder.encode(storedToken);
     const b = encoder.encode(token);
 
-    // Workers runtime extends SubtleCrypto with timingSafeEqual
-    return (
-      crypto.subtle as SubtleCrypto & {
-        timingSafeEqual(a: ArrayBufferView, b: ArrayBufferView): boolean;
-      }
-    ).timingSafeEqual(a, b);
+    try {
+      // Workers runtime extends SubtleCrypto with timingSafeEqual
+      return (
+        crypto.subtle as SubtleCrypto & {
+          timingSafeEqual(a: ArrayBufferView, b: ArrayBufferView): boolean;
+        }
+      ).timingSafeEqual(a, b);
+    } catch {
+      return false;
+    }
   }
 
   private validateCustomToken(token: string): void {
@@ -2385,7 +2390,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   ): string {
     if (!validatePort(port)) {
       throw new SecurityError(
-        `Invalid port number: ${port}. Must be between 1024-65535 and not reserved.`
+        `Invalid port number: ${port}. Must be 1024-65535, excluding 3000 (sandbox control plane).`
       );
     }
 
