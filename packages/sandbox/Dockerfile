@@ -211,7 +211,9 @@ ARG SANDBOX_VERSION=unknown
 
 ENV SANDBOX_VERSION=${SANDBOX_VERSION}
 
-RUN apk add --no-cache file git ca-certificates curl
+RUN apk add --no-cache bash file git ca-certificates curl libstdc++ libgcc s3fs-fuse fuse
+
+RUN sed -i 's/#user_allow_other/user_allow_other/' /etc/fuse.conf
 
 COPY --from=builder /app/packages/sandbox-container/dist/sandbox-musl /container-server/sandbox
 
@@ -225,7 +227,7 @@ RUN mkdir -p /workspace
 EXPOSE 3000
 
 ENV PYTHON_POOL_MIN_SIZE=0
-ENV JAVASCRIPT_POOL_MIN_SIZE=3
-ENV TYPESCRIPT_POOL_MIN_SIZE=3
+ENV JAVASCRIPT_POOL_MIN_SIZE=0
+ENV TYPESCRIPT_POOL_MIN_SIZE=0
 
 ENTRYPOINT ["/container-server/sandbox"]
