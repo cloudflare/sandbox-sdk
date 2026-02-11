@@ -266,7 +266,6 @@ jobs:
       id-token: write # Required for trusted publishing
       contents: write
       pull-requests: write
-      checks: write # Required for marking Version Packages PR checks as passing
 
     steps:
       - uses: actions/checkout@v4
@@ -380,31 +379,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_CONFIG_PROVENANCE: true
-
-      - name: Mark Version Packages PR checks as passing
-        if: steps.changesets.outputs.pullRequestNumber
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const prNumber = Number('${{ steps.changesets.outputs.pullRequestNumber }}');
-            const { data: pr } = await github.rest.pulls.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: prNumber,
-            });
-            await github.rest.checks.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              name: 'unit-tests',
-              head_sha: pr.head.sha,
-              status: 'completed',
-              conclusion: 'success',
-              output: {
-                title: 'Verified on main',
-                summary: 'Code already passed unit and E2E tests on the main branch push that generated this PR.',
-              },
-            });
-            core.info(`Created unit-tests check run on PR #${prNumber} (${pr.head.sha})`);
 
       - name: Upload standalone binary to GitHub release
         if: steps.changesets.outputs.published == 'true'
