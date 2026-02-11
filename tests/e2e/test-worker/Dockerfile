@@ -1,6 +1,6 @@
 # Base image Dockerfile (no Python)
 # Used for testing Python-not-available error handling
-FROM docker.io/cloudflare/sandbox-test:0.7.1
+FROM docker.io/cloudflare/sandbox-test:0.7.2
 
 # Expose ports used for testing
 # 8080: general testing

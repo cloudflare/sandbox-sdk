@@ -1,3 +1,3 @@
-FROM docker.io/cloudflare/sandbox-test:0.7.1-musl
+FROM docker.io/cloudflare/sandbox-test:0.7.2-musl
 
 EXPOSE 3000 8080
