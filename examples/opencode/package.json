@@ -18,7 +18,7 @@
     "@cloudflare/sandbox": "*",
     "@types/node": "^24.10.1",
     "typescript": "^5.9.3",
-    "wrangler": "^4.59.3"
+    "wrangler": "^4.63.0"
   },
   "author": "",
   "license": "MIT"
