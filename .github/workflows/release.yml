@@ -169,8 +169,19 @@ jobs:
             --build-arg BASE_IMAGE=registry.cloudflare.com/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/sandbox:main \
             -f tests/e2e/test-worker/Dockerfile.standalone tests/e2e/test-worker
 
+      # Build musl image variant (Alpine-based, from main Dockerfile)
+      - name: Build musl image
+        run: |
+          VERSION="${{ needs.unit-tests.outputs.version }}"
+          docker buildx build \
+            --cache-from type=gha,scope=release-musl \
+            --cache-to type=gha,mode=max,scope=release-musl \
+            --load -t sandbox-musl:local \
+            --build-arg SANDBOX_VERSION=$VERSION \
+            -f packages/sandbox/Dockerfile --target musl .
+
       # Push remaining images in parallel
-      - name: Push python, opencode, standalone images to Cloudflare
+      - name: Push python, opencode, standalone, musl images to Cloudflare
         run: |
           set -e
 
@@ -186,7 +197,11 @@ jobs:
           wrangler containers push sandbox-standalone:main &
           PID3=$!
 
-          wait $PID1 $PID2 $PID3
+          docker tag sandbox-musl:local sandbox-musl:main
+          wrangler containers push sandbox-musl:main &
+          PID4=$!
+
+          wait $PID1 $PID2 $PID3 $PID4
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -327,14 +342,34 @@ jobs:
           build-args: |
             SANDBOX_VERSION=${{ needs.unit-tests.outputs.version }}
 
-      - name: Extract standalone binary from Docker image
+      - name: Build and push Docker image (musl)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: packages/sandbox/Dockerfile
+          target: musl
+          platforms: linux/amd64
+          push: true
+          tags: cloudflare/sandbox:${{ needs.unit-tests.outputs.version }}-musl
+          cache-from: type=gha,scope=release-musl
+          cache-to: type=gha,mode=max,scope=release-musl
+          build-args: |
+            SANDBOX_VERSION=${{ needs.unit-tests.outputs.version }}
+
+      - name: Extract standalone binaries from Docker images
         run: |
           VERSION=${{ needs.unit-tests.outputs.version }}
+
           CONTAINER_ID=$(docker create --platform linux/amd64 cloudflare/sandbox:$VERSION)
           docker cp $CONTAINER_ID:/container-server/sandbox ./sandbox-linux-x64
           docker rm $CONTAINER_ID
-          file ./sandbox-linux-x64
-          ls -la ./sandbox-linux-x64
+
+          MUSL_CONTAINER_ID=$(docker create --platform linux/amd64 cloudflare/sandbox:$VERSION-musl)
+          docker cp $MUSL_CONTAINER_ID:/container-server/sandbox ./sandbox-linux-x64-musl
+          docker rm $MUSL_CONTAINER_ID
+
+          file ./sandbox-linux-x64 ./sandbox-linux-x64-musl
+          ls -la ./sandbox-linux-x64 ./sandbox-linux-x64-musl
 
       - id: changesets
         uses: changesets/action@v1
@@ -352,5 +387,9 @@ jobs:
         run: |
           VERSION=${{ needs.unit-tests.outputs.version }}
           sha256sum sandbox-linux-x64 > sandbox-linux-x64.sha256
+          sha256sum sandbox-linux-x64-musl > sandbox-linux-x64-musl.sha256
           # Tag format matches changesets: @cloudflare/sandbox@VERSION
-          gh release upload "@cloudflare/sandbox@${VERSION}" ./sandbox-linux-x64 ./sandbox-linux-x64.sha256 --clobber
+          gh release upload "@cloudflare/sandbox@${VERSION}" \
+            ./sandbox-linux-x64 ./sandbox-linux-x64.sha256 \
+            ./sandbox-linux-x64-musl ./sandbox-linux-x64-musl.sha256 \
+            --clobber

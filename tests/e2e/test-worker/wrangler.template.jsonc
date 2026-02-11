@@ -34,6 +34,11 @@
       "class_name": "SandboxStandalone",
       "image": "{{IMAGE_STANDALONE}}",
       "name": "{{CONTAINER_NAME}}-standalone"
+    },
+    {
+      "class_name": "SandboxMusl",
+      "image": "{{IMAGE_MUSL}}",
+      "name": "{{CONTAINER_NAME}}-musl"
     }
   ],
 
@@ -54,6 +59,10 @@
       {
         "class_name": "SandboxStandalone",
         "name": "SandboxStandalone"
+      },
+      {
+        "class_name": "SandboxMusl",
+        "name": "SandboxMusl"
       }
     ]
   },
@@ -70,6 +79,10 @@
     {
       "new_sqlite_classes": ["SandboxStandalone"],
       "tag": "v4"
+    },
+    {
+      "new_sqlite_classes": ["SandboxMusl"],
+      "tag": "v5"
     }
   ],
 

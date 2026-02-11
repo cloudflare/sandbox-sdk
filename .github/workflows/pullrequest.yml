@@ -159,8 +159,19 @@ jobs:
             --build-arg BASE_IMAGE=registry.cloudflare.com/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/sandbox:${{ steps.tags.outputs.tag }} \
             -f tests/e2e/test-worker/Dockerfile.standalone tests/e2e/test-worker
 
+      # Build musl image variant (Alpine-based, from main Dockerfile)
+      - name: Build musl image
+        run: |
+          VERSION="${{ needs.unit-tests.outputs.version }}"
+          docker buildx build \
+            --cache-from type=gha,scope=sandbox-musl \
+            --cache-to type=gha,mode=max,scope=sandbox-musl \
+            --load -t sandbox-musl:local \
+            --build-arg SANDBOX_VERSION=$VERSION \
+            -f packages/sandbox/Dockerfile --target musl .
+
       # Push remaining images in parallel
-      - name: Push python, opencode, standalone images to Cloudflare
+      - name: Push python, opencode, standalone, musl images to Cloudflare
         run: |
           set -e
           TAG="${{ steps.tags.outputs.tag }}"
@@ -177,7 +188,11 @@ jobs:
           wrangler containers push sandbox-standalone:$TAG &
           PID3=$!
 
-          wait $PID1 $PID2 $PID3
+          docker tag sandbox-musl:local sandbox-musl:$TAG
+          wrangler containers push sandbox-musl:$TAG &
+          PID4=$!
+
+          wait $PID1 $PID2 $PID3 $PID4
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

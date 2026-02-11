@@ -147,7 +147,7 @@ npm run dev                # Start wrangler dev server (builds Docker on first r
    Brief description of your change
    ```
 
-   Use `patch` for bug fixes, `minor` for new features, `major` for breaking changes.
+   The SDK is in beta — use `patch` for all changes, `minor` only for breaking changes. Never use `major`.
 
 5. Push your branch and create a PR
 

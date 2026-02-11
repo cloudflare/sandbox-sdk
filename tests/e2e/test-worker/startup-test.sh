@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 # Startup script for testing CMD passthrough
 # This script runs as the CMD, proving the entrypoint forwards execution correctly
 

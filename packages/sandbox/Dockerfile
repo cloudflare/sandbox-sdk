@@ -201,3 +201,33 @@ ENV TYPESCRIPT_POOL_MIN_SIZE=3
 EXPOSE 4096
 
 ENTRYPOINT ["/container-server/sandbox"]
+
+# ============================================================================
+# Stage 5d: Musl image - Alpine-based with musl-linked binary
+# ============================================================================
+FROM alpine:3.21 AS musl
+
+ARG SANDBOX_VERSION=unknown
+
+ENV SANDBOX_VERSION=${SANDBOX_VERSION}
+
+RUN apk add --no-cache bash file git ca-certificates curl libstdc++ libgcc s3fs-fuse fuse
+
+RUN sed -i 's/#user_allow_other/user_allow_other/' /etc/fuse.conf
+
+COPY --from=builder /app/packages/sandbox-container/dist/sandbox-musl /container-server/sandbox
+
+WORKDIR /container-server
+
+COPY --from=builder /app/packages/sandbox-container/dist/runtime/executors/javascript/node_executor.js ./dist/runtime/executors/javascript/
+COPY --from=builder /app/packages/sandbox-container/dist/index.js ./dist/
+
+RUN mkdir -p /workspace
+
+EXPOSE 3000
+
+ENV PYTHON_POOL_MIN_SIZE=0
+ENV JAVASCRIPT_POOL_MIN_SIZE=0
+ENV TYPESCRIPT_POOL_MIN_SIZE=0
+
+ENTRYPOINT ["/container-server/sandbox"]

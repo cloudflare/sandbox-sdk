@@ -1,9 +1,9 @@
 {
-  "name": "@cloudflare/sandbox-code-interpreter-example",
+  "name": "@cloudflare/sandbox-alpine-example",
   "version": "1.0.0",
   "type": "module",
   "private": true,
-  "description": "An example of using the sandbox package with code interpreter",
+  "description": "Sandbox SDK with an Alpine base image using the standalone musl binary",
   "scripts": {
     "deploy": "wrangler deploy",
     "dev": "wrangler dev",
@@ -11,17 +11,12 @@
     "cf-typegen": "wrangler types",
     "typecheck": "tsc --noEmit"
   },
-  "author": "",
-  "license": "MIT",
-  "dependencies": {
-    "@cloudflare/sandbox": "*",
-    "ai": "^6.0.57",
-    "workers-ai-provider": "^3.0.3",
-    "zod": "^3.25.76"
-  },
   "devDependencies": {
+    "@cloudflare/sandbox": "*",
     "@types/node": "^24.10.1",
     "typescript": "^5.9.3",
     "wrangler": "^4.63.0"
-  }
+  },
+  "author": "",
+  "license": "MIT"
 }
