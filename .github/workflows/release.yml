@@ -169,18 +169,19 @@ jobs:
             --build-arg BASE_IMAGE=registry.cloudflare.com/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/sandbox:main \
             -f tests/e2e/test-worker/Dockerfile.standalone tests/e2e/test-worker
 
-      # Build standalone Alpine (references base from registry)
-      - name: Build standalone Alpine image
+      # Build musl image variant (Alpine-based, from main Dockerfile)
+      - name: Build musl image
         run: |
+          VERSION="${{ needs.unit-tests.outputs.version }}"
           docker buildx build \
-            --cache-from type=gha,scope=release-standalone-alpine \
-            --cache-to type=gha,mode=max,scope=release-standalone-alpine \
-            --load -t sandbox-standalone-alpine:local \
-            --build-arg BASE_IMAGE=registry.cloudflare.com/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/sandbox:main \
-            -f tests/e2e/test-worker/Dockerfile.standalone-alpine tests/e2e/test-worker
+            --cache-from type=gha,scope=release-musl \
+            --cache-to type=gha,mode=max,scope=release-musl \
+            --load -t sandbox-musl:local \
+            --build-arg SANDBOX_VERSION=$VERSION \
+            -f packages/sandbox/Dockerfile --target musl .
 
       # Push remaining images in parallel
-      - name: Push python, opencode, standalone images to Cloudflare
+      - name: Push python, opencode, standalone, musl images to Cloudflare
         run: |
           set -e
 
@@ -196,8 +197,8 @@ jobs:
           wrangler containers push sandbox-standalone:main &
           PID3=$!
 
-          docker tag sandbox-standalone-alpine:local sandbox-standalone-alpine:main
-          wrangler containers push sandbox-standalone-alpine:main &
+          docker tag sandbox-musl:local sandbox-musl:main
+          wrangler containers push sandbox-musl:main &
           PID4=$!
 
           wait $PID1 $PID2 $PID3 $PID4
@@ -341,13 +342,32 @@ jobs:
           build-args: |
             SANDBOX_VERSION=${{ needs.unit-tests.outputs.version }}
 
-      - name: Extract standalone binaries from Docker image
+      - name: Build and push Docker image (musl)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: packages/sandbox/Dockerfile
+          target: musl
+          platforms: linux/amd64
+          push: true
+          tags: cloudflare/sandbox:${{ needs.unit-tests.outputs.version }}-musl
+          cache-from: type=gha,scope=release-musl
+          cache-to: type=gha,mode=max,scope=release-musl
+          build-args: |
+            SANDBOX_VERSION=${{ needs.unit-tests.outputs.version }}
+
+      - name: Extract standalone binaries from Docker images
         run: |
           VERSION=${{ needs.unit-tests.outputs.version }}
+
           CONTAINER_ID=$(docker create --platform linux/amd64 cloudflare/sandbox:$VERSION)
           docker cp $CONTAINER_ID:/container-server/sandbox ./sandbox-linux-x64
-          docker cp $CONTAINER_ID:/container-server/sandbox-musl ./sandbox-linux-x64-musl
           docker rm $CONTAINER_ID
+
+          MUSL_CONTAINER_ID=$(docker create --platform linux/amd64 cloudflare/sandbox:$VERSION-musl)
+          docker cp $MUSL_CONTAINER_ID:/container-server/sandbox ./sandbox-linux-x64-musl
+          docker rm $MUSL_CONTAINER_ID
+
           file ./sandbox-linux-x64 ./sandbox-linux-x64-musl
           ls -la ./sandbox-linux-x64 ./sandbox-linux-x64-musl
 
