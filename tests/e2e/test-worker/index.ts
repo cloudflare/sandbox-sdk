@@ -9,9 +9,9 @@
  * - SandboxPython: Full image with Python (for code interpreter tests)
  * - SandboxOpencode: Image with OpenCode CLI (for OpenCode integration tests)
  * - SandboxStandalone: Standalone binary on arbitrary base image (for binary pattern tests)
- * - SandboxStandaloneAlpine: Standalone musl binary on Alpine base image (for musl binary tests)
+ * - SandboxMusl: Musl-based Alpine image variant (for musl binary tests)
  *
- * Use X-Sandbox-Type header to select: 'python', 'opencode', 'standalone', 'standalone-alpine', or default
+ * Use X-Sandbox-Type header to select: 'python', 'opencode', 'standalone', 'musl', or default
  */
 
 import { getSandbox, proxyToSandbox, Sandbox } from '@cloudflare/sandbox';
@@ -36,14 +36,14 @@ export { Sandbox };
 export { Sandbox as SandboxPython };
 export { Sandbox as SandboxOpencode };
 export { Sandbox as SandboxStandalone };
-export { Sandbox as SandboxStandaloneAlpine };
+export { Sandbox as SandboxMusl };
 
 interface Env {
   Sandbox: DurableObjectNamespace<Sandbox>;
   SandboxPython: DurableObjectNamespace<Sandbox>;
   SandboxOpencode: DurableObjectNamespace<Sandbox>;
   SandboxStandalone: DurableObjectNamespace<Sandbox>;
-  SandboxStandaloneAlpine: DurableObjectNamespace<Sandbox>;
+  SandboxMusl: DurableObjectNamespace<Sandbox>;
   TEST_BUCKET: R2Bucket;
   // R2 credentials for bucket mounting tests
   CLOUDFLARE_ACCOUNT_ID?: string;
@@ -88,8 +88,8 @@ export default {
       sandboxNamespace = env.SandboxOpencode;
     } else if (sandboxType === 'standalone') {
       sandboxNamespace = env.SandboxStandalone;
-    } else if (sandboxType === 'standalone-alpine') {
-      sandboxNamespace = env.SandboxStandaloneAlpine;
+    } else if (sandboxType === 'musl') {
+      sandboxNamespace = env.SandboxMusl;
     } else {
       sandboxNamespace = env.Sandbox;
     }

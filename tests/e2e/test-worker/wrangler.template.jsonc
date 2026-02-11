@@ -36,9 +36,9 @@
       "name": "{{CONTAINER_NAME}}-standalone"
     },
     {
-      "class_name": "SandboxStandaloneAlpine",
-      "image": "{{IMAGE_STANDALONE_ALPINE}}",
-      "name": "{{CONTAINER_NAME}}-standalone-alpine"
+      "class_name": "SandboxMusl",
+      "image": "{{IMAGE_MUSL}}",
+      "name": "{{CONTAINER_NAME}}-musl"
     }
   ],
 
@@ -61,8 +61,8 @@
         "name": "SandboxStandalone"
       },
       {
-        "class_name": "SandboxStandaloneAlpine",
-        "name": "SandboxStandaloneAlpine"
+        "class_name": "SandboxMusl",
+        "name": "SandboxMusl"
       }
     ]
   },
@@ -81,7 +81,7 @@
       "tag": "v4"
     },
     {
-      "new_sqlite_classes": ["SandboxStandaloneAlpine"],
+      "new_sqlite_classes": ["SandboxMusl"],
       "tag": "v5"
     }
   ],
