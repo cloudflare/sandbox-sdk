@@ -25,7 +25,7 @@ function buildOpencodeCommand(port: number, directory?: string): string {
 
 type OpencodeClientFactory = (options: {
   baseUrl: string;
-  fetch: (request: Request) => Promise<Response>;
+  fetch: typeof fetch;
   directory?: string;
 }) => OpencodeClient;
 
@@ -375,7 +375,8 @@ export async function createOpencode<TClient = OpencodeClient>(
 
   const client = clientFactory({
     baseUrl: server.url,
-    fetch: (request: Request) => sandbox.containerFetch(request, server.port)
+    fetch: (input, init?) =>
+      sandbox.containerFetch(new Request(input, init), server.port)
   });
 
   return { client: client as TClient, server };
