@@ -1,5 +1,5 @@
 ---
-'@cloudflare/sandbox': minor
+'@cloudflare/sandbox': patch
 ---
 
 Add Alpine-based musl image variant published as `cloudflare/sandbox:VERSION-musl`.
