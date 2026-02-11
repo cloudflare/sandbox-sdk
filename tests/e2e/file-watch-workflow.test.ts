@@ -452,9 +452,11 @@ describe('File Watch Workflow', () => {
     await createDir(`${testDir}/.git`);
 
     // Start watch and create files after watch is confirmed ready
+    // Use a short timeout: excluded dirs mean fewer events arrive, so we
+    // only need to wait long enough for the non-excluded file events.
     const { events } = await watchWithActions(
       testDir,
-      { timeoutMs: 12000, stopAfterEvents: 10 },
+      { timeoutMs: 5000, stopAfterEvents: 5 },
       async () => {
         // Small delay to ensure watch is fully ready
         await new Promise((r) => setTimeout(r, 500));
