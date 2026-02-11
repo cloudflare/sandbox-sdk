@@ -1,10 +1,14 @@
 FROM docker.io/cloudflare/sandbox:0.7.2
 
-# Add opencode install location to PATH before installation
-ENV PATH="/root/.opencode/bin:${PATH}"
+# Set HOME to /home/user so OpenCode finds projects there (default /root is empty)
+ENV HOME=/home/user
 
-# Install OpenCode CLI
-RUN curl -fsSL https://opencode.ai/install -o /tmp/install-opencode.sh \
+# Add opencode install location to PATH before installation
+ENV PATH="${HOME}/.opencode/bin:${PATH}"
+
+# Install OpenCode CLI (create HOME dir first since it doesn't exist yet)
+RUN mkdir -p ${HOME} \
+    && curl -fsSL https://opencode.ai/install -o /tmp/install-opencode.sh \
     && bash /tmp/install-opencode.sh \
     && rm /tmp/install-opencode.sh \
     && opencode --version
