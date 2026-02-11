@@ -1,11 +1,19 @@
 ---
-'@cloudflare/sandbox': patch
+'@cloudflare/sandbox': minor
 ---
 
-Publish a musl-compatible standalone binary (`sandbox-musl`) in the Docker image alongside the existing glibc binary. This lets you use Alpine and other musl-based Docker images with the standalone binary pattern — no glibc compatibility layer needed.
+Add Alpine-based musl image variant published as `cloudflare/sandbox:VERSION-musl`.
 
-Copy from any `cloudflare/sandbox` image:
+A lightweight (51 MB) functional sandbox for Alpine and musl-based containers. Supports all core SDK methods (`exec`, file operations, git, port exposure, bucket mounting). Does not include Python or Node.js runtimes — add them with `apk add` to enable `runCode()`.
+
+As a base image:
 
 ```dockerfile
-COPY --from=docker.io/cloudflare/sandbox:VERSION /container-server/sandbox-musl /sandbox
+FROM docker.io/cloudflare/sandbox:0.7.1-musl
+```
+
+Or copy the binary into your own Alpine image:
+
+```dockerfile
+COPY --from=docker.io/cloudflare/sandbox:0.7.1-musl /container-server/sandbox /sandbox
 ```
