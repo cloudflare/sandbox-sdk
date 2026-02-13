@@ -689,7 +689,19 @@ export class Session {
             }
           };
 
-          const terminateTree = (targetPid: number, signal: NodeJS.Signals) => {
+          const killProcessTree = (
+            targetPid: number,
+            signal: NodeJS.Signals
+          ) => {
+            // Use process-group kill first to avoid TOCTOU races in child enumeration.
+            try {
+              process.kill(-targetPid, signal);
+              return;
+            } catch {
+              // If the process is not in its own process group, fall back to best-effort
+              // tree traversal. This may miss descendants that spawn between reads.
+            }
+
             const killChildrenFirst = (childPid: number): void => {
               for (const grandchildPid of this.getProcessChildren(childPid)) {
                 killChildrenFirst(grandchildPid);
@@ -697,7 +709,7 @@ export class Session {
               try {
                 process.kill(childPid, signal);
               } catch {
-                // Process already exited, ignore
+                // Process already exited
               }
             };
 
@@ -712,28 +724,14 @@ export class Session {
             }
           };
 
-          terminateTree(pid, 'SIGTERM');
+          killProcessTree(pid, 'SIGTERM');
 
           let exitConfirmed = false;
           if (waitForExit) {
             exitConfirmed = await waitForExitResult();
             if (!exitConfirmed) {
-              terminateTree(pid, 'SIGKILL');
+              killProcessTree(pid, 'SIGKILL');
               exitConfirmed = await waitForExitResult();
-            }
-
-            const pidsAlive = this.getProcessTreePids(pid);
-            if (pidsAlive.length > 0) {
-              this.logger.warn(
-                'killCommand did not fully terminate process tree',
-                {
-                  commandId,
-                  pid,
-                  remainingPids: pidsAlive
-                }
-              );
-
-              return false;
             }
           }
 
@@ -783,51 +781,6 @@ export class Session {
         .filter((value) => !Number.isNaN(value));
     } catch {
       return [];
-    }
-  }
-
-  /**
-   * Return the full process-tree PIDs rooted at the target.
-   *
-   * @param pid - Process ID of root node
-   * @param visited - Internal recursion guard
-   * @returns Array of pids still known to exist
-   */
-  private getProcessTreePids(
-    pid: number,
-    visited: Set<number> = new Set()
-  ): number[] {
-    if (visited.has(pid)) {
-      return [];
-    }
-    visited.add(pid);
-
-    const children = this.getProcessChildren(pid);
-    if (children.length === 0 && !this.processExists(pid)) {
-      return [];
-    }
-
-    const descendants = children.flatMap((child) =>
-      this.getProcessTreePids(child, visited)
-    );
-
-    return [pid, ...descendants].filter((childPid) =>
-      this.processExists(childPid)
-    );
-  }
-
-  /**
-   * Check if a process exists in the current OS process table.
-   *
-   * @param pid - Process ID
-   * @returns true if still alive
-   */
-  private processExists(pid: number): boolean {
-    try {
-      process.kill(pid, 0);
-      return true;
-    } catch {
-      return false;
     }
   }
 
@@ -1015,6 +968,9 @@ export class Session {
     if (isBackground) {
       // BACKGROUND PATTERN (for execStream/startProcess)
       // Command runs in subshell, shell continues immediately
+      // Enable job control so background commands run in a dedicated process group.
+      // This lets killCommand terminate the command subtree with process-group signals.
+      script += `  set -m\n`;
 
       // Create FIFOs and start labelers (background mode)
       // Labeler pattern explanation:
