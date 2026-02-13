@@ -1,6 +1,6 @@
 {
   "name": "@cloudflare/sandbox",
-  "version": "0.7.2",
+  "version": "0.7.3",
   "repository": {
     "type": "git",
     "url": "https://github.com/cloudflare/sandbox-sdk"
@@ -12,13 +12,13 @@
   },
   "devDependencies": {
     "@openai/agents": "^0.3.3",
-    "@opencode-ai/sdk": "^1.0.137",
+    "@opencode-ai/sdk": "^1.1.40",
     "@repo/shared": "*",
     "@xterm/xterm": "^6.0.0"
   },
   "peerDependencies": {
     "@openai/agents": "^0.3.3",
-    "@opencode-ai/sdk": "^1.0.137",
+    "@opencode-ai/sdk": "^1.1.40",
     "@xterm/xterm": ">=5.0.0"
   },
   "peerDependenciesMeta": {

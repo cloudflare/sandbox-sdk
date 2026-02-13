@@ -169,4 +169,48 @@ describe('getSandbox', () => {
       'myproject-abc123'
     );
   });
+
+  describe('proxy method routing', () => {
+    it('should preserve this binding for fetch()', async () => {
+      // fetch() is a native DurableObjectStub method that requires correct
+      // this binding. Without explicit handling in enhancedMethods, the
+      // Proxy's get trap returns an unbound function reference.
+      const expectedResponse = new Response('ok');
+      mockStub.fetch = function (this: any, _req: Request) {
+        if (this !== mockStub) {
+          throw new Error(
+            'this binding lost — fetch called with wrong receiver'
+          );
+        }
+        return Promise.resolve(expectedResponse);
+      };
+
+      const mockNamespace = {} as any;
+      const sandbox = getSandbox(mockNamespace, 'test-sandbox');
+
+      const response = await sandbox.fetch(new Request('http://localhost/'));
+      expect(response).toBe(expectedResponse);
+    });
+
+    it('should pass through non-enhanced methods to the stub', () => {
+      // RPC methods like exec, writeFile, etc. are accessed via target[prop]
+      // and dispatched through JSRPC which doesn't need this binding.
+      mockStub.validatePortToken = vi.fn().mockResolvedValue(true);
+
+      const mockNamespace = {} as any;
+      const sandbox = getSandbox(mockNamespace, 'test-sandbox');
+
+      sandbox.validatePortToken(8080, 'token123');
+      expect(mockStub.validatePortToken).toHaveBeenCalledWith(8080, 'token123');
+    });
+
+    it('should read properties directly from the stub', () => {
+      mockStub.sleepAfter = '30m';
+
+      const mockNamespace = {} as any;
+      const sandbox = getSandbox(mockNamespace, 'test-sandbox');
+
+      expect(sandbox.sleepAfter).toBe('30m');
+    });
+  });
 });

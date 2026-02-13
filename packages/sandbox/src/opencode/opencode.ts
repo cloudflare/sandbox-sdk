@@ -1,4 +1,5 @@
-import type { Config } from '@opencode-ai/sdk';
+import type { Config } from '@opencode-ai/sdk/v2';
+import type { OpencodeClient } from '@opencode-ai/sdk/v2/client';
 import { createLogger, type Logger, type Process } from '@repo/shared';
 import type { Sandbox } from '../sandbox';
 import type { OpencodeOptions, OpencodeResult, OpencodeServer } from './types';
@@ -22,16 +23,21 @@ function buildOpencodeCommand(port: number, directory?: string): string {
   return directory ? `cd ${directory} && ${serve}` : serve;
 }
 
+type OpencodeClientFactory = (options: {
+  baseUrl: string;
+  fetch: typeof fetch;
+  directory?: string;
+}) => OpencodeClient;
+
 // Dynamic import to handle peer dependency
-// Using unknown since SDK is optional peer dep - cast at usage site
-let createOpencodeClient: unknown;
+let createOpencodeClient: OpencodeClientFactory | undefined;
 
 async function ensureSdkLoaded(): Promise<void> {
   if (createOpencodeClient) return;
 
   try {
-    const sdk = await import('@opencode-ai/sdk');
-    createOpencodeClient = sdk.createOpencodeClient;
+    const sdk = await import('@opencode-ai/sdk/v2/client');
+    createOpencodeClient = sdk.createOpencodeClient as OpencodeClientFactory;
   } catch {
     throw new Error(
       '@opencode-ai/sdk is required for OpenCode integration. ' +
@@ -354,7 +360,7 @@ export async function createOpencodeServer(
  * await server.close()
  * ```
  */
-export async function createOpencode<TClient = unknown>(
+export async function createOpencode<TClient = OpencodeClient>(
   sandbox: Sandbox<unknown>,
   options?: OpencodeOptions
 ): Promise<OpencodeResult<TClient>> {
@@ -362,19 +368,18 @@ export async function createOpencode<TClient = unknown>(
 
   const server = await createOpencodeServer(sandbox, options);
 
-  // Create SDK client with Sandbox transport
-  // Cast from unknown - SDK is optional peer dependency loaded dynamically
-  const clientFactory = createOpencodeClient as (options: {
-    baseUrl: string;
-    fetch: (request: Request) => Promise<Response>;
-  }) => TClient;
+  const clientFactory = createOpencodeClient;
+  if (!clientFactory) {
+    throw new Error('OpenCode SDK client unavailable.');
+  }
 
   const client = clientFactory({
     baseUrl: server.url,
-    fetch: (request: Request) => sandbox.containerFetch(request, server.port)
+    fetch: (input, init?) =>
+      sandbox.containerFetch(new Request(input, init), server.port)
   });
 
-  return { client, server };
+  return { client: client as TClient, server };
 }
 
 /**
