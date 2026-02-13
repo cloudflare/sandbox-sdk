@@ -657,12 +657,9 @@ export class Session {
    *
    * @param commandId - The unique command identifier
    * @param waitForExit - If true, wait for process exit and verify termination before returning.
-    * @returns true if command was killed, false if not found or already completed
+   * @returns true if command was killed, false if not found or already completed
    */
-  async killCommand(
-    commandId: string,
-    waitForExit = true
-  ): Promise<boolean> {
+  async killCommand(commandId: string, waitForExit = true): Promise<boolean> {
     const handle = this.runningCommands.get(commandId);
     if (!handle) {
       return false; // Command not found or already completed
@@ -683,10 +680,7 @@ export class Session {
               await Promise.race([
                 this.waitForExitCode(handle.exitCodeFile),
                 new Promise((_, reject) =>
-                  setTimeout(
-                    () => reject(new Error('kill timeout')),
-                    5000
-                  )
+                  setTimeout(() => reject(new Error('kill timeout')), 5000)
                 )
               ]);
               return true;
@@ -727,20 +721,20 @@ export class Session {
               terminateTree(pid, 'SIGKILL');
               exitConfirmed = await waitForExitResult();
             }
-          }
 
-          const pidsAlive = this.getProcessTreePids(pid);
-          if (pidsAlive.length > 0) {
-            this.logger.warn(
-              'killCommand did not fully terminate process tree',
-              {
-                commandId,
-                pid,
-                remainingPids: pidsAlive
-              }
-            );
+            const pidsAlive = this.getProcessTreePids(pid);
+            if (pidsAlive.length > 0) {
+              this.logger.warn(
+                'killCommand did not fully terminate process tree',
+                {
+                  commandId,
+                  pid,
+                  remainingPids: pidsAlive
+                }
+              );
 
-            return false;
+              return false;
+            }
           }
 
           if (waitForExit && !exitConfirmed) {

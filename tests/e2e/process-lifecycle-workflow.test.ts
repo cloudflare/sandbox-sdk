@@ -87,12 +87,17 @@ describe('Process Lifecycle Error Handling', () => {
 
   async function isProcessAlive(
     pid: number,
-    expectedCommand: string
+    expectedCommand?: string
   ): Promise<boolean> {
-    const output = await readExecStdout(
-      `ps -p ${pid} -o cmd= | grep -F '${expectedCommand}' && echo alive`
-    );
-    return output === 'alive';
+    if (expectedCommand) {
+      const output = await readExecStdout(
+        `ps -p ${pid} -o cmd= | grep -F '${expectedCommand}' && echo alive`
+      );
+      return output === 'alive';
+    }
+
+    const output = await readExecStdout(`ps -p ${pid} -o pid=`);
+    return output.includes(String(pid));
   }
 
   test('should return error when killing nonexistent process', async () => {
@@ -150,8 +155,9 @@ describe('Process Lifecycle Error Handling', () => {
     const scriptPath = `/workspace/${token}.sh`;
     const pidFilePath = `/workspace/${token}.pid`;
     const scriptCode = `#!/usr/bin/env bash
-echo "$$" > '${pidFilePath}'
-sleep 120`;
+sleep 120 &
+echo "$!" > '${pidFilePath}'
+wait`;
     let processId: string | null = null;
     let childPid: number | null = null;
 
@@ -179,16 +185,19 @@ sleep 120`;
 
       childPid = await waitForChildPid(pidFilePath);
 
-      const killResponse = await fetch(`${workerUrl}/api/process/${processId}`, {
-        method: 'DELETE',
-        headers
-      });
+      const killResponse = await fetch(
+        `${workerUrl}/api/process/${processId}`,
+        {
+          method: 'DELETE',
+          headers
+        }
+      );
       expect(killResponse.status).toBe(200);
 
       await waitForProcessExit(processId);
 
       for (let i = 0; i < 20; i++) {
-        if (childPid && !(await isProcessAlive(childPid, scriptPath))) {
+        if (childPid && !(await isProcessAlive(childPid))) {
           break;
         }
         await new Promise((resolve) => setTimeout(resolve, 250));
@@ -213,7 +222,7 @@ sleep 120`;
     }
 
     if (childPid) {
-      expect(await isProcessAlive(childPid, scriptPath)).toBe(false);
+      expect(await isProcessAlive(childPid)).toBe(false);
     }
   }, 90000);
 
