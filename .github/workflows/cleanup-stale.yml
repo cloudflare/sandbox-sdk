@@ -38,7 +38,9 @@ jobs:
           # List all containers and extract unique worker names for PR test workers
           CONTAINERS=$(npx wrangler containers list 2>/dev/null || echo "")
 
-          echo "$CONTAINERS" | grep -E 'sandbox-e2e-test-worker-pr-[0-9]+(-http|-websocket)?' | sed 's/.*"name": "\([^"]*\)".*/\1/' | sed 's/-python$//' | sed 's/-opencode$//' | sed 's/-standalone$//' | sort -u | while read -r WORKER_NAME; do
+          # Validate JSON and extract unique base worker names using jq
+          # Strip variant suffixes (-python, -opencode, -standalone, -musl) to get the base worker name
+          echo "$CONTAINERS" | jq -r '.[].name' 2>/dev/null | grep -E '^sandbox-e2e-test-worker-pr-[0-9]+-(http|websocket)' | sed 's/-python$//' | sed 's/-opencode$//' | sed 's/-standalone$//' | sed 's/-musl$//' | sort -u | while read -r WORKER_NAME; do
             if [ -z "$WORKER_NAME" ]; then
               continue
             fi
@@ -86,6 +88,36 @@ jobs:
             fi
           done
 
+          # Also check for stale main-branch worker containers
+          MAIN_WORKER="sandbox-e2e-test-worker-main"
+          MAIN_EXISTS=$(echo "$CONTAINERS" | jq -r ".[].name" 2>/dev/null | grep -c "^${MAIN_WORKER}" || true)
+
+          if [ "$MAIN_EXISTS" -gt 0 ]; then
+            echo ""
+            echo "Checking main-branch worker: $MAIN_WORKER"
+
+            # Check when last main branch workflow ran
+            LAST_MAIN_RUN=$(gh run list --workflow=release.yml --branch=main --limit=1 --json updatedAt -q '.[0].updatedAt' 2>/dev/null || echo "")
+
+            if [ -n "$LAST_MAIN_RUN" ]; then
+              MAIN_UPDATED_SECONDS=$(date -d "$LAST_MAIN_RUN" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%SZ" "$LAST_MAIN_RUN" +%s 2>/dev/null)
+              TIME_SINCE_MAIN=$((CURRENT_TIME - MAIN_UPDATED_SECONDS))
+              HOURS_SINCE_MAIN=$((TIME_SINCE_MAIN / 3600))
+              echo "  Last release workflow: $HOURS_SINCE_MAIN hours ago"
+
+              if [ "$TIME_SINCE_MAIN" -gt "$STALE_THRESHOLD" ]; then
+                echo "  ✓ Main worker is stale (>24h) - will clean up"
+                echo "  Calling cleanup script for: $MAIN_WORKER"
+                ../../../scripts/cleanup-test-deployment.sh "$MAIN_WORKER" 2>&1 | sed 's/^/  /'
+              else
+                echo "  ✗ Main worker is recent - skipping"
+              fi
+            else
+              echo "  ⚠️  Could not determine last main run - cleaning up to be safe"
+              ../../../scripts/cleanup-test-deployment.sh "$MAIN_WORKER" 2>&1 | sed 's/^/  /'
+            fi
+          fi
+
           echo ""
           echo "=== Stale worker cleanup complete ==="
         working-directory: tests/e2e/test-worker
@@ -118,7 +150,7 @@ jobs:
             if [ "$PR_STATE" = "CLOSED" ] || [ "$PR_STATE" = "MERGED" ] || [ "$PR_STATE" = "NOT_FOUND" ]; then
               echo "  PR is $PR_STATE - cleaning up images..."
 
-              for image in sandbox sandbox-python sandbox-opencode sandbox-standalone; do
+              for image in sandbox sandbox-python sandbox-opencode sandbox-standalone sandbox-musl; do
                 echo "  Deleting $image:pr-$PR_NUMBER..."
                 npx wrangler containers images delete "$image:pr-$PR_NUMBER" 2>/dev/null || true
               done

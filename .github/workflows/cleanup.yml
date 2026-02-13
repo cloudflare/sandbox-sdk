@@ -35,7 +35,7 @@ jobs:
         run: |
           cd tests/e2e/test-worker
           # Clean up both transport variants
-          for suffix in "" "-http" "-websocket"; do
+          for suffix in "-http" "-websocket"; do
             WORKER="${{ steps.worker-name.outputs.worker_prefix }}${suffix}"
             echo "Cleaning up: $WORKER"
             ../../../scripts/cleanup-test-deployment.sh "$WORKER" || true
@@ -50,7 +50,7 @@ jobs:
           PR=${{ github.event.pull_request.number }}
           echo "Deleting PR images from Cloudflare registry..."
 
-          for image in sandbox sandbox-python sandbox-opencode sandbox-standalone; do
+          for image in sandbox sandbox-python sandbox-opencode sandbox-standalone sandbox-musl; do
             echo "Deleting $image:pr-$PR..."
             npx wrangler containers images delete "$image:pr-$PR" || true
           done

@@ -12,6 +12,7 @@ set -e
 # - <worker-name>-python: Python image container
 # - <worker-name>-opencode: OpenCode image container
 # - <worker-name>-standalone: Standalone binary on arbitrary base image
+# - <worker-name>-musl: Alpine/musl-based image container
 #
 # Environment variables required:
 # - CLOUDFLARE_API_TOKEN
@@ -30,16 +31,17 @@ echo "=== Starting cleanup for $WORKER_NAME ==="
 # Step 1: Get container IDs BEFORE deleting worker (critical order!)
 echo "Looking up container IDs..."
 
-# Get container list (wrangler outputs JSON by default, no --json flag needed)
-RAW_OUTPUT=$(npx wrangler containers list 2>&1)
+# Get container list as clean JSON (stderr has wrangler beta warnings that break jq)
+RAW_OUTPUT=$(npx wrangler containers list 2>/dev/null)
 
 CONTAINER_ID=""
 CONTAINER_PYTHON_ID=""
 CONTAINER_OPENCODE_ID=""
 CONTAINER_STANDALONE_ID=""
+CONTAINER_MUSL_ID=""
 
-# Check if output looks like JSON (starts with '[')
-if echo "$RAW_OUTPUT" | grep -q '^\['; then
+# Check if output is valid JSON
+if echo "$RAW_OUTPUT" | jq empty 2>/dev/null; then
   echo "✓ Got JSON output from wrangler containers list"
 
   # Parse JSON to find all containers
@@ -47,6 +49,7 @@ if echo "$RAW_OUTPUT" | grep -q '^\['; then
   CONTAINER_PYTHON_ID=$(echo "$RAW_OUTPUT" | jq -r ".[] | select(.name==\"$WORKER_NAME-python\") | .id" 2>/dev/null || echo "")
   CONTAINER_OPENCODE_ID=$(echo "$RAW_OUTPUT" | jq -r ".[] | select(.name==\"$WORKER_NAME-opencode\") | .id" 2>/dev/null || echo "")
   CONTAINER_STANDALONE_ID=$(echo "$RAW_OUTPUT" | jq -r ".[] | select(.name==\"$WORKER_NAME-standalone\") | .id" 2>/dev/null || echo "")
+  CONTAINER_MUSL_ID=$(echo "$RAW_OUTPUT" | jq -r ".[] | select(.name==\"$WORKER_NAME-musl\") | .id" 2>/dev/null || echo "")
 
   if [ -n "$CONTAINER_ID" ]; then
     echo "✓ Found base container: $CONTAINER_ID"
@@ -72,7 +75,13 @@ if echo "$RAW_OUTPUT" | grep -q '^\['; then
     echo "⚠️  No standalone container found for $WORKER_NAME-standalone"
   fi
 
-  if [ -z "$CONTAINER_ID" ] && [ -z "$CONTAINER_PYTHON_ID" ] && [ -z "$CONTAINER_OPENCODE_ID" ] && [ -z "$CONTAINER_STANDALONE_ID" ]; then
+  if [ -n "$CONTAINER_MUSL_ID" ]; then
+    echo "✓ Found musl container: $CONTAINER_MUSL_ID"
+  else
+    echo "⚠️  No musl container found for $WORKER_NAME-musl"
+  fi
+
+  if [ -z "$CONTAINER_ID" ] && [ -z "$CONTAINER_PYTHON_ID" ] && [ -z "$CONTAINER_OPENCODE_ID" ] && [ -z "$CONTAINER_STANDALONE_ID" ] && [ -z "$CONTAINER_MUSL_ID" ]; then
     echo "Available containers:"
     echo "$RAW_OUTPUT" | jq -r '.[].name' 2>/dev/null || echo "(unable to parse container names)"
   fi
@@ -122,6 +131,7 @@ delete_container "$CONTAINER_ID" "base" || CLEANUP_FAILED=true
 delete_container "$CONTAINER_PYTHON_ID" "python" || CLEANUP_FAILED=true
 delete_container "$CONTAINER_OPENCODE_ID" "opencode" || CLEANUP_FAILED=true
 delete_container "$CONTAINER_STANDALONE_ID" "standalone" || CLEANUP_FAILED=true
+delete_container "$CONTAINER_MUSL_ID" "musl" || CLEANUP_FAILED=true
 
 if [ "$CLEANUP_FAILED" = true ]; then
   echo "=== Cleanup completed with errors ==="
