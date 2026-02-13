@@ -14,6 +14,7 @@ declare namespace Cloudflare {
 		CLOUDFLARE_ACCOUNT_ID: string;
 		ANTHROPIC_API_KEY: string;
 		Sandbox: DurableObjectNamespace<import("./src/index").Sandbox>;
+		SESSIONS_BUCKET: R2Bucket;
 	}
 }
 interface Env extends Cloudflare.Env {}
