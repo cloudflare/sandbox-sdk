@@ -27,7 +27,6 @@ const getConfig = (env: Env): Config => ({
 
     // Option B: Cloudflare AI Gateway with unified billing (no provider API keys needed).
     // Models must be declared explicitly under 'models' using the provider/model format.
-    // Use 'cloudflareAIGateway' (camelCase) — the SDK remaps it to 'cloudflare-ai-gateway'
     // for the OpenCode CLI automatically.
     // 'cloudflare-ai-gateway': {
     //   options: {

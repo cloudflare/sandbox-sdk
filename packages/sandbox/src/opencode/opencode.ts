@@ -277,8 +277,7 @@ async function startOpencodeServer(
  *         options: { apiKey: env.ANTHROPIC_KEY }
  *       },
  *       // Or use Cloudflare AI Gateway (with unified billing, no provider keys needed).
- *       // The SDK remaps 'cloudflareAIGateway' to 'cloudflare-ai-gateway' automatically.
- *       // cloudflareAIGateway: {
+ *       // 'cloudflare-ai-gateway': {
  *       //   options: {
  *       //     accountId: env.CF_ACCOUNT_ID,
  *       //     gatewayId: env.CF_GATEWAY_ID,
@@ -344,8 +343,7 @@ export async function createOpencodeServer(
  *         options: { apiKey: env.ANTHROPIC_KEY }
  *       },
  *       // Or use Cloudflare AI Gateway (with unified billing, no provider keys needed).
- *       // The SDK remaps 'cloudflareAIGateway' to 'cloudflare-ai-gateway' automatically.
- *       // cloudflareAIGateway: {
+ *       // 'cloudflare-ai-gateway': {
  *       //   options: {
  *       //     accountId: env.CF_ACCOUNT_ID,
  *       //     gatewayId: env.CF_GATEWAY_ID,
@@ -418,7 +416,7 @@ export async function createOpencode<TClient = OpencodeClient>(
  *             options: { apiKey: env.ANTHROPIC_KEY }
  *           },
  *           // Optional: Route all providers through Cloudflare AI Gateway
- *           cloudflareAIGateway: {
+ *           'cloudflare-ai-gateway': {
  *             options: {
  *               accountId: env.CF_ACCOUNT_ID,
  *               gatewayId: env.CF_GATEWAY_ID,

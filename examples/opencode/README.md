@@ -59,7 +59,7 @@ Configure the provider in `src/index.ts`. Models must be declared explicitly usi
 ```typescript
 const getConfig = (env: Env): Config => ({
   provider: {
-    cloudflareAIGateway: {
+    'cloudflare-ai-gateway': {
       options: {
         accountId: env.CLOUDFLARE_ACCOUNT_ID,
         gatewayId: env.CLOUDFLARE_GATEWAY_ID,
