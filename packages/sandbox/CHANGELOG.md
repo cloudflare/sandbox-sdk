@@ -1,5 +1,13 @@
 # @cloudflare/sandbox
 
+## 0.7.3
+
+### Patch Changes
+
+- [#366](https://github.com/cloudflare/sandbox-sdk/pull/366) [`fa1713e`](https://github.com/cloudflare/sandbox-sdk/commit/fa1713e3dd162605405c0b3471e5e84c6ac56afe) Thanks [@kevoconnell](https://github.com/kevoconnell)! - Update the OpenCode integration to use the latest @opencode-ai/sdk (v2) client API. Install @opencode-ai/sdk@^1.1.40 to use OpenCode features.
+
+- [#390](https://github.com/cloudflare/sandbox-sdk/pull/390) [`1817eaf`](https://github.com/cloudflare/sandbox-sdk/commit/1817eaf08bc8a9331f7d6ea93fa681b8b5b2e868) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Fix `fetch()` losing its `this` binding when called on the proxy returned by `getSandbox()`. This caused preview URL WebSocket routing to fail at runtime.
+
 ## 0.7.2
 
 ### Patch Changes
@@ -11,13 +19,13 @@
   As a base image:
 
   ```dockerfile
-  FROM docker.io/cloudflare/sandbox:0.7.2-musl
+  FROM docker.io/cloudflare/sandbox:0.7.3-musl
   ```
 
   Or copy the binary into your own Alpine image:
 
   ```dockerfile
-  COPY --from=docker.io/cloudflare/sandbox:0.7.2-musl /container-server/sandbox /sandbox
+  COPY --from=docker.io/cloudflare/sandbox:0.7.3-musl /container-server/sandbox /sandbox
   ```
 
 - [#377](https://github.com/cloudflare/sandbox-sdk/pull/377) [`d83642e`](https://github.com/cloudflare/sandbox-sdk/commit/d83642e855f68e4fb8c15c2452709923e55a83fd) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Allow port 8787 in `exposePort()`. It was incorrectly blocked.
@@ -240,10 +248,10 @@
 
   ```dockerfile
   # Before
-  FROM cloudflare/sandbox:0.7.2
+  FROM cloudflare/sandbox:0.7.3
 
   # After
-  FROM cloudflare/sandbox:0.7.2-python
+  FROM cloudflare/sandbox:0.7.3-python
   ```
 
   Without this change, Python execution will fail with `PYTHON_NOT_AVAILABLE` error.
