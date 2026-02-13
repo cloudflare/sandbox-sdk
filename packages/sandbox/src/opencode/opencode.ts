@@ -154,6 +154,34 @@ async function ensureOpencodeServer(
 }
 
 /**
+ * The SDK accepts 'cloudflareAIGateway' (camelCase) as a convenience alias,
+ * but the OpenCode CLI recognizes 'cloudflare-ai-gateway' (hyphenated).
+ * Remap the provider key so the server picks it up correctly.
+ */
+function normalizeConfigForOpencode(config: Config): Config {
+  if (
+    !config.provider ||
+    typeof config.provider !== 'object' ||
+    Array.isArray(config.provider)
+  ) {
+    return config;
+  }
+
+  const { cloudflareAIGateway, ...rest } = config.provider;
+  if (!cloudflareAIGateway) {
+    return config;
+  }
+
+  return {
+    ...config,
+    provider: {
+      ...rest,
+      'cloudflare-ai-gateway': cloudflareAIGateway
+    }
+  };
+}
+
+/**
  * Internal function to start a new OpenCode server process.
  */
 async function startOpencodeServer(
@@ -169,7 +197,8 @@ async function startOpencodeServer(
   const env: Record<string, string> = {};
 
   if (config) {
-    env.OPENCODE_CONFIG_CONTENT = JSON.stringify(config);
+    const normalizedConfig = normalizeConfigForOpencode(config);
+    env.OPENCODE_CONFIG_CONTENT = JSON.stringify(normalizedConfig);
 
     // Extract API keys from provider config
     // Support both options.apiKey (official type) and legacy top-level apiKey
@@ -181,7 +210,10 @@ async function startOpencodeServer(
       for (const [providerId, providerConfig] of Object.entries(
         config.provider
       )) {
-        if (providerId === 'cloudflareAIGateway') {
+        if (
+          providerId === 'cloudflareAIGateway' ||
+          providerId === 'cloudflare-ai-gateway'
+        ) {
           continue;
         }
 
@@ -198,7 +230,9 @@ async function startOpencodeServer(
         }
       }
 
-      const aiGatewayConfig = config.provider.cloudflareAIGateway;
+      const aiGatewayConfig =
+        config.provider.cloudflareAIGateway ??
+        config.provider['cloudflare-ai-gateway'];
       if (aiGatewayConfig?.options) {
         const options = aiGatewayConfig.options as Record<string, unknown>;
 
@@ -276,14 +310,16 @@ async function startOpencodeServer(
  *       anthropic: {
  *         options: { apiKey: env.ANTHROPIC_KEY }
  *       },
- *       // Optional: Route all providers through Cloudflare AI Gateway
- *       cloudflareAIGateway: {
- *         options: {
- *           accountId: env.CF_ACCOUNT_ID,
- *           gatewayId: env.CF_GATEWAY_ID,
- *           apiToken: env.CF_API_TOKEN
- *         }
- *       }
+ *       // Or use Cloudflare AI Gateway (with unified billing, no provider keys needed).
+ *       // The SDK remaps 'cloudflareAIGateway' to 'cloudflare-ai-gateway' automatically.
+ *       // cloudflareAIGateway: {
+ *       //   options: {
+ *       //     accountId: env.CF_ACCOUNT_ID,
+ *       //     gatewayId: env.CF_GATEWAY_ID,
+ *       //     apiToken: env.CF_API_TOKEN
+ *       //   },
+ *       //   models: { 'anthropic/claude-sonnet-4-5-20250929': {} }
+ *       // }
  *     }
  *   }
  * })
@@ -341,14 +377,16 @@ export async function createOpencodeServer(
  *       anthropic: {
  *         options: { apiKey: env.ANTHROPIC_KEY }
  *       },
- *       // Optional: Route all providers through Cloudflare AI Gateway
- *       cloudflareAIGateway: {
- *         options: {
- *           accountId: env.CF_ACCOUNT_ID,
- *           gatewayId: env.CF_GATEWAY_ID,
- *           apiToken: env.CF_API_TOKEN
- *         }
- *       }
+ *       // Or use Cloudflare AI Gateway (with unified billing, no provider keys needed).
+ *       // The SDK remaps 'cloudflareAIGateway' to 'cloudflare-ai-gateway' automatically.
+ *       // cloudflareAIGateway: {
+ *       //   options: {
+ *       //     accountId: env.CF_ACCOUNT_ID,
+ *       //     gatewayId: env.CF_GATEWAY_ID,
+ *       //     apiToken: env.CF_API_TOKEN
+ *       //   },
+ *       //   models: { 'anthropic/claude-sonnet-4-5-20250929': {} }
+ *       // }
  *     }
  *   }
  * })
