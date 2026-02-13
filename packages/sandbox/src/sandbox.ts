@@ -109,6 +109,7 @@ export function getSandbox<T extends Sandbox<any>>(
   // IMPORTANT: Any method that returns ExecutionSession must be listed here
   // to ensure the returned session uses proxyTerminal instead of RPC's terminal.
   const enhancedMethods = {
+    fetch: (request: Request) => stub.fetch(request),
     createSession: async (opts?: SessionOptions): Promise<ExecutionSession> => {
       const rpcSession = await stub.createSession(opts);
       return enhanceSession(stub, rpcSession as ExecutionSession);
