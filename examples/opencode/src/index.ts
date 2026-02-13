@@ -18,11 +18,26 @@ export { Sandbox } from '@cloudflare/sandbox';
 
 const getConfig = (env: Env): Config => ({
   provider: {
+    // Option A: Direct Anthropic provider (requires ANTHROPIC_API_KEY)
     anthropic: {
       options: {
         apiKey: env.ANTHROPIC_API_KEY
       }
     }
+
+    // Option B: Cloudflare AI Gateway with unified billing (no provider API keys needed).
+    // Models must be declared explicitly under 'models' using the provider/model format.
+    // for the OpenCode CLI automatically.
+    // 'cloudflare-ai-gateway': {
+    //   options: {
+    //     accountId: env.CLOUDFLARE_ACCOUNT_ID,
+    //     gatewayId: env.CLOUDFLARE_GATEWAY_ID,
+    //     apiToken: env.CLOUDFLARE_API_TOKEN
+    //   },
+    //   models: {
+    //     'anthropic/claude-opus-4-6': {},
+    //   }
+    // }
   }
 });
 
@@ -53,11 +68,6 @@ async function handleSdkTest(
   env: Env
 ): Promise<Response> {
   try {
-    // Clone a repo to give the agent something to work with
-    await sandbox.gitCheckout('https://github.com/cloudflare/agents.git', {
-      targetDir: '/home/user/agents'
-    });
-
     // Get typed SDK client
     const { client } = await createOpencode<OpencodeClient>(sandbox, {
       directory: '/home/user/agents',
