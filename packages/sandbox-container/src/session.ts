@@ -91,7 +91,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { watch } from 'node:fs';
+import { readFileSync, watch } from 'node:fs';
 import { mkdir, open, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
@@ -656,9 +656,13 @@ export class Session {
    * so they cannot be killed mid-execution (use timeout instead).
    *
    * @param commandId - The unique command identifier
-   * @returns true if command was killed, false if not found or already completed
+   * @param waitForExit - If true, wait for process exit and verify termination before returning.
+    * @returns true if command was killed, false if not found or already completed
    */
-  async killCommand(commandId: string): Promise<boolean> {
+  async killCommand(
+    commandId: string,
+    waitForExit = true
+  ): Promise<boolean> {
     const handle = this.runningCommands.get(commandId);
     if (!handle) {
       return false; // Command not found or already completed
@@ -674,8 +678,74 @@ export class Session {
         const pid = parseInt(pidText.trim(), 10);
 
         if (!Number.isNaN(pid)) {
-          // Send SIGTERM for graceful termination
-          process.kill(pid, 'SIGTERM');
+          const waitForExitResult = async () => {
+            try {
+              await Promise.race([
+                this.waitForExitCode(handle.exitCodeFile),
+                new Promise((_, reject) =>
+                  setTimeout(
+                    () => reject(new Error('kill timeout')),
+                    5000
+                  )
+                )
+              ]);
+              return true;
+            } catch {
+              return false;
+            }
+          };
+
+          const terminateTree = (targetPid: number, signal: NodeJS.Signals) => {
+            const killChildrenFirst = (childPid: number): void => {
+              for (const grandchildPid of this.getProcessChildren(childPid)) {
+                killChildrenFirst(grandchildPid);
+              }
+              try {
+                process.kill(childPid, signal);
+              } catch {
+                // Process already exited, ignore
+              }
+            };
+
+            for (const childPid of this.getProcessChildren(targetPid)) {
+              killChildrenFirst(childPid);
+            }
+
+            try {
+              process.kill(targetPid, signal);
+            } catch {
+              // Process already exited
+            }
+          };
+
+          terminateTree(pid, 'SIGTERM');
+
+          let exitConfirmed = false;
+          if (waitForExit) {
+            exitConfirmed = await waitForExitResult();
+            if (!exitConfirmed) {
+              terminateTree(pid, 'SIGKILL');
+              exitConfirmed = await waitForExitResult();
+            }
+          }
+
+          const pidsAlive = this.getProcessTreePids(pid);
+          if (pidsAlive.length > 0) {
+            this.logger.warn(
+              'killCommand did not fully terminate process tree',
+              {
+                commandId,
+                pid,
+                remainingPids: pidsAlive
+              }
+            );
+
+            return false;
+          }
+
+          if (waitForExit && !exitConfirmed) {
+            return false;
+          }
 
           // Clean up
           this.runningCommands.delete(commandId);
@@ -701,6 +771,73 @@ export class Session {
   }
 
   /**
+   * Get direct child PIDs of a process from /proc.
+   *
+   * @param pid - Process ID
+   * @returns Array of child PIDs
+   */
+  private getProcessChildren(pid: number): number[] {
+    try {
+      const childrenFile = `/proc/${pid}/task/${pid}/children`;
+      const children = readFileSync(childrenFile, 'utf8')
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean);
+
+      return children
+        .map((child) => parseInt(child, 10))
+        .filter((value) => !Number.isNaN(value));
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Return the full process-tree PIDs rooted at the target.
+   *
+   * @param pid - Process ID of root node
+   * @param visited - Internal recursion guard
+   * @returns Array of pids still known to exist
+   */
+  private getProcessTreePids(
+    pid: number,
+    visited: Set<number> = new Set()
+  ): number[] {
+    if (visited.has(pid)) {
+      return [];
+    }
+    visited.add(pid);
+
+    const children = this.getProcessChildren(pid);
+    if (children.length === 0 && !this.processExists(pid)) {
+      return [];
+    }
+
+    const descendants = children.flatMap((child) =>
+      this.getProcessTreePids(child, visited)
+    );
+
+    return [pid, ...descendants].filter((childPid) =>
+      this.processExists(childPid)
+    );
+  }
+
+  /**
+   * Check if a process exists in the current OS process table.
+   *
+   * @param pid - Process ID
+   * @returns true if still alive
+   */
+  private processExists(pid: number): boolean {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * Destroy the session and clean up resources
    */
   async destroy(): Promise<void> {
@@ -715,7 +852,7 @@ export class Session {
     // Kill all running commands first
     const runningCommandIds = Array.from(this.runningCommands.keys());
     await Promise.all(
-      runningCommandIds.map((commandId) => this.killCommand(commandId))
+      runningCommandIds.map((commandId) => this.killCommand(commandId, false))
     );
 
     if (this.shell && !this.shell.killed) {
