@@ -1,5 +1,11 @@
 # @cloudflare/sandbox
 
+## 0.7.4
+
+### Patch Changes
+
+- [#393](https://github.com/cloudflare/sandbox-sdk/pull/393) [`76903ad`](https://github.com/cloudflare/sandbox-sdk/commit/76903ad968bc8fda5d319a56f9c900116c64234f) Thanks [@AshishKumar4](https://github.com/AshishKumar4)! - Fixes the bug where SDK's expected provider string 'cloudflareAIGateway' (camelCase) isn't recognised by opencode, and thus the opencode example fails to work with ai gateway.Also improved the example code with instructions for ai gateway via unified billing
+
 ## 0.7.3
 
 ### Patch Changes
@@ -19,13 +25,13 @@
   As a base image:
 
   ```dockerfile
-  FROM docker.io/cloudflare/sandbox:0.7.3-musl
+  FROM docker.io/cloudflare/sandbox:0.7.4-musl
   ```
 
   Or copy the binary into your own Alpine image:
 
   ```dockerfile
-  COPY --from=docker.io/cloudflare/sandbox:0.7.3-musl /container-server/sandbox /sandbox
+  COPY --from=docker.io/cloudflare/sandbox:0.7.4-musl /container-server/sandbox /sandbox
   ```
 
 - [#377](https://github.com/cloudflare/sandbox-sdk/pull/377) [`d83642e`](https://github.com/cloudflare/sandbox-sdk/commit/d83642e855f68e4fb8c15c2452709923e55a83fd) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Allow port 8787 in `exposePort()`. It was incorrectly blocked.
@@ -248,10 +254,10 @@
 
   ```dockerfile
   # Before
-  FROM cloudflare/sandbox:0.7.3
+  FROM cloudflare/sandbox:0.7.4
 
   # After
-  FROM cloudflare/sandbox:0.7.3-python
+  FROM cloudflare/sandbox:0.7.4-python
   ```
 
   Without this change, Python execution will fail with `PYTHON_NOT_AVAILABLE` error.
