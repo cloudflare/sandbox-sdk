@@ -154,34 +154,6 @@ async function ensureOpencodeServer(
 }
 
 /**
- * The SDK accepts 'cloudflareAIGateway' (camelCase) as a convenience alias,
- * but the OpenCode CLI recognizes 'cloudflare-ai-gateway' (hyphenated).
- * Remap the provider key so the server picks it up correctly.
- */
-function normalizeConfigForOpencode(config: Config): Config {
-  if (
-    !config.provider ||
-    typeof config.provider !== 'object' ||
-    Array.isArray(config.provider)
-  ) {
-    return config;
-  }
-
-  const { cloudflareAIGateway, ...rest } = config.provider;
-  if (!cloudflareAIGateway) {
-    return config;
-  }
-
-  return {
-    ...config,
-    provider: {
-      ...rest,
-      'cloudflare-ai-gateway': cloudflareAIGateway
-    }
-  };
-}
-
-/**
  * Internal function to start a new OpenCode server process.
  */
 async function startOpencodeServer(
@@ -197,8 +169,7 @@ async function startOpencodeServer(
   const env: Record<string, string> = {};
 
   if (config) {
-    const normalizedConfig = normalizeConfigForOpencode(config);
-    env.OPENCODE_CONFIG_CONTENT = JSON.stringify(normalizedConfig);
+    env.OPENCODE_CONFIG_CONTENT = JSON.stringify(config);
 
     // Extract API keys from provider config
     // Support both options.apiKey (official type) and legacy top-level apiKey
@@ -210,10 +181,7 @@ async function startOpencodeServer(
       for (const [providerId, providerConfig] of Object.entries(
         config.provider
       )) {
-        if (
-          providerId === 'cloudflareAIGateway' ||
-          providerId === 'cloudflare-ai-gateway'
-        ) {
+        if (providerId === 'cloudflare-ai-gateway') {
           continue;
         }
 
@@ -230,9 +198,7 @@ async function startOpencodeServer(
         }
       }
 
-      const aiGatewayConfig =
-        config.provider.cloudflareAIGateway ??
-        config.provider['cloudflare-ai-gateway'];
+      const aiGatewayConfig = config.provider['cloudflare-ai-gateway'];
       if (aiGatewayConfig?.options) {
         const options = aiGatewayConfig.options as Record<string, unknown>;
 
