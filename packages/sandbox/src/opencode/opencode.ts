@@ -181,7 +181,7 @@ async function startOpencodeServer(
       for (const [providerId, providerConfig] of Object.entries(
         config.provider
       )) {
-        if (providerId === 'cloudflareAIGateway') {
+        if (providerId === 'cloudflare-ai-gateway') {
           continue;
         }
 
@@ -198,7 +198,7 @@ async function startOpencodeServer(
         }
       }
 
-      const aiGatewayConfig = config.provider.cloudflareAIGateway;
+      const aiGatewayConfig = config.provider['cloudflare-ai-gateway'];
       if (aiGatewayConfig?.options) {
         const options = aiGatewayConfig.options as Record<string, unknown>;
 
@@ -276,14 +276,15 @@ async function startOpencodeServer(
  *       anthropic: {
  *         options: { apiKey: env.ANTHROPIC_KEY }
  *       },
- *       // Optional: Route all providers through Cloudflare AI Gateway
- *       cloudflareAIGateway: {
- *         options: {
- *           accountId: env.CF_ACCOUNT_ID,
- *           gatewayId: env.CF_GATEWAY_ID,
- *           apiToken: env.CF_API_TOKEN
- *         }
- *       }
+ *       // Or use Cloudflare AI Gateway (with unified billing, no provider keys needed).
+ *       // 'cloudflare-ai-gateway': {
+ *       //   options: {
+ *       //     accountId: env.CF_ACCOUNT_ID,
+ *       //     gatewayId: env.CF_GATEWAY_ID,
+ *       //     apiToken: env.CF_API_TOKEN
+ *       //   },
+ *       //   models: { 'anthropic/claude-sonnet-4-5-20250929': {} }
+ *       // }
  *     }
  *   }
  * })
@@ -341,14 +342,15 @@ export async function createOpencodeServer(
  *       anthropic: {
  *         options: { apiKey: env.ANTHROPIC_KEY }
  *       },
- *       // Optional: Route all providers through Cloudflare AI Gateway
- *       cloudflareAIGateway: {
- *         options: {
- *           accountId: env.CF_ACCOUNT_ID,
- *           gatewayId: env.CF_GATEWAY_ID,
- *           apiToken: env.CF_API_TOKEN
- *         }
- *       }
+ *       // Or use Cloudflare AI Gateway (with unified billing, no provider keys needed).
+ *       // 'cloudflare-ai-gateway': {
+ *       //   options: {
+ *       //     accountId: env.CF_ACCOUNT_ID,
+ *       //     gatewayId: env.CF_GATEWAY_ID,
+ *       //     apiToken: env.CF_API_TOKEN
+ *       //   },
+ *       //   models: { 'anthropic/claude-sonnet-4-5-20250929': {} }
+ *       // }
  *     }
  *   }
  * })
@@ -414,7 +416,7 @@ export async function createOpencode<TClient = OpencodeClient>(
  *             options: { apiKey: env.ANTHROPIC_KEY }
  *           },
  *           // Optional: Route all providers through Cloudflare AI Gateway
- *           cloudflareAIGateway: {
+ *           'cloudflare-ai-gateway': {
  *             options: {
  *               accountId: env.CF_ACCOUNT_ID,
  *               gatewayId: env.CF_GATEWAY_ID,
