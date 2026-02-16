@@ -7,6 +7,12 @@
   "observability": {
     "enabled": true
   },
+  "r2_buckets": [
+    {
+      "binding": "BACKUP_BUCKET",
+      "bucket_name": "sandbox-backups"
+    }
+  ],
   "containers": [
     {
       "class_name": "Sandbox",
