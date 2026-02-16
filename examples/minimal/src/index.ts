@@ -9,9 +9,16 @@ type Env = {
 
 const SRC_DIR = '/workspace/sandbox-sdk';
 const TMP_DIR = '/tmp/bench';
+const RESTORE_DIR = '/tmp/restore';
 const CHUNK_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB per R2 multipart part
 const ARCHIVE_TIMEOUT = 600_000; // 10 min for large archives
 const READ_CONCURRENCY = 4;
+
+const SERVE_PORT = 8080;
+const PIPE_PORT = 8081;
+const RESTORE_PORT = 8082;
+
+const MULTIPART_PART_SIZE = 10 * 1024 * 1024;
 
 type SandboxInstance = ReturnType<typeof getSandbox>;
 
@@ -73,12 +80,19 @@ async function getSourceInfo(sandbox: SandboxInstance) {
   };
 }
 
+async function killPort(sandbox: SandboxInstance, port: number): Promise<void> {
+  await sandbox.exec(`pkill -9 -f '${port}' || true`);
+  await sandbox.exec('sleep 0.2');
+}
+
 // ---------------------------------------------------------------------------
-// Core: archive → split → chunked read → R2 multipart upload
+// BACKUP: archive → split → chunked read → R2 multipart upload
 // ---------------------------------------------------------------------------
 
 interface ChunkedUploadResult {
   strategy: string;
+  type: 'backup';
+  method: 'chunked';
   chunks: number;
   steps: {
     archiveMs: number;
@@ -147,6 +161,8 @@ async function archiveAndUpload(
 
   return {
     strategy,
+    type: 'backup',
+    method: 'chunked',
     chunks: chunkNames.length,
     steps: { archiveMs, splitMs, uploadMs },
     totalMs: round(archiveMs + splitMs + uploadMs),
@@ -156,11 +172,13 @@ async function archiveAndUpload(
 }
 
 // ---------------------------------------------------------------------------
-// Core: archive → readFileStream → streamFile → R2.put (single object)
+// BACKUP: archive → readFileStream → streamFile → R2.put (single object)
 // ---------------------------------------------------------------------------
 
 interface StreamUploadResult {
   strategy: string;
+  type: 'backup';
+  method: 'stream';
   steps: {
     archiveMs: number;
     streamUploadMs: number;
@@ -190,11 +208,9 @@ async function archiveAndStream(
 
   const archiveBytes = await getFileSize(sandbox, archive);
 
-  // Stream archive from container → Worker → R2 in one pass
   const { ms: streamUploadMs } = await timed(async () => {
     const sseStream = await sandbox.readFileStream(archive);
     const fixedStream = new FixedLengthStream(archiveBytes);
-    // Pump decoded chunks into the writable side
     const pumpPromise = (async () => {
       const writer = fixedStream.writable.getWriter();
       try {
@@ -211,7 +227,6 @@ async function archiveAndStream(
         throw err;
       }
     })();
-    // R2 consumes the readable side concurrently
     await Promise.all([bucket.put(r2Key, fixedStream.readable), pumpPromise]);
   });
 
@@ -219,6 +234,8 @@ async function archiveAndStream(
 
   return {
     strategy,
+    type: 'backup',
+    method: 'stream',
     steps: { archiveMs, streamUploadMs },
     totalMs: round(archiveMs + streamUploadMs),
     archiveBytes,
@@ -227,11 +244,13 @@ async function archiveAndStream(
 }
 
 // ---------------------------------------------------------------------------
-// Core: archive → Bun file server → containerFetch (raw binary) → R2.put
+// BACKUP: archive → Bun file server → containerFetch (raw binary) → R2.put
 // ---------------------------------------------------------------------------
 
 interface DirectFetchResult {
   strategy: string;
+  type: 'backup';
+  method: 'direct';
   steps: {
     archiveMs: number;
     fetchUploadMs: number;
@@ -240,8 +259,6 @@ interface DirectFetchResult {
   archiveBytes: number;
   archiveMB: number;
 }
-
-const SERVE_PORT = 8080;
 
 async function archiveAndDirectFetch(
   sandbox: SandboxInstance,
@@ -263,7 +280,6 @@ async function archiveAndDirectFetch(
 
   const archiveBytes = await getFileSize(sandbox, archive);
 
-  // Start a minimal Bun file server (Bun.file streams lazily with correct Content-Length)
   await sandbox.exec(
     `bun -e "Bun.serve({port: ${SERVE_PORT}, fetch: () => new Response(Bun.file('${archive}'))})" &>/dev/null &`,
     { timeout: 5000 }
@@ -299,11 +315,13 @@ async function archiveAndDirectFetch(
     await Promise.all([bucket.put(r2Key, fixedStream.readable), pumpPromise]);
   });
 
-  await sandbox.exec(`pkill -f 'bun.*${SERVE_PORT}' || true`);
+  await killPort(sandbox, SERVE_PORT);
   await cleanupTmp(sandbox);
 
   return {
     strategy,
+    type: 'backup',
+    method: 'direct',
     steps: { archiveMs, fetchUploadMs },
     totalMs: round(archiveMs + fetchUploadMs),
     archiveBytes,
@@ -312,12 +330,13 @@ async function archiveAndDirectFetch(
 }
 
 // ---------------------------------------------------------------------------
-// Core: tar|compress piped directly into HTTP response → R2 multipart
-// No intermediate file on disk. Archive + transfer happen simultaneously.
+// BACKUP: tar|compress piped directly into HTTP response → R2 multipart
 // ---------------------------------------------------------------------------
 
 interface PipeResult {
   strategy: string;
+  type: 'backup';
+  method: 'pipe';
   steps: {
     pipeUploadMs: number;
   };
@@ -326,9 +345,6 @@ interface PipeResult {
   uploadedMB: number;
   parts: number;
 }
-
-const PIPE_PORT = 8081;
-const MULTIPART_PART_SIZE = 10 * 1024 * 1024; // R2 requires all non-final parts to be the same size
 
 async function pipeArchiveAndUpload(
   sandbox: SandboxInstance,
@@ -350,8 +366,7 @@ const server = Bun.serve({
 console.log("pipe-server listening on " + server.port);
 `;
   await sandbox.writeFile(`${TMP_DIR}/pipe-server.ts`, serverScript);
-  await sandbox.exec(`pkill -9 -f pipe-server || true`);
-  await sandbox.exec('sleep 0.2');
+  await killPort(sandbox, PIPE_PORT);
   await sandbox.exec(`bun ${TMP_DIR}/pipe-server.ts &>/dev/null &`, {
     timeout: 5000
   });
@@ -368,7 +383,6 @@ console.log("pipe-server listening on " + server.port);
     if (!resp.ok) throw new Error(`containerFetch failed: ${resp.status}`);
     if (!resp.body) throw new Error('containerFetch returned no body');
 
-    // Collect the full stream, then upload via multipart
     const reader = resp.body.getReader();
     const chunks: Uint8Array[] = [];
     let totalBytes = 0;
@@ -382,7 +396,6 @@ console.log("pipe-server listening on " + server.port);
       }
     }
 
-    // Concatenate all chunks into a single buffer
     const full = new Uint8Array(totalBytes);
     let offset = 0;
     for (const chunk of chunks) {
@@ -390,7 +403,6 @@ console.log("pipe-server listening on " + server.port);
       offset += chunk.length;
     }
 
-    // Upload fixed-size parts (R2 requires all non-final parts to be identical size)
     const multipart = await bucket.createMultipartUpload(r2Key);
     const parts: R2UploadedPart[] = [];
     let partNum = 1;
@@ -404,10 +416,12 @@ console.log("pipe-server listening on " + server.port);
     return { uploadedBytes: totalBytes, partCount: parts.length };
   });
 
-  await sandbox.exec(`pkill -9 -f pipe-server || true`);
+  await killPort(sandbox, PIPE_PORT);
 
   return {
     strategy,
+    type: 'backup',
+    method: 'pipe',
     steps: { pipeUploadMs },
     totalMs: round(pipeUploadMs),
     uploadedBytes,
@@ -417,165 +431,892 @@ console.log("pipe-server listening on " + server.port);
 }
 
 // ---------------------------------------------------------------------------
-// Strategies
+// BACKUP: mksquashfs → file on disk → containerFetch → R2.put
 // ---------------------------------------------------------------------------
 
-type BenchResult =
+interface SquashfsDirectResult {
+  strategy: string;
+  type: 'backup';
+  method: 'squashfs-direct';
+  steps: {
+    archiveMs: number;
+    fetchUploadMs: number;
+  };
+  totalMs: number;
+  archiveBytes: number;
+  archiveMB: number;
+}
+
+async function squashfsDirectBackup(
+  sandbox: SandboxInstance,
+  bucket: R2Bucket,
+  strategy: string,
+  compFlag: string,
+  r2Key: string
+): Promise<SquashfsDirectResult> {
+  await ensureTmpDir(sandbox);
+  const archive = `${TMP_DIR}/backup.squashfs`;
+
+  const { ms: archiveMs, result: archiveRes } = await timed(() =>
+    sandbox.exec(
+      `mksquashfs ${SRC_DIR} ${archive} -comp ${compFlag} -no-progress`,
+      { timeout: ARCHIVE_TIMEOUT }
+    )
+  );
+  if (!archiveRes.success)
+    throw new Error(`${strategy} mksquashfs failed: ${archiveRes.stderr}`);
+
+  const archiveBytes = await getFileSize(sandbox, archive);
+
+  await sandbox.exec(
+    `bun -e "Bun.serve({port: ${SERVE_PORT}, fetch: () => new Response(Bun.file('${archive}'))})" &>/dev/null &`,
+    { timeout: 5000 }
+  );
+  await sandbox.exec('sleep 0.3');
+
+  const { ms: fetchUploadMs } = await timed(async () => {
+    const resp = await sandbox.containerFetch(
+      new Request(`http://localhost:${SERVE_PORT}/`),
+      SERVE_PORT
+    );
+    if (!resp.ok) throw new Error(`containerFetch failed: ${resp.status}`);
+    if (!resp.body) throw new Error('containerFetch returned no body');
+
+    const fixedStream = new FixedLengthStream(archiveBytes);
+    const pumpPromise = (async () => {
+      const writer = fixedStream.writable.getWriter();
+      const reader = resp.body!.getReader();
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          await writer.write(value);
+        }
+        await writer.close();
+      } catch (err) {
+        await writer.abort(err instanceof Error ? err : new Error(String(err)));
+        throw err;
+      }
+    })();
+    await Promise.all([bucket.put(r2Key, fixedStream.readable), pumpPromise]);
+  });
+
+  await killPort(sandbox, SERVE_PORT);
+  await cleanupTmp(sandbox);
+
+  return {
+    strategy,
+    type: 'backup',
+    method: 'squashfs-direct',
+    steps: { archiveMs, fetchUploadMs },
+    totalMs: round(archiveMs + fetchUploadMs),
+    archiveBytes,
+    archiveMB: bytesToMB(archiveBytes)
+  };
+}
+
+// ---------------------------------------------------------------------------
+// BACKUP: mksquashfs piped to stdout → HTTP → R2 multipart
+// mksquashfs supports -o (offset) but not stdout pipe — use file + stream
+// Actually mksquashfs cannot pipe to stdout, so we use a two-step approach:
+// mksquashfs writes to tmpfs → Bun streams the file as it's being written
+// For true piping we'd need sqfstar (squashfs from tar stdin), not available
+// on Ubuntu 22.04. So squashfs only gets the "direct" strategy.
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// BACKUP: OverlayFS incremental — mount overlay, simulate changes, tar diff
+// ---------------------------------------------------------------------------
+
+interface OverlayResult {
+  strategy: string;
+  type: 'backup';
+  method: 'overlay';
+  steps: {
+    setupMs: number;
+    simulateMs: number;
+    archiveMs: number;
+    uploadMs: number;
+  };
+  totalMs: number;
+  archiveBytes: number;
+  archiveMB: number;
+  diffFileCount: number;
+}
+
+async function overlayIncrementalBackup(
+  sandbox: SandboxInstance,
+  bucket: R2Bucket,
+  strategy: string,
+  archiveFlag: string,
+  r2Key: string
+): Promise<OverlayResult> {
+  await ensureTmpDir(sandbox);
+  const upperDir = `${TMP_DIR}/overlay-upper`;
+  const workDir = `${TMP_DIR}/overlay-work`;
+  const mergedDir = `${TMP_DIR}/overlay-merged`;
+  const archive = `${TMP_DIR}/diff-backup`;
+
+  const { ms: setupMs, result: setupRes } = await timed(() =>
+    sandbox.exec(
+      [
+        `mkdir -p ${upperDir} ${workDir} ${mergedDir}`,
+        `mount -t overlay overlay -o lowerdir=${SRC_DIR},upperdir=${upperDir},workdir=${workDir} ${mergedDir}`
+      ].join(' && ')
+    )
+  );
+  if (!setupRes.success)
+    throw new Error(`overlay mount failed: ${setupRes.stderr}`);
+
+  // Simulate realistic changes in the merged view (writes go to upper)
+  const { ms: simulateMs, result: simRes } = await timed(() =>
+    sandbox.exec(
+      [
+        `echo 'modified' > ${mergedDir}/README.md`,
+        `mkdir -p ${mergedDir}/new-feature`,
+        `dd if=/dev/urandom of=${mergedDir}/new-feature/data.bin bs=1M count=5 2>/dev/null`,
+        `cp -r ${mergedDir}/packages/shared ${mergedDir}/new-feature/shared-copy 2>/dev/null || true`,
+        `rm -rf ${mergedDir}/node_modules/.cache 2>/dev/null || true`
+      ].join(' && '),
+      { timeout: 30_000 }
+    )
+  );
+  if (!simRes.success)
+    throw new Error(`overlay simulate failed: ${simRes.stderr}`);
+
+  const countRes = await sandbox.exec(
+    `find ${upperDir} -type f 2>/dev/null | wc -l`
+  );
+  const diffFileCount = parseInt(countRes.stdout.trim(), 10);
+
+  const archiveCmd = archiveFlag
+    ? `tar -I '${archiveFlag}' -cf ${archive} -C ${upperDir} .`
+    : `tar cf ${archive} -C ${upperDir} .`;
+
+  const { ms: archiveMs, result: archiveRes } = await timed(() =>
+    sandbox.exec(archiveCmd, { timeout: ARCHIVE_TIMEOUT })
+  );
+  if (!archiveRes.success)
+    throw new Error(`overlay archive failed: ${archiveRes.stderr}`);
+
+  const archiveBytes = await getFileSize(sandbox, archive);
+
+  await sandbox.exec(
+    `bun -e "Bun.serve({port: ${SERVE_PORT}, fetch: () => new Response(Bun.file('${archive}'))})" &>/dev/null &`,
+    { timeout: 5000 }
+  );
+  await sandbox.exec('sleep 0.3');
+
+  const { ms: uploadMs } = await timed(async () => {
+    const resp = await sandbox.containerFetch(
+      new Request(`http://localhost:${SERVE_PORT}/`),
+      SERVE_PORT
+    );
+    if (!resp.ok) throw new Error(`containerFetch failed: ${resp.status}`);
+    if (!resp.body) throw new Error('containerFetch returned no body');
+
+    const fixedStream = new FixedLengthStream(archiveBytes);
+    const pumpPromise = (async () => {
+      const writer = fixedStream.writable.getWriter();
+      const reader = resp.body!.getReader();
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          await writer.write(value);
+        }
+        await writer.close();
+      } catch (err) {
+        await writer.abort(err instanceof Error ? err : new Error(String(err)));
+        throw err;
+      }
+    })();
+    await Promise.all([bucket.put(r2Key, fixedStream.readable), pumpPromise]);
+  });
+
+  await killPort(sandbox, SERVE_PORT);
+  await sandbox.exec(`umount ${mergedDir} 2>/dev/null || true`);
+  await cleanupTmp(sandbox);
+
+  return {
+    strategy,
+    type: 'backup',
+    method: 'overlay',
+    steps: { setupMs, simulateMs, archiveMs, uploadMs },
+    totalMs: round(setupMs + simulateMs + archiveMs + uploadMs),
+    archiveBytes,
+    archiveMB: bytesToMB(archiveBytes),
+    diffFileCount
+  };
+}
+
+// ===========================================================================
+// RESTORE BENCHMARKS
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// RESTORE: R2 → containerFetch → write file → extract (tar/unsquashfs/mount)
+// ---------------------------------------------------------------------------
+
+interface RestoreResult {
+  strategy: string;
+  type: 'restore';
+  steps: {
+    downloadMs: number;
+    extractMs: number;
+  };
+  totalMs: number;
+  downloadedBytes: number;
+  downloadedMB: number;
+  fileCount: number;
+}
+
+async function startReceiveServer(
+  sandbox: SandboxInstance,
+  destPath: string,
+  port: number
+): Promise<void> {
+  const serverScript = `
+const fs = require("fs");
+const path = require("path");
+const server = Bun.serve({
+  port: ${port},
+  async fetch(req) {
+    if (req.method !== "PUT") return new Response("PUT only", { status: 405 });
+    const dest = "${destPath}";
+    const dir = path.dirname(dest);
+    fs.mkdirSync(dir, { recursive: true });
+    await Bun.write(dest, req.body);
+    const stat = fs.statSync(dest);
+    return Response.json({ bytes: stat.size });
+  }
+});
+console.log("receive-server on " + server.port);
+`;
+  await sandbox.writeFile(`${TMP_DIR}/receive-server.ts`, serverScript);
+  await killPort(sandbox, port);
+  await sandbox.exec(`bun ${TMP_DIR}/receive-server.ts &>/dev/null &`, {
+    timeout: 5000
+  });
+  await sandbox.exec('sleep 0.5');
+}
+
+async function downloadToContainer(
+  sandbox: SandboxInstance,
+  bucket: R2Bucket,
+  r2Key: string,
+  destPath: string,
+  port: number
+): Promise<{ bytes: number; ms: number }> {
+  const obj = await bucket.get(r2Key);
+  if (!obj) throw new Error(`R2 key not found: ${r2Key}`);
+  if (!obj.body) throw new Error(`R2 object has no body: ${r2Key}`);
+
+  const { ms } = await timed(async () => {
+    const resp = await sandbox.containerFetch(
+      new Request(`http://localhost:${port}/`, {
+        method: 'PUT',
+        body: obj.body,
+        headers: { 'Content-Length': String(obj.size) }
+      }),
+      port
+    );
+    if (!resp.ok) {
+      const text = await resp.text();
+      throw new Error(`receive-server PUT failed: ${resp.status} ${text}`);
+    }
+  });
+
+  return { bytes: obj.size, ms };
+}
+
+async function restoreTarArchive(
+  sandbox: SandboxInstance,
+  bucket: R2Bucket,
+  strategy: string,
+  r2Key: string,
+  extractCmd: string
+): Promise<RestoreResult> {
+  await sandbox.exec(
+    `rm -rf ${RESTORE_DIR} ${TMP_DIR} && mkdir -p ${RESTORE_DIR} ${TMP_DIR}`
+  );
+
+  const archivePath = `${TMP_DIR}/restore-archive`;
+  await startReceiveServer(sandbox, archivePath, RESTORE_PORT);
+
+  const { bytes: downloadedBytes, ms: downloadMs } = await downloadToContainer(
+    sandbox,
+    bucket,
+    r2Key,
+    archivePath,
+    RESTORE_PORT
+  );
+
+  const { ms: extractMs, result: extractRes } = await timed(() =>
+    sandbox.exec(`${extractCmd} ${archivePath} -C ${RESTORE_DIR}`, {
+      timeout: ARCHIVE_TIMEOUT
+    })
+  );
+  if (!extractRes.success)
+    throw new Error(`${strategy} extract failed: ${extractRes.stderr}`);
+
+  const countRes = await sandbox.exec(`find ${RESTORE_DIR} -type f | wc -l`);
+
+  await killPort(sandbox, RESTORE_PORT);
+  await sandbox.exec(`rm -rf ${RESTORE_DIR} ${TMP_DIR}`);
+
+  return {
+    strategy,
+    type: 'restore',
+    steps: { downloadMs, extractMs },
+    totalMs: round(downloadMs + extractMs),
+    downloadedBytes,
+    downloadedMB: bytesToMB(downloadedBytes),
+    fileCount: parseInt(countRes.stdout.trim(), 10)
+  };
+}
+
+// ---------------------------------------------------------------------------
+// RESTORE: R2 → container → pipe extract (download and extract simultaneously)
+// ---------------------------------------------------------------------------
+
+interface RestorePipeResult {
+  strategy: string;
+  type: 'restore';
+  method: 'pipe';
+  steps: {
+    pipeRestoreMs: number;
+  };
+  totalMs: number;
+  downloadedBytes: number;
+  downloadedMB: number;
+  fileCount: number;
+}
+
+async function restoreTarPipe(
+  sandbox: SandboxInstance,
+  bucket: R2Bucket,
+  strategy: string,
+  r2Key: string,
+  decompressFlag: string
+): Promise<RestorePipeResult> {
+  await sandbox.exec(
+    `rm -rf ${RESTORE_DIR} ${TMP_DIR} && mkdir -p ${RESTORE_DIR} ${TMP_DIR}`
+  );
+
+  const extractCmd = decompressFlag
+    ? `tar -I '${decompressFlag}' -xf - -C ${RESTORE_DIR}`
+    : `tar xf - -C ${RESTORE_DIR}`;
+
+  // Server that receives PUT body and pipes it directly into tar extract
+  const serverScript = `
+const server = Bun.serve({
+  port: ${RESTORE_PORT},
+  async fetch(req) {
+    if (req.method !== "PUT") return new Response("PUT only", { status: 405 });
+    const proc = Bun.spawn(["bash", "-c", ${JSON.stringify(extractCmd)}], {
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe"
+    });
+    const reader = req.body.getReader();
+    const writer = proc.stdin.getWriter();
+    let bytes = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) {
+        await writer.write(value);
+        bytes += value.length;
+      }
+    }
+    await writer.close();
+    await proc.exited;
+    return Response.json({ bytes, exitCode: proc.exitCode });
+  }
+});
+console.log("pipe-restore on " + server.port);
+`;
+  await sandbox.writeFile(`${TMP_DIR}/pipe-restore.ts`, serverScript);
+  await killPort(sandbox, RESTORE_PORT);
+  await sandbox.exec(`bun ${TMP_DIR}/pipe-restore.ts &>/dev/null &`, {
+    timeout: 5000
+  });
+  await sandbox.exec('sleep 0.5');
+
+  const obj = await bucket.get(r2Key);
+  if (!obj) throw new Error(`R2 key not found: ${r2Key}`);
+  if (!obj.body) throw new Error(`R2 object has no body: ${r2Key}`);
+  const downloadedBytes = obj.size;
+
+  const { ms: pipeRestoreMs } = await timed(async () => {
+    const resp = await sandbox.containerFetch(
+      new Request(`http://localhost:${RESTORE_PORT}/`, {
+        method: 'PUT',
+        body: obj.body,
+        headers: { 'Content-Length': String(obj.size) }
+      }),
+      RESTORE_PORT
+    );
+    if (!resp.ok) {
+      const text = await resp.text();
+      throw new Error(`pipe-restore failed: ${resp.status} ${text}`);
+    }
+  });
+
+  const countRes = await sandbox.exec(`find ${RESTORE_DIR} -type f | wc -l`);
+
+  await killPort(sandbox, RESTORE_PORT);
+  await sandbox.exec(`rm -rf ${RESTORE_DIR} ${TMP_DIR}`);
+
+  return {
+    strategy,
+    type: 'restore',
+    method: 'pipe',
+    steps: { pipeRestoreMs },
+    totalMs: round(pipeRestoreMs),
+    downloadedBytes,
+    downloadedMB: bytesToMB(downloadedBytes),
+    fileCount: parseInt(countRes.stdout.trim(), 10)
+  };
+}
+
+// ---------------------------------------------------------------------------
+// RESTORE: SquashFS — unsquashfs (extract) and mount -t squashfs (mountable)
+// ---------------------------------------------------------------------------
+
+interface RestoreSquashfsResult {
+  strategy: string;
+  type: 'restore';
+  method: 'unsquashfs' | 'squashfs-mount';
+  steps: {
+    downloadMs: number;
+    restoreMs: number;
+  };
+  totalMs: number;
+  downloadedBytes: number;
+  downloadedMB: number;
+  fileCount: number;
+}
+
+async function restoreSquashfs(
+  sandbox: SandboxInstance,
+  bucket: R2Bucket,
+  strategy: string,
+  r2Key: string,
+  mode: 'extract' | 'mount'
+): Promise<RestoreSquashfsResult> {
+  await sandbox.exec(
+    `rm -rf ${RESTORE_DIR} ${TMP_DIR} && mkdir -p ${RESTORE_DIR} ${TMP_DIR}`
+  );
+
+  const archivePath = `${TMP_DIR}/restore.squashfs`;
+  await startReceiveServer(sandbox, archivePath, RESTORE_PORT);
+
+  const { bytes: downloadedBytes, ms: downloadMs } = await downloadToContainer(
+    sandbox,
+    bucket,
+    r2Key,
+    archivePath,
+    RESTORE_PORT
+  );
+
+  let extractMs: number;
+  if (mode === 'extract') {
+    const { ms, result: res } = await timed(() =>
+      sandbox.exec(`unsquashfs -d ${RESTORE_DIR}/data -f ${archivePath}`, {
+        timeout: ARCHIVE_TIMEOUT
+      })
+    );
+    if (!res.success) throw new Error(`unsquashfs failed: ${res.stderr}`);
+    extractMs = ms;
+  } else {
+    const { ms, result: res } = await timed(() =>
+      sandbox.exec(`mount -t squashfs ${archivePath} ${RESTORE_DIR} -o ro`, {
+        timeout: 30_000
+      })
+    );
+    if (!res.success) throw new Error(`squashfs mount failed: ${res.stderr}`);
+    extractMs = ms;
+  }
+
+  const countPath = mode === 'extract' ? `${RESTORE_DIR}/data` : RESTORE_DIR;
+  const countRes = await sandbox.exec(`find ${countPath} -type f | wc -l`);
+
+  await killPort(sandbox, RESTORE_PORT);
+  if (mode === 'mount') {
+    await sandbox.exec(`umount ${RESTORE_DIR} 2>/dev/null || true`);
+  }
+  await sandbox.exec(`rm -rf ${RESTORE_DIR} ${TMP_DIR}`);
+
+  return {
+    strategy,
+    type: 'restore',
+    method: mode === 'extract' ? 'unsquashfs' : 'squashfs-mount',
+    steps: { downloadMs, restoreMs: extractMs },
+    totalMs: round(downloadMs + extractMs),
+    downloadedBytes,
+    downloadedMB: bytesToMB(downloadedBytes),
+    fileCount: parseInt(countRes.stdout.trim(), 10)
+  };
+}
+
+// ===========================================================================
+// STRATEGY REGISTRIES
+// ===========================================================================
+
+type BackupResult =
   | ChunkedUploadResult
   | StreamUploadResult
   | DirectFetchResult
-  | PipeResult;
+  | PipeResult
+  | SquashfsDirectResult
+  | OverlayResult;
 
-// Chunked multipart strategies (archive → split → readFile chunks → R2 multipart)
-const benchTar = (s: SandboxInstance, b: R2Bucket) =>
-  archiveAndUpload(s, b, 'tar-chunked', 'tar cf', 'bench/chunked/snapshot.tar');
+type AnyRestoreResult =
+  | RestoreResult
+  | RestorePipeResult
+  | RestoreSquashfsResult;
 
-const benchTarGz = (s: SandboxInstance, b: R2Bucket) =>
-  archiveAndUpload(
-    s,
-    b,
-    'tar-gz-chunked',
-    'tar czf',
-    'bench/chunked/snapshot.tar.gz'
-  );
+type BenchResult = BackupResult | AnyRestoreResult;
 
-const benchTarZst = (s: SandboxInstance, b: R2Bucket) =>
-  archiveAndUpload(
-    s,
-    b,
-    'tar-zst-chunked',
-    "tar -I 'zstd -T0' -cf",
-    'bench/chunked/snapshot.tar.zst'
-  );
+// --- Backup strategies ---
 
-const benchTarZstFast = (s: SandboxInstance, b: R2Bucket) =>
-  archiveAndUpload(
-    s,
-    b,
-    'tar-zst-fast-chunked',
-    "tar -I 'zstd -T0 -1' -cf",
-    'bench/chunked/snapshot-fast.tar.zst'
-  );
-
-// Streaming strategies (archive → readFileStream → streamFile → R2.put)
-const benchTarStream = (s: SandboxInstance, b: R2Bucket) =>
-  archiveAndStream(s, b, 'tar-stream', 'tar cf', 'bench/stream/snapshot.tar');
-
-const benchTarGzStream = (s: SandboxInstance, b: R2Bucket) =>
-  archiveAndStream(
-    s,
-    b,
-    'tar-gz-stream',
-    'tar czf',
-    'bench/stream/snapshot.tar.gz'
-  );
-
-const benchTarZstStream = (s: SandboxInstance, b: R2Bucket) =>
-  archiveAndStream(
-    s,
-    b,
-    'tar-zst-stream',
-    "tar -I 'zstd -T0' -cf",
-    'bench/stream/snapshot.tar.zst'
-  );
-
-const benchTarZstFastStream = (s: SandboxInstance, b: R2Bucket) =>
-  archiveAndStream(
-    s,
-    b,
-    'tar-zst-fast-stream',
-    "tar -I 'zstd -T0 -1' -cf",
-    'bench/stream/snapshot-fast.tar.zst'
-  );
-
-// Direct fetch strategies (archive → Bun file server → containerFetch raw binary → R2.put)
-const benchTarDirect = (s: SandboxInstance, b: R2Bucket) =>
-  archiveAndDirectFetch(
-    s,
-    b,
-    'tar-direct',
-    'tar cf',
-    'bench/direct/snapshot.tar'
-  );
-
-const benchTarGzDirect = (s: SandboxInstance, b: R2Bucket) =>
-  archiveAndDirectFetch(
-    s,
-    b,
-    'tar-gz-direct',
-    'tar czf',
-    'bench/direct/snapshot.tar.gz'
-  );
-
-const benchTarZstDirect = (s: SandboxInstance, b: R2Bucket) =>
-  archiveAndDirectFetch(
-    s,
-    b,
-    'tar-zst-direct',
-    "tar -I 'zstd -T0' -cf",
-    'bench/direct/snapshot.tar.zst'
-  );
-
-const benchTarZstFastDirect = (s: SandboxInstance, b: R2Bucket) =>
-  archiveAndDirectFetch(
-    s,
-    b,
-    'tar-zst-fast-direct',
-    "tar -I 'zstd -T0 -1' -cf",
-    'bench/direct/snapshot-fast.tar.zst'
-  );
-
-const benchTarPipe = (s: SandboxInstance, b: R2Bucket) =>
-  pipeArchiveAndUpload(
-    s,
-    b,
-    'tar-pipe',
-    `tar cf - -C /workspace sandbox-sdk`,
-    'bench/pipe/snapshot.tar'
-  );
-
-const benchTarZstPipe = (s: SandboxInstance, b: R2Bucket) =>
-  pipeArchiveAndUpload(
-    s,
-    b,
-    'tar-zst-pipe',
-    `tar cf - -C /workspace sandbox-sdk | zstd -T0 -3`,
-    'bench/pipe/snapshot.tar.zst'
-  );
-
-const benchTarZstFastPipe = (s: SandboxInstance, b: R2Bucket) =>
-  pipeArchiveAndUpload(
-    s,
-    b,
-    'tar-zst-fast-pipe',
-    `tar cf - -C /workspace sandbox-sdk | zstd -T0 -1`,
-    'bench/pipe/snapshot-fast.tar.zst'
-  );
-
-const STRATEGIES: Record<
+const BACKUP_STRATEGIES: Record<
   string,
-  (s: SandboxInstance, b: R2Bucket) => Promise<BenchResult>
+  {
+    fn: (s: SandboxInstance, b: R2Bucket) => Promise<BackupResult>;
+    desc: string;
+  }
 > = {
-  'tar-chunked': benchTar,
-  'tar-gz-chunked': benchTarGz,
-  'tar-zst-chunked': benchTarZst,
-  'tar-zst-fast-chunked': benchTarZstFast,
-  'tar-stream': benchTarStream,
-  'tar-gz-stream': benchTarGzStream,
-  'tar-zst-stream': benchTarZstStream,
-  'tar-zst-fast-stream': benchTarZstFastStream,
-  'tar-direct': benchTarDirect,
-  'tar-gz-direct': benchTarGzDirect,
-  'tar-zst-direct': benchTarZstDirect,
-  'tar-zst-fast-direct': benchTarZstFastDirect,
-  'tar-pipe': benchTarPipe,
-  'tar-zst-pipe': benchTarZstPipe,
-  'tar-zst-fast-pipe': benchTarZstFastPipe
+  'tar-chunked': {
+    fn: (s, b) =>
+      archiveAndUpload(
+        s,
+        b,
+        'tar-chunked',
+        'tar cf',
+        'bench/chunked/snapshot.tar'
+      ),
+    desc: 'tar → split → readFile base64 → R2 multipart'
+  },
+  'tar-gz-chunked': {
+    fn: (s, b) =>
+      archiveAndUpload(
+        s,
+        b,
+        'tar-gz-chunked',
+        'tar czf',
+        'bench/chunked/snapshot.tar.gz'
+      ),
+    desc: 'tar.gz → split → readFile base64 → R2 multipart'
+  },
+  'tar-zst-chunked': {
+    fn: (s, b) =>
+      archiveAndUpload(
+        s,
+        b,
+        'tar-zst-chunked',
+        "tar -I 'zstd -T0' -cf",
+        'bench/chunked/snapshot.tar.zst'
+      ),
+    desc: 'tar.zst → split → readFile base64 → R2 multipart'
+  },
+  'tar-zst-fast-chunked': {
+    fn: (s, b) =>
+      archiveAndUpload(
+        s,
+        b,
+        'tar-zst-fast-chunked',
+        "tar -I 'zstd -T0 -1' -cf",
+        'bench/chunked/snapshot-fast.tar.zst'
+      ),
+    desc: 'tar.zst -1 → split → readFile base64 → R2 multipart'
+  },
+  'tar-stream': {
+    fn: (s, b) =>
+      archiveAndStream(
+        s,
+        b,
+        'tar-stream',
+        'tar cf',
+        'bench/stream/snapshot.tar'
+      ),
+    desc: 'tar → readFileStream SSE → R2.put'
+  },
+  'tar-gz-stream': {
+    fn: (s, b) =>
+      archiveAndStream(
+        s,
+        b,
+        'tar-gz-stream',
+        'tar czf',
+        'bench/stream/snapshot.tar.gz'
+      ),
+    desc: 'tar.gz → readFileStream SSE → R2.put'
+  },
+  'tar-zst-stream': {
+    fn: (s, b) =>
+      archiveAndStream(
+        s,
+        b,
+        'tar-zst-stream',
+        "tar -I 'zstd -T0' -cf",
+        'bench/stream/snapshot.tar.zst'
+      ),
+    desc: 'tar.zst → readFileStream SSE → R2.put'
+  },
+  'tar-zst-fast-stream': {
+    fn: (s, b) =>
+      archiveAndStream(
+        s,
+        b,
+        'tar-zst-fast-stream',
+        "tar -I 'zstd -T0 -1' -cf",
+        'bench/stream/snapshot-fast.tar.zst'
+      ),
+    desc: 'tar.zst -1 → readFileStream SSE → R2.put'
+  },
+  'tar-direct': {
+    fn: (s, b) =>
+      archiveAndDirectFetch(
+        s,
+        b,
+        'tar-direct',
+        'tar cf',
+        'bench/direct/snapshot.tar'
+      ),
+    desc: 'tar → containerFetch raw binary → R2.put'
+  },
+  'tar-gz-direct': {
+    fn: (s, b) =>
+      archiveAndDirectFetch(
+        s,
+        b,
+        'tar-gz-direct',
+        'tar czf',
+        'bench/direct/snapshot.tar.gz'
+      ),
+    desc: 'tar.gz → containerFetch raw binary → R2.put'
+  },
+  'tar-zst-direct': {
+    fn: (s, b) =>
+      archiveAndDirectFetch(
+        s,
+        b,
+        'tar-zst-direct',
+        "tar -I 'zstd -T0' -cf",
+        'bench/direct/snapshot.tar.zst'
+      ),
+    desc: 'tar.zst → containerFetch raw binary → R2.put'
+  },
+  'tar-zst-fast-direct': {
+    fn: (s, b) =>
+      archiveAndDirectFetch(
+        s,
+        b,
+        'tar-zst-fast-direct',
+        "tar -I 'zstd -T0 -1' -cf",
+        'bench/direct/snapshot-fast.tar.zst'
+      ),
+    desc: 'tar.zst -1 → containerFetch raw binary → R2.put'
+  },
+  'tar-pipe': {
+    fn: (s, b) =>
+      pipeArchiveAndUpload(
+        s,
+        b,
+        'tar-pipe',
+        `tar cf - -C /workspace sandbox-sdk`,
+        'bench/pipe/snapshot.tar'
+      ),
+    desc: 'tar piped → containerFetch → R2 multipart'
+  },
+  'tar-zst-pipe': {
+    fn: (s, b) =>
+      pipeArchiveAndUpload(
+        s,
+        b,
+        'tar-zst-pipe',
+        `tar cf - -C /workspace sandbox-sdk | zstd -T0 -3`,
+        'bench/pipe/snapshot.tar.zst'
+      ),
+    desc: 'tar|zstd piped → containerFetch → R2 multipart'
+  },
+  'tar-zst-fast-pipe': {
+    fn: (s, b) =>
+      pipeArchiveAndUpload(
+        s,
+        b,
+        'tar-zst-fast-pipe',
+        `tar cf - -C /workspace sandbox-sdk | zstd -T0 -1`,
+        'bench/pipe/snapshot-fast.tar.zst'
+      ),
+    desc: 'tar|zstd -1 piped → containerFetch → R2 multipart'
+  },
+  'squashfs-zstd': {
+    fn: (s, b) =>
+      squashfsDirectBackup(
+        s,
+        b,
+        'squashfs-zstd',
+        'zstd',
+        'bench/squashfs/snapshot-zstd.squashfs'
+      ),
+    desc: 'mksquashfs -comp zstd → containerFetch → R2.put'
+  },
+  'squashfs-lzo': {
+    fn: (s, b) =>
+      squashfsDirectBackup(
+        s,
+        b,
+        'squashfs-lzo',
+        'lzo',
+        'bench/squashfs/snapshot-lzo.squashfs'
+      ),
+    desc: 'mksquashfs -comp lzo → containerFetch → R2.put'
+  },
+  'squashfs-gzip': {
+    fn: (s, b) =>
+      squashfsDirectBackup(
+        s,
+        b,
+        'squashfs-gzip',
+        'gzip',
+        'bench/squashfs/snapshot-gzip.squashfs'
+      ),
+    desc: 'mksquashfs -comp gzip → containerFetch → R2.put'
+  },
+  'overlay-tar': {
+    fn: (s, b) =>
+      overlayIncrementalBackup(
+        s,
+        b,
+        'overlay-tar',
+        '',
+        'bench/overlay/diff.tar'
+      ),
+    desc: 'overlayfs diff → tar → containerFetch → R2.put'
+  },
+  'overlay-tar-zst': {
+    fn: (s, b) =>
+      overlayIncrementalBackup(
+        s,
+        b,
+        'overlay-tar-zst',
+        'zstd -T0',
+        'bench/overlay/diff.tar.zst'
+      ),
+    desc: 'overlayfs diff → tar|zstd → containerFetch → R2.put'
+  }
 };
 
-// ---------------------------------------------------------------------------
+// --- Restore strategies ---
+// Each restore strategy references an R2 key that must exist (run the corresponding backup first)
+
+const RESTORE_STRATEGIES: Record<
+  string,
+  {
+    fn: (s: SandboxInstance, b: R2Bucket) => Promise<AnyRestoreResult>;
+    desc: string;
+    requires: string;
+  }
+> = {
+  'restore-tar': {
+    fn: (s, b) =>
+      restoreTarArchive(
+        s,
+        b,
+        'restore-tar',
+        'bench/direct/snapshot.tar',
+        'tar xf'
+      ),
+    desc: 'R2 → container → tar xf',
+    requires: 'tar-direct'
+  },
+  'restore-tar-zst': {
+    fn: (s, b) =>
+      restoreTarArchive(
+        s,
+        b,
+        'restore-tar-zst',
+        'bench/direct/snapshot.tar.zst',
+        "tar -I 'zstd -T0' -xf"
+      ),
+    desc: 'R2 → container → tar xf (zstd)',
+    requires: 'tar-zst-direct'
+  },
+  'restore-tar-gz': {
+    fn: (s, b) =>
+      restoreTarArchive(
+        s,
+        b,
+        'restore-tar-gz',
+        'bench/direct/snapshot.tar.gz',
+        'tar xzf'
+      ),
+    desc: 'R2 → container → tar xzf',
+    requires: 'tar-gz-direct'
+  },
+  'restore-tar-pipe': {
+    fn: (s, b) =>
+      restoreTarPipe(s, b, 'restore-tar-pipe', 'bench/direct/snapshot.tar', ''),
+    desc: 'R2 → container → pipe into tar xf',
+    requires: 'tar-direct'
+  },
+  'restore-tar-zst-pipe': {
+    fn: (s, b) =>
+      restoreTarPipe(
+        s,
+        b,
+        'restore-tar-zst-pipe',
+        'bench/direct/snapshot.tar.zst',
+        'zstd -T0 -d'
+      ),
+    desc: 'R2 → container → pipe into tar xf (zstd)',
+    requires: 'tar-zst-direct'
+  },
+  'restore-tar-pipe-from-pipe': {
+    fn: (s, b) =>
+      restoreTarPipe(
+        s,
+        b,
+        'restore-tar-pipe-from-pipe',
+        'bench/pipe/snapshot.tar.zst',
+        'zstd -T0 -d'
+      ),
+    desc: 'R2 (from pipe backup) → container → pipe into tar xf (zstd)',
+    requires: 'tar-zst-pipe'
+  },
+  'restore-squashfs-extract': {
+    fn: (s, b) =>
+      restoreSquashfs(
+        s,
+        b,
+        'restore-squashfs-extract',
+        'bench/squashfs/snapshot-zstd.squashfs',
+        'extract'
+      ),
+    desc: 'R2 → container → unsquashfs (full extract)',
+    requires: 'squashfs-zstd'
+  },
+  'restore-squashfs-mount': {
+    fn: (s, b) =>
+      restoreSquashfs(
+        s,
+        b,
+        'restore-squashfs-mount',
+        'bench/squashfs/snapshot-zstd.squashfs',
+        'mount'
+      ),
+    desc: 'R2 → container → mount -t squashfs (instant, read-only)',
+    requires: 'squashfs-zstd'
+  }
+};
+
+// ===========================================================================
 // Worker entry
-// ---------------------------------------------------------------------------
+// ===========================================================================
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -586,11 +1327,13 @@ export default {
       return Response.json(await getSourceInfo(sandbox));
     }
 
-    if (url.pathname === '/benchmark/all') {
+    // --- Run all backups ---
+    if (url.pathname === '/backup/all') {
       const info = await getSourceInfo(sandbox);
-      const results: (BenchResult | { strategy: string; error: string })[] = [];
+      const results: (BackupResult | { strategy: string; error: string })[] =
+        [];
 
-      for (const [name, fn] of Object.entries(STRATEGIES)) {
+      for (const [name, { fn }] of Object.entries(BACKUP_STRATEGIES)) {
         try {
           results.push(await fn(sandbox, env.BACKUP_BUCKET));
         } catch (err) {
@@ -601,15 +1344,69 @@ export default {
       return Response.json({ source: info, results });
     }
 
-    const match = url.pathname.match(/^\/benchmark\/(.+)$/);
-    if (match) {
-      const name = match[1];
-      const fn = STRATEGIES[name];
-      if (!fn) {
+    // --- Run all restores (requires backups to exist in R2) ---
+    if (url.pathname === '/restore/all') {
+      const results: (
+        | AnyRestoreResult
+        | { strategy: string; error: string }
+      )[] = [];
+
+      for (const [name, { fn }] of Object.entries(RESTORE_STRATEGIES)) {
+        try {
+          results.push(await fn(sandbox, env.BACKUP_BUCKET));
+        } catch (err) {
+          results.push({ strategy: name, error: String(err) });
+        }
+      }
+
+      return Response.json({ results });
+    }
+
+    // --- Run everything: all backups then all restores ---
+    if (url.pathname === '/benchmark/all') {
+      const info = await getSourceInfo(sandbox);
+      const backupResults: (
+        | BackupResult
+        | { strategy: string; error: string }
+      )[] = [];
+      const restoreResults: (
+        | AnyRestoreResult
+        | { strategy: string; error: string }
+      )[] = [];
+
+      for (const [name, { fn }] of Object.entries(BACKUP_STRATEGIES)) {
+        try {
+          backupResults.push(await fn(sandbox, env.BACKUP_BUCKET));
+        } catch (err) {
+          backupResults.push({ strategy: name, error: String(err) });
+        }
+      }
+
+      for (const [name, { fn }] of Object.entries(RESTORE_STRATEGIES)) {
+        try {
+          restoreResults.push(await fn(sandbox, env.BACKUP_BUCKET));
+        } catch (err) {
+          restoreResults.push({ strategy: name, error: String(err) });
+        }
+      }
+
+      return Response.json({
+        source: info,
+        backup: backupResults,
+        restore: restoreResults
+      });
+    }
+
+    // --- Single backup ---
+    const backupMatch = url.pathname.match(/^\/backup\/(.+)$/);
+    if (backupMatch) {
+      const name = backupMatch[1];
+      const entry = BACKUP_STRATEGIES[name];
+      if (!entry) {
         return Response.json(
           {
-            error: `Unknown strategy: ${name}`,
-            available: Object.keys(STRATEGIES)
+            error: `Unknown backup strategy: ${name}`,
+            available: Object.keys(BACKUP_STRATEGIES)
           },
           { status: 400 }
         );
@@ -617,7 +1414,7 @@ export default {
       try {
         const [info, result] = await Promise.all([
           getSourceInfo(sandbox),
-          fn(sandbox, env.BACKUP_BUCKET)
+          entry.fn(sandbox, env.BACKUP_BUCKET)
         ]);
         return Response.json({ source: info, result });
       } catch (err) {
@@ -625,43 +1422,84 @@ export default {
       }
     }
 
+    // --- Single restore ---
+    const restoreMatch = url.pathname.match(/^\/restore\/(.+)$/);
+    if (restoreMatch) {
+      const name = restoreMatch[1];
+      const entry = RESTORE_STRATEGIES[name];
+      if (!entry) {
+        return Response.json(
+          {
+            error: `Unknown restore strategy: ${name}`,
+            available: Object.keys(RESTORE_STRATEGIES)
+          },
+          { status: 400 }
+        );
+      }
+      try {
+        const result = await entry.fn(sandbox, env.BACKUP_BUCKET);
+        return Response.json({ result });
+      } catch (err) {
+        return Response.json({ error: String(err) }, { status: 500 });
+      }
+    }
+
+    // --- Legacy route for backward compat ---
+    const legacyMatch = url.pathname.match(/^\/benchmark\/(.+)$/);
+    if (legacyMatch) {
+      const name = legacyMatch[1];
+      const backupEntry = BACKUP_STRATEGIES[name];
+      if (backupEntry) {
+        try {
+          const [info, result] = await Promise.all([
+            getSourceInfo(sandbox),
+            backupEntry.fn(sandbox, env.BACKUP_BUCKET)
+          ]);
+          return Response.json({ source: info, result });
+        } catch (err) {
+          return Response.json({ error: String(err) }, { status: 500 });
+        }
+      }
+    }
+
+    // --- Index ---
+    const backupDescriptions: Record<string, Record<string, string>> = {};
+    for (const [name, { desc }] of Object.entries(BACKUP_STRATEGIES)) {
+      const family = name.includes('squashfs')
+        ? 'squashfs'
+        : name.includes('overlay')
+          ? 'overlay'
+          : name.includes('pipe')
+            ? 'pipe'
+            : name.includes('direct')
+              ? 'direct'
+              : name.includes('stream')
+                ? 'streaming'
+                : 'chunked';
+      if (!backupDescriptions[family]) backupDescriptions[family] = {};
+      backupDescriptions[family][name] = desc;
+    }
+
+    const restoreDescriptions: Record<string, string> = {};
+    for (const [name, { desc, requires }] of Object.entries(
+      RESTORE_STRATEGIES
+    )) {
+      restoreDescriptions[name] = `${desc} (requires: ${requires})`;
+    }
+
     return Response.json({
       endpoints: {
         '/info': 'Source directory stats',
-        '/benchmark/<strategy>': 'Run a single strategy',
-        '/benchmark/all': 'Run all strategies sequentially',
-        strategies: {
-          chunked: {
-            'tar-chunked': 'tar → split → readFile base64 → R2 multipart',
-            'tar-gz-chunked': 'tar.gz → split → readFile base64 → R2 multipart',
-            'tar-zst-chunked':
-              'tar.zst → split → readFile base64 → R2 multipart',
-            'tar-zst-fast-chunked':
-              'tar.zst -1 → split → readFile base64 → R2 multipart'
-          },
-          streaming: {
-            'tar-stream': 'tar → readFileStream SSE → R2.put',
-            'tar-gz-stream': 'tar.gz → readFileStream SSE → R2.put',
-            'tar-zst-stream': 'tar.zst → readFileStream SSE → R2.put',
-            'tar-zst-fast-stream': 'tar.zst -1 → readFileStream SSE → R2.put'
-          },
-          direct: {
-            'tar-direct': 'tar → containerFetch raw binary → R2.put',
-            'tar-gz-direct': 'tar.gz → containerFetch raw binary → R2.put',
-            'tar-zst-direct': 'tar.zst → containerFetch raw binary → R2.put',
-            'tar-zst-fast-direct':
-              'tar.zst -1 → containerFetch raw binary → R2.put'
-          },
-          pipe: {
-            'tar-pipe':
-              'tar piped → containerFetch → R2 multipart (no intermediate file)',
-            'tar-zst-pipe':
-              'tar|zstd piped → containerFetch → R2 multipart (no intermediate file)',
-            'tar-zst-fast-pipe':
-              'tar|zstd -1 piped → containerFetch → R2 multipart (no intermediate file)'
-          }
-        }
-      }
+        '/backup/<strategy>': 'Run a single backup strategy',
+        '/backup/all': 'Run all backup strategies',
+        '/restore/<strategy>':
+          'Run a single restore strategy (requires corresponding backup in R2)',
+        '/restore/all': 'Run all restore strategies',
+        '/benchmark/all': 'Run all backups then all restores',
+        '/benchmark/<strategy>': 'Legacy alias for /backup/<strategy>'
+      },
+      backup: backupDescriptions,
+      restore: restoreDescriptions
     });
   }
 };
