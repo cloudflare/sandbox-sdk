@@ -1691,6 +1691,7 @@ export default {
     }
 
     // --- Single restore ---
+    // ?runs=N  → run N times (max 10), drop page cache between runs, report stats
     const restoreMatch = url.pathname.match(/^\/restore\/(.+)$/);
     if (restoreMatch) {
       const name = restoreMatch[1];
@@ -1704,9 +1705,46 @@ export default {
           { status: 400 }
         );
       }
+
+      const runs = Math.min(
+        Math.max(parseInt(url.searchParams.get('runs') ?? '1', 10) || 1, 1),
+        10
+      );
+
       try {
-        const result = await entry.fn(sandbox, env);
-        return Response.json({ result });
+        const results: AnyRestoreResult[] = [];
+
+        for (let i = 0; i < runs; i++) {
+          if (i > 0) {
+            await sandbox.exec(
+              'sync && echo 3 > /proc/sys/vm/drop_caches 2>/dev/null; rm -rf /tmp/bench /tmp/restore',
+              { timeout: 10_000 }
+            );
+          }
+          results.push(await entry.fn(sandbox, env));
+        }
+
+        if (runs === 1) {
+          return Response.json({ result: results[0] });
+        }
+
+        const totals = results.map((r) => r.totalMs).sort((a, b) => a - b);
+        const median =
+          totals.length % 2 === 1
+            ? totals[Math.floor(totals.length / 2)]
+            : round(
+                (totals[totals.length / 2 - 1] + totals[totals.length / 2]) / 2
+              );
+
+        return Response.json({
+          runs,
+          results,
+          stats: {
+            medianMs: median,
+            minMs: totals[0],
+            maxMs: totals[totals.length - 1]
+          }
+        });
       } catch (err) {
         return Response.json({ error: String(err) }, { status: 500 });
       }
@@ -1759,8 +1797,8 @@ export default {
         '/probe': 'Kernel, filesystem, and tool diagnostics',
         '/backup/<strategy>': 'Run a single backup strategy',
         '/backup/all': 'Run all backup strategies',
-        '/restore/<strategy>':
-          'Run a single restore strategy (requires corresponding backup in R2)',
+        '/restore/<strategy>?runs=N':
+          'Run restore N times (max 10) with page-cache drops between runs',
         '/restore/all': 'Run all restore strategies',
         '/benchmark/all': 'Run all backups then all restores',
         '/benchmark/<strategy>': 'Legacy alias for /backup/<strategy>'
