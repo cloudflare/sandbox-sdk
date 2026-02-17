@@ -39,16 +39,29 @@ Test directory: the sandbox-sdk repo cloned into the container with `npm install
 
 Restore benchmarks create archives in-container and time extraction. This isolates archive/extract performance from network transfer (which is already benchmarked in backup strategies).
 
-### Production (standard-4: 4 vCPU, 12 GiB RAM, 20 GB disk)
+### Production — Presigned URL (R2 → container direct, standard-4)
 
-| Strategy                     | Total     | Archive | Extract   | Size    | Method                                             |
-| ---------------------------- | --------- | ------- | --------- | ------- | -------------------------------------------------- |
-| `restore-tar`                | 15.2s     | 10.4s   | 4.8s      | 704MB   | tar cf → tar xf (uncompressed)                     |
-| **`restore-squashfs-mount`** | **20.9s** | 20.9s   | **0.05s** | 205MB   | mksquashfs → mount -t squashfs (**50ms mount!**)   |
-| `restore-tar-zst`            | 54.0s     | 1.9s    | 52.2s     | 211MB   | tar+zstd cf → tar+zstd xf                          |
-| `restore-tar-zst-pipe`       | 53.8s     | —       | —         | (piped) | tar \| zstd \| zstd -d \| tar xf (single pipeline) |
-| `restore-squashfs-extract`   | 72.2s     | 21.5s   | 50.8s     | 205MB   | mksquashfs → unsquashfs                            |
-| `restore-tar-gz`             | 82.2s     | 28.3s   | 53.9s     | 229MB   | tar.gz cf → tar.gz xf                              |
+These strategies download from R2 via presigned URL directly into the container, bypassing JSRPC entirely. This is the recommended approach for cold-start restoration.
+
+| Strategy                       | Total    | Download | Restore  | Size  | Method                                  |
+| ------------------------------ | -------- | -------- | -------- | ----- | --------------------------------------- |
+| **`presigned-squashfs-mount`** | **4.1s** | 4.0s     | **70ms** | 205MB | curl R2 → mount -t squashfs (**70ms!**) |
+| `presigned-tar-zst-pipe`       | 4.7s     | (piped)  | —        | 212MB | curl R2 \| zstd -d \| tar xf            |
+| `presigned-tar-zst`            | 48.9s    | 2.1s     | 46.8s    | 212MB | curl R2 → tar xf (zstd)                 |
+| `presigned-squashfs-extract`   | 51.2s    | 1.9s     | 49.3s    | 205MB | curl R2 → unsquashfs                    |
+
+### Production — In-container only (standard-4)
+
+These strategies create and extract archives within the container (no R2 transfer). Useful for measuring pure archive/extract performance.
+
+| Strategy                   | Total | Archive | Extract | Size    | Method                                             |
+| -------------------------- | ----- | ------- | ------- | ------- | -------------------------------------------------- |
+| `restore-tar`              | 15.2s | 10.4s   | 4.8s    | 704MB   | tar cf → tar xf (uncompressed)                     |
+| `restore-squashfs-mount`   | 20.9s | 20.9s   | 0.05s   | 205MB   | mksquashfs → mount -t squashfs                     |
+| `restore-tar-zst`          | 54.0s | 1.9s    | 52.2s   | 211MB   | tar+zstd cf → tar+zstd xf                          |
+| `restore-tar-zst-pipe`     | 53.8s | —       | —       | (piped) | tar \| zstd \| zstd -d \| tar xf (single pipeline) |
+| `restore-squashfs-extract` | 72.2s | 21.5s   | 50.8s   | 205MB   | mksquashfs → unsquashfs                            |
+| `restore-tar-gz`           | 82.2s | 28.3s   | 53.9s   | 229MB   | tar.gz cf → tar.gz xf                              |
 
 ### Local dev (Docker on Apple Silicon)
 
@@ -148,6 +161,18 @@ Downloads the `.squashfs` image and extracts all files using `unsquashfs`.
 
 Downloads the `.squashfs` image and mounts it read-only. Near-instant "restore" — files are accessible immediately without extraction. Ideal for read-heavy restore scenarios.
 
+### Restore: Presigned URL (`presigned-*`)
+
+The fastest restore approach. The Worker generates a presigned R2 download URL (using `aws4fetch`, pure crypto, no network call) and passes it to the container via `exec()`. The container `curl`s R2 directly — no JSRPC, no Worker proxy, no base64.
+
+```
+Worker:    AwsClient.sign(r2Url) → presigned GET URL (0ms, in-memory)
+           exec("curl <presigned-url> -o /tmp/snap.squashfs && mount -t squashfs ...")
+Container: curl → R2 direct HTTP → disk → mount (70ms)
+```
+
+Requires an R2 API token (Access Key ID + Secret Access Key) set as Worker secrets. The presigned URL is valid for 1 hour and scoped to a single object.
+
 ## Key Findings
 
 ### Backup
@@ -162,11 +187,26 @@ Downloads the `.squashfs` image and mounts it read-only. Near-instant "restore" 
 
 ### Restore
 
-**SquashFS mount is the killer feature on production — 50ms restore.** `mount -t squashfs` makes 205MB of files instantly accessible with zero extraction. The 20.9s total is dominated by `mksquashfs` creation time; the actual mount is 50ms. This requires CAP_SYS_ADMIN, which is available on Cloudflare production but not in local Docker.
+**Presigned URL + SquashFS mount = 4.1s full restore from R2.** The container curls R2 directly via presigned URL (4.0s for 205MB) then mounts the squashfs image (70ms). This is the recommended path for cold-start optimization — 13x faster than the next best extraction-based approach.
 
-**Extraction is I/O-bound on production containers.** tar+zstd extraction takes 52s on prod vs 3.6s locally — a ~14x slowdown. Uncompressed tar extraction (4.8s on prod) is much faster since it avoids decompression CPU. The container's virtual disk I/O is the bottleneck for writes, not CPU.
+**Presigned URLs bypass all SDK bottlenecks.** By having the container download from R2 directly, data never touches JSRPC, base64 encoding, or Worker memory. The `aws4fetch` presigned URL generation is pure crypto (0ms, no network call).
 
-**Uncompressed tar is fastest for full extraction** on both local (1.4s) and prod (15.2s), but transfers 3x more data. For backup+restore workflows where the archive traverses the network, zstd's smaller size wins overall.
+**Piped curl is nearly as fast as squashfs mount.** `presigned-tar-zst-pipe` (curl | zstd -d | tar xf) achieves 4.7s — competitive with squashfs mount and doesn't require CAP_SYS_ADMIN. Good fallback for environments without mount permissions.
+
+**Extraction is I/O-bound on production containers.** tar+zstd extraction takes 47-52s on prod vs 3.6s locally — a ~14x slowdown. This makes mount-based restore (which avoids writing 692MB to disk) dramatically faster.
+
+### Recommended Backup + Restore Path
+
+For cold-start optimization, use **SquashFS end-to-end**:
+
+| Phase       | Strategy                   | Time     | What happens                                                       |
+| ----------- | -------------------------- | -------- | ------------------------------------------------------------------ |
+| **Backup**  | `squashfs-zstd`            | ~25s     | mksquashfs → containerFetch GET → R2.put (offline, async)          |
+| **Restore** | `presigned-squashfs-mount` | **4.1s** | Worker generates presigned URL → container curls R2 → mount (70ms) |
+
+The 4.1s is almost entirely network transfer (205MB from R2). The mount itself is 70ms. Backup is slower (25s vs 11s for tar+zstd) but runs offline — restore speed is what matters for cold starts.
+
+For environments without CAP_SYS_ADMIN, use `presigned-tar-zst-pipe` (4.7s) as the fallback.
 
 ### Local vs Production
 
@@ -176,7 +216,8 @@ Downloads the `.squashfs` image and mounts it read-only. Near-instant "restore" 
 | tar+zstd extraction       | 3.6s  | 52.2s      | ~14x slower (I/O-bound)   |
 | Uncompressed tar extract  | 0.8s  | 4.8s       | ~6x slower                |
 | R2 upload (211MB)         | 2.5s  | 9.3s       | ~4x slower (network path) |
-| squashfs mount            | N/A   | 0.05s      | Only works on prod        |
+| R2 download (205MB)       | N/A   | 4.0s       | Presigned URL, direct     |
+| squashfs mount            | N/A   | 0.07s      | Only works on prod        |
 
 **OverlayFS enables incremental snapshots.** By backing up only the diff layer, subsequent snapshots after an initial full backup are dramatically smaller and faster. Requires CAP_SYS_ADMIN (production only).
 
