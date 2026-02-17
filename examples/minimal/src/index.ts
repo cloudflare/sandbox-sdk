@@ -1,10 +1,14 @@
 import { getSandbox, type Sandbox, streamFile } from '@cloudflare/sandbox';
+import { AwsClient } from 'aws4fetch';
 
 export { Sandbox } from '@cloudflare/sandbox';
 
 type Env = {
   Sandbox: DurableObjectNamespace<Sandbox>;
   BACKUP_BUCKET: R2Bucket;
+  R2_ACCESS_KEY_ID: string;
+  R2_SECRET_ACCESS_KEY: string;
+  CLOUDFLARE_ACCOUNT_ID: string;
 };
 
 const SRC_DIR = '/workspace/sandbox-sdk';
@@ -844,6 +848,224 @@ async function restoreSquashfsBenchmark(
   };
 }
 
+// ---------------------------------------------------------------------------
+// PRESIGNED URL RESTORE: R2 → container direct via presigned GET URL
+// ---------------------------------------------------------------------------
+
+interface PresignedRestoreResult {
+  strategy: string;
+  type: 'restore';
+  method: 'presigned-curl';
+  steps: {
+    downloadMs: number;
+    restoreMs: number;
+  };
+  totalMs: number;
+  archiveBytes: number;
+  archiveMB: number;
+  fileCount: number;
+}
+
+function generatePresignedGetUrl(
+  env: Env,
+  r2Key: string,
+  expiresSeconds = 3600
+): Promise<string> {
+  const client = new AwsClient({
+    accessKeyId: env.R2_ACCESS_KEY_ID,
+    secretAccessKey: env.R2_SECRET_ACCESS_KEY
+  });
+  const r2Url = `https://${env.CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com/sandbox-backups/${r2Key}?X-Amz-Expires=${expiresSeconds}`;
+  return client
+    .sign(new Request(r2Url), { aws: { signQuery: true } })
+    .then((signed) => signed.url.toString());
+}
+
+async function presignedRestoreTarZst(
+  sandbox: SandboxInstance,
+  env: Env,
+  strategy: string,
+  r2Key: string
+): Promise<PresignedRestoreResult> {
+  const url = await generatePresignedGetUrl(env, r2Key);
+
+  await sandbox.exec(
+    `rm -rf ${RESTORE_DIR} ${TMP_DIR} && mkdir -p ${RESTORE_DIR} ${TMP_DIR}`
+  );
+
+  const { ms: downloadMs, result: dlRes } = await timed(() =>
+    sandbox.exec(`curl -sf '${url}' -o ${TMP_DIR}/restore.tar.zst`, {
+      timeout: ARCHIVE_TIMEOUT
+    })
+  );
+  if (!dlRes.success)
+    throw new Error(`${strategy} download failed: ${dlRes.stderr}`);
+
+  const archiveBytes = await getFileSize(sandbox, `${TMP_DIR}/restore.tar.zst`);
+
+  const { ms: restoreMs, result: restoreRes } = await timed(() =>
+    sandbox.exec(
+      `tar -I 'zstd -T0 -d' -xf ${TMP_DIR}/restore.tar.zst -C ${RESTORE_DIR}`,
+      { timeout: ARCHIVE_TIMEOUT }
+    )
+  );
+  if (!restoreRes.success)
+    throw new Error(`${strategy} extract failed: ${restoreRes.stderr}`);
+
+  const countRes = await sandbox.exec(`find ${RESTORE_DIR} -type f | wc -l`);
+  await sandbox.exec(`rm -rf ${RESTORE_DIR} ${TMP_DIR}/restore.tar.zst`);
+
+  return {
+    strategy,
+    type: 'restore',
+    method: 'presigned-curl',
+    steps: { downloadMs, restoreMs },
+    totalMs: round(downloadMs + restoreMs),
+    archiveBytes,
+    archiveMB: bytesToMB(archiveBytes),
+    fileCount: parseInt(countRes.stdout.trim(), 10)
+  };
+}
+
+async function presignedRestoreTarZstPipe(
+  sandbox: SandboxInstance,
+  env: Env,
+  strategy: string,
+  r2Key: string
+): Promise<PresignedRestoreResult> {
+  const url = await generatePresignedGetUrl(env, r2Key);
+
+  await sandbox.exec(`rm -rf ${RESTORE_DIR} && mkdir -p ${RESTORE_DIR}`);
+
+  const { ms: downloadMs, result: dlRes } = await timed(() =>
+    sandbox.exec(
+      `curl -sf '${url}' | zstd -T0 -d | tar xf - -C ${RESTORE_DIR}`,
+      { timeout: ARCHIVE_TIMEOUT }
+    )
+  );
+  if (!dlRes.success)
+    throw new Error(`${strategy} pipe restore failed: ${dlRes.stderr}`);
+
+  // No separate restoreMs — download and extract are overlapped in the pipe
+  const sizeRes = await sandbox.exec(`du -sb ${RESTORE_DIR} | cut -f1`);
+  const archiveBytes = parseInt(sizeRes.stdout.trim(), 10);
+  const countRes = await sandbox.exec(`find ${RESTORE_DIR} -type f | wc -l`);
+  await sandbox.exec(`rm -rf ${RESTORE_DIR}`);
+
+  return {
+    strategy,
+    type: 'restore',
+    method: 'presigned-curl',
+    steps: { downloadMs, restoreMs: 0 },
+    totalMs: round(downloadMs),
+    archiveBytes,
+    archiveMB: bytesToMB(archiveBytes),
+    fileCount: parseInt(countRes.stdout.trim(), 10)
+  };
+}
+
+async function presignedRestoreSquashfsMount(
+  sandbox: SandboxInstance,
+  env: Env,
+  strategy: string,
+  r2Key: string
+): Promise<PresignedRestoreResult> {
+  const url = await generatePresignedGetUrl(env, r2Key);
+
+  await sandbox.exec(
+    `rm -rf ${RESTORE_DIR} ${TMP_DIR} && mkdir -p ${RESTORE_DIR} ${TMP_DIR}`
+  );
+
+  const { ms: downloadMs, result: dlRes } = await timed(() =>
+    sandbox.exec(`curl -sf '${url}' -o ${TMP_DIR}/restore.squashfs`, {
+      timeout: ARCHIVE_TIMEOUT
+    })
+  );
+  if (!dlRes.success)
+    throw new Error(`${strategy} download failed: ${dlRes.stderr}`);
+
+  const archiveBytes = await getFileSize(
+    sandbox,
+    `${TMP_DIR}/restore.squashfs`
+  );
+
+  const { ms: restoreMs, result: mountRes } = await timed(() =>
+    sandbox.exec(
+      `mount -t squashfs ${TMP_DIR}/restore.squashfs ${RESTORE_DIR}`,
+      { timeout: 30_000 }
+    )
+  );
+  if (!mountRes.success)
+    throw new Error(`${strategy} mount failed: ${mountRes.stderr}`);
+
+  const countRes = await sandbox.exec(`find ${RESTORE_DIR} -type f | wc -l`);
+
+  await sandbox.exec(`umount ${RESTORE_DIR} 2>/dev/null || true`);
+  await sandbox.exec(`rm -rf ${RESTORE_DIR} ${TMP_DIR}`);
+
+  return {
+    strategy,
+    type: 'restore',
+    method: 'presigned-curl',
+    steps: { downloadMs, restoreMs },
+    totalMs: round(downloadMs + restoreMs),
+    archiveBytes,
+    archiveMB: bytesToMB(archiveBytes),
+    fileCount: parseInt(countRes.stdout.trim(), 10)
+  };
+}
+
+async function presignedRestoreSquashfsExtract(
+  sandbox: SandboxInstance,
+  env: Env,
+  strategy: string,
+  r2Key: string
+): Promise<PresignedRestoreResult> {
+  const url = await generatePresignedGetUrl(env, r2Key);
+
+  await sandbox.exec(
+    `rm -rf ${RESTORE_DIR} ${TMP_DIR} && mkdir -p ${RESTORE_DIR} ${TMP_DIR}`
+  );
+
+  const { ms: downloadMs, result: dlRes } = await timed(() =>
+    sandbox.exec(`curl -sf '${url}' -o ${TMP_DIR}/restore.squashfs`, {
+      timeout: ARCHIVE_TIMEOUT
+    })
+  );
+  if (!dlRes.success)
+    throw new Error(`${strategy} download failed: ${dlRes.stderr}`);
+
+  const archiveBytes = await getFileSize(
+    sandbox,
+    `${TMP_DIR}/restore.squashfs`
+  );
+
+  const { ms: restoreMs, result: extractRes } = await timed(() =>
+    sandbox.exec(
+      `unsquashfs -d ${RESTORE_DIR}/data -f ${TMP_DIR}/restore.squashfs`,
+      { timeout: ARCHIVE_TIMEOUT }
+    )
+  );
+  if (!extractRes.success)
+    throw new Error(`${strategy} unsquashfs failed: ${extractRes.stderr}`);
+
+  const countRes = await sandbox.exec(
+    `find ${RESTORE_DIR}/data -type f | wc -l`
+  );
+  await sandbox.exec(`rm -rf ${RESTORE_DIR} ${TMP_DIR}`);
+
+  return {
+    strategy,
+    type: 'restore',
+    method: 'presigned-curl',
+    steps: { downloadMs, restoreMs },
+    totalMs: round(downloadMs + restoreMs),
+    archiveBytes,
+    archiveMB: bytesToMB(archiveBytes),
+    fileCount: parseInt(countRes.stdout.trim(), 10)
+  };
+}
+
 // ===========================================================================
 // STRATEGY REGISTRIES
 // ===========================================================================
@@ -859,7 +1081,8 @@ type BackupResult =
 type AnyRestoreResult =
   | RestoreResult
   | RestorePipeResult
-  | RestoreSquashfsResult;
+  | RestoreSquashfsResult
+  | PresignedRestoreResult;
 
 type BenchResult = BackupResult | AnyRestoreResult;
 
@@ -1098,7 +1321,11 @@ const BACKUP_STRATEGIES: Record<
 
 const RESTORE_STRATEGIES: Record<
   string,
-  { fn: (s: SandboxInstance) => Promise<AnyRestoreResult>; desc: string }
+  {
+    fn: (s: SandboxInstance, env: Env) => Promise<AnyRestoreResult>;
+    desc: string;
+    needsR2Creds?: boolean;
+  }
 > = {
   'restore-tar': {
     fn: (s) => restoreTarBenchmark(s, 'restore-tar', 'tar cf', 'tar xf'),
@@ -1141,6 +1368,50 @@ const RESTORE_STRATEGIES: Record<
     fn: (s) =>
       restoreSquashfsBenchmark(s, 'restore-squashfs-mount', 'zstd', 'mount'),
     desc: 'mksquashfs → mount -t squashfs (instant, read-only)'
+  },
+  'presigned-tar-zst': {
+    fn: (s, env) =>
+      presignedRestoreTarZst(
+        s,
+        env,
+        'presigned-tar-zst',
+        'bench/direct/snapshot.tar.zst'
+      ),
+    desc: 'R2 presigned URL → curl → tar xf (zstd)',
+    needsR2Creds: true
+  },
+  'presigned-tar-zst-pipe': {
+    fn: (s, env) =>
+      presignedRestoreTarZstPipe(
+        s,
+        env,
+        'presigned-tar-zst-pipe',
+        'bench/direct/snapshot.tar.zst'
+      ),
+    desc: 'R2 presigned URL → curl | zstd -d | tar xf (piped)',
+    needsR2Creds: true
+  },
+  'presigned-squashfs-mount': {
+    fn: (s, env) =>
+      presignedRestoreSquashfsMount(
+        s,
+        env,
+        'presigned-squashfs-mount',
+        'bench/squashfs/snapshot-zstd.squashfs'
+      ),
+    desc: 'R2 presigned URL → curl → mount -t squashfs (instant)',
+    needsR2Creds: true
+  },
+  'presigned-squashfs-extract': {
+    fn: (s, env) =>
+      presignedRestoreSquashfsExtract(
+        s,
+        env,
+        'presigned-squashfs-extract',
+        'bench/squashfs/snapshot-zstd.squashfs'
+      ),
+    desc: 'R2 presigned URL → curl → unsquashfs',
+    needsR2Creds: true
   }
 };
 
@@ -1183,7 +1454,7 @@ export default {
 
       for (const [name, { fn }] of Object.entries(RESTORE_STRATEGIES)) {
         try {
-          results.push(await fn(sandbox));
+          results.push(await fn(sandbox, env));
         } catch (err) {
           results.push({ strategy: name, error: String(err) });
         }
@@ -1214,7 +1485,7 @@ export default {
 
       for (const [name, { fn }] of Object.entries(RESTORE_STRATEGIES)) {
         try {
-          restoreResults.push(await fn(sandbox));
+          restoreResults.push(await fn(sandbox, env));
         } catch (err) {
           restoreResults.push({ strategy: name, error: String(err) });
         }
@@ -1267,7 +1538,7 @@ export default {
         );
       }
       try {
-        const result = await entry.fn(sandbox);
+        const result = await entry.fn(sandbox, env);
         return Response.json({ result });
       } catch (err) {
         return Response.json({ error: String(err) }, { status: 500 });
