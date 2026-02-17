@@ -15,8 +15,10 @@ Test directory: the sandbox-sdk repo cloned into the container with `npm install
 | Strategy               | Total     | Archive | Upload | Size  | Method                                 |
 | ---------------------- | --------- | ------- | ------ | ----- | -------------------------------------- |
 | **`tar-zst-direct`**   | **10.9s** | 1.7s    | 9.3s   | 211MB | containerFetch raw binary → R2.put     |
+| `squashfs-lz4`         | 13.9s     | 1.8s    | 12.1s  | 292MB | mksquashfs -comp lz4 → containerFetch  |
 | `tar-zst-fast-chunked` | 22.4s     | 1.7s    | 20.1s  | 235MB | split → readFile base64 → R2 multipart |
-| `squashfs-zstd`        | 27.5s     | 21.0s   | 6.5s   | 205MB | mksquashfs → containerFetch → R2.put   |
+| `tar-zst-fast-direct`  | 22.4s     | 9.3s    | 13.1s  | 235MB | tar + zstd -1 → containerFetch → R2    |
+| `squashfs-zstd`        | 29.4s     | 21.6s   | 7.7s   | 205MB | mksquashfs → containerFetch → R2.put   |
 | `tar-direct`           | 29.7s     | 1.4s    | 28.4s  | 704MB | containerFetch raw binary → R2.put     |
 | `squashfs-lzo`         | 30.2s     | 20.2s   | 10.1s  | 236MB | mksquashfs → containerFetch → R2.put   |
 | `tar-gz-direct`        | 35.4s     | 28.5s   | 7.0s   | 229MB | containerFetch raw binary → R2.put     |
@@ -43,12 +45,17 @@ Restore benchmarks create archives in-container and time extraction. This isolat
 
 These strategies download from R2 via presigned URL directly into the container, bypassing JSRPC entirely. This is the recommended approach for cold-start restoration.
 
-| Strategy                       | Total    | Download | Restore  | Size  | Method                                  |
-| ------------------------------ | -------- | -------- | -------- | ----- | --------------------------------------- |
-| **`presigned-squashfs-mount`** | **4.1s** | 4.0s     | **70ms** | 205MB | curl R2 → mount -t squashfs (**70ms!**) |
-| `presigned-tar-zst-pipe`       | 4.7s     | (piped)  | —        | 212MB | curl R2 \| zstd -d \| tar xf            |
-| `presigned-tar-zst`            | 48.9s    | 2.1s     | 46.8s    | 212MB | curl R2 → tar xf (zstd)                 |
-| `presigned-squashfs-extract`   | 51.2s    | 1.9s     | 49.3s    | 205MB | curl R2 → unsquashfs                    |
+| Strategy                              | Total    | Download | Restore  | Size  | Method                                         |
+| ------------------------------------- | -------- | -------- | -------- | ----- | ---------------------------------------------- |
+| `presigned-squashfuse-mount`          | **2.2s** | 2.1s     | **40ms** | 205MB | curl R2 → squashfuse (FUSE, no CAP_SYS_ADMIN)  |
+| `presigned-squashfs-mount`            | **2.5s** | 2.4s     | **43ms** | 205MB | curl R2 → mount -t squashfs (kernel mount)     |
+| **`presigned-squashfs-mount-aria2c`** | **2.5s** | 2.5s     | **34ms** | 205MB | aria2c 4-conn → mount -t squashfs              |
+| `presigned-squashfs-lz4-mount`        | 3.0–3.8s | 2.9–3.8s | **32ms** | 292MB | curl R2 → mount squashfs-lz4                   |
+| `presigned-squashfs-lz4-mount-aria2c` | 3.0s     | 3.0s     | **35ms** | 292MB | aria2c 4-conn → mount squashfs-lz4             |
+| `presigned-tar-zst-pipe`              | 4.7s     | (piped)  | —        | 212MB | curl R2 \| zstd -d \| tar xf                   |
+| `presigned-tar-zst1-pipe`             | 5.5s     | (piped)  | —        | 236MB | curl R2 \| zstd -d \| tar xf (zstd -1 archive) |
+| `presigned-tar-zst`                   | 48.9s    | 2.1s     | 46.8s    | 212MB | curl R2 → tar xf (zstd)                        |
+| `presigned-squashfs-extract`          | 51.2s    | 1.9s     | 49.3s    | 205MB | curl R2 → unsquashfs                           |
 
 ### Production — In-container only (standard-4)
 
@@ -161,6 +168,10 @@ Downloads the `.squashfs` image and extracts all files using `unsquashfs`.
 
 Downloads the `.squashfs` image and mounts it read-only. Near-instant "restore" — files are accessible immediately without extraction. Ideal for read-heavy restore scenarios.
 
+### Restore: SquashFuse Mount (`presigned-squashfuse-mount`)
+
+Downloads the `.squashfs` image and mounts it via squashfuse (FUSE). Same near-instant mount as kernel squashfs, but runs entirely in userspace — no CAP_SYS_ADMIN required. Requires `/dev/fuse` to be available (confirmed on Cloudflare Firecracker).
+
 ### Restore: Presigned URL (`presigned-*`)
 
 The fastest restore approach. The Worker generates a presigned R2 download URL (using `aws4fetch`, pure crypto, no network call) and passes it to the container via `exec()`. The container `curl`s R2 directly — no JSRPC, no Worker proxy, no base64.
@@ -187,11 +198,17 @@ Requires an R2 API token (Access Key ID + Secret Access Key) set as Worker secre
 
 ### Restore
 
-**Presigned URL + SquashFS mount = 4.1s full restore from R2.** The container curls R2 directly via presigned URL (4.0s for 205MB) then mounts the squashfs image (70ms). This is the recommended path for cold-start optimization — 13x faster than the next best extraction-based approach.
+**Presigned URL + SquashFS mount = 2.2–2.5s full restore from R2.** The container downloads from R2 via presigned URL (2.1–2.5s for 205MB) then mounts the squashfs image (32–43ms). This is the recommended path for cold-start optimization.
+
+**squashfuse works on Cloudflare Firecracker.** The container runs kernel 6.12 with `/dev/fuse` available (`crw-rw-rw-`). squashfuse provides the same near-instant mount as `mount -t squashfs` but does NOT require CAP_SYS_ADMIN — it runs entirely in userspace via FUSE. This eliminates the need for elevated privileges.
+
+**aria2c parallel downloads provide marginal benefit.** With 4 parallel connections to R2, download speed is similar to single-connection curl (~2.5s for 205MB). R2 download from the same datacenter is already near network-saturated, so parallelism doesn't help much for a single object.
+
+**LZ4 is faster to create but slower to restore.** mksquashfs with LZ4 compression creates images 12x faster than zstd (1.8s vs 21.6s), but the 42% larger file (292MB vs 205MB) makes download slower. Since mount time is negligible (32ms), total restore time is dominated by download, making the smaller zstd image faster end-to-end.
 
 **Presigned URLs bypass all SDK bottlenecks.** By having the container download from R2 directly, data never touches JSRPC, base64 encoding, or Worker memory. The `aws4fetch` presigned URL generation is pure crypto (0ms, no network call).
 
-**Piped curl is nearly as fast as squashfs mount.** `presigned-tar-zst-pipe` (curl | zstd -d | tar xf) achieves 4.7s — competitive with squashfs mount and doesn't require CAP_SYS_ADMIN. Good fallback for environments without mount permissions.
+**Piped curl is competitive for no-mount scenarios.** `presigned-tar-zst-pipe` (curl | zstd -d | tar xf) achieves 4.7s and doesn't require any mount capabilities. Good fallback when neither kernel mount nor FUSE is available.
 
 **Extraction is I/O-bound on production containers.** tar+zstd extraction takes 47-52s on prod vs 3.6s locally — a ~14x slowdown. This makes mount-based restore (which avoids writing 692MB to disk) dramatically faster.
 
@@ -199,14 +216,16 @@ Requires an R2 API token (Access Key ID + Secret Access Key) set as Worker secre
 
 For cold-start optimization, use **SquashFS end-to-end**:
 
-| Phase       | Strategy                   | Time     | What happens                                                       |
-| ----------- | -------------------------- | -------- | ------------------------------------------------------------------ |
-| **Backup**  | `squashfs-zstd`            | ~25s     | mksquashfs → containerFetch GET → R2.put (offline, async)          |
-| **Restore** | `presigned-squashfs-mount` | **4.1s** | Worker generates presigned URL → container curls R2 → mount (70ms) |
+| Phase       | Strategy                     | Time     | What happens                                                           |
+| ----------- | ---------------------------- | -------- | ---------------------------------------------------------------------- |
+| **Backup**  | `squashfs-zstd`              | ~29s     | mksquashfs → containerFetch GET → R2.put (offline, async)              |
+| **Restore** | `presigned-squashfuse-mount` | **2.2s** | Worker generates presigned URL → container curls R2 → squashfuse mount |
 
-The 4.1s is almost entirely network transfer (205MB from R2). The mount itself is 70ms. Backup is slower (25s vs 11s for tar+zstd) but runs offline — restore speed is what matters for cold starts.
+The 2.2s is almost entirely network transfer (205MB from R2). The mount itself is 40ms. Backup is slower (~29s vs 11s for tar+zstd) but runs offline — restore speed is what matters for cold starts.
 
-For environments without CAP_SYS_ADMIN, use `presigned-tar-zst-pipe` (4.7s) as the fallback.
+squashfuse is the recommended mount method because it works via FUSE without requiring CAP_SYS_ADMIN. If squashfuse is not installed, `mount -t squashfs` achieves the same speed (2.5s) but requires elevated privileges.
+
+For environments without any mount capability, use `presigned-tar-zst-pipe` (4.7s) as the fallback.
 
 ### Local vs Production
 
@@ -216,8 +235,9 @@ For environments without CAP_SYS_ADMIN, use `presigned-tar-zst-pipe` (4.7s) as t
 | tar+zstd extraction       | 3.6s  | 52.2s      | ~14x slower (I/O-bound)   |
 | Uncompressed tar extract  | 0.8s  | 4.8s       | ~6x slower                |
 | R2 upload (211MB)         | 2.5s  | 9.3s       | ~4x slower (network path) |
-| R2 download (205MB)       | N/A   | 4.0s       | Presigned URL, direct     |
-| squashfs mount            | N/A   | 0.07s      | Only works on prod        |
+| R2 download (205MB)       | N/A   | 2.1–2.5s   | Presigned URL, direct     |
+| squashfs mount            | N/A   | 0.03–0.07s | Only works on prod        |
+| squashfuse (FUSE) mount   | N/A   | 0.04s      | FUSE works on prod        |
 
 **OverlayFS enables incremental snapshots.** By backing up only the diff layer, subsequent snapshots after an initial full backup are dramatically smaller and faster. Requires CAP_SYS_ADMIN (production only).
 
@@ -246,14 +266,18 @@ curl http://localhost:8787/
 # Source directory stats
 curl http://localhost:8787/info
 
+# Container diagnostics (kernel, filesystems, tools)
+curl http://localhost:8787/probe
+
 # Run a single backup
-curl http://localhost:8787/backup/tar-zst-pipe
+curl http://localhost:8787/backup/tar-zst-direct
 curl http://localhost:8787/backup/squashfs-zstd
-curl http://localhost:8787/backup/overlay-tar-zst
+curl http://localhost:8787/backup/squashfs-lz4
 
 # Run a single restore (requires backup to exist in R2)
-curl http://localhost:8787/restore/restore-tar-zst-pipe
-curl http://localhost:8787/restore/restore-squashfs-mount
+curl http://localhost:8787/restore/presigned-squashfs-mount
+curl http://localhost:8787/restore/presigned-squashfuse-mount
+curl http://localhost:8787/restore/presigned-squashfs-mount-aria2c
 
 # Run all backups
 curl http://localhost:8787/backup/all
@@ -265,11 +289,22 @@ curl http://localhost:8787/restore/all
 curl http://localhost:8787/benchmark/all
 ```
 
+## Container Environment
+
+The container runs on Cloudflare Firecracker with kernel 6.12. Key capabilities discovered via the `/probe` endpoint:
+
+- **squashfs** in `/proc/filesystems` — kernel mount works with CAP_SYS_ADMIN
+- **FUSE** available — `/dev/fuse` exists (`crw-rw-rw-`), `fuse` + `fusectl` in `/proc/filesystems`
+- **OverlayFS** available — in `/proc/filesystems`
+- **EROFS** not loaded — `modprobe` not available in the container
+
 ## Dockerfile
 
 The custom Dockerfile extends the base sandbox image with:
 
 - `zstd` for compression benchmarks
 - `squashfs-tools` for mksquashfs/unsquashfs benchmarks
+- `aria2` for parallel download benchmarks
+- `squashfuse` for FUSE-based squashfs mounting (no CAP_SYS_ADMIN required)
 - A clone of the sandbox-sdk repo with `npm install` as the test directory
 - `EXPOSE 8080 8081 8082` for the direct/pipe/restore strategies' Bun servers
