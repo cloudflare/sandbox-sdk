@@ -184,7 +184,31 @@ export class FileService implements FileSystemOperations {
           let content: string;
           if (actualEncoding === 'base64') {
             // Binary files: read as base64, return as-is (DO NOT decode)
-            const base64Command = `base64 -w 0 < ${escapedPath}`;
+            // Support range reads with offset/length using dd
+            let base64Command: string;
+            if (options.offset !== undefined && options.length !== undefined) {
+              // Range read: use dd to extract specific bytes, then base64 encode
+              const offset = options.offset;
+              const length = options.length;
+
+              // Use 4KB blocks for much better performance when offset is block-aligned
+              const blockSize = 4096;
+              const skipRemainder = offset % blockSize;
+
+              if (skipRemainder === 0) {
+                // Block-aligned: use large block size for fast reads
+                const skipBlocks = offset / blockSize;
+                const countBlocks = Math.ceil(length / blockSize);
+                // Read full blocks then trim to exact length with head -c
+                // Note: head -c requires GNU coreutils (available in container image)
+                base64Command = `dd if=${escapedPath} bs=${blockSize} skip=${skipBlocks} count=${countBlocks} 2>/dev/null | head -c ${length} | base64 -w 0`;
+              } else {
+                // Not block-aligned: fall back to byte-by-byte (slower but precise)
+                base64Command = `dd if=${escapedPath} bs=1 skip=${offset} count=${length} 2>/dev/null | base64 -w 0`;
+              }
+            } else {
+              base64Command = `base64 -w 0 < ${escapedPath}`;
+            }
             const base64Result = await exec(base64Command);
 
             if (base64Result.exitCode !== 0) {

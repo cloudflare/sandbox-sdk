@@ -97,13 +97,19 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 ENV SANDBOX_VERSION=${SANDBOX_VERSION}
 
-# Install runtime packages and S3FS-FUSE for bucket mounting
+# Install runtime packages, S3FS-FUSE for bucket mounting, and snapshot tools
+# - fuse3: FUSE filesystem support (replaces legacy fuse, needed by s3fs/squashfuse/fuse-overlayfs)
+# - squashfs-tools: create squashfs archives (mksquashfs)
+# - squashfuse: mount squashfs in userspace (FUSE)
+# - fuse-overlayfs: userspace overlayfs for copy-on-write snapshots
+# Cache-bust: 2 - Clear apt cache to force fresh package list
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     rm -f /etc/apt/apt.conf.d/docker-clean && \
     echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' >/etc/apt/apt.conf.d/keep-cache && \
+    rm -rf /var/cache/apt/* /var/lib/apt/lists/* && \
     apt-get update && apt-get install -y --no-install-recommends \
-    s3fs fuse \
+    s3fs fuse3 squashfs-tools squashfuse fuse-overlayfs \
     ca-certificates curl wget procps git unzip zip jq file \
     libssl3 zlib1g libbz2-1.0 libreadline8 libsqlite3-0 \
     libncursesw6 libtinfo6 libxml2 libxmlsec1 libffi8 liblzma5 libtk8.6 && \

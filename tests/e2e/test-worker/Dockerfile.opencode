@@ -2,6 +2,9 @@
 # Uses the -opencode variant for testing the OpenCode integration
 FROM docker.io/cloudflare/sandbox-test:0.7.4-opencode
 
+# Install snapshot tools: squashfs-tools (create), squashfuse (mount), fuse-overlayfs (COW)
+RUN apt-get update && apt-get install -y squashfs-tools squashfuse fuse-overlayfs && rm -rf /var/lib/apt/lists/*
+
 # Expose ports used for testing
 # 4096: OpenCode server default port
 # 8080: general testing

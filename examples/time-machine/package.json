@@ -1,0 +1,22 @@
+{
+  "name": "@cloudflare/sandbox-time-machine-example",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "description": "Time Machine - Save checkpoints, run dangerous commands, travel back in time",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "start": "wrangler dev",
+    "cf-typegen": "wrangler types",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@cloudflare/sandbox": "*",
+    "@types/node": "^24.10.1",
+    "typescript": "^5.9.3",
+    "wrangler": "^4.63.0"
+  },
+  "author": "",
+  "license": "MIT"
+}

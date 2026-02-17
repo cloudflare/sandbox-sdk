@@ -2,6 +2,9 @@
 # Used for testing Python-not-available error handling
 FROM docker.io/cloudflare/sandbox-test:0.7.4
 
+# Install snapshot tools: squashfs-tools (create), squashfuse (mount), fuse-overlayfs (COW)
+RUN apt-get update && apt-get install -y squashfs-tools squashfuse fuse-overlayfs && rm -rf /var/lib/apt/lists/*
+
 # Expose ports used for testing
 # 8080: general testing
 # 9090: process-readiness-workflow.test.ts (waitForPort test)

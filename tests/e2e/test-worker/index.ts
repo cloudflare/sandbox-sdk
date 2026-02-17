@@ -45,11 +45,104 @@ interface Env {
   SandboxStandalone: DurableObjectNamespace<Sandbox>;
   SandboxMusl: DurableObjectNamespace<Sandbox>;
   TEST_BUCKET: R2Bucket;
+  BACKUP_BUCKET: R2Bucket;
   // R2 credentials for bucket mounting tests
   CLOUDFLARE_ACCOUNT_ID?: string;
   AWS_ACCESS_KEY_ID?: string;
   AWS_SECRET_ACCESS_KEY?: string;
 }
+
+/**
+ * Interface for SandboxError shape (direct calls preserve errorResponse property).
+ * Used for type-safe error handling without importing the actual class.
+ */
+interface SandboxErrorLike extends Error {
+  errorResponse: {
+    message: string;
+    code?: string;
+    context?: Record<string, unknown>;
+    httpStatus?: number;
+    suggestion?: string;
+  };
+  code?: string;
+  context?: Record<string, unknown>;
+  httpStatus?: number;
+  suggestion?: string;
+}
+
+/**
+ * Type guard for SandboxError-like objects.
+ * Checks for the errorResponse property that direct calls preserve.
+ */
+function isSandboxErrorLike(error: unknown): error is SandboxErrorLike {
+  return (
+    error instanceof Error &&
+    'errorResponse' in error &&
+    typeof error.errorResponse === 'object' &&
+    error.errorResponse !== null
+  );
+}
+
+/**
+ * Maps SandboxError subclass names to HTTP status codes and error codes.
+ * Used as a fallback when errors cross the Cloudflare RPC boundary,
+ * which strips own properties and prototype getters, preserving only
+ * error.name and error.message.
+ */
+const ERROR_NAME_MAP: Record<string, { status: number; code: string }> = {
+  // Backup errors
+  BackupNotFoundError: { status: 404, code: 'BACKUP_NOT_FOUND' },
+  BackupExpiredError: { status: 400, code: 'BACKUP_EXPIRED' },
+  InvalidBackupConfigError: { status: 400, code: 'INVALID_BACKUP_CONFIG' },
+  BackupCreateError: { status: 500, code: 'BACKUP_CREATE_FAILED' },
+  BackupRestoreError: { status: 500, code: 'BACKUP_RESTORE_FAILED' },
+  // File errors
+  FileNotFoundError: { status: 404, code: 'FILE_NOT_FOUND' },
+  FileExistsError: { status: 409, code: 'FILE_EXISTS' },
+  FileSystemError: { status: 500, code: 'FILESYSTEM_ERROR' },
+  PermissionDeniedError: { status: 403, code: 'PERMISSION_DENIED' },
+  // Command errors
+  CommandNotFoundError: { status: 404, code: 'COMMAND_NOT_FOUND' },
+  CommandError: { status: 500, code: 'COMMAND_EXECUTION_ERROR' },
+  // Process errors
+  ProcessNotFoundError: { status: 404, code: 'PROCESS_NOT_FOUND' },
+  ProcessError: { status: 500, code: 'PROCESS_ERROR' },
+  ProcessReadyTimeoutError: { status: 408, code: 'PROCESS_READY_TIMEOUT' },
+  ProcessExitedBeforeReadyError: {
+    status: 500,
+    code: 'PROCESS_EXITED_BEFORE_READY'
+  },
+  // Port errors
+  PortAlreadyExposedError: { status: 409, code: 'PORT_ALREADY_EXPOSED' },
+  PortNotExposedError: { status: 404, code: 'PORT_NOT_EXPOSED' },
+  InvalidPortError: { status: 400, code: 'INVALID_PORT' },
+  PortInUseError: { status: 409, code: 'PORT_IN_USE' },
+  ServiceNotRespondingError: { status: 502, code: 'SERVICE_NOT_RESPONDING' },
+  CustomDomainRequiredError: { status: 400, code: 'CUSTOM_DOMAIN_REQUIRED' },
+  // Git errors
+  GitRepositoryNotFoundError: {
+    status: 404,
+    code: 'GIT_REPOSITORY_NOT_FOUND'
+  },
+  GitAuthenticationError: { status: 401, code: 'GIT_AUTH_FAILED' },
+  GitBranchNotFoundError: { status: 404, code: 'GIT_BRANCH_NOT_FOUND' },
+  GitNetworkError: { status: 502, code: 'GIT_NETWORK_ERROR' },
+  InvalidGitUrlError: { status: 400, code: 'INVALID_GIT_URL' },
+  GitCloneError: { status: 500, code: 'GIT_CLONE_FAILED' },
+  GitCheckoutError: { status: 500, code: 'GIT_CHECKOUT_FAILED' },
+  // Code interpreter errors
+  InterpreterNotReadyError: { status: 503, code: 'INTERPRETER_NOT_READY' },
+  ContextNotFoundError: { status: 404, code: 'CONTEXT_NOT_FOUND' },
+  CodeExecutionError: { status: 500, code: 'CODE_EXECUTION_ERROR' },
+  // Session errors
+  SessionAlreadyExistsError: { status: 409, code: 'SESSION_ALREADY_EXISTS' },
+  // Port errors (generic)
+  PortError: { status: 500, code: 'PORT_OPERATION_ERROR' },
+  // Git errors (generic)
+  GitError: { status: 500, code: 'GIT_OPERATION_FAILED' },
+  // Validation errors
+  ValidationFailedError: { status: 400, code: 'VALIDATION_FAILED' }
+};
 
 async function parseBody(request: Request): Promise<any> {
   try {
@@ -819,6 +912,22 @@ console.log('Terminal server on port ' + port);
         });
       }
 
+      // Backup - Create backup
+      if (url.pathname === '/api/backup/create' && request.method === 'POST') {
+        const backup = await sandbox.createBackup(body);
+        return new Response(JSON.stringify(backup), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      // Backup - Restore backup
+      if (url.pathname === '/api/backup/restore' && request.method === 'POST') {
+        const result = await sandbox.restoreBackup(body);
+        return new Response(JSON.stringify(result), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
       // Cleanup endpoint - destroys the sandbox container
       // This is used by E2E tests to explicitly clean up after each test
       if (url.pathname === '/cleanup' && request.method === 'POST') {
@@ -870,6 +979,62 @@ console.log('Terminal server on port ' + port);
 
       return new Response('Not found', { status: 404 });
     } catch (error) {
+      // Handle SandboxError with proper code and httpStatus.
+      //
+      // Two paths exist:
+      // 1. Direct calls (error has `errorResponse` own property)
+      // 2. RPC calls (only `error.name` and `error.message` survive the
+      //    Cloudflare RPC boundary — own properties are stripped)
+      //
+      // We try (1) first, then fall back to (2) using error.name mapping.
+      if (isSandboxErrorLike(error)) {
+        return new Response(
+          JSON.stringify({
+            error: error.message,
+            code: error.code,
+            context: error.context,
+            suggestion: error.suggestion
+          }),
+          {
+            status: error.httpStatus ?? 500,
+            headers: { 'Content-Type': 'application/json' }
+          }
+        );
+      }
+
+      // RPC fallback: derive HTTP status and error code from error.name
+      // Cloudflare RPC strips custom error classes, converting them to generic Error
+      // but preserves the class name in the message as "ClassName: actual message"
+      if (error instanceof Error) {
+        let errorName = error.name;
+        let errorMessage = error.message;
+
+        // Try to extract original error class from message format "ClassName: message"
+        if (errorName === 'Error' && error.message.includes(': ')) {
+          const colonIndex = error.message.indexOf(': ');
+          const potentialClassName = error.message.slice(0, colonIndex);
+          // Only use it if it looks like an error class name (PascalCase ending in Error)
+          if (/^[A-Z][a-zA-Z]*Error$/.test(potentialClassName)) {
+            errorName = potentialClassName;
+            errorMessage = error.message.slice(colonIndex + 2);
+          }
+        }
+
+        const mapping = ERROR_NAME_MAP[errorName];
+        if (mapping) {
+          return new Response(
+            JSON.stringify({
+              error: errorMessage,
+              code: mapping.code
+            }),
+            {
+              status: mapping.status,
+              headers: { 'Content-Type': 'application/json' }
+            }
+          );
+        }
+      }
+
       return new Response(
         JSON.stringify({
           error: error instanceof Error ? error.message : 'Unknown error'

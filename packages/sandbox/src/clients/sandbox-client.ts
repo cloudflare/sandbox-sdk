@@ -1,3 +1,4 @@
+import { BackupClient } from './backup-client';
 import { CommandClient } from './command-client';
 import { FileClient } from './file-client';
 import { GitClient } from './git-client';
@@ -23,6 +24,7 @@ import { UtilityClient } from './utility-client';
  * WebSocket mode reduces sub-request count when running inside Workers/Durable Objects.
  */
 export class SandboxClient {
+  public readonly backup: BackupClient;
   public readonly commands: CommandClient;
   public readonly files: FileClient;
   public readonly processes: ProcessClient;
@@ -55,6 +57,7 @@ export class SandboxClient {
     };
 
     // Initialize all domain clients with shared options
+    this.backup = new BackupClient(clientOptions);
     this.commands = new CommandClient(clientOptions);
     this.files = new FileClient(clientOptions);
     this.processes = new ProcessClient(clientOptions);

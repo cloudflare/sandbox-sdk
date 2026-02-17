@@ -73,7 +73,9 @@ export class FileHandler extends BaseHandler<Request, Response> {
     const body = await this.parseRequestBody<ReadFileRequest>(request);
 
     const result = await this.fileService.readFile(body.path, {
-      encoding: body.encoding
+      encoding: body.encoding,
+      offset: body.offset,
+      length: body.length
     });
 
     if (result.success) {

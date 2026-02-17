@@ -91,6 +91,11 @@
       "binding": "TEST_BUCKET",
       "bucket_name": "sandbox-e2e-test",
       "preview_bucket_name": "sandbox-e2e-test"
+    },
+    {
+      "binding": "BACKUP_BUCKET",
+      "bucket_name": "sandbox-e2e-test",
+      "preview_bucket_name": "sandbox-e2e-test"
     }
   ]
 }
