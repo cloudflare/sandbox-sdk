@@ -62,8 +62,15 @@ async function getFileSize(
   sandbox: SandboxInstance,
   path: string
 ): Promise<number> {
-  const r = await sandbox.exec(`stat -c%s ${path}`);
-  return parseInt(r.stdout.trim(), 10);
+  const r = await sandbox.exec(`stat -c%s '${path}'`);
+  const size = parseInt(r.stdout.trim(), 10);
+  if (Number.isNaN(size)) {
+    const check = await sandbox.exec(`ls -la '${path}' 2>&1`);
+    throw new Error(
+      `stat failed for ${path}: stdout=${JSON.stringify(r.stdout)}, stderr=${JSON.stringify(r.stderr)}, ls=${check.stdout.trim()}`
+    );
+  }
+  return size;
 }
 
 async function cleanupTmp(sandbox: SandboxInstance): Promise<void> {
@@ -1066,6 +1073,66 @@ async function presignedRestoreSquashfsExtract(
   };
 }
 
+function aria2cCmd(url: string, outPath: string): string {
+  const lastSlash = outPath.lastIndexOf('/');
+  const dir = outPath.substring(0, lastSlash);
+  const file = outPath.substring(lastSlash + 1);
+  return `aria2c -x4 -s4 --min-split-size=10M --file-allocation=none --allow-overwrite=true -d ${dir} -o ${file} '${url}' 2>&1`;
+}
+
+async function presignedDownloadAndMount(
+  sandbox: SandboxInstance,
+  env: Env,
+  strategy: string,
+  r2Key: string,
+  opts: {
+    downloadCmd: (url: string, outPath: string) => string;
+    mountCmd: (archivePath: string, mountDir: string) => string;
+    unmountCmd?: string;
+  }
+): Promise<PresignedRestoreResult> {
+  const url = await generatePresignedGetUrl(env, r2Key);
+  const archivePath = `${TMP_DIR}/restore.squashfs`;
+
+  await sandbox.exec(
+    `rm -rf ${RESTORE_DIR} ${TMP_DIR} && mkdir -p ${RESTORE_DIR} ${TMP_DIR}`
+  );
+
+  const { ms: downloadMs, result: dlRes } = await timed(() =>
+    sandbox.exec(opts.downloadCmd(url, archivePath), {
+      timeout: ARCHIVE_TIMEOUT
+    })
+  );
+  if (!dlRes.success)
+    throw new Error(`${strategy} download failed: ${dlRes.stderr}`);
+
+  const archiveBytes = await getFileSize(sandbox, archivePath);
+
+  const { ms: restoreMs, result: mountRes } = await timed(() =>
+    sandbox.exec(opts.mountCmd(archivePath, RESTORE_DIR), { timeout: 30_000 })
+  );
+  if (!mountRes.success)
+    throw new Error(`${strategy} mount failed: ${mountRes.stderr}`);
+
+  const countRes = await sandbox.exec(`find ${RESTORE_DIR} -type f | wc -l`);
+  const unmount =
+    opts.unmountCmd ??
+    `umount ${RESTORE_DIR} 2>/dev/null || fusermount -u ${RESTORE_DIR} 2>/dev/null || true`;
+  await sandbox.exec(unmount);
+  await sandbox.exec(`rm -rf ${RESTORE_DIR} ${TMP_DIR}`);
+
+  return {
+    strategy,
+    type: 'restore',
+    method: 'presigned-curl',
+    steps: { downloadMs, restoreMs },
+    totalMs: round(downloadMs + restoreMs),
+    archiveBytes,
+    archiveMB: bytesToMB(archiveBytes),
+    fileCount: parseInt(countRes.stdout.trim(), 10)
+  };
+}
+
 // ===========================================================================
 // STRATEGY REGISTRIES
 // ===========================================================================
@@ -1282,6 +1349,17 @@ const BACKUP_STRATEGIES: Record<
       ),
     desc: 'mksquashfs -comp lzo → containerFetch → R2.put'
   },
+  'squashfs-lz4': {
+    fn: (s, b) =>
+      squashfsDirectBackup(
+        s,
+        b,
+        'squashfs-lz4',
+        'lz4',
+        'bench/squashfs/snapshot-lz4.squashfs'
+      ),
+    desc: 'mksquashfs -comp lz4 → containerFetch → R2.put'
+  },
   'squashfs-gzip': {
     fn: (s, b) =>
       squashfsDirectBackup(
@@ -1412,6 +1490,78 @@ const RESTORE_STRATEGIES: Record<
       ),
     desc: 'R2 presigned URL → curl → unsquashfs',
     needsR2Creds: true
+  },
+  'presigned-squashfs-mount-aria2c': {
+    fn: (s, env) =>
+      presignedDownloadAndMount(
+        s,
+        env,
+        'presigned-squashfs-mount-aria2c',
+        'bench/squashfs/snapshot-zstd.squashfs',
+        {
+          downloadCmd: (url, out) => aria2cCmd(url, out),
+          mountCmd: (arch, dir) => `mount -t squashfs ${arch} ${dir} -o ro`
+        }
+      ),
+    desc: 'R2 presigned → aria2c 4-conn → mount squashfs-zstd',
+    needsR2Creds: true
+  },
+  'presigned-squashfs-lz4-mount': {
+    fn: (s, env) =>
+      presignedDownloadAndMount(
+        s,
+        env,
+        'presigned-squashfs-lz4-mount',
+        'bench/squashfs/snapshot-lz4.squashfs',
+        {
+          downloadCmd: (url, out) => `curl -sf '${url}' -o ${out}`,
+          mountCmd: (arch, dir) => `mount -t squashfs ${arch} ${dir} -o ro`
+        }
+      ),
+    desc: 'R2 presigned → curl → mount squashfs-lz4',
+    needsR2Creds: true
+  },
+  'presigned-squashfs-lz4-mount-aria2c': {
+    fn: (s, env) =>
+      presignedDownloadAndMount(
+        s,
+        env,
+        'presigned-squashfs-lz4-mount-aria2c',
+        'bench/squashfs/snapshot-lz4.squashfs',
+        {
+          downloadCmd: (url, out) => aria2cCmd(url, out),
+          mountCmd: (arch, dir) => `mount -t squashfs ${arch} ${dir} -o ro`
+        }
+      ),
+    desc: 'R2 presigned → aria2c 4-conn → mount squashfs-lz4',
+    needsR2Creds: true
+  },
+  'presigned-tar-zst1-pipe': {
+    fn: (s, env) =>
+      presignedRestoreTarZstPipe(
+        s,
+        env,
+        'presigned-tar-zst1-pipe',
+        'bench/direct/snapshot-fast.tar.zst'
+      ),
+    desc: 'R2 presigned → curl | zstd -d | tar xf (zstd -1 archive)',
+    needsR2Creds: true
+  },
+  'presigned-squashfuse-mount': {
+    fn: (s, env) =>
+      presignedDownloadAndMount(
+        s,
+        env,
+        'presigned-squashfuse-mount',
+        'bench/squashfs/snapshot-zstd.squashfs',
+        {
+          downloadCmd: (url, out) => `curl -sf '${url}' -o ${out}`,
+          mountCmd: (arch, dir) => `squashfuse ${arch} ${dir}`,
+          unmountCmd: `fusermount -u ${RESTORE_DIR} 2>/dev/null || true`
+        }
+      ),
+    desc: 'R2 presigned → curl → squashfuse FUSE mount',
+    needsR2Creds: true
   }
 };
 
@@ -1426,6 +1576,23 @@ export default {
 
     if (url.pathname === '/info') {
       return Response.json(await getSourceInfo(sandbox));
+    }
+
+    if (url.pathname === '/probe') {
+      const probeCmd = [
+        'echo "=== Kernel ===" && uname -r',
+        'echo "=== Filesystems ===" && cat /proc/filesystems',
+        'echo "=== EROFS ===" && (modprobe erofs 2>&1 && echo "EROFS: OK" || echo "EROFS: FAIL")',
+        'echo "=== FUSE ===" && (ls -la /dev/fuse 2>&1 || echo "/dev/fuse: NOT FOUND")',
+        'echo "=== Tools ===" && which aria2c squashfuse curl zstd mksquashfs 2>&1',
+        'echo "=== squashfs compressors ===" && mksquashfs --help 2>&1 | grep -A20 "Compressors available" || true'
+      ].join(' && ');
+      const result = await sandbox.exec(probeCmd, { timeout: 30_000 });
+      return new Response(
+        result.stdout +
+          (result.stderr ? `\n--- stderr ---\n${result.stderr}` : ''),
+        { headers: { 'Content-Type': 'text/plain' } }
+      );
     }
 
     // --- Run all backups ---
@@ -1589,6 +1756,7 @@ export default {
     return Response.json({
       endpoints: {
         '/info': 'Source directory stats',
+        '/probe': 'Kernel, filesystem, and tool diagnostics',
         '/backup/<strategy>': 'Run a single backup strategy',
         '/backup/all': 'Run all backup strategies',
         '/restore/<strategy>':
