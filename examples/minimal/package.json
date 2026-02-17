@@ -18,5 +18,8 @@
     "wrangler": "^4.63.0"
   },
   "author": "",
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "aws4fetch": "^1.0.20"
+  }
 }

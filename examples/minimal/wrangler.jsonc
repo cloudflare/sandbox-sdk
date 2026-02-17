@@ -7,6 +7,9 @@
   "observability": {
     "enabled": true
   },
+  "vars": {
+    "CLOUDFLARE_ACCOUNT_ID": "8acffcc765d5baa91c873d1459ba1a19"
+  },
   "r2_buckets": [
     {
       "binding": "BACKUP_BUCKET",
