@@ -655,105 +655,48 @@ async function overlayIncrementalBackup(
 // ===========================================================================
 
 // ---------------------------------------------------------------------------
-// RESTORE: R2 → containerFetch → write file → extract (tar/unsquashfs/mount)
+// RESTORE: create archive in-container → time extraction
+// containerFetch cannot send large request bodies (JSRPC limitation), so we
+// create the archive locally and benchmark the extraction/mount step directly.
+// The R2 transfer speed is ~symmetric with backup and already measured above.
 // ---------------------------------------------------------------------------
 
 interface RestoreResult {
   strategy: string;
   type: 'restore';
   steps: {
-    downloadMs: number;
+    archiveMs: number;
     extractMs: number;
   };
   totalMs: number;
-  downloadedBytes: number;
-  downloadedMB: number;
+  archiveBytes: number;
+  archiveMB: number;
   fileCount: number;
 }
 
-async function startReceiveServer(
+async function restoreTarBenchmark(
   sandbox: SandboxInstance,
-  destPath: string,
-  port: number
-): Promise<void> {
-  const serverScript = `
-const fs = require("fs");
-const path = require("path");
-const server = Bun.serve({
-  port: ${port},
-  async fetch(req) {
-    if (req.method !== "PUT") return new Response("PUT only", { status: 405 });
-    const dest = "${destPath}";
-    const dir = path.dirname(dest);
-    fs.mkdirSync(dir, { recursive: true });
-    await Bun.write(dest, req.body);
-    const stat = fs.statSync(dest);
-    return Response.json({ bytes: stat.size });
-  }
-});
-console.log("receive-server on " + server.port);
-`;
-  await sandbox.writeFile(`${TMP_DIR}/receive-server.ts`, serverScript);
-  await killPort(sandbox, port);
-  await sandbox.exec(`bun ${TMP_DIR}/receive-server.ts &>/dev/null &`, {
-    timeout: 5000
-  });
-  await sandbox.exec('sleep 0.5');
-}
-
-async function downloadToContainer(
-  sandbox: SandboxInstance,
-  bucket: R2Bucket,
-  r2Key: string,
-  destPath: string,
-  port: number
-): Promise<{ bytes: number; ms: number }> {
-  const obj = await bucket.get(r2Key);
-  if (!obj) throw new Error(`R2 key not found: ${r2Key}`);
-  if (!obj.body) throw new Error(`R2 object has no body: ${r2Key}`);
-
-  const { ms } = await timed(async () => {
-    const resp = await sandbox.containerFetch(
-      new Request(`http://localhost:${port}/`, {
-        method: 'PUT',
-        body: obj.body,
-        headers: { 'Content-Length': String(obj.size) }
-      }),
-      port
-    );
-    if (!resp.ok) {
-      const text = await resp.text();
-      throw new Error(`receive-server PUT failed: ${resp.status} ${text}`);
-    }
-  });
-
-  return { bytes: obj.size, ms };
-}
-
-async function restoreTarArchive(
-  sandbox: SandboxInstance,
-  bucket: R2Bucket,
   strategy: string,
-  r2Key: string,
+  archiveCmd: string,
   extractCmd: string
 ): Promise<RestoreResult> {
   await sandbox.exec(
     `rm -rf ${RESTORE_DIR} ${TMP_DIR} && mkdir -p ${RESTORE_DIR} ${TMP_DIR}`
   );
+  const archive = `${TMP_DIR}/restore-archive`;
 
-  const archivePath = `${TMP_DIR}/restore-archive`;
-  await startReceiveServer(sandbox, archivePath, RESTORE_PORT);
-
-  const { bytes: downloadedBytes, ms: downloadMs } = await downloadToContainer(
-    sandbox,
-    bucket,
-    r2Key,
-    archivePath,
-    RESTORE_PORT
+  const { ms: archiveMs, result: archiveRes } = await timed(() =>
+    sandbox.exec(`${archiveCmd} ${archive} -C /workspace sandbox-sdk`, {
+      timeout: ARCHIVE_TIMEOUT
+    })
   );
+  if (!archiveRes.success)
+    throw new Error(`${strategy} archive failed: ${archiveRes.stderr}`);
+
+  const archiveBytes = await getFileSize(sandbox, archive);
 
   const { ms: extractMs, result: extractRes } = await timed(() =>
-    sandbox.exec(`${extractCmd} ${archivePath} -C ${RESTORE_DIR}`, {
+    sandbox.exec(`${extractCmd} ${archive} -C ${RESTORE_DIR}`, {
       timeout: ARCHIVE_TIMEOUT
     })
   );
@@ -761,23 +704,21 @@ async function restoreTarArchive(
     throw new Error(`${strategy} extract failed: ${extractRes.stderr}`);
 
   const countRes = await sandbox.exec(`find ${RESTORE_DIR} -type f | wc -l`);
-
-  await killPort(sandbox, RESTORE_PORT);
   await sandbox.exec(`rm -rf ${RESTORE_DIR} ${TMP_DIR}`);
 
   return {
     strategy,
     type: 'restore',
-    steps: { downloadMs, extractMs },
-    totalMs: round(downloadMs + extractMs),
-    downloadedBytes,
-    downloadedMB: bytesToMB(downloadedBytes),
+    steps: { archiveMs, extractMs },
+    totalMs: round(archiveMs + extractMs),
+    archiveBytes,
+    archiveMB: bytesToMB(archiveBytes),
     fileCount: parseInt(countRes.stdout.trim(), 10)
   };
 }
 
 // ---------------------------------------------------------------------------
-// RESTORE: R2 → container → pipe extract (download and extract simultaneously)
+// RESTORE: pipe decompress+extract (archive piped directly into tar extract)
 // ---------------------------------------------------------------------------
 
 interface RestorePipeResult {
@@ -785,98 +726,41 @@ interface RestorePipeResult {
   type: 'restore';
   method: 'pipe';
   steps: {
-    pipeRestoreMs: number;
+    pipeExtractMs: number;
   };
   totalMs: number;
-  downloadedBytes: number;
-  downloadedMB: number;
+  archiveBytes: number;
+  archiveMB: number;
   fileCount: number;
 }
 
-async function restoreTarPipe(
+async function restoreTarPipeBenchmark(
   sandbox: SandboxInstance,
-  bucket: R2Bucket,
   strategy: string,
-  r2Key: string,
-  decompressFlag: string
+  pipeCmd: string
 ): Promise<RestorePipeResult> {
-  await sandbox.exec(
-    `rm -rf ${RESTORE_DIR} ${TMP_DIR} && mkdir -p ${RESTORE_DIR} ${TMP_DIR}`
+  await sandbox.exec(`rm -rf ${RESTORE_DIR} && mkdir -p ${RESTORE_DIR}`);
+
+  const { ms: pipeExtractMs, result: pipeRes } = await timed(() =>
+    sandbox.exec(pipeCmd, { timeout: ARCHIVE_TIMEOUT })
   );
+  if (!pipeRes.success)
+    throw new Error(`${strategy} pipe extract failed: ${pipeRes.stderr}`);
 
-  const extractCmd = decompressFlag
-    ? `tar -I '${decompressFlag}' -xf - -C ${RESTORE_DIR}`
-    : `tar xf - -C ${RESTORE_DIR}`;
-
-  // Server that receives PUT body and pipes it directly into tar extract
-  const serverScript = `
-const server = Bun.serve({
-  port: ${RESTORE_PORT},
-  async fetch(req) {
-    if (req.method !== "PUT") return new Response("PUT only", { status: 405 });
-    const proc = Bun.spawn(["bash", "-c", ${JSON.stringify(extractCmd)}], {
-      stdin: "pipe",
-      stdout: "pipe",
-      stderr: "pipe"
-    });
-    const reader = req.body.getReader();
-    const writer = proc.stdin.getWriter();
-    let bytes = 0;
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (value) {
-        await writer.write(value);
-        bytes += value.length;
-      }
-    }
-    await writer.close();
-    await proc.exited;
-    return Response.json({ bytes, exitCode: proc.exitCode });
-  }
-});
-console.log("pipe-restore on " + server.port);
-`;
-  await sandbox.writeFile(`${TMP_DIR}/pipe-restore.ts`, serverScript);
-  await killPort(sandbox, RESTORE_PORT);
-  await sandbox.exec(`bun ${TMP_DIR}/pipe-restore.ts &>/dev/null &`, {
-    timeout: 5000
-  });
-  await sandbox.exec('sleep 0.5');
-
-  const obj = await bucket.get(r2Key);
-  if (!obj) throw new Error(`R2 key not found: ${r2Key}`);
-  if (!obj.body) throw new Error(`R2 object has no body: ${r2Key}`);
-  const downloadedBytes = obj.size;
-
-  const { ms: pipeRestoreMs } = await timed(async () => {
-    const resp = await sandbox.containerFetch(
-      new Request(`http://localhost:${RESTORE_PORT}/`, {
-        method: 'PUT',
-        body: obj.body,
-        headers: { 'Content-Length': String(obj.size) }
-      }),
-      RESTORE_PORT
-    );
-    if (!resp.ok) {
-      const text = await resp.text();
-      throw new Error(`pipe-restore failed: ${resp.status} ${text}`);
-    }
-  });
+  const sizeRes = await sandbox.exec(`du -sb ${RESTORE_DIR} | cut -f1`);
+  const archiveBytes = parseInt(sizeRes.stdout.trim(), 10);
 
   const countRes = await sandbox.exec(`find ${RESTORE_DIR} -type f | wc -l`);
-
-  await killPort(sandbox, RESTORE_PORT);
-  await sandbox.exec(`rm -rf ${RESTORE_DIR} ${TMP_DIR}`);
+  await sandbox.exec(`rm -rf ${RESTORE_DIR}`);
 
   return {
     strategy,
     type: 'restore',
     method: 'pipe',
-    steps: { pipeRestoreMs },
-    totalMs: round(pipeRestoreMs),
-    downloadedBytes,
-    downloadedMB: bytesToMB(downloadedBytes),
+    steps: { pipeExtractMs },
+    totalMs: round(pipeExtractMs),
+    archiveBytes,
+    archiveMB: bytesToMB(archiveBytes),
     fileCount: parseInt(countRes.stdout.trim(), 10)
   };
 }
@@ -890,60 +774,59 @@ interface RestoreSquashfsResult {
   type: 'restore';
   method: 'unsquashfs' | 'squashfs-mount';
   steps: {
-    downloadMs: number;
+    archiveMs: number;
     restoreMs: number;
   };
   totalMs: number;
-  downloadedBytes: number;
-  downloadedMB: number;
+  archiveBytes: number;
+  archiveMB: number;
   fileCount: number;
 }
 
-async function restoreSquashfs(
+async function restoreSquashfsBenchmark(
   sandbox: SandboxInstance,
-  bucket: R2Bucket,
   strategy: string,
-  r2Key: string,
+  compFlag: string,
   mode: 'extract' | 'mount'
 ): Promise<RestoreSquashfsResult> {
   await sandbox.exec(
     `rm -rf ${RESTORE_DIR} ${TMP_DIR} && mkdir -p ${RESTORE_DIR} ${TMP_DIR}`
   );
+  const archive = `${TMP_DIR}/restore.squashfs`;
 
-  const archivePath = `${TMP_DIR}/restore.squashfs`;
-  await startReceiveServer(sandbox, archivePath, RESTORE_PORT);
-
-  const { bytes: downloadedBytes, ms: downloadMs } = await downloadToContainer(
-    sandbox,
-    bucket,
-    r2Key,
-    archivePath,
-    RESTORE_PORT
+  const { ms: archiveMs, result: archiveRes } = await timed(() =>
+    sandbox.exec(
+      `mksquashfs ${SRC_DIR} ${archive} -comp ${compFlag} -no-progress`,
+      { timeout: ARCHIVE_TIMEOUT }
+    )
   );
+  if (!archiveRes.success)
+    throw new Error(`${strategy} mksquashfs failed: ${archiveRes.stderr}`);
 
-  let extractMs: number;
+  const archiveBytes = await getFileSize(sandbox, archive);
+
+  let restoreMs: number;
   if (mode === 'extract') {
     const { ms, result: res } = await timed(() =>
-      sandbox.exec(`unsquashfs -d ${RESTORE_DIR}/data -f ${archivePath}`, {
+      sandbox.exec(`unsquashfs -d ${RESTORE_DIR}/data -f ${archive}`, {
         timeout: ARCHIVE_TIMEOUT
       })
     );
     if (!res.success) throw new Error(`unsquashfs failed: ${res.stderr}`);
-    extractMs = ms;
+    restoreMs = ms;
   } else {
     const { ms, result: res } = await timed(() =>
-      sandbox.exec(`mount -t squashfs ${archivePath} ${RESTORE_DIR} -o ro`, {
+      sandbox.exec(`mount -t squashfs ${archive} ${RESTORE_DIR} -o ro`, {
         timeout: 30_000
       })
     );
     if (!res.success) throw new Error(`squashfs mount failed: ${res.stderr}`);
-    extractMs = ms;
+    restoreMs = ms;
   }
 
   const countPath = mode === 'extract' ? `${RESTORE_DIR}/data` : RESTORE_DIR;
   const countRes = await sandbox.exec(`find ${countPath} -type f | wc -l`);
 
-  await killPort(sandbox, RESTORE_PORT);
   if (mode === 'mount') {
     await sandbox.exec(`umount ${RESTORE_DIR} 2>/dev/null || true`);
   }
@@ -953,10 +836,10 @@ async function restoreSquashfs(
     strategy,
     type: 'restore',
     method: mode === 'extract' ? 'unsquashfs' : 'squashfs-mount',
-    steps: { downloadMs, restoreMs: extractMs },
-    totalMs: round(downloadMs + extractMs),
-    downloadedBytes,
-    downloadedMB: bytesToMB(downloadedBytes),
+    steps: { archiveMs, restoreMs },
+    totalMs: round(archiveMs + restoreMs),
+    archiveBytes,
+    archiveMB: bytesToMB(archiveBytes),
     fileCount: parseInt(countRes.stdout.trim(), 10)
   };
 }
@@ -1212,105 +1095,52 @@ const BACKUP_STRATEGIES: Record<
 };
 
 // --- Restore strategies ---
-// Each restore strategy references an R2 key that must exist (run the corresponding backup first)
 
 const RESTORE_STRATEGIES: Record<
   string,
-  {
-    fn: (s: SandboxInstance, b: R2Bucket) => Promise<AnyRestoreResult>;
-    desc: string;
-    requires: string;
-  }
+  { fn: (s: SandboxInstance) => Promise<AnyRestoreResult>; desc: string }
 > = {
   'restore-tar': {
-    fn: (s, b) =>
-      restoreTarArchive(
-        s,
-        b,
-        'restore-tar',
-        'bench/direct/snapshot.tar',
-        'tar xf'
-      ),
-    desc: 'R2 → container → tar xf',
-    requires: 'tar-direct'
+    fn: (s) => restoreTarBenchmark(s, 'restore-tar', 'tar cf', 'tar xf'),
+    desc: 'tar cf → tar xf (uncompressed)'
   },
   'restore-tar-zst': {
-    fn: (s, b) =>
-      restoreTarArchive(
+    fn: (s) =>
+      restoreTarBenchmark(
         s,
-        b,
         'restore-tar-zst',
-        'bench/direct/snapshot.tar.zst',
+        "tar -I 'zstd -T0' -cf",
         "tar -I 'zstd -T0' -xf"
       ),
-    desc: 'R2 → container → tar xf (zstd)',
-    requires: 'tar-zst-direct'
+    desc: 'tar+zstd cf → tar+zstd xf'
   },
   'restore-tar-gz': {
-    fn: (s, b) =>
-      restoreTarArchive(
-        s,
-        b,
-        'restore-tar-gz',
-        'bench/direct/snapshot.tar.gz',
-        'tar xzf'
-      ),
-    desc: 'R2 → container → tar xzf',
-    requires: 'tar-gz-direct'
-  },
-  'restore-tar-pipe': {
-    fn: (s, b) =>
-      restoreTarPipe(s, b, 'restore-tar-pipe', 'bench/direct/snapshot.tar', ''),
-    desc: 'R2 → container → pipe into tar xf',
-    requires: 'tar-direct'
+    fn: (s) => restoreTarBenchmark(s, 'restore-tar-gz', 'tar czf', 'tar xzf'),
+    desc: 'tar.gz cf → tar.gz xf'
   },
   'restore-tar-zst-pipe': {
-    fn: (s, b) =>
-      restoreTarPipe(
+    fn: (s) =>
+      restoreTarPipeBenchmark(
         s,
-        b,
         'restore-tar-zst-pipe',
-        'bench/direct/snapshot.tar.zst',
-        'zstd -T0 -d'
+        `tar cf - -C /workspace sandbox-sdk | zstd -T0 | zstd -T0 -d | tar xf - -C ${RESTORE_DIR}`
       ),
-    desc: 'R2 → container → pipe into tar xf (zstd)',
-    requires: 'tar-zst-direct'
-  },
-  'restore-tar-pipe-from-pipe': {
-    fn: (s, b) =>
-      restoreTarPipe(
-        s,
-        b,
-        'restore-tar-pipe-from-pipe',
-        'bench/pipe/snapshot.tar.zst',
-        'zstd -T0 -d'
-      ),
-    desc: 'R2 (from pipe backup) → container → pipe into tar xf (zstd)',
-    requires: 'tar-zst-pipe'
+    desc: 'tar | zstd | zstd -d | tar xf (compress+decompress pipeline)'
   },
   'restore-squashfs-extract': {
-    fn: (s, b) =>
-      restoreSquashfs(
+    fn: (s) =>
+      restoreSquashfsBenchmark(
         s,
-        b,
         'restore-squashfs-extract',
-        'bench/squashfs/snapshot-zstd.squashfs',
+        'zstd',
         'extract'
       ),
-    desc: 'R2 → container → unsquashfs (full extract)',
-    requires: 'squashfs-zstd'
+    desc: 'mksquashfs → unsquashfs (full extract)'
   },
   'restore-squashfs-mount': {
-    fn: (s, b) =>
-      restoreSquashfs(
-        s,
-        b,
-        'restore-squashfs-mount',
-        'bench/squashfs/snapshot-zstd.squashfs',
-        'mount'
-      ),
-    desc: 'R2 → container → mount -t squashfs (instant, read-only)',
-    requires: 'squashfs-zstd'
+    fn: (s) =>
+      restoreSquashfsBenchmark(s, 'restore-squashfs-mount', 'zstd', 'mount'),
+    desc: 'mksquashfs → mount -t squashfs (instant, read-only)'
   }
 };
 
@@ -1353,7 +1183,7 @@ export default {
 
       for (const [name, { fn }] of Object.entries(RESTORE_STRATEGIES)) {
         try {
-          results.push(await fn(sandbox, env.BACKUP_BUCKET));
+          results.push(await fn(sandbox));
         } catch (err) {
           results.push({ strategy: name, error: String(err) });
         }
@@ -1384,7 +1214,7 @@ export default {
 
       for (const [name, { fn }] of Object.entries(RESTORE_STRATEGIES)) {
         try {
-          restoreResults.push(await fn(sandbox, env.BACKUP_BUCKET));
+          restoreResults.push(await fn(sandbox));
         } catch (err) {
           restoreResults.push({ strategy: name, error: String(err) });
         }
@@ -1437,7 +1267,7 @@ export default {
         );
       }
       try {
-        const result = await entry.fn(sandbox, env.BACKUP_BUCKET);
+        const result = await entry.fn(sandbox);
         return Response.json({ result });
       } catch (err) {
         return Response.json({ error: String(err) }, { status: 500 });
@@ -1481,10 +1311,8 @@ export default {
     }
 
     const restoreDescriptions: Record<string, string> = {};
-    for (const [name, { desc, requires }] of Object.entries(
-      RESTORE_STRATEGIES
-    )) {
-      restoreDescriptions[name] = `${desc} (requires: ${requires})`;
+    for (const [name, { desc }] of Object.entries(RESTORE_STRATEGIES)) {
+      restoreDescriptions[name] = desc;
     }
 
     return Response.json({

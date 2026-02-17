@@ -28,18 +28,16 @@ Test directory: the sandbox-sdk repo cloned into the container with `npm install
 
 ## Restore Results
 
-Restore benchmarks measure R2 → container download + extraction time. Requires corresponding backup to exist in R2 first.
+Restore benchmarks create archives in-container and time extraction. This isolates archive/extract performance from network transfer (which is already benchmarked in backup strategies).
 
-| Strategy                     | Method                                     | Notes                                   |
-| ---------------------------- | ------------------------------------------ | --------------------------------------- |
-| `restore-tar`                | R2 → container → tar xf                    | Sequential download then extract        |
-| `restore-tar-zst`            | R2 → container → tar xf (zstd)             | Sequential download then extract        |
-| `restore-tar-gz`             | R2 → container → tar xzf                   | Sequential download then extract        |
-| `restore-tar-pipe`           | R2 → pipe into tar xf                      | Download and extract simultaneously     |
-| `restore-tar-zst-pipe`       | R2 → pipe into tar xf (zstd)               | Download and extract simultaneously     |
-| `restore-tar-pipe-from-pipe` | R2 (pipe backup) → pipe into tar xf (zstd) | Tests pipe backup → pipe restore path   |
-| `restore-squashfs-extract`   | R2 → container → unsquashfs                | Full extraction to disk                 |
-| `restore-squashfs-mount`     | R2 → container → mount -t squashfs         | Instant mount, read-only, no extraction |
+| Strategy                   | Total    | Archive | Extract | Archive Size | Method                                             |
+| -------------------------- | -------- | ------- | ------- | ------------ | -------------------------------------------------- |
+| **`restore-tar`**          | **1.4s** | 0.5s    | 0.8s    | 704MB        | tar cf → tar xf (uncompressed)                     |
+| `restore-tar-zst`          | 5.1s     | 1.5s    | 3.6s    | 212MB        | tar+zstd cf → tar+zstd xf                          |
+| `restore-tar-gz`           | 21.7s    | 16.1s   | 5.6s    | 229MB        | tar.gz cf → tar.gz xf                              |
+| `restore-tar-zst-pipe`     | 3.4s     | —       | —       | (piped)      | tar \| zstd \| zstd -d \| tar xf (single pipeline) |
+| `restore-squashfs-extract` | 25.1s    | 24.3s   | 0.8s    | 205MB        | mksquashfs → unsquashfs                            |
+| `restore-squashfs-mount`   | N/A      | —       | —       | —            | Needs CAP_SYS_ADMIN (production only)              |
 
 ## Strategy Families
 
@@ -138,9 +136,13 @@ Downloads the `.squashfs` image and mounts it read-only. Near-instant "restore" 
 
 **R2 multipart requires identical part sizes.** All non-final parts must be exactly the same size, not just above the 5MB minimum. Variable-sized parts cause error 10048.
 
-**SquashFS enables instant restore.** While backup speed may be similar to tar+zstd, the `mount -t squashfs` restore is near-instantaneous since files are accessed on-demand from the image. No extraction step needed.
+**Uncompressed tar is fastest for restore.** When restoring to a local disk (no network transfer), uncompressed tar at 1.4s beats tar+zstd at 5.1s — decompression CPU cost exceeds the I/O saved. For network-bound restores (R2 → container), zstd's 3x smaller size would likely win.
 
-**OverlayFS enables incremental snapshots.** By backing up only the diff layer, subsequent snapshots after an initial full backup are dramatically smaller and faster.
+**Piped restore overlaps compress+decompress.** The `tar | zstd | zstd -d | tar xf` pipeline at 3.4s outperforms sequential tar+zstd create (1.5s) + extract (3.6s) = 5.1s by overlapping both stages.
+
+**SquashFS: great compression, slow creation.** mksquashfs takes ~24s (vs 1.5s for tar+zstd) but produces the smallest archive (205MB). The `unsquashfs` extraction is fast (0.8s), and `mount -t squashfs` would be near-instant but requires CAP_SYS_ADMIN (available in Cloudflare production, not local Docker).
+
+**OverlayFS enables incremental snapshots.** By backing up only the diff layer, subsequent snapshots after an initial full backup are dramatically smaller and faster. Requires CAP_SYS_ADMIN (production only).
 
 ## R2 Binding
 
