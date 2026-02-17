@@ -22,6 +22,13 @@ const SERVE_PORT = 8080;
 const PIPE_PORT = 8081;
 const RESTORE_PORT = 8082;
 
+// OverlayFS layering
+const OVERLAY_BASE = '/mnt/base';
+const OVERLAY_UPPER = '/mnt/upper';
+const OVERLAY_WORK = '/mnt/work';
+const OVERLAY_MERGED = '/mnt/merged';
+const OVERLAY_R2_PREFIX = 'bench/overlay/';
+
 const MULTIPART_PART_SIZE = 10 * 1024 * 1024;
 
 type SandboxInstance = ReturnType<typeof getSandbox>;
@@ -1134,6 +1141,364 @@ async function presignedDownloadAndMount(
 }
 
 // ===========================================================================
+// OVERLAY FILESYSTEM BENCHMARKS
+// ===========================================================================
+
+interface OverlaySetupResult {
+  baseDownloadMs: number;
+  baseMountMs: number;
+  overlayMountMs: number;
+  totalMs: number;
+}
+
+interface OverlaySimulateResult {
+  size: string;
+  description: string;
+  durationMs: number;
+  upperDirBytes: number;
+  upperDirMB: number;
+  upperFileCount: number;
+}
+
+interface OverlayStatusResult {
+  mounted: boolean;
+  upperDirBytes: number;
+  upperDirMB: number;
+  upperFileCount: number;
+  mergedFileCount: number;
+}
+
+interface OverlayDeltaBackupResult {
+  upperDirBytes: number;
+  upperDirMB: number;
+  upperFileCount: number;
+  archiveBytes: number;
+  archiveMB: number;
+  archiveMs: number;
+  uploadMs: number;
+  totalMs: number;
+  r2Key: string;
+}
+
+interface OverlayRestoreResult {
+  baseDownloadMs: number;
+  baseMountMs: number;
+  deltaDownloadMs: number;
+  deltaExtractMs: number;
+  overlayMountMs: number;
+  totalMs: number;
+  mergedFileCount: number;
+  deltaR2Key: string;
+}
+
+interface OverlayLifecycleResult {
+  setup: OverlaySetupResult;
+  simulate: OverlaySimulateResult;
+  backup: OverlayDeltaBackupResult;
+  restore: OverlayRestoreResult;
+}
+
+async function overlayTeardown(sandbox: SandboxInstance): Promise<void> {
+  await sandbox.exec(
+    [
+      `umount ${OVERLAY_MERGED} 2>/dev/null || true`,
+      `fusermount -u ${OVERLAY_BASE} 2>/dev/null || true`,
+      `umount ${OVERLAY_BASE} 2>/dev/null || true`,
+      `rm -rf ${OVERLAY_UPPER} ${OVERLAY_WORK} ${OVERLAY_MERGED}`,
+      `mkdir -p ${OVERLAY_BASE} ${OVERLAY_UPPER} ${OVERLAY_WORK} ${OVERLAY_MERGED} ${TMP_DIR}`
+    ].join(' ; '),
+    { timeout: 10_000 }
+  );
+}
+
+async function overlaySetup(
+  sandbox: SandboxInstance,
+  env: Env
+): Promise<OverlaySetupResult> {
+  await overlayTeardown(sandbox);
+
+  const baseUrl = await generatePresignedGetUrl(
+    env,
+    'bench/squashfs/snapshot-zstd.squashfs'
+  );
+
+  const { ms: baseDownloadMs, result: dlRes } = await timed(() =>
+    sandbox.exec(`curl -sf '${baseUrl}' -o ${TMP_DIR}/base.squashfs`, {
+      timeout: ARCHIVE_TIMEOUT
+    })
+  );
+  if (!dlRes.success) throw new Error(`Base download failed: ${dlRes.stderr}`);
+
+  const { ms: baseMountMs, result: mRes } = await timed(() =>
+    sandbox.exec(`squashfuse ${TMP_DIR}/base.squashfs ${OVERLAY_BASE}`)
+  );
+  if (!mRes.success) throw new Error(`squashfuse failed: ${mRes.stderr}`);
+
+  const { ms: overlayMountMs, result: oRes } = await timed(() =>
+    sandbox.exec(
+      `mount -t overlay overlay -o lowerdir=${OVERLAY_BASE},upperdir=${OVERLAY_UPPER},workdir=${OVERLAY_WORK} ${OVERLAY_MERGED}`
+    )
+  );
+  if (!oRes.success) throw new Error(`overlay mount failed: ${oRes.stderr}`);
+
+  const total = round(baseDownloadMs + baseMountMs + overlayMountMs);
+  return {
+    baseDownloadMs: round(baseDownloadMs),
+    baseMountMs: round(baseMountMs),
+    overlayMountMs: round(overlayMountMs),
+    totalMs: total
+  };
+}
+
+type SimulateSize = 'small' | 'medium' | 'large';
+
+async function overlaySimulate(
+  sandbox: SandboxInstance,
+  size: SimulateSize
+): Promise<OverlaySimulateResult> {
+  const dir = `${OVERLAY_MERGED}/__overlay_test`;
+  let cmd: string;
+  let desc: string;
+
+  switch (size) {
+    case 'small':
+      cmd = [
+        `for f in $(find ${OVERLAY_MERGED} -name '*.ts' -type f | head -5); do echo '// overlay-mod' >> "$f"; done`,
+        `mkdir -p ${dir}`,
+        `for i in $(seq 1 10); do dd if=/dev/urandom of=${dir}/s_$i.bin bs=10K count=1 2>/dev/null; done`
+      ].join(' && ');
+      desc = '5 modified .ts files + 10 new 10KB files (~100KB delta)';
+      break;
+    case 'medium':
+      cmd = [
+        `for f in $(find ${OVERLAY_MERGED} -name '*.json' -type f | head -10); do echo '{}' >> "$f"; done`,
+        `mkdir -p ${dir}`,
+        `for i in $(seq 1 50); do dd if=/dev/urandom of=${dir}/m_$i.bin bs=200K count=1 2>/dev/null; done`
+      ].join(' && ');
+      desc = '10 modified .json files + 50 new 200KB files (~10MB delta)';
+      break;
+    case 'large':
+      cmd = [
+        `for f in $(find ${OVERLAY_MERGED} -name '*.ts' -type f | head -50); do echo '// bulk-mod' >> "$f"; done`,
+        `mkdir -p ${dir}`,
+        `for i in $(seq 1 100); do dd if=/dev/urandom of=${dir}/l_$i.bin bs=1M count=1 2>/dev/null; done`
+      ].join(' && ');
+      desc = '50 modified .ts files + 100 new 1MB files (~100MB delta)';
+      break;
+  }
+
+  const { ms } = await timed(() => sandbox.exec(cmd, { timeout: 60_000 }));
+
+  const sizeRes = await sandbox.exec(`du -sb ${OVERLAY_UPPER} | cut -f1`);
+  const countRes = await sandbox.exec(`find ${OVERLAY_UPPER} -type f | wc -l`);
+  const upperBytes = parseInt(sizeRes.stdout.trim(), 10);
+
+  return {
+    size,
+    description: desc,
+    durationMs: round(ms),
+    upperDirBytes: upperBytes,
+    upperDirMB: bytesToMB(upperBytes),
+    upperFileCount: parseInt(countRes.stdout.trim(), 10)
+  };
+}
+
+async function overlayStatus(
+  sandbox: SandboxInstance
+): Promise<OverlayStatusResult> {
+  const mountCheck = await sandbox.exec(
+    `mount | grep ${OVERLAY_MERGED} | head -1`
+  );
+  const mounted = mountCheck.stdout.trim().length > 0;
+
+  if (!mounted) {
+    return {
+      mounted: false,
+      upperDirBytes: 0,
+      upperDirMB: 0,
+      upperFileCount: 0,
+      mergedFileCount: 0
+    };
+  }
+
+  const [sizeRes, upperCountRes, mergedCountRes] = await Promise.all([
+    sandbox.exec(`du -sb ${OVERLAY_UPPER} | cut -f1`),
+    sandbox.exec(`find ${OVERLAY_UPPER} -type f | wc -l`),
+    sandbox.exec(`find ${OVERLAY_MERGED} -type f | wc -l`)
+  ]);
+  const upperBytes = parseInt(sizeRes.stdout.trim(), 10);
+
+  return {
+    mounted: true,
+    upperDirBytes: upperBytes,
+    upperDirMB: bytesToMB(upperBytes),
+    upperFileCount: parseInt(upperCountRes.stdout.trim(), 10),
+    mergedFileCount: parseInt(mergedCountRes.stdout.trim(), 10)
+  };
+}
+
+async function overlayBackupDelta(
+  sandbox: SandboxInstance,
+  env: Env,
+  deltaName: string
+): Promise<OverlayDeltaBackupResult> {
+  const sizeRes = await sandbox.exec(`du -sb ${OVERLAY_UPPER} | cut -f1`);
+  const countRes = await sandbox.exec(`find ${OVERLAY_UPPER} -type f | wc -l`);
+  const upperDirBytes = parseInt(sizeRes.stdout.trim(), 10);
+  const upperFileCount = parseInt(countRes.stdout.trim(), 10);
+
+  const archivePath = `${TMP_DIR}/delta.tar.zst`;
+  const { ms: archiveMs, result: archRes } = await timed(() =>
+    sandbox.exec(
+      `rm -f ${archivePath} && tar -C ${OVERLAY_UPPER} -cf - . | zstd -T0 -o ${archivePath}`,
+      { timeout: ARCHIVE_TIMEOUT }
+    )
+  );
+  if (!archRes.success)
+    throw new Error(`Delta archive failed: ${archRes.stderr}`);
+
+  const archiveBytes = await getFileSize(sandbox, archivePath);
+  const r2Key = `${OVERLAY_R2_PREFIX}${deltaName}.tar.zst`;
+
+  await sandbox.exec(
+    `bun -e "Bun.serve({port:${SERVE_PORT},fetch:()=>new Response(Bun.file('${archivePath}'))})" &>/dev/null &`,
+    { timeout: 5_000 }
+  );
+  await sandbox.exec('sleep 0.3');
+
+  const { ms: uploadMs } = await timed(async () => {
+    const resp = await sandbox.containerFetch(
+      new Request(`http://localhost:${SERVE_PORT}/`),
+      SERVE_PORT
+    );
+    if (!resp.ok) throw new Error(`containerFetch failed: ${resp.status}`);
+    if (!resp.body) throw new Error('No response body');
+
+    const fixed = new FixedLengthStream(archiveBytes);
+    const pump = (async () => {
+      const writer = fixed.writable.getWriter();
+      const reader = resp.body!.getReader();
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          await writer.write(value);
+        }
+        await writer.close();
+      } catch (err) {
+        await writer.abort(err instanceof Error ? err : new Error(String(err)));
+        throw err;
+      }
+    })();
+
+    await Promise.all([
+      env.BACKUP_BUCKET.put(r2Key, fixed.readable, {
+        httpMetadata: { contentType: 'application/zstd' }
+      }),
+      pump
+    ]);
+  });
+
+  await killPort(sandbox, SERVE_PORT);
+
+  return {
+    upperDirBytes,
+    upperDirMB: bytesToMB(upperDirBytes),
+    upperFileCount,
+    archiveBytes,
+    archiveMB: bytesToMB(archiveBytes),
+    archiveMs: round(archiveMs),
+    uploadMs: round(uploadMs),
+    totalMs: round(archiveMs + uploadMs),
+    r2Key
+  };
+}
+
+async function overlayRestoreFull(
+  sandbox: SandboxInstance,
+  env: Env,
+  deltaR2Key: string
+): Promise<OverlayRestoreResult> {
+  await overlayTeardown(sandbox);
+
+  const [baseUrl, deltaUrl] = await Promise.all([
+    generatePresignedGetUrl(env, 'bench/squashfs/snapshot-zstd.squashfs'),
+    generatePresignedGetUrl(env, deltaR2Key)
+  ]);
+
+  const { ms: baseDownloadMs, result: baseDl } = await timed(() =>
+    sandbox.exec(`curl -sf '${baseUrl}' -o ${TMP_DIR}/base.squashfs`, {
+      timeout: ARCHIVE_TIMEOUT
+    })
+  );
+  if (!baseDl.success)
+    throw new Error(`Base download failed: ${baseDl.stderr}`);
+
+  const { ms: baseMountMs, result: baseMount } = await timed(() =>
+    sandbox.exec(`squashfuse ${TMP_DIR}/base.squashfs ${OVERLAY_BASE}`)
+  );
+  if (!baseMount.success)
+    throw new Error(`squashfuse failed: ${baseMount.stderr}`);
+
+  const { ms: deltaDownloadMs, result: deltaDl } = await timed(() =>
+    sandbox.exec(
+      `curl -sf '${deltaUrl}' | zstd -T0 -d | tar xf - -C ${OVERLAY_UPPER}`,
+      { timeout: ARCHIVE_TIMEOUT }
+    )
+  );
+  if (!deltaDl.success)
+    throw new Error(`Delta restore failed: ${deltaDl.stderr}`);
+
+  const { ms: overlayMountMs, result: oRes } = await timed(() =>
+    sandbox.exec(
+      `mount -t overlay overlay -o lowerdir=${OVERLAY_BASE},upperdir=${OVERLAY_UPPER},workdir=${OVERLAY_WORK} ${OVERLAY_MERGED}`
+    )
+  );
+  if (!oRes.success) throw new Error(`Overlay mount failed: ${oRes.stderr}`);
+
+  const countRes = await sandbox.exec(`find ${OVERLAY_MERGED} -type f | wc -l`);
+
+  return {
+    baseDownloadMs: round(baseDownloadMs),
+    baseMountMs: round(baseMountMs),
+    deltaDownloadMs: round(deltaDownloadMs),
+    deltaExtractMs: 0,
+    overlayMountMs: round(overlayMountMs),
+    totalMs: round(
+      baseDownloadMs + baseMountMs + deltaDownloadMs + overlayMountMs
+    ),
+    mergedFileCount: parseInt(countRes.stdout.trim(), 10),
+    deltaR2Key
+  };
+}
+
+async function overlayLifecycle(
+  sandbox: SandboxInstance,
+  env: Env,
+  simulateSize: SimulateSize
+): Promise<OverlayLifecycleResult> {
+  const setup = await overlaySetup(sandbox, env);
+  const simulate = await overlaySimulate(sandbox, simulateSize);
+  const backup = await overlayBackupDelta(
+    sandbox,
+    env,
+    `lifecycle-${simulateSize}`
+  );
+
+  await overlayTeardown(sandbox);
+  await sandbox.exec(
+    'sync && echo 3 > /proc/sys/vm/drop_caches 2>/dev/null || true',
+    { timeout: 10_000 }
+  );
+
+  const restore = await overlayRestoreFull(sandbox, env, backup.r2Key);
+
+  await overlayTeardown(sandbox);
+
+  return { setup, simulate, backup, restore };
+}
+
+// ===========================================================================
 // STRATEGY REGISTRIES
 // ===========================================================================
 
@@ -1691,7 +2056,9 @@ export default {
     }
 
     // --- Single restore ---
-    // ?runs=N  → run N times (max 10), drop page cache between runs, report stats
+    // ?runs=N          → run N times (max 10), report stats
+    // ?isolated=true   → fresh sandbox per run (true cold start)
+    // default          → shared sandbox with page-cache drops between runs
     const restoreMatch = url.pathname.match(/^\/restore\/(.+)$/);
     if (restoreMatch) {
       const name = restoreMatch[1];
@@ -1710,18 +2077,36 @@ export default {
         Math.max(parseInt(url.searchParams.get('runs') ?? '1', 10) || 1, 1),
         10
       );
+      const isolated = url.searchParams.get('isolated') === 'true';
 
       try {
-        const results: AnyRestoreResult[] = [];
+        const results: (AnyRestoreResult & {
+          startupMs?: number;
+          sandboxId?: string;
+        })[] = [];
 
         for (let i = 0; i < runs; i++) {
-          if (i > 0) {
-            await sandbox.exec(
-              'sync && echo 3 > /proc/sys/vm/drop_caches 2>/dev/null; rm -rf /tmp/bench /tmp/restore',
-              { timeout: 10_000 }
+          if (isolated) {
+            const freshId = `bench-iso-${name}-${Date.now()}-${i}`;
+            const freshSandbox = getSandbox(env.Sandbox, freshId);
+            const { ms: startupMs } = await timed(() =>
+              freshSandbox.exec('echo ready', { timeout: 120_000 })
             );
+            const result = await entry.fn(freshSandbox, env);
+            results.push({
+              ...result,
+              startupMs: round(startupMs),
+              sandboxId: freshId
+            });
+          } else {
+            if (i > 0) {
+              await sandbox.exec(
+                'sync && echo 3 > /proc/sys/vm/drop_caches 2>/dev/null; rm -rf /tmp/bench /tmp/restore',
+                { timeout: 10_000 }
+              );
+            }
+            results.push(await entry.fn(sandbox, env));
           }
-          results.push(await entry.fn(sandbox, env));
         }
 
         if (runs === 1) {
@@ -1736,15 +2121,159 @@ export default {
                 (totals[totals.length / 2 - 1] + totals[totals.length / 2]) / 2
               );
 
-        return Response.json({
+        const resp: Record<string, unknown> = {
           runs,
+          isolated,
           results,
           stats: {
             medianMs: median,
             minMs: totals[0],
             maxMs: totals[totals.length - 1]
           }
-        });
+        };
+
+        if (isolated) {
+          const startups = results
+            .map((r) => r.startupMs ?? 0)
+            .sort((a, b) => a - b);
+          resp.startupStats = {
+            medianMs:
+              startups.length % 2 === 1
+                ? startups[Math.floor(startups.length / 2)]
+                : round(
+                    (startups[startups.length / 2 - 1] +
+                      startups[startups.length / 2]) /
+                      2
+                  ),
+            minMs: startups[0],
+            maxMs: startups[startups.length - 1]
+          };
+        }
+
+        return Response.json(resp);
+      } catch (err) {
+        return Response.json({ error: String(err) }, { status: 500 });
+      }
+    }
+
+    // --- Overlay filesystem endpoints ---
+    const overlayMatch = url.pathname.match(/^\/overlay\/(.+)$/);
+    if (overlayMatch) {
+      const action = overlayMatch[1];
+      try {
+        switch (action) {
+          case 'setup': {
+            const result = await overlaySetup(sandbox, env);
+            return Response.json({ action: 'setup', result });
+          }
+          case 'simulate': {
+            const size = (url.searchParams.get('size') ??
+              'medium') as SimulateSize;
+            if (!['small', 'medium', 'large'].includes(size)) {
+              return Response.json(
+                {
+                  error: `Invalid size: ${size}`,
+                  available: ['small', 'medium', 'large']
+                },
+                { status: 400 }
+              );
+            }
+            const result = await overlaySimulate(sandbox, size);
+            return Response.json({ action: 'simulate', result });
+          }
+          case 'status': {
+            const result = await overlayStatus(sandbox);
+            return Response.json({ action: 'status', result });
+          }
+          case 'backup-delta': {
+            const name = url.searchParams.get('name') ?? `delta-${Date.now()}`;
+            const result = await overlayBackupDelta(sandbox, env, name);
+            return Response.json({ action: 'backup-delta', result });
+          }
+          case 'restore': {
+            const r2Key = url.searchParams.get('key');
+            if (!r2Key) {
+              return Response.json(
+                { error: 'Missing ?key= parameter (R2 key for delta archive)' },
+                { status: 400 }
+              );
+            }
+            const runs = Math.min(
+              Math.max(
+                parseInt(url.searchParams.get('runs') ?? '1', 10) || 1,
+                1
+              ),
+              10
+            );
+            const results: OverlayRestoreResult[] = [];
+            for (let i = 0; i < runs; i++) {
+              if (i > 0) {
+                await sandbox.exec(
+                  'sync && echo 3 > /proc/sys/vm/drop_caches 2>/dev/null || true',
+                  { timeout: 10_000 }
+                );
+              }
+              results.push(await overlayRestoreFull(sandbox, env, r2Key));
+            }
+            if (runs === 1) {
+              return Response.json({ action: 'restore', result: results[0] });
+            }
+            const totals = results.map((r) => r.totalMs).sort((a, b) => a - b);
+            const median =
+              totals.length % 2 === 1
+                ? totals[Math.floor(totals.length / 2)]
+                : round(
+                    (totals[totals.length / 2 - 1] +
+                      totals[totals.length / 2]) /
+                      2
+                  );
+            return Response.json({
+              action: 'restore',
+              runs,
+              results,
+              stats: {
+                medianMs: median,
+                minMs: totals[0],
+                maxMs: totals[totals.length - 1]
+              }
+            });
+          }
+          case 'teardown': {
+            await overlayTeardown(sandbox);
+            return Response.json({ action: 'teardown', ok: true });
+          }
+          case 'lifecycle': {
+            const size = (url.searchParams.get('size') ??
+              'medium') as SimulateSize;
+            if (!['small', 'medium', 'large'].includes(size)) {
+              return Response.json(
+                {
+                  error: `Invalid size: ${size}`,
+                  available: ['small', 'medium', 'large']
+                },
+                { status: 400 }
+              );
+            }
+            const result = await overlayLifecycle(sandbox, env, size);
+            return Response.json({ action: 'lifecycle', result });
+          }
+          default:
+            return Response.json(
+              {
+                error: `Unknown overlay action: ${action}`,
+                available: [
+                  'setup',
+                  'simulate?size=small|medium|large',
+                  'status',
+                  'backup-delta?name=<name>',
+                  'restore?key=<r2-key>&runs=N',
+                  'teardown',
+                  'lifecycle?size=small|medium|large'
+                ]
+              },
+              { status: 400 }
+            );
+        }
       } catch (err) {
         return Response.json({ error: String(err) }, { status: 500 });
       }
@@ -1797,11 +2326,21 @@ export default {
         '/probe': 'Kernel, filesystem, and tool diagnostics',
         '/backup/<strategy>': 'Run a single backup strategy',
         '/backup/all': 'Run all backup strategies',
-        '/restore/<strategy>?runs=N':
-          'Run restore N times (max 10) with page-cache drops between runs',
+        '/restore/<strategy>?runs=N&isolated=true':
+          'Run restore N times; isolated=true uses fresh sandbox per run',
         '/restore/all': 'Run all restore strategies',
         '/benchmark/all': 'Run all backups then all restores',
-        '/benchmark/<strategy>': 'Legacy alias for /backup/<strategy>'
+        '/benchmark/<strategy>': 'Legacy alias for /backup/<strategy>',
+        '/overlay/setup': 'Mount base squashfs + overlayfs workspace',
+        '/overlay/simulate?size=small|medium|large':
+          'Simulate changes in overlay workspace',
+        '/overlay/status': 'Show overlay delta size and file count',
+        '/overlay/backup-delta?name=<name>': 'Backup overlay upper dir to R2',
+        '/overlay/restore?key=<r2-key>&runs=N':
+          'Full restore: base + delta + overlay mount',
+        '/overlay/teardown': 'Unmount and clean up overlay',
+        '/overlay/lifecycle?size=small|medium|large':
+          'Full cycle: setup → simulate → backup → restore'
       },
       backup: backupDescriptions,
       restore: restoreDescriptions

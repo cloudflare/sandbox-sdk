@@ -21,7 +21,7 @@
       "class_name": "Sandbox",
       "image": "./Dockerfile",
       "instance_type": "standard-4",
-      "max_instances": 1
+      "max_instances": 10
     }
   ],
   "durable_objects": {

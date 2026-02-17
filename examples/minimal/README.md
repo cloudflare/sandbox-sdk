@@ -59,6 +59,36 @@ Median of 3 runs with `sync && echo 3 > /proc/sys/vm/drop_caches` between each r
 | `presigned-tar-zst`                   | 48.9s    | (single run) | 2.1s     | 46.8s    | 212MB | curl R2 → tar xf (zstd)                        |
 | `presigned-squashfs-extract`          | 51.2s    | (single run) | 1.9s     | 49.3s    | 205MB | curl R2 → unsquashfs                           |
 
+### Production — Isolated Sandboxes (fresh container per run, standard-4)
+
+True cold-start measurements with `?isolated=true`. Each run creates a brand-new sandbox with no page cache. Container startup time is reported separately.
+
+| Strategy                         | Restore Median | Restore Range | Startup Median | Startup Range |
+| -------------------------------- | -------------- | ------------- | -------------- | ------------- |
+| **`presigned-squashfs-mount`**   | **2.2s**       | 1.7–9.7s      | 2.2s           | 1.8–2.8s      |
+| **`presigned-squashfuse-mount`** | **3.1s**       | 2.6–3.2s      | 2.1s           | 1.7–2.6s      |
+| `presigned-tar-zst-pipe`         | 6.1s           | 5.5–8.1s      | 2.0s           | 1.8–3.0s      |
+
+Note: the squashfs-mount outlier (9.7s) was a single run with slow R2 download — likely cold network path for that container placement. Excluding it, the range is 1.7–2.2s.
+
+### Production — OverlayFS Incremental Restore (standard-4)
+
+Restores the base squashfs image via squashfuse, then downloads and extracts a delta layer containing only changed files, and mounts overlayfs on top. Median of 3 runs with page-cache drops.
+
+| Delta Size         | Total Median | Base DL | Base Mount | Delta DL | Overlay Mount | Delta Archive |
+| ------------------ | ------------ | ------- | ---------- | -------- | ------------- | ------------- |
+| **Small** (~100KB) | **2.4s**     | ~2.1s   | ~60ms      | ~140ms   | ~50ms         | 0.1MB         |
+| **Medium** (~10MB) | **2.6s**     | ~2.0s   | ~60ms      | ~260ms   | ~50ms         | 9.8MB         |
+| **Large** (~100MB) | **3.7s**     | ~2.5s   | ~38ms      | ~1.3s    | ~50ms         | 100MB         |
+
+**Overlay backup speed** (archiving the delta layer only):
+
+| Delta Size | Upper Dir | Archive | Archive Size | Upload | Total Backup |
+| ---------- | --------- | ------- | ------------ | ------ | ------------ |
+| Small      | 0.13MB    | 43ms    | 0.1MB        | 141ms  | **0.2s**     |
+| Medium     | 9.8MB     | 102ms   | 9.8MB        | 482ms  | **0.6s**     |
+| Large      | 102.8MB   | 323ms   | 100MB        | 4.0s   | **4.4s**     |
+
 ### Production — In-container only (standard-4)
 
 These strategies create and extract archives within the container (no R2 transfer). Useful for measuring pure archive/extract performance.
@@ -186,6 +216,26 @@ Container: curl → R2 direct HTTP → disk → mount (70ms)
 
 Requires an R2 API token (Access Key ID + Secret Access Key) set as Worker secrets. The presigned URL is valid for 1 hour and scoped to a single object.
 
+### Overlay: Incremental Snapshots (`/overlay/*`)
+
+Uses OverlayFS to capture only changed files. The base squashfs is mounted as the overlay lower layer, and all writes go to the upper directory. Subsequent backups archive only the upper dir (the delta), which is dramatically smaller and faster.
+
+```
+Setup:
+  squashfuse base.squashfs → /mnt/base
+  mount -t overlay ... lowerdir=/mnt/base,upperdir=/mnt/upper → /mnt/merged
+
+Backup delta:
+  tar -C /mnt/upper -cf - . | zstd → R2 (only changed files)
+
+Restore with delta:
+  squashfuse base.squashfs → /mnt/base
+  curl <delta-url> | zstd -d | tar xf - -C /mnt/upper
+  mount -t overlay ... → /mnt/merged
+```
+
+Supports three use cases: session persistence (save/restore workspace on sleep/wake), checkpoint/rollback (snapshot upper dir at any point), and golden image iteration (periodically flatten into a new base).
+
 ## Key Findings
 
 ### Backup
@@ -216,18 +266,30 @@ Requires an R2 API token (Access Key ID + Secret Access Key) set as Worker secre
 
 **Download speed is remarkably consistent.** With page-cache drops, 205MB squashfs-zstd downloads range 2.1–2.3s (±5%) across all runs, indicating stable R2 in-datacenter bandwidth. Mount times are equally consistent at 32–61ms.
 
+**Container startup takes ~2s.** Isolated sandbox benchmarks show fresh container startup (time to first `exec`) takes a median of 2.0–2.2s. This is platform overhead on top of the restore time.
+
+### Overlay (Incremental Snapshots)
+
+**OverlayFS layering enables sub-second delta backups.** By mounting the base squashfs image as the overlay lower layer, only changed files accumulate in the upper directory. Backing up a 10MB delta takes 0.6s total (archive + upload) compared to 29s for a full squashfs re-creation.
+
+**Delta restore adds minimal overhead.** Restoring base + 10MB delta (2.6s) is only ~0.3s slower than restoring the base alone (2.3s). Even a 100MB delta only adds ~1.4s. The base squashfs download dominates total time regardless of delta size.
+
+**squashfuse works as an overlay lower layer.** The FUSE-mounted squashfs image is accepted by overlayfs as a lower directory on kernel 6.12. This means the full incremental snapshot system (squashfuse base + overlay delta) works without CAP_SYS_ADMIN for the base mount. Only the overlay mount itself requires elevated privileges.
+
 ### Recommended Backup + Restore Path
 
 For cold-start optimization, use **SquashFS end-to-end**:
 
-| Phase       | Strategy                     | Median   | What happens                                                           |
-| ----------- | ---------------------------- | -------- | ---------------------------------------------------------------------- |
-| **Backup**  | `squashfs-zstd`              | ~29s     | mksquashfs → containerFetch GET → R2.put (offline, async)              |
-| **Restore** | `presigned-squashfuse-mount` | **2.3s** | Worker generates presigned URL → container curls R2 → squashfuse mount |
+| Phase                   | Strategy                     | Time     | What happens                                                           |
+| ----------------------- | ---------------------------- | -------- | ---------------------------------------------------------------------- |
+| **Initial backup**      | `squashfs-zstd`              | ~29s     | mksquashfs → containerFetch GET → R2.put (offline, one-time)           |
+| **Restore**             | `presigned-squashfuse-mount` | **2.3s** | Worker generates presigned URL → container curls R2 → squashfuse mount |
+| **Incremental backup**  | `overlay-delta`              | **0.6s** | tar.zst upper dir only → containerFetch → R2.put (10MB delta)          |
+| **Incremental restore** | `overlay-restore`            | **2.6s** | base squashfuse + delta download + overlay mount (10MB delta)          |
 
-The 2.3s median (3 runs, page cache dropped) is almost entirely network transfer (205MB from R2). The squashfuse mount itself is 37ms. Backup is slower (~29s vs 11s for tar+zstd) but runs offline — restore speed is what matters for cold starts.
+The 2.3s restore is almost entirely network transfer (205MB from R2). The squashfuse mount itself is 37ms. Backup is slower (~29s) but runs offline and only needs to happen once — subsequent snapshots use overlay deltas.
 
-squashfuse is the recommended mount method because it works via FUSE without requiring CAP_SYS_ADMIN. Kernel `mount -t squashfs` achieves the same speed (2.2s median) but requires elevated privileges.
+squashfuse is the recommended mount method because it works via FUSE without requiring CAP_SYS_ADMIN. Kernel `mount -t squashfs` achieves the same speed (2.2s median) but requires elevated privileges. Note that overlayfs itself still requires CAP_SYS_ADMIN.
 
 For environments without any mount capability, use `presigned-tar-zst-pipe` (4.7s median) as the fallback.
 
@@ -286,6 +348,9 @@ curl http://localhost:8787/restore/presigned-squashfs-mount-aria2c
 # Run restore multiple times with page-cache drops for clean data
 curl http://localhost:8787/restore/presigned-squashfuse-mount?runs=3
 
+# Run restore on fresh sandboxes (true cold start, requires max_instances > 1)
+curl http://localhost:8787/restore/presigned-squashfuse-mount?runs=3&isolated=true
+
 # Run all backups
 curl http://localhost:8787/backup/all
 
@@ -294,6 +359,15 @@ curl http://localhost:8787/restore/all
 
 # Run everything (all backups then all restores)
 curl http://localhost:8787/benchmark/all
+
+# Overlay incremental snapshots
+curl http://localhost:8787/overlay/lifecycle?size=medium  # full cycle benchmark
+curl http://localhost:8787/overlay/setup                  # mount base + overlay
+curl http://localhost:8787/overlay/simulate?size=medium   # make changes
+curl http://localhost:8787/overlay/status                 # show delta size
+curl http://localhost:8787/overlay/backup-delta?name=my-snapshot  # backup delta to R2
+curl http://localhost:8787/overlay/restore?key=bench/overlay/my-snapshot.tar.zst&runs=3
+curl http://localhost:8787/overlay/teardown               # clean up
 ```
 
 ## Container Environment
