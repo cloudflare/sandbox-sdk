@@ -10,34 +10,56 @@ The Sandbox SDK's file APIs (`readFile`, `readFileStream`) base64-encode binary 
 
 Test directory: the sandbox-sdk repo cloned into the container with `npm install` (~692MB, 34.5k files).
 
-| Strategy               | Total    | Archive Size | Method                                               |
-| ---------------------- | -------- | ------------ | ---------------------------------------------------- |
-| `tar-zst-fast-chunked` | 16.4s    | 236MB        | split → readFile base64 → R2 multipart               |
-| `tar-gz-direct`        | 17.7s    | 229MB        | containerFetch raw binary → R2.put                   |
-| `tar-direct`           | 8.8s     | 704MB        | containerFetch raw binary → R2.put                   |
-| `tar-zst-direct`       | 4.0s     | 212MB        | containerFetch raw binary → R2.put                   |
-| `tar-zst-fast-direct`  | 4.1s     | 236MB        | containerFetch raw binary → R2.put                   |
-| `tar-pipe`             | 8.0s     | 704MB        | pipe → containerFetch → R2 multipart                 |
-| **`tar-zst-pipe`**     | **3.6s** | **212MB**    | **pipe → containerFetch → R2 multipart**             |
-| `tar-zst-fast-pipe`    | 3.7s     | 236MB        | pipe → containerFetch → R2 multipart                 |
-| `squashfs-zstd`        | TBD      | TBD          | mksquashfs -comp zstd → containerFetch → R2.put      |
-| `squashfs-lzo`         | TBD      | TBD          | mksquashfs -comp lzo → containerFetch → R2.put       |
-| `squashfs-gzip`        | TBD      | TBD          | mksquashfs -comp gzip → containerFetch → R2.put      |
-| `overlay-tar`          | TBD      | TBD          | overlayfs diff → tar → containerFetch → R2.put       |
-| `overlay-tar-zst`      | TBD      | TBD          | overlayfs diff → tar\|zstd → containerFetch → R2.put |
+### Production (standard-4: 4 vCPU, 12 GiB RAM, 20 GB disk)
+
+| Strategy               | Total     | Archive | Upload | Size  | Method                                 |
+| ---------------------- | --------- | ------- | ------ | ----- | -------------------------------------- |
+| **`tar-zst-direct`**   | **10.9s** | 1.7s    | 9.3s   | 211MB | containerFetch raw binary → R2.put     |
+| `tar-zst-fast-chunked` | 22.4s     | 1.7s    | 20.1s  | 235MB | split → readFile base64 → R2 multipart |
+| `squashfs-zstd`        | 27.5s     | 21.0s   | 6.5s   | 205MB | mksquashfs → containerFetch → R2.put   |
+| `tar-direct`           | 29.7s     | 1.4s    | 28.4s  | 704MB | containerFetch raw binary → R2.put     |
+| `squashfs-lzo`         | 30.2s     | 20.2s   | 10.1s  | 236MB | mksquashfs → containerFetch → R2.put   |
+| `tar-gz-direct`        | 35.4s     | 28.5s   | 7.0s   | 229MB | containerFetch raw binary → R2.put     |
+| `tar-*-pipe`           | ❌ OOM    | —       | —      | —     | ~220MB buffer exceeds Worker memory    |
+
+### Local dev (Docker on Apple Silicon)
+
+| Strategy               | Total    | Archive Size | Method                                   |
+| ---------------------- | -------- | ------------ | ---------------------------------------- |
+| **`tar-zst-pipe`**     | **3.6s** | **212MB**    | **pipe → containerFetch → R2 multipart** |
+| `tar-zst-fast-pipe`    | 3.7s     | 236MB        | pipe → containerFetch → R2 multipart     |
+| `tar-zst-direct`       | 4.0s     | 212MB        | containerFetch raw binary → R2.put       |
+| `tar-zst-fast-direct`  | 4.1s     | 236MB        | containerFetch raw binary → R2.put       |
+| `tar-pipe`             | 8.0s     | 704MB        | pipe → containerFetch → R2 multipart     |
+| `tar-direct`           | 8.8s     | 704MB        | containerFetch raw binary → R2.put       |
+| `tar-zst-fast-chunked` | 16.4s    | 236MB        | split → readFile base64 → R2 multipart   |
+| `tar-gz-direct`        | 17.7s    | 229MB        | containerFetch raw binary → R2.put       |
 
 ## Restore Results
 
 Restore benchmarks create archives in-container and time extraction. This isolates archive/extract performance from network transfer (which is already benchmarked in backup strategies).
 
-| Strategy                   | Total    | Archive | Extract | Archive Size | Method                                             |
-| -------------------------- | -------- | ------- | ------- | ------------ | -------------------------------------------------- |
-| **`restore-tar`**          | **1.4s** | 0.5s    | 0.8s    | 704MB        | tar cf → tar xf (uncompressed)                     |
-| `restore-tar-zst`          | 5.1s     | 1.5s    | 3.6s    | 212MB        | tar+zstd cf → tar+zstd xf                          |
-| `restore-tar-gz`           | 21.7s    | 16.1s   | 5.6s    | 229MB        | tar.gz cf → tar.gz xf                              |
-| `restore-tar-zst-pipe`     | 3.4s     | —       | —       | (piped)      | tar \| zstd \| zstd -d \| tar xf (single pipeline) |
-| `restore-squashfs-extract` | 25.1s    | 24.3s   | 0.8s    | 205MB        | mksquashfs → unsquashfs                            |
-| `restore-squashfs-mount`   | N/A      | —       | —       | —            | Needs CAP_SYS_ADMIN (production only)              |
+### Production (standard-4: 4 vCPU, 12 GiB RAM, 20 GB disk)
+
+| Strategy                     | Total     | Archive | Extract   | Size    | Method                                             |
+| ---------------------------- | --------- | ------- | --------- | ------- | -------------------------------------------------- |
+| `restore-tar`                | 15.2s     | 10.4s   | 4.8s      | 704MB   | tar cf → tar xf (uncompressed)                     |
+| **`restore-squashfs-mount`** | **20.9s** | 20.9s   | **0.05s** | 205MB   | mksquashfs → mount -t squashfs (**50ms mount!**)   |
+| `restore-tar-zst`            | 54.0s     | 1.9s    | 52.2s     | 211MB   | tar+zstd cf → tar+zstd xf                          |
+| `restore-tar-zst-pipe`       | 53.8s     | —       | —         | (piped) | tar \| zstd \| zstd -d \| tar xf (single pipeline) |
+| `restore-squashfs-extract`   | 72.2s     | 21.5s   | 50.8s     | 205MB   | mksquashfs → unsquashfs                            |
+| `restore-tar-gz`             | 82.2s     | 28.3s   | 53.9s     | 229MB   | tar.gz cf → tar.gz xf                              |
+
+### Local dev (Docker on Apple Silicon)
+
+| Strategy                   | Total    | Archive | Extract | Size    | Method                                              |
+| -------------------------- | -------- | ------- | ------- | ------- | --------------------------------------------------- |
+| **`restore-tar`**          | **1.4s** | 0.5s    | 0.8s    | 704MB   | tar cf → tar xf (uncompressed)                      |
+| `restore-tar-zst-pipe`     | 3.4s     | —       | —       | (piped) | tar \| zstd \| zstd -d \| tar xf (single pipeline)  |
+| `restore-tar-zst`          | 5.1s     | 1.5s    | 3.6s    | 212MB   | tar+zstd cf → tar+zstd xf                           |
+| `restore-tar-gz`           | 21.7s    | 16.1s   | 5.6s    | 229MB   | tar.gz cf → tar.gz xf                               |
+| `restore-squashfs-extract` | 25.1s    | 24.3s   | 0.8s    | 205MB   | mksquashfs → unsquashfs                             |
+| `restore-squashfs-mount`   | N/A      | —       | —       | —       | Needs CAP_SYS_ADMIN (not available in local Docker) |
 
 ## Strategy Families
 
@@ -128,19 +150,33 @@ Downloads the `.squashfs` image and mounts it read-only. Near-instant "restore" 
 
 ## Key Findings
 
-**base64 is the bottleneck.** The SDK's `readFile` and `readFileStream` both base64-encode binary content. For large files, this adds 33% data inflation plus encode/decode CPU cost. Bypassing this via `containerFetch` to a custom port gives a 4x speedup.
+### Backup
 
-**zstd dominates.** zstd at default level (-3) compresses 692MB → 212MB in ~1.5s. gzip produces a similar size but takes 15s. Uncompressed tar is fast to create but 3x larger to transfer. zstd -1 (fastest) is marginally worse compression for no meaningful speed gain.
+**zstd + containerFetch is the winning combo.** `tar-zst-direct` is the fastest reliable strategy on both local (4.0s) and production (10.9s). zstd compresses 692MB → 211MB in ~1.7s; `containerFetch` streams raw binary with zero base64 overhead.
 
-**Pipe eliminates sequential overhead.** The direct approach archives to disk (1.5s) then transfers (2.5s) = 4.0s total. The pipe approach overlaps both operations = 3.6s total. The win is modest here but grows with larger directories.
+**base64 is the bottleneck for SDK file APIs.** `readFile` and `readFileStream` both base64-encode binary content — 33% inflation plus encode/decode CPU. Bypassing via `containerFetch` gives a 2x speedup on prod (22.4s chunked vs 10.9s direct).
+
+**Pipe strategies OOM on production.** Collecting ~220MB of streamed chunks into a single typed array for R2 multipart upload exceeds Worker memory limits (`RangeError: Invalid typed array length`). Works locally where memory is unconstrained. Would need true streaming multipart upload to fix.
 
 **R2 multipart requires identical part sizes.** All non-final parts must be exactly the same size, not just above the 5MB minimum. Variable-sized parts cause error 10048.
 
-**Uncompressed tar is fastest for restore.** When restoring to a local disk (no network transfer), uncompressed tar at 1.4s beats tar+zstd at 5.1s — decompression CPU cost exceeds the I/O saved. For network-bound restores (R2 → container), zstd's 3x smaller size would likely win.
+### Restore
 
-**Piped restore overlaps compress+decompress.** The `tar | zstd | zstd -d | tar xf` pipeline at 3.4s outperforms sequential tar+zstd create (1.5s) + extract (3.6s) = 5.1s by overlapping both stages.
+**SquashFS mount is the killer feature on production — 50ms restore.** `mount -t squashfs` makes 205MB of files instantly accessible with zero extraction. The 20.9s total is dominated by `mksquashfs` creation time; the actual mount is 50ms. This requires CAP_SYS_ADMIN, which is available on Cloudflare production but not in local Docker.
 
-**SquashFS: great compression, slow creation.** mksquashfs takes ~24s (vs 1.5s for tar+zstd) but produces the smallest archive (205MB). The `unsquashfs` extraction is fast (0.8s), and `mount -t squashfs` would be near-instant but requires CAP_SYS_ADMIN (available in Cloudflare production, not local Docker).
+**Extraction is I/O-bound on production containers.** tar+zstd extraction takes 52s on prod vs 3.6s locally — a ~14x slowdown. Uncompressed tar extraction (4.8s on prod) is much faster since it avoids decompression CPU. The container's virtual disk I/O is the bottleneck for writes, not CPU.
+
+**Uncompressed tar is fastest for full extraction** on both local (1.4s) and prod (15.2s), but transfers 3x more data. For backup+restore workflows where the archive traverses the network, zstd's smaller size wins overall.
+
+### Local vs Production
+
+| Observation               | Local | Production | Delta                     |
+| ------------------------- | ----- | ---------- | ------------------------- |
+| tar+zstd archive creation | 1.5s  | 1.7s       | ~1x (CPU-bound, similar)  |
+| tar+zstd extraction       | 3.6s  | 52.2s      | ~14x slower (I/O-bound)   |
+| Uncompressed tar extract  | 0.8s  | 4.8s       | ~6x slower                |
+| R2 upload (211MB)         | 2.5s  | 9.3s       | ~4x slower (network path) |
+| squashfs mount            | N/A   | 0.05s      | Only works on prod        |
 
 **OverlayFS enables incremental snapshots.** By backing up only the diff layer, subsequent snapshots after an initial full backup are dramatically smaller and faster. Requires CAP_SYS_ADMIN (production only).
 
