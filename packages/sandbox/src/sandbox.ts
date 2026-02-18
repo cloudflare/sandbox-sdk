@@ -3348,32 +3348,43 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         `for d in ${shellEscape(mountGlob)}_*/lower ${shellEscape(mountGlob)}/lower; do [ -d "$d" ] && /usr/bin/fusermount3 -uz "$d" 2>/dev/null; done; true`
       ).catch(() => {});
 
-      // Step 4: Write archive to the container
-      // Use chunked download for large archives to stay within DO memory limits
-      if (archiveHead.size <= Sandbox.BACKUP_CHUNK_SIZE_BYTES) {
-        // Small file: single download (fast path) — fetch the full body now
-        const archiveObject = await bucket.get(r2Key);
-        if (!archiveObject) {
-          throw new BackupNotFoundError({
-            message: `Backup archive disappeared from R2: ${backupId}`,
-            code: ErrorCode.BACKUP_NOT_FOUND,
-            httpStatus: 404,
-            context: { backupId },
-            timestamp: new Date().toISOString()
-          });
+      // Step 4: Write archive to the container (skip if already present and
+      // same size — avoids overwriting a file that a lazily-unmounted
+      // squashfuse may still hold open).
+      const sizeCheck = await this.exec(
+        `stat -c %s ${shellEscape(archivePath)} 2>/dev/null || echo 0`
+      ).catch(() => ({ stdout: '0' }));
+      const existingSize = Number.parseInt(
+        (sizeCheck.stdout ?? '0').trim(),
+        10
+      );
+
+      if (existingSize !== archiveHead.size) {
+        if (archiveHead.size <= Sandbox.BACKUP_CHUNK_SIZE_BYTES) {
+          // Small file: single download (fast path) — fetch the full body now
+          const archiveObject = await bucket.get(r2Key);
+          if (!archiveObject) {
+            throw new BackupNotFoundError({
+              message: `Backup archive disappeared from R2: ${backupId}`,
+              code: ErrorCode.BACKUP_NOT_FOUND,
+              httpStatus: 404,
+              context: { backupId },
+              timestamp: new Date().toISOString()
+            });
+          }
+          await this.downloadBackupSingle(archiveObject, archivePath, session);
+        } else {
+          // Large file: chunked download via range requests
+          await this.downloadBackupChunked(
+            bucket,
+            r2Key,
+            archiveHead.size,
+            archivePath,
+            backupId,
+            dir,
+            session
+          );
         }
-        await this.downloadBackupSingle(archiveObject, archivePath, session);
-      } else {
-        // Large file: chunked download via range requests
-        await this.downloadBackupChunked(
-          bucket,
-          r2Key,
-          archiveHead.size,
-          archivePath,
-          backupId,
-          dir,
-          session
-        );
       }
 
       // Step 5: Tell the container to extract the archive
