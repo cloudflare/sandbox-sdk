@@ -3337,13 +3337,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       // Step 3: Tear down existing FUSE mounts before overwriting the archive.
       // squashfuse holds the .sqsh file open; writing a new archive to the same
       // path while the old mount is active corrupts the backing store.
-      const mountBase = `/var/backups/mounts/${backupId}`;
-      const lowerDir = `${mountBase}/lower`;
+      // Unmount the overlay on dir, then iterate over all mount bases for this
+      // backup (both suffixed UUID_* and legacy unsuffixed UUID) and unmount
+      // their squashfuse lower dirs.
+      const mountGlob = `/var/backups/mounts/${backupId}`;
       await this.exec(
         `/usr/bin/fusermount3 -uz ${shellEscape(dir)} 2>/dev/null || true`
       ).catch(() => {});
       await this.exec(
-        `/usr/bin/fusermount3 -uz ${shellEscape(lowerDir)} 2>/dev/null || true`
+        `for d in ${shellEscape(mountGlob)}_*/lower ${shellEscape(mountGlob)}/lower; do [ -d "$d" ] && /usr/bin/fusermount3 -uz "$d" 2>/dev/null; done; true`
       ).catch(() => {});
 
       // Step 4: Write archive to the container

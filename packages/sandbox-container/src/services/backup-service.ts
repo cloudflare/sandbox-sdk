@@ -263,7 +263,12 @@ export class BackupService {
     const backupId = archivePath
       .replace(`${BACKUP_WORK_DIR}/`, '')
       .replace('.sqsh', '');
-    const mountBase = `${BACKUP_MOUNTS_DIR}/${backupId}`;
+
+    // Each restore uses a unique mount base so stale upper-layer files from a
+    // previous overlay session cannot leak into a new mount.  Old mount bases
+    // for this backup ID are torn down (best-effort) before the new mount.
+    const restoreId = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const mountBase = `${BACKUP_MOUNTS_DIR}/${backupId}_${restoreId}`;
     const lowerDir = `${mountBase}/lower`;
     const upperDir = `${mountBase}/upper`;
     const workDir = `${mountBase}/work`;
@@ -285,53 +290,36 @@ export class BackupService {
       opLogger.info('Restoring snapshot with overlayfs', {
         dir,
         archivePath,
-        backupId
+        backupId,
+        restoreId
       });
 
-      // Clean up any existing mounts from previous restores of this backup.
-      // Unmount overlayfs first (depends on squashfuse), then squashfuse.
-      // Uses non-lazy unmount first, falling back to lazy (-uz) so stale
-      // FUSE mounts are detached even if still referenced.
+      // Unmount the overlay on `dir` (from a previous restore of any backup).
       await this.sessionManager.executeInSession(
         sessionId,
         `${BIN.fusermount} -u ${shellEscape(dir)} 2>/dev/null; ${BIN.fusermount} -uz ${shellEscape(dir)} 2>/dev/null; true`
       );
+
+      // Tear down all previous mount bases for this backup ID.
+      // Each old mount base may have squashfuse on its lower dir; unmount
+      // those before removing the directories.  The glob covers both the
+      // new suffixed layout (UUID_*) and the legacy unsuffixed layout (UUID/).
+      const mountGlob = `${BACKUP_MOUNTS_DIR}/${backupId}`;
       await this.sessionManager.executeInSession(
         sessionId,
-        `${BIN.fusermount} -u ${shellEscape(lowerDir)} 2>/dev/null; ${BIN.fusermount} -uz ${shellEscape(lowerDir)} 2>/dev/null; true`
+        `for d in ${shellEscape(mountGlob)}_*/lower ${shellEscape(mountGlob)}/lower; do [ -d "$d" ] && ${BIN.fusermount} -u "$d" 2>/dev/null; ${BIN.fusermount} -uz "$d" 2>/dev/null; done; true`
       );
 
-      // Remove and recreate mount directories to ensure a clean upper layer.
-      // Removing upperDir is critical: leftover writes from a previous overlay
-      // would reappear when the new overlayfs is mounted on the same upper.
-      const cleanupResult = await this.sessionManager.executeInSession(
+      // Remove old mount bases (best-effort)
+      await this.sessionManager.executeInSession(
         sessionId,
-        [
-          `rm -rf ${shellEscape(upperDir)} ${shellEscape(workDir)}`,
-          `rm -rf ${shellEscape(lowerDir)} 2>/dev/null`,
-          `rm -rf ${shellEscape(mountBase)} 2>/dev/null`,
-          `mkdir -p ${shellEscape(lowerDir)} ${shellEscape(upperDir)} ${shellEscape(workDir)} ${shellEscape(dir)}`
-        ].join('; ')
+        `rm -rf ${shellEscape(mountGlob)}_* ${shellEscape(mountGlob)} 2>/dev/null; true`
       );
-      if (!cleanupResult.success) {
-        return serviceError({
-          message: `Failed to prepare mount directories: ${cleanupResult.error.message}`,
-          code: ErrorCode.BACKUP_RESTORE_FAILED,
-          details: { dir, archivePath }
-        });
-      }
-      if (cleanupResult.data.exitCode !== 0) {
-        return serviceError({
-          message: `Failed to prepare mount directories: ${cleanupResult.data.stderr}`,
-          code: ErrorCode.BACKUP_RESTORE_FAILED,
-          details: { dir, archivePath }
-        });
-      }
 
-      // Ensure target directory exists (may have been created above, but be explicit)
+      // Create fresh mount directories
       const mkdirResult = await this.sessionManager.executeInSession(
         sessionId,
-        `mkdir -p ${shellEscape(dir)}`
+        `mkdir -p ${shellEscape(lowerDir)} ${shellEscape(upperDir)} ${shellEscape(workDir)} ${shellEscape(dir)}`
       );
       if (!mkdirResult.success) {
         return serviceError({
@@ -482,8 +470,7 @@ export class BackupService {
       });
     }
 
-    const mountBase = `${BACKUP_MOUNTS_DIR}/${backupId}`;
-    const lowerDir = `${mountBase}/lower`;
+    const mountGlob = `${BACKUP_MOUNTS_DIR}/${backupId}`;
 
     try {
       opLogger.info('Unmounting snapshot', { dir, backupId });
@@ -494,13 +481,14 @@ export class BackupService {
         `${BIN.fusermount} -u ${shellEscape(dir)} 2>/dev/null || umount ${shellEscape(dir)} 2>/dev/null || true`
       );
 
-      // Unmount squashfs
+      // Unmount squashfuse on all mount bases for this backup ID
+      // (both suffixed UUID_* and legacy unsuffixed UUID)
       await this.sessionManager.executeInSession(
         sessionId,
-        `${BIN.fusermount} -u ${shellEscape(lowerDir)} 2>/dev/null || umount ${shellEscape(lowerDir)} 2>/dev/null || true`
+        `for d in ${shellEscape(mountGlob)}_*/lower ${shellEscape(mountGlob)}/lower; do [ -d "$d" ] && ${BIN.fusermount} -u "$d" 2>/dev/null; done; true`
       );
 
-      // Verify mounts are gone before removing directories
+      // Verify overlay mount is gone before removing directories
       const mountCheck = await this.sessionManager.executeInSession(
         sessionId,
         `mountpoint -q ${shellEscape(dir)} 2>/dev/null && echo "mounted" || echo "unmounted"`
@@ -517,10 +505,10 @@ export class BackupService {
         });
       }
 
-      // Clean up mount directories (but keep the archive)
+      // Clean up all mount directories for this backup ID (but keep the archive)
       await this.sessionManager.executeInSession(
         sessionId,
-        `rm -rf ${shellEscape(mountBase)}`
+        `rm -rf ${shellEscape(mountGlob)}_* ${shellEscape(mountGlob)} 2>/dev/null; true`
       );
 
       opLogger.info('Snapshot unmounted', { dir, backupId });

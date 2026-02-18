@@ -736,60 +736,12 @@ describe('Backup Workflow E2E', () => {
       // Cleanup and restore again - should get ORIGINAL content (not modified)
       await cleanupDir(workerUrl, headers, TEST_DIR);
 
-      // Debug: check mount and filesystem state before second restore
-      const preRestoreDebug = await fetch(`${workerUrl}/api/execute`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          command: [
-            `echo "=== mounts ===" && mount | grep -E "${backup.id}|${TEST_DIR}" || echo "(none)"`,
-            `echo "=== dir exists ===" && ls -la ${TEST_DIR} 2>&1 || echo "(missing)"`,
-            `echo "=== archive ===" && ls -la /var/backups/${backup.id}.sqsh 2>&1 || echo "(missing)"`,
-            `echo "=== mount dirs ===" && ls -la /var/backups/mounts/${backup.id}/ 2>&1 || echo "(missing)"`
-          ].join(' && ')
-        })
-      });
-      const preDebugResult = (await preRestoreDebug.json()) as ExecuteResponse;
-      console.log(
-        'PRE-RESTORE STATE:',
-        preDebugResult.stdout,
-        preDebugResult.stderr
-      );
-
       const restore2Response = await fetch(`${workerUrl}/api/backup/restore`, {
         method: 'POST',
         headers,
         body: JSON.stringify({ id: backup.id, dir: TEST_DIR })
       });
-      const restore2Body = await restore2Response.json();
-      console.log(
-        'RESTORE2 RESPONSE:',
-        restore2Response.status,
-        JSON.stringify(restore2Body)
-      );
       expect(restore2Response.ok).toBe(true);
-
-      // Debug: check mount and filesystem state after second restore
-      const postRestoreDebug = await fetch(`${workerUrl}/api/execute`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          command: [
-            `echo "=== mounts ===" && mount | grep -E "${backup.id}|${TEST_DIR}" || echo "(none)"`,
-            `echo "=== upper contents ===" && ls -laR /var/backups/mounts/${backup.id}/upper/ 2>&1 || echo "(missing)"`,
-            `echo "=== dir contents ===" && ls -la ${TEST_DIR}/ 2>&1`,
-            `echo "=== file.txt ===" && cat ${TEST_DIR}/file.txt 2>&1`,
-            `echo "=== file origin ===" && stat ${TEST_DIR}/file.txt 2>&1`
-          ].join(' && ')
-        })
-      });
-      const postDebugResult =
-        (await postRestoreDebug.json()) as ExecuteResponse;
-      console.log(
-        'POST-RESTORE STATE:',
-        postDebugResult.stdout,
-        postDebugResult.stderr
-      );
 
       // Verify original content is back
       const originalCheck = await fetch(`${workerUrl}/api/execute`, {
