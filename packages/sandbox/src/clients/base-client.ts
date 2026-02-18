@@ -37,7 +37,9 @@ export abstract class BaseHttpClient {
         wsUrl: options.wsUrl,
         logger: this.logger,
         stub: options.stub,
-        port: options.port
+        port: options.port,
+        requestTimeoutMs: options.requestTimeoutMs,
+        streamIdleTimeoutMs: options.streamIdleTimeoutMs
       });
     }
   }

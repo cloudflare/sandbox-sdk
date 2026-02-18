@@ -49,6 +49,20 @@ export interface HttpClientOptions {
   wsUrl?: string;
 
   /**
+   * Timeout for non-streaming WebSocket requests in milliseconds.
+   * @default 120000 (2 minutes)
+   */
+  requestTimeoutMs?: number;
+
+  /**
+   * Idle timeout for streaming WebSocket requests in milliseconds.
+   * The timer resets on every chunk, so streams stay alive as long as data
+   * is flowing. Only triggers when the stream is silent for this duration.
+   * @default 300000 (5 minutes)
+   */
+  streamIdleTimeoutMs?: number;
+
+  /**
    * Shared transport instance (for internal use).
    * When provided, clients will use this transport instead of creating their own.
    */

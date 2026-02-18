@@ -112,6 +112,10 @@ export function getSandbox<T extends Sandbox<any>>(
     stub.setContainerTimeouts(options.containerTimeouts);
   }
 
+  if (options?.transportTimeouts) {
+    stub.setTransportTimeouts(options.transportTimeouts);
+  }
+
   const defaultSessionId = `sandbox-${effectiveId}`;
 
   // IMPORTANT: Any method that returns ExecutionSession must be listed here
@@ -204,6 +208,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private keepAliveEnabled: boolean = false;
   private activeMounts: Map<string, MountInfo> = new Map();
   private transport: 'http' | 'websocket' = 'http';
+  private transportTimeouts: {
+    requestTimeoutMs?: number;
+    streamIdleTimeoutMs?: number;
+  } = {};
   // R2 bucket binding for backup storage (optional — only set if user configures BACKUP_BUCKET)
   private backupBucket: R2Bucket | null = null;
   /**
@@ -250,7 +258,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       ...(this.transport === 'websocket' && {
         transportMode: 'websocket' as const,
         wsUrl: 'ws://localhost:3000/ws'
-      })
+      }),
+      requestTimeoutMs: this.transportTimeouts.requestTimeoutMs,
+      streamIdleTimeoutMs: this.transportTimeouts.streamIdleTimeoutMs
     });
   }
 
@@ -282,6 +292,28 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       this.logger.warn(
         `Invalid SANDBOX_TRANSPORT value: "${transportEnv}". Must be "http" or "websocket". Defaulting to "http".`
       );
+    }
+
+    // Read transport timeouts from env vars (can be overridden via options)
+    const requestTimeoutEnv = getEnvString(
+      envObj,
+      'SANDBOX_REQUEST_TIMEOUT_MS'
+    );
+    if (requestTimeoutEnv) {
+      const parsed = parseInt(requestTimeoutEnv, 10);
+      if (!Number.isNaN(parsed) && parsed > 0) {
+        this.transportTimeouts.requestTimeoutMs = parsed;
+      }
+    }
+    const streamIdleTimeoutEnv = getEnvString(
+      envObj,
+      'SANDBOX_STREAM_IDLE_TIMEOUT_MS'
+    );
+    if (streamIdleTimeoutEnv) {
+      const parsed = parseInt(streamIdleTimeoutEnv, 10);
+      if (!Number.isNaN(parsed) && parsed > 0) {
+        this.transportTimeouts.streamIdleTimeoutMs = parsed;
+      }
     }
 
     // Read R2 backup bucket binding if configured
@@ -355,6 +387,21 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   async setKeepAlive(keepAlive: boolean): Promise<void> {
     this.keepAliveEnabled = keepAlive;
     await this.ctx.storage.put('keepAliveEnabled', keepAlive);
+  }
+
+  /**
+   * RPC method to configure transport-level timeouts (WebSocket mode)
+   */
+  async setTransportTimeouts(
+    timeouts: NonNullable<SandboxOptions['transportTimeouts']>
+  ): Promise<void> {
+    this.transportTimeouts = { ...this.transportTimeouts, ...timeouts };
+
+    // Recreate client so the new timeouts take effect
+    this.client.disconnect();
+    this.client = this.createSandboxClient();
+
+    this.logger.debug('Transport timeouts updated', this.transportTimeouts);
   }
 
   async setEnvVars(envVars: Record<string, string | undefined>): Promise<void> {
