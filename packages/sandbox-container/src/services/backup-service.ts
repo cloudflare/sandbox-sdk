@@ -289,22 +289,29 @@ export class BackupService {
       });
 
       // Clean up any existing mounts from previous restores of this backup.
-      // Uses lazy unmount (-uz) so stale FUSE mounts (e.g. from a deleted
-      // backing file) are detached immediately, allowing rm -rf to succeed.
+      // Unmount overlayfs first (depends on squashfuse), then squashfuse.
+      // Uses non-lazy unmount first, falling back to lazy (-uz) so stale
+      // FUSE mounts are detached even if still referenced.
       await this.sessionManager.executeInSession(
         sessionId,
-        `${BIN.fusermount} -uz ${shellEscape(dir)} 2>/dev/null || true`
+        `${BIN.fusermount} -u ${shellEscape(dir)} 2>/dev/null; ${BIN.fusermount} -uz ${shellEscape(dir)} 2>/dev/null; true`
       );
       await this.sessionManager.executeInSession(
         sessionId,
-        `${BIN.fusermount} -uz ${shellEscape(lowerDir)} 2>/dev/null || true`
+        `${BIN.fusermount} -u ${shellEscape(lowerDir)} 2>/dev/null; ${BIN.fusermount} -uz ${shellEscape(lowerDir)} 2>/dev/null; true`
       );
 
-      // Remove and recreate mount directories to ensure they're empty
-      // This prevents "mountpoint is not empty" errors from squashfuse
+      // Remove and recreate mount directories to ensure a clean upper layer.
+      // Removing upperDir is critical: leftover writes from a previous overlay
+      // would reappear when the new overlayfs is mounted on the same upper.
       const cleanupResult = await this.sessionManager.executeInSession(
         sessionId,
-        `rm -rf ${shellEscape(mountBase)} && mkdir -p ${shellEscape(lowerDir)} ${shellEscape(upperDir)} ${shellEscape(workDir)} ${shellEscape(dir)}`
+        [
+          `rm -rf ${shellEscape(upperDir)} ${shellEscape(workDir)}`,
+          `rm -rf ${shellEscape(lowerDir)} 2>/dev/null`,
+          `rm -rf ${shellEscape(mountBase)} 2>/dev/null`,
+          `mkdir -p ${shellEscape(lowerDir)} ${shellEscape(upperDir)} ${shellEscape(workDir)} ${shellEscape(dir)}`
+        ].join('; ')
       );
       if (!cleanupResult.success) {
         return serviceError({
