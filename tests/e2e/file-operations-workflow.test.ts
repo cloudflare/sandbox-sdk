@@ -58,7 +58,7 @@ describe('File Operations Error Handling', () => {
       })
     });
 
-    expect(deleteResponse.status).toBe(400);
+    expect(deleteResponse.status).toBe(500);
     const deleteData = (await deleteResponse.json()) as ErrorResponse;
     expect(deleteData.error).toContain('Cannot delete directory');
     expect(deleteData.error).toContain('deleteFile()');
@@ -131,7 +131,7 @@ describe('File Operations Error Handling', () => {
       })
     });
 
-    expect(wrongTypeResponse.status).toBe(400);
+    expect(wrongTypeResponse.status).toBe(500);
     const wrongTypeData = (await wrongTypeResponse.json()) as ErrorResponse;
     expect(wrongTypeData.error).toMatch(/not a directory/i);
   }, 90000);

@@ -3334,7 +3334,19 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     const archivePath = `/var/backups/${backupId}.sqsh`;
 
     try {
-      // Step 3: Write archive to the container
+      // Step 3: Tear down existing FUSE mounts before overwriting the archive.
+      // squashfuse holds the .sqsh file open; writing a new archive to the same
+      // path while the old mount is active corrupts the backing store.
+      const mountBase = `/var/backups/mounts/${backupId}`;
+      const lowerDir = `${mountBase}/lower`;
+      await this.exec(
+        `/usr/bin/fusermount3 -uz ${shellEscape(dir)} 2>/dev/null || true`
+      ).catch(() => {});
+      await this.exec(
+        `/usr/bin/fusermount3 -uz ${shellEscape(lowerDir)} 2>/dev/null || true`
+      ).catch(() => {});
+
+      // Step 4: Write archive to the container
       // Use chunked download for large archives to stay within DO memory limits
       if (archiveHead.size <= Sandbox.BACKUP_CHUNK_SIZE_BYTES) {
         // Small file: single download (fast path) — fetch the full body now
@@ -3362,7 +3374,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         );
       }
 
-      // Step 4: Tell the container to extract the archive
+      // Step 5: Tell the container to extract the archive
       const restoreResult = await this.client.backup.restoreArchive(
         dir,
         archivePath,
