@@ -741,7 +741,29 @@ describe('Backup Workflow E2E', () => {
         headers,
         body: JSON.stringify({ id: backup.id, dir: TEST_DIR })
       });
+      const restore2Body = await restore2Response.json();
+      console.log(
+        'RESTORE2:',
+        restore2Response.status,
+        JSON.stringify(restore2Body)
+      );
       expect(restore2Response.ok).toBe(true);
+
+      // Diagnostic: mount state + upper dir + raw file content after second restore
+      const diag = await fetch(`${workerUrl}/api/execute`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          command: [
+            `echo "MOUNTS:" && mount | grep -E "fuse|${TEST_DIR}" || echo "(none)"`,
+            `echo "UPPER_DIRS:" && ls /var/backups/mounts/ 2>/dev/null | head -20 || echo "(empty)"`,
+            `echo "UPPER_FILES:" && find /var/backups/mounts/ -path '*/upper/*' -type f 2>/dev/null || echo "(none)"`,
+            `echo "RAW_CAT:" && cat ${TEST_DIR}/file.txt`
+          ].join('; ')
+        })
+      });
+      const diagResult = (await diag.json()) as ExecuteResponse;
+      console.log('DIAG:', diagResult.stdout);
 
       // Verify original content is back
       const originalCheck = await fetch(`${workerUrl}/api/execute`, {
