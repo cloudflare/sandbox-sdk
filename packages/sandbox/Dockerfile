@@ -211,6 +211,19 @@ ARG SANDBOX_VERSION=unknown
 
 ENV SANDBOX_VERSION=${SANDBOX_VERSION}
 
+COPY .cert/zero_trust_cert.pem* /usr/local/share/ca-certificates/cloudflare.crt
+
+# 2. Break the SSL cycle by using HTTP temporarily
+RUN if [ -f /usr/local/share/ca-certificates/cloudflare.crt ]; then \
+      echo "Bypassing SSL to bootstrap certificates..." && \
+      # Replace https with http in repositories just for this install
+      sed -i 's/https/http/g' /etc/apk/repositories && \
+      apk add --no-cache ca-certificates && \
+      # Put https back now that we have the tools
+      sed -i 's/http/https/g' /etc/apk/repositories && \
+      update-ca-certificates; \
+    fi
+
 RUN apk add --no-cache bash file git ca-certificates curl libstdc++ libgcc s3fs-fuse fuse
 
 RUN sed -i 's/#user_allow_other/user_allow_other/' /etc/fuse.conf
