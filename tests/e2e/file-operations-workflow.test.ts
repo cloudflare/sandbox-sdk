@@ -58,7 +58,7 @@ describe('File Operations Error Handling', () => {
       })
     });
 
-    expect(deleteResponse.status).toBe(500);
+    expect(deleteResponse.status).toBe(400);
     const deleteData = (await deleteResponse.json()) as ErrorResponse;
     expect(deleteData.error).toContain('Cannot delete directory');
     expect(deleteData.error).toContain('deleteFile()');
@@ -86,7 +86,7 @@ describe('File Operations Error Handling', () => {
       })
     });
 
-    expect(deleteResponse.status).toBe(500);
+    expect(deleteResponse.status).toBe(404);
     const errorData = (await deleteResponse.json()) as ErrorResponse;
     expect(errorData.error).toBeTruthy();
     expect(errorData.error).toMatch(/not found|does not exist|no such file/i);
@@ -102,7 +102,7 @@ describe('File Operations Error Handling', () => {
       })
     });
 
-    expect(notFoundResponse.status).toBe(500);
+    expect(notFoundResponse.status).toBe(404);
     const notFoundData = (await notFoundResponse.json()) as ErrorResponse;
     expect(notFoundData.error).toBeTruthy();
     expect(notFoundData.error).toMatch(/not found|does not exist/i);
@@ -131,7 +131,7 @@ describe('File Operations Error Handling', () => {
       })
     });
 
-    expect(wrongTypeResponse.status).toBe(500);
+    expect(wrongTypeResponse.status).toBe(400);
     const wrongTypeData = (await wrongTypeResponse.json()) as ErrorResponse;
     expect(wrongTypeData.error).toMatch(/not a directory/i);
   }, 90000);

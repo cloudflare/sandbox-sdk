@@ -288,10 +288,43 @@ export class BackupService {
         backupId
       });
 
-      // Create mount directories
+      // Clean up any existing mounts from previous restores of this backup.
+      // Uses lazy unmount (-uz) so stale FUSE mounts (e.g. from a deleted
+      // backing file) are detached immediately, allowing rm -rf to succeed.
+      await this.sessionManager.executeInSession(
+        sessionId,
+        `${BIN.fusermount} -uz ${shellEscape(dir)} 2>/dev/null || true`
+      );
+      await this.sessionManager.executeInSession(
+        sessionId,
+        `${BIN.fusermount} -uz ${shellEscape(lowerDir)} 2>/dev/null || true`
+      );
+
+      // Remove and recreate mount directories to ensure they're empty
+      // This prevents "mountpoint is not empty" errors from squashfuse
+      const cleanupResult = await this.sessionManager.executeInSession(
+        sessionId,
+        `rm -rf ${shellEscape(mountBase)} && mkdir -p ${shellEscape(lowerDir)} ${shellEscape(upperDir)} ${shellEscape(workDir)} ${shellEscape(dir)}`
+      );
+      if (!cleanupResult.success) {
+        return serviceError({
+          message: `Failed to prepare mount directories: ${cleanupResult.error.message}`,
+          code: ErrorCode.BACKUP_RESTORE_FAILED,
+          details: { dir, archivePath }
+        });
+      }
+      if (cleanupResult.data.exitCode !== 0) {
+        return serviceError({
+          message: `Failed to prepare mount directories: ${cleanupResult.data.stderr}`,
+          code: ErrorCode.BACKUP_RESTORE_FAILED,
+          details: { dir, archivePath }
+        });
+      }
+
+      // Ensure target directory exists (may have been created above, but be explicit)
       const mkdirResult = await this.sessionManager.executeInSession(
         sessionId,
-        `mkdir -p ${shellEscape(lowerDir)} ${shellEscape(upperDir)} ${shellEscape(workDir)} ${shellEscape(dir)}`
+        `mkdir -p ${shellEscape(dir)}`
       );
       if (!mkdirResult.success) {
         return serviceError({

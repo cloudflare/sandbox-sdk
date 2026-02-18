@@ -3386,9 +3386,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         dir,
         backupId
       };
-    } finally {
-      // Clean up archive file (covers both download and extract failures)
+    } catch (error) {
+      // Clean up archive file on failure only — squashfuse needs it as
+      // backing storage for the lifetime of the mount
       await this.exec(`rm -f ${shellEscape(archivePath)}`).catch(() => {});
+      throw error;
     }
   }
 }
