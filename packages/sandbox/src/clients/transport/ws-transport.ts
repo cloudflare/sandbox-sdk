@@ -348,6 +348,10 @@ export class WebSocketTransport extends BaseTransport {
    *
    * The stream will receive data chunks as they arrive over the WebSocket.
    * Format matches SSE for compatibility with existing streaming code.
+   *
+   * Uses an inactivity timeout instead of a total-duration timeout so that
+   * long-running streams (e.g. execStream from an agent) stay alive as long
+   * as data is flowing. The timer resets on every chunk or response message.
    */
   private async requestStream(
     method: WSMethod,
@@ -367,17 +371,31 @@ export class WebSocketTransport extends BaseTransport {
 
     return new ReadableStream<Uint8Array>({
       start: (controller) => {
-        const timeoutMs = this.config.requestTimeoutMs ?? 120000;
-        const timeoutId = setTimeout(() => {
-          this.pendingRequests.delete(id);
-          controller.error(
-            new Error(`Stream timeout after ${timeoutMs}ms: ${method} ${path}`)
-          );
-        }, timeoutMs);
+        const idleTimeoutMs = this.config.streamIdleTimeoutMs ?? 300_000;
+
+        const resetTimeout = (): ReturnType<typeof setTimeout> => {
+          const pending = this.pendingRequests.get(id);
+          if (pending?.timeoutId) {
+            clearTimeout(pending.timeoutId);
+          }
+          return setTimeout(() => {
+            this.pendingRequests.delete(id);
+            controller.error(
+              new Error(
+                `Stream idle timeout after ${idleTimeoutMs}ms: ${method} ${path}`
+              )
+            );
+          }, idleTimeoutMs);
+        };
+
+        const timeoutId = resetTimeout();
 
         this.pendingRequests.set(id, {
           resolve: (response: WSResponse) => {
-            clearTimeout(timeoutId);
+            const pending = this.pendingRequests.get(id);
+            if (pending?.timeoutId) {
+              clearTimeout(pending.timeoutId);
+            }
             this.pendingRequests.delete(id);
             // Final response - close the stream
             if (response.status >= 400) {
@@ -391,7 +409,10 @@ export class WebSocketTransport extends BaseTransport {
             }
           },
           reject: (error: Error) => {
-            clearTimeout(timeoutId);
+            const pending = this.pendingRequests.get(id);
+            if (pending?.timeoutId) {
+              clearTimeout(pending.timeoutId);
+            }
             this.pendingRequests.delete(id);
             controller.error(error);
           },
@@ -403,7 +424,10 @@ export class WebSocketTransport extends BaseTransport {
         try {
           this.send(request);
         } catch (error) {
-          clearTimeout(timeoutId);
+          const pending = this.pendingRequests.get(id);
+          if (pending?.timeoutId) {
+            clearTimeout(pending.timeoutId);
+          }
           this.pendingRequests.delete(id);
           controller.error(
             error instanceof Error ? error : new Error(String(error))
@@ -487,6 +511,9 @@ export class WebSocketTransport extends BaseTransport {
 
   /**
    * Handle a stream chunk message
+   *
+   * Resets the idle timeout on every chunk so that long-running streams
+   * with continuous output are not killed by the inactivity timer.
    */
   private handleStreamChunk(chunk: WSStreamChunk): void {
     const pending = this.pendingRequests.get(chunk.id);
@@ -495,6 +522,11 @@ export class WebSocketTransport extends BaseTransport {
         id: chunk.id
       });
       return;
+    }
+
+    // Reset the idle timeout since we received activity
+    if (pending.isStreaming) {
+      this.resetStreamIdleTimeout(chunk.id, pending);
     }
 
     // Convert to SSE format for compatibility with existing parsers
@@ -520,6 +552,30 @@ export class WebSocketTransport extends BaseTransport {
       }
       this.pendingRequests.delete(chunk.id);
     }
+  }
+
+  /**
+   * Reset the idle timeout for a streaming request.
+   * Called on every incoming chunk to keep the stream alive while data flows.
+   */
+  private resetStreamIdleTimeout(id: string, pending: PendingRequest): void {
+    if (pending.timeoutId) {
+      clearTimeout(pending.timeoutId);
+    }
+
+    const idleTimeoutMs = this.config.streamIdleTimeoutMs ?? 300_000;
+    pending.timeoutId = setTimeout(() => {
+      this.pendingRequests.delete(id);
+      if (pending.streamController) {
+        try {
+          pending.streamController.error(
+            new Error(`Stream idle timeout after ${idleTimeoutMs}ms`)
+          );
+        } catch {
+          // Stream may already be closed/errored
+        }
+      }
+    }, idleTimeoutMs);
   }
 
   /**
