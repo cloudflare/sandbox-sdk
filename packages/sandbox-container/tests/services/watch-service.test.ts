@@ -11,7 +11,6 @@ const mockLogger = createNoOpLogger();
  * Uses module augmentation to expose private methods for testing only.
  */
 interface WatchServiceTestAccessor {
-  matchGlob(filePath: string, pattern: string): boolean;
   parseInotifyEvent(line: string): {
     eventType: string;
     path: string;
@@ -26,154 +25,6 @@ describe('WatchService', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     watchService = new WatchService(mockLogger);
-  });
-
-  describe('matchGlob', () => {
-    // Access private method for testing via type assertion
-    const testMatchGlob = (
-      service: WatchService,
-      path: string,
-      pattern: string
-    ): boolean => {
-      return (service as unknown as WatchServiceTestAccessor).matchGlob(
-        path,
-        pattern
-      );
-    };
-
-    describe('basic patterns', () => {
-      it('should match exact filename', () => {
-        expect(testMatchGlob(watchService, '/app/file.ts', 'file.ts')).toBe(
-          true
-        );
-        expect(testMatchGlob(watchService, '/app/other.ts', 'file.ts')).toBe(
-          false
-        );
-      });
-
-      it('should match wildcard extension', () => {
-        expect(testMatchGlob(watchService, '/app/code.ts', '*.ts')).toBe(true);
-        expect(testMatchGlob(watchService, '/app/code.js', '*.ts')).toBe(false);
-        expect(testMatchGlob(watchService, '/app/code.tsx', '*.ts')).toBe(
-          false
-        );
-      });
-
-      it('should match wildcard prefix', () => {
-        expect(
-          testMatchGlob(watchService, '/app/test.spec.ts', '*.spec.ts')
-        ).toBe(true);
-        expect(testMatchGlob(watchService, '/app/test.ts', '*.spec.ts')).toBe(
-          false
-        );
-      });
-
-      it('should match single character wildcard', () => {
-        expect(testMatchGlob(watchService, '/app/file1.ts', 'file?.ts')).toBe(
-          true
-        );
-        expect(testMatchGlob(watchService, '/app/file2.ts', 'file?.ts')).toBe(
-          true
-        );
-        expect(testMatchGlob(watchService, '/app/file12.ts', 'file?.ts')).toBe(
-          false
-        );
-      });
-    });
-
-    describe('security - regex metacharacters', () => {
-      it('should escape dots literally', () => {
-        // Pattern *.ts should NOT match file.tsx (dot is literal, not regex any-char)
-        expect(testMatchGlob(watchService, '/app/code.ts', '*.ts')).toBe(true);
-        expect(testMatchGlob(watchService, '/app/codexts', '*.ts')).toBe(false);
-      });
-
-      it('should escape plus literally', () => {
-        expect(
-          testMatchGlob(watchService, '/app/file+name.ts', 'file+name.ts')
-        ).toBe(true);
-        expect(
-          testMatchGlob(watchService, '/app/filename.ts', 'file+name.ts')
-        ).toBe(false);
-      });
-
-      it('should escape caret and dollar literally', () => {
-        expect(testMatchGlob(watchService, '/app/$file.ts', '$file.ts')).toBe(
-          true
-        );
-        expect(testMatchGlob(watchService, '/app/^file.ts', '^file.ts')).toBe(
-          true
-        );
-      });
-
-      it('should escape parentheses literally', () => {
-        expect(
-          testMatchGlob(watchService, '/app/file(1).ts', 'file(1).ts')
-        ).toBe(true);
-        expect(testMatchGlob(watchService, '/app/file1.ts', 'file(1).ts')).toBe(
-          false
-        );
-      });
-
-      it('should escape brackets literally (prevent character classes)', () => {
-        // Pattern [a-z].ts should match literal "[a-z].ts", not "a.ts" through "z.ts"
-        expect(testMatchGlob(watchService, '/app/[a-z].ts', '[a-z].ts')).toBe(
-          true
-        );
-        expect(testMatchGlob(watchService, '/app/a.ts', '[a-z].ts')).toBe(
-          false
-        );
-        expect(testMatchGlob(watchService, '/app/m.ts', '[a-z].ts')).toBe(
-          false
-        );
-      });
-
-      it('should escape pipe literally', () => {
-        expect(testMatchGlob(watchService, '/app/a|b.ts', 'a|b.ts')).toBe(true);
-        expect(testMatchGlob(watchService, '/app/a.ts', 'a|b.ts')).toBe(false);
-      });
-
-      it('should escape backslash literally', () => {
-        expect(testMatchGlob(watchService, '/app/file\\.ts', 'file\\.ts')).toBe(
-          true
-        );
-      });
-    });
-
-    describe('security - ReDoS prevention', () => {
-      it('should handle potentially malicious patterns safely', () => {
-        // These patterns should complete quickly, not cause catastrophic backtracking
-        const start = Date.now();
-
-        // Pattern that could cause ReDoS if not properly escaped
-        testMatchGlob(
-          watchService,
-          '/app/aaaaaaaaaaaaaaaaaaaaaaaaa.ts',
-          '*.ts'
-        );
-        testMatchGlob(watchService, '/app/test.ts', '*.*.*.*');
-
-        const elapsed = Date.now() - start;
-        // Should complete in under 100ms, not hang
-        expect(elapsed).toBeLessThan(100);
-      });
-    });
-
-    describe('edge cases', () => {
-      it('should match files in any directory', () => {
-        expect(testMatchGlob(watchService, '/a/b/c/d/file.ts', '*.ts')).toBe(
-          true
-        );
-      });
-
-      it('should handle empty pattern', () => {
-        expect(testMatchGlob(watchService, '/app/file.ts', '')).toBe(false);
-      });
-
-      it('should handle pattern with only wildcards', () => {
-        expect(testMatchGlob(watchService, '/app/anything', '*')).toBe(true);
-      });
-    });
   });
 
   describe('stopWatch', () => {
@@ -373,9 +224,21 @@ describe('WatchService', () => {
       expect(args).toContain('--exclude');
       const excludeIndex = args.indexOf('--exclude');
       const excludePattern = args[excludeIndex + 1];
-      // Patterns are escaped and wrapped in regex anchors, combined with OR
-      expect(excludePattern).toContain('(^|/)\\*\\.log(/|$)');
+      expect(excludePattern).toContain('(^|/)[^/]*\\.log(/|$)');
       expect(excludePattern).toContain('(^|/)temp(/|$)');
+    });
+
+    it('should include include patterns when provided', () => {
+      const args = testBuildArgs(watchService, '/app', {
+        path: '/app',
+        include: ['*.ts', 'src/**']
+      });
+      expect(args).toContain('--include');
+      expect(args).not.toContain('--exclude');
+      const includeIndex = args.indexOf('--include');
+      const includePattern = args[includeIndex + 1];
+      expect(includePattern).toContain('(^|/)[^/]*\\.ts(/|$)');
+      expect(includePattern).toContain('(^|/)src/.*(/|$)');
     });
 
     it('should add path as last argument', () => {

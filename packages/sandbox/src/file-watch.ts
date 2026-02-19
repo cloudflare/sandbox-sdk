@@ -1,11 +1,12 @@
-import type {
-  createLogger,
-  FileWatchSSEEvent,
-  WatchEvent,
-  WatchEventType,
-  WatchHandle
+import {
+  type createLogger,
+  type FileWatchSSEEvent,
+  parseSSEFrames,
+  type SSEPartialEvent,
+  type WatchEvent,
+  type WatchEventType,
+  type WatchHandle
 } from '@repo/shared';
-import type { SandboxClient } from './clients';
 
 /** Watch lifecycle state */
 type WatchState = 'establishing' | 'active' | 'stopped';
@@ -28,7 +29,6 @@ export class FileWatch implements WatchHandle {
   private readonly reader: ReadableStreamDefaultReader<Uint8Array>;
   private readonly decoder = new TextDecoder();
   private readonly logger: ReturnType<typeof createLogger>;
-  private readonly client: SandboxClient;
   private readonly onEvent?: (event: WatchEvent) => void;
   private readonly onError?: (error: Error) => void;
 
@@ -44,7 +44,6 @@ export class FileWatch implements WatchHandle {
   private constructor(
     stream: ReadableStream<Uint8Array>,
     path: string,
-    client: SandboxClient,
     logger: ReturnType<typeof createLogger>,
     externalSignal?: AbortSignal,
     onEvent?: (event: WatchEvent) => void,
@@ -52,19 +51,19 @@ export class FileWatch implements WatchHandle {
   ) {
     this.path = path;
     this.reader = stream.getReader();
-    this.client = client;
     this.logger = logger;
     this.onEvent = onEvent;
     this.onError = onError;
 
-    // Link external abort signal
     if (externalSignal) {
       if (externalSignal.aborted) {
         this.abortController.abort();
       } else {
         externalSignal.addEventListener(
           'abort',
-          () => this.abortController.abort(),
+          () => {
+            void this.stop();
+          },
           { once: true }
         );
       }
@@ -86,7 +85,6 @@ export class FileWatch implements WatchHandle {
   static async create(
     stream: ReadableStream<Uint8Array>,
     path: string,
-    client: SandboxClient,
     logger: ReturnType<typeof createLogger>,
     options?: {
       signal?: AbortSignal;
@@ -97,7 +95,6 @@ export class FileWatch implements WatchHandle {
     const watch = new FileWatch(
       stream,
       path,
-      client,
       logger,
       options?.signal,
       options?.onEvent,
@@ -114,11 +111,9 @@ export class FileWatch implements WatchHandle {
    * Rejects if the abort signal fires before establishment completes.
    */
   private established(): Promise<void> {
-    // Already established
     if (this.state === 'active') {
       return Promise.resolve();
     }
-    // Already failed or aborted
     if (this.state === 'stopped') {
       return Promise.reject(new Error('Watch failed to establish'));
     }
@@ -127,23 +122,22 @@ export class FileWatch implements WatchHandle {
         new Error('Watch was aborted before establishment')
       );
     }
-    // Wait for state transition, with abort signal rejection
+
     return new Promise<void>((resolve, reject) => {
       this.establishedResolve = resolve;
       this.establishedReject = reject;
 
-      // If abort fires during establishment, reject immediately
       const signal = this.abortController.signal;
       if (signal.aborted) {
         reject(new Error('Watch was aborted before establishment'));
         return;
       }
+
       const onAbort = () => {
         reject(new Error('Watch was aborted during establishment'));
       };
       signal.addEventListener('abort', onAbort, { once: true });
 
-      // Store original resolve/reject so they also clean up the abort listener
       const originalResolve = this.establishedResolve;
       const originalReject = this.establishedReject;
       this.establishedResolve = () => {
@@ -163,6 +157,8 @@ export class FileWatch implements WatchHandle {
   private async runLoop(): Promise<void> {
     const signal = this.abortController.signal;
 
+    let currentEvent: SSEPartialEvent = { data: [] };
+
     try {
       while (!signal.aborted) {
         const { done, value } = await this.reader.read();
@@ -174,15 +170,21 @@ export class FileWatch implements WatchHandle {
         }
 
         this.buffer += this.decoder.decode(value, { stream: true });
-        const lines = this.buffer.split('\n');
-        this.buffer = lines.pop() || '';
+        const parsed = parseSSEFrames(this.buffer, currentEvent);
+        this.buffer = parsed.remaining;
+        currentEvent = parsed.currentEvent;
 
-        for (const line of lines) {
+        for (const frame of parsed.events) {
           if (signal.aborted) break;
-          if (line.startsWith('data: ')) {
-            this.handleEvent(line);
-          }
+          this.handleEvent(frame.data);
         }
+      }
+
+      // Flush any complete trailing frame.
+      const finalParsed = parseSSEFrames(`${this.buffer}\n\n`, currentEvent);
+      for (const frame of finalParsed.events) {
+        if (signal.aborted) break;
+        this.handleEvent(frame.data);
       }
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
@@ -235,13 +237,13 @@ export class FileWatch implements WatchHandle {
   /**
    * Handles a single SSE event based on current state.
    */
-  private handleEvent(line: string): void {
+  private handleEvent(data: string): void {
     let parsed: unknown;
     try {
-      parsed = JSON.parse(line.slice(6));
+      parsed = JSON.parse(data);
     } catch {
       this.logger.debug('Malformed JSON in watch SSE event', {
-        line: line.substring(0, 200)
+        data: data.substring(0, 200)
       });
       return;
     }
@@ -321,17 +323,6 @@ export class FileWatch implements WatchHandle {
     }
 
     this.abortController.abort();
-
-    if (this.watchId) {
-      try {
-        await this.client.watch.stopWatch(this.watchId);
-      } catch (error) {
-        this.logger.warn('Failed to stop watch on server', {
-          watchId: this.watchId,
-          error
-        });
-      }
-    }
 
     await this.loopPromise.catch(() => {});
   }

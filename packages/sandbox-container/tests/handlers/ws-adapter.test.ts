@@ -146,6 +146,16 @@ describe('WebSocketAdapter', () => {
       expect(response.status).toBe(400);
     });
 
+    it('should ignore cancel message for unknown request id', async () => {
+      await adapter.onMessage(
+        mockWs as any,
+        JSON.stringify({ type: 'cancel', id: 'missing-request' })
+      );
+
+      expect(mockRouter.route).not.toHaveBeenCalled();
+      expect(mockWs.getSentMessages()).toHaveLength(0);
+    });
+
     it('should handle router errors gracefully', async () => {
       const request: WSRequest = {
         type: 'request',

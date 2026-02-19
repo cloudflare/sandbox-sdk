@@ -814,36 +814,57 @@ console.log('Terminal server on port ' + port);
         });
       }
 
-      // File Watch - Start watching (SSE stream)
-      // Note: watches are container-wide, not session-specific
+      // File Watch - Stream watch events from the container API.
+      // Returning the SDK WatchHandle over RPC is not supported because class
+      // instances are not serializable across the Worker <-> DO boundary.
       if (url.pathname === '/api/watch' && request.method === 'POST') {
-        const stream = await sandbox.watchStream(body.path, {
+        const watchRequest = {
+          path: body.path,
           recursive: body.recursive,
           include: body.include,
-          exclude: body.exclude
-        });
-        return new Response(stream, {
-          headers: {
-            'Content-Type': 'text/event-stream',
-            'Cache-Control': 'no-cache',
-            Connection: 'keep-alive'
+          // inotifywait rejects include+exclude together. Keep include-only
+          // requests compatible with both current and older container images.
+          exclude: body.include ? [] : body.exclude,
+          sessionId: sessionId ?? undefined
+        };
+
+        const upstream = await sandbox.containerFetch(
+          new Request('http://localhost:3000/api/watch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(watchRequest)
+          }),
+          3000
+        );
+
+        if (!upstream.body) {
+          return upstream;
+        }
+
+        const upstreamReader = upstream.body.getReader();
+        const stream = new ReadableStream<Uint8Array>({
+          async pull(controller) {
+            const { done, value } = await upstreamReader.read();
+            if (done) {
+              controller.close();
+              return;
+            }
+            controller.enqueue(value);
+          },
+          async cancel(reason) {
+            await upstreamReader.cancel(reason).catch(() => {});
           }
         });
-      }
 
-      // File Watch - Stop watching
-      if (url.pathname === '/api/watch/stop' && request.method === 'POST') {
-        const result = await sandbox.stopWatch(body.watchId);
-        return new Response(JSON.stringify(result), {
-          headers: { 'Content-Type': 'application/json' }
-        });
-      }
+        const headers = new Headers(upstream.headers);
+        headers.set('Content-Type', 'text/event-stream');
+        headers.set('Cache-Control', 'no-cache');
+        headers.set('Connection', 'keep-alive');
 
-      // File Watch - List active watches
-      if (url.pathname === '/api/watch/list' && request.method === 'GET') {
-        const result = await sandbox.listWatches();
-        return new Response(JSON.stringify(result), {
-          headers: { 'Content-Type': 'application/json' }
+        return new Response(stream, {
+          status: upstream.status,
+          statusText: upstream.statusText,
+          headers
         });
       }
 

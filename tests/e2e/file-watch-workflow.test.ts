@@ -296,11 +296,10 @@ describe('File Watch Workflow', () => {
     expect(jsEvents.length).toBe(0);
   }, 30000);
 
-  test('should stop watch via API', async () => {
+  test('should stop watch when client closes stream', async () => {
     testDir = uniqueTestPath('watch-stop');
     await createDir(testDir);
 
-    // Start a watch
     const response = await fetch(`${workerUrl}/api/watch`, {
       method: 'POST',
       headers,
@@ -312,86 +311,29 @@ describe('File Watch Workflow', () => {
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
-
-    // Read until we get the watching event
-    let watchId: string | null = null;
-    while (!watchId) {
-      const { value } = await reader.read();
-      const text = decoder.decode(value);
-      const match = text.match(/"watchId":"([^"]+)"/);
-      if (match) watchId = match[1];
-    }
-
-    expect(watchId).toBeTruthy();
-
-    // Stop the watch
-    const stopResponse = await fetch(`${workerUrl}/api/watch/stop`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ watchId })
-    });
-
-    expect(stopResponse.ok).toBe(true);
-    const stopResult = (await stopResponse.json()) as { success: boolean };
-    expect(stopResult.success).toBe(true);
-
-    reader.cancel();
-  }, 30000);
-
-  test('should list active watches', async () => {
-    testDir = uniqueTestPath('watch-list');
-    await createDir(testDir);
-
-    // Start a watch
-    const response = await fetch(`${workerUrl}/api/watch`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ path: testDir })
-    });
 
     // Wait for watch to establish
-    expect(response.body).toBeTruthy();
-    if (!response.body) return;
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let watchId: string | null = null;
-
-    while (!watchId) {
-      const { value } = await reader.read();
-      const text = decoder.decode(value);
-      const match = text.match(/"watchId":"([^"]+)"/);
-      if (match) watchId = match[1];
+    let watchingReceived = false;
+    while (!watchingReceived) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const text = decoder.decode(value, { stream: true });
+      watchingReceived = text.includes('"type":"watching"');
     }
 
-    // List watches
-    const listResponse = await fetch(`${workerUrl}/api/watch/list`, {
-      method: 'GET',
-      headers
-    });
+    expect(watchingReceived).toBe(true);
 
-    expect(listResponse.ok).toBe(true);
-    const listResult = (await listResponse.json()) as {
-      success: boolean;
-      watches: Array<{ id: string; path: string }>;
-      count: number;
-    };
+    // Client-side cancellation should stop the server watch
+    await reader.cancel();
 
-    expect(listResult.success).toBe(true);
-    expect(listResult.count).toBeGreaterThanOrEqual(1);
-
-    const ourWatch = listResult.watches.find((w) => w.id === watchId);
-    expect(ourWatch).toBeDefined();
-    expect(ourWatch?.path).toBe(testDir);
-
-    // Cleanup
-    await fetch(`${workerUrl}/api/watch/stop`, {
+    // Starting another watch on same path should work immediately if cleanup succeeded
+    const secondResponse = await fetch(`${workerUrl}/api/watch`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ watchId })
+      body: JSON.stringify({ path: testDir })
     });
-
-    reader.cancel();
+    expect(secondResponse.ok).toBe(true);
+    await secondResponse.body?.cancel();
   }, 30000);
 
   test('should return error for non-existent path', async () => {

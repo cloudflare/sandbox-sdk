@@ -282,20 +282,6 @@ export function setupRoutes(router: Router, container: Container): void {
     middleware: [container.get('loggingMiddleware')]
   });
 
-  router.register({
-    method: 'POST',
-    path: '/api/watch/stop',
-    handler: async (req, ctx) => container.get('watchHandler').handle(req, ctx),
-    middleware: [container.get('loggingMiddleware')]
-  });
-
-  router.register({
-    method: 'GET',
-    path: '/api/watch/list',
-    handler: async (req, ctx) => container.get('watchHandler').handle(req, ctx),
-    middleware: [container.get('loggingMiddleware')]
-  });
-
   // Miscellaneous routes
   router.register({
     method: 'GET',

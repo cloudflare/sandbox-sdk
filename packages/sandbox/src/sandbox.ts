@@ -2186,69 +2186,19 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * await watcher.stop();
    * ```
    */
-  async watch(
-    path: string,
-    options?: Omit<WatchOptions, 'sessionId'>
-  ): Promise<WatchHandle> {
-    const sessionId = await this.ensureDefaultSession();
+  async watch(path: string, options?: WatchOptions): Promise<WatchHandle> {
     const stream = await this.client.watch.watch({
       path,
-      sessionId,
       recursive: options?.recursive,
       include: options?.include,
       exclude: options?.exclude
     });
 
-    return FileWatch.create(stream, path, this.client, this.logger, {
+    return FileWatch.create(stream, path, this.logger, {
       signal: options?.signal,
       onEvent: options?.onEvent,
       onError: options?.onError
     });
-  }
-
-  /**
-   * Get raw SSE stream for file watching.
-   * This is a lower-level API for testing and advanced use cases.
-   * Most users should use watch() instead.
-   *
-   * @internal
-   */
-  async watchStream(
-    path: string,
-    options?: {
-      recursive?: boolean;
-      include?: string[];
-      exclude?: string[];
-    }
-  ): Promise<ReadableStream<Uint8Array>> {
-    const sessionId = await this.ensureDefaultSession();
-    return this.client.watch.watch({
-      path,
-      sessionId,
-      recursive: options?.recursive,
-      include: options?.include,
-      exclude: options?.exclude
-    });
-  }
-
-  /**
-   * Stop a watch by ID.
-   * @internal
-   */
-  async stopWatch(watchId: string): Promise<{ success: boolean }> {
-    return this.client.watch.stopWatch(watchId);
-  }
-
-  /**
-   * List all active watches.
-   * @internal
-   */
-  async listWatches(): Promise<{
-    success: boolean;
-    watches: Array<{ id: string; path: string; startedAt: string }>;
-    count: number;
-  }> {
-    return this.client.watch.listWatches();
   }
 
   /**

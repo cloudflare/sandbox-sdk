@@ -58,6 +58,9 @@ export type {
 } from './request-types.js';
 // Export shell utilities
 export { shellEscape } from './shell-escape.js';
+// Export SSE utilities
+export type { SSEEventFrame, SSEPartialEvent } from './sse.js';
+export { parseSSEFrames } from './sse.js';
 // Export all types from types.ts
 export type {
   BaseExecOptions,

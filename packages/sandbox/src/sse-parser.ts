@@ -1,3 +1,5 @@
+import { parseSSEFrames, type SSEPartialEvent } from '@repo/shared';
+
 /**
  * Server-Sent Events (SSE) parser for streaming responses
  * Converts ReadableStream<Uint8Array> to typed AsyncIterable<T>
@@ -15,6 +17,19 @@ export async function* parseSSEStream<T>(
   const reader = stream.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
+  let currentEvent: SSEPartialEvent = { data: [] };
+
+  const emitEvent = (data: string): T | undefined => {
+    if (data === '[DONE]' || data.trim() === '') {
+      return undefined;
+    }
+
+    try {
+      return JSON.parse(data) as T;
+    } catch {
+      return undefined;
+    }
+  };
 
   try {
     while (true) {
@@ -26,48 +41,26 @@ export async function* parseSSEStream<T>(
       const { done, value } = await reader.read();
       if (done) break;
 
-      // Decode chunk and add to buffer
+      // Decode chunk and parse complete SSE frames
       buffer += decoder.decode(value, { stream: true });
+      const parsed = parseSSEFrames(buffer, currentEvent);
+      buffer = parsed.remaining;
+      currentEvent = parsed.currentEvent;
 
-      // Process complete SSE events in buffer
-      const lines = buffer.split('\n');
-
-      // Keep the last incomplete line in buffer
-      buffer = lines.pop() || '';
-
-      for (const line of lines) {
-        // Skip empty lines
-        if (line.trim() === '') continue;
-
-        // Process SSE data lines
-        if (line.startsWith('data: ')) {
-          const data = line.substring(6);
-
-          // Skip [DONE] markers or empty data
-          if (data === '[DONE]' || data.trim() === '') continue;
-
-          try {
-            const event = JSON.parse(data) as T;
-            yield event;
-          } catch {
-            // Skip invalid JSON events and continue processing
-          }
+      for (const frame of parsed.events) {
+        const event = emitEvent(frame.data);
+        if (event !== undefined) {
+          yield event;
         }
-        // Handle other SSE fields if needed (event:, id:, retry:)
-        // For now, we only care about data: lines
       }
     }
 
-    // Process any remaining data in buffer
-    if (buffer.trim() && buffer.startsWith('data: ')) {
-      const data = buffer.substring(6);
-      if (data !== '[DONE]' && data.trim()) {
-        try {
-          const event = JSON.parse(data) as T;
-          yield event;
-        } catch {
-          // Skip invalid JSON in final event
-        }
+    // Flush any complete frame that can be parsed from remaining data
+    const finalParsed = parseSSEFrames(`${buffer}\n\n`, currentEvent);
+    for (const frame of finalParsed.events) {
+      const event = emitEvent(frame.data);
+      if (event !== undefined) {
+        yield event;
       }
     }
   } finally {

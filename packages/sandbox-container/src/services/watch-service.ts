@@ -13,7 +13,6 @@ interface ActiveWatch {
   id: string;
   path: string;
   process: Subprocess;
-  options: WatchRequest;
   startedAt: Date;
 }
 
@@ -65,18 +64,11 @@ export class WatchService {
         id: watchId,
         path,
         process: proc,
-        options,
         startedAt: new Date()
       });
 
       // Create SSE stream from inotifywait output
-      const stream = this.createWatchStream(
-        watchId,
-        path,
-        proc,
-        options,
-        watchLogger
-      );
+      const stream = this.createWatchStream(watchId, path, proc, watchLogger);
 
       return serviceSuccess(stream);
     } catch (error) {
@@ -176,18 +168,18 @@ export class WatchService {
       args.push('-e', inotifyEvents.join(','));
     }
 
-    // Exclude patterns - convert to regex for inotifywait
-    // inotifywait --exclude uses POSIX extended regex matching against full path
-    // NOTE: inotifywait only supports a single --exclude option, so we combine all patterns
-    const excludes = options.exclude || ['.git', 'node_modules', '.DS_Store'];
-    if (excludes.length > 0) {
-      // Escape regex metacharacters and wrap each pattern to match anywhere in path
-      const escapedPatterns = excludes.map((pattern) => {
-        const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        return `(^|/)${escaped}(/|$)`;
-      });
-      // Combine all patterns with OR operator
-      args.push('--exclude', escapedPatterns.join('|'));
+    // inotifywait does not allow --include and --exclude together.
+    // Include filters take precedence; when include is set, exclusion is handled
+    // implicitly by only matching included paths.
+    const includeRegex = this.buildCombinedPathRegex(options.include);
+    if (includeRegex) {
+      args.push('--include', includeRegex);
+    } else {
+      const excludes = options.exclude || ['.git', 'node_modules', '.DS_Store'];
+      const excludeRegex = this.buildCombinedPathRegex(excludes);
+      if (excludeRegex) {
+        args.push('--exclude', excludeRegex);
+      }
     }
 
     // Add path last
@@ -206,6 +198,25 @@ export class WatchService {
       attrib: 'attrib'
     };
     return mapping[type];
+  }
+
+  private buildCombinedPathRegex(patterns?: string[]): string | undefined {
+    if (!patterns || patterns.length === 0) {
+      return undefined;
+    }
+
+    return patterns
+      .map((pattern) => `(^|/)${this.globToPathRegex(pattern)}(/|$)`)
+      .join('|');
+  }
+
+  private globToPathRegex(pattern: string): string {
+    return pattern
+      .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+      .replace(/\*\*/g, '::double_star::')
+      .replace(/\*/g, '[^/]*')
+      .replace(/::double_star::/g, '.*')
+      .replace(/\?/g, '[^/]');
   }
 
   private parseInotifyEvent(line: string): {
@@ -253,11 +264,9 @@ export class WatchService {
     watchId: string,
     path: string,
     proc: Subprocess,
-    options: WatchRequest,
     logger: Logger
   ): ReadableStream<Uint8Array> {
     const encoder = new TextEncoder();
-    const includePatterns = options.include;
     const self = this;
     const stdout = proc.stdout;
     const stderr = proc.stderr;
@@ -280,15 +289,26 @@ export class WatchService {
 
     return new ReadableStream({
       async start(controller) {
-        // Wait for inotifywait to establish watches before sending watching event
-        // This ensures clients know the watch is truly ready to detect changes
+        // Wait for inotifywait to establish watches before sending watching event.
+        // If setup emits an error, fail fast and stop this watch.
         if (stderr && typeof stderr !== 'number') {
-          await self.waitForWatchesEstablished(
-            stderr,
-            controller,
-            encoder,
-            logger
-          );
+          try {
+            await self.waitForWatchesEstablished(
+              stderr,
+              controller,
+              encoder,
+              logger
+            );
+          } catch {
+            try {
+              proc.kill();
+            } catch {
+              // Process may have already exited.
+            }
+            self.activeWatches.delete(watchId);
+            controller.close();
+            return;
+          }
         }
 
         // Send watching event only after watches are established
@@ -309,14 +329,6 @@ export class WatchService {
         const processLine = (line: string) => {
           const parsed = self.parseInotifyEvent(line);
           if (!parsed) return;
-
-          // Apply include filter if specified
-          if (includePatterns && includePatterns.length > 0) {
-            const matches = includePatterns.some((pattern: string) =>
-              self.matchGlob(parsed.path, pattern)
-            );
-            if (!matches) return;
-          }
 
           const event: FileWatchSSEEvent = {
             type: 'event',
@@ -439,68 +451,63 @@ export class WatchService {
     let buffer = '';
     let established = false;
 
-    // Timeout after 10 seconds - inotifywait should establish watches quickly
     const timeoutMs = 10000;
     const timeoutPromise = new Promise<'timeout'>((resolve) =>
       setTimeout(() => resolve('timeout'), timeoutMs)
     );
 
     const readLoop = async (): Promise<'done' | 'established'> => {
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) {
-            logger.debug('stderr ended before watches established');
-            return 'done';
-          }
-
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop() || '';
-
-          for (const line of lines) {
-            const trimmed = line.trim();
-            if (trimmed) {
-              if (trimmed.includes('Watches established')) {
-                logger.debug('inotifywait watches established');
-                established = true;
-                return 'established';
-              }
-              if (trimmed.includes('Setting up watches')) {
-                logger.debug('inotifywait setting up watches', {
-                  message: trimmed
-                });
-                continue;
-              }
-              // Actual error from inotifywait
-              logger.warn('inotifywait stderr during setup', {
-                message: trimmed
-              });
-              const errorEvent: FileWatchSSEEvent = {
-                type: 'error',
-                error: trimmed
-              };
-              try {
-                controller.enqueue(
-                  encoder.encode(`data: ${JSON.stringify(errorEvent)}\n\n`)
-                );
-              } catch (enqueueError) {
-                logger.debug('Could not enqueue error event during setup', {
-                  error:
-                    enqueueError instanceof Error
-                      ? enqueueError.message
-                      : String(enqueueError)
-                });
-                return 'done';
-              }
-            }
-          }
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          logger.debug('stderr ended before watches established');
+          return 'done';
         }
-      } catch (error) {
-        logger.debug('stderr reading ended during setup', {
-          error: error instanceof Error ? error.message : 'Unknown'
-        });
-        return 'done';
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed) {
+            continue;
+          }
+
+          if (trimmed.includes('Watches established')) {
+            logger.debug('inotifywait watches established');
+            established = true;
+            return 'established';
+          }
+          if (trimmed.includes('Setting up watches')) {
+            logger.debug('inotifywait setting up watches', {
+              message: trimmed
+            });
+            continue;
+          }
+
+          logger.warn('inotifywait stderr during setup', {
+            message: trimmed
+          });
+          const errorEvent: FileWatchSSEEvent = {
+            type: 'error',
+            error: trimmed
+          };
+          try {
+            controller.enqueue(
+              encoder.encode(`data: ${JSON.stringify(errorEvent)}\n\n`)
+            );
+          } catch (enqueueError) {
+            logger.debug('Could not enqueue error event during setup', {
+              error:
+                enqueueError instanceof Error
+                  ? enqueueError.message
+                  : String(enqueueError)
+            });
+          }
+
+          throw new Error(trimmed);
+        }
       }
     };
 
@@ -508,11 +515,9 @@ export class WatchService {
 
     if (result === 'timeout') {
       logger.warn('Timeout waiting for inotifywait to establish watches');
-      // Continue anyway - watches might still work
     }
 
     if (established) {
-      // Continue monitoring stderr for errors in background
       this.continueStderrMonitoring(
         reader,
         decoder,
@@ -521,18 +526,18 @@ export class WatchService {
         encoder,
         logger
       );
-    } else {
-      // Release the reader if we're not continuing to monitor
-      try {
-        reader.releaseLock();
-      } catch (releaseError) {
-        logger.debug('Could not release stderr reader lock', {
-          error:
-            releaseError instanceof Error
-              ? releaseError.message
-              : String(releaseError)
-        });
-      }
+      return;
+    }
+
+    try {
+      reader.releaseLock();
+    } catch (releaseError) {
+      logger.debug('Could not release stderr reader lock', {
+        error:
+          releaseError instanceof Error
+            ? releaseError.message
+            : String(releaseError)
+      });
     }
   }
 
@@ -602,63 +607,5 @@ export class WatchService {
         });
       }
     })();
-  }
-
-  /**
-   * Simple glob matching for include patterns
-   * Converts glob pattern to regex character-by-character for security
-   */
-  private matchGlob(filePath: string, pattern: string): boolean {
-    const regexParts: string[] = ['^'];
-
-    for (let i = 0; i < pattern.length; i++) {
-      const char = pattern[i];
-
-      switch (char) {
-        case '*':
-          // ** matches any path segments, * matches any chars except /
-          if (pattern[i + 1] === '*') {
-            regexParts.push('.*');
-            i++; // Skip next *
-          } else {
-            regexParts.push('[^/]*');
-          }
-          break;
-        case '?':
-          // ? matches single char except /
-          regexParts.push('[^/]');
-          break;
-        case '.':
-        case '+':
-        case '^':
-        case '$':
-        case '{':
-        case '}':
-        case '(':
-        case ')':
-        case '|':
-        case '\\':
-          // Escape regex metacharacters
-          regexParts.push(`\\${char}`);
-          break;
-        case '[':
-          // Character classes - find matching ] and treat literally
-          // to prevent [a-z] from being interpreted as regex range
-          regexParts.push('\\[');
-          break;
-        case ']':
-          regexParts.push('\\]');
-          break;
-        default:
-          regexParts.push(char);
-      }
-    }
-
-    regexParts.push('$');
-    const regex = new RegExp(regexParts.join(''));
-
-    // Match against filename only (for patterns like *.ts)
-    const filename = filePath.split('/').pop() || '';
-    return regex.test(filename);
   }
 }
