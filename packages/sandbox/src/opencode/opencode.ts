@@ -11,6 +11,7 @@ function getLogger(): Logger {
 }
 
 const DEFAULT_PORT = 4096;
+const OPENCODE_STARTUP_TIMEOUT_MS = 180_000;
 const OPENCODE_SERVE = (port: number) =>
   `opencode serve --port ${port} --hostname 0.0.0.0`;
 
@@ -95,7 +96,7 @@ async function ensureOpencodeServer(
         await existingProcess.waitForPort(port, {
           mode: 'http',
           path: '/',
-          timeout: 60_000
+          timeout: OPENCODE_STARTUP_TIMEOUT_MS
         });
       } catch (e) {
         const logs = await existingProcess.getLogs();
@@ -134,7 +135,7 @@ async function ensureOpencodeServer(
           await retryProcess.waitForPort(port, {
             mode: 'http',
             path: '/',
-            timeout: 60_000
+            timeout: OPENCODE_STARTUP_TIMEOUT_MS
           });
         } catch (e) {
           const logs = await retryProcess.getLogs();
@@ -227,7 +228,7 @@ async function startOpencodeServer(
     await process.waitForPort(port, {
       mode: 'http',
       path: '/',
-      timeout: 60_000
+      timeout: OPENCODE_STARTUP_TIMEOUT_MS
     });
     getLogger().info('OpenCode server started successfully', {
       port,
