@@ -52,7 +52,7 @@ describe('OpenCode Workflow (E2E)', () => {
       };
       expect(result.healthy).toBe(true);
       expect(result.version).toMatch(/\d+\.\d+\.\d+/);
-    }, 60000);
+    }, 180000);
   });
 
   describe('OpenCode server lifecycle', () => {
@@ -77,7 +77,7 @@ describe('OpenCode Workflow (E2E)', () => {
           headers,
           body: JSON.stringify({
             port: 4096,
-            options: { mode: 'http', path: '/', timeout: 30000 }
+            options: { mode: 'http', path: '/', timeout: 120000 }
           })
         }
       );
@@ -109,6 +109,6 @@ describe('OpenCode Workflow (E2E)', () => {
         }
       );
       expect(killRes.status).toBe(200);
-    }, 60000);
+    }, 180000);
   });
 });

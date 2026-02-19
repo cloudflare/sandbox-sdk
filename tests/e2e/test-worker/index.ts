@@ -315,7 +315,16 @@ console.log('Terminal server on port ' + port);
           request
         );
 
-        return proxyToOpencodeServer(opencodeRequest, sandbox, server);
+        const response = await proxyToOpencodeServer(
+          opencodeRequest,
+          sandbox,
+          server
+        );
+
+        // This endpoint is a one-shot health probe, so tear down the helper server
+        // to avoid leaking a long-lived process that can interfere with later tests.
+        await server.close();
+        return response;
       }
 
       // Session management
