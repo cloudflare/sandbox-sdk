@@ -57,6 +57,27 @@ describe('OpenCode Workflow (E2E)', () => {
 
   describe('OpenCode server lifecycle', () => {
     test('should start opencode server via process', async () => {
+      // Cleanup stale OpenCode processes from prior retries/tests.
+      const preList = await fetch(`${workerUrl}/api/process/list`, {
+        method: 'GET',
+        headers
+      });
+      expect(preList.status).toBe(200);
+      const existing = (await preList.json()) as Array<{
+        id: string;
+        command: string;
+      }>;
+      await Promise.all(
+        existing
+          .filter((p) => p.command.includes('opencode serve'))
+          .map((p) =>
+            fetch(`${workerUrl}/api/process/${p.id}`, {
+              method: 'DELETE',
+              headers
+            })
+          )
+      );
+
       // Start OpenCode server as a background process
       const startRes = await fetch(`${workerUrl}/api/process/start`, {
         method: 'POST',
