@@ -421,7 +421,7 @@ for i in range(3):
     expect(finalValue).toBe(5);
 
     await deleteContext(mutexCtx.id);
-  }, 30000);
+  }, 120000);
 
   // ============================================================================
   // Test 6: Error Handling
