@@ -957,7 +957,7 @@ export interface RestoreBackupResult {
   /** The directory that was restored */
   dir: string;
   /** Backup ID that was restored */
-  backupId: string;
+  id: string;
 }
 
 // Bucket mounting types

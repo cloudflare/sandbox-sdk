@@ -3409,7 +3409,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       return {
         success: true,
         dir,
-        backupId
+        id: backupId
       };
     } catch (error) {
       // Clean up archive file on failure only — squashfuse needs it as
