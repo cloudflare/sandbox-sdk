@@ -895,6 +895,81 @@ function generatePresignedGetUrl(
     .then((signed) => signed.url.toString());
 }
 
+function generatePresignedPutUrl(
+  env: Env,
+  r2Key: string,
+  expiresSeconds = 3600
+): Promise<string> {
+  const client = new AwsClient({
+    accessKeyId: env.R2_ACCESS_KEY_ID,
+    secretAccessKey: env.R2_SECRET_ACCESS_KEY
+  });
+  const r2Url = `https://${env.CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com/sandbox-backups/${r2Key}?X-Amz-Expires=${expiresSeconds}`;
+  return client
+    .sign(new Request(r2Url, { method: 'PUT' }), {
+      aws: { signQuery: true }
+    })
+    .then((signed) => signed.url.toString());
+}
+
+interface PresignedBackupResult {
+  strategy: string;
+  type: 'backup';
+  method: 'presigned-put';
+  steps: {
+    archiveMs: number;
+    uploadMs: number;
+  };
+  totalMs: number;
+  archiveBytes: number;
+  archiveMB: number;
+}
+
+async function presignedPutBackup(
+  sandbox: SandboxInstance,
+  env: Env,
+  strategy: string,
+  archiveCmd: string,
+  archivePath: string,
+  r2Key: string
+): Promise<PresignedBackupResult> {
+  await ensureTmpDir(sandbox);
+
+  const { ms: archiveMs, result: archiveRes } = await timed(() =>
+    sandbox.exec(archiveCmd, { timeout: ARCHIVE_TIMEOUT })
+  );
+  if (!archiveRes.success)
+    throw new Error(`${strategy} archive failed: ${archiveRes.stderr}`);
+
+  const archiveBytes = await getFileSize(sandbox, archivePath);
+  const putUrl = await generatePresignedPutUrl(env, r2Key);
+
+  const { ms: uploadMs, result: uploadRes } = await timed(() =>
+    sandbox.exec(
+      `curl -s -w '\\n%{http_code}' -X PUT --data-binary @${archivePath} '${putUrl}'`,
+      { timeout: ARCHIVE_TIMEOUT }
+    )
+  );
+  const lines = uploadRes.stdout.trim().split('\n');
+  const httpCode = lines[lines.length - 1];
+  if (!uploadRes.success || (httpCode !== '200' && httpCode !== '201'))
+    throw new Error(
+      `${strategy} presigned PUT failed (HTTP ${httpCode}): ${uploadRes.stdout} ${uploadRes.stderr}`
+    );
+
+  await cleanupTmp(sandbox);
+
+  return {
+    strategy,
+    type: 'backup',
+    method: 'presigned-put',
+    steps: { archiveMs: round(archiveMs), uploadMs: round(uploadMs) },
+    totalMs: round(archiveMs + uploadMs),
+    archiveBytes,
+    archiveMB: bytesToMB(archiveBytes)
+  };
+}
+
 async function presignedRestoreTarZst(
   sandbox: SandboxInstance,
   env: Env,
@@ -1137,6 +1212,102 @@ async function presignedDownloadAndMount(
     archiveBytes,
     archiveMB: bytesToMB(archiveBytes),
     fileCount: parseInt(countRes.stdout.trim(), 10)
+  };
+}
+
+interface FuseOverlayRestoreResult {
+  strategy: string;
+  type: 'restore';
+  method: 'presigned-fuse-overlayfs';
+  steps: {
+    downloadMs: number;
+    squashfuseMountMs: number;
+    fuseOverlayMountMs: number;
+  };
+  totalMs: number;
+  archiveBytes: number;
+  archiveMB: number;
+  fileCount: number;
+  writeTestMs?: number;
+}
+
+async function presignedFuseOverlayfsRestore(
+  sandbox: SandboxInstance,
+  env: Env,
+  r2Key: string
+): Promise<FuseOverlayRestoreResult> {
+  const url = await generatePresignedGetUrl(env, r2Key);
+  const archivePath = `${TMP_DIR}/restore.squashfs`;
+  const fuseLower = `${TMP_DIR}/fuse-lower`;
+  const fuseUpper = `${TMP_DIR}/fuse-upper`;
+  const fuseWork = `${TMP_DIR}/fuse-work`;
+
+  await sandbox.exec(
+    [
+      `fusermount -u ${RESTORE_DIR} 2>/dev/null || true`,
+      `fusermount -u ${TMP_DIR}/fuse-lower 2>/dev/null || true`,
+      `rm -rf ${RESTORE_DIR} ${TMP_DIR}`,
+      `mkdir -p ${RESTORE_DIR} ${TMP_DIR} ${fuseLower} ${fuseUpper} ${fuseWork}`
+    ].join(' ; ')
+  );
+
+  const { ms: downloadMs, result: dlRes } = await timed(() =>
+    sandbox.exec(`curl -sf '${url}' -o ${archivePath}`, {
+      timeout: ARCHIVE_TIMEOUT
+    })
+  );
+  if (!dlRes.success)
+    throw new Error(`fuse-overlayfs download failed: ${dlRes.stderr}`);
+
+  const archiveBytes = await getFileSize(sandbox, archivePath);
+
+  await sandbox.exec('echo 3 > /proc/sys/vm/drop_caches 2>/dev/null || true');
+
+  const { ms: squashfuseMountMs, result: sfRes } = await timed(() =>
+    sandbox.exec(`squashfuse ${archivePath} ${fuseLower}`, { timeout: 30_000 })
+  );
+  if (!sfRes.success)
+    throw new Error(`squashfuse mount failed: ${sfRes.stderr}`);
+
+  const { ms: fuseOverlayMountMs, result: foRes } = await timed(() =>
+    sandbox.exec(
+      `fuse-overlayfs -o lowerdir=${fuseLower},upperdir=${fuseUpper},workdir=${fuseWork} ${RESTORE_DIR}`,
+      { timeout: 30_000 }
+    )
+  );
+  if (!foRes.success)
+    throw new Error(`fuse-overlayfs mount failed: ${foRes.stderr}`);
+
+  const countRes = await sandbox.exec(`find ${RESTORE_DIR} -type f | wc -l`);
+
+  const { ms: writeTestMs } = await timed(() =>
+    sandbox.exec(
+      `dd if=/dev/zero of=${RESTORE_DIR}/__write_test bs=1M count=10 2>/dev/null && rm -f ${RESTORE_DIR}/__write_test`
+    )
+  );
+
+  await sandbox.exec(
+    [
+      `fusermount -u ${RESTORE_DIR} 2>/dev/null || true`,
+      `fusermount -u ${fuseLower} 2>/dev/null || true`,
+      `rm -rf ${RESTORE_DIR} ${TMP_DIR}`
+    ].join(' ; ')
+  );
+
+  return {
+    strategy: 'presigned-fuse-overlayfs-mount',
+    type: 'restore',
+    method: 'presigned-fuse-overlayfs',
+    steps: {
+      downloadMs: round(downloadMs),
+      squashfuseMountMs: round(squashfuseMountMs),
+      fuseOverlayMountMs: round(fuseOverlayMountMs)
+    },
+    totalMs: round(downloadMs + squashfuseMountMs + fuseOverlayMountMs),
+    archiveBytes,
+    archiveMB: bytesToMB(archiveBytes),
+    fileCount: parseInt(countRes.stdout.trim(), 10),
+    writeTestMs: round(writeTestMs)
   };
 }
 
@@ -1508,13 +1679,15 @@ type BackupResult =
   | DirectFetchResult
   | PipeResult
   | SquashfsDirectResult
-  | OverlayResult;
+  | OverlayResult
+  | PresignedBackupResult;
 
 type AnyRestoreResult =
   | RestoreResult
   | RestorePipeResult
   | RestoreSquashfsResult
-  | PresignedRestoreResult;
+  | PresignedRestoreResult
+  | FuseOverlayRestoreResult;
 
 type BenchResult = BackupResult | AnyRestoreResult;
 
@@ -1523,8 +1696,9 @@ type BenchResult = BackupResult | AnyRestoreResult;
 const BACKUP_STRATEGIES: Record<
   string,
   {
-    fn: (s: SandboxInstance, b: R2Bucket) => Promise<BackupResult>;
+    fn: (s: SandboxInstance, b: R2Bucket, env: Env) => Promise<BackupResult>;
     desc: string;
+    needsR2Creds?: boolean;
   }
 > = {
   'tar-chunked': {
@@ -1736,6 +1910,45 @@ const BACKUP_STRATEGIES: Record<
       ),
     desc: 'mksquashfs -comp gzip → containerFetch → R2.put'
   },
+  'presigned-squashfs-zstd': {
+    fn: (s, _b, env) =>
+      presignedPutBackup(
+        s,
+        env,
+        'presigned-squashfs-zstd',
+        `mksquashfs ${SRC_DIR} ${TMP_DIR}/backup.squashfs -comp zstd -no-progress`,
+        `${TMP_DIR}/backup.squashfs`,
+        'bench/presigned/snapshot-zstd.squashfs'
+      ),
+    desc: 'mksquashfs -comp zstd → curl presigned PUT → R2 direct',
+    needsR2Creds: true
+  },
+  'presigned-squashfs-lz4': {
+    fn: (s, _b, env) =>
+      presignedPutBackup(
+        s,
+        env,
+        'presigned-squashfs-lz4',
+        `mksquashfs ${SRC_DIR} ${TMP_DIR}/backup.squashfs -comp lz4 -no-progress`,
+        `${TMP_DIR}/backup.squashfs`,
+        'bench/presigned/snapshot-lz4.squashfs'
+      ),
+    desc: 'mksquashfs -comp lz4 → curl presigned PUT → R2 direct',
+    needsR2Creds: true
+  },
+  'presigned-tar-zst': {
+    fn: (s, _b, env) =>
+      presignedPutBackup(
+        s,
+        env,
+        'presigned-tar-zst',
+        `tar -C ${SRC_DIR} -cf - . | zstd -T0 -o ${TMP_DIR}/backup.tar.zst`,
+        `${TMP_DIR}/backup.tar.zst`,
+        'bench/presigned/snapshot.tar.zst'
+      ),
+    desc: 'tar+zstd → curl presigned PUT → R2 direct',
+    needsR2Creds: true
+  },
   'overlay-tar': {
     fn: (s, b) =>
       overlayIncrementalBackup(
@@ -1927,6 +2140,16 @@ const RESTORE_STRATEGIES: Record<
       ),
     desc: 'R2 presigned → curl → squashfuse FUSE mount',
     needsR2Creds: true
+  },
+  'presigned-fuse-overlayfs-mount': {
+    fn: (s, env) =>
+      presignedFuseOverlayfsRestore(
+        s,
+        env,
+        'bench/squashfs/snapshot-zstd.squashfs'
+      ),
+    desc: 'R2 presigned → curl → squashfuse + fuse-overlayfs writable (PR #396 approach)',
+    needsR2Creds: true
   }
 };
 
@@ -1941,6 +2164,11 @@ export default {
 
     if (url.pathname === '/info') {
       return Response.json(await getSourceInfo(sandbox));
+    }
+
+    if (url.pathname === '/cleanup') {
+      await sandbox.destroy();
+      return Response.json({ destroyed: true });
     }
 
     if (url.pathname === '/probe') {
@@ -1968,7 +2196,7 @@ export default {
 
       for (const [name, { fn }] of Object.entries(BACKUP_STRATEGIES)) {
         try {
-          results.push(await fn(sandbox, env.BACKUP_BUCKET));
+          results.push(await fn(sandbox, env.BACKUP_BUCKET, env));
         } catch (err) {
           results.push({ strategy: name, error: String(err) });
         }
@@ -2009,7 +2237,7 @@ export default {
 
       for (const [name, { fn }] of Object.entries(BACKUP_STRATEGIES)) {
         try {
-          backupResults.push(await fn(sandbox, env.BACKUP_BUCKET));
+          backupResults.push(await fn(sandbox, env.BACKUP_BUCKET, env));
         } catch (err) {
           backupResults.push({ strategy: name, error: String(err) });
         }
@@ -2047,7 +2275,7 @@ export default {
       try {
         const [info, result] = await Promise.all([
           getSourceInfo(sandbox),
-          entry.fn(sandbox, env.BACKUP_BUCKET)
+          entry.fn(sandbox, env.BACKUP_BUCKET, env)
         ]);
         return Response.json({ source: info, result });
       } catch (err) {
@@ -2288,7 +2516,7 @@ export default {
         try {
           const [info, result] = await Promise.all([
             getSourceInfo(sandbox),
-            backupEntry.fn(sandbox, env.BACKUP_BUCKET)
+            backupEntry.fn(sandbox, env.BACKUP_BUCKET, env)
           ]);
           return Response.json({ source: info, result });
         } catch (err) {

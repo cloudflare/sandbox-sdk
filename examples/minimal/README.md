@@ -12,17 +12,19 @@ Test directory: the sandbox-sdk repo cloned into the container with `npm install
 
 ### Production (standard-4: 4 vCPU, 12 GiB RAM, 20 GB disk)
 
-| Strategy               | Total     | Archive | Upload | Size  | Method                                 |
-| ---------------------- | --------- | ------- | ------ | ----- | -------------------------------------- |
-| **`tar-zst-direct`**   | **10.9s** | 1.7s    | 9.3s   | 211MB | containerFetch raw binary → R2.put     |
-| `squashfs-lz4`         | 13.9s     | 1.8s    | 12.1s  | 292MB | mksquashfs -comp lz4 → containerFetch  |
-| `tar-zst-fast-chunked` | 22.4s     | 1.7s    | 20.1s  | 235MB | split → readFile base64 → R2 multipart |
-| `tar-zst-fast-direct`  | 22.4s     | 9.3s    | 13.1s  | 235MB | tar + zstd -1 → containerFetch → R2    |
-| `squashfs-zstd`        | 29.4s     | 21.6s   | 7.7s   | 205MB | mksquashfs → containerFetch → R2.put   |
-| `tar-direct`           | 29.7s     | 1.4s    | 28.4s  | 704MB | containerFetch raw binary → R2.put     |
-| `squashfs-lzo`         | 30.2s     | 20.2s   | 10.1s  | 236MB | mksquashfs → containerFetch → R2.put   |
-| `tar-gz-direct`        | 35.4s     | 28.5s   | 7.0s   | 229MB | containerFetch raw binary → R2.put     |
-| `tar-*-pipe`           | ❌ OOM    | —       | —      | —     | ~220MB buffer exceeds Worker memory    |
+| Strategy                  | Total    | Archive | Upload | Size  | Method                                    |
+| ------------------------- | -------- | ------- | ------ | ----- | ----------------------------------------- |
+| **`tar-zst-direct`**      | **9.4s** | 1.6s    | 7.8s   | 212MB | containerFetch raw binary → R2.put        |
+| `presigned-tar-zst`       | 10.5s    | 1.6s    | 8.9s   | 212MB | tar+zstd → curl presigned PUT → R2 direct |
+| `presigned-squashfs-lz4`  | 13.4s    | 1.5s    | 11.9s  | 292MB | mksquashfs lz4 → curl presigned PUT → R2  |
+| `squashfs-lz4`            | 13.9s    | 1.8s    | 12.1s  | 292MB | mksquashfs -comp lz4 → containerFetch     |
+| `tar-zst-fast-chunked`    | 22.4s    | 1.7s    | 20.1s  | 235MB | split → readFile base64 → R2 multipart    |
+| `squashfs-zstd`           | 24.7s    | 16.7s   | 8.0s   | 205MB | mksquashfs → containerFetch → R2.put      |
+| `presigned-squashfs-zstd` | 25.3s    | 17.0s   | 8.3s   | 205MB | mksquashfs zstd → curl presigned PUT → R2 |
+| `tar-direct`              | 29.7s    | 1.4s    | 28.4s  | 704MB | containerFetch raw binary → R2.put        |
+| `squashfs-lzo`            | 30.2s    | 20.2s   | 10.1s  | 236MB | mksquashfs → containerFetch → R2.put      |
+| `tar-gz-direct`           | 35.4s    | 28.5s   | 7.0s   | 229MB | containerFetch raw binary → R2.put        |
+| `tar-*-pipe`              | ❌ OOM   | —       | —      | —     | ~220MB buffer exceeds Worker memory       |
 
 ### Local dev (Docker on Apple Silicon)
 
@@ -47,17 +49,18 @@ These strategies download from R2 via presigned URL directly into the container,
 
 Median of 3 runs with `sync && echo 3 > /proc/sys/vm/drop_caches` between each run to eliminate page cache effects. Use `?runs=3` query parameter to reproduce.
 
-| Strategy                              | Median   | Min–Max      | Download | Mount    | Size  | Method                                         |
-| ------------------------------------- | -------- | ------------ | -------- | -------- | ----- | ---------------------------------------------- |
-| **`presigned-squashfs-mount`**        | **2.2s** | 2.2–2.3s     | ~2.2s    | **35ms** | 205MB | curl R2 → mount -t squashfs (kernel mount)     |
-| **`presigned-squashfuse-mount`**      | **2.3s** | 2.1–2.3s     | ~2.1s    | **37ms** | 205MB | curl R2 → squashfuse (FUSE, no CAP_SYS_ADMIN)  |
-| `presigned-squashfs-mount-aria2c`     | 2.3s     | 2.3–2.4s     | ~2.3s    | 34ms     | 205MB | aria2c 4-conn → mount -t squashfs              |
-| `presigned-squashfs-lz4-mount-aria2c` | 2.8s     | 2.8–3.0s     | ~2.8s    | 61ms     | 292MB | aria2c 4-conn → mount squashfs-lz4             |
-| `presigned-squashfs-lz4-mount`        | 3.8s     | 3.4–4.2s     | ~3.7s    | 32ms     | 292MB | curl R2 → mount squashfs-lz4                   |
-| `presigned-tar-zst1-pipe`             | 4.5s     | 4.2–5.0s     | (piped)  | —        | 235MB | curl R2 \| zstd -d \| tar xf (zstd -1 archive) |
-| `presigned-tar-zst-pipe`              | 4.7s     | 4.6–4.7s     | (piped)  | —        | 212MB | curl R2 \| zstd -d \| tar xf                   |
-| `presigned-tar-zst`                   | 48.9s    | (single run) | 2.1s     | 46.8s    | 212MB | curl R2 → tar xf (zstd)                        |
-| `presigned-squashfs-extract`          | 51.2s    | (single run) | 1.9s     | 49.3s    | 205MB | curl R2 → unsquashfs                           |
+| Strategy                              | Median   | Min–Max      | Download | Mount           | Size  | Method                                              |
+| ------------------------------------- | -------- | ------------ | -------- | --------------- | ----- | --------------------------------------------------- |
+| **`presigned-squashfs-mount`**        | **2.2s** | 2.2–2.3s     | ~2.2s    | **35ms**        | 205MB | curl R2 → mount -t squashfs (kernel, CAP_SYS_ADMIN) |
+| **`presigned-squashfuse-mount`**      | **2.3s** | 2.1–2.3s     | ~2.1s    | **37ms**        | 205MB | curl R2 → squashfuse (FUSE, no CAP_SYS_ADMIN)       |
+| **`presigned-fuse-overlayfs-mount`**  | **2.3s** | 2.2–2.9s     | ~2.1s    | **42ms + 61ms** | 205MB | curl R2 → squashfuse + fuse-overlayfs (writable)    |
+| `presigned-squashfs-mount-aria2c`     | 2.3s     | 2.3–2.4s     | ~2.3s    | 34ms            | 205MB | aria2c 4-conn → mount -t squashfs                   |
+| `presigned-squashfs-lz4-mount-aria2c` | 2.8s     | 2.8–3.0s     | ~2.8s    | 61ms            | 292MB | aria2c 4-conn → mount squashfs-lz4                  |
+| `presigned-squashfs-lz4-mount`        | 3.8s     | 3.4–4.2s     | ~3.7s    | 32ms            | 292MB | curl R2 → mount squashfs-lz4                        |
+| `presigned-tar-zst1-pipe`             | 4.5s     | 4.2–5.0s     | (piped)  | —               | 235MB | curl R2 \| zstd -d \| tar xf (zstd -1 archive)      |
+| `presigned-tar-zst-pipe`              | 4.7s     | 4.6–4.7s     | (piped)  | —               | 212MB | curl R2 \| zstd -d \| tar xf                        |
+| `presigned-tar-zst`                   | 48.9s    | (single run) | 2.1s     | 46.8s           | 212MB | curl R2 → tar xf (zstd)                             |
+| `presigned-squashfs-extract`          | 51.2s    | (single run) | 1.9s     | 49.3s           | 205MB | curl R2 → unsquashfs                                |
 
 ### Production — Isolated Sandboxes (fresh container per run, standard-4)
 
@@ -163,6 +166,18 @@ Worker:    containerFetch → FixedLengthStream → R2.put
 
 SquashFS provides block-level dedup, so identical files are stored once. The image can be mounted directly on restore without extraction (`mount -t squashfs`). Note: `mksquashfs` cannot pipe to stdout, so only the "direct" strategy is available.
 
+### Backup: Presigned PUT (`presigned-*`)
+
+Bypasses the Worker entirely by having the container upload directly to R2 via a presigned URL. The Worker only generates the URL (pure crypto, 0ms) and orchestrates commands.
+
+```
+Worker:    AwsClient.sign(r2Url, {method: 'PUT'}) → presigned PUT URL (0ms)
+           exec("mksquashfs ... && curl -X PUT --data-binary @archive <presigned-url>")
+Container: mksquashfs → curl PUT → R2 direct (no Worker proxy)
+```
+
+Same upload throughput as containerFetch (~24 MB/s), but no Bun server setup, no Worker memory usage, and no streaming complexity. The simplest backup implementation.
+
 ### Backup: OverlayFS (`overlay-*`)
 
 Incremental backup strategy. Mounts an overlay filesystem on top of the source directory, simulates changes, then backs up only the diff layer (upper directory).
@@ -236,6 +251,48 @@ Restore with delta:
 
 Supports three use cases: session persistence (save/restore workspace on sleep/wake), checkpoint/rollback (snapshot upper dir at any point), and golden image iteration (periodically flatten into a new base).
 
+## Transfer Throughput (Worker ↔ Container)
+
+These benchmarks measure raw data transfer speed between the Worker (Durable Object) and the container, independent of archival format. This is the fundamental bottleneck for any backup/restore implementation.
+
+### Write Paths (Worker → Container)
+
+| Path                                  | Throughput      | Max Size              | Mechanism                                       |
+| ------------------------------------- | --------------- | --------------------- | ----------------------------------------------- |
+| **Presigned URL** (curl in container) | **~93 MB/s**    | Unlimited             | R2 → container direct, bypasses Worker entirely |
+| **containerFetch PUT**                | **~50–60 MB/s** | ~128MB (OOM at 200MB) | `tcpPort.fetch()` — raw binary, no base64       |
+| **writeFile** (base64)                | **~0.6 MB/s**   | No hard limit         | base64 encode → JSON → HTTP → decode            |
+
+### Read Paths (Container → Worker)
+
+| Path                     | Throughput      | Max Size              | Mechanism                                     |
+| ------------------------ | --------------- | --------------------- | --------------------------------------------- |
+| **containerFetch GET**   | **~30–50 MB/s** | ~128MB (OOM at 200MB) | `tcpPort.fetch()` — raw binary                |
+| **readFile** (base64)    | **~0.6 MB/s**   | No hard limit         | base64 encode → JSON → HTTP → decode          |
+| **readFileStream** (SSE) | **~0.6 MB/s**   | No hard limit         | base64 in SSE frames — same encoding overhead |
+
+### containerFetch PUT Detail
+
+| Size  | Time    | Throughput          |
+| ----- | ------- | ------------------- |
+| 1MB   | 70ms    | ~14 MB/s            |
+| 5MB   | 94ms    | ~53 MB/s            |
+| 10MB  | 434ms   | ~23 MB/s            |
+| 50MB  | 2,350ms | ~21 MB/s            |
+| 100MB | 1,651ms | ~60 MB/s            |
+| 128MB | 2,609ms | ~49 MB/s            |
+| 200MB | OOM     | Worker memory limit |
+
+### Implications
+
+For a 205MB squashfs archive:
+
+| Transfer Method             | Estimated Time       | Notes                                      |
+| --------------------------- | -------------------- | ------------------------------------------ |
+| Presigned URL (curl)        | **~2.2s**            | Data never touches Worker                  |
+| containerFetch              | ~4–7s                | Raw binary, but limited to ~128MB per call |
+| writeFile/readFile (base64) | **~340s (~5.7 min)** | 33% inflation + JSON parsing               |
+
 ## Key Findings
 
 ### Backup
@@ -243,6 +300,8 @@ Supports three use cases: session persistence (save/restore workspace on sleep/w
 **zstd + containerFetch is the winning combo.** `tar-zst-direct` is the fastest reliable strategy on both local (4.0s) and production (10.9s). zstd compresses 692MB → 211MB in ~1.7s; `containerFetch` streams raw binary with zero base64 overhead.
 
 **base64 is the bottleneck for SDK file APIs.** `readFile` and `readFileStream` both base64-encode binary content — 33% inflation plus encode/decode CPU. Bypassing via `containerFetch` gives a 2x speedup on prod (22.4s chunked vs 10.9s direct).
+
+**Presigned PUT uploads match containerFetch speed (~24 MB/s vs ~26 MB/s).** Unlike the download direction (where presigned GET is 3–4x faster than containerFetch), presigned PUT provides no throughput advantage for uploads. Both paths are limited by the container's upload bandwidth to R2. However, presigned PUT is architecturally simpler — no Bun server needed in the container, just `curl -X PUT`. It also avoids Worker memory entirely, which matters for very large archives.
 
 **Pipe strategies OOM on production.** Collecting ~220MB of streamed chunks into a single typed array for R2 multipart upload exceeds Worker memory limits (`RangeError: Invalid typed array length`). Works locally where memory is unconstrained. Would need true streaming multipart upload to fix.
 
@@ -253,6 +312,8 @@ Supports three use cases: session persistence (save/restore workspace on sleep/w
 **Presigned URL + SquashFS mount = 2.2s median full restore from R2** (3 runs, page cache dropped between each). The container downloads 205MB from R2 via presigned URL (~2.2s) then mounts the squashfs image (35ms). This is the recommended path for cold-start optimization.
 
 **squashfuse works on Cloudflare Firecracker.** The container runs kernel 6.12 with `/dev/fuse` available (`crw-rw-rw-`). squashfuse provides the same near-instant mount as `mount -t squashfs` but does NOT require CAP_SYS_ADMIN — it runs entirely in userspace via FUSE. This eliminates the need for elevated privileges.
+
+**fuse-overlayfs adds negligible overhead to squashfuse.** Mounting fuse-overlayfs on top of a squashfuse lower layer takes ~61ms median, making the total mount stack (squashfuse 42ms + fuse-overlayfs 61ms ≈ 103ms) comparable to kernel overlayfs (~50ms). This provides a fully writable restore target without CAP_SYS_ADMIN — the same architecture that can be used for read-write access on top of a read-only squashfs snapshot. Write throughput through fuse-overlayfs is ~53 MB/s (10MB dd test in ~185ms).
 
 **aria2c parallel downloads provide no meaningful speedup.** With 4 parallel connections to R2, download speed is similar to single-connection curl (median 2.3s vs 2.2–2.3s for 205MB). R2 download from the same datacenter is already near network-saturated.
 
@@ -274,22 +335,23 @@ Supports three use cases: session persistence (save/restore workspace on sleep/w
 
 **Delta restore adds minimal overhead.** Restoring base + 10MB delta (2.6s) is only ~0.3s slower than restoring the base alone (2.3s). Even a 100MB delta only adds ~1.4s. The base squashfs download dominates total time regardless of delta size.
 
-**squashfuse works as an overlay lower layer.** The FUSE-mounted squashfs image is accepted by overlayfs as a lower directory on kernel 6.12. This means the full incremental snapshot system (squashfuse base + overlay delta) works without CAP_SYS_ADMIN for the base mount. Only the overlay mount itself requires elevated privileges.
+**squashfuse works as an overlay lower layer.** The FUSE-mounted squashfs image is accepted by overlayfs as a lower directory on kernel 6.12. This means the full incremental snapshot system (squashfuse base + overlay delta) works without CAP_SYS_ADMIN for the base mount. Only the kernel overlay mount itself requires elevated privileges — or use fuse-overlayfs for a fully unprivileged stack.
 
 ### Recommended Backup + Restore Path
 
-For cold-start optimization, use **SquashFS end-to-end**:
+For cold-start optimization, use **presigned URLs + SquashFS + FUSE end-to-end**:
 
-| Phase                   | Strategy                     | Time     | What happens                                                           |
-| ----------------------- | ---------------------------- | -------- | ---------------------------------------------------------------------- |
-| **Initial backup**      | `squashfs-zstd`              | ~29s     | mksquashfs → containerFetch GET → R2.put (offline, one-time)           |
-| **Restore**             | `presigned-squashfuse-mount` | **2.3s** | Worker generates presigned URL → container curls R2 → squashfuse mount |
-| **Incremental backup**  | `overlay-delta`              | **0.6s** | tar.zst upper dir only → containerFetch → R2.put (10MB delta)          |
-| **Incremental restore** | `overlay-restore`            | **2.6s** | base squashfuse + delta download + overlay mount (10MB delta)          |
+| Phase                   | Strategy                         | Time     | What happens                                                           |
+| ----------------------- | -------------------------------- | -------- | ---------------------------------------------------------------------- |
+| **Initial backup**      | `presigned-squashfs-zstd`        | ~25s     | mksquashfs → curl presigned PUT → R2 direct (offline, one-time)        |
+| **Restore (read-only)** | `presigned-squashfuse-mount`     | **2.3s** | Worker generates presigned URL → container curls R2 → squashfuse mount |
+| **Restore (writable)**  | `presigned-fuse-overlayfs-mount` | **2.3s** | Same as above + fuse-overlayfs writable layer (~61ms extra mount)      |
+| **Incremental backup**  | `overlay-delta`                  | **0.6s** | tar.zst upper dir only → presigned PUT → R2 (10MB delta)               |
+| **Incremental restore** | `overlay-restore`                | **2.6s** | base squashfuse + delta download + fuse-overlayfs mount (10MB delta)   |
 
-The 2.3s restore is almost entirely network transfer (205MB from R2). The squashfuse mount itself is 37ms. Backup is slower (~29s) but runs offline and only needs to happen once — subsequent snapshots use overlay deltas.
+The 2.3s restore is almost entirely network transfer (205MB from R2). The mount stack itself is ~100ms total (squashfuse 42ms + fuse-overlayfs 61ms). Backup is slower (~25s) but runs offline and only needs to happen once — subsequent snapshots use overlay deltas.
 
-squashfuse is the recommended mount method because it works via FUSE without requiring CAP_SYS_ADMIN. Kernel `mount -t squashfs` achieves the same speed (2.2s median) but requires elevated privileges. Note that overlayfs itself still requires CAP_SYS_ADMIN.
+The entire stack — presigned URLs + squashfuse + fuse-overlayfs — runs without CAP_SYS_ADMIN and without Worker memory involvement. Data flows directly between R2 and the container in both directions. The Worker only generates presigned URLs (pure crypto, 0ms) and orchestrates `exec()` commands.
 
 For environments without any mount capability, use `presigned-tar-zst-pipe` (4.7s median) as the fallback.
 
