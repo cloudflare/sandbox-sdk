@@ -7,21 +7,27 @@
  */
 
 import type { ExecResult } from '@repo/shared';
-import { beforeAll, describe, expect, test } from 'vitest';
+import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import {
-  createUniqueSession,
-  getSharedSandbox
+  cleanupIsolatedSandbox,
+  getIsolatedSandbox,
+  type SharedSandbox
 } from './helpers/global-sandbox';
 import { waitForCondition } from './helpers/test-fixtures';
 
 describe('OpenCode Workflow (E2E)', () => {
   let workerUrl: string;
   let headers: Record<string, string>;
+  let sandbox: SharedSandbox | null = null;
 
   beforeAll(async () => {
-    const sandbox = await getSharedSandbox();
+    sandbox = await getIsolatedSandbox();
     workerUrl = sandbox.workerUrl;
-    headers = sandbox.createOpencodeHeaders(createUniqueSession());
+    headers = sandbox.createOpencodeHeaders();
+  }, 120000);
+
+  afterAll(async () => {
+    await cleanupIsolatedSandbox(sandbox);
   }, 120000);
 
   test('should have opencode CLI available', async () => {

@@ -42,7 +42,7 @@ import { getTestWorkerUrl, type WranglerDevRunner } from './wrangler-runner';
 export interface SharedSandbox {
   /** The worker URL to make requests to */
   workerUrl: string;
-  /** The shared sandbox ID */
+  /** The sandbox ID */
   sandboxId: string;
   /** Create headers for a specific session (base image) */
   createHeaders: (sessionId?: string) => Record<string, string>;
@@ -85,6 +85,46 @@ export async function getSharedSandbox(): Promise<SharedSandbox> {
 }
 
 /**
+ * Create a sandbox dedicated to one test file.
+ *
+ * Unlike getSharedSandbox(), this creates a fresh container instance every time.
+ * Use this for lifecycle-sensitive suites (process/alarm/keepAlive tests) where
+ * cross-file process state introduces flakiness.
+ */
+export async function getIsolatedSandbox(): Promise<SharedSandbox> {
+  const workerContext = await getWorkerContext();
+  const sandboxId = createSandboxId();
+
+  const headers = createTestHeaders(sandboxId);
+  const initResponse = await fetch(`${workerContext.workerUrl}/api/execute`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ command: 'echo "Isolated sandbox initialized"' })
+  });
+
+  if (!initResponse.ok) {
+    throw new Error(
+      `Failed to initialize isolated sandbox: ${initResponse.status}`
+    );
+  }
+
+  return createSandboxFacade(workerContext.workerUrl, sandboxId);
+}
+
+/**
+ * Cleanup helper for sandboxes returned by getIsolatedSandbox().
+ */
+export async function cleanupIsolatedSandbox(
+  sandbox: Pick<SharedSandbox, 'workerUrl' | 'sandboxId'> | null
+): Promise<void> {
+  if (!sandbox) {
+    return;
+  }
+
+  await cleanupSandbox(sandbox.workerUrl, sandbox.sandboxId);
+}
+
+/**
  * Create a unique session ID for test isolation.
  * Each test file should use a unique session.
  */
@@ -102,96 +142,29 @@ export function uniqueTestPath(prefix: string): string {
 
 async function initializeSharedSandbox(): Promise<SharedSandbox> {
   // Check if global setup already created the sandbox (read from temp file)
-  const { readFileSync, existsSync } = await import('node:fs');
-  const { tmpdir } = await import('node:os');
-  const { join } = await import('node:path');
+  const sharedState = await readGlobalSetupState();
 
-  const stateFile = join(tmpdir(), 'e2e-shared-sandbox.json');
-
-  if (existsSync(stateFile)) {
-    try {
-      const state = JSON.parse(readFileSync(stateFile, 'utf-8'));
-      if (state.workerUrl && state.sandboxId) {
-        console.log(
-          `[SharedSandbox] Using global setup sandbox: ${state.sandboxId.slice(0, 12)}...`
-        );
-        const baseHeaders = createTestHeaders(state.sandboxId);
-
-        sharedSandbox = {
-          workerUrl: state.workerUrl,
-          sandboxId: state.sandboxId,
-          createHeaders: (sessionId?: string) => {
-            const headers = { ...baseHeaders };
-            if (sessionId) {
-              headers['X-Session-Id'] = sessionId;
-            }
-            return headers;
-          },
-          createPythonHeaders: (sessionId?: string) => {
-            const headers: Record<string, string> = {
-              ...baseHeaders,
-              'X-Sandbox-Type': 'python'
-            };
-            if (sessionId) {
-              headers['X-Session-Id'] = sessionId;
-            }
-            return headers;
-          },
-          createOpencodeHeaders: (sessionId?: string) => {
-            const headers: Record<string, string> = {
-              ...baseHeaders,
-              'X-Sandbox-Type': 'opencode'
-            };
-            if (sessionId) {
-              headers['X-Session-Id'] = sessionId;
-            }
-            return headers;
-          },
-          createStandaloneHeaders: (sessionId?: string) => {
-            const headers: Record<string, string> = {
-              ...baseHeaders,
-              'X-Sandbox-Type': 'standalone'
-            };
-            if (sessionId) {
-              headers['X-Session-Id'] = sessionId;
-            }
-            return headers;
-          },
-          createMuslHeaders: (sessionId?: string) => {
-            const headers: Record<string, string> = {
-              ...baseHeaders,
-              'X-Sandbox-Type': 'musl'
-            };
-            if (sessionId) {
-              headers['X-Session-Id'] = sessionId;
-            }
-            return headers;
-          },
-          uniquePath: (prefix: string) =>
-            `/workspace/test-${randomUUID().slice(0, 8)}/${prefix}`
-        };
-        return sharedSandbox;
-      }
-    } catch {
-      console.warn(
-        '[SharedSandbox] Failed to read state file, creating new sandbox'
-      );
-    }
+  if (sharedState?.sandboxId) {
+    console.log(
+      `[SharedSandbox] Using global setup sandbox: ${sharedState.sandboxId.slice(0, 12)}...`
+    );
+    sharedSandbox = createSandboxFacade(
+      sharedState.workerUrl,
+      sharedState.sandboxId
+    );
+    return sharedSandbox;
   }
 
   // Fallback: create sandbox ourselves (single-threaded mode or no global setup)
   console.log('\n[SharedSandbox] Initializing (this only happens once)...');
 
-  const result = await getTestWorkerUrl();
-  runner = result.runner;
-
+  const workerContext = await getWorkerContext();
   const sandboxId = createSandboxId();
-  const baseHeaders = createTestHeaders(sandboxId);
 
   // Initialize the sandbox with a simple command
-  const initResponse = await fetch(`${result.url}/api/execute`, {
+  const initResponse = await fetch(`${workerContext.workerUrl}/api/execute`, {
     method: 'POST',
-    headers: baseHeaders,
+    headers: createTestHeaders(sandboxId),
     body: JSON.stringify({ command: 'echo "Shared sandbox initialized"' })
   });
 
@@ -203,8 +176,32 @@ async function initializeSharedSandbox(): Promise<SharedSandbox> {
 
   console.log(`[SharedSandbox] Ready! ID: ${sandboxId}\n`);
 
-  sharedSandbox = {
-    workerUrl: result.url,
+  sharedSandbox = createSandboxFacade(workerContext.workerUrl, sandboxId);
+
+  // Register cleanup on process exit (only when we created it)
+  process.on('beforeExit', async () => {
+    await cleanupSharedSandbox();
+  });
+
+  // Handle SIGTERM/SIGINT for graceful shutdown (e.g., Ctrl+C, CI termination)
+  const handleSignal = async (signal: string) => {
+    console.log(`\n[SharedSandbox] Received ${signal}, cleaning up...`);
+    await cleanupSharedSandbox();
+  };
+  process.on('SIGTERM', () => handleSignal('SIGTERM'));
+  process.on('SIGINT', () => handleSignal('SIGINT'));
+
+  return sharedSandbox;
+}
+
+function createSandboxFacade(
+  workerUrl: string,
+  sandboxId: string
+): SharedSandbox {
+  const baseHeaders = createTestHeaders(sandboxId);
+
+  return {
+    workerUrl,
     sandboxId,
     createHeaders: (sessionId?: string) => {
       const headers = { ...baseHeaders };
@@ -256,21 +253,53 @@ async function initializeSharedSandbox(): Promise<SharedSandbox> {
     uniquePath: (prefix: string) =>
       `/workspace/test-${randomUUID().slice(0, 8)}/${prefix}`
   };
+}
 
-  // Register cleanup on process exit (only when we created it)
-  process.on('beforeExit', async () => {
-    await cleanupSharedSandbox();
-  });
+async function readGlobalSetupState(): Promise<{
+  workerUrl: string;
+  sandboxId?: string;
+} | null> {
+  const { readFileSync, existsSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
 
-  // Handle SIGTERM/SIGINT for graceful shutdown (e.g., Ctrl+C, CI termination)
-  const handleSignal = async (signal: string) => {
-    console.log(`\n[SharedSandbox] Received ${signal}, cleaning up...`);
-    await cleanupSharedSandbox();
-  };
-  process.on('SIGTERM', () => handleSignal('SIGTERM'));
-  process.on('SIGINT', () => handleSignal('SIGINT'));
+  const stateFile = join(tmpdir(), 'e2e-shared-sandbox.json');
 
-  return sharedSandbox;
+  if (!existsSync(stateFile)) {
+    return null;
+  }
+
+  try {
+    const state = JSON.parse(readFileSync(stateFile, 'utf-8')) as {
+      workerUrl?: string;
+      sandboxId?: string;
+    };
+
+    if (!state.workerUrl) {
+      return null;
+    }
+
+    return {
+      workerUrl: state.workerUrl,
+      sandboxId: state.sandboxId
+    };
+  } catch {
+    console.warn(
+      '[SharedSandbox] Failed to read state file, creating new sandbox'
+    );
+    return null;
+  }
+}
+
+async function getWorkerContext(): Promise<{ workerUrl: string }> {
+  const sharedState = await readGlobalSetupState();
+  if (sharedState?.workerUrl) {
+    return { workerUrl: sharedState.workerUrl };
+  }
+
+  const result = await getTestWorkerUrl();
+  runner = result.runner;
+  return { workerUrl: result.url };
 }
 
 async function cleanupSharedSandbox(): Promise<void> {

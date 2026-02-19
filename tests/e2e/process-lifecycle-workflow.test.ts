@@ -235,7 +235,7 @@ console.log("Line 3");
     const execDuration = Date.now() - execStart;
 
     expect(execResponse.status).toBe(200);
-    expect(execDuration).toBeLessThan(3500); // Should complete quickly even with WS/CI overhead
+    expect(execDuration).toBeLessThan(2000); // Should complete quickly
 
     // Cleanup
     await fetch(`${workerUrl}/api/process/${processId}`, {

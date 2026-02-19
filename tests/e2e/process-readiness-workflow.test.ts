@@ -1,8 +1,10 @@
 import type { PortExposeResult, Process, WaitForLogResult } from '@repo/shared';
-import { beforeAll, describe, expect, test } from 'vitest';
+import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import {
+  cleanupIsolatedSandbox,
   createUniqueSession,
-  getSharedSandbox
+  getIsolatedSandbox,
+  type SharedSandbox
 } from './helpers/global-sandbox';
 
 // Port exposure tests require custom domain with wildcard DNS routing
@@ -20,9 +22,10 @@ describe('Process Readiness Workflow', () => {
   let workerUrl: string;
   let headers: Record<string, string>;
   let portHeaders: Record<string, string>;
+  let sandbox: SharedSandbox | null = null;
 
   beforeAll(async () => {
-    const sandbox = await getSharedSandbox();
+    sandbox = await getIsolatedSandbox();
     workerUrl = sandbox.workerUrl;
     headers = sandbox.createHeaders(createUniqueSession());
     // Port exposure requires sandbox headers (not session headers)
@@ -30,6 +33,10 @@ describe('Process Readiness Workflow', () => {
       'X-Sandbox-Id': sandbox.sandboxId,
       'Content-Type': 'application/json'
     };
+  }, 120000);
+
+  afterAll(async () => {
+    await cleanupIsolatedSandbox(sandbox);
   }, 120000);
 
   test('should wait for string pattern in process output', async () => {
