@@ -115,14 +115,15 @@ export default {
       // WebSocket init endpoint - starts all WebSocket servers
       if (url.pathname === '/api/init' && request.method === 'POST') {
         const processes = await sandbox.listProcesses();
-        const runningServers = new Set(
-          processes.filter((p) => p.status === 'running').map((p) => p.id)
-        );
+        const isServerRunning = (commandFragment: string): boolean =>
+          processes.some(
+            (p) => p.status === 'running' && p.command.includes(commandFragment)
+          );
 
         const serversToStart = [];
 
         // Echo server
-        if (!runningServers.has('ws-echo-8080')) {
+        if (!isServerRunning('/tmp/ws-echo.ts')) {
           const echoScript = `
 const port = 8080;
 Bun.serve({
@@ -140,15 +141,11 @@ Bun.serve({
 console.log('Echo server on port ' + port);
 `;
           await sandbox.writeFile('/tmp/ws-echo.ts', echoScript);
-          serversToStart.push(
-            sandbox.startProcess('bun run /tmp/ws-echo.ts', {
-              processId: 'ws-echo-8080'
-            })
-          );
+          serversToStart.push(sandbox.startProcess('bun run /tmp/ws-echo.ts'));
         }
 
         // Python code server
-        if (!runningServers.has('ws-code-8081')) {
+        if (!isServerRunning('/tmp/ws-code.ts')) {
           const codeScript = `
 const port = 8081;
 Bun.serve({
@@ -203,15 +200,11 @@ Bun.serve({
 console.log('Code server on port ' + port);
 `;
           await sandbox.writeFile('/tmp/ws-code.ts', codeScript);
-          serversToStart.push(
-            sandbox.startProcess('bun run /tmp/ws-code.ts', {
-              processId: 'ws-code-8081'
-            })
-          );
+          serversToStart.push(sandbox.startProcess('bun run /tmp/ws-code.ts'));
         }
 
         // Terminal server
-        if (!runningServers.has('ws-terminal-8082')) {
+        if (!isServerRunning('/tmp/ws-terminal.ts')) {
           const terminalScript = `
 const port = 8082;
 Bun.serve({
@@ -243,9 +236,7 @@ console.log('Terminal server on port ' + port);
 `;
           await sandbox.writeFile('/tmp/ws-terminal.ts', terminalScript);
           serversToStart.push(
-            sandbox.startProcess('bun run /tmp/ws-terminal.ts', {
-              processId: 'ws-terminal-8082'
-            })
+            sandbox.startProcess('bun run /tmp/ws-terminal.ts')
           );
         }
 
