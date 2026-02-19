@@ -44,6 +44,9 @@ export const ERROR_STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.RESOURCE_BUSY]: 409,
   [ErrorCode.SESSION_ALREADY_EXISTS]: 409,
 
+  // 413 Content Too Large
+  [ErrorCode.FILE_TOO_LARGE]: 413,
+
   // 502 Bad Gateway
   [ErrorCode.SERVICE_NOT_RESPONDING]: 502,
   [ErrorCode.GIT_NETWORK_ERROR]: 502,

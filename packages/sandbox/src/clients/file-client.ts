@@ -158,6 +158,8 @@ export class FileClient extends BaseHttpClient {
         sessionId
       };
 
+      this.logSuccess('readFileStream', 'Initiating file stream'); // Log before starting the stream
+
       // Use doStreamFetch which handles both WebSocket and HTTP streaming
       const stream = await this.doStreamFetch('/api/read/stream', data);
       this.logSuccess('File stream started', path);
