@@ -1,7 +1,11 @@
 // packages/sandbox/tests/opencode/opencode.test.ts
 import type { Process, ProcessStatus } from '@repo/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createOpencode, proxyToOpencode } from '../../src/opencode/opencode';
+import {
+  createOpencode,
+  proxyToOpencode,
+  proxyToOpencodeServer
+} from '../../src/opencode/opencode';
 import type { OpencodeServer } from '../../src/opencode/types';
 import { OpencodeStartupError } from '../../src/opencode/types';
 import type { Sandbox } from '../../src/sandbox';
@@ -283,6 +287,43 @@ describe('createOpencode', () => {
       const envKeys = Object.keys(callArgs.env);
       expect(envKeys.filter((k: string) => k.endsWith('_API_KEY'))).toEqual([]);
     });
+  });
+});
+
+describe('proxyToOpencodeServer', () => {
+  const server: OpencodeServer = {
+    port: 4096,
+    url: 'http://localhost:4096',
+    close: vi.fn()
+  };
+
+  function createMockSandboxForProxy() {
+    return {
+      containerFetch: vi.fn().mockResolvedValue(new Response('proxied'))
+    } as unknown as Sandbox;
+  }
+
+  it('should proxy GET requests directly without redirect', async () => {
+    const sandbox = createMockSandboxForProxy();
+    const request = new Request('http://example.com/', {
+      headers: { accept: 'text/html' }
+    });
+
+    await proxyToOpencodeServer(request, sandbox, server);
+
+    expect(sandbox.containerFetch).toHaveBeenCalledWith(request, 4096);
+  });
+
+  it('should proxy POST requests directly', async () => {
+    const sandbox = createMockSandboxForProxy();
+    const request = new Request('http://example.com/session', {
+      method: 'POST',
+      body: JSON.stringify({ prompt: 'test' })
+    });
+
+    await proxyToOpencodeServer(request, sandbox, server);
+
+    expect(sandbox.containerFetch).toHaveBeenCalledWith(request, 4096);
   });
 });
 

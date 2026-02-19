@@ -385,6 +385,21 @@ export async function createOpencode<TClient = OpencodeClient>(
 }
 
 /**
+ * Proxy a request directly to the OpenCode server.
+ *
+ * Unlike `proxyToOpencode()`, this helper does not apply any web UI redirects
+ * or query parameter rewrites. Use it for API/CLI traffic where raw request
+ * forwarding is preferred.
+ */
+export function proxyToOpencodeServer(
+  request: Request,
+  sandbox: Sandbox<unknown>,
+  server: OpencodeServer
+): Promise<Response> {
+  return sandbox.containerFetch(request, server.port);
+}
+
+/**
  * Proxy a request to the OpenCode web UI.
  *
  * This function handles the redirect and proxying only - you must start the
@@ -452,5 +467,5 @@ export function proxyToOpencode(
     }
   }
 
-  return sandbox.containerFetch(request, server.port);
+  return proxyToOpencodeServer(request, sandbox, server);
 }
