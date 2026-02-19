@@ -12,6 +12,7 @@ import {
   createUniqueSession,
   getSharedSandbox
 } from './helpers/global-sandbox';
+import { waitForCondition } from './helpers/test-fixtures';
 
 describe('OpenCode Workflow (E2E)', () => {
   let workerUrl: string;
@@ -58,11 +59,25 @@ describe('OpenCode Workflow (E2E)', () => {
   describe('OpenCode server lifecycle', () => {
     test('should start opencode server via process', async () => {
       // Cleanup stale OpenCode processes from prior retries/tests.
-      const preList = await fetch(`${workerUrl}/api/process/list`, {
-        method: 'GET',
-        headers
-      });
-      expect(preList.status).toBe(200);
+      const preList = await waitForCondition(
+        async () => {
+          const response = await fetch(`${workerUrl}/api/process/list`, {
+            method: 'GET',
+            headers
+          });
+          if (response.status !== 200) {
+            throw new Error(
+              `Unexpected process list status: ${response.status}`
+            );
+          }
+          return response;
+        },
+        {
+          timeout: 30000,
+          interval: 1000,
+          errorMessage: 'Process list endpoint did not become ready'
+        }
+      );
       const existing = (await preList.json()) as Array<{
         id: string;
         command: string;
@@ -79,14 +94,28 @@ describe('OpenCode Workflow (E2E)', () => {
       );
 
       // Start OpenCode server as a background process
-      const startRes = await fetch(`${workerUrl}/api/process/start`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          command: 'opencode serve --port 4096 --hostname 0.0.0.0'
-        })
-      });
-      expect(startRes.status).toBe(200);
+      const startRes = await waitForCondition(
+        async () => {
+          const response = await fetch(`${workerUrl}/api/process/start`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              command: 'opencode serve --port 4096 --hostname 0.0.0.0'
+            })
+          });
+          if (response.status !== 200) {
+            throw new Error(
+              `Unexpected process start status: ${response.status}`
+            );
+          }
+          return response;
+        },
+        {
+          timeout: 30000,
+          interval: 1000,
+          errorMessage: 'Failed to start OpenCode process'
+        }
+      );
       const startResult = (await startRes.json()) as { id: string };
       expect(startResult.id).toBeDefined();
 
