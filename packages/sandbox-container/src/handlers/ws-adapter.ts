@@ -9,6 +9,8 @@
 import type { Logger } from '@repo/shared';
 import {
   isWSRequest,
+  parseSSEFrames,
+  type SSEPartialEvent,
   type WSError,
   type WSRequest,
   type WSResponse,
@@ -29,6 +31,17 @@ export interface WSData {
   connectionId: string;
 }
 
+function isCancelMessage(
+  value: unknown
+): value is { type: 'cancel'; id: string } {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+
+  const candidate = value as Record<string, unknown>;
+  return candidate.type === 'cancel' && typeof candidate.id === 'string';
+}
+
 /**
  * WebSocket protocol adapter that bridges WebSocket messages to HTTP handlers
  *
@@ -38,6 +51,13 @@ export interface WSData {
 export class WebSocketAdapter {
   private router: Router;
   private logger: Logger;
+  /** Track active streaming responses for explicit client-side cancellation */
+  private activeStreams: Map<
+    string,
+    {
+      cancel: () => Promise<void>;
+    }
+  > = new Map();
 
   constructor(router: Router, logger: Logger) {
     this.router = router;
@@ -62,6 +82,16 @@ export class WebSocketAdapter {
       code,
       reason
     });
+
+    for (const [requestId, stream] of this.activeStreams) {
+      void stream.cancel().catch((error) => {
+        this.logger.debug('Failed to cancel stream on socket close', {
+          requestId,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      });
+      this.activeStreams.delete(requestId);
+    }
   }
 
   /**
@@ -79,6 +109,11 @@ export class WebSocketAdapter {
       parsed = JSON.parse(messageStr);
     } catch (error) {
       this.sendError(ws, undefined, 'PARSE_ERROR', 'Invalid JSON message', 400);
+      return;
+    }
+
+    if (isCancelMessage(parsed)) {
+      await this.handleCancel(parsed.id);
       return;
     }
 
@@ -117,6 +152,30 @@ export class WebSocketAdapter {
         error instanceof Error ? error.message : 'Unknown error',
         500
       );
+    }
+  }
+
+  /**
+   * Handle explicit cancellation for an in-flight streaming request.
+   */
+  private async handleCancel(requestId: string): Promise<void> {
+    const stream = this.activeStreams.get(requestId);
+    if (!stream) {
+      this.logger.debug('Cancel received for unknown stream request', {
+        requestId
+      });
+      return;
+    }
+
+    this.activeStreams.delete(requestId);
+    try {
+      await stream.cancel();
+      this.logger.debug('Cancelled active stream request', { requestId });
+    } catch (error) {
+      this.logger.debug('Failed to cancel active stream request', {
+        requestId,
+        error: error instanceof Error ? error.message : String(error)
+      });
     }
   }
 
@@ -162,7 +221,38 @@ export class WebSocketAdapter {
 
     if (isStreaming && httpResponse.body) {
       // Handle SSE streaming response
-      await this.handleStreamingResponse(ws, request.id, httpResponse);
+      // CRITICAL: We must capture the Response body reader BEFORE the promise starts executing
+      // asynchronously. If we call getReader() inside handleStreamingResponse after an await,
+      // Bun's WebSocket handler may GC or invalidate the Response body when onMessage returns.
+      // By getting the reader synchronously here, we ensure the stream remains valid.
+      const reader =
+        httpResponse.body.getReader() as ReadableStreamDefaultReader<Uint8Array>;
+      void this.handleStreamingResponseWithReader(
+        ws,
+        request.id,
+        httpResponse.status,
+        reader
+      )
+        .catch((error: unknown) => {
+          this.logger.error(
+            'Error in streaming response',
+            error instanceof Error ? error : new Error(String(error)),
+            { requestId: request.id }
+          );
+        })
+        .finally(() => {
+          this.activeStreams.delete(request.id);
+        });
+
+      this.activeStreams.set(request.id, {
+        cancel: async () => {
+          try {
+            await reader.cancel();
+          } catch {
+            // Reader may already be closed/cancelled.
+          }
+        }
+      });
     } else {
       // Handle regular response
       await this.handleRegularResponse(ws, request.id, httpResponse);
@@ -198,39 +288,65 @@ export class WebSocketAdapter {
   }
 
   /**
-   * Handle a streaming (SSE) HTTP response
+   * Handle a streaming (SSE) HTTP response with a pre-acquired reader
+   *
+   * This variant receives the reader instead of the Response, allowing the caller
+   * to acquire the reader synchronously before any await points. This is critical
+   * for WebSocket streaming because Bun's message handler may invalidate the
+   * Response body if the reader is acquired after the handler returns.
    */
-  private async handleStreamingResponse(
+  private async handleStreamingResponseWithReader(
     ws: ServerWebSocket<WSData>,
     requestId: string,
-    response: Response
+    status: number,
+    reader: ReadableStreamDefaultReader<Uint8Array>
   ): Promise<void> {
-    if (!response.body) {
-      this.sendError(ws, requestId, 'STREAM_ERROR', 'No response body', 500);
-      return;
-    }
+    this.logger.debug('Starting streaming response handler', { requestId });
 
-    const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
+    // Track partial event state across chunks
+    let currentEvent: SSEPartialEvent = { data: [] };
+    let chunkCount = 0;
 
     try {
       while (true) {
+        this.logger.debug('Waiting for stream chunk', {
+          requestId,
+          chunkCount
+        });
         const { done, value } = await reader.read();
 
         if (done) {
+          this.logger.debug('Stream ended', { requestId, chunkCount });
           break;
         }
 
-        // Decode chunk and add to buffer
-        buffer += decoder.decode(value, { stream: true });
+        chunkCount++;
 
-        // Parse SSE events from buffer
-        const events = this.parseSSEEvents(buffer);
-        buffer = events.remaining;
+        // Decode chunk and add to buffer
+        const chunkText = decoder.decode(value, { stream: true });
+        this.logger.debug('Received stream chunk', {
+          requestId,
+          chunkCount,
+          chunkLength: chunkText.length,
+          chunkPreview: chunkText.substring(0, 100)
+        });
+        buffer += chunkText;
+
+        // Parse SSE events from buffer, preserving partial event state
+        const result = parseSSEFrames(buffer, currentEvent);
+        buffer = result.remaining;
+        currentEvent = result.currentEvent;
+
+        this.logger.debug('Parsed SSE events', {
+          requestId,
+          eventCount: result.events.length,
+          remainingBuffer: result.remaining.length
+        });
 
         // Send each parsed event as a stream chunk
-        for (const event of events.events) {
+        for (const event of result.events) {
           const chunk: WSStreamChunk = {
             type: 'stream',
             id: requestId,
@@ -247,11 +363,17 @@ export class WebSocketAdapter {
       const wsResponse: WSResponse = {
         type: 'response',
         id: requestId,
-        status: response.status,
+        status,
         done: true
       };
       this.send(ws, wsResponse);
     } catch (error) {
+      // Cancellation removes the request from activeStreams before reader.cancel().
+      if (!this.activeStreams.has(requestId)) {
+        this.logger.debug('Stream cancelled', { requestId });
+        return;
+      }
+
       this.logger.error(
         'Error reading stream',
         error instanceof Error ? error : new Error(String(error)),
@@ -267,58 +389,6 @@ export class WebSocketAdapter {
     } finally {
       reader.releaseLock();
     }
-  }
-
-  /**
-   * Parse SSE events from a buffer
-   *
-   * Returns parsed events and any remaining unparsed content (incomplete lines
-   * waiting for more data from the next chunk).
-   *
-   * Note: This is a minimal SSE parser that only handles `event:` and `data:`
-   * fields - sufficient for our streaming handlers which only emit these.
-   * Per the SSE spec, we intentionally ignore:
-   * - `id:` field (event IDs for reconnection)
-   * - `retry:` field (reconnection timing hints)
-   * - Comment lines (starting with `:`)
-   */
-  private parseSSEEvents(buffer: string): {
-    events: Array<{ event?: string; data: string }>;
-    remaining: string;
-  } {
-    const events: Array<{ event?: string; data: string }> = [];
-    let currentEvent: { event?: string; data: string[] } = { data: [] };
-    let i = 0;
-
-    while (i < buffer.length) {
-      const newlineIndex = buffer.indexOf('\n', i);
-      if (newlineIndex === -1) break; // Incomplete line, keep in buffer
-
-      const line = buffer.substring(i, newlineIndex);
-      i = newlineIndex + 1;
-
-      // Check if we have a complete event (empty line after data)
-      if (line === '' && currentEvent.data.length > 0) {
-        events.push({
-          event: currentEvent.event,
-          data: currentEvent.data.join('\n')
-        });
-        currentEvent = { data: [] };
-        continue;
-      }
-
-      if (line.startsWith('event:')) {
-        currentEvent.event = line.substring(6).trim();
-      } else if (line.startsWith('data:')) {
-        currentEvent.data.push(line.substring(5).trim());
-      }
-      // Other lines (including empty lines without pending data) are ignored
-    }
-
-    return {
-      events,
-      remaining: buffer.substring(i)
-    };
   }
 
   /**

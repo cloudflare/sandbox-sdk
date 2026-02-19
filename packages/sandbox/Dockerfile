@@ -105,6 +105,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
     s3fs fuse \
     ca-certificates curl wget procps git unzip zip jq file \
+    inotify-tools \
     libssl3 zlib1g libbz2-1.0 libreadline8 libsqlite3-0 \
     libncursesw6 libtinfo6 libxml2 libxmlsec1 libffi8 liblzma5 libtk8.6 && \
     update-ca-certificates

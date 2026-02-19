@@ -146,6 +146,16 @@ describe('WebSocketAdapter', () => {
       expect(response.status).toBe(400);
     });
 
+    it('should ignore cancel message for unknown request id', async () => {
+      await adapter.onMessage(
+        mockWs as any,
+        JSON.stringify({ type: 'cancel', id: 'missing-request' })
+      );
+
+      expect(mockRouter.route).not.toHaveBeenCalled();
+      expect(mockWs.getSentMessages()).toHaveLength(0);
+    });
+
     it('should handle router errors gracefully', async () => {
       const request: WSRequest = {
         type: 'request',
@@ -228,6 +238,21 @@ describe('WebSocketAdapter', () => {
       );
 
       await adapter.onMessage(mockWs as any, JSON.stringify(request));
+
+      // Streaming runs in background to avoid blocking the message handler.
+      // Wait for the final response which indicates streaming completed.
+      const waitForFinalResponse = async (maxWait = 1000) => {
+        const start = Date.now();
+        while (Date.now() - start < maxWait) {
+          const messages = mockWs.getSentMessages<any>();
+          const finalResponse = messages.find(
+            (m) => m.type === 'response' && m.done === true
+          );
+          if (finalResponse) return;
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+      };
+      await waitForFinalResponse();
 
       // Should have received stream chunks and final response
       const messages = mockWs.getSentMessages<any>();

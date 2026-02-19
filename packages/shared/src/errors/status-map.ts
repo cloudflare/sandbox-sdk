@@ -13,6 +13,7 @@ export const ERROR_STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.GIT_REPOSITORY_NOT_FOUND]: 404,
   [ErrorCode.GIT_BRANCH_NOT_FOUND]: 404,
   [ErrorCode.CONTEXT_NOT_FOUND]: 404,
+  [ErrorCode.WATCH_NOT_FOUND]: 404,
 
   // 400 Bad Request
   [ErrorCode.IS_DIRECTORY]: 400,
@@ -75,6 +76,8 @@ export const ERROR_STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.CODE_EXECUTION_ERROR]: 500,
   [ErrorCode.BUCKET_MOUNT_ERROR]: 500,
   [ErrorCode.S3FS_MOUNT_ERROR]: 500,
+  [ErrorCode.WATCH_START_ERROR]: 500,
+  [ErrorCode.WATCH_STOP_ERROR]: 500,
   [ErrorCode.UNKNOWN_ERROR]: 500,
   [ErrorCode.INTERNAL_ERROR]: 500
 };

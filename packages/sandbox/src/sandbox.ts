@@ -23,7 +23,9 @@ import type {
   StreamOptions,
   WaitForExitResult,
   WaitForLogResult,
-  WaitForPortOptions
+  WaitForPortOptions,
+  WatchHandle,
+  WatchOptions
 } from '@repo/shared';
 import {
   createLogger,
@@ -44,6 +46,7 @@ import {
   ProcessReadyTimeoutError,
   SessionAlreadyExistsError
 } from './errors';
+import { FileWatch } from './file-watch';
 import { CodeInterpreter } from './interpreter';
 import { proxyTerminal } from './pty';
 import { isLocalhostPattern } from './request-handler';
@@ -2151,6 +2154,52 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   async exists(path: string, sessionId?: string) {
     const session = sessionId ?? (await this.ensureDefaultSession());
     return this.client.files.exists(path, session);
+  }
+
+  /**
+   * Watch a directory for file system changes using native inotify
+   *
+   * Returns a FileWatcher that emits events for file changes (create, modify, delete, move).
+   * The watcher uses inotify under the hood for efficient, real-time notifications.
+   *
+   * @param path - Path to watch (absolute or relative to /workspace)
+   * @param options - Watch options
+   * @returns FileWatcher instance for consuming events
+   *
+   * @example
+   * ```typescript
+   * // Watch for all changes in src directory
+   * const watcher = await sandbox.watch('/app/src', {
+   *   recursive: true,
+   *   onEvent: (event) => console.log(`${event.type}: ${event.path}`),
+   *   onError: (error) => console.error('Watch error:', error)
+   * });
+   *
+   * // With AbortController for cancellation
+   * const controller = new AbortController();
+   * const watcher = await sandbox.watch('/app', {
+   *   signal: controller.signal,
+   *   onEvent: (e) => console.log(e)
+   * });
+   * // Later: controller.abort();
+   *
+   * // Stop watching when done
+   * await watcher.stop();
+   * ```
+   */
+  async watch(path: string, options?: WatchOptions): Promise<WatchHandle> {
+    const stream = await this.client.watch.watch({
+      path,
+      recursive: options?.recursive,
+      include: options?.include,
+      exclude: options?.exclude
+    });
+
+    return FileWatch.create(stream, path, this.logger, {
+      signal: options?.signal,
+      onEvent: options?.onEvent,
+      onError: options?.onError
+    });
   }
 
   /**

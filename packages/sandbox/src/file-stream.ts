@@ -1,4 +1,10 @@
-import type { FileChunk, FileMetadata, FileStreamEvent } from '@repo/shared';
+import {
+  type FileChunk,
+  type FileMetadata,
+  type FileStreamEvent,
+  parseSSEFrames,
+  type SSEPartialEvent
+} from '@repo/shared';
 
 /**
  * Parse SSE (Server-Sent Events) lines from a stream
@@ -9,6 +15,7 @@ async function* parseSSE(
   const reader = stream.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
+  let currentEvent: SSEPartialEvent = { data: [] };
 
   try {
     while (true) {
@@ -19,21 +26,28 @@ async function* parseSSE(
       }
 
       buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
+      const parsed = parseSSEFrames(buffer, currentEvent);
+      buffer = parsed.remaining;
+      currentEvent = parsed.currentEvent;
 
-      // Keep the last incomplete line in the buffer
-      buffer = lines.pop() || '';
-
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          const data = line.slice(6); // Remove 'data: ' prefix
-          try {
-            const event = JSON.parse(data) as FileStreamEvent;
-            yield event;
-          } catch {
-            // Skip invalid JSON events and continue processing
-          }
+      for (const frame of parsed.events) {
+        try {
+          const event = JSON.parse(frame.data) as FileStreamEvent;
+          yield event;
+        } catch {
+          // Skip invalid JSON events and continue processing
         }
+      }
+    }
+
+    // Flush complete frame from final trailing buffer
+    const finalParsed = parseSSEFrames(`${buffer}\n\n`, currentEvent);
+    for (const frame of finalParsed.events) {
+      try {
+        const event = JSON.parse(frame.data) as FileStreamEvent;
+        yield event;
+      } catch {
+        // Skip invalid JSON events and continue processing
       }
     }
   } finally {

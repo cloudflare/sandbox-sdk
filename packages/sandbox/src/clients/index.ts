@@ -16,6 +16,7 @@ export { InterpreterClient } from './interpreter-client';
 export { PortClient } from './port-client';
 export { ProcessClient } from './process-client';
 export { UtilityClient } from './utility-client';
+export { WatchClient } from './watch-client';
 
 // =============================================================================
 // Transport layer
@@ -38,6 +39,7 @@ export {
 // Client types and interfaces
 // =============================================================================
 
+export type { WatchRequest } from '@repo/shared';
 // Command client types
 export type { ExecuteRequest, ExecuteResponse } from './command-client';
 // File client types
@@ -79,7 +81,6 @@ export type {
   ResponseHandler,
   SessionRequest
 } from './types';
-
 // Utility client types
 export type {
   CommandsResponse,

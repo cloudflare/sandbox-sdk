@@ -819,6 +819,60 @@ console.log('Terminal server on port ' + port);
         });
       }
 
+      // File Watch - Stream watch events from the container API.
+      // Returning the SDK WatchHandle over RPC is not supported because class
+      // instances are not serializable across the Worker <-> DO boundary.
+      if (url.pathname === '/api/watch' && request.method === 'POST') {
+        const watchRequest = {
+          path: body.path,
+          recursive: body.recursive,
+          include: body.include,
+          // inotifywait rejects include+exclude together. Keep include-only
+          // requests compatible with both current and older container images.
+          exclude: body.include ? [] : body.exclude,
+          sessionId: sessionId ?? undefined
+        };
+
+        const upstream = await sandbox.containerFetch(
+          new Request('http://localhost:3000/api/watch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(watchRequest)
+          }),
+          3000
+        );
+
+        if (!upstream.body) {
+          return upstream;
+        }
+
+        const upstreamReader = upstream.body.getReader();
+        const stream = new ReadableStream<Uint8Array>({
+          async pull(controller) {
+            const { done, value } = await upstreamReader.read();
+            if (done) {
+              controller.close();
+              return;
+            }
+            controller.enqueue(value);
+          },
+          async cancel(reason) {
+            await upstreamReader.cancel(reason).catch(() => {});
+          }
+        });
+
+        const headers = new Headers(upstream.headers);
+        headers.set('Content-Type', 'text/event-stream');
+        headers.set('Cache-Control', 'no-cache');
+        headers.set('Connection', 'keep-alive');
+
+        return new Response(stream, {
+          status: upstream.status,
+          statusText: upstream.statusText,
+          headers
+        });
+      }
+
       // Cleanup endpoint - destroys the sandbox container
       // This is used by E2E tests to explicitly clean up after each test
       if (url.pathname === '/cleanup' && request.method === 'POST') {
