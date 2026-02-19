@@ -120,7 +120,11 @@ export default {
             (p) => p.status === 'running' && p.command.includes(commandFragment)
           );
 
-        const serversToStart = [];
+        const serversToStart: Array<{
+          name: string;
+          port: number;
+          start: Promise<Process>;
+        }> = [];
 
         // Echo server
         if (!isServerRunning('/tmp/ws-echo.ts')) {
@@ -141,7 +145,11 @@ Bun.serve({
 console.log('Echo server on port ' + port);
 `;
           await sandbox.writeFile('/tmp/ws-echo.ts', echoScript);
-          serversToStart.push(sandbox.startProcess('bun run /tmp/ws-echo.ts'));
+          serversToStart.push({
+            name: 'echo',
+            port: 8080,
+            start: sandbox.startProcess('bun run /tmp/ws-echo.ts')
+          });
         }
 
         // Python code server
@@ -200,7 +208,11 @@ Bun.serve({
 console.log('Code server on port ' + port);
 `;
           await sandbox.writeFile('/tmp/ws-code.ts', codeScript);
-          serversToStart.push(sandbox.startProcess('bun run /tmp/ws-code.ts'));
+          serversToStart.push({
+            name: 'code',
+            port: 8081,
+            start: sandbox.startProcess('bun run /tmp/ws-code.ts')
+          });
         }
 
         // Terminal server
@@ -235,13 +247,26 @@ Bun.serve({
 console.log('Terminal server on port ' + port);
 `;
           await sandbox.writeFile('/tmp/ws-terminal.ts', terminalScript);
-          serversToStart.push(
-            sandbox.startProcess('bun run /tmp/ws-terminal.ts')
-          );
+          serversToStart.push({
+            name: 'terminal',
+            port: 8082,
+            start: sandbox.startProcess('bun run /tmp/ws-terminal.ts')
+          });
         }
 
-        // Start all servers and track results
-        const results = await Promise.allSettled(serversToStart);
+        // Start all servers and wait until their target ports are accepting connections.
+        const results = await Promise.allSettled(
+          serversToStart.map(async (server) => {
+            const process = await server.start;
+            await process.waitForPort(server.port, {
+              mode: 'tcp',
+              timeout: 30000,
+              interval: 250
+            });
+            return server.name;
+          })
+        );
+
         const failedCount = results.filter(
           (r) => r.status === 'rejected'
         ).length;
