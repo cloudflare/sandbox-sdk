@@ -3,6 +3,7 @@ import { shellEscape } from '@repo/shared';
 import type {
   FileNotFoundContext,
   FileSystemContext,
+  FileTooLargeContext,
   ValidationFailedContext
 } from '@repo/shared/errors';
 import { ErrorCode, Operation } from '@repo/shared/errors';
@@ -20,6 +21,9 @@ import type { SessionManager } from './session-manager';
 export interface SecurityService {
   validatePath(path: string): { isValid: boolean; errors: string[] };
 }
+
+// Maximum file size for RPC transfers is 32 MiB to prevent performance issues. For larger files, clients should use streaming APIs.
+const MAX_RPC_FILE_SIZE = 32 * 1_048_576; // 32 MiB
 
 // File system operations interface with session support
 export interface FileSystemOperations {
@@ -97,10 +101,8 @@ export class FileService implements FileSystemOperations {
         };
       }
 
-      // 2. Use Bun.file() for all metadata and content — no shell execs needed.
       const bunFile = Bun.file(path);
 
-      // Existence check: Bun.file().exists() is a native async call.
       const fileExists = await bunFile.exists();
       if (!fileExists) {
         return {
@@ -118,10 +120,25 @@ export class FileService implements FileSystemOperations {
 
       // Size and MIME type come directly from the BunFile object.
       const fileSize = bunFile.size;
+      // RPC transfers have a hard limit of 32 MiB to prevent issues for large files, enforce this limit upfront before reading content.
+      if (fileSize > MAX_RPC_FILE_SIZE) {
+        return {
+          success: false,
+          error: {
+            message: `File too large. Size ${fileSize} bytes exceeds the 32 MiB limit. Consider using streaming APIs for large files.`,
+            code: ErrorCode.FILE_TOO_LARGE,
+            details: {
+              path,
+              operation: Operation.FILE_READ,
+              actualSize: fileSize,
+              maxSize: MAX_RPC_FILE_SIZE
+            } satisfies FileTooLargeContext
+          }
+        };
+      }
+
       // Bun.file() derives the MIME type from the file extension and falls back
-      // to 'application/octet-stream' for unknown types.  We use the `file`
-      // command as a one-shot fallback only when Bun returns the generic type so
-      // that binary vs text detection is accurate for extension-less files.
+      // to 'application/octet-stream' for unknown types.
       let mimeType = bunFile.type;
       if (mimeType === 'application/octet-stream') {
         const escapedPath = shellEscape(path);
@@ -147,7 +164,7 @@ export class FileService implements FileSystemOperations {
         actualEncoding = isBinary ? 'base64' : 'utf-8';
       }
 
-      // 3. Read file content natively — a single OS read, no process spawn.
+      // 3. Read file content natively.
       let content: string;
       if (actualEncoding === 'base64') {
         const buffer = await bunFile.arrayBuffer();
@@ -902,12 +919,6 @@ export class FileService implements FileSystemOperations {
 
   /**
    * Get file metadata (size, MIME type, binary/text classification).
-   *
-   * Uses Bun.file() for existence, size, and MIME type — no shell execs in
-   * the common case.  When Bun returns the generic 'application/octet-stream'
-   * type (i.e. the extension is absent or unknown) we fall back to a single
-   * `file --mime-type` shell exec so that binary vs text detection remains
-   * accurate for extension-less files.
    */
   async getFileMetadata(
     path: string,
@@ -933,7 +944,7 @@ export class FileService implements FileSystemOperations {
         };
       }
 
-      // 2. Use Bun.file() for existence and stat — zero shell execs.
+      // 2. Use Bun.file() for existence and stat.
       const bunFile = Bun.file(path);
       const fileExists = await bunFile.exists();
 
@@ -1328,16 +1339,6 @@ export class FileService implements FileSystemOperations {
   /**
    * Stream a file using Server-Sent Events (SSE).
    * Sends metadata, chunks, and a completion event.
-   *
-   * Reads the file directly via Bun.file().stream() rather than spawning a
-   * shell process per chunk.  The native stream is piped through a
-   * TransformStream that base64-encodes binary chunks and emits each chunk
-   * as an SSE data line.  This eliminates the per-chunk shell-exec overhead
-   * that dominated transfer time under the previous dd-based implementation.
-   *
-   * Chunk size of 65535 bytes is kept for base64 alignment (divisible by 3)
-   * so there is no inter-chunk padding and the client can concatenate chunks
-   * before decoding.
    */
   async readFileStreamOperation(
     path: string,
@@ -1345,7 +1346,7 @@ export class FileService implements FileSystemOperations {
   ): Promise<ReadableStream<Uint8Array>> {
     const encoder = new TextEncoder();
 
-    // Resolve metadata first (path validation + Bun stat).
+    // Resolve metadata first.
     // This is the only async work before returning the stream so the caller
     // gets an early error rather than an SSE error event mid-stream.
     const metadataResult = await this.getFileMetadata(path, sessionId);
@@ -1368,9 +1369,6 @@ export class FileService implements FileSystemOperations {
 
     const metadata = metadataResult.data;
 
-    // Chunk size: 65535 bytes is divisible by 3, so base64-encoded chunks
-    // have no padding within the stream (padding only appears on the final
-    // chunk if the file size is not a multiple of 3).
     const CHUNK_SIZE = 65535;
 
     // Open the native Bun file stream.  Bun.file() does not throw for missing
@@ -1399,7 +1397,6 @@ export class FileService implements FileSystemOperations {
       },
 
       transform(incoming, controller) {
-        // Concatenate carry-over with new bytes.
         const combined = new Uint8Array(carry.length + incoming.length);
         combined.set(carry);
         combined.set(incoming, carry.length);
@@ -1412,12 +1409,10 @@ export class FileService implements FileSystemOperations {
           offset += CHUNK_SIZE;
         }
 
-        // Keep any remainder for the next transform call.
         carry = combined.subarray(offset);
       },
 
       flush(controller) {
-        // Emit whatever is left in the carry buffer as the final chunk.
         if (carry.length > 0) {
           emitChunk(carry, metadata.isBinary, encoder, controller);
           totalBytesEmitted += carry.length;
@@ -1434,20 +1429,14 @@ export class FileService implements FileSystemOperations {
       }
     });
 
-    // Pipe the file stream through the SSE transform.  Any read error (e.g.
-    // permission denied) surfaces as a stream error on the piped stream.
     return fileStream
       .pipeThrough(sseTransform)
       .pipeThrough(
-        // Wrap errors as SSE error events so the client gets a structured
-        // response rather than an abrupt stream close.
         new TransformStream<Uint8Array, Uint8Array>({
           transform(chunk, controller) {
             controller.enqueue(chunk);
           },
-          flush() {
-            // Normal completion – nothing extra needed.
-          }
+          flush() {}
         })
       )
       .pipeThrough(buildErrorCatchTransform(encoder, this.logger, path));
@@ -1496,9 +1485,7 @@ function buildErrorCatchTransform(
     transform(chunk, controller) {
       controller.enqueue(chunk);
     },
-    flush() {
-      // Normal path – nothing to do.
-    }
+    flush() {}
   });
   // Note: TransformStream does not expose a built-in error handler per spec.
   // Stream errors propagate as readable stream errors to the consumer; the

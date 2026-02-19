@@ -13,6 +13,13 @@ export interface FileExistsContext {
   operation: OperationType;
 }
 
+export interface FileTooLargeContext {
+  path: string;
+  operation: OperationType;
+  maxSize: number;
+  actualSize: number;
+}
+
 export interface FileSystemContext {
   path: string;
   operation: OperationType;
