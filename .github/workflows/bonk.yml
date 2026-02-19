@@ -15,6 +15,7 @@ jobs:
       group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
       cancel-in-progress: false
     permissions:
+      contents: write
       id-token: write
       issues: write
       pull-requests: write
