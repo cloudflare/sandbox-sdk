@@ -9,6 +9,8 @@
 import type { Logger } from '@repo/shared';
 import {
   isWSRequest,
+  parseSSEFrames,
+  type SSEPartialEvent,
   type WSError,
   type WSRequest,
   type WSResponse,
@@ -29,6 +31,17 @@ export interface WSData {
   connectionId: string;
 }
 
+function isCancelMessage(
+  value: unknown
+): value is { type: 'cancel'; id: string } {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+
+  const candidate = value as Record<string, unknown>;
+  return candidate.type === 'cancel' && typeof candidate.id === 'string';
+}
+
 /**
  * WebSocket protocol adapter that bridges WebSocket messages to HTTP handlers
  *
@@ -38,8 +51,13 @@ export interface WSData {
 export class WebSocketAdapter {
   private router: Router;
   private logger: Logger;
-  /** Track active streaming responses to prevent garbage collection */
-  private activeStreams: Map<string, Promise<void>> = new Map();
+  /** Track active streaming responses for explicit client-side cancellation */
+  private activeStreams: Map<
+    string,
+    {
+      cancel: () => Promise<void>;
+    }
+  > = new Map();
 
   constructor(router: Router, logger: Logger) {
     this.router = router;
@@ -64,6 +82,16 @@ export class WebSocketAdapter {
       code,
       reason
     });
+
+    for (const [requestId, stream] of this.activeStreams) {
+      void stream.cancel().catch((error) => {
+        this.logger.debug('Failed to cancel stream on socket close', {
+          requestId,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      });
+      this.activeStreams.delete(requestId);
+    }
   }
 
   /**
@@ -81,6 +109,11 @@ export class WebSocketAdapter {
       parsed = JSON.parse(messageStr);
     } catch (error) {
       this.sendError(ws, undefined, 'PARSE_ERROR', 'Invalid JSON message', 400);
+      return;
+    }
+
+    if (isCancelMessage(parsed)) {
+      await this.handleCancel(parsed.id);
       return;
     }
 
@@ -119,6 +152,30 @@ export class WebSocketAdapter {
         error instanceof Error ? error.message : 'Unknown error',
         500
       );
+    }
+  }
+
+  /**
+   * Handle explicit cancellation for an in-flight streaming request.
+   */
+  private async handleCancel(requestId: string): Promise<void> {
+    const stream = this.activeStreams.get(requestId);
+    if (!stream) {
+      this.logger.debug('Cancel received for unknown stream request', {
+        requestId
+      });
+      return;
+    }
+
+    this.activeStreams.delete(requestId);
+    try {
+      await stream.cancel();
+      this.logger.debug('Cancelled active stream request', { requestId });
+    } catch (error) {
+      this.logger.debug('Failed to cancel active stream request', {
+        requestId,
+        error: error instanceof Error ? error.message : String(error)
+      });
     }
   }
 
@@ -170,7 +227,7 @@ export class WebSocketAdapter {
       // By getting the reader synchronously here, we ensure the stream remains valid.
       const reader =
         httpResponse.body.getReader() as ReadableStreamDefaultReader<Uint8Array>;
-      const streamPromise = this.handleStreamingResponseWithReader(
+      void this.handleStreamingResponseWithReader(
         ws,
         request.id,
         httpResponse.status,
@@ -186,7 +243,16 @@ export class WebSocketAdapter {
         .finally(() => {
           this.activeStreams.delete(request.id);
         });
-      this.activeStreams.set(request.id, streamPromise);
+
+      this.activeStreams.set(request.id, {
+        cancel: async () => {
+          try {
+            await reader.cancel();
+          } catch {
+            // Reader may already be closed/cancelled.
+          }
+        }
+      });
     } else {
       // Handle regular response
       await this.handleRegularResponse(ws, request.id, httpResponse);
@@ -240,7 +306,7 @@ export class WebSocketAdapter {
     const decoder = new TextDecoder();
     let buffer = '';
     // Track partial event state across chunks
-    let currentEvent: { event?: string; data: string[] } = { data: [] };
+    let currentEvent: SSEPartialEvent = { data: [] };
     let chunkCount = 0;
 
     try {
@@ -269,7 +335,7 @@ export class WebSocketAdapter {
         buffer += chunkText;
 
         // Parse SSE events from buffer, preserving partial event state
-        const result = this.parseSSEEvents(buffer, currentEvent);
+        const result = parseSSEFrames(buffer, currentEvent);
         buffer = result.remaining;
         currentEvent = result.currentEvent;
 
@@ -302,6 +368,12 @@ export class WebSocketAdapter {
       };
       this.send(ws, wsResponse);
     } catch (error) {
+      // Cancellation removes the request from activeStreams before reader.cancel().
+      if (!this.activeStreams.has(requestId)) {
+        this.logger.debug('Stream cancelled', { requestId });
+        return;
+      }
+
       this.logger.error(
         'Error reading stream',
         error instanceof Error ? error : new Error(String(error)),
@@ -317,62 +389,6 @@ export class WebSocketAdapter {
     } finally {
       reader.releaseLock();
     }
-  }
-
-  /**
-   * Parse SSE events from a buffer
-   *
-   * Returns parsed events, remaining unparsed content, and current partial event state.
-   * The currentEvent parameter allows preserving state across chunk boundaries.
-   *
-   * Note: This is a minimal SSE parser that only handles `event:` and `data:`
-   * fields - sufficient for our streaming handlers which only emit these.
-   * Per the SSE spec, we intentionally ignore:
-   * - `id:` field (event IDs for reconnection)
-   * - `retry:` field (reconnection timing hints)
-   * - Comment lines (starting with `:`)
-   */
-  private parseSSEEvents(
-    buffer: string,
-    currentEvent: { event?: string; data: string[] } = { data: [] }
-  ): {
-    events: Array<{ event?: string; data: string }>;
-    remaining: string;
-    currentEvent: { event?: string; data: string[] };
-  } {
-    const events: Array<{ event?: string; data: string }> = [];
-    let i = 0;
-
-    while (i < buffer.length) {
-      const newlineIndex = buffer.indexOf('\n', i);
-      if (newlineIndex === -1) break; // Incomplete line, keep in buffer
-
-      const line = buffer.substring(i, newlineIndex);
-      i = newlineIndex + 1;
-
-      // Check if we have a complete event (empty line after data)
-      if (line === '' && currentEvent.data.length > 0) {
-        events.push({
-          event: currentEvent.event,
-          data: currentEvent.data.join('\n')
-        });
-        currentEvent = { data: [] };
-        continue;
-      }
-
-      if (line.startsWith('event:')) {
-        currentEvent.event = line.substring(6).trim();
-      } else if (line.startsWith('data:')) {
-        currentEvent.data.push(line.substring(5).trim());
-      }
-      // Other lines (including empty lines without pending data) are ignored
-    }
-
-    return {
-      events,
-      remaining: buffer.substring(i),
-      currentEvent
-    };
   }
 
   /**

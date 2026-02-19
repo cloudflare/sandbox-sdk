@@ -92,5 +92,3 @@ export type {
   PingResponse,
   VersionResponse
 } from './utility-client';
-// Watch client types
-export type { WatchListResponse } from './watch-client';

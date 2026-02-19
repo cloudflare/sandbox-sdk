@@ -401,6 +401,17 @@ export class WebSocketTransport extends BaseTransport {
           if (pending?.timeoutId) {
             clearTimeout(pending.timeoutId);
           }
+
+          // Best-effort server-side cancellation for active streaming requests.
+          try {
+            this.send({ type: 'cancel', id });
+          } catch (error) {
+            this.logger.debug('Failed to send stream cancel message', {
+              id,
+              error: error instanceof Error ? error.message : String(error)
+            });
+          }
+
           this.pendingRequests.delete(id);
         }
       });
@@ -476,7 +487,7 @@ export class WebSocketTransport extends BaseTransport {
   /**
    * Send a message over the WebSocket
    */
-  private send(message: WSRequest): void {
+  private send(message: WSRequest | { type: 'cancel'; id: string }): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       throw new Error('WebSocket not connected');
     }
@@ -484,8 +495,9 @@ export class WebSocketTransport extends BaseTransport {
     this.ws.send(JSON.stringify(message));
     this.logger.debug('WebSocket sent', {
       id: message.id,
-      method: message.method,
-      path: message.path
+      type: message.type,
+      method: message.type === 'request' ? message.method : undefined,
+      path: message.type === 'request' ? message.path : undefined
     });
   }
 
