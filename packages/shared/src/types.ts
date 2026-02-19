@@ -38,6 +38,12 @@ export interface BaseExecOptions {
    * Text encoding for output (default: 'utf8')
    */
   encoding?: string;
+
+  /**
+   * Data to pass to the command's standard input.
+   * Enables passing arbitrary user input to commands without shell injection risks.
+   */
+  stdin?: string;
 }
 
 // Command execution types

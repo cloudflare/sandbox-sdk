@@ -162,6 +162,8 @@ interface ExecOptions {
   cwd?: string;
   /** Environment variables for this command only (does not persist in session). Undefined values are skipped. */
   env?: Record<string, string | undefined>;
+  /** Data to pass to the command's standard input */
+  stdin?: string;
 }
 
 /** Command handle for tracking and killing running commands */
@@ -308,6 +310,11 @@ export class Session {
     const logFile = join(this.sessionDir!, `${commandId}.log`);
     const exitCodeFile = join(this.sessionDir!, `${commandId}.exit`);
     const pidFile = join(this.sessionDir!, `${commandId}.pid`);
+    // Write stdin to temp file if provided (enables passing arbitrary input without shell injection)
+    const stdinFile =
+      options?.stdin !== undefined
+        ? join(this.sessionDir!, `${commandId}.stdin`)
+        : undefined;
 
     this.logger.info('Command execution started', {
       sessionId: this.id,
@@ -317,6 +324,11 @@ export class Session {
     });
 
     try {
+      // Write stdin data to file if provided
+      if (stdinFile !== undefined && options?.stdin !== undefined) {
+        await Bun.write(stdinFile, options.stdin);
+      }
+
       // Track command
       this.trackCommand(commandId, pidFile, logFile, exitCodeFile);
 
@@ -329,12 +341,14 @@ export class Session {
         exitCodeFile,
         options?.cwd,
         false,
-        options?.env
+        options?.env,
+        undefined, // pidPipe not used for foreground
+        stdinFile
       );
 
       // Write script to shell's stdin
-      if (this.shell!.stdin && typeof this.shell!.stdin !== 'number') {
-        this.shell!.stdin.write(`${bashScript}\n`);
+      if (this.shell?.stdin && typeof this.shell.stdin !== 'number') {
+        this.shell.stdin.write(`${bashScript}\n`);
       } else {
         throw new Error('Shell stdin is not available');
       }
@@ -343,9 +357,12 @@ export class Session {
       // 1. Normal completion (exit code file appears)
       // 2. Shell death (shell process exits unexpectedly)
       // This allows us to detect shell termination (e.g., from 'exit' command) immediately
+      if (!this.shellExitedPromise) {
+        throw new Error('Shell exited promise is not available');
+      }
       const exitCode = await Promise.race([
         this.waitForExitCode(exitCodeFile),
-        this.shellExitedPromise!
+        this.shellExitedPromise
       ]);
 
       // Read log file and parse prefixes
@@ -354,8 +371,8 @@ export class Session {
       // Untrack command
       this.untrackCommand(commandId);
 
-      // Clean up temp files
-      await this.cleanupCommandFiles(logFile, exitCodeFile);
+      // Clean up temp files (including stdin file)
+      await this.cleanupCommandFiles(logFile, exitCodeFile, stdinFile);
 
       const duration = Date.now() - startTime;
 
@@ -385,9 +402,9 @@ export class Session {
           operation: 'exec'
         }
       );
-      // Untrack and clean up on error
+      // Untrack and clean up on error (including stdin file)
       this.untrackCommand(commandId);
-      await this.cleanupCommandFiles(logFile, exitCodeFile);
+      await this.cleanupCommandFiles(logFile, exitCodeFile, stdinFile);
       throw error;
     }
   }
@@ -414,6 +431,11 @@ export class Session {
       this.sessionDir!,
       `${commandId}.labelers.done`
     );
+    // Write stdin to temp file if provided (enables passing arbitrary input without shell injection)
+    const stdinFile =
+      options?.stdin !== undefined
+        ? join(this.sessionDir!, `${commandId}.stdin`)
+        : undefined;
 
     this.logger.info('Streaming command execution started', {
       sessionId: this.id,
@@ -423,6 +445,11 @@ export class Session {
     });
 
     try {
+      // Write stdin data to file if provided
+      if (stdinFile !== undefined && options?.stdin !== undefined) {
+        await Bun.write(stdinFile, options.stdin);
+      }
+
       // Track command
       this.trackCommand(commandId, pidFile, logFile, exitCodeFile);
 
@@ -440,11 +467,12 @@ export class Session {
         options?.cwd,
         true,
         options?.env,
-        pidPipe
+        pidPipe,
+        stdinFile
       );
 
-      if (this.shell!.stdin && typeof this.shell!.stdin !== 'number') {
-        this.shell!.stdin.write(`${bashScript}\n`);
+      if (this.shell?.stdin && typeof this.shell.stdin !== 'number') {
+        this.shell.stdin.write(`${bashScript}\n`);
       } else {
         throw new Error('Shell stdin is not available');
       }
@@ -617,8 +645,8 @@ export class Session {
       // Untrack command
       this.untrackCommand(commandId);
 
-      // Clean up temp files
-      await this.cleanupCommandFiles(logFile, exitCodeFile);
+      // Clean up temp files (including stdin file)
+      await this.cleanupCommandFiles(logFile, exitCodeFile, stdinFile);
     } catch (error) {
       this.logger.error(
         'Streaming command execution failed',
@@ -629,9 +657,9 @@ export class Session {
           operation: 'execStream'
         }
       );
-      // Untrack and clean up on error
+      // Untrack and clean up on error (including stdin file)
       this.untrackCommand(commandId);
-      await this.cleanupCommandFiles(logFile, exitCodeFile);
+      await this.cleanupCommandFiles(logFile, exitCodeFile, stdinFile);
 
       yield {
         type: 'error',
@@ -806,6 +834,7 @@ export class Session {
    * @param isBackground - If true, command runs in background (for execStream/startProcess)
    *                       If false, command runs in foreground (for exec) - state persists!
    * @param pidPipe - Optional path to PID notification FIFO (for reliable PID synchronization)
+   * @param stdinFile - Optional path to file containing stdin data for the command
    */
   private buildFIFOScript(
     command: string,
@@ -815,7 +844,8 @@ export class Session {
     cwd?: string,
     isBackground = false,
     env?: Record<string, string | undefined>,
-    pidPipe?: string
+    pidPipe?: string,
+    stdinFile?: string
   ): string {
     // Create unique FIFO names to prevent collisions
     const stdoutPipe = join(this.sessionDir!, `${cmdId}.stdout.pipe`);
@@ -832,6 +862,10 @@ export class Session {
     const safePidFile = this.escapeShellPath(pidFile);
     const safeLabelersDoneFile = this.escapeShellPath(labelersDoneFile);
     const safePidPipe = pidPipe ? this.escapeShellPath(pidPipe) : null;
+    const safeStdinFile = stdinFile ? this.escapeShellPath(stdinFile) : null;
+
+    // Stdin redirection: use provided file or /dev/null
+    const stdinRedirect = safeStdinFile ? `< ${safeStdinFile}` : '< /dev/null';
 
     const indentLines = (input: string, spaces: number) => {
       const prefix = ' '.repeat(spaces);
@@ -915,7 +949,7 @@ export class Session {
         script += `${buildCommandBlock('CMD_EXIT', 6)}\n`;
         script += `      echo "$CMD_EXIT" > ${safeExitCodeFile}.tmp\n`;
         script += `      mv ${safeExitCodeFile}.tmp ${safeExitCodeFile}\n`;
-        script += `    } < /dev/null > "$sp" 2> "$ep" & CMD_PID=$!\n`;
+        script += `    } ${stdinRedirect} > "$sp" 2> "$ep" & CMD_PID=$!\n`;
         script += `    echo "$CMD_PID" > ${safePidFile}.tmp\n`;
         script += `    mv ${safePidFile}.tmp ${safePidFile}\n`;
         if (safePidPipe) {
@@ -943,7 +977,7 @@ export class Session {
         script += `${buildCommandBlock('CMD_EXIT', 4)}\n`;
         script += `    echo "$CMD_EXIT" > ${safeExitCodeFile}.tmp\n`;
         script += `    mv ${safeExitCodeFile}.tmp ${safeExitCodeFile}\n`;
-        script += `  } < /dev/null > "$sp" 2> "$ep" & CMD_PID=$!\n`;
+        script += `  } ${stdinRedirect} > "$sp" 2> "$ep" & CMD_PID=$!\n`;
         script += `  echo "$CMD_PID" > ${safePidFile}.tmp\n`;
         script += `  mv ${safePidFile}.tmp ${safePidFile}\n`;
         if (safePidPipe) {
@@ -973,7 +1007,7 @@ export class Session {
         script += `    # Execute command, redirect to temp files\n`;
         script += `    {\n`;
         script += `${buildCommandBlock('EXIT_CODE', 6)}\n`;
-        script += `    } < /dev/null > "$log.stdout" 2> "$log.stderr"\n`;
+        script += `    } ${stdinRedirect} > "$log.stdout" 2> "$log.stderr"\n`;
         script += `    # Restore directory\n`;
         script += `    cd "$PREV_DIR"\n`;
         script += `  else\n`;
@@ -984,7 +1018,7 @@ export class Session {
         script += `  # Execute command, redirect to temp files\n`;
         script += `  {\n`;
         script += `${buildCommandBlock('EXIT_CODE', 4)}\n`;
-        script += `  } < /dev/null > "$log.stdout" 2> "$log.stderr"\n`;
+        script += `  } ${stdinRedirect} > "$log.stdout" 2> "$log.stderr"\n`;
       }
 
       script += `  \n`;
@@ -1201,7 +1235,8 @@ export class Session {
    */
   private async cleanupCommandFiles(
     logFile: string,
-    exitCodeFile: string
+    exitCodeFile: string,
+    stdinFile?: string
   ): Promise<void> {
     // Derive related files from log file
     const pidFile = logFile.replace('.log', '.pid');
@@ -1229,6 +1264,14 @@ export class Session {
       await rm(pidPipe, { force: true });
     } catch {
       // Ignore errors
+    }
+
+    if (stdinFile) {
+      try {
+        await rm(stdinFile, { force: true });
+      } catch {
+        // Ignore errors
+      }
     }
   }
 
