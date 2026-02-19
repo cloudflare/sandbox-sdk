@@ -601,13 +601,18 @@ console.log('Terminal server on port ' + port);
             headers: { 'Content-Type': 'application/json' }
           });
         }
-        // Build WaitForPortOptions from request body
+        // Build WaitForPortOptions from request body.
+        // Accept both flat fields and nested `options` payloads.
+        const waitOptions =
+          body.options && typeof body.options === 'object'
+            ? body.options
+            : body;
         await process.waitForPort(body.port, {
-          mode: body.mode,
-          path: body.path,
-          status: body.status,
-          timeout: body.timeout,
-          interval: body.interval
+          mode: waitOptions.mode,
+          path: waitOptions.path,
+          status: waitOptions.status,
+          timeout: waitOptions.timeout,
+          interval: waitOptions.interval
         });
         return new Response(JSON.stringify({ success: true }), {
           headers: { 'Content-Type': 'application/json' }
