@@ -15,6 +15,10 @@
  */
 
 import { getSandbox, proxyToSandbox, Sandbox } from '@cloudflare/sandbox';
+import {
+  createOpencodeServer,
+  proxyToOpencodeServer
+} from '@cloudflare/sandbox/opencode';
 
 import type {
   BucketDeleteResponse,
@@ -295,6 +299,23 @@ console.log('Terminal server on port ' + port);
         return new Response(JSON.stringify(response), {
           headers: { 'Content-Type': 'application/json' }
         });
+      }
+
+      // OpenCode direct server proxy helper
+      if (
+        url.pathname === '/api/opencode/proxy-server/global-health' &&
+        request.method === 'GET'
+      ) {
+        const server = await createOpencodeServer(sandbox, {
+          port: 4096
+        });
+
+        const opencodeRequest = new Request(
+          `${url.origin}/global/health${url.search}`,
+          request
+        );
+
+        return proxyToOpencodeServer(opencodeRequest, sandbox, server);
       }
 
       // Session management

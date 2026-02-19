@@ -35,6 +35,26 @@ describe('OpenCode Workflow (E2E)', () => {
     expect(result.stdout).toMatch(/\d+\.\d+/);
   });
 
+  describe('OpenCode proxy helpers', () => {
+    test('should proxy OpenCode global health through proxyToOpencodeServer', async () => {
+      const res = await fetch(
+        `${workerUrl}/api/opencode/proxy-server/global-health`,
+        {
+          method: 'GET',
+          headers
+        }
+      );
+
+      expect(res.status).toBe(200);
+      const result = (await res.json()) as {
+        healthy: boolean;
+        version: string;
+      };
+      expect(result.healthy).toBe(true);
+      expect(result.version).toMatch(/\d+\.\d+\.\d+/);
+    }, 60000);
+  });
+
   describe('OpenCode server lifecycle', () => {
     test('should start opencode server via process', async () => {
       // Start OpenCode server as a background process
