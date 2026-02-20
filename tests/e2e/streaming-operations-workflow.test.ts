@@ -182,7 +182,7 @@ describe('Streaming Operations Edge Cases', () => {
     const complete = events.find((e) => e.type === 'complete');
 
     expect(metadata).toBeDefined();
-    expect(metadata.mimeType).toBe('text/plain');
+    expect(metadata.mimeType).toBe('text/plain;charset=utf-8');
     expect(chunk).toBeDefined();
     expect(chunk.data).toBe(testContent);
     expect(complete).toBeDefined();

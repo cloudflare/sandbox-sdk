@@ -3,6 +3,7 @@ import { shellEscape } from '@repo/shared';
 import type {
   FileNotFoundContext,
   FileSystemContext,
+  FileTooLargeContext,
   ValidationFailedContext
 } from '@repo/shared/errors';
 import { ErrorCode, Operation } from '@repo/shared/errors';
@@ -20,6 +21,9 @@ import type { SessionManager } from './session-manager';
 export interface SecurityService {
   validatePath(path: string): { isValid: boolean; errors: string[] };
 }
+
+// Maximum file size for RPC transfers is 32 MiB to prevent performance issues. For larger files, clients should use streaming APIs.
+const MAX_RPC_FILE_SIZE = 32 * 1_048_576; // 32 MiB
 
 // File system operations interface with session support
 export interface FileSystemOperations {
@@ -97,17 +101,36 @@ export class FileService implements FileSystemOperations {
         };
       }
 
-      // 2. Execute exists→stat→mime→cat sequence atomically within session
-      const escapedPath = shellEscape(path);
-
       return this.sessionManager
         .withSession(sessionId, async (exec) => {
-          // Check if file exists
-          const existsResult = await exec(`test -e ${escapedPath}`);
-          if (existsResult.exitCode !== 0) {
+          let targetPath = path;
+
+          if (!path.startsWith('/')) {
+            const pwdResult = await exec('pwd');
+            if (pwdResult.exitCode !== 0) {
+              throw {
+                code: ErrorCode.FILESYSTEM_ERROR,
+                message: `Failed to resolve working directory for '${path}'`,
+                details: {
+                  path,
+                  operation: Operation.FILE_READ,
+                  exitCode: pwdResult.exitCode,
+                  stderr: pwdResult.stderr
+                } satisfies FileSystemContext
+              };
+            }
+
+            const cwd = pwdResult.stdout.trim();
+            targetPath = `${cwd}/${path}`;
+          }
+
+          const bunFile = Bun.file(targetPath);
+
+          const fileExists = await bunFile.exists();
+          if (!fileExists) {
             throw {
-              code: ErrorCode.FILE_NOT_FOUND,
               message: `File not found: ${path}`,
+              code: ErrorCode.FILE_NOT_FOUND,
               details: {
                 path,
                 operation: Operation.FILE_READ
@@ -115,59 +138,37 @@ export class FileService implements FileSystemOperations {
             };
           }
 
-          // Get file size using stat
-          const statCommand = `stat -c '%s' ${escapedPath} 2>/dev/null`;
-          const statResult = await exec(statCommand);
-
-          if (statResult.exitCode !== 0) {
+          // Size and MIME type come directly from the BunFile object.
+          const fileSize = bunFile.size;
+          // RPC transfers have a hard limit of 32 MiB to prevent issues for large files, enforce this limit upfront before reading content.
+          if (fileSize > MAX_RPC_FILE_SIZE) {
             throw {
-              code: ErrorCode.FILESYSTEM_ERROR,
-              message: `Failed to get file size for '${path}'`,
+              message: `File too large. Size ${fileSize} bytes exceeds the 32 MiB limit. Consider using streaming APIs for large files.`,
+              code: ErrorCode.FILE_TOO_LARGE,
               details: {
                 path,
                 operation: Operation.FILE_READ,
-                stderr: statResult.stderr
-              } satisfies FileSystemContext
+                actualSize: fileSize,
+                maxSize: MAX_RPC_FILE_SIZE
+              } satisfies FileTooLargeContext
             };
           }
 
-          const fileSize = parseInt(statResult.stdout.trim(), 10);
-
-          if (Number.isNaN(fileSize)) {
-            throw {
-              code: ErrorCode.FILESYSTEM_ERROR,
-              message: `Failed to parse file size for '${path}': invalid stat output`,
-              details: {
-                path,
-                operation: Operation.FILE_READ,
-                stderr: `Unexpected stat output: ${statResult.stdout}`
-              } satisfies FileSystemContext
-            };
+          // Bun.file() derives the MIME type from the file extension and falls back
+          // to 'application/octet-stream' for unknown types.
+          let mimeType = bunFile.type;
+          if (mimeType === 'application/octet-stream') {
+            const escapedPath = shellEscape(path);
+            const mimeResult = await exec(`file --mime-type -b ${escapedPath}`);
+            if (mimeResult.exitCode === 0) {
+              mimeType = mimeResult.stdout.trim();
+            }
           }
 
-          // Detect MIME type using file command
-          const mimeCommand = `file --mime-type -b ${escapedPath}`;
-          const mimeResult = await exec(mimeCommand);
-
-          if (mimeResult.exitCode !== 0) {
-            throw {
-              code: ErrorCode.FILESYSTEM_ERROR,
-              message: `Failed to detect MIME type for '${path}'`,
-              details: {
-                path,
-                operation: Operation.FILE_READ,
-                stderr: mimeResult.stderr
-              } satisfies FileSystemContext
-            };
-          }
-
-          const mimeType = mimeResult.stdout.trim();
-
-          // Determine if file is binary based on MIME type
           const isBinary = this.isBinaryMimeType(mimeType);
 
-          // Read file with appropriate encoding
-          // Respect user's encoding preference if provided, otherwise use MIME-based detection
+          // Determine encoding: honour explicit caller preference, otherwise fall
+          // back to MIME-based detection.
           let actualEncoding: 'utf-8' | 'base64';
           if (options.encoding === 'base64') {
             actualEncoding = 'base64';
@@ -177,52 +178,26 @@ export class FileService implements FileSystemOperations {
           ) {
             actualEncoding = 'utf-8';
           } else {
-            // No explicit encoding requested - use MIME-based detection (original behavior)
             actualEncoding = isBinary ? 'base64' : 'utf-8';
           }
 
+          // 3. Read file content natively.
           let content: string;
           if (actualEncoding === 'base64') {
-            // Binary files: read as base64, return as-is (DO NOT decode)
-            const base64Command = `base64 -w 0 < ${escapedPath}`;
-            const base64Result = await exec(base64Command);
-
-            if (base64Result.exitCode !== 0) {
-              throw {
-                code: ErrorCode.FILESYSTEM_ERROR,
-                message: `Failed to read binary file '${path}': ${base64Result.stderr}`,
-                details: {
-                  path,
-                  operation: Operation.FILE_READ,
-                  exitCode: base64Result.exitCode,
-                  stderr: base64Result.stderr
-                } satisfies FileSystemContext
-              };
+            const buffer = await bunFile.arrayBuffer();
+            const bytes = new Uint8Array(buffer);
+            // btoa only accepts latin1; convert byte-by-byte.
+            let binary = '';
+            for (let i = 0; i < bytes.length; i++) {
+              binary += String.fromCharCode(bytes[i]);
             }
-
-            content = base64Result.stdout.trim();
+            content = btoa(binary);
           } else {
-            // Text files: read normally
-            const catCommand = `cat ${escapedPath}`;
-            const catResult = await exec(catCommand);
-
-            if (catResult.exitCode !== 0) {
-              throw {
-                code: ErrorCode.FILESYSTEM_ERROR,
-                message: `Failed to read text file '${path}': ${catResult.stderr}`,
-                details: {
-                  path,
-                  operation: Operation.FILE_READ,
-                  exitCode: catResult.exitCode,
-                  stderr: catResult.stderr
-                } satisfies FileSystemContext
-              };
-            }
-
-            content = catResult.stdout;
+            content = await bunFile.text();
           }
 
           return {
+            success: true,
             content,
             metadata: {
               encoding: actualEncoding,
@@ -972,10 +947,7 @@ export class FileService implements FileSystemOperations {
   }
 
   /**
-   * Get file metadata
-   * Optimized for scenarios where you need file characteristics
-   * (size, type, encoding) before processing, without the overhead
-   * of reading potentially large files. Used by readFileStreamOperation.
+   * Get file metadata (size, MIME type, binary/text classification).
    */
   async getFileMetadata(
     path: string,
@@ -1001,16 +973,11 @@ export class FileService implements FileSystemOperations {
         };
       }
 
-      // 2. Check if file exists using session-aware check
-      const existsResult = await this.exists(path, sessionId);
-      if (!existsResult.success) {
-        return {
-          success: false,
-          error: existsResult.error
-        };
-      }
+      // 2. Use Bun.file() for existence and stat.
+      const bunFile = Bun.file(path);
+      const fileExists = await bunFile.exists();
 
-      if (!existsResult.data) {
+      if (!fileExists) {
         return {
           success: false,
           error: {
@@ -1024,101 +991,27 @@ export class FileService implements FileSystemOperations {
         };
       }
 
-      // 3. Get file size using stat
-      const escapedPath = shellEscape(path);
-      const statCommand = `stat -c '%s' ${escapedPath} 2>/dev/null`;
-      const statResult = await this.sessionManager.executeInSession(
-        sessionId,
-        statCommand
-      );
+      const fileSize = bunFile.size;
 
-      if (!statResult.success) {
-        return {
-          success: false,
-          error: {
-            message: `Failed to get file size for '${path}'`,
-            code: ErrorCode.FILESYSTEM_ERROR,
-            details: {
-              path,
-              operation: Operation.FILE_READ,
-              stderr: 'Command execution failed'
-            } satisfies FileSystemContext
-          }
-        };
+      // 3. Determine MIME type.  Bun derives this from the file extension; for
+      //    unknown extensions it returns 'application/octet-stream'.  In that
+      //    case we run `file --mime-type` as a fallback so we can correctly
+      //    classify extension-less binaries (e.g. compiled executables).
+      let mimeType = bunFile.type;
+      if (mimeType === 'application/octet-stream') {
+        const escapedPath = shellEscape(path);
+        const mimeResult = await this.sessionManager.executeInSession(
+          sessionId,
+          `file --mime-type -b ${escapedPath}`
+        );
+        if (mimeResult.success && mimeResult.data.exitCode === 0) {
+          mimeType = mimeResult.data.stdout.trim();
+        }
+        // If the fallback fails we keep 'application/octet-stream', which
+        // isBinaryMimeType() will correctly classify as binary.
       }
 
-      if (statResult.data.exitCode !== 0) {
-        return {
-          success: false,
-          error: {
-            message: `Failed to get file size for '${path}'`,
-            code: ErrorCode.FILESYSTEM_ERROR,
-            details: {
-              path,
-              operation: Operation.FILE_READ,
-              stderr: statResult.data.stderr
-            } satisfies FileSystemContext
-          }
-        };
-      }
-
-      const fileSize = parseInt(statResult.data.stdout.trim(), 10);
-
-      if (Number.isNaN(fileSize)) {
-        return {
-          success: false,
-          error: {
-            message: `Failed to parse file size for '${path}': invalid stat output`,
-            code: ErrorCode.FILESYSTEM_ERROR,
-            details: {
-              path,
-              operation: Operation.FILE_READ,
-              stderr: `Unexpected stat output: ${statResult.data.stdout}`
-            } satisfies FileSystemContext
-          }
-        };
-      }
-
-      // 4. Detect MIME type using file command
-      const mimeCommand = `file --mime-type -b ${escapedPath}`;
-      const mimeResult = await this.sessionManager.executeInSession(
-        sessionId,
-        mimeCommand
-      );
-
-      if (!mimeResult.success) {
-        return {
-          success: false,
-          error: {
-            message: `Failed to detect MIME type for '${path}'`,
-            code: ErrorCode.FILESYSTEM_ERROR,
-            details: {
-              path,
-              operation: Operation.FILE_READ,
-              stderr: 'Command execution failed'
-            } satisfies FileSystemContext
-          }
-        };
-      }
-
-      if (mimeResult.data.exitCode !== 0) {
-        return {
-          success: false,
-          error: {
-            message: `Failed to detect MIME type for '${path}'`,
-            code: ErrorCode.FILESYSTEM_ERROR,
-            details: {
-              path,
-              operation: Operation.FILE_READ,
-              stderr: mimeResult.data.stderr
-            } satisfies FileSystemContext
-          }
-        };
-      }
-
-      const mimeType = mimeResult.data.stdout.trim();
-
-      // 5. Determine if file is binary based on MIME type
+      // 4. Classify binary vs text
       const isBinary = this.isBinaryMimeType(mimeType);
 
       return {
@@ -1473,159 +1366,172 @@ export class FileService implements FileSystemOperations {
   }
 
   /**
-   * Stream a file using Server-Sent Events (SSE)
-   * Sends metadata, chunks, and completion events
-   * Uses 65535 byte chunks for proper base64 alignment
+   * Stream a file using Server-Sent Events (SSE).
+   * Sends metadata, chunks, and a completion event.
    */
   async readFileStreamOperation(
     path: string,
     sessionId = 'default'
   ): Promise<ReadableStream<Uint8Array>> {
     const encoder = new TextEncoder();
-    const escapedPath = shellEscape(path);
 
-    return new ReadableStream({
-      start: async (controller) => {
-        try {
-          // 1. Get file metadata
-          const metadataResult = await this.getFileMetadata(path, sessionId);
+    let absolutePath = path;
 
-          if (!metadataResult.success) {
+    if (!path.startsWith('/')) {
+      // Resolve the absolute path first to avoid calling executeInSession inside withSession
+      const pwdResult = await this.sessionManager.executeInSession(
+        sessionId,
+        'pwd'
+      );
+
+      if (!pwdResult.success || pwdResult.data.exitCode !== 0) {
+        // Return a stream that immediately emits the error and closes.
+        return new ReadableStream({
+          start(controller) {
             const errorEvent = {
               type: 'error',
-              error: metadataResult.error.message
+              error: pwdResult.success
+                ? 'Failed to get working directory'
+                : pwdResult.error.message
             };
             controller.enqueue(
               encoder.encode(`data: ${JSON.stringify(errorEvent)}\n\n`)
             );
             controller.close();
-            return;
           }
+        });
+      }
 
-          const metadata = metadataResult.data;
+      const cwd = pwdResult.data.stdout.trim();
+      absolutePath = `${cwd}/${path}`;
+    }
 
-          // 2. Send metadata event
-          const metadataEvent = {
-            type: 'metadata',
-            mimeType: metadata.mimeType,
-            size: metadata.size,
-            isBinary: metadata.isBinary,
-            encoding: metadata.encoding
-          };
-          controller.enqueue(
-            encoder.encode(`data: ${JSON.stringify(metadataEvent)}\n\n`)
-          );
+    // Resolve metadata with the absolute path.
+    // This is the only async work before returning the stream so the caller
+    // gets an early error rather than an SSE error event mid-stream.
+    const metadataResult = await this.getFileMetadata(absolutePath, sessionId);
 
-          // 3. Stream file in chunks using dd
-          // Chunk size of 65535 bytes (divisible by 3 for base64 alignment)
-          const chunkSize = 65535;
-          let bytesRead = 0;
-          let blockNumber = 0;
-
-          while (bytesRead < metadata.size) {
-            // Use dd to read specific chunk
-            const skip = blockNumber;
-            const count = 1;
-
-            let command: string;
-            if (metadata.isBinary) {
-              // Binary files: read as base64
-              command = `dd if=${escapedPath} bs=${chunkSize} skip=${skip} count=${count} 2>/dev/null | base64 -w 0`;
-            } else {
-              // Text files: read as-is
-              command = `dd if=${escapedPath} bs=${chunkSize} skip=${skip} count=${count} 2>/dev/null`;
-            }
-
-            const execResult = await this.sessionManager.executeInSession(
-              sessionId,
-              command
-            );
-
-            if (!execResult.success) {
-              const errorEvent = {
-                type: 'error',
-                error: `Failed to read chunk at offset ${bytesRead}: Command execution failed`
-              };
-              controller.enqueue(
-                encoder.encode(`data: ${JSON.stringify(errorEvent)}\n\n`)
-              );
-              controller.close();
-              return;
-            }
-
-            if (execResult.data.exitCode !== 0) {
-              const errorEvent = {
-                type: 'error',
-                error: `Failed to read chunk at offset ${bytesRead}: ${execResult.data.stderr}`
-              };
-              controller.enqueue(
-                encoder.encode(`data: ${JSON.stringify(errorEvent)}\n\n`)
-              );
-              controller.close();
-              return;
-            }
-
-            const chunkData = execResult.data.stdout;
-
-            if (chunkData.length === 0) {
-              // End of file
-              break;
-            }
-
-            // Send chunk event
-            const chunkEvent = {
-              type: 'chunk',
-              data: chunkData
-            };
-            controller.enqueue(
-              encoder.encode(`data: ${JSON.stringify(chunkEvent)}\n\n`)
-            );
-
-            // Calculate actual bytes read
-            // For text files: use the actual length of the data
-            // For binary files: decode base64 length (every 4 base64 chars = 3 bytes)
-            let actualBytesRead: number;
-            if (metadata.isBinary) {
-              // Base64 decoding: 4 chars = 3 bytes
-              // Handle padding: remove '=' characters before calculating
-              const base64Length = chunkData.replace(/=/g, '').length;
-              actualBytesRead = Math.floor((base64Length * 3) / 4);
-            } else {
-              actualBytesRead = chunkData.length;
-            }
-
-            bytesRead += actualBytesRead;
-            blockNumber++;
-          }
-
-          // 4. Send complete event
-          const completeEvent = {
-            type: 'complete',
-            bytesRead: metadata.size
-          };
-          controller.enqueue(
-            encoder.encode(`data: ${JSON.stringify(completeEvent)}\n\n`)
-          );
-          controller.close();
-        } catch (error) {
-          const errorMessage =
-            error instanceof Error ? error.message : 'Unknown error';
-          this.logger.error(
-            'File streaming failed',
-            error instanceof Error ? error : undefined,
-            { path }
-          );
-
+    if (!metadataResult.success) {
+      // Return a stream that immediately emits the error and closes.
+      return new ReadableStream({
+        start(controller) {
           const errorEvent = {
             type: 'error',
-            error: errorMessage
+            error: metadataResult.error.message
           };
           controller.enqueue(
             encoder.encode(`data: ${JSON.stringify(errorEvent)}\n\n`)
           );
           controller.close();
         }
-      }
-    });
+      });
+    }
+
+    const metadata = metadataResult.data;
+
+    const CHUNK_SIZE = 65535;
+
+    return await this.sessionManager
+      .withSession(sessionId, async () => {
+        const fileStream = Bun.file(absolutePath).stream();
+
+        // Carry-over buffer for chunks that arrive smaller than CHUNK_SIZE from
+        // Bun's internal read buffer so we always emit full-sized SSE events.
+        let carry = new Uint8Array(0);
+        let totalBytesEmitted = 0;
+
+        const sseTransform = new TransformStream<Uint8Array, Uint8Array>({
+          start(controller) {
+            // Emit the metadata SSE event as the very first bytes of the stream.
+            const metadataEvent = {
+              type: 'metadata',
+              mimeType: metadata.mimeType,
+              size: metadata.size,
+              isBinary: metadata.isBinary,
+              encoding: metadata.encoding
+            };
+            controller.enqueue(
+              encoder.encode(`data: ${JSON.stringify(metadataEvent)}\n\n`)
+            );
+          },
+
+          transform(incoming, controller) {
+            const combined = new Uint8Array(carry.length + incoming.length);
+            combined.set(carry);
+            combined.set(incoming, carry.length);
+
+            let offset = 0;
+            while (offset + CHUNK_SIZE <= combined.length) {
+              const slice = combined.subarray(offset, offset + CHUNK_SIZE);
+              emitChunk(slice, metadata.isBinary, encoder, controller);
+              totalBytesEmitted += slice.length;
+              offset += CHUNK_SIZE;
+            }
+
+            carry = combined.subarray(offset);
+          },
+
+          flush(controller) {
+            if (carry.length > 0) {
+              emitChunk(carry, metadata.isBinary, encoder, controller);
+              totalBytesEmitted += carry.length;
+              carry = new Uint8Array(0);
+            }
+
+            const completeEvent = {
+              type: 'complete',
+              bytesRead: totalBytesEmitted
+            };
+            controller.enqueue(
+              encoder.encode(`data: ${JSON.stringify(completeEvent)}\n\n`)
+            );
+          }
+        });
+
+        return fileStream.pipeThrough(sseTransform).pipeThrough(
+          new TransformStream<Uint8Array, Uint8Array>({
+            transform(chunk, controller) {
+              controller.enqueue(chunk);
+            },
+            flush() {}
+          })
+        );
+      })
+      .then((result) => {
+        if (!result.success) {
+          throw new Error(
+            `Failed to create file stream: ${result.error.message}`
+          );
+        }
+        return result.data;
+      });
   }
+}
+
+/**
+ * Encode a byte slice as an SSE chunk event and enqueue it onto the
+ * TransformStream controller.  Binary slices are base64-encoded; text slices
+ * are UTF-8 decoded and embedded as-is.
+ */
+function emitChunk(
+  slice: Uint8Array,
+  isBinary: boolean,
+  encoder: TextEncoder,
+  controller: TransformStreamDefaultController<Uint8Array>
+): void {
+  let data: string;
+  if (isBinary) {
+    // Encode bytes to base64 without line breaks.
+    // btoa only accepts latin1; convert via charCodeAt.
+    let binary = '';
+    for (let i = 0; i < slice.length; i++) {
+      binary += String.fromCharCode(slice[i]);
+    }
+    data = btoa(binary);
+  } else {
+    data = new TextDecoder().decode(slice);
+  }
+
+  const chunkEvent = { type: 'chunk', data };
+  controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunkEvent)}\n\n`));
 }

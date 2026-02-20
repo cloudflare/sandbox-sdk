@@ -16,6 +16,9 @@ export const ErrorCode = {
   IS_DIRECTORY: 'IS_DIRECTORY',
   NOT_DIRECTORY: 'NOT_DIRECTORY',
 
+  // File Too Large Errors (413)
+  FILE_TOO_LARGE: 'FILE_TOO_LARGE',
+
   // File System Errors (500)
   NO_SPACE: 'NO_SPACE',
   TOO_MANY_FILES: 'TOO_MANY_FILES',
