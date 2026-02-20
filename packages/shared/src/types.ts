@@ -934,7 +934,7 @@ export interface BackupOptions {
   dir: string;
   /** Human-readable name for this backup. Optional. */
   name?: string;
-  /** Seconds until automatic garbage collection. Default: 3600 (1 hour). Max: 86400 (24 hours). */
+  /** Seconds until automatic garbage collection. Default: 259200 (3 days). No upper limit. */
   ttl?: number;
 }
 

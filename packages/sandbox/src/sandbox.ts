@@ -2789,11 +2789,27 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     return this.backupBucket;
   }
 
-  /**
-   * Presigned URL expiration (seconds). 1 hour is generous — transfers complete
-   * in seconds, but retries and slow networks benefit from longer windows.
-   */
   private static readonly PRESIGNED_URL_EXPIRY_SECONDS = 3600;
+
+  /**
+   * Ensure a dedicated session for backup operations exists.
+   * Isolates backup shell commands (curl, stat, rm, mkdir) from user exec()
+   * calls to prevent session state interference and interleaving.
+   */
+  private async ensureBackupSession(): Promise<string> {
+    const sessionId = '__sandbox_backup__';
+    try {
+      await this.client.utils.createSession({
+        id: sessionId,
+        cwd: '/'
+      });
+    } catch (error: unknown) {
+      if (!(error instanceof SessionAlreadyExistsError)) {
+        throw error;
+      }
+    }
+    return sessionId;
+  }
 
   /**
    * Returns validated presigned URL configuration or throws if not configured.
@@ -2837,8 +2853,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private async generatePresignedGetUrl(r2Key: string): Promise<string> {
     const { client, accountId, bucketName } = this.requirePresignedUrlSupport();
 
+    const encodedBucket = encodeURIComponent(bucketName);
+    const encodedKey = r2Key
+      .split('/')
+      .map((seg) => encodeURIComponent(seg))
+      .join('/');
     const url = new URL(
-      `https://${accountId}.r2.cloudflarestorage.com/${bucketName}/${r2Key}`
+      `https://${accountId}.r2.cloudflarestorage.com/${encodedBucket}/${encodedKey}`
     );
     url.searchParams.set(
       'X-Amz-Expires',
@@ -2859,8 +2880,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private async generatePresignedPutUrl(r2Key: string): Promise<string> {
     const { client, accountId, bucketName } = this.requirePresignedUrlSupport();
 
+    const encodedBucket = encodeURIComponent(bucketName);
+    const encodedKey = r2Key
+      .split('/')
+      .map((seg) => encodeURIComponent(seg))
+      .join('/');
     const url = new URL(
-      `https://${accountId}.r2.cloudflarestorage.com/${bucketName}/${r2Key}`
+      `https://${accountId}.r2.cloudflarestorage.com/${encodedBucket}/${encodedKey}`
     );
     url.searchParams.set(
       'X-Amz-Expires',
@@ -2884,7 +2910,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     r2Key: string,
     archiveSize: number,
     backupId: string,
-    dir: string
+    dir: string,
+    backupSession: string
   ): Promise<void> {
     const presignedUrl = await this.generatePresignedPutUrl(r2Key);
 
@@ -2895,16 +2922,20 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     });
 
     const curlCmd = [
-      'curl -sf',
+      'curl -sSf',
       '-X PUT',
       "-H 'Content-Type: application/octet-stream'",
       '--connect-timeout 10',
       '--max-time 300',
+      '--retry 2',
+      '--retry-max-time 60',
       `--data-binary @${shellEscape(archivePath)}`,
-      `'${presignedUrl}'`
+      shellEscape(presignedUrl)
     ].join(' ');
 
-    const result = await this.exec(curlCmd, { timeout: 310_000 });
+    const result = await this.execWithSession(curlCmd, backupSession, {
+      timeout: 310_000
+    });
 
     if (result.exitCode !== 0) {
       throw new BackupCreateError({
@@ -2940,7 +2971,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     r2Key: string,
     expectedSize: number,
     backupId: string,
-    dir: string
+    dir: string,
+    backupSession: string
   ): Promise<void> {
     const presignedUrl = await this.generatePresignedGetUrl(r2Key);
 
@@ -2950,20 +2982,28 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       backupId
     });
 
-    await this.exec('mkdir -p /var/backups');
+    await this.execWithSession('mkdir -p /var/backups', backupSession);
 
+    const tmpPath = `${archivePath}.tmp`;
     const curlCmd = [
-      'curl -sf',
+      'curl -sSf',
       '--connect-timeout 10',
       '--max-time 300',
-      `-o ${shellEscape(archivePath)}`,
-      `'${presignedUrl}'`
+      '--retry 2',
+      '--retry-max-time 60',
+      `-o ${shellEscape(tmpPath)}`,
+      shellEscape(presignedUrl)
     ].join(' ');
 
-    const result = await this.exec(curlCmd, { timeout: 310_000 });
+    const result = await this.execWithSession(curlCmd, backupSession, {
+      timeout: 310_000
+    });
 
     if (result.exitCode !== 0) {
-      await this.exec(`rm -f ${shellEscape(archivePath)}`).catch(() => {});
+      await this.execWithSession(
+        `rm -f ${shellEscape(tmpPath)}`,
+        backupSession
+      ).catch(() => {});
       throw new BackupRestoreError({
         message: `Presigned URL download failed (exit code ${result.exitCode}): ${result.stderr}`,
         code: ErrorCode.BACKUP_RESTORE_FAILED,
@@ -2973,13 +3013,38 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       });
     }
 
-    // Verify downloaded file size
-    const sizeCheck = await this.exec(`stat -c %s ${shellEscape(archivePath)}`);
+    // Verify downloaded file size before committing
+    const sizeCheck = await this.execWithSession(
+      `stat -c %s ${shellEscape(tmpPath)}`,
+      backupSession
+    );
     const actualSize = parseInt(sizeCheck.stdout.trim(), 10);
     if (actualSize !== expectedSize) {
-      await this.exec(`rm -f ${shellEscape(archivePath)}`).catch(() => {});
+      await this.execWithSession(
+        `rm -f ${shellEscape(tmpPath)}`,
+        backupSession
+      ).catch(() => {});
       throw new BackupRestoreError({
         message: `Downloaded archive size mismatch: expected ${expectedSize}, got ${actualSize}`,
+        code: ErrorCode.BACKUP_RESTORE_FAILED,
+        httpStatus: 500,
+        context: { dir, backupId },
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    // Atomic move from temp to final path
+    const mvResult = await this.execWithSession(
+      `mv ${shellEscape(tmpPath)} ${shellEscape(archivePath)}`,
+      backupSession
+    );
+    if (mvResult.exitCode !== 0) {
+      await this.execWithSession(
+        `rm -f ${shellEscape(tmpPath)}`,
+        backupSession
+      ).catch(() => {});
+      throw new BackupRestoreError({
+        message: `Failed to finalize downloaded archive: ${mvResult.stderr}`,
         code: ErrorCode.BACKUP_RESTORE_FAILED,
         httpStatus: 500,
         context: { dir, backupId },
@@ -3031,8 +3096,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   ): Promise<DirectoryBackup> {
     const bucket = this.requireBackupBucket();
     this.requirePresignedUrlSupport();
-    const MAX_TTL_SECONDS = 86400; // 24 hours
-    const DEFAULT_TTL_SECONDS = 3600; // 1 hour
+    const DEFAULT_TTL_SECONDS = 259200; // 3 days
     const MAX_NAME_LENGTH = 256;
     const { dir, name, ttl = DEFAULT_TTL_SECONDS } = options;
     Sandbox.validateBackupDir(dir, 'BackupOptions.dir');
@@ -3060,29 +3124,28 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         });
       }
     }
-    if (ttl <= 0 || ttl > MAX_TTL_SECONDS) {
+    if (ttl <= 0) {
       throw new InvalidBackupConfigError({
-        message: `BackupOptions.ttl must be between 1 and ${MAX_TTL_SECONDS} seconds (24 hours)`,
+        message: 'BackupOptions.ttl must be a positive number of seconds',
         code: ErrorCode.INVALID_BACKUP_CONFIG,
         httpStatus: 400,
-        context: {
-          reason: `ttl must be between 1 and ${MAX_TTL_SECONDS} seconds`
-        },
+        context: { reason: 'ttl must be a positive number of seconds' },
         timestamp: new Date().toISOString()
       });
     }
 
-    const session = await this.ensureDefaultSession();
+    const backupSession = await this.ensureBackupSession();
+    const defaultSession = await this.ensureDefaultSession();
     const backupId = crypto.randomUUID();
     const archivePath = `/var/backups/${backupId}.sqsh`;
 
     this.logger.info('Creating backup', { backupId, dir, name });
 
-    // Step 1: Tell the container to create the squashfs archive
+    // Step 1: Create squashfs archive (uses default session for container API)
     const createResult = await this.client.backup.createArchive(
       dir,
       archivePath,
-      session
+      defaultSession
     );
 
     if (!createResult.success) {
@@ -3099,13 +3162,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     const metaKey = `backups/${backupId}/meta.json`;
 
     try {
-      // Step 2: Upload archive to R2 via presigned URL (container curls directly)
+      // Step 2: Upload archive to R2 via presigned URL (isolated backup session)
       await this.uploadBackupPresigned(
         archivePath,
         r2Key,
         createResult.sizeBytes,
         backupId,
-        dir
+        dir,
+        backupSession
       );
 
       // Step 3: Write metadata alongside the archive
@@ -3126,12 +3190,18 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       });
 
       // Step 5: Clean up the local archive in the container
-      await this.exec(`rm -f ${shellEscape(archivePath)}`).catch(() => {});
+      await this.execWithSession(
+        `rm -f ${shellEscape(archivePath)}`,
+        backupSession
+      ).catch(() => {});
 
       return { id: backupId, dir };
     } catch (error) {
       // Clean up local archive and any partially-uploaded R2 objects
-      await this.exec(`rm -f ${shellEscape(archivePath)}`).catch(() => {});
+      await this.execWithSession(
+        `rm -f ${shellEscape(archivePath)}`,
+        backupSession
+      ).catch(() => {});
       await bucket.delete(r2Key).catch(() => {});
       await bucket.delete(metaKey).catch(() => {});
       throw error;
@@ -3266,7 +3336,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       });
     }
 
-    const session = await this.ensureDefaultSession();
+    const backupSession = await this.ensureBackupSession();
+    const defaultSession = await this.ensureDefaultSession();
     const archivePath = `/var/backups/${backupId}.sqsh`;
 
     try {
@@ -3277,18 +3348,21 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       // backup (both suffixed UUID_* and legacy unsuffixed UUID) and unmount
       // their squashfuse lower dirs.
       const mountGlob = `/var/backups/mounts/${backupId}`;
-      await this.exec(
-        `/usr/bin/fusermount3 -uz ${shellEscape(dir)} 2>/dev/null || true`
+      await this.execWithSession(
+        `/usr/bin/fusermount3 -uz ${shellEscape(dir)} 2>/dev/null || true`,
+        backupSession
       ).catch(() => {});
-      await this.exec(
-        `for d in ${shellEscape(mountGlob)}_*/lower ${shellEscape(mountGlob)}/lower; do [ -d "$d" ] && /usr/bin/fusermount3 -uz "$d" 2>/dev/null; done; true`
+      await this.execWithSession(
+        `for d in ${shellEscape(mountGlob)}_*/lower ${shellEscape(mountGlob)}/lower; do [ -d "$d" ] && /usr/bin/fusermount3 -uz "$d" 2>/dev/null; done; true`,
+        backupSession
       ).catch(() => {});
 
       // Step 4: Write archive to the container (skip if already present and
       // same size — avoids overwriting a file that a lazily-unmounted
       // squashfuse may still hold open).
-      const sizeCheck = await this.exec(
-        `stat -c %s ${shellEscape(archivePath)} 2>/dev/null || echo 0`
+      const sizeCheck = await this.execWithSession(
+        `stat -c %s ${shellEscape(archivePath)} 2>/dev/null || echo 0`,
+        backupSession
       ).catch(() => ({ stdout: '0' }));
       const existingSize = Number.parseInt(
         (sizeCheck.stdout ?? '0').trim(),
@@ -3302,15 +3376,16 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           r2Key,
           archiveHead.size,
           backupId,
-          dir
+          dir,
+          backupSession
         );
       }
 
-      // Step 5: Tell the container to extract the archive
+      // Step 5: Tell the container to extract the archive (uses default session for container API)
       const restoreResult = await this.client.backup.restoreArchive(
         dir,
         archivePath,
-        session
+        defaultSession
       );
 
       if (!restoreResult.success) {
@@ -3333,7 +3408,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     } catch (error) {
       // Clean up archive file on failure only — squashfuse needs it as
       // backing storage for the lifetime of the mount
-      await this.exec(`rm -f ${shellEscape(archivePath)}`).catch(() => {});
+      await this.execWithSession(
+        `rm -f ${shellEscape(archivePath)}`,
+        backupSession
+      ).catch(() => {});
       throw error;
     }
   }
