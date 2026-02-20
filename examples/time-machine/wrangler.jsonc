@@ -8,6 +8,14 @@
     "enabled": true
   },
 
+  // Required: Set R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY as secrets:
+  //   wrangler secret put R2_ACCESS_KEY_ID
+  //   wrangler secret put R2_SECRET_ACCESS_KEY
+  "vars": {
+    "BACKUP_BUCKET_NAME": "time-machine-snapshots",
+    "CLOUDFLARE_ACCOUNT_ID": "<your-account-id>"
+  },
+
   // R2 bucket for storing snapshots (also stores checkpoint metadata in meta.json files)
   // Create: wrangler r2 bucket create time-machine-snapshots
   "r2_buckets": [
