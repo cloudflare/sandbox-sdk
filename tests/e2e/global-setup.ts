@@ -66,6 +66,22 @@ export async function setup() {
     );
   }
 
+  const opencodeHeaders = {
+    ...createTestHeaders(sandboxId),
+    'X-Sandbox-Type': 'opencode'
+  };
+  const opencodeInitResponse = await fetch(`${workerUrl}/api/execute`, {
+    method: 'POST',
+    headers: opencodeHeaders,
+    body: JSON.stringify({ command: 'opencode --version' })
+  });
+
+  if (!opencodeInitResponse.ok) {
+    console.warn(
+      `Warning: Failed to initialize OpenCode sandbox: ${opencodeInitResponse.status}`
+    );
+  }
+
   // Write state to temp file for worker threads to read
   writeFileSync(SHARED_STATE_FILE, JSON.stringify({ workerUrl, sandboxId }));
 
