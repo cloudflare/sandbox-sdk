@@ -50,6 +50,10 @@ interface Env {
   CLOUDFLARE_ACCOUNT_ID?: string;
   AWS_ACCESS_KEY_ID?: string;
   AWS_SECRET_ACCESS_KEY?: string;
+  // R2 credentials for backup presigned URL transfers
+  R2_ACCESS_KEY_ID?: string;
+  R2_SECRET_ACCESS_KEY?: string;
+  BACKUP_BUCKET_NAME?: string;
 }
 
 /**
