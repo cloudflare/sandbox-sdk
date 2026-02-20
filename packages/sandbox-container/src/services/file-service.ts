@@ -101,94 +101,123 @@ export class FileService implements FileSystemOperations {
         };
       }
 
-      const bunFile = Bun.file(path);
+      return this.sessionManager
+        .withSession(sessionId, async (exec) => {
+          let targetPath = path;
 
-      const fileExists = await bunFile.exists();
-      if (!fileExists) {
-        return {
-          success: false,
-          error: {
-            message: `File not found: ${path}`,
-            code: ErrorCode.FILE_NOT_FOUND,
-            details: {
-              path,
-              operation: Operation.FILE_READ
-            } satisfies FileNotFoundContext
+          if (!path.startsWith('/')) {
+            const pwdResult = await exec('pwd');
+            if (pwdResult.exitCode !== 0) {
+              throw {
+                code: ErrorCode.FILESYSTEM_ERROR,
+                message: `Failed to resolve working directory for '${path}'`,
+                details: {
+                  path,
+                  operation: Operation.FILE_WRITE,
+                  exitCode: pwdResult.exitCode,
+                  stderr: pwdResult.stderr
+                } satisfies FileSystemContext
+              };
+            }
+
+            const cwd = pwdResult.stdout.trim();
+            targetPath = `${cwd}/${path}`;
           }
-        };
-      }
 
-      // Size and MIME type come directly from the BunFile object.
-      const fileSize = bunFile.size;
-      // RPC transfers have a hard limit of 32 MiB to prevent issues for large files, enforce this limit upfront before reading content.
-      if (fileSize > MAX_RPC_FILE_SIZE) {
-        return {
-          success: false,
-          error: {
-            message: `File too large. Size ${fileSize} bytes exceeds the 32 MiB limit. Consider using streaming APIs for large files.`,
-            code: ErrorCode.FILE_TOO_LARGE,
-            details: {
-              path,
-              operation: Operation.FILE_READ,
-              actualSize: fileSize,
-              maxSize: MAX_RPC_FILE_SIZE
-            } satisfies FileTooLargeContext
+          const bunFile = Bun.file(targetPath);
+
+          const fileExists = await bunFile.exists();
+          if (!fileExists) {
+            throw {
+              message: `File not found: ${path}`,
+              code: ErrorCode.FILE_NOT_FOUND,
+              details: {
+                path,
+                operation: Operation.FILE_READ
+              } satisfies FileNotFoundContext
+            };
           }
-        };
-      }
 
-      // Bun.file() derives the MIME type from the file extension and falls back
-      // to 'application/octet-stream' for unknown types.
-      let mimeType = bunFile.type;
-      if (mimeType === 'application/octet-stream') {
-        const escapedPath = shellEscape(path);
-        const mimeResult = await this.sessionManager.executeInSession(
-          sessionId,
-          `file --mime-type -b ${escapedPath}`
-        );
-        if (mimeResult.success && mimeResult.data.exitCode === 0) {
-          mimeType = mimeResult.data.stdout.trim();
-        }
-      }
+          // Size and MIME type come directly from the BunFile object.
+          const fileSize = bunFile.size;
+          // RPC transfers have a hard limit of 32 MiB to prevent issues for large files, enforce this limit upfront before reading content.
+          if (fileSize > MAX_RPC_FILE_SIZE) {
+            throw {
+              message: `File too large. Size ${fileSize} bytes exceeds the 32 MiB limit. Consider using streaming APIs for large files.`,
+              code: ErrorCode.FILE_TOO_LARGE,
+              details: {
+                path,
+                operation: Operation.FILE_READ,
+                actualSize: fileSize,
+                maxSize: MAX_RPC_FILE_SIZE
+              } satisfies FileTooLargeContext
+            };
+          }
 
-      const isBinary = this.isBinaryMimeType(mimeType);
+          // Bun.file() derives the MIME type from the file extension and falls back
+          // to 'application/octet-stream' for unknown types.
+          let mimeType = bunFile.type;
+          if (mimeType === 'application/octet-stream') {
+            const escapedPath = shellEscape(path);
+            const mimeResult = await exec(`file --mime-type -b ${escapedPath}`);
+            if (mimeResult.exitCode === 0) {
+              mimeType = mimeResult.stdout.trim();
+            }
+          }
 
-      // Determine encoding: honour explicit caller preference, otherwise fall
-      // back to MIME-based detection.
-      let actualEncoding: 'utf-8' | 'base64';
-      if (options.encoding === 'base64') {
-        actualEncoding = 'base64';
-      } else if (options.encoding === 'utf-8' || options.encoding === 'utf8') {
-        actualEncoding = 'utf-8';
-      } else {
-        actualEncoding = isBinary ? 'base64' : 'utf-8';
-      }
+          const isBinary = this.isBinaryMimeType(mimeType);
 
-      // 3. Read file content natively.
-      let content: string;
-      if (actualEncoding === 'base64') {
-        const buffer = await bunFile.arrayBuffer();
-        const bytes = new Uint8Array(buffer);
-        // btoa only accepts latin1; convert byte-by-byte.
-        let binary = '';
-        for (let i = 0; i < bytes.length; i++) {
-          binary += String.fromCharCode(bytes[i]);
-        }
-        content = btoa(binary);
-      } else {
-        content = await bunFile.text();
-      }
+          // Determine encoding: honour explicit caller preference, otherwise fall
+          // back to MIME-based detection.
+          let actualEncoding: 'utf-8' | 'base64';
+          if (options.encoding === 'base64') {
+            actualEncoding = 'base64';
+          } else if (
+            options.encoding === 'utf-8' ||
+            options.encoding === 'utf8'
+          ) {
+            actualEncoding = 'utf-8';
+          } else {
+            actualEncoding = isBinary ? 'base64' : 'utf-8';
+          }
 
-      return {
-        success: true,
-        data: content,
-        metadata: {
-          encoding: actualEncoding,
-          isBinary: actualEncoding === 'base64',
-          mimeType,
-          size: fileSize
-        }
-      };
+          // 3. Read file content natively.
+          let content: string;
+          if (actualEncoding === 'base64') {
+            const buffer = await bunFile.arrayBuffer();
+            const bytes = new Uint8Array(buffer);
+            // btoa only accepts latin1; convert byte-by-byte.
+            let binary = '';
+            for (let i = 0; i < bytes.length; i++) {
+              binary += String.fromCharCode(bytes[i]);
+            }
+            content = btoa(binary);
+          } else {
+            content = await bunFile.text();
+          }
+
+          return {
+            success: true,
+            content,
+            metadata: {
+              encoding: actualEncoding,
+              isBinary: actualEncoding === 'base64',
+              mimeType,
+              size: fileSize
+            }
+          };
+        })
+        .then((result) => {
+          if (!result.success) {
+            return result as ServiceResult<string, FileMetadata>;
+          }
+
+          return {
+            success: true,
+            data: result.data.content,
+            metadata: result.data.metadata
+          };
+        });
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
@@ -1346,10 +1375,41 @@ export class FileService implements FileSystemOperations {
   ): Promise<ReadableStream<Uint8Array>> {
     const encoder = new TextEncoder();
 
-    // Resolve metadata first.
+    let absolutePath = path;
+
+    if (!path.startsWith('/')) {
+      // Resolve the absolute path first to avoid calling executeInSession inside withSession
+      const pwdResult = await this.sessionManager.executeInSession(
+        sessionId,
+        'pwd'
+      );
+
+      if (!pwdResult.success || pwdResult.data.exitCode !== 0) {
+        // Return a stream that immediately emits the error and closes.
+        return new ReadableStream({
+          start(controller) {
+            const errorEvent = {
+              type: 'error',
+              error: pwdResult.success
+                ? 'Failed to get working directory'
+                : pwdResult.error.message
+            };
+            controller.enqueue(
+              encoder.encode(`data: ${JSON.stringify(errorEvent)}\n\n`)
+            );
+            controller.close();
+          }
+        });
+      }
+
+      const cwd = pwdResult.data.stdout.trim();
+      absolutePath = `${cwd}/${path}`;
+    }
+
+    // Resolve metadata with the absolute path.
     // This is the only async work before returning the stream so the caller
     // gets an early error rather than an SSE error event mid-stream.
-    const metadataResult = await this.getFileMetadata(path, sessionId);
+    const metadataResult = await this.getFileMetadata(absolutePath, sessionId);
 
     if (!metadataResult.success) {
       // Return a stream that immediately emits the error and closes.
@@ -1371,75 +1431,80 @@ export class FileService implements FileSystemOperations {
 
     const CHUNK_SIZE = 65535;
 
-    // Open the native Bun file stream.  Bun.file() does not throw for missing
-    // files at construction time; it throws when the stream is read, which is
-    // handled in the TransformStream's flush / ReadableStream catch below.
-    const fileStream = Bun.file(path).stream();
+    return await this.sessionManager
+      .withSession(sessionId, async () => {
+        const fileStream = Bun.file(absolutePath).stream();
 
-    // Carry-over buffer for chunks that arrive smaller than CHUNK_SIZE from
-    // Bun's internal read buffer so we always emit full-sized SSE events.
-    let carry = new Uint8Array(0);
-    let totalBytesEmitted = 0;
+        // Carry-over buffer for chunks that arrive smaller than CHUNK_SIZE from
+        // Bun's internal read buffer so we always emit full-sized SSE events.
+        let carry = new Uint8Array(0);
+        let totalBytesEmitted = 0;
 
-    const sseTransform = new TransformStream<Uint8Array, Uint8Array>({
-      start(controller) {
-        // Emit the metadata SSE event as the very first bytes of the stream.
-        const metadataEvent = {
-          type: 'metadata',
-          mimeType: metadata.mimeType,
-          size: metadata.size,
-          isBinary: metadata.isBinary,
-          encoding: metadata.encoding
-        };
-        controller.enqueue(
-          encoder.encode(`data: ${JSON.stringify(metadataEvent)}\n\n`)
-        );
-      },
-
-      transform(incoming, controller) {
-        const combined = new Uint8Array(carry.length + incoming.length);
-        combined.set(carry);
-        combined.set(incoming, carry.length);
-
-        let offset = 0;
-        while (offset + CHUNK_SIZE <= combined.length) {
-          const slice = combined.subarray(offset, offset + CHUNK_SIZE);
-          emitChunk(slice, metadata.isBinary, encoder, controller);
-          totalBytesEmitted += slice.length;
-          offset += CHUNK_SIZE;
-        }
-
-        carry = combined.subarray(offset);
-      },
-
-      flush(controller) {
-        if (carry.length > 0) {
-          emitChunk(carry, metadata.isBinary, encoder, controller);
-          totalBytesEmitted += carry.length;
-          carry = new Uint8Array(0);
-        }
-
-        const completeEvent = {
-          type: 'complete',
-          bytesRead: totalBytesEmitted
-        };
-        controller.enqueue(
-          encoder.encode(`data: ${JSON.stringify(completeEvent)}\n\n`)
-        );
-      }
-    });
-
-    return fileStream
-      .pipeThrough(sseTransform)
-      .pipeThrough(
-        new TransformStream<Uint8Array, Uint8Array>({
-          transform(chunk, controller) {
-            controller.enqueue(chunk);
+        const sseTransform = new TransformStream<Uint8Array, Uint8Array>({
+          start(controller) {
+            // Emit the metadata SSE event as the very first bytes of the stream.
+            const metadataEvent = {
+              type: 'metadata',
+              mimeType: metadata.mimeType,
+              size: metadata.size,
+              isBinary: metadata.isBinary,
+              encoding: metadata.encoding
+            };
+            controller.enqueue(
+              encoder.encode(`data: ${JSON.stringify(metadataEvent)}\n\n`)
+            );
           },
-          flush() {}
-        })
-      )
-      .pipeThrough(buildErrorCatchTransform(encoder, this.logger, path));
+
+          transform(incoming, controller) {
+            const combined = new Uint8Array(carry.length + incoming.length);
+            combined.set(carry);
+            combined.set(incoming, carry.length);
+
+            let offset = 0;
+            while (offset + CHUNK_SIZE <= combined.length) {
+              const slice = combined.subarray(offset, offset + CHUNK_SIZE);
+              emitChunk(slice, metadata.isBinary, encoder, controller);
+              totalBytesEmitted += slice.length;
+              offset += CHUNK_SIZE;
+            }
+
+            carry = combined.subarray(offset);
+          },
+
+          flush(controller) {
+            if (carry.length > 0) {
+              emitChunk(carry, metadata.isBinary, encoder, controller);
+              totalBytesEmitted += carry.length;
+              carry = new Uint8Array(0);
+            }
+
+            const completeEvent = {
+              type: 'complete',
+              bytesRead: totalBytesEmitted
+            };
+            controller.enqueue(
+              encoder.encode(`data: ${JSON.stringify(completeEvent)}\n\n`)
+            );
+          }
+        });
+
+        return fileStream.pipeThrough(sseTransform).pipeThrough(
+          new TransformStream<Uint8Array, Uint8Array>({
+            transform(chunk, controller) {
+              controller.enqueue(chunk);
+            },
+            flush() {}
+          })
+        );
+      })
+      .then((result) => {
+        if (!result.success) {
+          throw new Error(
+            `Failed to create file stream: ${result.error.message}`
+          );
+        }
+        return result.data;
+      });
   }
 }
 
@@ -1469,27 +1534,4 @@ function emitChunk(
 
   const chunkEvent = { type: 'chunk', data };
   controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunkEvent)}\n\n`));
-}
-
-/**
- * Returns a TransformStream that passes bytes through unchanged but catches
- * any stream error and converts it into an SSE error event so the consumer
- * always receives a structured response.
- */
-function buildErrorCatchTransform(
-  encoder: TextEncoder,
-  logger: Logger,
-  path: string
-): TransformStream<Uint8Array, Uint8Array> {
-  return new TransformStream<Uint8Array, Uint8Array>({
-    transform(chunk, controller) {
-      controller.enqueue(chunk);
-    },
-    flush() {}
-  });
-  // Note: TransformStream does not expose a built-in error handler per spec.
-  // Stream errors propagate as readable stream errors to the consumer; the
-  // container handler wraps the response in a try/catch and sends an SSE
-  // error event from there.  This transform is a pass-through placeholder
-  // kept here for symmetry – the error path is handled at the handler level.
 }

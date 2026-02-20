@@ -72,9 +72,13 @@ export class FileHandler extends BaseHandler<Request, Response> {
   ): Promise<Response> {
     const body = await this.parseRequestBody<ReadFileRequest>(request);
 
-    const result = await this.fileService.readFile(body.path, {
-      encoding: body.encoding
-    });
+    const result = await this.fileService.readFile(
+      body.path,
+      {
+        encoding: body.encoding
+      },
+      body.sessionId
+    );
 
     if (result.success) {
       const response: ReadFileResult = {

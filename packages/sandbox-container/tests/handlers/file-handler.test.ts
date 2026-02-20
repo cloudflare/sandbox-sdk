@@ -69,7 +69,8 @@ describe('FileHandler', () => {
     it('should read file successfully', async () => {
       const readFileData = {
         path: '/tmp/test.txt',
-        encoding: 'utf-8'
+        encoding: 'utf-8',
+        sessionId: 'session-id'
       };
       const fileContent = 'Hello, World!';
 
@@ -94,9 +95,13 @@ describe('FileHandler', () => {
       expect(responseData.timestamp).toBeDefined();
 
       // Verify service was called correctly
-      expect(mockFileService.readFile).toHaveBeenCalledWith('/tmp/test.txt', {
-        encoding: 'utf-8'
-      });
+      expect(mockFileService.readFile).toHaveBeenCalledWith(
+        '/tmp/test.txt',
+        {
+          encoding: 'utf-8'
+        },
+        'session-id'
+      );
     });
 
     it('should pass undefined encoding when not specified', async () => {
@@ -125,9 +130,13 @@ describe('FileHandler', () => {
       expect(responseData.path).toBe('/tmp/test.txt');
       expect(responseData.timestamp).toBeDefined();
 
-      expect(mockFileService.readFile).toHaveBeenCalledWith('/tmp/test.txt', {
-        encoding: undefined
-      });
+      expect(mockFileService.readFile).toHaveBeenCalledWith(
+        '/tmp/test.txt',
+        {
+          encoding: undefined
+        },
+        undefined
+      );
     });
 
     it('should handle file read errors', async () => {

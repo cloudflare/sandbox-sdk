@@ -18,6 +18,7 @@ import type {
   FileExistsContext,
   FileNotFoundContext,
   FileSystemContext,
+  FileTooLargeContext,
   GitAuthFailedContext,
   GitBranchNotFoundContext,
   GitErrorContext,
@@ -113,6 +114,21 @@ export class FileExistsError extends SandboxError<FileExistsContext> {
   constructor(errorResponse: ErrorResponse<FileExistsContext>) {
     super(errorResponse);
     this.name = 'FileExistsError';
+  }
+
+  // Type-safe accessor
+  get path() {
+    return this.context.path;
+  }
+}
+
+/**
+ * Error thrown when a file is too large
+ */
+export class FileTooLargeError extends SandboxError<FileTooLargeContext> {
+  constructor(errorResponse: ErrorResponse<FileTooLargeContext>) {
+    super(errorResponse);
+    this.name = 'FileTooLargeError';
   }
 
   // Type-safe accessor

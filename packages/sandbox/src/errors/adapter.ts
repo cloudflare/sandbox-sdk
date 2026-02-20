@@ -18,6 +18,7 @@ import type {
   FileExistsContext,
   FileNotFoundContext,
   FileSystemContext,
+  FileTooLargeContext,
   GitAuthFailedContext,
   GitBranchNotFoundContext,
   GitErrorContext,
@@ -49,6 +50,7 @@ import {
   FileExistsError,
   FileNotFoundError,
   FileSystemError,
+  FileTooLargeError,
   GitAuthenticationError,
   GitBranchNotFoundError,
   GitCheckoutError,
@@ -89,6 +91,11 @@ export function createErrorFromResponse(errorResponse: ErrorResponse): Error {
     case ErrorCode.FILE_EXISTS:
       return new FileExistsError(
         errorResponse as unknown as ErrorResponse<FileExistsContext>
+      );
+
+    case ErrorCode.FILE_TOO_LARGE:
+      return new FileTooLargeError(
+        errorResponse as unknown as ErrorResponse<FileTooLargeContext>
       );
 
     case ErrorCode.PERMISSION_DENIED:
