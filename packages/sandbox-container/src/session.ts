@@ -91,7 +91,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { watch } from 'node:fs';
+import { readFileSync, watch } from 'node:fs';
 import { mkdir, open, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
@@ -656,9 +656,10 @@ export class Session {
    * so they cannot be killed mid-execution (use timeout instead).
    *
    * @param commandId - The unique command identifier
+   * @param waitForExit - If true, wait for process exit and verify termination before returning.
    * @returns true if command was killed, false if not found or already completed
    */
-  async killCommand(commandId: string): Promise<boolean> {
+  async killCommand(commandId: string, waitForExit = true): Promise<boolean> {
     const handle = this.runningCommands.get(commandId);
     if (!handle) {
       return false; // Command not found or already completed
@@ -674,8 +675,69 @@ export class Session {
         const pid = parseInt(pidText.trim(), 10);
 
         if (!Number.isNaN(pid)) {
-          // Send SIGTERM for graceful termination
-          process.kill(pid, 'SIGTERM');
+          const waitForExitResult = async () => {
+            try {
+              await Promise.race([
+                this.waitForExitCode(handle.exitCodeFile),
+                new Promise((_, reject) =>
+                  setTimeout(() => reject(new Error('kill timeout')), 5000)
+                )
+              ]);
+              return true;
+            } catch {
+              return false;
+            }
+          };
+
+          const killProcessTree = (
+            targetPid: number,
+            signal: NodeJS.Signals
+          ) => {
+            // Use process-group kill first to avoid TOCTOU races in child enumeration.
+            try {
+              process.kill(-targetPid, signal);
+              return;
+            } catch {
+              // If the process is not in its own process group, fall back to best-effort
+              // tree traversal. This may miss descendants that spawn between reads.
+            }
+
+            const killChildrenFirst = (childPid: number): void => {
+              for (const grandchildPid of this.getProcessChildren(childPid)) {
+                killChildrenFirst(grandchildPid);
+              }
+              try {
+                process.kill(childPid, signal);
+              } catch {
+                // Process already exited
+              }
+            };
+
+            for (const childPid of this.getProcessChildren(targetPid)) {
+              killChildrenFirst(childPid);
+            }
+
+            try {
+              process.kill(targetPid, signal);
+            } catch {
+              // Process already exited
+            }
+          };
+
+          killProcessTree(pid, 'SIGTERM');
+
+          let exitConfirmed = false;
+          if (waitForExit) {
+            exitConfirmed = await waitForExitResult();
+            if (!exitConfirmed) {
+              killProcessTree(pid, 'SIGKILL');
+              exitConfirmed = await waitForExitResult();
+            }
+          }
+
+          if (waitForExit && !exitConfirmed) {
+            return false;
+          }
 
           // Clean up
           this.runningCommands.delete(commandId);
@@ -701,6 +763,28 @@ export class Session {
   }
 
   /**
+   * Get direct child PIDs of a process from /proc.
+   *
+   * @param pid - Process ID
+   * @returns Array of child PIDs
+   */
+  private getProcessChildren(pid: number): number[] {
+    try {
+      const childrenFile = `/proc/${pid}/task/${pid}/children`;
+      const children = readFileSync(childrenFile, 'utf8')
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean);
+
+      return children
+        .map((child) => parseInt(child, 10))
+        .filter((value) => !Number.isNaN(value));
+    } catch {
+      return [];
+    }
+  }
+
+  /**
    * Destroy the session and clean up resources
    */
   async destroy(): Promise<void> {
@@ -715,7 +799,7 @@ export class Session {
     // Kill all running commands first
     const runningCommandIds = Array.from(this.runningCommands.keys());
     await Promise.all(
-      runningCommandIds.map((commandId) => this.killCommand(commandId))
+      runningCommandIds.map((commandId) => this.killCommand(commandId, false))
     );
 
     if (this.shell && !this.shell.killed) {
@@ -884,6 +968,9 @@ export class Session {
     if (isBackground) {
       // BACKGROUND PATTERN (for execStream/startProcess)
       // Command runs in subshell, shell continues immediately
+      // Enable job control so background commands run in a dedicated process group.
+      // This lets killCommand terminate the command subtree with process-group signals.
+      script += `  set -m\n`;
 
       // Create FIFOs and start labelers (background mode)
       // Labeler pattern explanation:
