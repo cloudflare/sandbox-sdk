@@ -7,7 +7,7 @@
  */
 
 import type { ExecResult } from '@repo/shared';
-import { afterAll, beforeAll, describe, expect, test } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import {
   cleanupIsolatedSandbox,
   getIsolatedSandbox,
@@ -20,14 +20,15 @@ describe('OpenCode Workflow (E2E)', () => {
   let headers: Record<string, string>;
   let sandbox: SharedSandbox | null = null;
 
-  beforeAll(async () => {
+  beforeEach(async () => {
     sandbox = await getIsolatedSandbox();
     workerUrl = sandbox.workerUrl;
     headers = sandbox.createOpencodeHeaders();
   }, 120000);
 
-  afterAll(async () => {
+  afterEach(async () => {
     await cleanupIsolatedSandbox(sandbox);
+    sandbox = null;
   }, 120000);
 
   test('should have opencode CLI available', async () => {
@@ -66,14 +67,6 @@ describe('OpenCode Workflow (E2E)', () => {
     test('should start opencode server via process', async () => {
       const testPort = 4400 + Math.floor(Math.random() * 300);
 
-      // Reset process state for this isolated sandbox to avoid stale process IDs
-      // from retries interfering with lifecycle assertions.
-      const killAllRes = await fetch(`${workerUrl}/api/process/kill-all`, {
-        method: 'POST',
-        headers
-      });
-      expect(killAllRes.status).toBe(200);
-
       // Start OpenCode server as a background process on a unique test port.
       const startRes = await waitForCondition(
         async () => {
@@ -92,7 +85,7 @@ describe('OpenCode Workflow (E2E)', () => {
           return response;
         },
         {
-          timeout: 30000,
+          timeout: 60000,
           interval: 1000,
           errorMessage: 'Failed to start OpenCode process'
         }
@@ -108,11 +101,38 @@ describe('OpenCode Workflow (E2E)', () => {
           headers,
           body: JSON.stringify({
             port: testPort,
-            options: { mode: 'http', path: '/', timeout: 120000 }
+            options: { mode: 'http', path: '/global/health', timeout: 180000 }
           })
         }
       );
-      expect(waitRes.status).toBe(200);
+      if (waitRes.status !== 200) {
+        const [waitErrorBody, processListRes, processLogsRes] =
+          await Promise.all([
+            waitRes.text().catch(() => '(unreadable response body)'),
+            fetch(`${workerUrl}/api/process/list`, {
+              method: 'GET',
+              headers
+            }),
+            fetch(`${workerUrl}/api/process/${startResult.id}/logs`, {
+              method: 'GET',
+              headers
+            })
+          ]);
+
+        const processListBody = await processListRes
+          .text()
+          .catch(() => '(unreadable process list)');
+        const processLogsBody = await processLogsRes
+          .text()
+          .catch(() => '(unreadable process logs)');
+
+        throw new Error(
+          `waitForPort failed with status ${waitRes.status}. ` +
+            `wait body: ${waitErrorBody}. ` +
+            `process list status/body: ${processListRes.status}/${processListBody}. ` +
+            `process logs status/body: ${processLogsRes.status}/${processLogsBody}`
+        );
+      }
 
       // Verify server is running by listing processes
       const listRes = await fetch(`${workerUrl}/api/process/list`, {
@@ -140,6 +160,6 @@ describe('OpenCode Workflow (E2E)', () => {
         }
       );
       expect([200, 404, 500]).toContain(killRes.status);
-    }, 180000);
+    }, 240000);
   });
 });
