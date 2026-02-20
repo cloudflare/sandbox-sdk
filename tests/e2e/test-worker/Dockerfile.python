@@ -1,6 +1,6 @@
 # Integration test Dockerfile
 # Uses the -python variant because E2E tests include Python code execution tests
-FROM docker.io/cloudflare/sandbox-test:0.7.4-python
+FROM docker.io/cloudflare/sandbox-test:0.7.5-python
 
 # Install snapshot tools: squashfs-tools (create), squashfuse (mount), fuse-overlayfs (COW)
 RUN apt-get update && apt-get install -y squashfs-tools squashfuse fuse-overlayfs && rm -rf /var/lib/apt/lists/*

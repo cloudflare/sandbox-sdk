@@ -1,6 +1,6 @@
 # Base image Dockerfile (no Python)
 # Used for testing Python-not-available error handling
-FROM docker.io/cloudflare/sandbox-test:0.7.4
+FROM docker.io/cloudflare/sandbox-test:0.7.5
 
 # Install snapshot tools: squashfs-tools (create), squashfuse (mount), fuse-overlayfs (COW)
 RUN apt-get update && apt-get install -y squashfs-tools squashfuse fuse-overlayfs && rm -rf /var/lib/apt/lists/*
