@@ -1,5 +1,21 @@
 # @cloudflare/sandbox
 
+## 0.7.5
+
+### Patch Changes
+
+- [#396](https://github.com/cloudflare/sandbox-sdk/pull/396) [`76284f0`](https://github.com/cloudflare/sandbox-sdk/commit/76284f02154056b89ce0861373d51966e3fe0f02) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - Add backup and restore API for directory snapshots.
+
+  `createBackup()` archives a directory as a compressed squashfs image and uploads it to R2.
+  `restoreBackup()` downloads and mounts the archive with copy-on-write semantics via FUSE overlay.
+
+  Requires R2 presigned URL credentials: set `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`,
+  `CLOUDFLARE_ACCOUNT_ID`, and `BACKUP_BUCKET_NAME` as environment variables alongside the
+  `BACKUP_BUCKET` R2 binding. Archives transfer directly between the container and R2
+  at ~24 MB/s upload / ~93 MB/s download.
+
+- [#403](https://github.com/cloudflare/sandbox-sdk/pull/403) [`bbfc579`](https://github.com/cloudflare/sandbox-sdk/commit/bbfc579645e53f9e1c6ba54760bfa3d249f6de1c) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - Add `proxyToOpencodeServer()` to proxy requests directly to a running OpenCode server without web UI redirect behavior. Use this helper for headless API and CLI traffic where raw request forwarding is preferred.
+
 ## 0.7.4
 
 ### Patch Changes
@@ -25,13 +41,13 @@
   As a base image:
 
   ```dockerfile
-  FROM docker.io/cloudflare/sandbox:0.7.4-musl
+  FROM docker.io/cloudflare/sandbox:0.7.5-musl
   ```
 
   Or copy the binary into your own Alpine image:
 
   ```dockerfile
-  COPY --from=docker.io/cloudflare/sandbox:0.7.4-musl /container-server/sandbox /sandbox
+  COPY --from=docker.io/cloudflare/sandbox:0.7.5-musl /container-server/sandbox /sandbox
   ```
 
 - [#377](https://github.com/cloudflare/sandbox-sdk/pull/377) [`d83642e`](https://github.com/cloudflare/sandbox-sdk/commit/d83642e855f68e4fb8c15c2452709923e55a83fd) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Allow port 8787 in `exposePort()`. It was incorrectly blocked.
@@ -254,10 +270,10 @@
 
   ```dockerfile
   # Before
-  FROM cloudflare/sandbox:0.7.4
+  FROM cloudflare/sandbox:0.7.5
 
   # After
-  FROM cloudflare/sandbox:0.7.4-python
+  FROM cloudflare/sandbox:0.7.5-python
   ```
 
   Without this change, Python execution will fail with `PYTHON_NOT_AVAILABLE` error.
