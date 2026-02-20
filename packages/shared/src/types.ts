@@ -917,8 +917,47 @@ export interface ExecutionSession {
   ): Promise<void>;
   unmountBucket(mountPath: string): Promise<void>;
 
+  // Backup operations
+  createBackup(options: BackupOptions): Promise<DirectoryBackup>;
+  restoreBackup(backup: DirectoryBackup): Promise<RestoreBackupResult>;
+
   // Terminal access (browser WebSocket passthrough)
   terminal(request: Request, options?: PtyOptions): Promise<Response>;
+}
+
+// Backup types
+/**
+ * Options for creating a directory backup
+ */
+export interface BackupOptions {
+  /** Directory to back up (absolute path). Required. */
+  dir: string;
+  /** Human-readable name for this backup. Optional. */
+  name?: string;
+  /** Seconds until automatic garbage collection. Default: 259200 (3 days). No upper limit. */
+  ttl?: number;
+}
+
+/**
+ * Handle representing a stored directory backup.
+ * Serializable (two strings). The user stores this and passes it to restoreBackup().
+ */
+export interface DirectoryBackup {
+  /** Unique backup identifier */
+  readonly id: string;
+  /** Directory that was backed up */
+  readonly dir: string;
+}
+
+/**
+ * Result returned from a successful restoreBackup() call
+ */
+export interface RestoreBackupResult {
+  success: boolean;
+  /** The directory that was restored */
+  dir: string;
+  /** Backup ID that was restored */
+  id: string;
 }
 
 // Bucket mounting types
@@ -1086,6 +1125,10 @@ export interface ISandbox {
   ): Promise<ReadableStream>;
   listCodeContexts(): Promise<CodeContext[]>;
   deleteCodeContext(contextId: string): Promise<void>;
+
+  // Backup operations
+  createBackup(options: BackupOptions): Promise<DirectoryBackup>;
+  restoreBackup(backup: DirectoryBackup): Promise<RestoreBackupResult>;
 
   // WebSocket connection
   wsConnect(request: Request, port: number): Promise<Response>;

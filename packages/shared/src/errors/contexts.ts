@@ -170,6 +170,36 @@ export interface InvalidMountConfigContext {
 }
 
 /**
+ * Backup error contexts
+ */
+export interface BackupCreateContext {
+  dir: string;
+  backupId?: string;
+  stderr?: string;
+  exitCode?: number;
+}
+
+export interface BackupRestoreContext {
+  dir: string;
+  backupId: string;
+  stderr?: string;
+  exitCode?: number;
+}
+
+export interface BackupNotFoundContext {
+  backupId: string;
+}
+
+export interface BackupExpiredContext {
+  backupId: string;
+  expiredAt?: string;
+}
+
+export interface InvalidBackupConfigContext {
+  reason: string;
+}
+
+/**
  * OpenCode error contexts
  */
 export interface OpencodeStartupContext {

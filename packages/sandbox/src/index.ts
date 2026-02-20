@@ -2,6 +2,7 @@
 
 // Export the new client architecture
 export {
+  BackupClient,
   CommandClient,
   FileClient,
   GitClient,
@@ -16,11 +17,13 @@ export { getSandbox, Sandbox } from './sandbox';
 
 // Export core SDK types for consumers
 export type {
+  BackupOptions,
   BaseExecOptions,
   BucketCredentials,
   BucketProvider,
   CodeContext,
   CreateContextOptions,
+  DirectoryBackup,
   ExecEvent,
   ExecOptions,
   ExecResult,
@@ -38,6 +41,7 @@ export type {
   ProcessOptions,
   ProcessStatus,
   PtyOptions,
+  RestoreBackupResult,
   RunCodeOptions,
   SandboxOptions,
   SessionOptions,
@@ -99,8 +103,13 @@ export type {
   ExecutionCallbacks,
   InterpreterClient
 } from './clients/interpreter-client.js';
-// Export process readiness errors
+// Export backup and process readiness errors
 export {
+  BackupCreateError,
+  BackupExpiredError,
+  BackupNotFoundError,
+  BackupRestoreError,
+  InvalidBackupConfigError,
   ProcessExitedBeforeReadyError,
   ProcessReadyTimeoutError
 } from './errors';

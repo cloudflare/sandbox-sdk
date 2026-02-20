@@ -36,6 +36,11 @@ export const Operation = {
   GIT_CHECKOUT: 'git.checkout',
   GIT_OPERATION: 'git.operation',
 
+  // Backup Operations
+  BACKUP_CREATE: 'backup.create',
+  BACKUP_RESTORE: 'backup.restore',
+  BACKUP_UNMOUNT: 'backup.unmount',
+
   // Code Interpreter
   CODE_EXECUTE: 'code.execute',
   CODE_CONTEXT_CREATE: 'code.context.create',

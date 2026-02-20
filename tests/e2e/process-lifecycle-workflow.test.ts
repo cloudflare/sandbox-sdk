@@ -47,7 +47,7 @@ describe('Process Lifecycle Error Handling', () => {
       }
     );
 
-    expect(killResponse.status).toBe(500);
+    expect(killResponse.status).toBe(404);
     const errorData = (await killResponse.json()) as { error: string };
     expect(errorData.error).toBeTruthy();
     expect(errorData.error).toMatch(
@@ -202,7 +202,7 @@ console.log("Line 3");
         }
       );
 
-      expect(unexposeResponse.status).toBe(500);
+      expect(unexposeResponse.status).toBe(404);
       const errorData = (await unexposeResponse.json()) as { error: string };
       expect(errorData.error).toBeTruthy();
       expect(errorData.error).toMatch(/not found|not exposed|does not exist/i);

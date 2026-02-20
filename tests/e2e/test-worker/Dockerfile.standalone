@@ -9,9 +9,13 @@ FROM node:20-slim
 # Install dependencies required by the SDK
 # - file: MIME type detection for file operations
 # - git: git clone/checkout operations
+# - squashfs-tools, squashfuse, fuse-overlayfs: snapshot functionality
 RUN apt-get update && apt-get install -y --no-install-recommends \
     file \
     git \
+    squashfs-tools \
+    squashfuse \
+    fuse-overlayfs \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy standalone binary from sandbox image

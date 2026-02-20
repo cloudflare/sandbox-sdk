@@ -40,6 +40,10 @@
 
 // Re-export context types for advanced usage
 export type {
+  BackupCreateContext,
+  BackupExpiredContext,
+  BackupNotFoundContext,
+  BackupRestoreContext,
   CodeExecutionContext,
   CommandErrorContext,
   CommandNotFoundContext,
@@ -55,6 +59,7 @@ export type {
   GitRepositoryNotFoundContext,
   InternalErrorContext,
   InterpreterNotReadyContext,
+  InvalidBackupConfigContext,
   InvalidPortContext,
   OperationType,
   PortAlreadyExposedContext,
@@ -73,6 +78,11 @@ export { ErrorCode, Operation } from '@repo/shared/errors';
 export { createErrorFromResponse } from './adapter';
 // Export all error classes
 export {
+  // Backup Errors
+  BackupCreateError,
+  BackupExpiredError,
+  BackupNotFoundError,
+  BackupRestoreError,
   CodeExecutionError,
   CommandError,
   // Command Errors
@@ -93,6 +103,7 @@ export {
   GitRepositoryNotFoundError,
   // Code Interpreter Errors
   InterpreterNotReadyError,
+  InvalidBackupConfigError,
   InvalidGitUrlError,
   InvalidPortError,
   PermissionDeniedError,

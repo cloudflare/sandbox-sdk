@@ -1,5 +1,6 @@
 import type { Logger } from '@repo/shared';
 import { createLogger, GitLogger } from '@repo/shared';
+import { BackupHandler } from '../handlers/backup-handler';
 import { ExecuteHandler } from '../handlers/execute-handler';
 import { FileHandler } from '../handlers/file-handler';
 import { GitHandler } from '../handlers/git-handler';
@@ -13,6 +14,7 @@ import { CorsMiddleware } from '../middleware/cors';
 import { LoggingMiddleware } from '../middleware/logging';
 import { SecurityServiceAdapter } from '../security/security-adapter';
 import { SecurityService } from '../security/security-service';
+import { BackupService } from '../services/backup-service';
 import { FileService } from '../services/file-service';
 import { GitService } from '../services/git-service';
 import { InterpreterService } from '../services/interpreter-service';
@@ -28,12 +30,14 @@ export interface Dependencies {
   portService: PortService;
   gitService: GitService;
   interpreterService: InterpreterService;
+  backupService: BackupService;
 
   // Infrastructure
   logger: Logger;
   security: SecurityService;
 
   // Handlers
+  backupHandler: BackupHandler;
   executeHandler: ExecuteHandler;
   fileHandler: FileHandler;
   processHandler: ProcessHandler;
@@ -114,8 +118,10 @@ export class Container {
       sessionManager
     );
     const interpreterService = new InterpreterService(logger);
+    const backupService = new BackupService(logger, sessionManager);
 
     // Initialize handlers
+    const backupHandler = new BackupHandler(backupService, logger);
     const sessionHandler = new SessionHandler(sessionManager, logger);
     const executeHandler = new ExecuteHandler(processService, logger);
     const fileHandler = new FileHandler(fileService, logger);
@@ -141,12 +147,14 @@ export class Container {
       portService,
       gitService,
       interpreterService,
+      backupService,
 
       // Infrastructure
       logger,
       security,
 
       // Handlers
+      backupHandler,
       executeHandler,
       fileHandler,
       processHandler,

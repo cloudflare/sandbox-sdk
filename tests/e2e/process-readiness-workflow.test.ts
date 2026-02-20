@@ -274,8 +274,8 @@ await Bun.sleep(60000);
       }
     );
 
-    // Should fail with timeout
-    expect(waitResponse.status).toBe(500);
+    // Should fail with timeout (408 Request Timeout)
+    expect(waitResponse.status).toBe(408);
     const errorData = (await waitResponse.json()) as { error: string };
     expect(errorData.error).toMatch(/timeout|did not become ready/i);
 

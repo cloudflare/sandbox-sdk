@@ -6,6 +6,10 @@
  */
 
 import type {
+  BackupCreateContext,
+  BackupExpiredContext,
+  BackupNotFoundContext,
+  BackupRestoreContext,
   CodeExecutionContext,
   CommandErrorContext,
   CommandNotFoundContext,
@@ -20,6 +24,7 @@ import type {
   GitRepositoryNotFoundContext,
   InternalErrorContext,
   InterpreterNotReadyContext,
+  InvalidBackupConfigContext,
   InvalidPortContext,
   PortAlreadyExposedContext,
   PortErrorContext,
@@ -664,5 +669,88 @@ export class ProcessExitedBeforeReadyError extends SandboxError<ProcessExitedBef
   }
   get exitCode() {
     return this.context.exitCode;
+  }
+}
+
+// ============================================================================
+// Backup Errors
+// ============================================================================
+
+/**
+ * Error thrown when a backup is not found in R2
+ */
+export class BackupNotFoundError extends SandboxError<BackupNotFoundContext> {
+  constructor(errorResponse: ErrorResponse<BackupNotFoundContext>) {
+    super(errorResponse);
+    this.name = 'BackupNotFoundError';
+  }
+
+  get backupId() {
+    return this.context.backupId;
+  }
+}
+
+/**
+ * Error thrown when a backup has expired (past its TTL)
+ */
+export class BackupExpiredError extends SandboxError<BackupExpiredContext> {
+  constructor(errorResponse: ErrorResponse<BackupExpiredContext>) {
+    super(errorResponse);
+    this.name = 'BackupExpiredError';
+  }
+
+  get backupId() {
+    return this.context.backupId;
+  }
+  get expiredAt() {
+    return this.context.expiredAt;
+  }
+}
+
+/**
+ * Error thrown when backup configuration or inputs are invalid
+ */
+export class InvalidBackupConfigError extends SandboxError<InvalidBackupConfigContext> {
+  constructor(errorResponse: ErrorResponse<InvalidBackupConfigContext>) {
+    super(errorResponse);
+    this.name = 'InvalidBackupConfigError';
+  }
+
+  get reason() {
+    return this.context.reason;
+  }
+}
+
+/**
+ * Error thrown when backup creation fails
+ */
+export class BackupCreateError extends SandboxError<BackupCreateContext> {
+  constructor(errorResponse: ErrorResponse<BackupCreateContext>) {
+    super(errorResponse);
+    this.name = 'BackupCreateError';
+  }
+
+  get dir() {
+    return this.context.dir;
+  }
+  get backupId() {
+    return this.context.backupId;
+  }
+}
+
+/**
+ * Error thrown when backup restoration fails
+ */
+export class BackupRestoreError extends SandboxError<BackupRestoreContext> {
+  constructor(errorResponse: ErrorResponse<BackupRestoreContext>) {
+    super(errorResponse);
+    this.name = 'BackupRestoreError';
+  }
+
+  get dir() {
+    return this.context.dir;
+  }
+  get backupId() {
+    return this.context.backupId;
   }
 }
