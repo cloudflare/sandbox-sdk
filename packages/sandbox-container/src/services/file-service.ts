@@ -113,7 +113,7 @@ export class FileService implements FileSystemOperations {
                 message: `Failed to resolve working directory for '${path}'`,
                 details: {
                   path,
-                  operation: Operation.FILE_WRITE,
+                  operation: Operation.FILE_READ,
                   exitCode: pwdResult.exitCode,
                   stderr: pwdResult.stderr
                 } satisfies FileSystemContext
