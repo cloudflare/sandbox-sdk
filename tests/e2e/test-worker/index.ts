@@ -322,25 +322,36 @@ console.log('Terminal server on port ' + port);
         url.pathname === '/api/opencode/proxy-server/global-health' &&
         request.method === 'GET'
       ) {
-        const server = await createOpencodeServer(sandbox, {
-          port: 4096
-        });
+        let server:
+          | Awaited<ReturnType<typeof createOpencodeServer>>
+          | undefined;
 
-        const opencodeRequest = new Request(
-          `${url.origin}/global/health${url.search}`,
-          request
-        );
+        try {
+          server = await createOpencodeServer(sandbox, {
+            port: 4096
+          });
 
-        const response = await proxyToOpencodeServer(
-          opencodeRequest,
-          sandbox,
-          server
-        );
+          const opencodeRequest = new Request(
+            `${url.origin}/global/health${url.search}`,
+            request
+          );
 
-        // This endpoint is a one-shot health probe, so tear down the helper server
-        // to avoid leaking a long-lived process that can interfere with later tests.
-        await server.close();
-        return response;
+          const response = await proxyToOpencodeServer(
+            opencodeRequest,
+            sandbox,
+            server
+          );
+          const body = await response.arrayBuffer();
+
+          return new Response(body, {
+            status: response.status,
+            headers: response.headers
+          });
+        } finally {
+          if (server) {
+            await server.close();
+          }
+        }
       }
 
       // Session management
