@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'bun:test';
+import { randomUUID } from 'node:crypto';
 import { mkdir, rm } from 'node:fs/promises';
 import type { Logger } from '@repo/shared';
 import type { ProcessRecord } from '@sandbox-container/core/types';
@@ -34,10 +35,12 @@ const createMockProcess = (
 
 describe('ProcessStore', () => {
   let processStore: ProcessStore;
-  const testProcessDir = '/tmp/sandbox-internal/processes';
+  let testProcessDir: string;
 
   beforeEach(async () => {
     vi.clearAllMocks();
+
+    testProcessDir = `/tmp/sandbox-internal/processes-test-${randomUUID()}`;
 
     // Clean up test directory
     try {
@@ -47,6 +50,9 @@ describe('ProcessStore', () => {
     }
 
     processStore = new ProcessStore(mockLogger);
+    // Isolate test writes from other suites that use the default process directory.
+    (processStore as unknown as { processDir: string }).processDir =
+      testProcessDir;
   });
 
   describe('initialization', () => {
