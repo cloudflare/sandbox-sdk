@@ -38,6 +38,7 @@ import {
   shellEscape,
   TraceContext
 } from '@repo/shared';
+import { AwsClient } from 'aws4fetch';
 import { type ExecuteResponse, SandboxClient } from './clients';
 import type { ErrorResponse } from './errors';
 import {
@@ -216,6 +217,16 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private backupInProgress: Promise<unknown> = Promise.resolve();
 
   /**
+   * R2 presigned URL credentials for direct container-to-R2 transfers.
+   * All four fields plus the R2 binding must be configured for backup to work.
+   */
+  private r2AccessKeyId: string | null = null;
+  private r2SecretAccessKey: string | null = null;
+  private r2AccountId: string | null = null;
+  private backupBucketName: string | null = null;
+  private r2Client: AwsClient | null = null;
+
+  /**
    * Default container startup timeouts (conservative for production)
    * Based on Cloudflare docs: "Containers take several minutes to provision"
    */
@@ -288,6 +299,20 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     const backupBucket = envObj?.BACKUP_BUCKET;
     if (isR2Bucket(backupBucket)) {
       this.backupBucket = backupBucket;
+    }
+
+    // Read R2 presigned URL credentials for direct container-to-R2 backup transfers
+    this.r2AccountId = getEnvString(envObj, 'CLOUDFLARE_ACCOUNT_ID') ?? null;
+    this.r2AccessKeyId = getEnvString(envObj, 'R2_ACCESS_KEY_ID') ?? null;
+    this.r2SecretAccessKey =
+      getEnvString(envObj, 'R2_SECRET_ACCESS_KEY') ?? null;
+    this.backupBucketName = getEnvString(envObj, 'BACKUP_BUCKET_NAME') ?? null;
+
+    if (this.r2AccessKeyId && this.r2SecretAccessKey) {
+      this.r2Client = new AwsClient({
+        accessKeyId: this.r2AccessKeyId,
+        secretAccessKey: this.r2SecretAccessKey
+      });
     }
 
     // Create client with transport based on env var (may be updated from storage)
@@ -2709,51 +2734,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   // Backup methods — squashfs archive + R2 storage
   // ============================================================================
 
-  /**
-   * Chunk size for backup uploads (bytes). Each chunk is read from the container
-   * and uploaded to R2 separately. 50MB chunks fit comfortably in DO memory
-   * with base64 overhead (~117MB peak for one chunk).
-   */
-  private static readonly BACKUP_CHUNK_SIZE_BYTES = 50 * 1024 * 1024;
-
-  /**
-   * Maximum total backup archive size (bytes). With chunked uploads,
-   * we can support much larger backups than the single-upload limit.
-   * 500MB is a reasonable ceiling for directory backups.
-   */
-  private static readonly MAX_BACKUP_SIZE_BYTES = 500 * 1024 * 1024;
-
   /** UUID v4 format validator for backup IDs */
   private static readonly UUID_REGEX =
     /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-  /**
-   * Convert a Uint8Array to a base64 string without spreading large arrays
-   * onto the call stack. Processes the array in 8 KB sub-arrays to avoid
-   * engine-dependent argument limits on String.fromCharCode while keeping
-   * O(n) concatenation via a final join.
-   */
-  private static uint8ArrayToBase64(bytes: Uint8Array): string {
-    const CHUNK = 8192;
-    const parts: string[] = [];
-    for (let i = 0; i < bytes.length; i += CHUNK) {
-      const slice = bytes.subarray(i, i + CHUNK);
-      parts.push(String.fromCharCode(...slice));
-    }
-    return btoa(parts.join(''));
-  }
-
-  /**
-   * Decode a base64 string into a Uint8Array.
-   */
-  private static base64ToUint8Array(base64: string): Uint8Array {
-    const binaryString = atob(base64);
-    const bytes = new Uint8Array(binaryString.length);
-    for (let i = 0; i < binaryString.length; i++) {
-      bytes[i] = binaryString.charCodeAt(i);
-    }
-    return bytes;
-  }
 
   /**
    * Validate that a directory path is safe for backup operations.
@@ -2807,6 +2790,205 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   /**
+   * Presigned URL expiration (seconds). 1 hour is generous — transfers complete
+   * in seconds, but retries and slow networks benefit from longer windows.
+   */
+  private static readonly PRESIGNED_URL_EXPIRY_SECONDS = 3600;
+
+  /**
+   * Returns validated presigned URL configuration or throws if not configured.
+   * All credential fields plus the R2 binding are required for backup to work.
+   */
+  private requirePresignedUrlSupport(): {
+    client: AwsClient;
+    accountId: string;
+    bucketName: string;
+  } {
+    if (!this.r2Client || !this.r2AccountId || !this.backupBucketName) {
+      const missing: string[] = [];
+      if (!this.r2AccountId) missing.push('CLOUDFLARE_ACCOUNT_ID');
+      if (!this.r2AccessKeyId) missing.push('R2_ACCESS_KEY_ID');
+      if (!this.r2SecretAccessKey) missing.push('R2_SECRET_ACCESS_KEY');
+      if (!this.backupBucketName) missing.push('BACKUP_BUCKET_NAME');
+
+      throw new InvalidBackupConfigError({
+        message:
+          `Backup requires R2 presigned URL credentials. ` +
+          `Missing: ${missing.join(', ')}. ` +
+          'Set these as environment variables or secrets in your wrangler.jsonc.',
+        code: ErrorCode.INVALID_BACKUP_CONFIG,
+        httpStatus: 400,
+        context: { reason: `Missing env vars: ${missing.join(', ')}` },
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    return {
+      client: this.r2Client,
+      accountId: this.r2AccountId,
+      bucketName: this.backupBucketName
+    };
+  }
+
+  /**
+   * Generate a presigned GET URL for downloading an object from R2.
+   * The container can curl this URL directly without credentials.
+   */
+  private async generatePresignedGetUrl(r2Key: string): Promise<string> {
+    const { client, accountId, bucketName } = this.requirePresignedUrlSupport();
+
+    const url = new URL(
+      `https://${accountId}.r2.cloudflarestorage.com/${bucketName}/${r2Key}`
+    );
+    url.searchParams.set(
+      'X-Amz-Expires',
+      String(Sandbox.PRESIGNED_URL_EXPIRY_SECONDS)
+    );
+
+    const signed = await client.sign(new Request(url), {
+      aws: { signQuery: true }
+    });
+
+    return signed.url;
+  }
+
+  /**
+   * Generate a presigned PUT URL for uploading an object to R2.
+   * The container can curl PUT to this URL directly without credentials.
+   */
+  private async generatePresignedPutUrl(r2Key: string): Promise<string> {
+    const { client, accountId, bucketName } = this.requirePresignedUrlSupport();
+
+    const url = new URL(
+      `https://${accountId}.r2.cloudflarestorage.com/${bucketName}/${r2Key}`
+    );
+    url.searchParams.set(
+      'X-Amz-Expires',
+      String(Sandbox.PRESIGNED_URL_EXPIRY_SECONDS)
+    );
+
+    const signed = await client.sign(new Request(url, { method: 'PUT' }), {
+      aws: { signQuery: true }
+    });
+
+    return signed.url;
+  }
+
+  /**
+   * Upload a backup archive via presigned PUT URL.
+   * The container curls the archive directly to R2, bypassing the DO.
+   * ~24 MB/s throughput vs ~0.6 MB/s for base64 readFile.
+   */
+  private async uploadBackupPresigned(
+    archivePath: string,
+    r2Key: string,
+    archiveSize: number,
+    backupId: string,
+    dir: string
+  ): Promise<void> {
+    const presignedUrl = await this.generatePresignedPutUrl(r2Key);
+
+    this.logger.info('Uploading backup via presigned PUT', {
+      r2Key,
+      archiveSize,
+      backupId
+    });
+
+    const curlCmd = [
+      'curl -sf',
+      '-X PUT',
+      "-H 'Content-Type: application/octet-stream'",
+      '--connect-timeout 10',
+      '--max-time 300',
+      `--data-binary @${shellEscape(archivePath)}`,
+      `'${presignedUrl}'`
+    ].join(' ');
+
+    const result = await this.exec(curlCmd, { timeout: 310_000 });
+
+    if (result.exitCode !== 0) {
+      throw new BackupCreateError({
+        message: `Presigned URL upload failed (exit code ${result.exitCode}): ${result.stderr}`,
+        code: ErrorCode.BACKUP_CREATE_FAILED,
+        httpStatus: 500,
+        context: { dir, backupId },
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    // Verify the upload landed correctly in R2
+    const bucket = this.requireBackupBucket();
+    const head = await bucket.head(r2Key);
+    if (!head || head.size !== archiveSize) {
+      throw new BackupCreateError({
+        message: `Upload verification failed: expected ${archiveSize} bytes, got ${head?.size ?? 0}`,
+        code: ErrorCode.BACKUP_CREATE_FAILED,
+        httpStatus: 500,
+        context: { dir, backupId },
+        timestamp: new Date().toISOString()
+      });
+    }
+  }
+
+  /**
+   * Download a backup archive via presigned GET URL.
+   * The container curls the archive directly from R2, bypassing the DO.
+   * ~93 MB/s throughput vs ~0.6 MB/s for base64 writeFile.
+   */
+  private async downloadBackupPresigned(
+    archivePath: string,
+    r2Key: string,
+    expectedSize: number,
+    backupId: string,
+    dir: string
+  ): Promise<void> {
+    const presignedUrl = await this.generatePresignedGetUrl(r2Key);
+
+    this.logger.info('Downloading backup via presigned GET', {
+      r2Key,
+      expectedSize,
+      backupId
+    });
+
+    await this.exec('mkdir -p /var/backups');
+
+    const curlCmd = [
+      'curl -sf',
+      '--connect-timeout 10',
+      '--max-time 300',
+      `-o ${shellEscape(archivePath)}`,
+      `'${presignedUrl}'`
+    ].join(' ');
+
+    const result = await this.exec(curlCmd, { timeout: 310_000 });
+
+    if (result.exitCode !== 0) {
+      await this.exec(`rm -f ${shellEscape(archivePath)}`).catch(() => {});
+      throw new BackupRestoreError({
+        message: `Presigned URL download failed (exit code ${result.exitCode}): ${result.stderr}`,
+        code: ErrorCode.BACKUP_RESTORE_FAILED,
+        httpStatus: 500,
+        context: { dir, backupId },
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    // Verify downloaded file size
+    const sizeCheck = await this.exec(`stat -c %s ${shellEscape(archivePath)}`);
+    const actualSize = parseInt(sizeCheck.stdout.trim(), 10);
+    if (actualSize !== expectedSize) {
+      await this.exec(`rm -f ${shellEscape(archivePath)}`).catch(() => {});
+      throw new BackupRestoreError({
+        message: `Downloaded archive size mismatch: expected ${expectedSize}, got ${actualSize}`,
+        code: ErrorCode.BACKUP_RESTORE_FAILED,
+        httpStatus: 500,
+        context: { dir, backupId },
+        timestamp: new Date().toISOString()
+      });
+    }
+  }
+
+  /**
    * Serialize backup operations on this sandbox instance.
    * Concurrent backup/restore calls are queued so the multi-step
    * create-archive → read → upload (or download → write → extract) flow
@@ -2823,17 +3005,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    *
    * Flow:
    *   1. Container creates squashfs archive from the directory
-   *   2. DO reads the archive from the container as base64
-   *   3. DO uploads the archive + metadata to R2
+   *   2. Container uploads the archive directly to R2 via presigned URL
+   *   3. DO writes metadata to R2
    *   4. Container cleans up the local archive
    *
    * The returned DirectoryBackup handle is serializable. Store it anywhere
    * (KV, D1, DO storage) and pass it to restoreBackup() later.
    *
    * Concurrent backup/restore calls on the same sandbox are serialized.
-   *
-   * Archives larger than 50 MB are rejected because the base64 transfer
-   * through the DO would exceed the Durable Object memory limit.
    *
    * Partially-written files in the target directory may not be captured
    * consistently. Completed writes are captured.
@@ -2851,6 +3030,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     options: BackupOptions
   ): Promise<DirectoryBackup> {
     const bucket = this.requireBackupBucket();
+    this.requirePresignedUrlSupport();
     const MAX_TTL_SECONDS = 86400; // 24 hours
     const DEFAULT_TTL_SECONDS = 3600; // 1 hour
     const MAX_NAME_LENGTH = 256;
@@ -2915,41 +3095,20 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       });
     }
 
-    // Reject archives that exceed the maximum supported size
-    if (createResult.sizeBytes > Sandbox.MAX_BACKUP_SIZE_BYTES) {
-      await this.exec(`rm -f ${shellEscape(archivePath)}`).catch(() => {});
-      throw new BackupCreateError({
-        message:
-          `Backup archive is too large (${createResult.sizeBytes} bytes). ` +
-          `Maximum supported size is ${Sandbox.MAX_BACKUP_SIZE_BYTES} bytes (500 MB). ` +
-          'Reduce the directory size or exclude large files.',
-        code: ErrorCode.BACKUP_CREATE_FAILED,
-        httpStatus: 500,
-        context: { dir, backupId },
-        timestamp: new Date().toISOString()
-      });
-    }
-
     const r2Key = `backups/${backupId}/data.sqsh`;
     const metaKey = `backups/${backupId}/meta.json`;
 
     try {
-      // Step 2 & 3: Upload archive to R2 (single or chunked based on size)
-      if (createResult.sizeBytes <= Sandbox.BACKUP_CHUNK_SIZE_BYTES) {
-        // Small file: single upload (fast path)
-        await this.uploadBackupSingle(bucket, archivePath, r2Key, session);
-      } else {
-        // Large file: chunked multipart upload
-        await this.uploadBackupChunked(
-          bucket,
-          archivePath,
-          r2Key,
-          createResult.sizeBytes,
-          session
-        );
-      }
+      // Step 2: Upload archive to R2 via presigned URL (container curls directly)
+      await this.uploadBackupPresigned(
+        archivePath,
+        r2Key,
+        createResult.sizeBytes,
+        backupId,
+        dir
+      );
 
-      // Step 4: Write metadata alongside the archive
+      // Step 3: Write metadata alongside the archive
       const metadata = {
         id: backupId,
         dir,
@@ -2980,224 +3139,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   /**
-   * Upload a small backup archive in a single request.
-   * Used for archives <= 50MB.
-   */
-  private async uploadBackupSingle(
-    bucket: R2Bucket,
-    archivePath: string,
-    r2Key: string,
-    session: string
-  ): Promise<void> {
-    // Read entire file as base64
-    const fileContent = await this.client.files.readFile(archivePath, session, {
-      encoding: 'base64'
-    });
-
-    // Convert base64 to binary and upload to R2
-    const bytes = Sandbox.base64ToUint8Array(fileContent.content);
-    await bucket.put(r2Key, bytes);
-  }
-
-  /**
-   * Upload a large backup archive using R2 multipart upload.
-   * Reads the archive in chunks and uploads each part separately.
-   * Used for archives > 50MB.
-   */
-  private async uploadBackupChunked(
-    bucket: R2Bucket,
-    archivePath: string,
-    r2Key: string,
-    totalSize: number,
-    session: string
-  ): Promise<void> {
-    const chunkSize = Sandbox.BACKUP_CHUNK_SIZE_BYTES;
-    const numChunks = Math.ceil(totalSize / chunkSize);
-
-    this.logger.info('Starting chunked backup upload', {
-      totalSize,
-      chunkSize,
-      numChunks
-    });
-
-    // Create multipart upload
-    const multipartUpload = await bucket.createMultipartUpload(r2Key);
-    const uploadedParts: R2UploadedPart[] = [];
-
-    try {
-      for (let i = 0; i < numChunks; i++) {
-        const offset = i * chunkSize;
-        const length = Math.min(chunkSize, totalSize - offset);
-        const partNumber = i + 1;
-
-        this.logger.debug('Uploading backup chunk', {
-          partNumber,
-          offset,
-          length
-        });
-
-        // Read chunk from container
-        const chunkContent = await this.client.files.readFile(
-          archivePath,
-          session,
-          { encoding: 'base64', offset, length }
-        );
-
-        // Convert base64 to binary and upload part to R2
-        const bytes = Sandbox.base64ToUint8Array(chunkContent.content);
-        const uploadedPart = await multipartUpload.uploadPart(
-          partNumber,
-          bytes
-        );
-        uploadedParts.push(uploadedPart);
-      }
-
-      // Complete multipart upload
-      await multipartUpload.complete(uploadedParts);
-
-      this.logger.info('Chunked backup upload complete', {
-        numChunks,
-        totalSize
-      });
-    } catch (error) {
-      // Abort multipart upload on failure
-      await multipartUpload.abort().catch(() => {});
-      throw error;
-    }
-  }
-
-  /**
-   * Download a small backup archive in a single request.
-   * Used for archives <= 50MB.
-   */
-  private async downloadBackupSingle(
-    archiveObject: R2ObjectBody,
-    archivePath: string,
-    session: string
-  ): Promise<void> {
-    const archiveBuffer = await archiveObject.arrayBuffer();
-    const archiveBytes = new Uint8Array(archiveBuffer);
-    const base64Content = Sandbox.uint8ArrayToBase64(archiveBytes);
-
-    await this.client.files.writeFile(archivePath, base64Content, session, {
-      encoding: 'base64'
-    });
-  }
-
-  /**
-   * Download a large backup archive using chunked transfers.
-   * Reads from R2 in chunks and writes to container via file API.
-   * Used for archives > 50MB.
-   *
-   * Disk space note: During download, both the temp chunk file (~50MB) and
-   * the growing archive file exist simultaneously. For a 500MB archive at
-   * the last chunk, this requires ~500MB of disk space in /var/backups.
-   */
-  private async downloadBackupChunked(
-    bucket: R2Bucket,
-    r2Key: string,
-    totalSize: number,
-    archivePath: string,
-    backupId: string,
-    targetDir: string,
-    session: string
-  ): Promise<void> {
-    const chunkSize = Sandbox.BACKUP_CHUNK_SIZE_BYTES;
-    const numChunks = Math.ceil(totalSize / chunkSize);
-
-    this.logger.info('Starting chunked backup download', {
-      backupId,
-      totalSize,
-      chunkSize,
-      numChunks
-    });
-
-    // Ensure backup directory exists
-    await this.exec('mkdir -p /var/backups');
-
-    try {
-      for (let i = 0; i < numChunks; i++) {
-        const offset = i * chunkSize;
-        const length = Math.min(chunkSize, totalSize - offset);
-
-        this.logger.debug('Downloading backup chunk', {
-          chunkNumber: i + 1,
-          offset,
-          length
-        });
-
-        // Read chunk from R2 using range request
-        const chunkObject = await bucket.get(r2Key, {
-          range: { offset, length }
-        });
-
-        if (!chunkObject) {
-          throw new BackupRestoreError({
-            message: `Failed to read backup chunk at offset ${offset}`,
-            code: ErrorCode.BACKUP_RESTORE_FAILED,
-            httpStatus: 500,
-            context: { dir: targetDir, backupId },
-            timestamp: new Date().toISOString()
-          });
-        }
-
-        // Convert chunk to base64
-        const chunkBuffer = await chunkObject.arrayBuffer();
-        const chunkBytes = new Uint8Array(chunkBuffer);
-        const base64Chunk = Sandbox.uint8ArrayToBase64(chunkBytes);
-
-        // Write chunk to temp file
-        const chunkPath = `${archivePath}.part${i}`;
-        await this.client.files.writeFile(chunkPath, base64Chunk, session, {
-          encoding: 'base64'
-        });
-
-        // Append to main file and remove temp
-        // For first chunk, move instead of append
-        if (i === 0) {
-          await this.exec(
-            `mv ${shellEscape(chunkPath)} ${shellEscape(archivePath)}`
-          );
-        } else {
-          const appendResult = await this.exec(
-            `cat ${shellEscape(chunkPath)} >> ${shellEscape(archivePath)} && rm ${shellEscape(chunkPath)}`
-          );
-          if (appendResult.exitCode !== 0) {
-            throw new BackupRestoreError({
-              message: `Failed to assemble backup chunks: ${appendResult.stderr}`,
-              code: ErrorCode.BACKUP_RESTORE_FAILED,
-              httpStatus: 500,
-              context: { dir: targetDir, backupId },
-              timestamp: new Date().toISOString()
-            });
-          }
-        }
-      }
-
-      this.logger.info('Chunked backup download complete', {
-        backupId,
-        numChunks,
-        totalSize
-      });
-    } catch (error) {
-      // Clean up partial archive and any remaining temp files
-      // Note: archivePath is validated to be under /var/backups/ with no special chars
-      const partPattern = `${archivePath}.part*`;
-      await this.exec(
-        `rm -f ${shellEscape(archivePath)} ${shellEscape(partPattern)}`
-      ).catch(() => {});
-      throw error;
-    }
-  }
-
-  /**
    * Restore a backup from R2 into a directory.
    *
    * Flow:
-   *   1. DO downloads archive + metadata from R2
-   *   2. DO checks TTL (throws if expired)
-   *   3. DO writes the archive to the container as base64
-   *   4. Container mounts the squashfs archive with FUSE overlayfs
+   *   1. DO reads metadata from R2 and checks TTL
+   *   2. Container downloads the archive directly from R2 via presigned URL
+   *   3. Container mounts the squashfs archive with FUSE overlayfs
    *
    * The target directory becomes an overlay mount with the backup as a
    * read-only lower layer and a writable upper layer for copy-on-write.
@@ -3227,6 +3174,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     backup: DirectoryBackup
   ): Promise<RestoreBackupResult> {
     const bucket = this.requireBackupBucket();
+    this.requirePresignedUrlSupport();
     const { id: backupId, dir } = backup;
 
     // Validate user-provided inputs (DirectoryBackup is deserialized from external storage)
@@ -3318,18 +3266,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       });
     }
 
-    if (archiveHead.size > Sandbox.MAX_BACKUP_SIZE_BYTES) {
-      throw new BackupRestoreError({
-        message:
-          `Backup archive too large to restore (${archiveHead.size} bytes). ` +
-          `Maximum supported size is ${Sandbox.MAX_BACKUP_SIZE_BYTES} bytes (500 MB).`,
-        code: ErrorCode.BACKUP_RESTORE_FAILED,
-        httpStatus: 500,
-        context: { dir, backupId },
-        timestamp: new Date().toISOString()
-      });
-    }
-
     const session = await this.ensureDefaultSession();
     const archivePath = `/var/backups/${backupId}.sqsh`;
 
@@ -3360,31 +3296,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       );
 
       if (existingSize !== archiveHead.size) {
-        if (archiveHead.size <= Sandbox.BACKUP_CHUNK_SIZE_BYTES) {
-          // Small file: single download (fast path) — fetch the full body now
-          const archiveObject = await bucket.get(r2Key);
-          if (!archiveObject) {
-            throw new BackupNotFoundError({
-              message: `Backup archive disappeared from R2: ${backupId}`,
-              code: ErrorCode.BACKUP_NOT_FOUND,
-              httpStatus: 404,
-              context: { backupId },
-              timestamp: new Date().toISOString()
-            });
-          }
-          await this.downloadBackupSingle(archiveObject, archivePath, session);
-        } else {
-          // Large file: chunked download via range requests
-          await this.downloadBackupChunked(
-            bucket,
-            r2Key,
-            archiveHead.size,
-            archivePath,
-            backupId,
-            dir,
-            session
-          );
-        }
+        // Download archive via presigned URL (container curls directly from R2)
+        await this.downloadBackupPresigned(
+          archivePath,
+          r2Key,
+          archiveHead.size,
+          backupId,
+          dir
+        );
       }
 
       // Step 5: Tell the container to extract the archive
