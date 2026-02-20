@@ -3135,17 +3135,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
 
     const backupSession = await this.ensureBackupSession();
-    const defaultSession = await this.ensureDefaultSession();
     const backupId = crypto.randomUUID();
     const archivePath = `/var/backups/${backupId}.sqsh`;
 
     this.logger.info('Creating backup', { backupId, dir, name });
 
-    // Step 1: Create squashfs archive (uses default session for container API)
     const createResult = await this.client.backup.createArchive(
       dir,
       archivePath,
-      defaultSession
+      backupSession
     );
 
     if (!createResult.success) {
@@ -3337,7 +3335,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
 
     const backupSession = await this.ensureBackupSession();
-    const defaultSession = await this.ensureDefaultSession();
     const archivePath = `/var/backups/${backupId}.sqsh`;
 
     try {
@@ -3381,11 +3378,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         );
       }
 
-      // Step 5: Tell the container to extract the archive (uses default session for container API)
       const restoreResult = await this.client.backup.restoreArchive(
         dir,
         archivePath,
-        defaultSession
+        backupSession
       );
 
       if (!restoreResult.success) {
