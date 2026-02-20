@@ -66,31 +66,13 @@ describe('OpenCode Workflow (E2E)', () => {
     test('should start opencode server via process', async () => {
       const testPort = 4400 + Math.floor(Math.random() * 300);
 
-      // Clean up stale OpenCode processes from earlier retries in the same sandbox.
-      const preList = await fetch(`${workerUrl}/api/process/list`, {
-        method: 'GET',
+      // Reset process state for this isolated sandbox to avoid stale process IDs
+      // from retries interfering with lifecycle assertions.
+      const killAllRes = await fetch(`${workerUrl}/api/process/kill-all`, {
+        method: 'POST',
         headers
       });
-      expect(preList.status).toBe(200);
-      const existing = (await preList.json()) as Array<{
-        id: string;
-        command: string;
-        status: string;
-      }>;
-      await Promise.all(
-        existing
-          .filter(
-            (p) =>
-              p.command.includes('opencode serve') &&
-              (p.status === 'running' || p.status === 'starting')
-          )
-          .map((p) =>
-            fetch(`${workerUrl}/api/process/${p.id}`, {
-              method: 'DELETE',
-              headers
-            })
-          )
-      );
+      expect(killAllRes.status).toBe(200);
 
       // Start OpenCode server as a background process on a unique test port.
       const startRes = await waitForCondition(

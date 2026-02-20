@@ -599,7 +599,8 @@ console.log('Terminal server on port ' + port);
       ) {
         const pathParts = url.pathname.split('/');
         const processId = pathParts[3];
-        const process = await executor.getProcess(processId);
+        const processes = await executor.listProcesses();
+        const process = processes.find((p) => p.id === processId);
         if (!process) {
           return new Response(JSON.stringify({ error: 'Process not found' }), {
             status: 404,
@@ -630,7 +631,8 @@ console.log('Terminal server on port ' + port);
       ) {
         const pathParts = url.pathname.split('/');
         const processId = pathParts[3];
-        const process = await executor.getProcess(processId);
+        const processes = await executor.listProcesses();
+        const process = processes.find((p) => p.id === processId);
         if (!process) {
           return new Response(JSON.stringify({ error: 'Process not found' }), {
             status: 404,
@@ -663,7 +665,8 @@ console.log('Terminal server on port ' + port);
       ) {
         const pathParts = url.pathname.split('/');
         const processId = pathParts[3];
-        const process = await executor.getProcess(processId);
+        const processes = await executor.listProcesses();
+        const process = processes.find((p) => p.id === processId);
         if (!process) {
           return new Response(JSON.stringify({ error: 'Process not found' }), {
             status: 404,
