@@ -43,6 +43,7 @@ describe('FileService', () => {
 
   beforeEach(async () => {
     // Reset all mocks before each test
+    vi.restoreAllMocks();
     vi.clearAllMocks();
 
     // Set up default successful security validation
@@ -506,21 +507,10 @@ describe('FileService', () => {
   });
 
   describe('write', () => {
-    it('should write file successfully with base64 encoding', async () => {
+    it('should write file successfully with utf-8 encoding', async () => {
       const testPath = '/tmp/test.txt';
       const testContent = 'Test content';
-      const base64Content = Buffer.from(testContent, 'utf-8').toString(
-        'base64'
-      );
-
-      mocked(mockSessionManager.executeInSession).mockResolvedValue({
-        success: true,
-        data: {
-          exitCode: 0,
-          stdout: '',
-          stderr: ''
-        }
-      } as ServiceResult<RawExecResult>);
+      const writeSpy = vi.spyOn(Bun, 'write').mockResolvedValue(0);
 
       const result = await fileService.write(
         testPath,
@@ -530,29 +520,14 @@ describe('FileService', () => {
       );
 
       expect(result.success).toBe(true);
-
-      // Verify SessionManager was called with base64 encoded content
-      expect(mockSessionManager.executeInSession).toHaveBeenCalledWith(
-        'session-123',
-        `printf '%s' '${base64Content}' | base64 -d > '/tmp/test.txt'`
-      );
+      expect(writeSpy).toHaveBeenCalledWith(testPath, testContent);
+      expect(mockSessionManager.executeInSession).not.toHaveBeenCalled();
     });
 
     it('should support utf8 as alias for utf-8 encoding in write', async () => {
       const testPath = '/tmp/test.txt';
       const testContent = 'Test content';
-      const base64Content = Buffer.from(testContent, 'utf-8').toString(
-        'base64'
-      );
-
-      mocked(mockSessionManager.executeInSession).mockResolvedValue({
-        success: true,
-        data: {
-          exitCode: 0,
-          stdout: '',
-          stderr: ''
-        }
-      } as ServiceResult<RawExecResult>);
+      const writeSpy = vi.spyOn(Bun, 'write').mockResolvedValue(0);
 
       const result = await fileService.write(
         testPath,
@@ -562,11 +537,31 @@ describe('FileService', () => {
       );
 
       expect(result.success).toBe(true);
+      expect(writeSpy).toHaveBeenCalledWith(testPath, testContent);
+    });
 
-      // Verify text encoding path is used (printf + base64)
+    it('should resolve relative paths using session working directory', async () => {
+      const writeSpy = vi.spyOn(Bun, 'write').mockResolvedValue(0);
+      mocked(mockSessionManager.executeInSession).mockResolvedValueOnce({
+        success: true,
+        data: { exitCode: 0, stdout: '/workspace/project\n', stderr: '' }
+      } as ServiceResult<RawExecResult>);
+
+      const result = await fileService.write(
+        'notes/todo.txt',
+        'content',
+        {},
+        'session-123'
+      );
+
+      expect(result.success).toBe(true);
       expect(mockSessionManager.executeInSession).toHaveBeenCalledWith(
         'session-123',
-        `printf '%s' '${base64Content}' | base64 -d > '/tmp/test.txt'`
+        'pwd'
+      );
+      expect(writeSpy).toHaveBeenCalledWith(
+        '/workspace/project/notes/todo.txt',
+        'content'
       );
     });
 
@@ -574,15 +569,7 @@ describe('FileService', () => {
       const testPath = '/tmp/image.png';
       const binaryData = Buffer.from([0x89, 0x50, 0x4e, 0x47]); // PNG header
       const base64Content = binaryData.toString('base64');
-
-      mocked(mockSessionManager.executeInSession).mockResolvedValue({
-        success: true,
-        data: {
-          exitCode: 0,
-          stdout: '',
-          stderr: ''
-        }
-      } as ServiceResult<RawExecResult>);
+      const writeSpy = vi.spyOn(Bun, 'write').mockResolvedValue(0);
 
       const result = await fileService.write(
         testPath,
@@ -592,24 +579,20 @@ describe('FileService', () => {
       );
 
       expect(result.success).toBe(true);
-
-      // Verify that content is passed directly without re-encoding
-      expect(mockSessionManager.executeInSession).toHaveBeenCalledWith(
-        'session-123',
-        `printf '%s' '${base64Content}' | base64 -d > '/tmp/image.png'`
-      );
+      expect(writeSpy).toHaveBeenCalledWith(testPath, binaryData);
     });
 
     it('should reject base64 content with invalid characters', async () => {
       const testPath = '/tmp/test.txt';
+      const writeSpy = vi.spyOn(Bun, 'write').mockResolvedValue(0);
 
       const maliciousInputs = [
-        "abc'; rm -rf / #", // Shell command injection
-        'valid$(whoami)base64', // Command substitution
-        'test\nmalicious', // Newline injection
-        'test`whoami`test', // Backtick injection
-        'test|whoami', // Pipe injection
-        'test&whoami&' // Background command injection
+        "abc'; rm -rf / #",
+        'valid$(whoami)base64',
+        'test\nmalicious',
+        'test`whoami`test',
+        'test|whoami',
+        'test&whoami&'
       ];
 
       for (const maliciousContent of maliciousInputs) {
@@ -625,22 +608,15 @@ describe('FileService', () => {
         expect(result.success).toBe(false);
         if (result.success) throw new Error('Expected failure');
         expect(result.error.code).toBe('VALIDATION_FAILED');
+        expect(writeSpy).not.toHaveBeenCalled();
         expect(mockSessionManager.executeInSession).not.toHaveBeenCalled();
       }
     });
 
     it('should accept valid base64 content with padding', async () => {
       const testPath = '/tmp/test.txt';
-      const validBase64 = 'SGVsbG8gV29ybGQ='; // "Hello World" with padding
-
-      mocked(mockSessionManager.executeInSession).mockResolvedValue({
-        success: true,
-        data: {
-          exitCode: 0,
-          stdout: '',
-          stderr: ''
-        }
-      } as ServiceResult<RawExecResult>);
+      const validBase64 = 'SGVsbG8gV29ybGQ=';
+      const writeSpy = vi.spyOn(Bun, 'write').mockResolvedValue(0);
 
       const result = await fileService.write(
         testPath,
@@ -650,18 +626,14 @@ describe('FileService', () => {
       );
 
       expect(result.success).toBe(true);
-      expect(mockSessionManager.executeInSession).toHaveBeenCalled();
+      expect(writeSpy).toHaveBeenCalledWith(
+        testPath,
+        Buffer.from(validBase64, 'base64')
+      );
     });
 
     it('should handle write errors', async () => {
-      mocked(mockSessionManager.executeInSession).mockResolvedValue({
-        success: true,
-        data: {
-          exitCode: 1,
-          stdout: '',
-          stderr: 'Disk full'
-        }
-      } as ServiceResult<RawExecResult>);
+      vi.spyOn(Bun, 'write').mockRejectedValue(new Error('Disk full'));
 
       const result = await fileService.write('/tmp/test.txt', 'content');
 
