@@ -37,10 +37,6 @@ export interface ReadFileRequest {
   path: string;
   encoding?: string;
   sessionId?: string;
-  /** Byte offset to start reading from (for chunked reads) */
-  offset?: number;
-  /** Number of bytes to read (for chunked reads) */
-  length?: number;
 }
 
 /**

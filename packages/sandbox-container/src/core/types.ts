@@ -305,10 +305,6 @@ export interface FileMetadata {
 
 export interface ReadOptions {
   encoding?: string;
-  /** Byte offset to start reading from (for chunked reads) */
-  offset?: number;
-  /** Number of bytes to read (for chunked reads) */
-  length?: number;
 }
 
 export interface WriteOptions {

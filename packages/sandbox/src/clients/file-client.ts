@@ -35,10 +35,6 @@ export interface WriteFileRequest extends SessionRequest {
 export interface ReadFileRequest extends SessionRequest {
   path: string;
   encoding?: string;
-  /** Byte offset to start reading from (for chunked reads) */
-  offset?: number;
-  /** Number of bytes to read (for chunked reads) */
-  length?: number;
 }
 
 /**
@@ -119,20 +115,18 @@ export class FileClient extends BaseHttpClient {
    * Read content from a file
    * @param path - File path to read from
    * @param sessionId - The session ID for this operation
-   * @param options - Optional settings (encoding, offset, length for chunked reads)
+   * @param options - Optional settings (encoding)
    */
   async readFile(
     path: string,
     sessionId: string,
-    options?: { encoding?: string; offset?: number; length?: number }
+    options?: { encoding?: string }
   ): Promise<ReadFileResult> {
     try {
       const data = {
         path,
         sessionId,
-        encoding: options?.encoding,
-        offset: options?.offset,
-        length: options?.length
+        encoding: options?.encoding
       };
 
       const response = await this.post<ReadFileResult>('/api/read', data);
