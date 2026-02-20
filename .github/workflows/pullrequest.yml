@@ -281,7 +281,17 @@ jobs:
 
       - name: Run E2E tests
         run: |
-          npx vitest run --config vitest.e2e.config.ts
+          set -e
+
+          npx vitest run --config vitest.e2e.config.ts --exclude tests/e2e/git-clone-workflow.test.ts &
+          PID_FAST=$!
+
+          npx vitest run --config vitest.e2e.config.ts tests/e2e/git-clone-workflow.test.ts &
+          PID_GIT=$!
+
+          wait $PID_FAST
+          wait $PID_GIT
+
           npx playwright test --config tests/e2e/browser/playwright.config.ts
         env:
           TEST_WORKER_URL: ${{ steps.get-url.outputs.worker_url }}
