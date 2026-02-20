@@ -295,15 +295,12 @@ export class FileService implements FileSystemOperations {
         };
       }
 
-      // 2. Write file using SessionManager with proper encoding handling
-      const escapedPath = shellEscape(path);
-      const encoding = options.encoding || 'utf-8';
+      // 2. Write file using Bun native file operations
+      const normalizedEncoding =
+        options.encoding === 'utf8' ? 'utf-8' : options.encoding || 'utf-8';
 
-      let command: string;
-
-      if (encoding === 'base64') {
-        // Content is already base64 encoded, validate and decode it directly to file
-        // Validate that content only contains valid base64 characters to prevent command injection
+      if (normalizedEncoding === 'base64') {
+        // Validate that content only contains valid base64 characters
         if (!/^[A-Za-z0-9+/=]*$/.test(content)) {
           return {
             success: false,
@@ -322,42 +319,56 @@ export class FileService implements FileSystemOperations {
             }
           };
         }
-        // Use printf to output base64 literally without trailing newline
-        command = `printf '%s' '${content}' | base64 -d > ${escapedPath}`;
-      } else {
-        // Encode text to base64 to safely handle shell metacharacters (quotes, backticks, $, etc.)
-        // and special characters (newlines, control chars, null bytes) in user content
-        const base64Content = Buffer.from(content, 'utf-8').toString('base64');
-        command = `printf '%s' '${base64Content}' | base64 -d > ${escapedPath}`;
       }
 
-      const execResult = await this.sessionManager.executeInSession(
+      const writeResult = await this.sessionManager.withSession(
         sessionId,
-        command
+        async (exec) => {
+          let targetPath = path;
+
+          if (!path.startsWith('/')) {
+            const pwdResult = await exec('pwd');
+            if (pwdResult.exitCode !== 0) {
+              throw {
+                code: ErrorCode.FILESYSTEM_ERROR,
+                message: `Failed to resolve working directory for '${path}'`,
+                details: {
+                  path,
+                  operation: Operation.FILE_WRITE,
+                  exitCode: pwdResult.exitCode,
+                  stderr: pwdResult.stderr
+                } satisfies FileSystemContext
+              };
+            }
+
+            const cwd = pwdResult.stdout.trim();
+            targetPath = `${cwd}/${path}`;
+          }
+
+          try {
+            const data =
+              normalizedEncoding === 'base64'
+                ? Buffer.from(content, 'base64')
+                : content;
+            await Bun.write(targetPath, data);
+          } catch (error) {
+            const errorMessage =
+              error instanceof Error ? error.message : 'Unknown error';
+            throw {
+              code: ErrorCode.FILESYSTEM_ERROR,
+              message: `Failed to write file '${path}': ${errorMessage}`,
+              details: {
+                path,
+                operation: Operation.FILE_WRITE,
+                stderr: errorMessage
+              } satisfies FileSystemContext
+            };
+          }
+        }
       );
 
-      if (!execResult.success) {
-        return execResult as ServiceResult<void>;
-      }
-
-      const result = execResult.data;
-
-      if (result.exitCode !== 0) {
-        return {
-          success: false,
-          error: {
-            message: `Failed to write file '${path}': ${
-              result.stderr || `exit code ${result.exitCode}`
-            }`,
-            code: ErrorCode.FILESYSTEM_ERROR,
-            details: {
-              path,
-              operation: Operation.FILE_WRITE,
-              exitCode: result.exitCode,
-              stderr: result.stderr
-            } satisfies FileSystemContext
-          }
-        };
+      if (!writeResult.success) {
+        return writeResult as ServiceResult<void>;
       }
 
       return {
