@@ -15,6 +15,10 @@
  */
 
 import { getSandbox, proxyToSandbox, Sandbox } from '@cloudflare/sandbox';
+import {
+  createOpencodeServer,
+  proxyToOpencodeServer
+} from '@cloudflare/sandbox/opencode';
 
 import type {
   BucketDeleteResponse,
@@ -208,14 +212,19 @@ export default {
       // WebSocket init endpoint - starts all WebSocket servers
       if (url.pathname === '/api/init' && request.method === 'POST') {
         const processes = await sandbox.listProcesses();
-        const runningServers = new Set(
-          processes.filter((p) => p.status === 'running').map((p) => p.id)
-        );
+        const isServerRunning = (commandFragment: string): boolean =>
+          processes.some(
+            (p) => p.status === 'running' && p.command.includes(commandFragment)
+          );
 
-        const serversToStart = [];
+        const serversToStart: Array<{
+          name: string;
+          port: number;
+          start: Promise<Process>;
+        }> = [];
 
         // Echo server
-        if (!runningServers.has('ws-echo-8080')) {
+        if (!isServerRunning('/tmp/ws-echo.ts')) {
           const echoScript = `
 const port = 8080;
 Bun.serve({
@@ -233,15 +242,15 @@ Bun.serve({
 console.log('Echo server on port ' + port);
 `;
           await sandbox.writeFile('/tmp/ws-echo.ts', echoScript);
-          serversToStart.push(
-            sandbox.startProcess('bun run /tmp/ws-echo.ts', {
-              processId: 'ws-echo-8080'
-            })
-          );
+          serversToStart.push({
+            name: 'echo',
+            port: 8080,
+            start: sandbox.startProcess('bun run /tmp/ws-echo.ts')
+          });
         }
 
         // Python code server
-        if (!runningServers.has('ws-code-8081')) {
+        if (!isServerRunning('/tmp/ws-code.ts')) {
           const codeScript = `
 const port = 8081;
 Bun.serve({
@@ -296,15 +305,15 @@ Bun.serve({
 console.log('Code server on port ' + port);
 `;
           await sandbox.writeFile('/tmp/ws-code.ts', codeScript);
-          serversToStart.push(
-            sandbox.startProcess('bun run /tmp/ws-code.ts', {
-              processId: 'ws-code-8081'
-            })
-          );
+          serversToStart.push({
+            name: 'code',
+            port: 8081,
+            start: sandbox.startProcess('bun run /tmp/ws-code.ts')
+          });
         }
 
         // Terminal server
-        if (!runningServers.has('ws-terminal-8082')) {
+        if (!isServerRunning('/tmp/ws-terminal.ts')) {
           const terminalScript = `
 const port = 8082;
 Bun.serve({
@@ -335,15 +344,26 @@ Bun.serve({
 console.log('Terminal server on port ' + port);
 `;
           await sandbox.writeFile('/tmp/ws-terminal.ts', terminalScript);
-          serversToStart.push(
-            sandbox.startProcess('bun run /tmp/ws-terminal.ts', {
-              processId: 'ws-terminal-8082'
-            })
-          );
+          serversToStart.push({
+            name: 'terminal',
+            port: 8082,
+            start: sandbox.startProcess('bun run /tmp/ws-terminal.ts')
+          });
         }
 
-        // Start all servers and track results
-        const results = await Promise.allSettled(serversToStart);
+        // Start all servers and wait until their target ports are accepting connections.
+        const results = await Promise.allSettled(
+          serversToStart.map(async (server) => {
+            const process = await server.start;
+            await process.waitForPort(server.port, {
+              mode: 'tcp',
+              timeout: 30000,
+              interval: 250
+            });
+            return server.name;
+          })
+        );
+
         const failedCount = results.filter(
           (r) => r.status === 'rejected'
         ).length;
@@ -392,6 +412,43 @@ console.log('Terminal server on port ' + port);
         return new Response(JSON.stringify(response), {
           headers: { 'Content-Type': 'application/json' }
         });
+      }
+
+      // OpenCode direct server proxy helper
+      if (
+        url.pathname === '/api/opencode/proxy-server/global-health' &&
+        request.method === 'GET'
+      ) {
+        let server:
+          | Awaited<ReturnType<typeof createOpencodeServer>>
+          | undefined;
+
+        try {
+          server = await createOpencodeServer(sandbox, {
+            port: 4096
+          });
+
+          const opencodeRequest = new Request(
+            `${url.origin}/global/health${url.search}`,
+            request
+          );
+
+          const response = await proxyToOpencodeServer(
+            opencodeRequest,
+            sandbox,
+            server
+          );
+          const body = await response.arrayBuffer();
+
+          return new Response(body, {
+            status: response.status,
+            headers: response.headers
+          });
+        } finally {
+          if (server) {
+            await server.close();
+          }
+        }
       }
 
       // Session management
@@ -639,7 +696,8 @@ console.log('Terminal server on port ' + port);
       ) {
         const pathParts = url.pathname.split('/');
         const processId = pathParts[3];
-        const process = await executor.getProcess(processId);
+        const processes = await executor.listProcesses();
+        const process = processes.find((p) => p.id === processId);
         if (!process) {
           return new Response(JSON.stringify({ error: 'Process not found' }), {
             status: 404,
@@ -670,20 +728,26 @@ console.log('Terminal server on port ' + port);
       ) {
         const pathParts = url.pathname.split('/');
         const processId = pathParts[3];
-        const process = await executor.getProcess(processId);
+        const processes = await executor.listProcesses();
+        const process = processes.find((p) => p.id === processId);
         if (!process) {
           return new Response(JSON.stringify({ error: 'Process not found' }), {
             status: 404,
             headers: { 'Content-Type': 'application/json' }
           });
         }
-        // Build WaitForPortOptions from request body
+        // Build WaitForPortOptions from request body.
+        // Accept both flat fields and nested `options` payloads.
+        const waitOptions =
+          body.options && typeof body.options === 'object'
+            ? body.options
+            : body;
         await process.waitForPort(body.port, {
-          mode: body.mode,
-          path: body.path,
-          status: body.status,
-          timeout: body.timeout,
-          interval: body.interval
+          mode: waitOptions.mode,
+          path: waitOptions.path,
+          status: waitOptions.status,
+          timeout: waitOptions.timeout,
+          interval: waitOptions.interval
         });
         return new Response(JSON.stringify({ success: true }), {
           headers: { 'Content-Type': 'application/json' }
@@ -698,7 +762,8 @@ console.log('Terminal server on port ' + port);
       ) {
         const pathParts = url.pathname.split('/');
         const processId = pathParts[3];
-        const process = await executor.getProcess(processId);
+        const processes = await executor.listProcesses();
+        const process = processes.find((p) => p.id === processId);
         if (!process) {
           return new Response(JSON.stringify({ error: 'Process not found' }), {
             status: 404,
