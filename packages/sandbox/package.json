@@ -8,7 +8,8 @@
   "description": "A sandboxed environment for running commands",
   "type": "module",
   "dependencies": {
-    "@cloudflare/containers": "^0.0.30"
+    "@cloudflare/containers": "^0.0.30",
+    "aws4fetch": "^1.0.20"
   },
   "devDependencies": {
     "@openai/agents": "^0.3.3",
