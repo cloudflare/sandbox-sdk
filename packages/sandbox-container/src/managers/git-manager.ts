@@ -43,7 +43,7 @@ export class GitManager {
     targetDir: string,
     options: CloneOptions = {}
   ): string[] {
-    const args = ['git', 'clone'];
+    const args = ['git', 'clone', '--filter=blob:none'];
 
     if (options.branch) {
       args.push('--branch', options.branch);

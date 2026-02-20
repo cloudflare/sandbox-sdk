@@ -153,7 +153,7 @@ describe('GitService', () => {
       expect(mockSessionManager.executeInSession).toHaveBeenNthCalledWith(
         1,
         'default',
-        "'git' 'clone' 'https://github.com/user/repo.git' '/workspace/repo'"
+        "'git' 'clone' '--filter=blob:none' 'https://github.com/user/repo.git' '/workspace/repo'"
       );
 
       // Verify SessionManager was called for getting current branch
@@ -205,7 +205,7 @@ describe('GitService', () => {
       expect(mockSessionManager.executeInSession).toHaveBeenNthCalledWith(
         1,
         'session-123',
-        "'git' 'clone' '--branch' 'develop' 'https://github.com/user/repo.git' '/tmp/custom-target'"
+        "'git' 'clone' '--filter=blob:none' '--branch' 'develop' 'https://github.com/user/repo.git' '/tmp/custom-target'"
       );
     });
 
