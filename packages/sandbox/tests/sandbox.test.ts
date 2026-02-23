@@ -821,7 +821,7 @@ describe('Sandbox - Automatic Session Management', () => {
       });
 
       expect(result.url).toMatch(
-        /^https:\/\/8080-my-project-[a-z0-9_-]{16}\.example\.com\/?$/
+        /^https:\/\/8080-my-project-[a-z0-9_]{16}\.example\.com\/?$/
       );
       expect(result.port).toBe(8080);
     });
@@ -839,7 +839,7 @@ describe('Sandbox - Automatic Session Management', () => {
       const result = await sandbox.exposePort(4000, { hostname: 'my-app.dev' });
 
       expect(result.url).toMatch(
-        /^https:\/\/4000-myproject-123-[a-z0-9_-]{16}\.my-app\.dev\/?$/
+        /^https:\/\/4000-myproject-123-[a-z0-9_]{16}\.my-app\.dev\/?$/
       );
       expect(result.port).toBe(4000);
     });
@@ -859,7 +859,7 @@ describe('Sandbox - Automatic Session Management', () => {
       });
 
       expect(result.url).toMatch(
-        /^http:\/\/8080-test-sandbox-[a-z0-9_-]{16}\.localhost:3000\/?$/
+        /^http:\/\/8080-test-sandbox-[a-z0-9_]{16}\.localhost:3000\/?$/
       );
     });
 
