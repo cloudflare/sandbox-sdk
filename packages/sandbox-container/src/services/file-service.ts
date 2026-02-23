@@ -973,18 +973,46 @@ export class FileService implements FileSystemOperations {
         };
       }
 
+      let absolutePath = path;
+
+      if (!path.startsWith('/')) {
+        // Resolve the absolute path first to avoid calling executeInSession inside withSession
+        const pwdResult = await this.sessionManager.executeInSession(
+          sessionId,
+          'pwd'
+        );
+
+        if (!pwdResult.success || pwdResult.data.exitCode !== 0) {
+          // Return a stream that immediately emits the error and closes.
+          return {
+            success: false,
+            error: {
+              message: `Failed to resolve working directory for '${path}'`,
+              code: ErrorCode.FILESYSTEM_ERROR,
+              details: {
+                path,
+                operation: Operation.FILE_READ
+              } satisfies FileSystemContext
+            }
+          };
+        }
+
+        const cwd = pwdResult.data.stdout.trim();
+        absolutePath = `${cwd}/${path}`;
+      }
+
       // 2. Use Bun.file() for existence and stat.
-      const bunFile = Bun.file(path);
+      const bunFile = Bun.file(absolutePath);
       const fileExists = await bunFile.exists();
 
       if (!fileExists) {
         return {
           success: false,
           error: {
-            message: `File not found: ${path}`,
+            message: `File not found: ${absolutePath}`,
             code: ErrorCode.FILE_NOT_FOUND,
             details: {
-              path,
+              path: absolutePath,
               operation: Operation.FILE_READ
             } satisfies FileNotFoundContext
           }
@@ -999,7 +1027,7 @@ export class FileService implements FileSystemOperations {
       //    classify extension-less binaries (e.g. compiled executables).
       let mimeType = bunFile.type;
       if (mimeType === 'application/octet-stream') {
-        const escapedPath = shellEscape(path);
+        const escapedPath = shellEscape(absolutePath);
         const mimeResult = await this.sessionManager.executeInSession(
           sessionId,
           `file --mime-type -b ${escapedPath}`
@@ -1375,6 +1403,28 @@ export class FileService implements FileSystemOperations {
   ): Promise<ReadableStream<Uint8Array>> {
     const encoder = new TextEncoder();
 
+    // This is the only async work before returning the stream so the caller
+    // gets an early error rather than an SSE error event mid-stream.
+    const metadataResult = await this.getFileMetadata(path, sessionId);
+
+    if (!metadataResult.success) {
+      // Return a stream that immediately emits the error and closes.
+      return new ReadableStream({
+        start(controller) {
+          const errorEvent = {
+            type: 'error',
+            error: metadataResult.error.message
+          };
+          controller.enqueue(
+            encoder.encode(`data: ${JSON.stringify(errorEvent)}\n\n`)
+          );
+          controller.close();
+        }
+      });
+    }
+
+    const metadata = metadataResult.data;
+
     let absolutePath = path;
 
     if (!path.startsWith('/')) {
@@ -1405,29 +1455,6 @@ export class FileService implements FileSystemOperations {
       const cwd = pwdResult.data.stdout.trim();
       absolutePath = `${cwd}/${path}`;
     }
-
-    // Resolve metadata with the absolute path.
-    // This is the only async work before returning the stream so the caller
-    // gets an early error rather than an SSE error event mid-stream.
-    const metadataResult = await this.getFileMetadata(absolutePath, sessionId);
-
-    if (!metadataResult.success) {
-      // Return a stream that immediately emits the error and closes.
-      return new ReadableStream({
-        start(controller) {
-          const errorEvent = {
-            type: 'error',
-            error: metadataResult.error.message
-          };
-          controller.enqueue(
-            encoder.encode(`data: ${JSON.stringify(errorEvent)}\n\n`)
-          );
-          controller.close();
-        }
-      });
-    }
-
-    const metadata = metadataResult.data;
 
     const CHUNK_SIZE = 65535;
 
