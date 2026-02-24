@@ -1451,7 +1451,8 @@ export class FileService implements FileSystemOperations {
               );
               totalBytesEmitted += carry.length;
               carry = new Uint8Array(0);
-            } else if (!metadata.isBinary) {
+            }
+            if (!metadata.isBinary) {
               const remaining = decoder.decode();
               if (remaining.length > 0) {
                 const chunkEvent = { type: 'chunk', data: remaining };
