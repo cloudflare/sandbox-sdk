@@ -164,7 +164,8 @@ describe('FileHandler', () => {
       const writeFileData = {
         path: '/tmp/output.txt',
         content: 'Hello, File!',
-        encoding: 'utf-8'
+        encoding: 'utf-8',
+        sessionId: 'session-123'
       };
 
       (mockFileService.writeFile as any).mockResolvedValue({
@@ -191,7 +192,37 @@ describe('FileHandler', () => {
         'Hello, File!',
         {
           encoding: 'utf-8'
-        }
+        },
+        'session-123'
+      );
+    });
+
+    it('should pass undefined sessionId when not provided', async () => {
+      const writeFileData = {
+        path: '/tmp/output.txt',
+        content: 'Hello, File!'
+      };
+
+      (mockFileService.writeFile as any).mockResolvedValue({
+        success: true
+      });
+
+      const request = new Request('http://localhost:3000/api/write', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(writeFileData)
+      });
+
+      const response = await fileHandler.handle(request, mockContext);
+
+      expect(response.status).toBe(200);
+      expect(mockFileService.writeFile).toHaveBeenCalledWith(
+        '/tmp/output.txt',
+        'Hello, File!',
+        {
+          encoding: undefined
+        },
+        undefined
       );
     });
 

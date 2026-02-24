@@ -157,9 +157,14 @@ export class FileHandler extends BaseHandler<Request, Response> {
   ): Promise<Response> {
     const body = await this.parseRequestBody<WriteFileRequest>(request);
 
-    const result = await this.fileService.writeFile(body.path, body.content, {
-      encoding: body.encoding
-    });
+    const result = await this.fileService.writeFile(
+      body.path,
+      body.content,
+      {
+        encoding: body.encoding
+      },
+      body.sessionId
+    );
 
     if (result.success) {
       const response: WriteFileResult = {
