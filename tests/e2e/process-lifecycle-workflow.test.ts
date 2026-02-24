@@ -162,7 +162,7 @@ wait`;
     let childPid: number | null = null;
 
     try {
-      await fetch(`${workerUrl}/api/file/write`, {
+      const writeResponse = await fetch(`${workerUrl}/api/file/write`, {
         method: 'POST',
         headers,
         body: JSON.stringify({
@@ -170,6 +170,7 @@ wait`;
           content: scriptCode
         })
       });
+      expect(writeResponse.status).toBe(200);
 
       const startResponse = await fetch(`${workerUrl}/api/process/start`, {
         method: 'POST',

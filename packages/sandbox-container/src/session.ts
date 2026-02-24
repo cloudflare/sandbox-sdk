@@ -733,6 +733,8 @@ export class Session {
               killProcessTree(pid, 'SIGKILL');
               exitConfirmed = await waitForExitResult();
             }
+          } else {
+            killProcessTree(pid, 'SIGKILL');
           }
 
           if (waitForExit && !exitConfirmed) {
