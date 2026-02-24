@@ -93,6 +93,7 @@ export {
   // File System Errors
   FileNotFoundError,
   FileSystemError,
+  FileTooLargeError,
   GitAuthenticationError,
   GitBranchNotFoundError,
   GitCheckoutError,

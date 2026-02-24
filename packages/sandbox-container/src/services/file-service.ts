@@ -104,28 +104,9 @@ export class FileService implements FileSystemOperations {
 
       return this.sessionManager
         .withSession(sessionId, async (exec) => {
-          let targetPath = path;
+          const absolutePath = await this.resolvePathInSession(path, exec);
 
-          if (!path.startsWith('/')) {
-            const pwdResult = await exec('pwd');
-            if (pwdResult.exitCode !== 0) {
-              throw {
-                code: ErrorCode.FILESYSTEM_ERROR,
-                message: `Failed to resolve working directory for '${path}'`,
-                details: {
-                  path,
-                  operation: Operation.FILE_READ,
-                  exitCode: pwdResult.exitCode,
-                  stderr: pwdResult.stderr
-                } satisfies FileSystemContext
-              };
-            }
-
-            const cwd = pwdResult.stdout.trim();
-            targetPath = resolve(cwd, path);
-          }
-
-          const bunFile = Bun.file(targetPath);
+          const bunFile = Bun.file(absolutePath);
 
           const fileExists = await bunFile.exists();
           if (!fileExists) {
@@ -946,7 +927,10 @@ export class FileService implements FileSystemOperations {
    */
   async getFileMetadata(
     path: string,
-    sessionId = 'default'
+    exec: (
+      command: string,
+      options?: { cwd?: string; env?: Record<string, string | undefined> }
+    ) => Promise<{ exitCode: number; stdout: string; stderr: string }>
   ): Promise<ServiceResult<FileMetadata>> {
     try {
       // 1. Validate path for security
@@ -967,47 +951,18 @@ export class FileService implements FileSystemOperations {
           }
         };
       }
-
-      let absolutePath = path;
-
-      if (!path.startsWith('/')) {
-        // Resolve the absolute path first to avoid calling executeInSession inside withSession
-        const pwdResult = await this.sessionManager.executeInSession(
-          sessionId,
-          'pwd'
-        );
-
-        if (!pwdResult.success || pwdResult.data.exitCode !== 0) {
-          // Return a stream that immediately emits the error and closes.
-          return {
-            success: false,
-            error: {
-              message: `Failed to resolve working directory for '${path}'`,
-              code: ErrorCode.FILESYSTEM_ERROR,
-              details: {
-                path,
-                operation: Operation.FILE_READ
-              } satisfies FileSystemContext
-            }
-          };
-        }
-
-        const cwd = pwdResult.data.stdout.trim();
-        absolutePath = resolve(cwd, path);
-      }
-
       // 2. Use Bun.file() for existence and stat.
-      const bunFile = Bun.file(absolutePath);
+      const bunFile = Bun.file(path);
       const fileExists = await bunFile.exists();
 
       if (!fileExists) {
         return {
           success: false,
           error: {
-            message: `File not found: ${absolutePath}`,
+            message: `File not found: ${path}`,
             code: ErrorCode.FILE_NOT_FOUND,
             details: {
-              path: absolutePath,
+              path,
               operation: Operation.FILE_READ
             } satisfies FileNotFoundContext
           }
@@ -1022,13 +977,10 @@ export class FileService implements FileSystemOperations {
       //    classify extension-less binaries (e.g. compiled executables).
       let mimeType = bunFile.type;
       if (mimeType === 'application/octet-stream') {
-        const escapedPath = shellEscape(absolutePath);
-        const mimeResult = await this.sessionManager.executeInSession(
-          sessionId,
-          `file --mime-type -b ${escapedPath}`
-        );
-        if (mimeResult.success && mimeResult.data.exitCode === 0) {
-          mimeType = mimeResult.data.stdout.trim();
+        const escapedPath = shellEscape(path);
+        const mimeResult = await exec(`file --mime-type -b ${escapedPath}`);
+        if (mimeResult.exitCode === 0) {
+          mimeType = mimeResult.stdout.trim();
         }
         // If the fallback fails we keep 'application/octet-stream', which
         // isBinaryMimeType() will correctly classify as binary.
@@ -1400,17 +1352,15 @@ export class FileService implements FileSystemOperations {
     const encoder = new TextEncoder();
     const decoder = new TextDecoder();
 
-    // This is the only async work before returning the stream so the caller
-    // gets an early error rather than an SSE error event mid-stream.
-    const metadataResult = await this.getFileMetadata(path, sessionId);
-
-    if (!metadataResult.success) {
-      // Return a stream that immediately emits the error and closes.
+    const validation = this.security.validatePath(path);
+    if (!validation.isValid) {
       return new ReadableStream({
         start(controller) {
           const errorEvent = {
             type: 'error',
-            error: metadataResult.error.message
+            error: `Invalid path format for '${path}': ${validation.errors.join(
+              ', '
+            )}`
           };
           controller.enqueue(
             encoder.encode(`data: ${JSON.stringify(errorEvent)}\n\n`)
@@ -1420,126 +1370,157 @@ export class FileService implements FileSystemOperations {
       });
     }
 
-    const metadata = metadataResult.data;
-
-    let absolutePath = path;
-
-    if (!path.startsWith('/')) {
-      // Resolve the absolute path first to avoid calling executeInSession inside withSession
-      const pwdResult = await this.sessionManager.executeInSession(
-        sessionId,
-        'pwd'
-      );
-
-      if (!pwdResult.success || pwdResult.data.exitCode !== 0) {
-        // Return a stream that immediately emits the error and closes.
-        return new ReadableStream({
-          start(controller) {
-            const errorEvent = {
-              type: 'error',
-              error: pwdResult.success
-                ? 'Failed to get working directory'
-                : pwdResult.error.message
-            };
-            controller.enqueue(
-              encoder.encode(`data: ${JSON.stringify(errorEvent)}\n\n`)
-            );
-            controller.close();
-          }
-        });
-      }
-
-      const cwd = pwdResult.data.stdout.trim();
-      absolutePath = resolve(cwd, path);
-    }
-
     const CHUNK_SIZE = 65535;
 
-    const fileStream = Bun.file(absolutePath).stream();
+    return await this.sessionManager
+      .withSession(sessionId, async (exec) => {
+        const absolutePath = await this.resolvePathInSession(path, exec);
+        const metadataResult = await this.getFileMetadata(absolutePath, exec);
 
-    // Carry-over buffer for chunks that arrive smaller than CHUNK_SIZE from
-    // Bun's internal read buffer so we always emit full-sized SSE events.
-    let carry = new Uint8Array(0);
-    let totalBytesEmitted = 0;
-
-    const sseTransform = new TransformStream<Uint8Array, Uint8Array>({
-      start(controller) {
-        // Emit the metadata SSE event as the very first bytes of the stream.
-        const metadataEvent = {
-          type: 'metadata',
-          mimeType: metadata.mimeType,
-          size: metadata.size,
-          isBinary: metadata.isBinary,
-          encoding: metadata.encoding
-        };
-        controller.enqueue(
-          encoder.encode(`data: ${JSON.stringify(metadataEvent)}\n\n`)
-        );
-      },
-
-      transform(incoming, controller) {
-        const combined = new Uint8Array(carry.length + incoming.length);
-        combined.set(carry);
-        combined.set(incoming, carry.length);
-
-        let offset = 0;
-        while (offset + CHUNK_SIZE <= combined.length) {
-          const slice = combined.subarray(offset, offset + CHUNK_SIZE);
-          emitChunk(
-            slice,
-            metadata.isBinary,
-            encoder,
-            decoder,
-            controller,
-            true
-          );
-          totalBytesEmitted += slice.length;
-          offset += CHUNK_SIZE;
+        if (!metadataResult.success) {
+          return new ReadableStream({
+            start(controller) {
+              const errorEvent = {
+                type: 'error',
+                error: metadataResult.error.message
+              };
+              controller.enqueue(
+                encoder.encode(`data: ${JSON.stringify(errorEvent)}\n\n`)
+              );
+              controller.close();
+            }
+          });
         }
 
-        carry = combined.subarray(offset);
-      },
+        const metadata = metadataResult.data;
 
-      flush(controller) {
-        if (carry.length > 0) {
-          emitChunk(
-            carry,
-            metadata.isBinary,
-            encoder,
-            decoder,
-            controller,
-            false
-          );
-          totalBytesEmitted += carry.length;
-          carry = new Uint8Array(0);
-        } else if (!metadata.isBinary) {
-          const remaining = decoder.decode();
-          if (remaining.length > 0) {
-            const chunkEvent = { type: 'chunk', data: remaining };
+        const fileStream = Bun.file(absolutePath).stream();
+
+        // Carry-over buffer for chunks that arrive smaller than CHUNK_SIZE from
+        // Bun's internal read buffer so we always emit full-sized SSE events.
+        let carry = new Uint8Array(0);
+        let totalBytesEmitted = 0;
+
+        const sseTransform = new TransformStream<Uint8Array, Uint8Array>({
+          start(controller) {
+            // Emit the metadata SSE event as the very first bytes of the stream.
+            const metadataEvent = {
+              type: 'metadata',
+              mimeType: metadata.mimeType,
+              size: metadata.size,
+              isBinary: metadata.isBinary,
+              encoding: metadata.encoding
+            };
             controller.enqueue(
-              encoder.encode(`data: ${JSON.stringify(chunkEvent)}\n\n`)
+              encoder.encode(`data: ${JSON.stringify(metadataEvent)}\n\n`)
+            );
+          },
+
+          transform(incoming, controller) {
+            const combined = new Uint8Array(carry.length + incoming.length);
+            combined.set(carry);
+            combined.set(incoming, carry.length);
+
+            let offset = 0;
+            while (offset + CHUNK_SIZE <= combined.length) {
+              const slice = combined.subarray(offset, offset + CHUNK_SIZE);
+              emitChunk(
+                slice,
+                metadata.isBinary,
+                encoder,
+                decoder,
+                controller,
+                true
+              );
+              totalBytesEmitted += slice.length;
+              offset += CHUNK_SIZE;
+            }
+
+            carry = combined.subarray(offset);
+          },
+
+          flush(controller) {
+            if (carry.length > 0) {
+              emitChunk(
+                carry,
+                metadata.isBinary,
+                encoder,
+                decoder,
+                controller,
+                false
+              );
+              totalBytesEmitted += carry.length;
+              carry = new Uint8Array(0);
+            } else if (!metadata.isBinary) {
+              const remaining = decoder.decode();
+              if (remaining.length > 0) {
+                const chunkEvent = { type: 'chunk', data: remaining };
+                controller.enqueue(
+                  encoder.encode(`data: ${JSON.stringify(chunkEvent)}\n\n`)
+                );
+              }
+            }
+
+            const completeEvent = {
+              type: 'complete',
+              bytesRead: totalBytesEmitted
+            };
+            controller.enqueue(
+              encoder.encode(`data: ${JSON.stringify(completeEvent)}\n\n`)
             );
           }
-        }
+        });
 
-        const completeEvent = {
-          type: 'complete',
-          bytesRead: totalBytesEmitted
-        };
-        controller.enqueue(
-          encoder.encode(`data: ${JSON.stringify(completeEvent)}\n\n`)
+        return fileStream.pipeThrough(sseTransform).pipeThrough(
+          new TransformStream<Uint8Array, Uint8Array>({
+            transform(chunk, controller) {
+              controller.enqueue(chunk);
+            },
+            flush() {}
+          })
         );
-      }
-    });
-
-    return fileStream.pipeThrough(sseTransform).pipeThrough(
-      new TransformStream<Uint8Array, Uint8Array>({
-        transform(chunk, controller) {
-          controller.enqueue(chunk);
-        },
-        flush() {}
       })
-    );
+      .then((result) => {
+        if (!result.success) {
+          throw new Error(
+            `Failed to create file stream: ${result.error.message}`
+          );
+        }
+        return result.data;
+      });
+  }
+
+  /*
+   * Resolve a complete path in the context of the session's current working directory.  If the
+   * provided path is relative, we append the session's current working directory to it.
+   */
+  private async resolvePathInSession(
+    path: string,
+    exec: (
+      command: string,
+      options?: { cwd?: string; env?: Record<string, string | undefined> }
+    ) => Promise<{ exitCode: number; stdout: string; stderr: string }>
+  ): Promise<string> {
+    if (path.startsWith('/')) {
+      return path;
+    }
+
+    const pwdResult = await exec('pwd');
+    if (pwdResult.exitCode !== 0) {
+      throw {
+        code: ErrorCode.FILESYSTEM_ERROR,
+        message: `Failed to resolve working directory for '${path}'`,
+        details: {
+          path,
+          operation: Operation.FILE_READ,
+          exitCode: pwdResult.exitCode,
+          stderr: pwdResult.stderr
+        } satisfies FileSystemContext
+      };
+    }
+
+    const cwd = pwdResult.stdout.trim();
+    return resolve(cwd, path);
   }
 }
 

@@ -965,7 +965,7 @@ describe('FileService', () => {
   });
 
   describe('getFileMetadata', () => {
-    it('should return metadata without reading file content', async () => {
+    it('should return metadata for octet-stream file, falling back to shell MIME detection', async () => {
       const testPath = '/tmp/large-file.bin';
       const fileSize = 50_000_000; // 50MB file
 
@@ -975,12 +975,15 @@ describe('FileService', () => {
         type: 'application/octet-stream'
       });
 
-      mocked(mockSessionManager.executeInSession).mockResolvedValueOnce({
-        success: true,
-        data: { exitCode: 0, stdout: 'application/octet-stream', stderr: '' }
-      } as ServiceResult<RawExecResult>);
+      const mockExec = vi
+        .fn()
+        .mockResolvedValue({
+          exitCode: 0,
+          stdout: 'application/octet-stream',
+          stderr: ''
+        });
 
-      const result = await fileService.getFileMetadata(testPath, 'session-123');
+      const result = await fileService.getFileMetadata(testPath, mockExec);
 
       expect(result.success).toBe(true);
       if (result.success) {
@@ -990,14 +993,13 @@ describe('FileService', () => {
         expect(result.data.encoding).toBe('base64');
       }
 
-      expect(mockSessionManager.executeInSession).toHaveBeenCalledTimes(1);
-      expect(mockSessionManager.executeInSession).toHaveBeenCalledWith(
-        'session-123',
+      expect(mockExec).toHaveBeenCalledTimes(1);
+      expect(mockExec).toHaveBeenCalledWith(
         "file --mime-type -b '/tmp/large-file.bin'"
       );
     });
 
-    it('should detect text files correctly', async () => {
+    it('should detect text files correctly without shelling out', async () => {
       const testPath = '/tmp/document.json';
 
       mockBunFile({
@@ -1006,7 +1008,9 @@ describe('FileService', () => {
         type: 'application/json'
       });
 
-      const result = await fileService.getFileMetadata(testPath, 'session-123');
+      const mockExec = vi.fn();
+
+      const result = await fileService.getFileMetadata(testPath, mockExec);
 
       expect(result.success).toBe(true);
       if (result.success) {
@@ -1016,13 +1020,18 @@ describe('FileService', () => {
         expect(result.data.encoding).toBe('utf-8');
       }
 
-      expect(mockSessionManager.executeInSession).not.toHaveBeenCalled();
+      expect(mockExec).not.toHaveBeenCalled();
     });
 
     it('should return error when file does not exist', async () => {
       mockBunFile({ exists: false });
 
-      const result = await fileService.getFileMetadata('/tmp/nonexistent.txt');
+      const mockExec = vi.fn();
+
+      const result = await fileService.getFileMetadata(
+        '/tmp/nonexistent.txt',
+        mockExec
+      );
 
       expect(result.success).toBe(false);
       if (!result.success) {
@@ -1036,15 +1045,16 @@ describe('FileService', () => {
         errors: ['Path outside sandbox']
       });
 
-      const result = await fileService.getFileMetadata('/etc/passwd');
+      const mockExec = vi.fn();
+
+      const result = await fileService.getFileMetadata('/etc/passwd', mockExec);
 
       expect(result.success).toBe(false);
       if (!result.success) {
         expect(result.error.code).toBe('VALIDATION_FAILED');
       }
 
-      // Should not attempt any file operations
-      expect(mockSessionManager.executeInSession).not.toHaveBeenCalled();
+      expect(mockExec).not.toHaveBeenCalled();
     });
   });
 
