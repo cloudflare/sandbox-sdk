@@ -1,3 +1,4 @@
+import { resolve } from 'node:path';
 import type { FileInfo, ListFilesOptions, Logger } from '@repo/shared';
 import { shellEscape } from '@repo/shared';
 import type {
@@ -342,7 +343,7 @@ export class FileService implements FileSystemOperations {
             }
 
             const cwd = pwdResult.stdout.trim();
-            targetPath = `${cwd}/${path}`;
+            targetPath = resolve(cwd, path);
           }
 
           try {

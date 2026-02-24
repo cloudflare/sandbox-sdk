@@ -565,6 +565,27 @@ describe('FileService', () => {
       );
     });
 
+    it('should normalize relative paths before writing', async () => {
+      const writeSpy = vi.spyOn(Bun, 'write').mockResolvedValue(0);
+      mocked(mockSessionManager.executeInSession).mockResolvedValueOnce({
+        success: true,
+        data: { exitCode: 0, stdout: '/workspace/project\n', stderr: '' }
+      } as ServiceResult<RawExecResult>);
+
+      const result = await fileService.write(
+        './notes/../todo.txt',
+        'content',
+        {},
+        'session-123'
+      );
+
+      expect(result.success).toBe(true);
+      expect(writeSpy).toHaveBeenCalledWith(
+        '/workspace/project/todo.txt',
+        'content'
+      );
+    });
+
     it('should write binary file with base64 encoding option', async () => {
       const testPath = '/tmp/image.png';
       const binaryData = Buffer.from([0x89, 0x50, 0x4e, 0x47]); // PNG header
