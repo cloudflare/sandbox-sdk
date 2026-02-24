@@ -11,6 +11,7 @@ export { SandboxClient } from './sandbox-client';
 
 export { BackupClient } from './backup-client';
 export { CommandClient } from './command-client';
+export { DesktopClient } from './desktop-client';
 export { FileClient } from './file-client';
 export { GitClient } from './git-client';
 export { InterpreterClient } from './interpreter-client';
@@ -41,6 +42,23 @@ export {
 
 // Command client types
 export type { ExecuteRequest, ExecuteResponse } from './command-client';
+// Desktop client types
+export type {
+  ClickOptions,
+  CursorPositionResponse,
+  DesktopStartOptions,
+  DesktopStartResponse,
+  DesktopStatusResponse,
+  DesktopStopResponse,
+  KeyInput,
+  ScreenSizeResponse,
+  ScreenshotBytesResponse,
+  ScreenshotOptions,
+  ScreenshotRegion,
+  ScreenshotResponse,
+  ScrollDirection,
+  TypeOptions
+} from './desktop-client';
 // File client types
 export type {
   FileOperationRequest,
