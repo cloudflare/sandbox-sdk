@@ -1038,6 +1038,7 @@ export class FileService implements FileSystemOperations {
         // If the fallback fails we keep 'application/octet-stream', which
         // isBinaryMimeType() will correctly classify as binary.
       }
+      mimeType = mimeType.split(';')[0].trim(); // In case there are extra parameters like charset
 
       // 4. Classify binary vs text
       const isBinary = this.isBinaryMimeType(mimeType);
@@ -1402,6 +1403,7 @@ export class FileService implements FileSystemOperations {
     sessionId = 'default'
   ): Promise<ReadableStream<Uint8Array>> {
     const encoder = new TextEncoder();
+    const decoder = new TextDecoder();
 
     // This is the only async work before returning the stream so the caller
     // gets an early error rather than an SSE error event mid-stream.
@@ -1458,80 +1460,91 @@ export class FileService implements FileSystemOperations {
 
     const CHUNK_SIZE = 65535;
 
-    return await this.sessionManager
-      .withSession(sessionId, async () => {
-        const fileStream = Bun.file(absolutePath).stream();
+    const fileStream = Bun.file(absolutePath).stream();
 
-        // Carry-over buffer for chunks that arrive smaller than CHUNK_SIZE from
-        // Bun's internal read buffer so we always emit full-sized SSE events.
-        let carry = new Uint8Array(0);
-        let totalBytesEmitted = 0;
+    // Carry-over buffer for chunks that arrive smaller than CHUNK_SIZE from
+    // Bun's internal read buffer so we always emit full-sized SSE events.
+    let carry = new Uint8Array(0);
+    let totalBytesEmitted = 0;
 
-        const sseTransform = new TransformStream<Uint8Array, Uint8Array>({
-          start(controller) {
-            // Emit the metadata SSE event as the very first bytes of the stream.
-            const metadataEvent = {
-              type: 'metadata',
-              mimeType: metadata.mimeType,
-              size: metadata.size,
-              isBinary: metadata.isBinary,
-              encoding: metadata.encoding
-            };
+    const sseTransform = new TransformStream<Uint8Array, Uint8Array>({
+      start(controller) {
+        // Emit the metadata SSE event as the very first bytes of the stream.
+        const metadataEvent = {
+          type: 'metadata',
+          mimeType: metadata.mimeType,
+          size: metadata.size,
+          isBinary: metadata.isBinary,
+          encoding: metadata.encoding
+        };
+        controller.enqueue(
+          encoder.encode(`data: ${JSON.stringify(metadataEvent)}\n\n`)
+        );
+      },
+
+      transform(incoming, controller) {
+        const combined = new Uint8Array(carry.length + incoming.length);
+        combined.set(carry);
+        combined.set(incoming, carry.length);
+
+        let offset = 0;
+        while (offset + CHUNK_SIZE <= combined.length) {
+          const slice = combined.subarray(offset, offset + CHUNK_SIZE);
+          emitChunk(
+            slice,
+            metadata.isBinary,
+            encoder,
+            decoder,
+            controller,
+            true
+          );
+          totalBytesEmitted += slice.length;
+          offset += CHUNK_SIZE;
+        }
+
+        carry = combined.subarray(offset);
+      },
+
+      flush(controller) {
+        if (carry.length > 0) {
+          emitChunk(
+            carry,
+            metadata.isBinary,
+            encoder,
+            decoder,
+            controller,
+            false
+          );
+          totalBytesEmitted += carry.length;
+          carry = new Uint8Array(0);
+        } else if (!metadata.isBinary) {
+          const remaining = decoder.decode();
+          if (remaining.length > 0) {
+            const chunkEvent = { type: 'chunk', data: remaining };
             controller.enqueue(
-              encoder.encode(`data: ${JSON.stringify(metadataEvent)}\n\n`)
-            );
-          },
-
-          transform(incoming, controller) {
-            const combined = new Uint8Array(carry.length + incoming.length);
-            combined.set(carry);
-            combined.set(incoming, carry.length);
-
-            let offset = 0;
-            while (offset + CHUNK_SIZE <= combined.length) {
-              const slice = combined.subarray(offset, offset + CHUNK_SIZE);
-              emitChunk(slice, metadata.isBinary, encoder, controller);
-              totalBytesEmitted += slice.length;
-              offset += CHUNK_SIZE;
-            }
-
-            carry = combined.subarray(offset);
-          },
-
-          flush(controller) {
-            if (carry.length > 0) {
-              emitChunk(carry, metadata.isBinary, encoder, controller);
-              totalBytesEmitted += carry.length;
-              carry = new Uint8Array(0);
-            }
-
-            const completeEvent = {
-              type: 'complete',
-              bytesRead: totalBytesEmitted
-            };
-            controller.enqueue(
-              encoder.encode(`data: ${JSON.stringify(completeEvent)}\n\n`)
+              encoder.encode(`data: ${JSON.stringify(chunkEvent)}\n\n`)
             );
           }
-        });
-
-        return fileStream.pipeThrough(sseTransform).pipeThrough(
-          new TransformStream<Uint8Array, Uint8Array>({
-            transform(chunk, controller) {
-              controller.enqueue(chunk);
-            },
-            flush() {}
-          })
-        );
-      })
-      .then((result) => {
-        if (!result.success) {
-          throw new Error(
-            `Failed to create file stream: ${result.error.message}`
-          );
         }
-        return result.data;
-      });
+
+        const completeEvent = {
+          type: 'complete',
+          bytesRead: totalBytesEmitted
+        };
+        controller.enqueue(
+          encoder.encode(`data: ${JSON.stringify(completeEvent)}\n\n`)
+        );
+      }
+    });
+
+    return fileStream.pipeThrough(sseTransform).pipeThrough(
+      new TransformStream<Uint8Array, Uint8Array>({
+        transform(chunk, controller) {
+          controller.enqueue(chunk);
+        },
+        flush() {}
+      })
+    );
   }
 }
 
@@ -1544,7 +1557,9 @@ function emitChunk(
   slice: Uint8Array,
   isBinary: boolean,
   encoder: TextEncoder,
-  controller: TransformStreamDefaultController<Uint8Array>
+  decoder: TextDecoder,
+  controller: TransformStreamDefaultController<Uint8Array>,
+  stream: boolean
 ): void {
   let data: string;
   if (isBinary) {
@@ -1556,7 +1571,7 @@ function emitChunk(
     }
     data = btoa(binary);
   } else {
-    data = new TextDecoder().decode(slice);
+    data = decoder.decode(slice, { stream });
   }
 
   const chunkEvent = { type: 'chunk', data };
