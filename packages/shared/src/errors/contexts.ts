@@ -216,3 +216,20 @@ export interface InternalErrorContext {
   stack?: string;
   [key: string]: unknown; // Allow extension
 }
+
+/**
+ * Desktop error contexts
+ */
+export interface DesktopErrorContext {
+  process?: string;
+  stderr?: string;
+  crashedProcess?: string;
+  reason?: string;
+}
+
+export interface DesktopCoordinateErrorContext {
+  x: number;
+  y: number;
+  displayWidth: number;
+  displayHeight: number;
+}
