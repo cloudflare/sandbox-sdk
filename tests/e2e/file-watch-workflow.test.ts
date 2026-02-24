@@ -336,6 +336,64 @@ describe('File Watch Workflow', () => {
     await secondResponse.body?.cancel();
   }, 30000);
 
+  test('should stop watch using explicit stop endpoint', async () => {
+    testDir = uniqueTestPath('watch-stop-endpoint');
+    await createDir(testDir);
+
+    const response = await fetch(`${workerUrl}/api/watch`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ path: testDir })
+    });
+
+    expect(response.ok).toBe(true);
+    expect(response.body).toBeTruthy();
+    if (!response.body) return;
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+
+    let watchId: string | null = null;
+    let buffer = '';
+
+    while (!watchId) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) {
+          continue;
+        }
+        const event = JSON.parse(line.slice(6)) as FileWatchSSEEvent;
+        if (event.type === 'watching') {
+          watchId = event.watchId;
+          break;
+        }
+      }
+    }
+
+    expect(watchId).toBeTruthy();
+
+    const stopResponse = await fetch(`${workerUrl}/api/watch/stop`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ watchId })
+    });
+
+    expect(stopResponse.ok).toBe(true);
+    const stopBody = (await stopResponse.json()) as {
+      success: boolean;
+      watchId: string;
+    };
+    expect(stopBody.success).toBe(true);
+    expect(stopBody.watchId).toBe(watchId);
+
+    await reader.cancel();
+  }, 30000);
+
   test('should return error for non-existent path', async () => {
     const response = await fetch(`${workerUrl}/api/watch`, {
       method: 'POST',

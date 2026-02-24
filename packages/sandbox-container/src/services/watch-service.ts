@@ -16,6 +16,10 @@ interface ActiveWatch {
   startedAt: Date;
 }
 
+const WATCH_SETUP_TIMEOUT_MS = 10000;
+const EVENT_COALESCE_WINDOW_MS = 75;
+const MAX_PENDING_EVENTS = 1000;
+
 /**
  * Service for watching filesystem changes using inotifywait
  */
@@ -211,6 +215,8 @@ export class WatchService {
   }
 
   private globToPathRegex(pattern: string): string {
+    // Supported glob syntax is intentionally limited to *, ** and ?.
+    // Handler validation rejects unsupported tokens such as [] and {}.
     return pattern
       .replace(/[.+^${}()|[\]\\]/g, '\\$&')
       .replace(/\*\*/g, '::double_star::')
@@ -290,7 +296,7 @@ export class WatchService {
     return new ReadableStream({
       async start(controller) {
         // Wait for inotifywait to establish watches before sending watching event.
-        // If setup emits an error, fail fast and stop this watch.
+        // If setup emits an error or times out, fail fast and stop this watch.
         if (stderr && typeof stderr !== 'number') {
           try {
             await self.waitForWatchesEstablished(
@@ -326,6 +332,46 @@ export class WatchService {
         const decoder = new TextDecoder();
         let buffer = '';
 
+        const pendingEvents = new Map<string, FileWatchSSEEvent>();
+        let droppedEvents = 0;
+        const enqueueEvent = (event: FileWatchSSEEvent) => {
+          const key =
+            event.type === 'event'
+              ? `${event.eventType}|${event.path}|${event.isDirectory}`
+              : `${event.type}|${Date.now()}`;
+
+          if (
+            !pendingEvents.has(key) &&
+            pendingEvents.size >= MAX_PENDING_EVENTS
+          ) {
+            droppedEvents++;
+            if (droppedEvents === 1 || droppedEvents % 100 === 0) {
+              logger.warn('Dropping watch events due to backpressure', {
+                watchId,
+                droppedEvents,
+                pendingCount: pendingEvents.size
+              });
+            }
+            return;
+          }
+
+          pendingEvents.set(key, event);
+        };
+
+        const flushPendingEvents = () => {
+          for (const event of pendingEvents.values()) {
+            controller.enqueue(
+              encoder.encode(`data: ${JSON.stringify(event)}\n\n`)
+            );
+          }
+          pendingEvents.clear();
+        };
+
+        const flushInterval = setInterval(
+          flushPendingEvents,
+          EVENT_COALESCE_WINDOW_MS
+        );
+
         const processLine = (line: string) => {
           const parsed = self.parseInotifyEvent(line);
           if (!parsed) return;
@@ -337,9 +383,7 @@ export class WatchService {
             isDirectory: parsed.isDirectory,
             timestamp: new Date().toISOString()
           };
-          controller.enqueue(
-            encoder.encode(`data: ${JSON.stringify(event)}\n\n`)
-          );
+          enqueueEvent(event);
         };
 
         try {
@@ -373,16 +417,25 @@ export class WatchService {
             processLine(buffer);
           }
 
+          clearInterval(flushInterval);
+          flushPendingEvents();
+
           // Send stopped event
+          const reason =
+            droppedEvents > 0
+              ? `Watch process ended. Dropped ${droppedEvents} events due to backpressure.`
+              : 'Watch process ended';
+
           const stoppedEvent: FileWatchSSEEvent = {
             type: 'stopped',
-            reason: 'Watch process ended'
+            reason
           };
           controller.enqueue(
             encoder.encode(`data: ${JSON.stringify(stoppedEvent)}\n\n`)
           );
           controller.close();
         } catch (error) {
+          clearInterval(flushInterval);
           const err = error instanceof Error ? error : new Error(String(error));
           logger.error('Error reading watch output', err);
           const errorEvent: FileWatchSSEEvent = {
@@ -437,8 +490,6 @@ export class WatchService {
    * Wait for inotifywait to output "Watches established" on stderr.
    * This ensures the watch is ready to detect file changes before we signal readiness to clients.
    * After watches are established, continues monitoring stderr for errors in background.
-   *
-   * Has a timeout to prevent hanging if inotifywait behaves unexpectedly.
    */
   private async waitForWatchesEstablished(
     stderr: ReadableStream<Uint8Array>,
@@ -449,19 +500,31 @@ export class WatchService {
     const reader = stderr.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
-    let established = false;
 
-    const timeoutMs = 10000;
-    const timeoutPromise = new Promise<'timeout'>((resolve) =>
-      setTimeout(() => resolve('timeout'), timeoutMs)
-    );
+    const emitSetupError = (message: string) => {
+      const errorEvent: FileWatchSSEEvent = {
+        type: 'error',
+        error: message
+      };
+      try {
+        controller.enqueue(
+          encoder.encode(`data: ${JSON.stringify(errorEvent)}\n\n`)
+        );
+      } catch (enqueueError) {
+        logger.debug('Could not enqueue setup error event', {
+          error:
+            enqueueError instanceof Error
+              ? enqueueError.message
+              : String(enqueueError)
+        });
+      }
+    };
 
-    const readLoop = async (): Promise<'done' | 'established'> => {
+    const readLoop = async (): Promise<'established'> => {
       while (true) {
         const { done, value } = await reader.read();
         if (done) {
-          logger.debug('stderr ended before watches established');
-          return 'done';
+          throw new Error('Watch setup ended before watcher became ready');
         }
 
         buffer += decoder.decode(value, { stream: true });
@@ -476,7 +539,6 @@ export class WatchService {
 
           if (trimmed.includes('Watches established')) {
             logger.debug('inotifywait watches established');
-            established = true;
             return 'established';
           }
           if (trimmed.includes('Setting up watches')) {
@@ -489,35 +551,26 @@ export class WatchService {
           logger.warn('inotifywait stderr during setup', {
             message: trimmed
           });
-          const errorEvent: FileWatchSSEEvent = {
-            type: 'error',
-            error: trimmed
-          };
-          try {
-            controller.enqueue(
-              encoder.encode(`data: ${JSON.stringify(errorEvent)}\n\n`)
-            );
-          } catch (enqueueError) {
-            logger.debug('Could not enqueue error event during setup', {
-              error:
-                enqueueError instanceof Error
-                  ? enqueueError.message
-                  : String(enqueueError)
-            });
-          }
-
           throw new Error(trimmed);
         }
       }
     };
 
-    const result = await Promise.race([readLoop(), timeoutPromise]);
+    try {
+      const result = await Promise.race([
+        readLoop(),
+        new Promise<'timeout'>((resolve) =>
+          setTimeout(() => resolve('timeout'), WATCH_SETUP_TIMEOUT_MS)
+        )
+      ]);
 
-    if (result === 'timeout') {
-      logger.warn('Timeout waiting for inotifywait to establish watches');
-    }
+      if (result === 'timeout') {
+        const timeoutMessage =
+          'Timed out waiting for file watcher setup to complete';
+        logger.warn(timeoutMessage, { timeoutMs: WATCH_SETUP_TIMEOUT_MS });
+        throw new Error(timeoutMessage);
+      }
 
-    if (established) {
       this.continueStderrMonitoring(
         reader,
         decoder,
@@ -526,18 +579,12 @@ export class WatchService {
         encoder,
         logger
       );
-      return;
-    }
-
-    try {
-      reader.releaseLock();
-    } catch (releaseError) {
-      logger.debug('Could not release stderr reader lock', {
-        error:
-          releaseError instanceof Error
-            ? releaseError.message
-            : String(releaseError)
-      });
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Failed to establish watch';
+      emitSetupError(message);
+      await reader.cancel().catch(() => {});
+      throw error;
     }
   }
 

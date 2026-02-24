@@ -227,6 +227,19 @@ export class WebSocketAdapter {
       // By getting the reader synchronously here, we ensure the stream remains valid.
       const reader =
         httpResponse.body.getReader() as ReadableStreamDefaultReader<Uint8Array>;
+
+      // Register cancellation immediately after reader acquisition so socket-close
+      // cleanup can always find and cancel this stream.
+      this.activeStreams.set(request.id, {
+        cancel: async () => {
+          try {
+            await reader.cancel();
+          } catch {
+            // Reader may already be closed/cancelled.
+          }
+        }
+      });
+
       void this.handleStreamingResponseWithReader(
         ws,
         request.id,
@@ -243,16 +256,6 @@ export class WebSocketAdapter {
         .finally(() => {
           this.activeStreams.delete(request.id);
         });
-
-      this.activeStreams.set(request.id, {
-        cancel: async () => {
-          try {
-            await reader.cancel();
-          } catch {
-            // Reader may already be closed/cancelled.
-          }
-        }
-      });
     } else {
       // Handle regular response
       await this.handleRegularResponse(ws, request.id, httpResponse);
@@ -387,6 +390,9 @@ export class WebSocketAdapter {
         500
       );
     } finally {
+      await reader.cancel().catch(() => {
+        // Reader may already be closed/cancelled.
+      });
       reader.releaseLock();
     }
   }

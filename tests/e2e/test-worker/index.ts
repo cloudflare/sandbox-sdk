@@ -1051,6 +1051,24 @@ console.log('Terminal server on port ' + port);
         });
       }
 
+      // File Watch - Stop a watch by ID.
+      if (url.pathname === '/api/watch/stop' && request.method === 'POST') {
+        const upstream = await sandbox.containerFetch(
+          new Request('http://localhost:3000/api/watch/stop', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ watchId: body.watchId })
+          }),
+          3000
+        );
+
+        const responseBody = await upstream.text();
+        return new Response(responseBody, {
+          status: upstream.status,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
       // Cleanup endpoint - destroys the sandbox container
       // This is used by E2E tests to explicitly clean up after each test
       if (url.pathname === '/cleanup' && request.method === 'POST') {
