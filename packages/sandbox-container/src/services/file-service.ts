@@ -1,3 +1,4 @@
+import { resolve } from 'node:path';
 import type { FileInfo, ListFilesOptions, Logger } from '@repo/shared';
 import { shellEscape } from '@repo/shared';
 import type {
@@ -121,7 +122,7 @@ export class FileService implements FileSystemOperations {
             }
 
             const cwd = pwdResult.stdout.trim();
-            targetPath = `${cwd}/${path}`;
+            targetPath = resolve(cwd, path);
           }
 
           const bunFile = Bun.file(targetPath);
@@ -185,13 +186,7 @@ export class FileService implements FileSystemOperations {
           let content: string;
           if (actualEncoding === 'base64') {
             const buffer = await bunFile.arrayBuffer();
-            const bytes = new Uint8Array(buffer);
-            // btoa only accepts latin1; convert byte-by-byte.
-            let binary = '';
-            for (let i = 0; i < bytes.length; i++) {
-              binary += String.fromCharCode(bytes[i]);
-            }
-            content = btoa(binary);
+            content = Buffer.from(buffer).toString('base64');
           } else {
             content = await bunFile.text();
           }
@@ -998,7 +993,7 @@ export class FileService implements FileSystemOperations {
         }
 
         const cwd = pwdResult.data.stdout.trim();
-        absolutePath = `${cwd}/${path}`;
+        absolutePath = resolve(cwd, path);
       }
 
       // 2. Use Bun.file() for existence and stat.
@@ -1455,7 +1450,7 @@ export class FileService implements FileSystemOperations {
       }
 
       const cwd = pwdResult.data.stdout.trim();
-      absolutePath = `${cwd}/${path}`;
+      absolutePath = resolve(cwd, path);
     }
 
     const CHUNK_SIZE = 65535;
@@ -1564,12 +1559,7 @@ function emitChunk(
   let data: string;
   if (isBinary) {
     // Encode bytes to base64 without line breaks.
-    // btoa only accepts latin1; convert via charCodeAt.
-    let binary = '';
-    for (let i = 0; i < slice.length; i++) {
-      binary += String.fromCharCode(slice[i]);
-    }
-    data = btoa(binary);
+    data = Buffer.from(slice).toString('base64');
   } else {
     data = decoder.decode(slice, { stream });
   }
