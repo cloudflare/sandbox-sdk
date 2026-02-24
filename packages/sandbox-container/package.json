@@ -9,8 +9,7 @@
     "typecheck": "tsc --noEmit",
     "test": "bun test tests",
     "test:watch": "bun test --watch tests",
-    "clean": "rm -rf dist",
-    "bench:write": "bun scripts/benchmark-write.ts"
+    "clean": "rm -rf dist"
   },
   "dependencies": {
     "@repo/shared": "*",
