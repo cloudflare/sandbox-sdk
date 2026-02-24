@@ -113,6 +113,75 @@ export interface GitCheckoutRequest {
 }
 
 /**
+ * Request for git operations that target an existing repository path
+ */
+export interface GitRepoPathRequest {
+  repoPath: string;
+  sessionId?: string;
+}
+
+/**
+ * Request to checkout a branch in an existing repository
+ */
+export interface GitCheckoutBranchRequest extends GitRepoPathRequest {
+  branch: string;
+}
+
+/**
+ * Request to create a branch in an existing repository
+ */
+export interface GitCreateBranchRequest extends GitRepoPathRequest {
+  branch: string;
+}
+
+/**
+ * Request to delete a branch in an existing repository
+ */
+export interface GitDeleteBranchRequest extends GitRepoPathRequest {
+  branch: string;
+  force?: boolean;
+}
+
+/**
+ * Request to stage files in an existing repository
+ */
+export interface GitAddRequest extends GitRepoPathRequest {
+  files?: string[];
+  all?: boolean;
+}
+
+/**
+ * Request to create a commit in an existing repository
+ */
+export interface GitCommitRequest extends GitRepoPathRequest {
+  message: string;
+  authorName?: string;
+  authorEmail?: string;
+  allowEmpty?: boolean;
+}
+
+export type GitResetMode = 'soft' | 'mixed' | 'hard' | 'merge' | 'keep';
+
+/**
+ * Request to reset repository state
+ */
+export interface GitResetRequest extends GitRepoPathRequest {
+  mode?: GitResetMode;
+  target?: string;
+  paths?: string[];
+}
+
+/**
+ * Request to restore repository files
+ */
+export interface GitRestoreRequest extends GitRepoPathRequest {
+  paths: string[];
+  staged?: boolean;
+  worktree?: boolean;
+  source?: string;
+}
+
+/**
  * Request to list files in a directory
  */
 export interface ListFilesRequest {

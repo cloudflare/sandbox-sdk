@@ -45,15 +45,15 @@ The glibc binary from the default image will not work on Alpine — always use t
 
 The musl image is a lightweight, functional sandbox. It supports all core SDK methods out of the box:
 
-| Capability                                 | Supported | Notes                                                           |
-| ------------------------------------------ | --------- | --------------------------------------------------------------- |
-| `exec()`, `startProcess()`                 | ✅        | Shell commands via `bash`                                       |
-| `readFile()`, `writeFile()`, `listFiles()` | ✅        | Requires `file` (included)                                      |
-| `gitCheckout()`, `listBranches()`          | ✅        | Requires `git` (included)                                       |
-| `mountBucket()`, `unmountBucket()`         | ✅        | Requires `s3fs-fuse` and `fuse` (included)                      |
-| `exposePort()`                             | ✅        |                                                                 |
-| `runCode()` (JavaScript/TypeScript)        | ❌        | Needs `node` or `bun` on PATH — `apk add nodejs`                |
-| `runCode()` (Python)                       | ❌        | Needs `python3` on PATH — install from Alpine packages or pyenv |
+| Capability                                                                                                           | Supported | Notes                                                           |
+| -------------------------------------------------------------------------------------------------------------------- | --------- | --------------------------------------------------------------- |
+| `exec()`, `startProcess()`                                                                                           | ✅        | Shell commands via `bash`                                       |
+| `readFile()`, `writeFile()`, `listFiles()`                                                                           | ✅        | Requires `file` (included)                                      |
+| `gitCheckout()`, `gitStatus()`, `listBranches()`, branch/file git helpers (`gitReset()`/`gitRestore()` are advanced) | ✅        | Requires `git` (included)                                       |
+| `mountBucket()`, `unmountBucket()`                                                                                   | ✅        | Requires `s3fs-fuse` and `fuse` (included)                      |
+| `exposePort()`                                                                                                       | ✅        |                                                                 |
+| `runCode()` (JavaScript/TypeScript)                                                                                  | ❌        | Needs `node` or `bun` on PATH — `apk add nodejs`                |
+| `runCode()` (Python)                                                                                                 | ❌        | Needs `python3` on PATH — install from Alpine packages or pyenv |
 
 ## How CMD Passthrough Works
 
@@ -66,12 +66,12 @@ The `/sandbox` binary acts as a supervisor:
 
 ## Required Dependencies
 
-| Dependency           | Required For                                    | Install Command            |
-| -------------------- | ----------------------------------------------- | -------------------------- |
-| `file`               | `readFile()`, `writeFile()`, any file operation | `apt-get install file`     |
-| `git`                | `gitCheckout()`, `listBranches()`               | `apt-get install git`      |
-| `bash`               | Everything (core requirement)                   | Usually pre-installed      |
-| `libstdc++` `libgcc` | Alpine/musl only: Bun runtime C++ dependencies  | `apk add libstdc++ libgcc` |
+| Dependency           | Required For                                            | Install Command            |
+| -------------------- | ------------------------------------------------------- | -------------------------- |
+| `file`               | `readFile()`, `writeFile()`, any file operation         | `apt-get install file`     |
+| `git`                | `gitCheckout()`, `gitStatus()`, branch/file git helpers | `apt-get install git`      |
+| `bash`               | Everything (core requirement)                           | Usually pre-installed      |
+| `libstdc++` `libgcc` | Alpine/musl only: Bun runtime C++ dependencies          | `apk add libstdc++ libgcc` |
 
 Most glibc-based images (node:slim, python:slim, ubuntu) include everything except `file` and `git`. Alpine images also need `bash`, `libstdc++`, and `libgcc`.
 

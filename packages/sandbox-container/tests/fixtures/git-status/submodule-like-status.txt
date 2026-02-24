@@ -1,0 +1,4 @@
+## main...origin/main [ahead 1]
+ M deps/some-submodule
+M  libs/another-submodule
+?? deps/new-submodule

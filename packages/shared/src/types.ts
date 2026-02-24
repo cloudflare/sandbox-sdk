@@ -643,6 +643,63 @@ export interface GitCheckoutResult {
   exitCode?: number;
 }
 
+export interface GitStatusFile {
+  path: string;
+  indexStatus: string;
+  workingTreeStatus: string;
+}
+
+export interface GitStatusResult {
+  success: boolean;
+  repoPath: string;
+  currentBranch: string;
+  ahead: number;
+  behind: number;
+  branchPublished: boolean;
+  fileStatus: GitStatusFile[];
+  timestamp: string;
+}
+
+export interface GitBranchListResult {
+  success: boolean;
+  repoPath: string;
+  currentBranch: string;
+  branches: string[];
+  timestamp: string;
+}
+
+export interface GitOperationResult {
+  success: boolean;
+  repoPath: string;
+  timestamp: string;
+}
+
+export interface GitAddOptions {
+  files?: string[];
+  all?: boolean;
+}
+
+export interface GitCommitOptions {
+  authorName?: string;
+  authorEmail?: string;
+  allowEmpty?: boolean;
+}
+
+export type GitResetMode = 'soft' | 'mixed' | 'hard' | 'merge' | 'keep';
+
+export interface GitResetOptions {
+  mode?: GitResetMode;
+  target?: string;
+  paths?: string[];
+}
+
+export interface GitRestoreOptions {
+  paths: string[];
+  staged?: boolean;
+  worktree?: boolean;
+  source?: string;
+}
+
 // File Streaming Types
 
 /**
@@ -895,6 +952,32 @@ export interface ExecutionSession {
       depth?: number;
     }
   ): Promise<GitCheckoutResult>;
+  gitStatus(repoPath: string): Promise<GitStatusResult>;
+  listBranches(repoPath: string): Promise<GitBranchListResult>;
+  checkoutBranch(repoPath: string, branch: string): Promise<GitOperationResult>;
+  createBranch(repoPath: string, branch: string): Promise<GitOperationResult>;
+  deleteBranch(
+    repoPath: string,
+    branch: string,
+    options?: { force?: boolean }
+  ): Promise<GitOperationResult>;
+  gitAdd(
+    repoPath: string,
+    options?: GitAddOptions
+  ): Promise<GitOperationResult>;
+  gitCommit(
+    repoPath: string,
+    message: string,
+    options?: GitCommitOptions
+  ): Promise<GitOperationResult>;
+  gitReset(
+    repoPath: string,
+    options?: GitResetOptions
+  ): Promise<GitOperationResult>;
+  gitRestore(
+    repoPath: string,
+    options: GitRestoreOptions
+  ): Promise<GitOperationResult>;
 
   // Environment management
   setEnvVars(envVars: Record<string, string | undefined>): Promise<void>;
@@ -1100,6 +1183,32 @@ export interface ISandbox {
       depth?: number;
     }
   ): Promise<GitCheckoutResult>;
+  gitStatus(repoPath: string): Promise<GitStatusResult>;
+  listBranches(repoPath: string): Promise<GitBranchListResult>;
+  checkoutBranch(repoPath: string, branch: string): Promise<GitOperationResult>;
+  createBranch(repoPath: string, branch: string): Promise<GitOperationResult>;
+  deleteBranch(
+    repoPath: string,
+    branch: string,
+    options?: { force?: boolean }
+  ): Promise<GitOperationResult>;
+  gitAdd(
+    repoPath: string,
+    options?: GitAddOptions
+  ): Promise<GitOperationResult>;
+  gitCommit(
+    repoPath: string,
+    message: string,
+    options?: GitCommitOptions
+  ): Promise<GitOperationResult>;
+  gitReset(
+    repoPath: string,
+    options?: GitResetOptions
+  ): Promise<GitOperationResult>;
+  gitRestore(
+    repoPath: string,
+    options: GitRestoreOptions
+  ): Promise<GitOperationResult>;
 
   // Environment management
   setEnvVars(envVars: Record<string, string | undefined>): Promise<void>;

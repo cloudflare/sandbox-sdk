@@ -1,0 +1,5 @@
+## main...origin/main
+?? "docs/My File.md"
+ M "src/with space.ts"
+R  "src/old name.ts" -> "src/new name.ts"
+C  "src/base.ts" -> "src/base copy.ts"

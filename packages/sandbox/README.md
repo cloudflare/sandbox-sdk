@@ -117,6 +117,36 @@ export default {
 - **Preview URLs** - Expose services with public URLs
 - **Git Integration** - Clone repositories directly
 
+### Git API tiers
+
+For Git workflows, start with the core methods:
+
+- `gitCheckout()`, `gitStatus()`, `listBranches()`
+- `checkoutBranch()`, `createBranch()`, `deleteBranch()`
+- `gitAdd()`, `gitCommit()`
+
+Advanced methods are available for targeted workflows:
+
+- `gitReset()`
+- `gitRestore()`
+
+Use `exec('git ...')` for operations that are not yet covered by typed SDK methods.
+
+### Git API tiers
+
+For Git workflows, start with the core methods:
+
+- `gitCheckout()`, `gitStatus()`, `listBranches()`
+- `checkoutBranch()`, `createBranch()`, `deleteBranch()`
+- `gitAdd()`, `gitCommit()`
+
+Advanced methods are available for targeted workflows:
+
+- `gitReset()`
+- `gitRestore()`
+
+Use `exec('git ...')` for operations that are not yet covered by typed SDK methods.
+
 ## Contributing
 
 We welcome contributions from the community! See [CONTRIBUTING.md](./CONTRIBUTING.md) for guidelines on:

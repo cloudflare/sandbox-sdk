@@ -197,12 +197,27 @@ export function setupRoutes(router: Router, container: Container): void {
   });
 
   // Git operations
-  router.register({
-    method: 'POST',
-    path: '/api/git/checkout',
-    handler: async (req, ctx) => container.get('gitHandler').handle(req, ctx),
-    middleware: [container.get('loggingMiddleware')]
-  });
+  const gitRoutes = [
+    '/api/git/checkout',
+    '/api/git/status',
+    '/api/git/branches',
+    '/api/git/checkout-branch',
+    '/api/git/create-branch',
+    '/api/git/delete-branch',
+    '/api/git/add',
+    '/api/git/commit',
+    '/api/git/reset',
+    '/api/git/restore'
+  ];
+
+  for (const path of gitRoutes) {
+    router.register({
+      method: 'POST',
+      path,
+      handler: async (req, ctx) => container.get('gitHandler').handle(req, ctx),
+      middleware: [container.get('loggingMiddleware')]
+    });
+  }
 
   // Interpreter/Code execution routes
   router.register({

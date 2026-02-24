@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
+import { readFileSync } from 'node:fs';
 import { ErrorCode } from '@repo/shared/errors';
 import { GitManager } from '@sandbox-container/managers/git-manager';
 
@@ -175,12 +176,117 @@ describe('GitManager', () => {
   remotes/origin/main`;
       const branches = manager.parseBranchList(output);
       expect(branches).not.toContain('HEAD');
-      expect(branches).toContain('HEAD -> origin/main');
+      expect(branches).not.toContain('HEAD -> origin/main');
+    });
+
+    it('should return current branch from summary', () => {
+      const summary = manager.parseBranchSummary(`  develop
+* main
+  remotes/origin/main`);
+      expect(summary.currentBranch).toBe('main');
+      expect(summary.branches).toEqual(['develop', 'main']);
+    });
+
+    it('should normalize detached HEAD branch summary', () => {
+      const summary = manager.parseBranchSummary(`* (HEAD detached at abc123)
+  main`);
+      expect(summary.currentBranch).toBe('HEAD');
+      expect(summary.branches).toEqual(['(HEAD detached at abc123)', 'main']);
     });
 
     it('should handle empty and single branch lists', () => {
       expect(manager.parseBranchList('\n\n  \n')).toEqual([]);
       expect(manager.parseBranchList('* main')).toEqual(['main']);
+    });
+  });
+
+  describe('parseStatus', () => {
+    it('should parse ahead/behind and file states', () => {
+      const status =
+        manager.parseStatus(`## main...origin/main [ahead 2, behind 1]
+M  src/app.ts
+ M README.md
+?? docs/new.md`);
+
+      expect(status.currentBranch).toBe('main');
+      expect(status.ahead).toBe(2);
+      expect(status.behind).toBe(1);
+      expect(status.branchPublished).toBe(true);
+      expect(status.fileStatus).toEqual([
+        { path: 'src/app.ts', indexStatus: 'M', workingTreeStatus: ' ' },
+        { path: 'README.md', indexStatus: ' ', workingTreeStatus: 'M' },
+        { path: 'docs/new.md', indexStatus: '?', workingTreeStatus: '?' }
+      ]);
+    });
+
+    it('should parse rename and detached head', () => {
+      const status = manager.parseStatus(`## HEAD (no branch)
+R  old.txt -> new.txt`);
+
+      expect(status.currentBranch).toBe('HEAD');
+      expect(status.branchPublished).toBe(false);
+      expect(status.fileStatus).toEqual([
+        { path: 'new.txt', indexStatus: 'R', workingTreeStatus: ' ' }
+      ]);
+    });
+
+    it('should parse conflict markers', () => {
+      const status = manager.parseStatus(`## feature
+UU conflict.ts`);
+
+      expect(status.fileStatus).toEqual([
+        { path: 'conflict.ts', indexStatus: 'U', workingTreeStatus: 'U' }
+      ]);
+    });
+  });
+
+  describe('status fixture coverage', () => {
+    it('should parse merge-conflict fixture output', () => {
+      const output = readFileSync(
+        new URL('./../fixtures/git-status/merge-conflict.txt', import.meta.url),
+        'utf8'
+      );
+
+      const parsed = manager.parseStatus(output);
+
+      expect(parsed.currentBranch).toBe('feature/merge-fix');
+      expect(parsed.ahead).toBe(2);
+      expect(parsed.behind).toBe(1);
+      expect(parsed.fileStatus).toEqual([
+        { path: 'src/conflict.ts', indexStatus: 'U', workingTreeStatus: 'U' },
+        { path: 'src/new-file.ts', indexStatus: 'A', workingTreeStatus: 'A' },
+        {
+          path: 'src/deleted-upstream.ts',
+          indexStatus: 'D',
+          workingTreeStatus: 'U'
+        },
+        {
+          path: 'src/deleted-local.ts',
+          indexStatus: 'U',
+          workingTreeStatus: 'D'
+        },
+        { path: 'notes/todo.md', indexStatus: '?', workingTreeStatus: '?' }
+      ]);
+    });
+
+    it('should parse copy-and-rename fixture output', () => {
+      const output = readFileSync(
+        new URL('./../fixtures/git-status/copy-rename.txt', import.meta.url),
+        'utf8'
+      );
+
+      const parsed = manager.parseStatus(output);
+
+      expect(parsed.currentBranch).toBe('main');
+      expect(parsed.fileStatus).toEqual([
+        { path: 'src/new-name.ts', indexStatus: 'R', workingTreeStatus: ' ' },
+        {
+          path: 'src/template-copy.ts',
+          indexStatus: 'C',
+          workingTreeStatus: ' '
+        },
+        { path: 'README.md', indexStatus: ' ', workingTreeStatus: 'M' }
+      ]);
     });
   });
 

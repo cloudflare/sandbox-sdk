@@ -1,5 +1,3 @@
-// Git Operations Service
-
 import type { Logger } from '@repo/shared';
 import { sanitizeGitData, shellEscape } from '@repo/shared';
 import type {
@@ -7,13 +5,25 @@ import type {
   ValidationFailedContext
 } from '@repo/shared/errors';
 import { ErrorCode } from '@repo/shared/errors';
-import type { CloneOptions, ServiceError, ServiceResult } from '../core/types';
+import {
+  type CloneOptions,
+  type ServiceError,
+  type ServiceResult,
+  serviceError,
+  serviceSuccess
+} from '../core/types';
 import { GitManager } from '../managers/git-manager';
 import type { SessionManager } from './session-manager';
 
 export interface SecurityService {
   validateGitUrl(url: string): { isValid: boolean; errors: string[] };
   validatePath(path: string): { isValid: boolean; errors: string[] };
+}
+
+interface GitExecResult {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
 }
 
 export class GitService {
@@ -27,151 +37,205 @@ export class GitService {
     this.manager = new GitManager();
   }
 
-  /**
-   * Build a shell command string from an array of arguments
-   * Escapes all arguments to prevent command injection
-   */
   private buildCommand(args: string[]): string {
     return args.map((arg) => shellEscape(arg)).join(' ');
   }
 
-  /**
-   * Create error result with sanitized data
-   */
   private returnError<T>(error: ServiceError): ServiceResult<T> {
-    return {
-      success: false,
-      error: sanitizeGitData(error)
-    } as ServiceResult<T>;
+    return serviceError<T>({
+      ...error,
+      details: sanitizeGitData(error.details ?? {})
+    });
   }
 
-  /**
-   * Create success result
-   */
   private returnSuccess<T>(data: T): ServiceResult<T> {
+    return serviceSuccess(data);
+  }
+
+  private returnVoidSuccess(): ServiceResult<void> {
+    return { success: true };
+  }
+
+  private validateRepoPath(repoPath: string): ServiceError | null {
+    const pathValidation = this.security.validatePath(repoPath);
+    if (pathValidation.isValid) {
+      return null;
+    }
+
     return {
-      success: true,
-      data
-    } as ServiceResult<T>;
+      message: `Invalid repository path '${repoPath}': ${pathValidation.errors.join(', ')}`,
+      code: ErrorCode.VALIDATION_FAILED,
+      details: {
+        validationErrors: pathValidation.errors.map((e) => ({
+          field: 'repoPath',
+          message: e,
+          code: 'INVALID_PATH'
+        }))
+      } satisfies ValidationFailedContext
+    };
+  }
+
+  private validateBranch(branch: string): ServiceError | null {
+    const branchValidation = this.manager.validateBranchName(branch);
+    if (branchValidation.isValid) {
+      return null;
+    }
+
+    return {
+      message: `Invalid branch name '${branch}': ${
+        branchValidation.error || 'Invalid format'
+      }`,
+      code: ErrorCode.VALIDATION_FAILED,
+      details: {
+        validationErrors: [
+          {
+            field: 'branch',
+            message: branchValidation.error || 'Invalid branch name format',
+            code: 'INVALID_BRANCH'
+          }
+        ]
+      } satisfies ValidationFailedContext
+    };
+  }
+
+  private async runGitCommand(
+    operation: string,
+    repoPath: string,
+    sessionId: string,
+    args: string[],
+    extraDetails: Record<string, unknown> = {}
+  ): Promise<ServiceResult<GitExecResult>> {
+    const command = this.buildCommand(args);
+    const execResult = await this.sessionManager.executeInSession(
+      sessionId,
+      command,
+      repoPath
+    );
+
+    if (!execResult.success) {
+      return this.returnError(execResult.error);
+    }
+
+    const { exitCode, stdout, stderr } = execResult.data;
+
+    if (exitCode !== 0) {
+      const errorCode = this.manager.determineErrorCode(
+        operation,
+        stderr || 'Unknown error',
+        exitCode
+      );
+
+      return this.returnError({
+        message: this.manager.createErrorMessage(
+          operation,
+          { repoPath, ...extraDetails },
+          stderr || `exit code ${exitCode}`
+        ),
+        code: errorCode,
+        details: {
+          targetDir: repoPath,
+          exitCode,
+          stderr,
+          ...extraDetails
+        } satisfies GitErrorContext
+      });
+    }
+
+    return this.returnSuccess({ exitCode, stdout, stderr });
   }
 
   async cloneRepository(
     repoUrl: string,
     options: CloneOptions = {}
   ): Promise<ServiceResult<{ path: string; branch: string }>> {
+    const urlValidation = this.security.validateGitUrl(repoUrl);
+    if (!urlValidation.isValid) {
+      return this.returnError({
+        message: `Invalid Git URL '${repoUrl}': ${urlValidation.errors.join(', ')}`,
+        code: ErrorCode.INVALID_GIT_URL,
+        details: {
+          validationErrors: urlValidation.errors.map((e) => ({
+            field: 'repoUrl',
+            message: e,
+            code: 'INVALID_GIT_URL'
+          }))
+        } satisfies ValidationFailedContext
+      });
+    }
+
+    const targetDirectory =
+      options.targetDir || this.manager.generateTargetDirectory(repoUrl);
+
+    const pathValidation = this.security.validatePath(targetDirectory);
+    if (!pathValidation.isValid) {
+      return this.returnError({
+        message: `Invalid target directory '${targetDirectory}': ${pathValidation.errors.join(', ')}`,
+        code: ErrorCode.VALIDATION_FAILED,
+        details: {
+          validationErrors: pathValidation.errors.map((e) => ({
+            field: 'targetDirectory',
+            message: e,
+            code: 'INVALID_PATH'
+          }))
+        } satisfies ValidationFailedContext
+      });
+    }
+
+    const sessionId = options.sessionId || 'default';
+    const cloneArgs = this.manager.buildCloneArgs(
+      repoUrl,
+      targetDirectory,
+      options
+    );
+    const cloneCommand = this.buildCommand(cloneArgs);
+
     try {
-      // Validate repository URL
-      const urlValidation = this.security.validateGitUrl(repoUrl);
-      if (!urlValidation.isValid) {
-        return this.returnError({
-          message: `Invalid Git URL '${repoUrl}': ${urlValidation.errors.join(', ')}`,
-          code: ErrorCode.INVALID_GIT_URL,
-          details: {
-            validationErrors: urlValidation.errors.map((e) => ({
-              field: 'repoUrl',
-              message: e,
-              code: 'INVALID_GIT_URL'
-            }))
-          } satisfies ValidationFailedContext
-        });
-      }
+      const result = await this.sessionManager.withSession(
+        sessionId,
+        async (exec) => {
+          const cloneResult = await exec(cloneCommand);
 
-      // Generate target directory if not provided
-      const targetDirectory =
-        options.targetDir || this.manager.generateTargetDirectory(repoUrl);
-
-      // Validate target directory path
-      const pathValidation = this.security.validatePath(targetDirectory);
-      if (!pathValidation.isValid) {
-        return this.returnError({
-          message: `Invalid target directory '${targetDirectory}': ${pathValidation.errors.join(', ')}`,
-          code: ErrorCode.VALIDATION_FAILED,
-          details: {
-            validationErrors: pathValidation.errors.map((e) => ({
-              field: 'targetDirectory',
-              message: e,
-              code: 'INVALID_PATH'
-            }))
-          } satisfies ValidationFailedContext
-        });
-      }
-
-      // Build git clone command (via manager)
-      const args = this.manager.buildCloneArgs(
-        repoUrl,
-        targetDirectory,
-        options
-      );
-      const command = this.buildCommand(args);
-
-      // Execute clone→branch sequence atomically within session
-      const sessionId = options.sessionId || 'default';
-
-      return this.sessionManager
-        .withSession(sessionId, async (exec) => {
-          // Execute git clone
-          const result = await exec(command);
-
-          if (result.exitCode !== 0) {
-            this.logger.error('Git clone failed', undefined, {
-              repoUrl,
-              targetDirectory,
-              exitCode: result.exitCode,
-              stderr: result.stderr
-            });
-
-            const errorCode = this.manager.determineErrorCode(
-              'clone',
-              result.stderr || 'Unknown error',
-              result.exitCode
-            );
+          if (cloneResult.exitCode !== 0) {
             throw {
               message: `Failed to clone repository '${repoUrl}': ${
-                result.stderr || `exit code ${result.exitCode}`
+                cloneResult.stderr || `exit code ${cloneResult.exitCode}`
               }`,
-              code: errorCode,
+              code: this.manager.determineErrorCode(
+                'clone',
+                cloneResult.stderr || 'Unknown error',
+                cloneResult.exitCode
+              ),
               details: {
                 repository: repoUrl,
                 targetDir: targetDirectory,
-                exitCode: result.exitCode,
-                stderr: result.stderr
+                exitCode: cloneResult.exitCode,
+                stderr: cloneResult.stderr
               } satisfies GitErrorContext
             };
           }
 
-          // Determine the actual branch that was checked out by querying Git
-          // This ensures we always return the true current branch, whether it was
-          // explicitly specified or defaulted to the repository's HEAD
-          const branchArgs = this.manager.buildGetCurrentBranchArgs();
-          const branchCommand = this.buildCommand(branchArgs);
+          const branchCommand = this.buildCommand(
+            this.manager.buildGetCurrentBranchArgs()
+          );
           const branchResult = await exec(branchCommand, {
             cwd: targetDirectory
           });
+          const branch =
+            branchResult.exitCode === 0 && branchResult.stdout.trim().length > 0
+              ? branchResult.stdout.trim()
+              : options.branch || 'unknown';
 
-          let actualBranch: string;
-          if (branchResult.exitCode === 0 && branchResult.stdout.trim()) {
-            actualBranch = branchResult.stdout.trim();
-          } else {
-            // Fallback: use the requested branch or 'unknown'
-            actualBranch = options.branch || 'unknown';
-          }
+          return { path: targetDirectory, branch };
+        }
+      );
 
-          return {
-            path: targetDirectory,
-            branch: actualBranch
-          };
-        })
-        .then((result) => {
-          if (!result.success) {
-            return result as ServiceResult<{ path: string; branch: string }>;
-          }
+      if (!result.success) {
+        return this.returnError(result.error);
+      }
 
-          return this.returnSuccess(result.data);
-        });
+      return this.returnSuccess(result.data);
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : 'Unknown error';
-
+      const message = error instanceof Error ? error.message : 'Unknown error';
       this.logger.error(
         'Failed to clone repository',
         error instanceof Error ? error : undefined,
@@ -179,12 +243,12 @@ export class GitService {
       );
 
       return this.returnError({
-        message: `Failed to clone repository '${repoUrl}': ${errorMessage}`,
+        message: `Failed to clone repository '${repoUrl}': ${message}`,
         code: ErrorCode.GIT_CLONE_FAILED,
         details: {
           repository: repoUrl,
           targetDir: options.targetDir,
-          stderr: errorMessage
+          stderr: message
         } satisfies GitErrorContext
       });
     }
@@ -195,108 +259,225 @@ export class GitService {
     branch: string,
     sessionId = 'default'
   ): Promise<ServiceResult<void>> {
-    try {
-      // Validate repository path
-      const pathValidation = this.security.validatePath(repoPath);
-      if (!pathValidation.isValid) {
-        return this.returnError({
-          message: `Invalid repository path '${repoPath}': ${pathValidation.errors.join(', ')}`,
-          code: ErrorCode.VALIDATION_FAILED,
-          details: {
-            validationErrors: pathValidation.errors.map((e) => ({
-              field: 'repoPath',
-              message: e,
-              code: 'INVALID_PATH'
-            }))
-          } satisfies ValidationFailedContext
-        });
-      }
+    const pathError = this.validateRepoPath(repoPath);
+    if (pathError) return this.returnError(pathError);
 
-      // Validate branch name (via manager)
-      const branchValidation = this.manager.validateBranchName(branch);
-      if (!branchValidation.isValid) {
-        return this.returnError({
-          message: `Invalid branch name '${branch}': ${
-            branchValidation.error || 'Invalid format'
-          }`,
-          code: ErrorCode.VALIDATION_FAILED,
-          details: {
-            validationErrors: [
-              {
-                field: 'branch',
-                message: branchValidation.error || 'Invalid branch name format',
-                code: 'INVALID_BRANCH'
-              }
-            ]
-          } satisfies ValidationFailedContext
-        });
-      }
+    const branchError = this.validateBranch(branch);
+    if (branchError) return this.returnError(branchError);
 
-      // Build git checkout command (via manager)
-      const args = this.manager.buildCheckoutArgs(branch);
-      const command = this.buildCommand(args);
+    const result = await this.runGitCommand(
+      'checkout',
+      repoPath,
+      sessionId,
+      this.manager.buildCheckoutArgs(branch),
+      { branch }
+    );
 
-      // Execute git checkout (via SessionManager)
-      const execResult = await this.sessionManager.executeInSession(
-        sessionId,
-        command,
-        repoPath
-      );
+    return result.success ? this.returnVoidSuccess() : result;
+  }
 
-      if (!execResult.success) {
-        return execResult as ServiceResult<void>;
-      }
+  async createBranch(
+    repoPath: string,
+    branch: string,
+    sessionId = 'default'
+  ): Promise<ServiceResult<void>> {
+    const pathError = this.validateRepoPath(repoPath);
+    if (pathError) return this.returnError(pathError);
 
-      const result = execResult.data;
+    const branchError = this.validateBranch(branch);
+    if (branchError) return this.returnError(branchError);
 
-      if (result.exitCode !== 0) {
-        this.logger.error('Git checkout failed', undefined, {
-          repoPath,
-          branch,
-          exitCode: result.exitCode,
-          stderr: result.stderr
-        });
+    const result = await this.runGitCommand(
+      'createBranch',
+      repoPath,
+      sessionId,
+      this.manager.buildCreateBranchArgs(branch),
+      { branch }
+    );
 
-        const errorCode = this.manager.determineErrorCode(
-          'checkout',
-          result.stderr || 'Unknown error',
-          result.exitCode
-        );
-        return this.returnError({
-          message: `Failed to checkout branch '${branch}' in '${repoPath}': ${
-            result.stderr || `exit code ${result.exitCode}`
-          }`,
-          code: errorCode,
-          details: {
-            branch,
-            targetDir: repoPath,
-            exitCode: result.exitCode,
-            stderr: result.stderr
-          } satisfies GitErrorContext
-        });
-      }
+    return result.success ? this.returnVoidSuccess() : result;
+  }
 
-      return {
-        success: true
-      };
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : 'Unknown error';
+  async deleteBranch(
+    repoPath: string,
+    branch: string,
+    sessionId = 'default',
+    options?: { force?: boolean }
+  ): Promise<ServiceResult<void>> {
+    const pathError = this.validateRepoPath(repoPath);
+    if (pathError) return this.returnError(pathError);
 
-      this.logger.error(
-        'Failed to checkout branch',
-        error instanceof Error ? error : undefined,
-        { repoPath, branch }
-      );
+    const branchError = this.validateBranch(branch);
+    if (branchError) return this.returnError(branchError);
 
+    const result = await this.runGitCommand(
+      'deleteBranch',
+      repoPath,
+      sessionId,
+      this.manager.buildDeleteBranchArgs(branch, options?.force),
+      { branch, force: options?.force }
+    );
+
+    return result.success ? this.returnVoidSuccess() : result;
+  }
+
+  async add(
+    repoPath: string,
+    sessionId = 'default',
+    options?: { files?: string[]; all?: boolean }
+  ): Promise<ServiceResult<void>> {
+    const pathError = this.validateRepoPath(repoPath);
+    if (pathError) return this.returnError(pathError);
+
+    const result = await this.runGitCommand(
+      'add',
+      repoPath,
+      sessionId,
+      this.manager.buildAddArgs(options?.files, options?.all),
+      { files: options?.files, all: options?.all }
+    );
+
+    return result.success ? this.returnVoidSuccess() : result;
+  }
+
+  async commit(
+    repoPath: string,
+    message: string,
+    sessionId = 'default',
+    options?: {
+      authorName?: string;
+      authorEmail?: string;
+      allowEmpty?: boolean;
+    }
+  ): Promise<ServiceResult<void>> {
+    const pathError = this.validateRepoPath(repoPath);
+    if (pathError) return this.returnError(pathError);
+
+    if (!message || message.trim().length === 0) {
       return this.returnError({
-        message: `Failed to checkout branch '${branch}' in '${repoPath}': ${errorMessage}`,
-        code: ErrorCode.GIT_CHECKOUT_FAILED,
+        message: 'Commit message cannot be empty',
+        code: ErrorCode.VALIDATION_FAILED,
         details: {
-          branch,
-          targetDir: repoPath,
-          stderr: errorMessage
-        } satisfies GitErrorContext
+          validationErrors: [
+            {
+              field: 'message',
+              message: 'Commit message cannot be empty',
+              code: 'INVALID_COMMIT_MESSAGE'
+            }
+          ]
+        } satisfies ValidationFailedContext
+      });
+    }
+
+    const result = await this.runGitCommand(
+      'commit',
+      repoPath,
+      sessionId,
+      this.manager.buildCommitArgs(message, options),
+      {
+        authorName: options?.authorName,
+        authorEmail: options?.authorEmail,
+        allowEmpty: options?.allowEmpty
+      }
+    );
+
+    return result.success ? this.returnVoidSuccess() : result;
+  }
+
+  async reset(
+    repoPath: string,
+    sessionId = 'default',
+    options?: {
+      mode?: 'soft' | 'mixed' | 'hard' | 'merge' | 'keep';
+      target?: string;
+      paths?: string[];
+    }
+  ): Promise<ServiceResult<void>> {
+    const pathError = this.validateRepoPath(repoPath);
+    if (pathError) return this.returnError(pathError);
+
+    try {
+      const result = await this.runGitCommand(
+        'reset',
+        repoPath,
+        sessionId,
+        this.manager.buildResetArgs(options),
+        {
+          mode: options?.mode,
+          target: options?.target,
+          paths: options?.paths
+        }
+      );
+
+      return result.success ? this.returnVoidSuccess() : result;
+    } catch (error) {
+      return this.returnError({
+        message: `Invalid reset options: ${
+          error instanceof Error ? error.message : 'Unknown error'
+        }`,
+        code: ErrorCode.VALIDATION_FAILED,
+        details: {
+          validationErrors: [
+            {
+              field: 'mode',
+              message:
+                error instanceof Error
+                  ? error.message
+                  : 'Unknown validation error',
+              code: 'INVALID_RESET_OPTIONS'
+            }
+          ]
+        } satisfies ValidationFailedContext
+      });
+    }
+  }
+
+  async restore(
+    repoPath: string,
+    sessionId = 'default',
+    options: {
+      paths: string[];
+      staged?: boolean;
+      worktree?: boolean;
+      source?: string;
+    }
+  ): Promise<ServiceResult<void>> {
+    const pathError = this.validateRepoPath(repoPath);
+    if (pathError) return this.returnError(pathError);
+
+    try {
+      const result = await this.runGitCommand(
+        'restore',
+        repoPath,
+        sessionId,
+        this.manager.buildRestoreArgs(options),
+        {
+          paths: options.paths,
+          staged: options.staged,
+          worktree: options.worktree,
+          source: options.source
+        }
+      );
+
+      return result.success ? this.returnVoidSuccess() : result;
+    } catch (error) {
+      return this.returnError({
+        message: `Invalid restore options: ${
+          error instanceof Error ? error.message : 'Unknown error'
+        }`,
+        code: ErrorCode.VALIDATION_FAILED,
+        details: {
+          validationErrors: [
+            {
+              field: 'restore',
+              message:
+                error instanceof Error
+                  ? error.message
+                  : 'Unknown validation error',
+              code: 'INVALID_RESTORE_OPTIONS'
+            }
+          ]
+        } satisfies ValidationFailedContext
       });
     }
   }
@@ -305,162 +486,76 @@ export class GitService {
     repoPath: string,
     sessionId = 'default'
   ): Promise<ServiceResult<string>> {
-    try {
-      // Validate repository path
-      const pathValidation = this.security.validatePath(repoPath);
-      if (!pathValidation.isValid) {
-        return this.returnError({
-          message: `Invalid repository path '${repoPath}': ${pathValidation.errors.join(', ')}`,
-          code: ErrorCode.VALIDATION_FAILED,
-          details: {
-            validationErrors: pathValidation.errors.map((e) => ({
-              field: 'repoPath',
-              message: e,
-              code: 'INVALID_PATH'
-            }))
-          } satisfies ValidationFailedContext
-        });
-      }
+    const pathError = this.validateRepoPath(repoPath);
+    if (pathError) return this.returnError(pathError);
 
-      // Build git branch --show-current command (via manager)
-      const args = this.manager.buildGetCurrentBranchArgs();
-      const command = this.buildCommand(args);
+    const result = await this.runGitCommand(
+      'getCurrentBranch',
+      repoPath,
+      sessionId,
+      this.manager.buildGetCurrentBranchArgs()
+    );
 
-      // Execute command (via SessionManager)
-      const execResult = await this.sessionManager.executeInSession(
-        sessionId,
-        command,
-        repoPath
-      );
-
-      if (!execResult.success) {
-        return execResult as ServiceResult<string>;
-      }
-
-      const result = execResult.data;
-
-      if (result.exitCode !== 0) {
-        const errorCode = this.manager.determineErrorCode(
-          'getCurrentBranch',
-          result.stderr || 'Unknown error',
-          result.exitCode
-        );
-        return this.returnError({
-          message: `Failed to get current branch in '${repoPath}': ${
-            result.stderr || `exit code ${result.exitCode}`
-          }`,
-          code: errorCode,
-          details: {
-            targetDir: repoPath,
-            exitCode: result.exitCode,
-            stderr: result.stderr
-          } satisfies GitErrorContext
-        });
-      }
-
-      const currentBranch = result.stdout.trim();
-
-      return this.returnSuccess(currentBranch);
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : 'Unknown error';
-
-      this.logger.error(
-        'Failed to get current branch',
-        error instanceof Error ? error : undefined,
-        { repoPath }
-      );
-
-      return this.returnError({
-        message: `Failed to get current branch in '${repoPath}': ${errorMessage}`,
-        code: ErrorCode.GIT_OPERATION_FAILED,
-        details: {
-          targetDir: repoPath,
-          stderr: errorMessage
-        } satisfies GitErrorContext
-      });
+    if (!result.success) {
+      return result;
     }
+
+    return this.returnSuccess(result.data.stdout.trim());
   }
 
   async listBranches(
     repoPath: string,
     sessionId = 'default'
-  ): Promise<ServiceResult<string[]>> {
-    try {
-      // Validate repository path
-      const pathValidation = this.security.validatePath(repoPath);
-      if (!pathValidation.isValid) {
-        return this.returnError({
-          message: `Invalid repository path '${repoPath}': ${pathValidation.errors.join(', ')}`,
-          code: ErrorCode.VALIDATION_FAILED,
-          details: {
-            validationErrors: pathValidation.errors.map((e) => ({
-              field: 'repoPath',
-              message: e,
-              code: 'INVALID_PATH'
-            }))
-          } satisfies ValidationFailedContext
-        });
-      }
+  ): Promise<ServiceResult<{ branches: string[]; currentBranch: string }>> {
+    const pathError = this.validateRepoPath(repoPath);
+    if (pathError) return this.returnError(pathError);
 
-      // Build git branch -a command (via manager)
-      const args = this.manager.buildListBranchesArgs();
-      const command = this.buildCommand(args);
+    const result = await this.runGitCommand(
+      'listBranches',
+      repoPath,
+      sessionId,
+      this.manager.buildListBranchesArgs()
+    );
 
-      // Execute command (via SessionManager)
-      const execResult = await this.sessionManager.executeInSession(
-        sessionId,
-        command,
-        repoPath
-      );
-
-      if (!execResult.success) {
-        return execResult as ServiceResult<string[]>;
-      }
-
-      const result = execResult.data;
-
-      if (result.exitCode !== 0) {
-        const errorCode = this.manager.determineErrorCode(
-          'listBranches',
-          result.stderr || 'Unknown error',
-          result.exitCode
-        );
-        return this.returnError({
-          message: `Failed to list branches in '${repoPath}': ${
-            result.stderr || `exit code ${result.exitCode}`
-          }`,
-          code: errorCode,
-          details: {
-            targetDir: repoPath,
-            exitCode: result.exitCode,
-            stderr: result.stderr
-          } satisfies GitErrorContext
-        });
-      }
-
-      // Parse branch output (via manager)
-      const branches = this.manager.parseBranchList(result.stdout);
-
-      return this.returnSuccess(branches);
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : 'Unknown error';
-
-      this.logger.error(
-        'Failed to list branches',
-        error instanceof Error ? error : undefined,
-        { repoPath }
-      );
-
-      return this.returnError({
-        message: `Failed to list branches in '${repoPath}': ${errorMessage}`,
-        code: ErrorCode.GIT_OPERATION_FAILED,
-        details: {
-          targetDir: repoPath,
-          stderr: errorMessage
-        } satisfies GitErrorContext
-      });
+    if (!result.success) {
+      return result;
     }
+
+    return this.returnSuccess(
+      this.manager.parseBranchSummary(result.data.stdout)
+    );
+  }
+
+  async getStatus(
+    repoPath: string,
+    sessionId = 'default'
+  ): Promise<
+    ServiceResult<{
+      currentBranch: string;
+      ahead: number;
+      behind: number;
+      branchPublished: boolean;
+      fileStatus: {
+        path: string;
+        indexStatus: string;
+        workingTreeStatus: string;
+      }[];
+    }>
+  > {
+    const pathError = this.validateRepoPath(repoPath);
+    if (pathError) return this.returnError(pathError);
+
+    const result = await this.runGitCommand(
+      'status',
+      repoPath,
+      sessionId,
+      this.manager.buildStatusArgs()
+    );
+
+    if (!result.success) {
+      return result;
+    }
+
+    return this.returnSuccess(this.manager.parseStatus(result.data.stdout));
   }
 }

@@ -1,43 +1,17 @@
 /**
  * GitManager - Pure Business Logic for Git Operations
- *
- * Handles git operation logic without any I/O dependencies.
- * Extracted from GitService to enable fast unit testing.
- *
- * Responsibilities:
- * - Command argument building
- * - Branch output parsing
- * - Branch name validation
- * - Target directory generation
- * - Error code determination
- *
- * NO I/O operations - all infrastructure delegated to SessionManager via GitService
  */
 
+import type { GitStatusFile, GitStatusResult } from '@repo/shared';
 import { extractRepoName } from '@repo/shared';
 import { ErrorCode } from '@repo/shared/errors';
 import type { CloneOptions } from '../core/types';
 
-/**
- * GitManager contains pure business logic for git operations.
- * No Bun APIs, no I/O - just pure functions that can be unit tested instantly.
- */
 export class GitManager {
-  /**
-   * Generate target directory for cloning
-   * Format: /workspace/{repoName}
-   *
-   * Uses the repository name extracted from the URL as the directory name.
-   * Clones to /workspace to match user expectations and keep files accessible.
-   */
   generateTargetDirectory(repoUrl: string): string {
     return `/workspace/${extractRepoName(repoUrl)}`;
   }
 
-  /**
-   * Build git clone command arguments
-   * Returns array of args to pass to spawn (e.g., ['git', 'clone', '--branch', 'main', 'url', 'path'])
-   */
   buildCloneArgs(
     repoUrl: string,
     targetDir: string,
@@ -54,55 +28,280 @@ export class GitManager {
     }
 
     args.push(repoUrl, targetDir);
-
     return args;
   }
 
-  /**
-   * Build git checkout command arguments
-   */
   buildCheckoutArgs(branch: string): string[] {
     return ['git', 'checkout', branch];
   }
 
-  /**
-   * Build git branch --show-current command arguments
-   */
+  buildCreateBranchArgs(branch: string): string[] {
+    return ['git', 'checkout', '-b', branch];
+  }
+
+  buildDeleteBranchArgs(branch: string, force = false): string[] {
+    return ['git', 'branch', force ? '-D' : '-d', branch];
+  }
+
+  buildAddArgs(files?: string[], all = true): string[] {
+    if (files && files.length > 0) {
+      return ['git', 'add', '--', ...files];
+    }
+
+    return ['git', 'add', all ? '-A' : '.'];
+  }
+
+  buildCommitArgs(
+    message: string,
+    options?: {
+      authorName?: string;
+      authorEmail?: string;
+      allowEmpty?: boolean;
+    }
+  ): string[] {
+    const args = ['git'];
+
+    if (options?.authorName) {
+      args.push('-c', `user.name=${options.authorName}`);
+    }
+
+    if (options?.authorEmail) {
+      args.push('-c', `user.email=${options.authorEmail}`);
+    }
+
+    args.push('commit', '-m', message);
+
+    if (options?.allowEmpty) {
+      args.push('--allow-empty');
+    }
+
+    return args;
+  }
+
+  buildResetArgs(options?: {
+    mode?: 'soft' | 'mixed' | 'hard' | 'merge' | 'keep';
+    target?: string;
+    paths?: string[];
+  }): string[] {
+    const allowedModes = ['soft', 'mixed', 'hard', 'merge', 'keep'] as const;
+
+    if (options?.mode && !allowedModes.includes(options.mode)) {
+      throw new Error(`Reset mode must be one of ${allowedModes.join(', ')}.`);
+    }
+
+    const args = ['git', 'reset'];
+
+    if (options?.mode) {
+      args.push(`--${options.mode}`);
+    }
+
+    if (options?.target) {
+      args.push(options.target);
+    }
+
+    if (options?.paths && options.paths.length > 0) {
+      args.push('--', ...options.paths);
+    }
+
+    return args;
+  }
+
+  buildRestoreArgs(options: {
+    paths: string[];
+    staged?: boolean;
+    worktree?: boolean;
+    source?: string;
+  }): string[] {
+    if (!options.paths || options.paths.length === 0) {
+      throw new Error('At least one path is required.');
+    }
+
+    let staged = options.staged;
+    let worktree = options.worktree;
+
+    if (staged === undefined && worktree === undefined) {
+      worktree = true;
+    } else if (staged === true && worktree === undefined) {
+      worktree = false;
+    } else if (staged === undefined && worktree !== undefined) {
+      staged = false;
+    }
+
+    if (staged === false && worktree === false) {
+      throw new Error('At least one of staged or worktree must be true.');
+    }
+
+    const args = ['git', 'restore'];
+
+    if (worktree) {
+      args.push('--worktree');
+    }
+
+    if (staged) {
+      args.push('--staged');
+    }
+
+    if (options.source) {
+      args.push('--source', options.source);
+    }
+
+    args.push('--', ...options.paths);
+    return args;
+  }
+
   buildGetCurrentBranchArgs(): string[] {
     return ['git', 'branch', '--show-current'];
   }
 
-  /**
-   * Build git branch -a command arguments
-   */
   buildListBranchesArgs(): string[] {
     return ['git', 'branch', '-a'];
   }
 
-  /**
-   * Parse git branch -a output into array of branch names
-   * Handles:
-   * - Current branch marker (*)
-   * - Remote branch prefixes (remotes/origin/)
-   * - HEAD references
-   * - Duplicates
-   */
-  parseBranchList(stdout: string): string[] {
+  buildStatusArgs(): string[] {
+    return ['git', 'status', '--porcelain=1', '-b'];
+  }
+
+  parseBranchSummary(stdout: string): {
+    branches: string[];
+    currentBranch: string;
+  } {
+    let currentBranch = 'HEAD';
+
     const branches = stdout
       .split('\n')
       .map((line) => line.trim())
       .filter((line) => line.length > 0)
-      .map((line) => line.replace(/^\*\s*/, '')) // Remove current branch marker
-      .map((line) => line.replace(/^remotes\/origin\//, '')) // Simplify remote branch names
-      .filter((branch, index, array) => array.indexOf(branch) === index) // Remove duplicates
-      .filter((branch) => branch !== 'HEAD'); // Remove HEAD reference
+      .map((line) => {
+        const branchLine = line.replace(/^\*\s*/, '');
+        if (line.startsWith('* ')) {
+          currentBranch = this.normalizeCurrentBranch(branchLine);
+        }
 
-    return branches;
+        return branchLine;
+      })
+      .map((line) => line.replace(/^remotes\/origin\//, ''))
+      .filter((line) => !line.startsWith('HEAD'))
+      .filter((line, index, array) => array.indexOf(line) === index);
+
+    return {
+      branches,
+      currentBranch
+    };
   }
 
-  /**
-   * Validate branch name
-   */
+  parseBranchList(stdout: string): string[] {
+    return this.parseBranchSummary(stdout).branches;
+  }
+
+  parseStatus(
+    stdout: string
+  ): Pick<
+    GitStatusResult,
+    'currentBranch' | 'ahead' | 'behind' | 'branchPublished' | 'fileStatus'
+  > {
+    const lines = stdout
+      .split('\n')
+      .filter((line) => line.length > 0)
+      .map((line) => line.replace(/\r$/, ''));
+
+    const header = lines[0] ?? '';
+    const statusLines = lines.slice(1);
+
+    let currentBranch = 'HEAD';
+    let ahead = 0;
+    let behind = 0;
+    let branchPublished = false;
+
+    if (header.startsWith('## ')) {
+      const branchInfo = header.slice(3);
+      const trackingPart = branchInfo.split(' [')[0] || branchInfo;
+
+      if (trackingPart.startsWith('HEAD ')) {
+        currentBranch = 'HEAD';
+      } else {
+        const branchNamePart = trackingPart.split('...')[0]?.trim();
+        if (branchNamePart && branchNamePart.length > 0) {
+          currentBranch = this.normalizeCurrentBranch(branchNamePart);
+        }
+      }
+
+      branchPublished =
+        trackingPart.includes('...') && !branchInfo.includes('[gone]');
+
+      const aheadMatch = branchInfo.match(/ahead\s+(\d+)/);
+      const behindMatch = branchInfo.match(/behind\s+(\d+)/);
+      ahead = aheadMatch ? Number.parseInt(aheadMatch[1] || '0', 10) : 0;
+      behind = behindMatch ? Number.parseInt(behindMatch[1] || '0', 10) : 0;
+    }
+
+    const fileStatus: GitStatusFile[] = statusLines
+      .map((line) => this.parseStatusLine(line))
+      .filter((entry): entry is GitStatusFile => entry !== null);
+
+    return {
+      currentBranch,
+      ahead,
+      behind,
+      branchPublished,
+      fileStatus
+    };
+  }
+
+  private normalizeCurrentBranch(branch: string): string {
+    const trimmed = branch.trim();
+    if (
+      trimmed.startsWith('(HEAD detached') ||
+      trimmed.startsWith('HEAD detached')
+    ) {
+      return 'HEAD';
+    }
+
+    return trimmed;
+  }
+
+  private parseStatusLine(line: string): GitStatusFile | null {
+    if (line.length < 3) {
+      return null;
+    }
+
+    const indexStatus = line[0] || ' ';
+    const workingTreeStatus = line[1] || ' ';
+    const rawPath = line.slice(3).trim();
+
+    if (!rawPath) {
+      return null;
+    }
+
+    const path = this.parsePorcelainPath(rawPath, indexStatus);
+
+    return {
+      path,
+      indexStatus,
+      workingTreeStatus
+    };
+  }
+
+  private parsePorcelainPath(rawPath: string, indexStatus: string): string {
+    if (
+      (indexStatus === 'R' || indexStatus === 'C') &&
+      rawPath.includes(' -> ')
+    ) {
+      const [, destination] = rawPath.split(' -> ');
+      return this.normalizeQuotedPath(destination?.trim() || rawPath);
+    }
+
+    return this.normalizeQuotedPath(rawPath);
+  }
+
+  private normalizeQuotedPath(path: string): string {
+    if (path.startsWith('"') && path.endsWith('"') && path.length >= 2) {
+      const unquoted = path.slice(1, -1);
+      return unquoted.replaceAll('\\"', '"').replaceAll('\\\\', '\\');
+    }
+
+    return path;
+  }
+
   validateBranchName(branch: string): { isValid: boolean; error?: string } {
     if (!branch || branch.trim().length === 0) {
       return {
@@ -111,16 +310,9 @@ export class GitManager {
       };
     }
 
-    // Additional validation could be added here
-    // (e.g., check for invalid characters, reserved names)
-
     return { isValid: true };
   }
 
-  /**
-   * Determine appropriate error code based on operation and error.
-   * Returns valid ErrorCode enum values for use with withSession error handling.
-   */
   determineErrorCode(
     operation: string,
     error: Error | string,
@@ -129,7 +321,6 @@ export class GitManager {
     const errorMessage = typeof error === 'string' ? error : error.message;
     const lowerMessage = errorMessage.toLowerCase();
 
-    // Check exit code patterns first
     if (exitCode === 128) {
       if (lowerMessage.includes('not a git repository')) {
         return ErrorCode.GIT_OPERATION_FAILED;
@@ -140,7 +331,6 @@ export class GitManager {
       return ErrorCode.GIT_OPERATION_FAILED;
     }
 
-    // Common error patterns
     if (
       lowerMessage.includes('permission denied') ||
       lowerMessage.includes('access denied')
@@ -173,12 +363,18 @@ export class GitManager {
       return ErrorCode.GIT_AUTH_FAILED;
     }
 
-    // Operation-specific defaults
     switch (operation) {
       case 'clone':
         return ErrorCode.GIT_CLONE_FAILED;
       case 'checkout':
+      case 'createBranch':
+      case 'deleteBranch':
         return ErrorCode.GIT_CHECKOUT_FAILED;
+      case 'add':
+      case 'commit':
+      case 'reset':
+      case 'restore':
+      case 'status':
       case 'getCurrentBranch':
       case 'listBranches':
         return ErrorCode.GIT_OPERATION_FAILED;
@@ -187,41 +383,39 @@ export class GitManager {
     }
   }
 
-  /**
-   * Create standardized error message for git operations
-   */
   createErrorMessage(
     operation: string,
-    context: Record<string, any>,
+    context: Record<string, unknown>,
     error: string
   ): string {
     const operationVerbs: Record<string, string> = {
       clone: 'clone repository',
       checkout: 'checkout branch',
       getCurrentBranch: 'get current branch',
-      listBranches: 'list branches'
+      listBranches: 'list branches',
+      status: 'get repository status',
+      createBranch: 'create branch',
+      deleteBranch: 'delete branch',
+      add: 'stage changes',
+      commit: 'commit changes',
+      reset: 'reset repository',
+      restore: 'restore repository files'
     };
 
     const verb = operationVerbs[operation] || 'perform git operation';
     const contextStr = Object.entries(context)
-      .map(([key, value]) => `${key}=${value}`)
+      .map(([key, value]) => `${key}=${String(value)}`)
       .join(', ');
 
     return `Failed to ${verb} (${contextStr}): ${error}`;
   }
 
-  /**
-   * Check if git URL appears to be SSH format
-   */
   isSshUrl(url: string): boolean {
     return (
       url.startsWith('git@') || (url.includes(':') && !url.startsWith('http'))
     );
   }
 
-  /**
-   * Check if git URL appears to be HTTPS format
-   */
   isHttpsUrl(url: string): boolean {
     return url.startsWith('https://') || url.startsWith('http://');
   }

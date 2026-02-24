@@ -540,4 +540,91 @@ describe('GitClient', () => {
       expect(logDetails).toContain('https://github.com/facebook/react.git');
     });
   });
+
+  describe('additional git operations', () => {
+    it('should call status endpoint', async () => {
+      mockFetch.mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            success: true,
+            repoPath: '/workspace/repo',
+            currentBranch: 'main',
+            ahead: 0,
+            behind: 0,
+            branchPublished: true,
+            fileStatus: [],
+            timestamp: '2023-01-01T00:00:00Z'
+          }),
+          { status: 200 }
+        )
+      );
+
+      const result = await client.status('/workspace/repo', 'session-1');
+      expect(result.currentBranch).toBe('main');
+
+      const [, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+      const body = JSON.parse(init.body as string);
+      expect(body).toEqual({
+        repoPath: '/workspace/repo',
+        sessionId: 'session-1'
+      });
+    });
+
+    it('should call listBranches endpoint and include currentBranch', async () => {
+      mockFetch.mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            success: true,
+            repoPath: '/workspace/repo',
+            currentBranch: 'develop',
+            branches: ['develop', 'main'],
+            timestamp: '2023-01-01T00:00:00Z'
+          }),
+          { status: 200 }
+        )
+      );
+
+      const result = await client.listBranches('/workspace/repo', 'session-1');
+      expect(result.currentBranch).toBe('develop');
+      expect(result.branches).toEqual(['develop', 'main']);
+    });
+
+    it('should call write git operation endpoints', async () => {
+      mockFetch.mockImplementation(() =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              success: true,
+              repoPath: '/workspace/repo',
+              timestamp: '2023-01-01T00:00:00Z'
+            }),
+            { status: 200 }
+          )
+        )
+      );
+
+      await client.createBranch('/workspace/repo', 'feature/x', 'session-1');
+      await client.deleteBranch('/workspace/repo', 'feature/x', 'session-1', {
+        force: true
+      });
+      await client.add('/workspace/repo', 'session-1', {
+        files: ['README.md']
+      });
+      await client.commit('/workspace/repo', 'msg', 'session-1', {
+        authorName: 'Bot',
+        authorEmail: 'bot@example.com',
+        allowEmpty: true
+      });
+      await client.reset('/workspace/repo', 'session-1', {
+        mode: 'hard',
+        target: 'HEAD~1'
+      });
+      await client.restore('/workspace/repo', 'session-1', {
+        paths: ['README.md'],
+        staged: true
+      });
+
+      expect(mockFetch).toHaveBeenCalledTimes(6);
+    });
+  });
 });

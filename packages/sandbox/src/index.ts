@@ -73,7 +73,13 @@ export type {
   FileOperationRequest,
 
   // Git client types
-  GitCheckoutRequest,
+  GitAddOptions,
+  GitBranchListResult,
+  GitCommitOptions,
+  GitOperationResult,
+  GitResetOptions,
+  GitRestoreOptions,
+  GitStatusResult,
   // Base client types
   HttpClientOptions as SandboxClientOptions,
 

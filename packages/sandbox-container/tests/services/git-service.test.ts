@@ -415,16 +415,18 @@ describe('GitService', () => {
 
       expect(result.success).toBe(true);
       if (result.success) {
-        expect(result.data).toEqual([
+        expect(result.data.branches).toEqual([
           'develop',
           'main',
-          'feature/auth',
-          'HEAD -> origin/main'
+          'feature/auth'
         ]);
+        expect(result.data.currentBranch).toBe('main');
 
         // Should not include duplicates or HEAD references
-        expect(result.data).not.toContain('HEAD');
-        expect(result.data.filter((b) => b === 'main')).toHaveLength(1);
+        expect(result.data.branches).not.toContain('HEAD');
+        expect(result.data.branches.filter((b) => b === 'main')).toHaveLength(
+          1
+        );
       }
 
       expect(mockSessionManager.executeInSession).toHaveBeenCalledWith(
@@ -451,6 +453,67 @@ describe('GitService', () => {
         expect(result.error.code).toBe(ErrorCode.GIT_OPERATION_FAILED);
         expect(result.error.details?.exitCode).toBe(128);
       }
+    });
+  });
+
+  describe('getStatus', () => {
+    it('should parse porcelain status for tracked and untracked files', async () => {
+      mocked(mockSessionManager.executeInSession).mockResolvedValue({
+        success: true,
+        data: {
+          exitCode: 0,
+          stdout: `## main...origin/main [ahead 1]\nM  src/app.ts\n M README.md\n?? docs/new.md`,
+          stderr: ''
+        }
+      } as ServiceResult<RawExecResult>);
+
+      const result = await gitService.getStatus('/tmp/repo', 'session-123');
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.currentBranch).toBe('main');
+        expect(result.data.ahead).toBe(1);
+        expect(result.data.behind).toBe(0);
+        expect(result.data.branchPublished).toBe(true);
+        expect(result.data.fileStatus).toEqual([
+          { path: 'src/app.ts', indexStatus: 'M', workingTreeStatus: ' ' },
+          { path: 'README.md', indexStatus: ' ', workingTreeStatus: 'M' },
+          { path: 'docs/new.md', indexStatus: '?', workingTreeStatus: '?' }
+        ]);
+      }
+    });
+
+    it('should parse renames and detached HEAD', async () => {
+      mocked(mockSessionManager.executeInSession).mockResolvedValue({
+        success: true,
+        data: {
+          exitCode: 0,
+          stdout: '## HEAD (no branch)\nR  old.ts -> new.ts',
+          stderr: ''
+        }
+      } as ServiceResult<RawExecResult>);
+
+      const result = await gitService.getStatus('/tmp/repo');
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.currentBranch).toBe('HEAD');
+        expect(result.data.fileStatus).toEqual([
+          { path: 'new.ts', indexStatus: 'R', workingTreeStatus: ' ' }
+        ]);
+      }
+    });
+  });
+
+  describe('commit validation', () => {
+    it('should reject empty commit message', async () => {
+      const result = await gitService.commit('/tmp/repo', '   ');
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.code).toBe('VALIDATION_FAILED');
+      }
+      expect(mockSessionManager.executeInSession).not.toHaveBeenCalled();
     });
   });
 });

@@ -49,7 +49,16 @@ export type {
   WriteFileRequest
 } from './file-client';
 // Git client types
-export type { GitCheckoutRequest, GitCheckoutResult } from './git-client';
+export type {
+  GitAddOptions,
+  GitBranchListResult,
+  GitCheckoutResult,
+  GitCommitOptions,
+  GitOperationResult,
+  GitResetOptions,
+  GitRestoreOptions,
+  GitStatusResult
+} from './git-client';
 // Interpreter client types
 export type { ExecutionCallbacks } from './interpreter-client';
 // Port client types

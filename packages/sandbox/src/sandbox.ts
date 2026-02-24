@@ -2144,6 +2144,110 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     });
   }
 
+  async gitStatus(repoPath: string, options?: { sessionId?: string }) {
+    const session = options?.sessionId ?? (await this.ensureDefaultSession());
+    return this.client.git.status(repoPath, session);
+  }
+
+  async listBranches(repoPath: string, options?: { sessionId?: string }) {
+    const session = options?.sessionId ?? (await this.ensureDefaultSession());
+    return this.client.git.listBranches(repoPath, session);
+  }
+
+  async checkoutBranch(
+    repoPath: string,
+    branch: string,
+    options?: { sessionId?: string }
+  ) {
+    const session = options?.sessionId ?? (await this.ensureDefaultSession());
+    return this.client.git.checkoutBranch(repoPath, branch, session);
+  }
+
+  async createBranch(
+    repoPath: string,
+    branch: string,
+    options?: { sessionId?: string }
+  ) {
+    const session = options?.sessionId ?? (await this.ensureDefaultSession());
+    return this.client.git.createBranch(repoPath, branch, session);
+  }
+
+  async deleteBranch(
+    repoPath: string,
+    branch: string,
+    options?: { force?: boolean; sessionId?: string }
+  ) {
+    const session = options?.sessionId ?? (await this.ensureDefaultSession());
+    return this.client.git.deleteBranch(repoPath, branch, session, {
+      force: options?.force
+    });
+  }
+
+  async gitAdd(
+    repoPath: string,
+    options?: { files?: string[]; all?: boolean; sessionId?: string }
+  ) {
+    const session = options?.sessionId ?? (await this.ensureDefaultSession());
+    return this.client.git.add(repoPath, session, {
+      files: options?.files,
+      all: options?.all
+    });
+  }
+
+  async gitCommit(
+    repoPath: string,
+    message: string,
+    options?: {
+      authorName?: string;
+      authorEmail?: string;
+      allowEmpty?: boolean;
+      sessionId?: string;
+    }
+  ) {
+    const session = options?.sessionId ?? (await this.ensureDefaultSession());
+    return this.client.git.commit(repoPath, message, session, {
+      authorName: options?.authorName,
+      authorEmail: options?.authorEmail,
+      allowEmpty: options?.allowEmpty
+    });
+  }
+
+  async gitReset(
+    repoPath: string,
+    options?: {
+      mode?: 'soft' | 'mixed' | 'hard' | 'merge' | 'keep';
+      target?: string;
+      paths?: string[];
+      sessionId?: string;
+    }
+  ) {
+    const session = options?.sessionId ?? (await this.ensureDefaultSession());
+    return this.client.git.reset(repoPath, session, {
+      mode: options?.mode,
+      target: options?.target,
+      paths: options?.paths
+    });
+  }
+
+  async gitRestore(
+    repoPath: string,
+    options: {
+      paths: string[];
+      staged?: boolean;
+      worktree?: boolean;
+      source?: string;
+      sessionId?: string;
+    }
+  ) {
+    const session = options.sessionId ?? (await this.ensureDefaultSession());
+    return this.client.git.restore(repoPath, session, {
+      paths: options.paths,
+      staged: options.staged,
+      worktree: options.worktree,
+      source: options.source
+    });
+  }
+
   async mkdir(
     path: string,
     options: { recursive?: boolean; sessionId?: string } = {}
@@ -2629,6 +2733,22 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       // Git operations
       gitCheckout: (repoUrl, options) =>
         this.gitCheckout(repoUrl, { ...options, sessionId }),
+      gitStatus: (repoPath) => this.gitStatus(repoPath, { sessionId }),
+      listBranches: (repoPath) => this.listBranches(repoPath, { sessionId }),
+      checkoutBranch: (repoPath, branch) =>
+        this.checkoutBranch(repoPath, branch, { sessionId }),
+      createBranch: (repoPath, branch) =>
+        this.createBranch(repoPath, branch, { sessionId }),
+      deleteBranch: (repoPath, branch, options) =>
+        this.deleteBranch(repoPath, branch, { ...options, sessionId }),
+      gitAdd: (repoPath, options) =>
+        this.gitAdd(repoPath, { ...options, sessionId }),
+      gitCommit: (repoPath, message, options) =>
+        this.gitCommit(repoPath, message, { ...options, sessionId }),
+      gitReset: (repoPath, options) =>
+        this.gitReset(repoPath, { ...options, sessionId }),
+      gitRestore: (repoPath, options) =>
+        this.gitRestore(repoPath, { ...options, sessionId }),
 
       setEnvVars: async (envVars: Record<string, string | undefined>) => {
         const { toSet, toUnset } = partitionEnvVars(envVars);

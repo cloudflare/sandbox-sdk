@@ -1,21 +1,29 @@
-import type { GitCheckoutResult } from '@repo/shared';
+import type {
+  GitAddOptions,
+  GitBranchListResult,
+  GitCheckoutRequest,
+  GitCheckoutResult,
+  GitCommitOptions,
+  GitOperationResult,
+  GitResetOptions,
+  GitRestoreOptions,
+  GitStatusResult
+} from '@repo/shared';
 import { extractRepoName, GitLogger } from '@repo/shared';
 import { BaseHttpClient } from './base-client';
-import type { HttpClientOptions, SessionRequest } from './types';
+import type { HttpClientOptions } from './types';
 
 // Re-export for convenience
-export type { GitCheckoutResult };
-
-/**
- * Request interface for Git checkout operations
- */
-export interface GitCheckoutRequest extends SessionRequest {
-  repoUrl: string;
-  branch?: string;
-  targetDir?: string;
-  /** Clone depth for shallow clones (e.g., 1 for latest commit only) */
-  depth?: number;
-}
+export type {
+  GitAddOptions,
+  GitBranchListResult,
+  GitCheckoutResult,
+  GitCommitOptions,
+  GitOperationResult,
+  GitResetOptions,
+  GitRestoreOptions,
+  GitStatusResult
+};
 
 /**
  * Client for Git repository operations
@@ -25,6 +33,19 @@ export class GitClient extends BaseHttpClient {
     super(options);
     // Wrap logger with GitLogger to auto-redact credentials
     this.logger = new GitLogger(this.logger);
+  }
+
+  private async postRepoPath<T>(
+    endpoint: string,
+    repoPath: string,
+    sessionId: string,
+    extra: Record<string, unknown> = {}
+  ): Promise<T> {
+    return this.post<T>(endpoint, {
+      repoPath,
+      sessionId,
+      ...extra
+    });
   }
 
   /**
@@ -86,5 +107,131 @@ export class GitClient extends BaseHttpClient {
       this.logError('checkout', error);
       throw error;
     }
+  }
+
+  async status(repoPath: string, sessionId: string): Promise<GitStatusResult> {
+    return this.postRepoPath<GitStatusResult>(
+      '/api/git/status',
+      repoPath,
+      sessionId
+    );
+  }
+
+  async listBranches(
+    repoPath: string,
+    sessionId: string
+  ): Promise<GitBranchListResult> {
+    return this.postRepoPath<GitBranchListResult>(
+      '/api/git/branches',
+      repoPath,
+      sessionId
+    );
+  }
+
+  async checkoutBranch(
+    repoPath: string,
+    branch: string,
+    sessionId: string
+  ): Promise<GitOperationResult> {
+    return this.postRepoPath<GitOperationResult>(
+      '/api/git/checkout-branch',
+      repoPath,
+      sessionId,
+      { branch }
+    );
+  }
+
+  async createBranch(
+    repoPath: string,
+    branch: string,
+    sessionId: string
+  ): Promise<GitOperationResult> {
+    return this.postRepoPath<GitOperationResult>(
+      '/api/git/create-branch',
+      repoPath,
+      sessionId,
+      { branch }
+    );
+  }
+
+  async deleteBranch(
+    repoPath: string,
+    branch: string,
+    sessionId: string,
+    options?: { force?: boolean }
+  ): Promise<GitOperationResult> {
+    return this.postRepoPath<GitOperationResult>(
+      '/api/git/delete-branch',
+      repoPath,
+      sessionId,
+      { branch, force: options?.force }
+    );
+  }
+
+  async add(
+    repoPath: string,
+    sessionId: string,
+    options?: GitAddOptions
+  ): Promise<GitOperationResult> {
+    return this.postRepoPath<GitOperationResult>(
+      '/api/git/add',
+      repoPath,
+      sessionId,
+      { files: options?.files, all: options?.all }
+    );
+  }
+
+  async commit(
+    repoPath: string,
+    message: string,
+    sessionId: string,
+    options?: GitCommitOptions
+  ): Promise<GitOperationResult> {
+    return this.postRepoPath<GitOperationResult>(
+      '/api/git/commit',
+      repoPath,
+      sessionId,
+      {
+        message,
+        authorName: options?.authorName,
+        authorEmail: options?.authorEmail,
+        allowEmpty: options?.allowEmpty
+      }
+    );
+  }
+
+  async reset(
+    repoPath: string,
+    sessionId: string,
+    options?: GitResetOptions
+  ): Promise<GitOperationResult> {
+    return this.postRepoPath<GitOperationResult>(
+      '/api/git/reset',
+      repoPath,
+      sessionId,
+      {
+        mode: options?.mode,
+        target: options?.target,
+        paths: options?.paths
+      }
+    );
+  }
+
+  async restore(
+    repoPath: string,
+    sessionId: string,
+    options: GitRestoreOptions
+  ): Promise<GitOperationResult> {
+    return this.postRepoPath<GitOperationResult>(
+      '/api/git/restore',
+      repoPath,
+      sessionId,
+      {
+        paths: options.paths,
+        staged: options.staged,
+        worktree: options.worktree,
+        source: options.source
+      }
+    );
   }
 }

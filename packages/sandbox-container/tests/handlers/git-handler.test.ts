@@ -9,7 +9,14 @@ import type { GitService } from '@sandbox-container/services/git-service';
 const mockGitService = {
   cloneRepository: vi.fn(),
   checkoutBranch: vi.fn(),
+  createBranch: vi.fn(),
+  deleteBranch: vi.fn(),
+  add: vi.fn(),
+  commit: vi.fn(),
+  reset: vi.fn(),
+  restore: vi.fn(),
   getCurrentBranch: vi.fn(),
+  getStatus: vi.fn(),
   listBranches: vi.fn()
 } as unknown as GitService;
 
@@ -314,6 +321,79 @@ describe('GitHandler', () => {
       expect(responseData.context.originalError).toBe('Command not found');
       expect(responseData.httpStatus).toBe(500);
       expect(responseData.timestamp).toBeDefined();
+    });
+  });
+
+  describe('additional git endpoints', () => {
+    it('should return status with branch and file details', async () => {
+      (mockGitService.getStatus as any).mockResolvedValue({
+        success: true,
+        data: {
+          currentBranch: 'main',
+          ahead: 1,
+          behind: 0,
+          branchPublished: true,
+          fileStatus: [
+            { path: 'README.md', indexStatus: 'M', workingTreeStatus: ' ' }
+          ]
+        }
+      });
+
+      const request = new Request('http://localhost:3000/api/git/status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ repoPath: '/workspace/repo' })
+      });
+
+      const response = await gitHandler.handle(request, mockContext);
+      expect(response.status).toBe(200);
+      const responseData = (await response.json()) as any;
+      expect(responseData.currentBranch).toBe('main');
+      expect(responseData.fileStatus).toHaveLength(1);
+    });
+
+    it('should return branches with currentBranch', async () => {
+      (mockGitService.listBranches as any).mockResolvedValue({
+        success: true,
+        data: {
+          currentBranch: 'develop',
+          branches: ['develop', 'main']
+        }
+      });
+
+      const request = new Request('http://localhost:3000/api/git/branches', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ repoPath: '/workspace/repo' })
+      });
+
+      const response = await gitHandler.handle(request, mockContext);
+      expect(response.status).toBe(200);
+      const responseData = (await response.json()) as any;
+      expect(responseData.currentBranch).toBe('develop');
+      expect(responseData.branches).toEqual(['develop', 'main']);
+    });
+
+    it('should execute write operations and return operation result', async () => {
+      (mockGitService.createBranch as any).mockResolvedValue({ success: true });
+
+      const request = new Request(
+        'http://localhost:3000/api/git/create-branch',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            repoPath: '/workspace/repo',
+            branch: 'feature/new'
+          })
+        }
+      );
+
+      const response = await gitHandler.handle(request, mockContext);
+      expect(response.status).toBe(200);
+      const responseData = (await response.json()) as any;
+      expect(responseData.success).toBe(true);
+      expect(responseData.repoPath).toBe('/workspace/repo');
     });
   });
 
