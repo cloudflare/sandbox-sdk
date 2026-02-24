@@ -10,7 +10,7 @@
  */
 
 import type { FileWatchSSEEvent } from '@repo/shared';
-import { beforeAll, describe, expect, test } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, test } from 'vitest';
 import {
   createUniqueSession,
   getSharedSandbox,
@@ -25,8 +25,12 @@ describe('File Watch Workflow', () => {
   beforeAll(async () => {
     const sandbox = await getSharedSandbox();
     workerUrl = sandbox.workerUrl;
-    headers = sandbox.createHeaders(createUniqueSession());
   }, 120000);
+
+  beforeEach(async () => {
+    const sandbox = await getSharedSandbox();
+    headers = sandbox.createHeaders(createUniqueSession());
+  });
 
   /**
    * Helper to start a watch that allows performing actions after the watch is established.
