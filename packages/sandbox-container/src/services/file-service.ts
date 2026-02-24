@@ -1471,14 +1471,7 @@ export class FileService implements FileSystemOperations {
           }
         });
 
-        return fileStream.pipeThrough(sseTransform).pipeThrough(
-          new TransformStream<Uint8Array, Uint8Array>({
-            transform(chunk, controller) {
-              controller.enqueue(chunk);
-            },
-            flush() {}
-          })
-        );
+        return fileStream.pipeThrough(sseTransform);
       })
       .then((result) => {
         if (!result.success) {
