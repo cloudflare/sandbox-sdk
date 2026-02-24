@@ -140,37 +140,49 @@ describe('File Watch Workflow', () => {
     return { events: result.events, watchId: result.watchId };
   }
 
+  async function expectOk(response: Response, context: string): Promise<void> {
+    if (response.ok) {
+      return;
+    }
+
+    const body = await response.text();
+    throw new Error(`${context} failed with ${response.status}: ${body}`);
+  }
+
   /**
    * Helper to create a file via the API.
    */
   async function createFile(path: string, content: string): Promise<void> {
-    await fetch(`${workerUrl}/api/file/write`, {
+    const response = await fetch(`${workerUrl}/api/file/write`, {
       method: 'POST',
       headers,
       body: JSON.stringify({ path, content })
     });
+    await expectOk(response, `createFile(${path})`);
   }
 
   /**
    * Helper to create a directory via the API.
    */
   async function createDir(path: string): Promise<void> {
-    await fetch(`${workerUrl}/api/file/mkdir`, {
+    const response = await fetch(`${workerUrl}/api/file/mkdir`, {
       method: 'POST',
       headers,
       body: JSON.stringify({ path, recursive: true })
     });
+    await expectOk(response, `createDir(${path})`);
   }
 
   /**
    * Helper to delete a file via the API.
    */
   async function deleteFile(path: string): Promise<void> {
-    await fetch(`${workerUrl}/api/file/delete`, {
+    const response = await fetch(`${workerUrl}/api/file/delete`, {
       method: 'DELETE',
       headers,
       body: JSON.stringify({ path })
     });
+    await expectOk(response, `deleteFile(${path})`);
   }
 
   test('should establish watch and receive watching event', async () => {
@@ -340,9 +352,14 @@ describe('File Watch Workflow', () => {
     testDir = uniqueTestPath('watch-stop-endpoint');
     await createDir(testDir);
 
+    const isolatedHeaders = {
+      ...headers,
+      'X-Session-Id': createUniqueSession()
+    };
+
     const response = await fetch(`${workerUrl}/api/watch`, {
       method: 'POST',
-      headers,
+      headers: isolatedHeaders,
       body: JSON.stringify({ path: testDir })
     });
 
@@ -355,10 +372,25 @@ describe('File Watch Workflow', () => {
 
     let watchId: string | null = null;
     let buffer = '';
+    const observedEvents: string[] = [];
+    const deadline = Date.now() + 10000;
 
-    while (!watchId) {
-      const { done, value } = await reader.read();
-      if (done) break;
+    while (!watchId && Date.now() < deadline) {
+      const readResult = await Promise.race([
+        reader.read(),
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error('Timed out waiting for watch events')),
+            1500
+          )
+        )
+      ]);
+
+      const { done, value } = readResult;
+      if (done) {
+        break;
+      }
+
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split('\n');
       buffer = lines.pop() || '';
@@ -367,19 +399,29 @@ describe('File Watch Workflow', () => {
         if (!line.startsWith('data: ')) {
           continue;
         }
+
         const event = JSON.parse(line.slice(6)) as FileWatchSSEEvent;
+        observedEvents.push(event.type);
+
         if (event.type === 'watching') {
           watchId = event.watchId;
           break;
         }
+
+        if (event.type === 'error') {
+          throw new Error(`watch emitted error before ready: ${event.error}`);
+        }
       }
     }
 
-    expect(watchId).toBeTruthy();
+    expect(
+      watchId,
+      `did not receive watching event; observed: ${observedEvents.join(', ')}`
+    ).toBeTruthy();
 
     const stopResponse = await fetch(`${workerUrl}/api/watch/stop`, {
       method: 'POST',
-      headers,
+      headers: isolatedHeaders,
       body: JSON.stringify({ watchId })
     });
 
