@@ -6,8 +6,13 @@ import type { GitStatusFile, GitStatusResult } from '@repo/shared';
 import { extractRepoName } from '@repo/shared';
 import { ErrorCode } from '@repo/shared/errors';
 import type { CloneOptions } from '../core/types';
+import { GitBranchCommands } from './git-branch-commands';
+import { GitWorkingTreeCommands } from './git-working-tree-commands';
 
 export class GitManager {
+  private readonly branchCommands = new GitBranchCommands();
+  private readonly workingTreeCommands = new GitWorkingTreeCommands();
+
   generateTargetDirectory(repoUrl: string): string {
     return `/workspace/${extractRepoName(repoUrl)}`;
   }
@@ -32,23 +37,19 @@ export class GitManager {
   }
 
   buildCheckoutArgs(branch: string): string[] {
-    return ['git', 'checkout', branch];
+    return this.branchCommands.buildCheckoutArgs(branch);
   }
 
   buildCreateBranchArgs(branch: string): string[] {
-    return ['git', 'checkout', '-b', branch];
+    return this.branchCommands.buildCreateBranchArgs(branch);
   }
 
   buildDeleteBranchArgs(branch: string, force = false): string[] {
-    return ['git', 'branch', force ? '-D' : '-d', branch];
+    return this.branchCommands.buildDeleteBranchArgs(branch, force);
   }
 
   buildAddArgs(files?: string[], all = true): string[] {
-    if (files && files.length > 0) {
-      return ['git', 'add', '--', ...files];
-    }
-
-    return ['git', 'add', all ? '-A' : '.'];
+    return this.workingTreeCommands.buildAddArgs(files, all);
   }
 
   buildCommitArgs(
@@ -59,23 +60,7 @@ export class GitManager {
       allowEmpty?: boolean;
     }
   ): string[] {
-    const args = ['git'];
-
-    if (options?.authorName) {
-      args.push('-c', `user.name=${options.authorName}`);
-    }
-
-    if (options?.authorEmail) {
-      args.push('-c', `user.email=${options.authorEmail}`);
-    }
-
-    args.push('commit', '-m', message);
-
-    if (options?.allowEmpty) {
-      args.push('--allow-empty');
-    }
-
-    return args;
+    return this.workingTreeCommands.buildCommitArgs(message, options);
   }
 
   buildResetArgs(options?: {
@@ -83,27 +68,7 @@ export class GitManager {
     target?: string;
     paths?: string[];
   }): string[] {
-    const allowedModes = ['soft', 'mixed', 'hard', 'merge', 'keep'] as const;
-
-    if (options?.mode && !allowedModes.includes(options.mode)) {
-      throw new Error(`Reset mode must be one of ${allowedModes.join(', ')}.`);
-    }
-
-    const args = ['git', 'reset'];
-
-    if (options?.mode) {
-      args.push(`--${options.mode}`);
-    }
-
-    if (options?.target) {
-      args.push(options.target);
-    }
-
-    if (options?.paths && options.paths.length > 0) {
-      args.push('--', ...options.paths);
-    }
-
-    return args;
+    return this.workingTreeCommands.buildResetArgs(options);
   }
 
   buildRestoreArgs(options: {
@@ -112,53 +77,19 @@ export class GitManager {
     worktree?: boolean;
     source?: string;
   }): string[] {
-    if (!options.paths || options.paths.length === 0) {
-      throw new Error('At least one path is required.');
-    }
-
-    let staged = options.staged;
-    let worktree = options.worktree;
-
-    if (staged === undefined && worktree === undefined) {
-      worktree = true;
-    } else if (staged === true && worktree === undefined) {
-      worktree = false;
-    } else if (staged === undefined && worktree !== undefined) {
-      staged = false;
-    }
-
-    if (staged === false && worktree === false) {
-      throw new Error('At least one of staged or worktree must be true.');
-    }
-
-    const args = ['git', 'restore'];
-
-    if (worktree) {
-      args.push('--worktree');
-    }
-
-    if (staged) {
-      args.push('--staged');
-    }
-
-    if (options.source) {
-      args.push('--source', options.source);
-    }
-
-    args.push('--', ...options.paths);
-    return args;
+    return this.workingTreeCommands.buildRestoreArgs(options);
   }
 
   buildGetCurrentBranchArgs(): string[] {
-    return ['git', 'branch', '--show-current'];
+    return this.branchCommands.buildGetCurrentBranchArgs();
   }
 
   buildListBranchesArgs(): string[] {
-    return ['git', 'branch', '-a'];
+    return this.branchCommands.buildListBranchesArgs();
   }
 
   buildStatusArgs(): string[] {
-    return ['git', 'status', '--porcelain=1', '-b'];
+    return this.workingTreeCommands.buildStatusArgs();
   }
 
   parseBranchSummary(stdout: string): {

@@ -113,6 +113,15 @@ export class GitService {
     );
 
     if (!execResult.success) {
+      this.logger.error('Git command execution failed', undefined, {
+        operation,
+        repoPath,
+        sessionId,
+        command,
+        ...extraDetails,
+        errorCode: execResult.error.code,
+        errorMessage: execResult.error.message
+      });
       return this.returnError(execResult.error);
     }
 
@@ -124,6 +133,16 @@ export class GitService {
         stderr || 'Unknown error',
         exitCode
       );
+
+      this.logger.error('Git command failed', undefined, {
+        operation,
+        repoPath,
+        sessionId,
+        command,
+        exitCode,
+        stderr,
+        ...extraDetails
+      });
 
       return this.returnError({
         message: this.manager.createErrorMessage(

@@ -516,4 +516,68 @@ describe('GitService', () => {
       expect(mockSessionManager.executeInSession).not.toHaveBeenCalled();
     });
   });
+
+  describe('validation timing and error contract', () => {
+    it('should validate repoPath before executing command', async () => {
+      mocked(mockSecurityService.validatePath).mockReturnValueOnce({
+        isValid: false,
+        errors: ['invalid path']
+      });
+
+      const result = await gitService.add('/bad/path', 'session-1');
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.code).toBe('VALIDATION_FAILED');
+        expect(result.error.details).toHaveProperty('validationErrors');
+      }
+      expect(mockSessionManager.executeInSession).not.toHaveBeenCalled();
+    });
+
+    it('should return consistent error shape for command failures', async () => {
+      mocked(mockSessionManager.executeInSession).mockResolvedValueOnce({
+        success: true,
+        data: {
+          exitCode: 1,
+          stdout: '',
+          stderr: 'boom'
+        }
+      } as ServiceResult<RawExecResult>);
+
+      const result = await gitService.add('/tmp/repo', 'session-1');
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toHaveProperty('code');
+        expect(result.error).toHaveProperty('message');
+        expect(result.error).toHaveProperty('details');
+      }
+    });
+  });
+
+  describe('logging behavior', () => {
+    it('should log git command failures with operation context', async () => {
+      mocked(mockSessionManager.executeInSession).mockResolvedValueOnce({
+        success: true,
+        data: {
+          exitCode: 1,
+          stdout: '',
+          stderr: 'failed'
+        }
+      } as ServiceResult<RawExecResult>);
+
+      await gitService.add('/tmp/repo', 'session-1');
+
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        'Git command failed',
+        undefined,
+        expect.objectContaining({
+          operation: 'add',
+          repoPath: '/tmp/repo',
+          sessionId: 'session-1',
+          exitCode: 1
+        })
+      );
+    });
+  });
 });

@@ -79,26 +79,26 @@ export class GitHandler extends BaseHandler<Request, Response> {
       depth: body.depth
     });
 
-    if (result.success) {
-      const response: GitCheckoutResult = {
-        success: true,
+    if (!result.success) {
+      this.logger.error('Repository clone failed', undefined, {
+        requestId: context.requestId,
         repoUrl: body.repoUrl,
-        branch: result.data.branch,
-        targetDir: result.data.path,
-        timestamp: new Date().toISOString()
-      };
+        errorCode: result.error.code,
+        errorMessage: result.error.message
+      });
 
-      return this.createTypedResponse(response, context);
+      return this.createErrorResponse(result.error, context);
     }
 
-    this.logger.error('Repository clone failed', undefined, {
-      requestId: context.requestId,
+    const response: GitCheckoutResult = {
+      success: true,
       repoUrl: body.repoUrl,
-      errorCode: result.error.code,
-      errorMessage: result.error.message
-    });
+      branch: result.data.branch,
+      targetDir: result.data.path,
+      timestamp: new Date().toISOString()
+    };
 
-    return this.createErrorResponse(result.error, context);
+    return this.createTypedResponse(response, context);
   }
 
   private async handleStatus(

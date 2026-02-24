@@ -523,6 +523,64 @@ console.log('Terminal server on port ' + port);
         });
       }
 
+      if (url.pathname === '/api/git/status' && request.method === 'POST') {
+        const result = await executor.gitStatus(body.repoPath);
+        return new Response(JSON.stringify(result), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (url.pathname === '/api/git/branches' && request.method === 'POST') {
+        const result = await executor.listBranches(body.repoPath);
+        return new Response(JSON.stringify(result), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (
+        url.pathname === '/api/git/checkout-branch' &&
+        request.method === 'POST'
+      ) {
+        const result = await executor.checkoutBranch(
+          body.repoPath,
+          body.branch
+        );
+        return new Response(JSON.stringify(result), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (
+        url.pathname === '/api/git/create-branch' &&
+        request.method === 'POST'
+      ) {
+        const result = await executor.createBranch(body.repoPath, body.branch);
+        return new Response(JSON.stringify(result), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (url.pathname === '/api/git/add' && request.method === 'POST') {
+        const result = await executor.gitAdd(body.repoPath, {
+          files: body.files,
+          all: body.all
+        });
+        return new Response(JSON.stringify(result), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (url.pathname === '/api/git/commit' && request.method === 'POST') {
+        const result = await executor.gitCommit(body.repoPath, body.message, {
+          authorName: body.authorName,
+          authorEmail: body.authorEmail,
+          allowEmpty: body.allowEmpty
+        });
+        return new Response(JSON.stringify(result), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
       // Bucket mount
       if (url.pathname === '/api/bucket/mount' && request.method === 'POST') {
         // Pass R2 credentials from worker env to sandbox env
