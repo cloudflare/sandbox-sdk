@@ -219,9 +219,7 @@ describe('FileHandler', () => {
       expect(mockFileService.writeFile).toHaveBeenCalledWith(
         '/tmp/output.txt',
         'Hello, File!',
-        {
-          encoding: undefined
-        },
+        {},
         undefined
       );
     });
