@@ -10,26 +10,43 @@
  */
 
 import type { FileWatchSSEEvent } from '@repo/shared';
-import { beforeAll, beforeEach, describe, expect, test } from 'vitest';
 import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  test
+} from 'vitest';
+import {
+  cleanupIsolatedSandbox,
   createUniqueSession,
-  getSharedSandbox,
+  getIsolatedSandbox,
+  type SharedSandbox,
   uniqueTestPath
 } from './helpers/global-sandbox';
 
 describe('File Watch Workflow', () => {
+  let sandbox: SharedSandbox | null = null;
   let workerUrl: string;
   let headers: Record<string, string>;
   let testDir: string;
 
   beforeAll(async () => {
-    const sandbox = await getSharedSandbox();
+    sandbox = await getIsolatedSandbox();
     workerUrl = sandbox.workerUrl;
   }, 120000);
 
   beforeEach(async () => {
-    const sandbox = await getSharedSandbox();
+    if (!sandbox) {
+      throw new Error('Isolated sandbox not initialized');
+    }
     headers = sandbox.createHeaders(createUniqueSession());
+  });
+
+  afterAll(async () => {
+    await cleanupIsolatedSandbox(sandbox);
+    sandbox = null;
   });
 
   /**
