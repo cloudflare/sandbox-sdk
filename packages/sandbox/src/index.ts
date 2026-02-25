@@ -67,6 +67,7 @@ export type {
   CursorPositionResponse,
   DeleteSessionRequest,
   DeleteSessionResponse,
+  Desktop,
   DesktopStartOptions,
   DesktopStartResponse,
   DesktopStatusResponse,

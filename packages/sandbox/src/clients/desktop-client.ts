@@ -73,6 +73,70 @@ export interface ScreenSizeResponse extends BaseApiResponse {
 }
 
 /**
+ * Public interface for desktop operations.
+ * Returned by `sandbox.desktop` via an RpcTarget wrapper so that pipelined
+ * method calls work across the Durable Object RPC boundary.
+ */
+export interface Desktop {
+  start(options?: DesktopStartOptions): Promise<DesktopStartResponse>;
+  stop(): Promise<DesktopStopResponse>;
+  status(): Promise<DesktopStatusResponse>;
+  screenshot(
+    options?: ScreenshotOptions & { format?: 'base64' }
+  ): Promise<ScreenshotResponse>;
+  screenshot(
+    options: ScreenshotOptions & { format: 'bytes' }
+  ): Promise<ScreenshotBytesResponse>;
+  screenshot(
+    options?: ScreenshotOptions
+  ): Promise<ScreenshotResponse | ScreenshotBytesResponse>;
+  screenshotRegion(
+    region: ScreenshotRegion,
+    options?: ScreenshotOptions & { format?: 'base64' }
+  ): Promise<ScreenshotResponse>;
+  screenshotRegion(
+    region: ScreenshotRegion,
+    options: ScreenshotOptions & { format: 'bytes' }
+  ): Promise<ScreenshotBytesResponse>;
+  screenshotRegion(
+    region: ScreenshotRegion,
+    options?: ScreenshotOptions
+  ): Promise<ScreenshotResponse | ScreenshotBytesResponse>;
+  click(x: number, y: number, options?: ClickOptions): Promise<void>;
+  doubleClick(x: number, y: number, options?: ClickOptions): Promise<void>;
+  tripleClick(x: number, y: number, options?: ClickOptions): Promise<void>;
+  rightClick(x: number, y: number): Promise<void>;
+  middleClick(x: number, y: number): Promise<void>;
+  mouseDown(x?: number, y?: number, options?: ClickOptions): Promise<void>;
+  mouseUp(x?: number, y?: number, options?: ClickOptions): Promise<void>;
+  moveMouse(x: number, y: number): Promise<void>;
+  drag(
+    startX: number,
+    startY: number,
+    endX: number,
+    endY: number,
+    options?: ClickOptions
+  ): Promise<void>;
+  scroll(
+    x: number,
+    y: number,
+    direction: ScrollDirection,
+    amount?: number
+  ): Promise<void>;
+  getCursorPosition(): Promise<CursorPositionResponse>;
+  type(text: string, options?: TypeOptions): Promise<void>;
+  press(key: KeyInput): Promise<void>;
+  keyDown(key: KeyInput): Promise<void>;
+  keyUp(key: KeyInput): Promise<void>;
+  getScreenSize(): Promise<ScreenSizeResponse>;
+  getProcessStatus(
+    name: string
+  ): Promise<
+    BaseApiResponse & { running: boolean; pid?: number; uptime?: number }
+  >;
+}
+
+/**
  * Client for desktop environment lifecycle, input, and screen operations
  */
 export class DesktopClient extends BaseHttpClient {

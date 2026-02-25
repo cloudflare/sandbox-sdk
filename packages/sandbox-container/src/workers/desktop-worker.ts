@@ -21,7 +21,7 @@ interface DesktopBindings {
     y: number,
     w: number,
     h: number
-  ) => void;
+  ) => string;
   getMousePos: () => { x: number; y: number };
   mouseDown: (button: string) => void;
   mouseUp: (button: string) => void;
@@ -36,10 +36,24 @@ function loadLibrary(): boolean {
     const koffi = require('koffi');
     lib = koffi.load('/usr/lib/desktop.so');
 
-    // Type assertion is safe here: koffi.load returns an object with .func()
+    // Disposable string type: koffi reads the C string, then calls free() on the
+    // pointer. Required because Go's C.CString() allocates via malloc and koffi's
+    // default 'str' return type does not free the memory.
+    const HeapStr = koffi.disposable('HeapStr', 'str');
+
     const koffiLib = lib as {
-      func: (name: string, ret: string, args: string[]) => Function;
+      func: (name: string, ret: unknown, args: string[]) => Function;
     };
+
+    // Raw FFI bindings — out-pointer functions need wrapper logic
+    const rawGetScreenSize = koffiLib.func('GetScreenSize', 'void', [
+      'int*',
+      'int*'
+    ]);
+    const rawGetMousePos = koffiLib.func('GetMousePos', 'void', [
+      'int*',
+      'int*'
+    ]);
 
     bindings = {
       move: koffiLib.func('Move', 'void', [
@@ -64,25 +78,10 @@ function loadLibrary(): boolean {
         'str',
         'int'
       ]) as DesktopBindings['typeStr'],
-      keyTap: koffiLib.func('KeyTap', 'str', [
+      keyTap: koffiLib.func('KeyTap', HeapStr, [
         'str',
         'str'
       ]) as DesktopBindings['keyTap'],
-      getScreenSize: koffiLib.func('GetScreenSize', 'void', [
-        'int*',
-        'int*'
-      ]) as unknown as DesktopBindings['getScreenSize'],
-      saveCapture: koffiLib.func('SaveCapture', 'void', [
-        'str',
-        'int',
-        'int',
-        'int',
-        'int'
-      ]) as DesktopBindings['saveCapture'],
-      getMousePos: koffiLib.func('GetMousePos', 'void', [
-        'int*',
-        'int*'
-      ]) as unknown as DesktopBindings['getMousePos'],
       mouseDown: koffiLib.func('MouseDown', 'void', [
         'str'
       ]) as DesktopBindings['mouseDown'],
@@ -92,7 +91,31 @@ function loadLibrary(): boolean {
       keyDown: koffiLib.func('KeyDown', 'void', [
         'str'
       ]) as DesktopBindings['keyDown'],
-      keyUp: koffiLib.func('KeyUp', 'void', ['str']) as DesktopBindings['keyUp']
+      keyUp: koffiLib.func('KeyUp', 'void', [
+        'str'
+      ]) as DesktopBindings['keyUp'],
+      saveCapture: koffiLib.func('SaveCapture', HeapStr, [
+        'str',
+        'int',
+        'int',
+        'int',
+        'int'
+      ]) as DesktopBindings['saveCapture'],
+
+      // Out-pointer wrappers: allocate output arrays and extract values
+      getScreenSize: (() => {
+        const w = [0],
+          h = [0];
+        rawGetScreenSize(w, h);
+        return { width: w[0], height: h[0] };
+      }) as DesktopBindings['getScreenSize'],
+
+      getMousePos: (() => {
+        const x = [0],
+          y = [0];
+        rawGetMousePos(x, y);
+        return { x: x[0], y: y[0] };
+      }) as DesktopBindings['getMousePos']
     };
     return true;
   } catch (error) {
@@ -111,16 +134,21 @@ self.onmessage = (event: MessageEvent) => {
 
     let result: unknown;
     switch (op) {
-      case 'screenshot':
-        bindings.saveCapture!(
-          args.path,
-          args.x ?? 0,
-          args.y ?? 0,
-          args.w ?? 0,
-          args.h ?? 0
-        );
+      case 'screenshot': {
+        const sx = Math.max(0, args.x ?? 0);
+        const sy = Math.max(0, args.y ?? 0);
+        const sw = args.w ?? 0;
+        const sh = args.h ?? 0;
+        if (sw <= 0 || sh <= 0) {
+          throw new Error(`Invalid screenshot dimensions: ${sw}x${sh}`);
+        }
+        const err = bindings.saveCapture!(args.path, sx, sy, sw, sh);
+        if (err && err !== '') {
+          throw new Error(`Screenshot capture failed: ${err}`);
+        }
         result = { success: true, path: args.path };
         break;
+      }
       case 'click':
         bindings.move!(args.x, args.y);
         bindings.click!(args.button || 'left', args.double || false);

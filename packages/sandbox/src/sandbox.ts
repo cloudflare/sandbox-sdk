@@ -39,11 +39,7 @@ import {
   TraceContext
 } from '@repo/shared';
 import { AwsClient } from 'aws4fetch';
-import {
-  type DesktopClient,
-  type ExecuteResponse,
-  SandboxClient
-} from './clients';
+import { type Desktop, type ExecuteResponse, SandboxClient } from './clients';
 import type { ErrorResponse } from './errors';
 import {
   BackupCreateError,
@@ -133,7 +129,15 @@ export function getSandbox<T extends Sandbox<any>>(
     },
     terminal: (request: Request, opts?: PtyOptions) =>
       proxyTerminal(stub, defaultSessionId, request, opts),
-    wsConnect: connect(stub)
+    wsConnect: connect(stub),
+    // Client-side proxy for desktop operations. Each method call is dispatched
+    // to the DO's callDesktop() method, avoiding RPC pipelining through getters.
+    desktop: new Proxy({} as Desktop, {
+      get(_, method) {
+        if (typeof method !== 'string' || method === 'then') return undefined;
+        return (...args: unknown[]) => stub.callDesktop(method, args);
+      }
+    })
   };
 
   // Proxy intercepts enhanced methods, passes all others to stub directly.
@@ -255,11 +259,60 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private containerTimeouts = { ...this.DEFAULT_CONTAINER_TIMEOUTS };
 
   /**
-   * Desktop environment client.
-   * Access via sandbox.desktop.start(), sandbox.desktop.screenshot(), etc.
+   * Desktop environment operations.
+   * Within the DO, this getter provides direct access to DesktopClient.
+   * Over RPC, the getSandbox() proxy intercepts this property and routes
+   * calls through callDesktop() instead.
    */
-  get desktop(): DesktopClient {
-    return this.client.desktop;
+  get desktop(): Desktop {
+    return this.client.desktop as unknown as Desktop;
+  }
+
+  /**
+   * Allowed desktop methods — derived from the Desktop interface.
+   * Restricts callDesktop() to a known set of operations.
+   */
+  private static readonly DESKTOP_METHODS = new Set([
+    'start',
+    'stop',
+    'status',
+    'screenshot',
+    'screenshotRegion',
+    'click',
+    'doubleClick',
+    'tripleClick',
+    'rightClick',
+    'middleClick',
+    'mouseDown',
+    'mouseUp',
+    'moveMouse',
+    'drag',
+    'scroll',
+    'getCursorPosition',
+    'type',
+    'press',
+    'keyDown',
+    'keyUp',
+    'getScreenSize',
+    'getProcessStatus'
+  ]);
+
+  /**
+   * Dispatch method for desktop operations.
+   * Called by the client-side proxy created in getSandbox() to provide
+   * the `sandbox.desktop.status()` API without relying on RPC pipelining
+   * through property getters.
+   */
+  async callDesktop(method: string, args: unknown[]): Promise<unknown> {
+    if (!Sandbox.DESKTOP_METHODS.has(method)) {
+      throw new Error(`Unknown desktop method: ${method}`);
+    }
+    const client = this.client.desktop;
+    const fn = client[method as keyof typeof client];
+    if (typeof fn !== 'function') {
+      throw new Error(`Unknown desktop method: ${method}`);
+    }
+    return (fn as (...a: unknown[]) => unknown).apply(client, args);
   }
 
   /**
@@ -2265,11 +2318,49 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       );
     }
 
-    // Use the existing exposePort mechanism for preview URL + token
-    const { url } = await this.exposePort(6080, {
-      hostname,
-      token: options?.token
-    });
+    let url: string;
+
+    // Try exposing port 6080; if already exposed, construct the URL from stored token
+    try {
+      const result = await this.exposePort(6080, {
+        hostname,
+        token: options?.token
+      });
+      url = result.url;
+    } catch {
+      // Port may already be exposed — look up the existing token from DO storage
+      const tokens =
+        (await this.ctx.storage.get<Record<string, string>>('portTokens')) ||
+        {};
+      const existingToken = tokens['6080'];
+      if (existingToken && this.sandboxName) {
+        url = this.constructPreviewUrl(
+          6080,
+          this.sandboxName,
+          hostname,
+          existingToken
+        );
+      } else {
+        throw new Error(
+          'Failed to get desktop stream URL: port 6080 could not be exposed and no existing token found.'
+        );
+      }
+    }
+
+    // Wait for the platform to detect port 6080 using the Containers runtime's
+    // built-in port readiness mechanism (getTcpPort polling). This ensures the
+    // preview URL is routable before returning it to the caller.
+    try {
+      await this.waitForPort({
+        portToCheck: 6080,
+        retries: 30,
+        waitInterval: 500
+      });
+    } catch {
+      // Best-effort: if detection times out after ~15s, return the URL anyway.
+      // noVNC's WebSocket auto-connect will retry on the client side.
+    }
+
     return { url };
   }
 

@@ -46,6 +46,7 @@ export type { ExecuteRequest, ExecuteResponse } from './command-client';
 export type {
   ClickOptions,
   CursorPositionResponse,
+  Desktop,
   DesktopStartOptions,
   DesktopStartResponse,
   DesktopStatusResponse,

@@ -83,7 +83,12 @@ export class DesktopManager {
           {
             name: 'novnc',
             command: 'websockify',
-            args: ['--web', '/usr/share/novnc', '6080', 'localhost:5900'],
+            args: [
+              '--web',
+              '/usr/share/novnc',
+              '0.0.0.0:6080',
+              'localhost:5900'
+            ],
             priority: 400
           }
         ];

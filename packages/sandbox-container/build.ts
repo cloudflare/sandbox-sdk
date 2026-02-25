@@ -68,7 +68,8 @@ const workerResult = await Bun.build({
   outdir: 'dist/workers',
   target: 'bun',
   minify: true,
-  sourcemap: 'external'
+  sourcemap: 'external',
+  external: ['koffi']
 });
 
 if (!workerResult.success) {

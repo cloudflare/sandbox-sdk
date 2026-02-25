@@ -96,16 +96,19 @@ export class DesktopService {
       this.ensureDesktopActive();
       const imageFormat = options?.imageFormat ?? 'png';
       const path = `/tmp/screenshot-${crypto.randomUUID()}.${imageFormat}`;
+      const resolution = this.manager.getResolution() ?? [1024, 768];
 
-      await this.sendToWorker('screenshot', { path, x: 0, y: 0, w: 0, h: 0 });
+      await this.sendToWorker('screenshot', {
+        path,
+        x: 0,
+        y: 0,
+        w: resolution[0],
+        h: resolution[1]
+      });
 
       const file = Bun.file(path);
       const buffer = await file.arrayBuffer();
       const data = Buffer.from(buffer).toString('base64');
-      const screen = (await this.sendToWorker('getScreenSize')) as {
-        width: number;
-        height: number;
-      };
 
       try {
         await unlink(path);
@@ -114,8 +117,8 @@ export class DesktopService {
       return serviceSuccess<DesktopScreenshotResult>({
         data,
         imageFormat,
-        width: screen.width,
-        height: screen.height
+        width: resolution[0],
+        height: resolution[1]
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -130,14 +133,9 @@ export class DesktopService {
       this.ensureDesktopActive();
       const imageFormat = options.imageFormat ?? 'png';
       const path = `/tmp/screenshot-${crypto.randomUUID()}.${imageFormat}`;
+      const { x, y, width: w, height: h } = options.region;
 
-      await this.sendToWorker('screenshot', {
-        path,
-        x: options.region.x,
-        y: options.region.y,
-        w: options.region.width,
-        h: options.region.height
-      });
+      await this.sendToWorker('screenshot', { path, x, y, w, h });
 
       const file = Bun.file(path);
       const buffer = await file.arrayBuffer();
@@ -150,8 +148,8 @@ export class DesktopService {
       return serviceSuccess<DesktopScreenshotResult>({
         data,
         imageFormat,
-        width: options.region.width,
-        height: options.region.height
+        width: w,
+        height: h
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

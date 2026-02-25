@@ -5,10 +5,17 @@ package main
 */
 import "C"
 import (
+	"os"
 	"strings"
 
 	"github.com/go-vgo/robotgo"
 )
+
+func init() {
+	if os.Getenv("DISPLAY") == "" {
+		os.Setenv("DISPLAY", ":99")
+	}
+}
 
 //export Move
 func Move(x, y C.int) {
@@ -61,9 +68,19 @@ func GetScreenSize(w, h *C.int) {
 }
 
 //export SaveCapture
-func SaveCapture(path *C.char, x, y, w, h C.int) {
+func SaveCapture(path *C.char, x, y, w, h C.int) *C.char {
 	p := C.GoString(path)
-	robotgo.SaveCapture(p, int(x), int(y), int(w), int(h))
+	// Use robotgo.Capture (Go-native, xgb sockets) instead of
+	// robotgo.SaveCapture (C-based, XGetImage) which segfaults in c-shared mode
+	img, err := robotgo.Capture(int(x), int(y), int(w), int(h))
+	if err != nil {
+		return C.CString(err.Error())
+	}
+	err = robotgo.Save(img, p)
+	if err != nil {
+		return C.CString(err.Error())
+	}
+	return C.CString("")
 }
 
 //export GetMousePos
