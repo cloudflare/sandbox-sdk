@@ -2228,7 +2228,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * @param options - Configuration options
    * @param options.hostname - Your Worker's domain name (required for preview URL construction)
    * @param options.name - Optional friendly name for the port
-   * @param options.token - Optional custom token for the preview URL (1-16 characters: lowercase letters, numbers, hyphens, underscores)
+   * @param options.token - Optional custom token for the preview URL (1-16 characters: lowercase letters, numbers, underscores)
    *                       If not provided, a random 16-character token will be generated automatically
    * @returns Preview URL information including the full URL, port number, and optional name
    *
@@ -2241,9 +2241,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * // With custom token for stable URLs across deployments
    * const { url } = await sandbox.exposePort(8080, {
    *   hostname: 'example.com',
-   *   token: 'my-token-v1'
+   *   token: 'my_token_v1'
    * });
-   * // url: https://8080-sandbox-id-my-token-v1.example.com
+   * // url: https://8080-sandbox-id-my_token_v1.example.com
    */
   async exposePort(
     port: number,
