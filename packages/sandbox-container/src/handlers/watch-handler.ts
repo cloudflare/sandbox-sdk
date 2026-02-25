@@ -131,7 +131,7 @@ export class WatchHandler extends BaseHandler<Request, Response> {
     }
 
     const result = await this.watchService.stopWatch(body.watchId.trim());
-    if (!result.success) {
+    if (!result.success && result.error.code !== 'WATCH_NOT_FOUND') {
       return this.createErrorResponse(result.error, context);
     }
 
