@@ -126,6 +126,12 @@ export {
   BackupExpiredError,
   BackupNotFoundError,
   BackupRestoreError,
+  DesktopInvalidCoordinatesError,
+  DesktopInvalidOptionsError,
+  DesktopNotStartedError,
+  DesktopProcessCrashedError,
+  DesktopStartFailedError,
+  DesktopUnavailableError,
   InvalidBackupConfigError,
   ProcessExitedBeforeReadyError,
   ProcessReadyTimeoutError
