@@ -2951,8 +2951,18 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     const bucket = this.requireBackupBucket();
     const head = await bucket.head(r2Key);
     if (!head || head.size !== archiveSize) {
+      const actualSize = head?.size ?? 0;
+      // curl succeeded but R2 binding sees nothing — almost certainly a
+      // local-dev mismatch where presigned URLs target real R2 while the
+      // BACKUP_BUCKET binding points to local (miniflare) storage.
+      const localDevHint =
+        result.exitCode === 0 && actualSize === 0
+          ? ' This usually means the BACKUP_BUCKET R2 binding is using local storage ' +
+            'while presigned URLs upload to remote R2. Add `"remote": true` to your ' +
+            'BACKUP_BUCKET R2 binding in wrangler.jsonc to fix this.'
+          : '';
       throw new BackupCreateError({
-        message: `Upload verification failed: expected ${archiveSize} bytes, got ${head?.size ?? 0}`,
+        message: `Upload verification failed: expected ${archiveSize} bytes, got ${actualSize}.${localDevHint}`,
         code: ErrorCode.BACKUP_CREATE_FAILED,
         httpStatus: 500,
         context: { dir, backupId },
