@@ -105,6 +105,19 @@ export class WatchService {
       this.logger.info('Watch stopped', { watchId, path: watch.path });
       return serviceSuccess(undefined);
     } catch (error) {
+      const code =
+        error instanceof Error
+          ? (error as NodeJS.ErrnoException).code
+          : undefined;
+      if (code === 'ESRCH') {
+        this.activeWatches.delete(watchId);
+        this.logger.info('Watch already stopped', {
+          watchId,
+          path: watch.path
+        });
+        return serviceSuccess(undefined);
+      }
+
       return serviceError({
         message: `Failed to stop watch: ${error instanceof Error ? error.message : 'Unknown error'}`,
         code: ErrorCode.WATCH_STOP_ERROR,

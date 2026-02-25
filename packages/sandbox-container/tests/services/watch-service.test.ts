@@ -3,6 +3,7 @@ import type { WatchRequest } from '@repo/shared';
 import { createNoOpLogger } from '@repo/shared';
 import { ErrorCode } from '@repo/shared/errors';
 import { WatchService } from '@sandbox-container/services/watch-service';
+import type { Subprocess } from 'bun';
 
 const mockLogger = createNoOpLogger();
 
@@ -36,6 +37,39 @@ describe('WatchService', () => {
         expect(result.error.code).toBe(ErrorCode.WATCH_NOT_FOUND);
         expect(result.error.message).toContain('non-existent-watch-id');
       }
+    });
+
+    it('should return success when process is already gone (ESRCH)', async () => {
+      const kill = vi.fn(() => {
+        throw Object.assign(new Error('No such process'), { code: 'ESRCH' });
+      });
+
+      const activeWatches = (
+        watchService as unknown as {
+          activeWatches: Map<
+            string,
+            {
+              id: string;
+              path: string;
+              process: Subprocess;
+              startedAt: Date;
+            }
+          >;
+        }
+      ).activeWatches;
+
+      activeWatches.set('watch-1', {
+        id: 'watch-1',
+        path: '/workspace/test',
+        process: { kill } as unknown as Subprocess,
+        startedAt: new Date()
+      });
+
+      const result = await watchService.stopWatch('watch-1');
+
+      expect(result.success).toBe(true);
+      expect(kill).toHaveBeenCalledTimes(1);
+      expect(activeWatches.has('watch-1')).toBe(false);
     });
   });
 
