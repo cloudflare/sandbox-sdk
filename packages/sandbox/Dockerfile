@@ -211,7 +211,7 @@ ENTRYPOINT ["/container-server/sandbox"]
 # ============================================================================
 # Desktop variant — full Linux desktop with robotgo native control
 # ============================================================================
-FROM golang:1.21-bookworm AS go-builder
+FROM golang:1.24-bookworm AS go-builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc libx11-dev libxtst-dev libxinerama-dev libpng-dev \

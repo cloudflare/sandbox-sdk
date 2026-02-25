@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { unlink } from 'node:fs/promises';
 import type {
   DesktopCursorPosition,
@@ -387,9 +388,13 @@ export class DesktopService {
 
   private ensureWorkerRunning(): void {
     if (!this.worker) {
-      this.worker = new Worker(
-        new URL('../workers/desktop-worker.ts', import.meta.url).href
-      );
+      // Compiled binary: worker is at /container-server/workers/desktop-worker.js
+      // Dev mode: resolve relative to this source file via import.meta.url
+      const compiledWorkerPath = '/container-server/workers/desktop-worker.js';
+      const workerPath = existsSync(compiledWorkerPath)
+        ? compiledWorkerPath
+        : new URL('../workers/desktop-worker.ts', import.meta.url).href;
+      this.worker = new Worker(workerPath);
       this.worker.onmessage = (event: MessageEvent) => {
         const { id, result, error } = event.data;
         const handler = this.pending.get(id);

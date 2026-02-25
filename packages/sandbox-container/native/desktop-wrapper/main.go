@@ -6,7 +6,6 @@ package main
 import "C"
 import (
 	"strings"
-	"unsafe"
 
 	"github.com/go-vgo/robotgo"
 )
@@ -22,9 +21,9 @@ func MoveSmooth(x, y C.int, low, high C.double) {
 }
 
 //export Click
-func Click(button *C.char, double C.int) {
+func Click(button *C.char, dblClick C.int) {
 	btn := C.GoString(button)
-	isDouble := double != 0
+	isDouble := dblClick != 0
 	robotgo.Click(btn, isDouble)
 }
 
@@ -42,13 +41,14 @@ func TypeStr(text *C.char, pid C.int) {
 func KeyTap(key *C.char, modifiers *C.char) *C.char {
 	k := C.GoString(key)
 	m := C.GoString(modifiers)
-	var mods []string
+	var args []interface{}
 	if m != "" {
-		mods = strings.Split(m, "+")
+		mods := strings.Split(m, "+")
+		args = append(args, mods)
 	}
-	err := robotgo.KeyTap(k, mods...)
-	if err != "" {
-		return C.CString(err)
+	err := robotgo.KeyTap(k, args...)
+	if err != nil {
+		return C.CString(err.Error())
 	}
 	return C.CString("")
 }

@@ -10,6 +10,7 @@ import { mkdir } from 'node:fs/promises';
 
 // Ensure output directories exist
 await mkdir('dist/runtime/executors/javascript', { recursive: true });
+await mkdir('dist/workers', { recursive: true });
 
 // Build legacy JS bundle for backwards compatibility
 // Users with custom startup scripts that call `bun /container-server/dist/index.js` need this
@@ -58,6 +59,30 @@ if (!executorResult.success) {
 console.log(
   `  dist/runtime/executors/javascript/node_executor.js (${(executorResult.outputs[0].size / 1024).toFixed(1)} KB)`
 );
+
+// Bundle the desktop FFI worker thread (runs in a separate Bun worker)
+console.log('Building desktop worker thread...');
+
+const workerResult = await Bun.build({
+  entrypoints: ['src/workers/desktop-worker.ts'],
+  outdir: 'dist/workers',
+  target: 'bun',
+  minify: true,
+  sourcemap: 'external'
+});
+
+if (!workerResult.success) {
+  console.error('Desktop worker build failed:');
+  for (const log of workerResult.logs) {
+    console.error(log);
+  }
+  // Non-fatal: desktop worker is only needed for desktop image variant
+  console.warn('  Skipping desktop worker (not required for default image)');
+} else {
+  console.log(
+    `  dist/workers/desktop-worker.js (${(workerResult.outputs[0].size / 1024).toFixed(1)} KB)`
+  );
+}
 
 console.log('Building standalone binaries...');
 
