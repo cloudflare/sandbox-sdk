@@ -105,7 +105,8 @@ export async function proxyToSandbox<
       headers,
       body: request.body,
       // @ts-expect-error - duplex required for body streaming in modern runtimes
-      duplex: 'half'
+      duplex: 'half',
+      redirect: 'manual' // Do not follow redirects, return them to the client to handle
     });
 
     return await sandbox.containerFetch(proxyRequest, port);
