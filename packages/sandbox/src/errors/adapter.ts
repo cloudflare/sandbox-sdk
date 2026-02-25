@@ -14,6 +14,8 @@ import type {
   CommandErrorContext,
   CommandNotFoundContext,
   ContextNotFoundContext,
+  DesktopCoordinateErrorContext,
+  DesktopErrorContext,
   ErrorResponse,
   FileExistsContext,
   FileNotFoundContext,
@@ -46,6 +48,12 @@ import {
   CommandNotFoundError,
   ContextNotFoundError,
   CustomDomainRequiredError,
+  DesktopInvalidCoordinatesError,
+  DesktopInvalidOptionsError,
+  DesktopNotStartedError,
+  DesktopProcessCrashedError,
+  DesktopStartFailedError,
+  DesktopUnavailableError,
   FileExistsError,
   FileNotFoundError,
   FileSystemError,
@@ -259,6 +267,32 @@ export function createErrorFromResponse(errorResponse: ErrorResponse): Error {
     case ErrorCode.CODE_EXECUTION_ERROR:
       return new CodeExecutionError(
         errorResponse as unknown as ErrorResponse<CodeExecutionContext>
+      );
+
+    // Desktop Errors
+    case ErrorCode.DESKTOP_NOT_STARTED:
+      return new DesktopNotStartedError(
+        errorResponse as unknown as ErrorResponse<DesktopErrorContext>
+      );
+    case ErrorCode.DESKTOP_START_FAILED:
+      return new DesktopStartFailedError(
+        errorResponse as unknown as ErrorResponse<DesktopErrorContext>
+      );
+    case ErrorCode.DESKTOP_UNAVAILABLE:
+      return new DesktopUnavailableError(
+        errorResponse as unknown as ErrorResponse<DesktopErrorContext>
+      );
+    case ErrorCode.DESKTOP_PROCESS_CRASHED:
+      return new DesktopProcessCrashedError(
+        errorResponse as unknown as ErrorResponse<DesktopErrorContext>
+      );
+    case ErrorCode.DESKTOP_INVALID_OPTIONS:
+      return new DesktopInvalidOptionsError(
+        errorResponse as unknown as ErrorResponse<DesktopErrorContext>
+      );
+    case ErrorCode.DESKTOP_INVALID_COORDINATES:
+      return new DesktopInvalidCoordinatesError(
+        errorResponse as unknown as ErrorResponse<DesktopCoordinateErrorContext>
       );
 
     // Validation Errors

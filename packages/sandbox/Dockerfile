@@ -209,6 +209,52 @@ EXPOSE 4096
 ENTRYPOINT ["/container-server/sandbox"]
 
 # ============================================================================
+# Desktop variant — full Linux desktop with robotgo native control
+# ============================================================================
+FROM golang:1.24-bookworm AS go-builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc libx11-dev libxtst-dev libxinerama-dev libpng-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY packages/sandbox-container/native/desktop-wrapper/ /build/
+WORKDIR /build
+RUN go mod tidy && go build -buildmode=c-shared -o /usr/lib/desktop.so .
+
+FROM runtime-base AS desktop
+
+# Install display stack
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    rm -f /etc/apt/apt.conf.d/docker-clean && \
+    echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' >/etc/apt/apt.conf.d/keep-cache && \
+    apt-get update && apt-get install -y --no-install-recommends \
+    xvfb x11vnc novnc websockify \
+    xfce4 xfce4-terminal dbus-x11 \
+    libx11-6 libxrandr2 libxext6 libxrender1 libxfixes3 \
+    libxss1 libxtst6 libxi6 libxinerama1 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=go-builder /usr/lib/desktop.so /usr/lib/desktop.so
+COPY --from=go-builder /usr/lib/desktop.h /usr/lib/desktop.h
+
+COPY --from=builder /app/packages/sandbox-container/dist/sandbox /container-server/sandbox
+COPY --from=builder /app/packages/sandbox-container/dist/workers/ /container-server/workers/
+
+# Install koffi for FFI worker thread
+WORKDIR /container-server
+RUN npm init -y && npm install koffi
+
+EXPOSE 6080
+
+ENV DISPLAY=:99
+ENV PYTHON_POOL_MIN_SIZE=0
+ENV JAVASCRIPT_POOL_MIN_SIZE=0
+ENV TYPESCRIPT_POOL_MIN_SIZE=0
+
+ENTRYPOINT ["/container-server/sandbox"]
+
+# ============================================================================
 # Stage 5d: Musl image - Alpine-based with musl-linked binary
 # ============================================================================
 FROM alpine:3.21 AS musl
