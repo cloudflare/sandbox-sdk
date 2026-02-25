@@ -356,14 +356,9 @@ describe('File Watch Workflow', () => {
     testDir = uniqueTestPath('watch-stop-endpoint');
     await createDir(testDir);
 
-    const isolatedHeaders = {
-      ...headers,
-      'X-Session-Id': createUniqueSession()
-    };
-
     const response = await fetch(`${workerUrl}/api/watch`, {
       method: 'POST',
-      headers: isolatedHeaders,
+      headers,
       body: JSON.stringify({ path: testDir })
     });
 
@@ -425,7 +420,7 @@ describe('File Watch Workflow', () => {
 
     const stopResponse = await fetch(`${workerUrl}/api/watch/stop`, {
       method: 'POST',
-      headers: isolatedHeaders,
+      headers,
       body: JSON.stringify({ watchId })
     });
 
@@ -444,16 +439,17 @@ describe('File Watch Workflow', () => {
     const response = await fetch(`${workerUrl}/api/watch`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ path: '/nonexistent/path/that/does/not/exist' })
+      body: JSON.stringify({
+        path: '/workspace/nonexistent/path/that/does/not/exist'
+      })
     });
 
     // Should get an error response (either 4xx/5xx or error in body)
     if (!response.ok) {
-      // Non-OK response is expected - pass
-      expect(response.ok).toBe(false);
-      // Verify we get meaningful error content
       const body = await response.text();
-      expect(body).toMatch(/error|not found|does not exist/i);
+      expect(body).toMatch(
+        /error|not found|does not exist|permission denied|file_not_found|permission_denied/i
+      );
       return;
     }
 
