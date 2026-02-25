@@ -2929,7 +2929,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       '--max-time 300',
       '--retry 2',
       '--retry-max-time 60',
-      `--data-binary @${shellEscape(archivePath)}`,
+      `-T ${shellEscape(archivePath)}`,
       shellEscape(presignedUrl)
     ].join(' ');
 
