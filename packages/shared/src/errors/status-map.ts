@@ -59,6 +59,14 @@ export const ERROR_STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.PYTHON_NOT_AVAILABLE]: 501,
   [ErrorCode.JAVASCRIPT_NOT_AVAILABLE]: 501,
 
+  // Desktop errors
+  [ErrorCode.DESKTOP_NOT_STARTED]: 409,
+  [ErrorCode.DESKTOP_START_FAILED]: 500,
+  [ErrorCode.DESKTOP_UNAVAILABLE]: 503,
+  [ErrorCode.DESKTOP_PROCESS_CRASHED]: 500,
+  [ErrorCode.DESKTOP_INVALID_OPTIONS]: 400,
+  [ErrorCode.DESKTOP_INVALID_COORDINATES]: 400,
+
   // 503 Service Unavailable
   [ErrorCode.INTERPRETER_NOT_READY]: 503,
   [ErrorCode.OPENCODE_STARTUP_FAILED]: 503,
