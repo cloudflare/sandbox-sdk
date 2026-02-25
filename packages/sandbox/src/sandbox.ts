@@ -39,7 +39,11 @@ import {
   TraceContext
 } from '@repo/shared';
 import { AwsClient } from 'aws4fetch';
-import { type ExecuteResponse, SandboxClient } from './clients';
+import {
+  type DesktopClient,
+  type ExecuteResponse,
+  SandboxClient
+} from './clients';
 import type { ErrorResponse } from './errors';
 import {
   BackupCreateError,
@@ -249,6 +253,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * Can be set via options, env vars, or defaults
    */
   private containerTimeouts = { ...this.DEFAULT_CONTAINER_TIMEOUTS };
+
+  /**
+   * Desktop environment client.
+   * Access via sandbox.desktop.start(), sandbox.desktop.screenshot(), etc.
+   */
+  get desktop(): DesktopClient {
+    return this.client.desktop;
+  }
 
   /**
    * Create a SandboxClient with current transport settings
@@ -823,6 +835,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    */
   override async destroy(): Promise<void> {
     this.logger.info('Destroying sandbox container');
+
+    // Best-effort desktop stop — don't check status first as containerFetch
+    // can auto-start the container during teardown
+    try {
+      await this.client.desktop.stop();
+    } catch {
+      // Desktop may not be running or available — continue cleanup
+    }
 
     // Disconnect WebSocket transport if active
     this.client.disconnect();
@@ -2219,6 +2239,38 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   async exists(path: string, sessionId?: string) {
     const session = sessionId ?? (await this.ensureDefaultSession());
     return this.client.files.exists(path, session);
+  }
+
+  /**
+   * Get the noVNC preview URL for browser-based desktop viewing.
+   * Confirms desktop is active, then uses exposePort() to generate
+   * a token-authenticated preview URL for the noVNC port (6080).
+   *
+   * @param hostname - The custom domain hostname for preview URLs
+   *   (e.g., 'preview.example.com'). Required because preview URLs
+   *   use subdomain patterns that .workers.dev doesn't support.
+   * @param options - Optional settings
+   * @param options.token - Reuse an existing token instead of generating a new one
+   * @returns The authenticated noVNC preview URL
+   */
+  async getDesktopStreamUrl(
+    hostname: string,
+    options?: { token?: string }
+  ): Promise<{ url: string }> {
+    // Confirm desktop is running before generating a URL
+    const status = await this.client.desktop.status();
+    if (status.status === 'inactive') {
+      throw new Error(
+        'Desktop is not running. Call sandbox.desktop.start() first.'
+      );
+    }
+
+    // Use the existing exposePort mechanism for preview URL + token
+    const { url } = await this.exposePort(6080, {
+      hostname,
+      token: options?.token
+    });
+    return { url };
   }
 
   /**
