@@ -2926,15 +2926,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       '-X PUT',
       "-H 'Content-Type: application/octet-stream'",
       '--connect-timeout 10',
-      '--max-time 300',
+      '--max-time 1800',
       '--retry 2',
       '--retry-max-time 60',
-      `--data-binary @${shellEscape(archivePath)}`,
+      `-T ${shellEscape(archivePath)}`,
       shellEscape(presignedUrl)
     ].join(' ');
 
     const result = await this.execWithSession(curlCmd, backupSession, {
-      timeout: 310_000
+      timeout: 1810_000
     });
 
     if (result.exitCode !== 0) {
@@ -2988,7 +2988,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     const curlCmd = [
       'curl -sSf',
       '--connect-timeout 10',
-      '--max-time 300',
+      '--max-time 1800',
       '--retry 2',
       '--retry-max-time 60',
       `-o ${shellEscape(tmpPath)}`,
@@ -2996,7 +2996,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     ].join(' ');
 
     const result = await this.execWithSession(curlCmd, backupSession, {
-      timeout: 310_000
+      timeout: 1810_000
     });
 
     if (result.exitCode !== 0) {
