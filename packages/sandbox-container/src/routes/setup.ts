@@ -291,6 +291,151 @@ export function setupRoutes(router: Router, container: Container): void {
     middleware: [container.get('loggingMiddleware')]
   });
 
+  // Desktop routes
+  router.register({
+    method: 'POST',
+    path: '/api/desktop/start',
+    handler: async (req, ctx) =>
+      container.get('desktopHandler').handle(req, ctx),
+    middleware: [container.get('loggingMiddleware')]
+  });
+
+  router.register({
+    method: 'POST',
+    path: '/api/desktop/stop',
+    handler: async (req, ctx) =>
+      container.get('desktopHandler').handle(req, ctx),
+    middleware: [container.get('loggingMiddleware')]
+  });
+
+  router.register({
+    method: 'GET',
+    path: '/api/desktop/status',
+    handler: async (req, ctx) =>
+      container.get('desktopHandler').handle(req, ctx),
+    middleware: [container.get('loggingMiddleware')]
+  });
+
+  router.register({
+    method: 'POST',
+    path: '/api/desktop/screenshot',
+    handler: async (req, ctx) =>
+      container.get('desktopHandler').handle(req, ctx),
+    middleware: [container.get('loggingMiddleware')]
+  });
+
+  router.register({
+    method: 'POST',
+    path: '/api/desktop/screenshot/region',
+    handler: async (req, ctx) =>
+      container.get('desktopHandler').handle(req, ctx),
+    middleware: [container.get('loggingMiddleware')]
+  });
+
+  router.register({
+    method: 'POST',
+    path: '/api/desktop/mouse/click',
+    handler: async (req, ctx) =>
+      container.get('desktopHandler').handle(req, ctx),
+    middleware: [container.get('loggingMiddleware')]
+  });
+
+  router.register({
+    method: 'POST',
+    path: '/api/desktop/mouse/move',
+    handler: async (req, ctx) =>
+      container.get('desktopHandler').handle(req, ctx),
+    middleware: [container.get('loggingMiddleware')]
+  });
+
+  router.register({
+    method: 'POST',
+    path: '/api/desktop/mouse/down',
+    handler: async (req, ctx) =>
+      container.get('desktopHandler').handle(req, ctx),
+    middleware: [container.get('loggingMiddleware')]
+  });
+
+  router.register({
+    method: 'POST',
+    path: '/api/desktop/mouse/up',
+    handler: async (req, ctx) =>
+      container.get('desktopHandler').handle(req, ctx),
+    middleware: [container.get('loggingMiddleware')]
+  });
+
+  router.register({
+    method: 'POST',
+    path: '/api/desktop/mouse/drag',
+    handler: async (req, ctx) =>
+      container.get('desktopHandler').handle(req, ctx),
+    middleware: [container.get('loggingMiddleware')]
+  });
+
+  router.register({
+    method: 'POST',
+    path: '/api/desktop/mouse/scroll',
+    handler: async (req, ctx) =>
+      container.get('desktopHandler').handle(req, ctx),
+    middleware: [container.get('loggingMiddleware')]
+  });
+
+  router.register({
+    method: 'GET',
+    path: '/api/desktop/mouse/position',
+    handler: async (req, ctx) =>
+      container.get('desktopHandler').handle(req, ctx),
+    middleware: [container.get('loggingMiddleware')]
+  });
+
+  router.register({
+    method: 'POST',
+    path: '/api/desktop/keyboard/type',
+    handler: async (req, ctx) =>
+      container.get('desktopHandler').handle(req, ctx),
+    middleware: [container.get('loggingMiddleware')]
+  });
+
+  router.register({
+    method: 'POST',
+    path: '/api/desktop/keyboard/press',
+    handler: async (req, ctx) =>
+      container.get('desktopHandler').handle(req, ctx),
+    middleware: [container.get('loggingMiddleware')]
+  });
+
+  router.register({
+    method: 'POST',
+    path: '/api/desktop/keyboard/down',
+    handler: async (req, ctx) =>
+      container.get('desktopHandler').handle(req, ctx),
+    middleware: [container.get('loggingMiddleware')]
+  });
+
+  router.register({
+    method: 'POST',
+    path: '/api/desktop/keyboard/up',
+    handler: async (req, ctx) =>
+      container.get('desktopHandler').handle(req, ctx),
+    middleware: [container.get('loggingMiddleware')]
+  });
+
+  router.register({
+    method: 'GET',
+    path: '/api/desktop/screen/size',
+    handler: async (req, ctx) =>
+      container.get('desktopHandler').handle(req, ctx),
+    middleware: [container.get('loggingMiddleware')]
+  });
+
+  router.register({
+    method: 'GET',
+    path: '/api/desktop/process/{name}/status',
+    handler: async (req, ctx) =>
+      container.get('desktopHandler').handle(req, ctx),
+    middleware: [container.get('loggingMiddleware')]
+  });
+
   // Miscellaneous routes
   router.register({
     method: 'GET',
