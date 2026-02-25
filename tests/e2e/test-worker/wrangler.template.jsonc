@@ -40,6 +40,11 @@
       "class_name": "SandboxMusl",
       "image": "{{IMAGE_MUSL}}",
       "name": "{{CONTAINER_NAME}}-musl"
+    },
+    {
+      "class_name": "SandboxDesktop",
+      "image": "{{IMAGE_DESKTOP}}",
+      "name": "{{CONTAINER_NAME}}-desktop"
     }
   ],
 
@@ -64,6 +69,10 @@
       {
         "class_name": "SandboxMusl",
         "name": "SandboxMusl"
+      },
+      {
+        "class_name": "SandboxDesktop",
+        "name": "SandboxDesktop"
       }
     ]
   },
@@ -84,6 +93,10 @@
     {
       "new_sqlite_classes": ["SandboxMusl"],
       "tag": "v5"
+    },
+    {
+      "new_sqlite_classes": ["SandboxDesktop"],
+      "tag": "v6"
     }
   ],
 

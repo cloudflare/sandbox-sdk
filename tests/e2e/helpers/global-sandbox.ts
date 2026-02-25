@@ -54,6 +54,8 @@ export interface SharedSandbox {
   createStandaloneHeaders: (sessionId?: string) => Record<string, string>;
   /** Create headers for musl-based Alpine image sandbox */
   createMuslHeaders: (sessionId?: string) => Record<string, string>;
+  /** Create headers for Desktop image sandbox (with XFCE desktop) */
+  createDesktopHeaders: (sessionId?: string) => Record<string, string>;
   /** Generate a unique file path prefix for test isolation */
   uniquePath: (prefix: string) => string;
 }
@@ -244,6 +246,16 @@ function createSandboxFacade(
       const headers: Record<string, string> = {
         ...baseHeaders,
         'X-Sandbox-Type': 'musl'
+      };
+      if (sessionId) {
+        headers['X-Session-Id'] = sessionId;
+      }
+      return headers;
+    },
+    createDesktopHeaders: (sessionId?: string) => {
+      const headers: Record<string, string> = {
+        ...baseHeaders,
+        'X-Sandbox-Type': 'desktop'
       };
       if (sessionId) {
         headers['X-Session-Id'] = sessionId;
