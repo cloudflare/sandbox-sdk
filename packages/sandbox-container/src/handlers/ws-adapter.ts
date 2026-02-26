@@ -55,6 +55,7 @@ export class WebSocketAdapter {
   private activeStreams: Map<
     string,
     {
+      connectionId: string;
       cancel: () => Promise<void>;
     }
   > = new Map();
@@ -77,13 +78,18 @@ export class WebSocketAdapter {
    * Handle WebSocket connection close
    */
   onClose(ws: ServerWebSocket<WSData>, code: number, reason: string): void {
+    const connectionId = ws.data.connectionId;
     this.logger.debug('WebSocket connection closed', {
-      connectionId: ws.data.connectionId,
+      connectionId,
       code,
       reason
     });
 
     for (const [requestId, stream] of this.activeStreams) {
+      if (stream.connectionId !== connectionId) {
+        continue;
+      }
+
       void stream.cancel().catch((error) => {
         this.logger.debug('Failed to cancel stream on socket close', {
           requestId,
@@ -113,7 +119,7 @@ export class WebSocketAdapter {
     }
 
     if (isCancelMessage(parsed)) {
-      await this.handleCancel(parsed.id);
+      await this.handleCancel(parsed.id, ws.data.connectionId);
       return;
     }
 
@@ -158,11 +164,15 @@ export class WebSocketAdapter {
   /**
    * Handle explicit cancellation for an in-flight streaming request.
    */
-  private async handleCancel(requestId: string): Promise<void> {
+  private async handleCancel(
+    requestId: string,
+    connectionId: string
+  ): Promise<void> {
     const stream = this.activeStreams.get(requestId);
-    if (!stream) {
+    if (!stream || stream.connectionId !== connectionId) {
       this.logger.debug('Cancel received for unknown stream request', {
-        requestId
+        requestId,
+        connectionId
       });
       return;
     }
@@ -231,6 +241,7 @@ export class WebSocketAdapter {
       // Register cancellation immediately after reader acquisition so socket-close
       // cleanup can always find and cancel this stream.
       this.activeStreams.set(request.id, {
+        connectionId: ws.data.connectionId,
         cancel: async () => {
           try {
             await reader.cancel();
