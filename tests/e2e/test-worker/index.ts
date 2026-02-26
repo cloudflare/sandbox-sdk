@@ -14,7 +14,11 @@
  * Use X-Sandbox-Type header to select: 'python', 'opencode', 'standalone', 'musl', or default
  */
 
-import { getSandbox, proxyToSandbox, Sandbox } from '@cloudflare/sandbox';
+import {
+  getSandbox,
+  proxyToSandbox,
+  Sandbox as BaseSandbox
+} from '@cloudflare/sandbox';
 import {
   createOpencodeServer,
   proxyToOpencodeServer
@@ -33,6 +37,30 @@ import type {
   SuccessWithMessageResponse,
   WebSocketInitResponse
 } from './types';
+
+class Sandbox extends BaseSandbox {
+  async watchStreamForTests(
+    path: string,
+    options?: {
+      recursive?: boolean;
+      include?: string[];
+      exclude?: string[];
+      sessionId?: string;
+    }
+  ): Promise<ReadableStream<Uint8Array>> {
+    return this.client.watch.watch({
+      path,
+      recursive: options?.recursive,
+      include: options?.include,
+      exclude: options?.exclude,
+      sessionId: options?.sessionId
+    });
+  }
+
+  async stopWatchForTests(watchId: string) {
+    return this.client.watch.stop(watchId);
+  }
+}
 
 // Export Sandbox class with different names for each container type
 // The actual image is determined by the container binding in wrangler.jsonc
@@ -999,7 +1027,7 @@ console.log('Terminal server on port ' + port);
 
       // File Watch - Stream events via SDK watch client.
       if (url.pathname === '/api/watch' && request.method === 'POST') {
-        const stream = await sandbox.watchStream(body.path, {
+        const stream = await sandbox.watchStreamForTests(body.path, {
           recursive: body.recursive,
           include: body.include,
           exclude: body.include ? [] : body.exclude,
@@ -1017,7 +1045,7 @@ console.log('Terminal server on port ' + port);
 
       // File Watch - Stop a watch by ID.
       if (url.pathname === '/api/watch/stop' && request.method === 'POST') {
-        const result = await sandbox.stopWatch(body.watchId);
+        const result = await sandbox.stopWatchForTests(body.watchId);
         return new Response(JSON.stringify(result), {
           headers: { 'Content-Type': 'application/json' }
         });
