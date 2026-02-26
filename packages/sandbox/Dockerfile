@@ -217,7 +217,15 @@ ARG SANDBOX_VERSION=unknown
 
 ENV SANDBOX_VERSION=${SANDBOX_VERSION}
 
-RUN apk add --no-cache bash file git ca-certificates curl libstdc++ libgcc s3fs-fuse fuse
+# CA certificate installation
+RUN mkdir -p /usr/local/share/ca-certificates
+RUN --mount=type=secret,id=wrangler_ca \
+    cp /run/secrets/wrangler_ca /usr/local/share/ca-certificates/wrangler-dev-ca.crt && \
+    cat /run/secrets/wrangler_ca >> /etc/ssl/certs/ca-certificates.crt && \
+    apk add --no-cache ca-certificates && \
+    update-ca-certificates
+
+RUN apk add --no-cache bash file git curl libstdc++ libgcc s3fs-fuse fuse
 
 RUN sed -i 's/#user_allow_other/user_allow_other/' /etc/fuse.conf
 
