@@ -28,7 +28,8 @@ import type {
   WaitForLogResult,
   WaitForPortOptions,
   WatchHandle,
-  WatchOptions
+  WatchOptions,
+  WatchStopResult
 } from '@repo/shared';
 import {
   createLogger,
@@ -2268,6 +2269,37 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       onEvent: options?.onEvent,
       onError: options?.onError
     });
+  }
+
+  /**
+   * Start a file watch stream using the low-level watch transport.
+   *
+   * This returns raw SSE bytes from the container endpoint and is suitable
+   * for proxy scenarios where WatchHandle instances cannot cross RPC boundaries.
+   */
+  async watchStream(
+    path: string,
+    options?: {
+      recursive?: boolean;
+      include?: string[];
+      exclude?: string[];
+      sessionId?: string;
+    }
+  ): Promise<ReadableStream<Uint8Array>> {
+    return this.client.watch.watch({
+      path,
+      recursive: options?.recursive,
+      include: options?.include,
+      exclude: options?.exclude,
+      sessionId: options?.sessionId
+    });
+  }
+
+  /**
+   * Stop an active file watch by ID.
+   */
+  async stopWatch(watchId: string): Promise<WatchStopResult> {
+    return this.client.watch.stop(watchId);
   }
 
   /**
