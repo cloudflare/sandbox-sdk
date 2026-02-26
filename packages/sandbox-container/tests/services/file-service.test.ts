@@ -154,7 +154,7 @@ describe('FileService', () => {
       mockBunFile({
         exists: true,
         size: 13,
-        type: 'text/plain',
+        type: 'text/plain; charset=utf-8',
         text: testContent
       });
 
@@ -975,13 +975,11 @@ describe('FileService', () => {
         type: 'application/octet-stream'
       });
 
-      const mockExec = vi
-        .fn()
-        .mockResolvedValue({
-          exitCode: 0,
-          stdout: 'application/octet-stream',
-          stderr: ''
-        });
+      const mockExec = vi.fn().mockResolvedValue({
+        exitCode: 0,
+        stdout: 'application/octet-stream',
+        stderr: ''
+      });
 
       const result = await fileService.getFileMetadata(testPath, mockExec);
 
