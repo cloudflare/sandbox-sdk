@@ -138,7 +138,7 @@ export class FileService implements FileSystemOperations {
 
           // Bun.file() derives the MIME type from the file extension and falls back
           // to 'application/octet-stream' for unknown types.
-          let mimeType = bunFile.type;
+          let mimeType = bunFile.type.split(';')[0].trim();
           if (mimeType === 'application/octet-stream') {
             const escapedPath = shellEscape(path);
             const mimeResult = await exec(`file --mime-type -b ${escapedPath}`);
