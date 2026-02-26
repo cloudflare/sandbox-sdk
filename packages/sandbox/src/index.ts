@@ -32,6 +32,8 @@ export type {
   FileChunk,
   FileMetadata,
   FileStreamEvent,
+  // File watch types
+  FileWatchSSEEvent,
   GitCheckoutResult,
   ISandbox,
   ListFilesOptions,
@@ -48,10 +50,6 @@ export type {
   StreamOptions,
   WaitForLogResult,
   WaitForPortOptions,
-  // File watch types
-  WatchEvent,
-  WatchEventType,
-  WatchHandle,
   WatchOptions
 } from '@repo/shared';
 // Export type guards for runtime validation

@@ -687,34 +687,9 @@ export type FileChunk = string | Uint8Array;
 // File Watch Types
 
 /**
- * File system event types
- */
-export type WatchEventType = 'create' | 'modify' | 'delete' | 'rename';
-
-/**
- * A file system change event
- */
-export interface WatchEvent {
-  /** The type of change that occurred */
-  type: WatchEventType;
-  /** Absolute path to the file or directory that changed */
-  path: string;
-  /** Whether the changed path is a directory */
-  isDirectory: boolean;
-}
-
-/**
- * Callback for file watch events
- */
-export type WatchEventCallback = (event: WatchEvent) => void;
-
-/**
- * Callback for watch errors
- */
-export type WatchErrorCallback = (error: Error) => void;
-
-/**
- * Options for watching a directory
+ * Options for watching a directory.
+ *
+ * `watch()` returns an SSE stream that can be consumed with `parseSSEStream()`.
  */
 export interface WatchOptions {
   /**
@@ -736,31 +711,10 @@ export interface WatchOptions {
   exclude?: string[];
 
   /**
-   * AbortSignal to cancel the watch
+   * Session to run the watch in.
+   * If omitted, the default session is used.
    */
-  signal?: AbortSignal;
-
-  /**
-   * Callback for file change events
-   */
-  onEvent?: WatchEventCallback;
-
-  /**
-   * Callback for errors (e.g., watch process died)
-   */
-  onError?: WatchErrorCallback;
-}
-
-/**
- * Handle returned from watch() - use to stop watching
- */
-export interface WatchHandle {
-  /** Stop watching and clean up resources */
-  stop(): Promise<void>;
-  /** The watch ID (for debugging) */
-  readonly id: string;
-  /** The path being watched */
-  readonly path: string;
+  sessionId?: string;
 }
 
 // Internal types for SSE protocol (not user-facing)
@@ -789,7 +743,7 @@ export interface WatchRequest {
 }
 
 /**
- * @internal SSE events for file watching
+ * SSE events emitted by `sandbox.watch()`.
  */
 export type FileWatchSSEEvent =
   | {
@@ -812,15 +766,6 @@ export type FileWatchSSEEvent =
       type: 'stopped';
       reason: string;
     };
-
-/**
- * @internal Result from stopping a watch
- */
-export interface WatchStopResult {
-  success: boolean;
-  watchId: string;
-  timestamp: string;
-}
 
 // Process management result types
 export interface ProcessStartResult {
@@ -1013,6 +958,10 @@ export interface ExecutionSession {
     options?: { encoding?: string }
   ): Promise<ReadFileResult>;
   readFileStream(path: string): Promise<ReadableStream<Uint8Array>>;
+  watch(
+    path: string,
+    options?: Omit<WatchOptions, 'sessionId'>
+  ): Promise<ReadableStream<Uint8Array>>;
   mkdir(path: string, options?: { recursive?: boolean }): Promise<MkdirResult>;
   deleteFile(path: string): Promise<DeleteFileResult>;
   renameFile(oldPath: string, newPath: string): Promise<RenameFileResult>;
@@ -1218,6 +1167,10 @@ export interface ISandbox {
     options?: { encoding?: string }
   ): Promise<ReadFileResult>;
   readFileStream(path: string): Promise<ReadableStream<Uint8Array>>;
+  watch(
+    path: string,
+    options?: WatchOptions
+  ): Promise<ReadableStream<Uint8Array>>;
   mkdir(path: string, options?: { recursive?: boolean }): Promise<MkdirResult>;
   deleteFile(path: string): Promise<DeleteFileResult>;
   renameFile(oldPath: string, newPath: string): Promise<RenameFileResult>;

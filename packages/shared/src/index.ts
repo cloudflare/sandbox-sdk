@@ -139,16 +139,9 @@ export type {
   WaitForExitResult,
   WaitForLogResult,
   WaitForPortOptions,
-  // File watch types (user-facing)
-  WatchErrorCallback,
-  WatchEvent,
-  WatchEventCallback,
-  WatchEventType,
-  WatchHandle,
-  WatchOptions,
   // File watch types
+  WatchOptions,
   WatchRequest,
-  WatchStopResult,
   WriteFileResult
 } from './types.js';
 export {

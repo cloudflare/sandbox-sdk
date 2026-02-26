@@ -5,10 +5,6 @@ import type { RequestContext } from '../core/types';
 import type { WatchService } from '../services/watch-service';
 import { BaseHandler } from './base-handler';
 
-interface StopWatchRequest {
-  watchId: string;
-}
-
 const WORKSPACE_ROOT = '/workspace';
 
 /**
@@ -27,10 +23,6 @@ export class WatchHandler extends BaseHandler<Request, Response> {
 
     if (pathname === '/api/watch') {
       return this.handleWatch(request, context);
-    }
-
-    if (pathname === '/api/watch/stop') {
-      return this.handleStopWatch(request, context);
     }
 
     return this.createErrorResponse(
@@ -92,57 +84,6 @@ export class WatchHandler extends BaseHandler<Request, Response> {
     }
 
     return this.createErrorResponse(result.error, context);
-  }
-
-  /**
-   * Stop an active watch by ID.
-   */
-  private async handleStopWatch(
-    request: Request,
-    context: RequestContext
-  ): Promise<Response> {
-    let body: StopWatchRequest;
-    try {
-      body = await this.parseRequestBody<StopWatchRequest>(request);
-    } catch (error) {
-      return this.createErrorResponse(
-        {
-          message:
-            error instanceof Error ? error.message : 'Invalid request body',
-          code: ErrorCode.VALIDATION_FAILED
-        },
-        context
-      );
-    }
-
-    if (
-      !body ||
-      typeof body.watchId !== 'string' ||
-      body.watchId.trim() === ''
-    ) {
-      return this.createErrorResponse(
-        {
-          message: 'watchId is required and must be a non-empty string',
-          code: ErrorCode.VALIDATION_FAILED,
-          details: { watchId: body?.watchId }
-        },
-        context
-      );
-    }
-
-    const result = await this.watchService.stopWatch(body.watchId.trim());
-    if (!result.success && result.error.code !== 'WATCH_NOT_FOUND') {
-      return this.createErrorResponse(result.error, context);
-    }
-
-    return this.createTypedResponse(
-      {
-        success: true,
-        watchId: body.watchId.trim(),
-        timestamp: new Date().toISOString()
-      },
-      context
-    );
   }
 
   private validateWatchBody(body: WatchRequest): {

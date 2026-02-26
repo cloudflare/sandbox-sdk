@@ -87,46 +87,6 @@ export class WatchService {
   }
 
   /**
-   * Stop a specific watch
-   */
-  async stopWatch(watchId: string): Promise<ServiceResult<void>> {
-    const watch = this.activeWatches.get(watchId);
-    if (!watch) {
-      return serviceError({
-        message: `Watch not found: ${watchId}`,
-        code: ErrorCode.WATCH_NOT_FOUND,
-        details: { watchId }
-      });
-    }
-
-    try {
-      watch.process.kill();
-      this.activeWatches.delete(watchId);
-      this.logger.info('Watch stopped', { watchId, path: watch.path });
-      return serviceSuccess(undefined);
-    } catch (error) {
-      const code =
-        error instanceof Error
-          ? (error as NodeJS.ErrnoException).code
-          : undefined;
-      if (code === 'ESRCH') {
-        this.activeWatches.delete(watchId);
-        this.logger.info('Watch already stopped', {
-          watchId,
-          path: watch.path
-        });
-        return serviceSuccess(undefined);
-      }
-
-      return serviceError({
-        message: `Failed to stop watch: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        code: ErrorCode.WATCH_STOP_ERROR,
-        details: { watchId }
-      });
-    }
-  }
-
-  /**
    * Stop all active watches
    */
   async stopAllWatches(): Promise<number> {
@@ -569,12 +529,17 @@ export class WatchService {
       }
     };
 
+    let setupTimeout: ReturnType<typeof setTimeout> | undefined;
+
     try {
       const result = await Promise.race([
         readLoop(),
-        new Promise<'timeout'>((resolve) =>
-          setTimeout(() => resolve('timeout'), WATCH_SETUP_TIMEOUT_MS)
-        )
+        new Promise<'timeout'>((resolve) => {
+          setupTimeout = setTimeout(
+            () => resolve('timeout'),
+            WATCH_SETUP_TIMEOUT_MS
+          );
+        })
       ]);
 
       if (result === 'timeout') {
@@ -598,6 +563,10 @@ export class WatchService {
       emitSetupError(message);
       await reader.cancel().catch(() => {});
       throw error;
+    } finally {
+      if (setupTimeout) {
+        clearTimeout(setupTimeout);
+      }
     }
   }
 

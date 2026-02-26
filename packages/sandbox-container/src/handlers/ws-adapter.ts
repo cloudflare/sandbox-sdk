@@ -304,8 +304,6 @@ export class WebSocketAdapter {
     status: number,
     reader: ReadableStreamDefaultReader<Uint8Array>
   ): Promise<void> {
-    this.logger.debug('Starting streaming response handler', { requestId });
-
     const decoder = new TextDecoder();
     let buffer = '';
     // Track partial event state across chunks
@@ -314,14 +312,9 @@ export class WebSocketAdapter {
 
     try {
       while (true) {
-        this.logger.debug('Waiting for stream chunk', {
-          requestId,
-          chunkCount
-        });
         const { done, value } = await reader.read();
 
         if (done) {
-          this.logger.debug('Stream ended', { requestId, chunkCount });
           break;
         }
 
@@ -329,24 +322,12 @@ export class WebSocketAdapter {
 
         // Decode chunk and add to buffer
         const chunkText = decoder.decode(value, { stream: true });
-        this.logger.debug('Received stream chunk', {
-          requestId,
-          chunkCount,
-          chunkLength: chunkText.length,
-          chunkPreview: chunkText.substring(0, 100)
-        });
         buffer += chunkText;
 
         // Parse SSE events from buffer, preserving partial event state
         const result = parseSSEFrames(buffer, currentEvent);
         buffer = result.remaining;
         currentEvent = result.currentEvent;
-
-        this.logger.debug('Parsed SSE events', {
-          requestId,
-          eventCount: result.events.length,
-          remainingBuffer: result.remaining.length
-        });
 
         // Send each parsed event as a stream chunk
         for (const event of result.events) {
@@ -361,6 +342,11 @@ export class WebSocketAdapter {
           }
         }
       }
+
+      this.logger.debug('Completed streaming response handler', {
+        requestId,
+        chunkCount
+      });
 
       // Send final response to close the stream
       const wsResponse: WSResponse = {

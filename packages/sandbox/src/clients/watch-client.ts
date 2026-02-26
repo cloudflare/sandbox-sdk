@@ -1,4 +1,4 @@
-import type { WatchRequest, WatchStopResult } from '@repo/shared';
+import type { WatchRequest } from '@repo/shared';
 import { BaseHttpClient } from './base-client';
 
 /**
@@ -24,24 +24,6 @@ export class WatchClient extends BaseHttpClient {
       return stream;
     } catch (error) {
       this.logError('watch', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Stop an active watch by ID
-   *
-   * @param watchId - Watch identifier returned by the watching event
-   */
-  async stop(watchId: string): Promise<WatchStopResult> {
-    try {
-      const result = await this.post<WatchStopResult>('/api/watch/stop', {
-        watchId
-      });
-      this.logSuccess('File watch stopped', watchId);
-      return result;
-    } catch (error) {
-      this.logError('stopWatch', error);
       throw error;
     }
   }
