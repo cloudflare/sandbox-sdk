@@ -28,7 +28,8 @@
 export {
   createOpencode,
   createOpencodeServer,
-  proxyToOpencode
+  proxyToOpencode,
+  proxyToOpencodeServer
 } from './opencode';
 export type { OpencodeOptions, OpencodeResult, OpencodeServer } from './types';
 export { OpencodeStartupError } from './types';

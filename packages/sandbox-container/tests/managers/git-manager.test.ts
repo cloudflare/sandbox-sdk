@@ -46,6 +46,7 @@ describe('GitManager', () => {
       expect(args).toEqual([
         'git',
         'clone',
+        '--filter=blob:none',
         'https://github.com/user/repo.git',
         '/tmp/target'
       ]);
@@ -60,6 +61,7 @@ describe('GitManager', () => {
       expect(args).toEqual([
         'git',
         'clone',
+        '--filter=blob:none',
         '--branch',
         'develop',
         'https://github.com/user/repo.git',
@@ -76,6 +78,7 @@ describe('GitManager', () => {
       expect(args).toEqual([
         'git',
         'clone',
+        '--filter=blob:none',
         '--depth',
         '1',
         'https://github.com/user/repo.git',
@@ -92,6 +95,7 @@ describe('GitManager', () => {
       expect(args).toEqual([
         'git',
         'clone',
+        '--filter=blob:none',
         '--branch',
         'main',
         '--depth',
@@ -110,6 +114,7 @@ describe('GitManager', () => {
       expect(args).toEqual([
         'git',
         'clone',
+        '--filter=blob:none',
         '--depth',
         '5',
         'https://github.com/user/repo.git',

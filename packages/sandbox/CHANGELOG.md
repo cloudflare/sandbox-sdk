@@ -1,5 +1,39 @@
 # @cloudflare/sandbox
 
+## 0.7.6
+
+### Patch Changes
+
+- [#417](https://github.com/cloudflare/sandbox-sdk/pull/417) [`9cbebd8`](https://github.com/cloudflare/sandbox-sdk/commit/9cbebd83ab00fec916216478371c4a6f08f65c2e) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - Stream backup archive uploads to presigned R2 URLs with `curl -T` instead of `--data-binary`.
+  This avoids large in-memory payload allocation and improves reliability for multi-GB backups.
+
+- [#419](https://github.com/cloudflare/sandbox-sdk/pull/419) [`35f7d65`](https://github.com/cloudflare/sandbox-sdk/commit/35f7d6569ac8c99a9c78f8a1ebb18e122e74b385) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - Fix flaky OpenCode E2E test by checking health endpoint readiness
+
+  Changed `waitForPort` to verify `/global/health` returns HTTP 200 instead of just checking if the server accepts connections at `/`. This ensures the OpenCode server is fully initialized before `createOpencodeServer` returns, preventing 500 errors when tests immediately call the health endpoint.
+
+- [#418](https://github.com/cloudflare/sandbox-sdk/pull/418) [`6994598`](https://github.com/cloudflare/sandbox-sdk/commit/6994598220fd5b2bdff23b774b25a01faf0966c6) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Improve error message when backup upload verification fails due to a local/remote R2 mismatch. When using `wrangler dev`, presigned URLs upload to real R2 while the `BACKUP_BUCKET` binding defaults to local storage. The error now suggests adding `"remote": true` to the R2 binding in `wrangler.jsonc`.
+
+- [#404](https://github.com/cloudflare/sandbox-sdk/pull/404) [`c602785`](https://github.com/cloudflare/sandbox-sdk/commit/c602785b72d549abe0f60b106b1375b5eaa82e50) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - Improve `writeFile()` performance by using native container file writes instead of shell-based write pipelines.
+  This reduces write latency for both UTF-8 and base64 payloads while preserving existing encoding behavior.
+
+- [#412](https://github.com/cloudflare/sandbox-sdk/pull/412) [`5abdb55`](https://github.com/cloudflare/sandbox-sdk/commit/5abdb5576e8f677741d597970d8f4d5afc2b4cef) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - Fix file writes without an explicit `encoding` so requests use default write options instead of sending `encoding: undefined`.
+
+## 0.7.5
+
+### Patch Changes
+
+- [#396](https://github.com/cloudflare/sandbox-sdk/pull/396) [`76284f0`](https://github.com/cloudflare/sandbox-sdk/commit/76284f02154056b89ce0861373d51966e3fe0f02) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - Add backup and restore API for directory snapshots.
+
+  `createBackup()` archives a directory as a compressed squashfs image and uploads it to R2.
+  `restoreBackup()` downloads and mounts the archive with copy-on-write semantics via FUSE overlay.
+
+  Requires R2 presigned URL credentials: set `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`,
+  `CLOUDFLARE_ACCOUNT_ID`, and `BACKUP_BUCKET_NAME` as environment variables alongside the
+  `BACKUP_BUCKET` R2 binding. Archives transfer directly between the container and R2
+  at ~24 MB/s upload / ~93 MB/s download.
+
+- [#403](https://github.com/cloudflare/sandbox-sdk/pull/403) [`bbfc579`](https://github.com/cloudflare/sandbox-sdk/commit/bbfc579645e53f9e1c6ba54760bfa3d249f6de1c) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - Add `proxyToOpencodeServer()` to proxy requests directly to a running OpenCode server without web UI redirect behavior. Use this helper for headless API and CLI traffic where raw request forwarding is preferred.
+
 ## 0.7.4
 
 ### Patch Changes
@@ -25,13 +59,13 @@
   As a base image:
 
   ```dockerfile
-  FROM docker.io/cloudflare/sandbox:0.7.4-musl
+  FROM docker.io/cloudflare/sandbox:0.7.6-musl
   ```
 
   Or copy the binary into your own Alpine image:
 
   ```dockerfile
-  COPY --from=docker.io/cloudflare/sandbox:0.7.4-musl /container-server/sandbox /sandbox
+  COPY --from=docker.io/cloudflare/sandbox:0.7.6-musl /container-server/sandbox /sandbox
   ```
 
 - [#377](https://github.com/cloudflare/sandbox-sdk/pull/377) [`d83642e`](https://github.com/cloudflare/sandbox-sdk/commit/d83642e855f68e4fb8c15c2452709923e55a83fd) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Allow port 8787 in `exposePort()`. It was incorrectly blocked.
@@ -254,10 +288,10 @@
 
   ```dockerfile
   # Before
-  FROM cloudflare/sandbox:0.7.4
+  FROM cloudflare/sandbox:0.7.6
 
   # After
-  FROM cloudflare/sandbox:0.7.4-python
+  FROM cloudflare/sandbox:0.7.6-python
   ```
 
   Without this change, Python execution will fail with `PYTHON_NOT_AVAILABLE` error.

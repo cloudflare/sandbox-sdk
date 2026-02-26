@@ -274,6 +274,23 @@ export function setupRoutes(router: Router, container: Container): void {
     middleware: [container.get('loggingMiddleware')]
   });
 
+  // Backup routes
+  router.register({
+    method: 'POST',
+    path: '/api/backup/create',
+    handler: async (req, ctx) =>
+      container.get('backupHandler').handle(req, ctx),
+    middleware: [container.get('loggingMiddleware')]
+  });
+
+  router.register({
+    method: 'POST',
+    path: '/api/backup/restore',
+    handler: async (req, ctx) =>
+      container.get('backupHandler').handle(req, ctx),
+    middleware: [container.get('loggingMiddleware')]
+  });
+
   // Miscellaneous routes
   router.register({
     method: 'GET',

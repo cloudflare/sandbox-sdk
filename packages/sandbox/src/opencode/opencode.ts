@@ -11,6 +11,7 @@ function getLogger(): Logger {
 }
 
 const DEFAULT_PORT = 4096;
+const OPENCODE_STARTUP_TIMEOUT_MS = 180_000;
 const OPENCODE_SERVE = (port: number) =>
   `opencode serve --port ${port} --hostname 0.0.0.0`;
 
@@ -94,8 +95,9 @@ async function ensureOpencodeServer(
       try {
         await existingProcess.waitForPort(port, {
           mode: 'http',
-          path: '/',
-          timeout: 60_000
+          path: '/global/health',
+          status: 200,
+          timeout: OPENCODE_STARTUP_TIMEOUT_MS
         });
       } catch (e) {
         const logs = await existingProcess.getLogs();
@@ -133,8 +135,9 @@ async function ensureOpencodeServer(
         try {
           await retryProcess.waitForPort(port, {
             mode: 'http',
-            path: '/',
-            timeout: 60_000
+            path: '/global/health',
+            status: 200,
+            timeout: OPENCODE_STARTUP_TIMEOUT_MS
           });
         } catch (e) {
           const logs = await retryProcess.getLogs();
@@ -222,12 +225,13 @@ async function startOpencodeServer(
     env: Object.keys(env).length > 0 ? env : undefined
   });
 
-  // Wait for server to be ready
+  // Wait for server to be ready - check the actual health endpoint
   try {
     await process.waitForPort(port, {
       mode: 'http',
-      path: '/',
-      timeout: 60_000
+      path: '/global/health',
+      status: 200,
+      timeout: OPENCODE_STARTUP_TIMEOUT_MS
     });
     getLogger().info('OpenCode server started successfully', {
       port,
@@ -385,6 +389,21 @@ export async function createOpencode<TClient = OpencodeClient>(
 }
 
 /**
+ * Proxy a request directly to the OpenCode server.
+ *
+ * Unlike `proxyToOpencode()`, this helper does not apply any web UI redirects
+ * or query parameter rewrites. Use it for API/CLI traffic where raw request
+ * forwarding is preferred.
+ */
+export function proxyToOpencodeServer(
+  request: Request,
+  sandbox: Sandbox<unknown>,
+  server: OpencodeServer
+): Promise<Response> {
+  return sandbox.containerFetch(request, server.port);
+}
+
+/**
  * Proxy a request to the OpenCode web UI.
  *
  * This function handles the redirect and proxying only - you must start the
@@ -452,5 +471,5 @@ export function proxyToOpencode(
     }
   }
 
-  return sandbox.containerFetch(request, server.port);
+  return proxyToOpencodeServer(request, sandbox, server);
 }

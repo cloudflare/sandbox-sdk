@@ -77,6 +77,21 @@ export function getSuggestion(
     case ErrorCode.SERVICE_NOT_RESPONDING:
       return 'Service is not responding. Check if the service is running and accessible';
 
+    case ErrorCode.BACKUP_NOT_FOUND:
+      return `Backup "${context.backupId}" does not exist. Verify the backup ID is correct`;
+
+    case ErrorCode.BACKUP_EXPIRED:
+      return `Backup "${context.backupId}" has expired. Create a new backup`;
+
+    case ErrorCode.INVALID_BACKUP_CONFIG:
+      return `Invalid backup configuration: ${context.reason}`;
+
+    case ErrorCode.BACKUP_CREATE_FAILED:
+      return 'Backup creation failed. Check that the directory exists and you have sufficient disk space';
+
+    case ErrorCode.BACKUP_RESTORE_FAILED:
+      return 'Backup restoration failed. The archive may be corrupted or the target directory may be in use';
+
     // Generic fallback for other errors
     default:
       return undefined;

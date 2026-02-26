@@ -48,6 +48,13 @@ export const ERROR_STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.SERVICE_NOT_RESPONDING]: 502,
   [ErrorCode.GIT_NETWORK_ERROR]: 502,
 
+  // Backup errors
+  [ErrorCode.BACKUP_NOT_FOUND]: 404,
+  [ErrorCode.BACKUP_EXPIRED]: 400,
+  [ErrorCode.INVALID_BACKUP_CONFIG]: 400,
+  [ErrorCode.BACKUP_CREATE_FAILED]: 500,
+  [ErrorCode.BACKUP_RESTORE_FAILED]: 500,
+
   // 501 Not Implemented (feature not available in image variant)
   [ErrorCode.PYTHON_NOT_AVAILABLE]: 501,
   [ErrorCode.JAVASCRIPT_NOT_AVAILABLE]: 501,

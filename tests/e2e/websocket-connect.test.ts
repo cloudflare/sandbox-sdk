@@ -1,9 +1,6 @@
 import { beforeAll, describe, expect, test } from 'vitest';
 import WebSocket from 'ws';
-import {
-  createUniqueSession,
-  getSharedSandbox
-} from './helpers/global-sandbox';
+import { getSharedSandbox } from './helpers/global-sandbox';
 
 /**
  * WebSocket Connection Tests
@@ -20,10 +17,11 @@ describe('WebSocket Connections', () => {
     sandboxId = sandbox.sandboxId;
 
     // Initialize sandbox (container echo server is built-in)
-    await fetch(`${workerUrl}/api/init`, {
+    const initRes = await fetch(`${workerUrl}/api/init`, {
       method: 'POST',
       headers: { 'X-Sandbox-Id': sandboxId }
     });
+    expect(initRes.status).toBe(200);
   }, 120000);
 
   test('should establish WebSocket connection and echo messages', async () => {

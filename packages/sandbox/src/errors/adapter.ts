@@ -6,6 +6,10 @@
  */
 
 import type {
+  BackupCreateContext,
+  BackupExpiredContext,
+  BackupNotFoundContext,
+  BackupRestoreContext,
   CodeExecutionContext,
   CommandErrorContext,
   CommandNotFoundContext,
@@ -20,6 +24,7 @@ import type {
   GitRepositoryNotFoundContext,
   InternalErrorContext,
   InterpreterNotReadyContext,
+  InvalidBackupConfigContext,
   InvalidPortContext,
   PortAlreadyExposedContext,
   PortErrorContext,
@@ -32,6 +37,10 @@ import type {
 import { ErrorCode } from '@repo/shared/errors';
 
 import {
+  BackupCreateError,
+  BackupExpiredError,
+  BackupNotFoundError,
+  BackupRestoreError,
   CodeExecutionError,
   CommandError,
   CommandNotFoundError,
@@ -48,6 +57,7 @@ import {
   GitNetworkError,
   GitRepositoryNotFoundError,
   InterpreterNotReadyError,
+  InvalidBackupConfigError,
   InvalidGitUrlError,
   InvalidPortError,
   PermissionDeniedError,
@@ -207,6 +217,32 @@ export function createErrorFromResponse(errorResponse: ErrorResponse): Error {
     case ErrorCode.GIT_OPERATION_FAILED:
       return new GitError(
         errorResponse as unknown as ErrorResponse<GitErrorContext>
+      );
+
+    // Backup Errors
+    case ErrorCode.BACKUP_NOT_FOUND:
+      return new BackupNotFoundError(
+        errorResponse as unknown as ErrorResponse<BackupNotFoundContext>
+      );
+
+    case ErrorCode.BACKUP_EXPIRED:
+      return new BackupExpiredError(
+        errorResponse as unknown as ErrorResponse<BackupExpiredContext>
+      );
+
+    case ErrorCode.INVALID_BACKUP_CONFIG:
+      return new InvalidBackupConfigError(
+        errorResponse as unknown as ErrorResponse<InvalidBackupConfigContext>
+      );
+
+    case ErrorCode.BACKUP_CREATE_FAILED:
+      return new BackupCreateError(
+        errorResponse as unknown as ErrorResponse<BackupCreateContext>
+      );
+
+    case ErrorCode.BACKUP_RESTORE_FAILED:
+      return new BackupRestoreError(
+        errorResponse as unknown as ErrorResponse<BackupRestoreContext>
       );
 
     // Code Interpreter Errors

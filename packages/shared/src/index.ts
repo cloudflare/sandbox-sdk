@@ -41,6 +41,8 @@ export type {
 } from './pty-types.js';
 // Export all request types (enforce contract between client and container)
 export type {
+  CreateBackupRequest,
+  CreateBackupResponse,
   DeleteFileRequest,
   ExecuteRequest,
   ExposePortRequest,
@@ -51,6 +53,8 @@ export type {
   MoveFileRequest,
   ReadFileRequest,
   RenameFileRequest,
+  RestoreBackupRequest,
+  RestoreBackupResponse,
   SessionCreateRequest,
   SessionDeleteRequest,
   StartProcessRequest,
@@ -60,6 +64,8 @@ export type {
 export { shellEscape } from './shell-escape.js';
 // Export all types from types.ts
 export type {
+  // Backup types
+  BackupOptions,
   BaseExecOptions,
   // Bucket mounting types
   BucketCredentials,
@@ -68,6 +74,7 @@ export type {
   ContextDeleteResult,
   ContextListResult,
   DeleteFileResult,
+  DirectoryBackup,
   Disposable,
   EnvSetResult,
   ExecEvent,
@@ -113,6 +120,7 @@ export type {
   ProcessStatus,
   ReadFileResult,
   RenameFileResult,
+  RestoreBackupResult,
   // Sandbox configuration options
   SandboxOptions,
   // Session management result types

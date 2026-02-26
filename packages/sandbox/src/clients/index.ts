@@ -9,6 +9,7 @@ export { SandboxClient } from './sandbox-client';
 // Domain-specific clients
 // =============================================================================
 
+export { BackupClient } from './backup-client';
 export { CommandClient } from './command-client';
 export { FileClient } from './file-client';
 export { GitClient } from './git-client';
