@@ -220,10 +220,14 @@ ENV SANDBOX_VERSION=${SANDBOX_VERSION}
 # CA certificate installation
 RUN mkdir -p /usr/local/share/ca-certificates
 RUN --mount=type=secret,id=wrangler_ca \
-    cp /run/secrets/wrangler_ca /usr/local/share/ca-certificates/wrangler-dev-ca.crt && \
-    cat /run/secrets/wrangler_ca >> /etc/ssl/certs/ca-certificates.crt && \
-    apk add --no-cache ca-certificates && \
-    update-ca-certificates
+    if [ -f /run/secrets/wrangler_ca ] && [ -s /run/secrets/wrangler_ca ]; then \
+        cp /run/secrets/wrangler_ca /usr/local/share/ca-certificates/wrangler-dev-ca.crt && \
+        cat /run/secrets/wrangler_ca >> /etc/ssl/certs/ca-certificates.crt && \
+        apk add --no-cache ca-certificates && \
+        update-ca-certificates; \
+    else \
+        apk add --no-cache ca-certificates; \
+    fi
 
 RUN apk add --no-cache bash file git curl libstdc++ libgcc s3fs-fuse fuse
 
