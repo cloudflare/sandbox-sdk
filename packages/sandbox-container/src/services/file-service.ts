@@ -975,7 +975,7 @@ export class FileService implements FileSystemOperations {
       //    unknown extensions it returns 'application/octet-stream'.  In that
       //    case we run `file --mime-type` as a fallback so we can correctly
       //    classify extension-less binaries (e.g. compiled executables).
-      let mimeType = bunFile.type;
+      let mimeType = bunFile.type.split(';')[0].trim();
       if (mimeType === 'application/octet-stream') {
         const escapedPath = shellEscape(path);
         const mimeResult = await exec(`file --mime-type -b ${escapedPath}`);
@@ -985,7 +985,6 @@ export class FileService implements FileSystemOperations {
         // If the fallback fails we keep 'application/octet-stream', which
         // isBinaryMimeType() will correctly classify as binary.
       }
-      mimeType = mimeType.split(';')[0].trim(); // In case there are extra parameters like charset
 
       // 4. Classify binary vs text
       const isBinary = this.isBinaryMimeType(mimeType);
