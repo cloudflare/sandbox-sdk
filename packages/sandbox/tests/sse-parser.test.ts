@@ -154,9 +154,75 @@ describe('SSE Parser', () => {
       controller.abort();
 
       await expect(async () => {
-        for await (const event of parseSSEStream(stream, controller.signal)) {
+        for await (const _event of parseSSEStream(stream, controller.signal)) {
+          // No-op
         }
       }).rejects.toThrow('Operation was aborted');
+    });
+
+    it('should abort while blocked on reader.read()', async () => {
+      const controller = new AbortController();
+      let cancelResolve: (() => void) | undefined;
+      const cancelCalled = new Promise<void>((resolve) => {
+        cancelResolve = resolve;
+      });
+
+      const stream = new ReadableStream<Uint8Array>({
+        pull() {
+          return new Promise<void>(() => {
+            // Keep the stream idle until canceled.
+          });
+        },
+        cancel() {
+          cancelResolve?.();
+        }
+      });
+
+      const consumePromise = (async () => {
+        for await (const _event of parseSSEStream(stream, controller.signal)) {
+          // No-op
+        }
+      })();
+
+      await Promise.resolve();
+      controller.abort();
+
+      await expect(consumePromise).rejects.toThrow('Operation was aborted');
+      await cancelCalled;
+    });
+
+    it('should remove abort listener after completion', async () => {
+      const controller = new AbortController();
+      const addEventListenerSpy = vi.spyOn(
+        controller.signal,
+        'addEventListener'
+      );
+      const removeEventListenerSpy = vi.spyOn(
+        controller.signal,
+        'removeEventListener'
+      );
+
+      const stream = createMockSSEStream(['data: {"type":"done"}\n\n']);
+      const events: unknown[] = [];
+
+      for await (const event of parseSSEStream(stream, controller.signal)) {
+        events.push(event);
+      }
+
+      expect(events).toEqual([{ type: 'done' }]);
+      expect(addEventListenerSpy).toHaveBeenCalledWith(
+        'abort',
+        expect.any(Function)
+      );
+
+      const abortHandler = addEventListenerSpy.mock.calls.find(
+        ([eventName]) => eventName === 'abort'
+      )?.[1];
+      expect(abortHandler).toBeDefined();
+      expect(removeEventListenerSpy).toHaveBeenCalledWith(
+        'abort',
+        abortHandler
+      );
     });
 
     it('should handle non-data SSE lines', async () => {

@@ -2225,7 +2225,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   /**
    * Watch a directory for file system changes using native inotify.
    *
-   * Returns an SSE stream of watch lifecycle and file change events.
+   * The returned promise resolves only after the watcher is established on the
+   * filesystem, so callers can immediately perform actions that depend on the
+   * watch being active. The returned stream contains the full event sequence
+   * starting with the `watching` event.
+   *
    * Consume the stream with `parseSSEStream<FileWatchSSEEvent>(stream)`.
    *
    * @param path - Path to watch (absolute or relative to /workspace)

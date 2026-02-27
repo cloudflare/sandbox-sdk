@@ -18,6 +18,7 @@ import {
   expect,
   test
 } from 'vitest';
+import { parseSSEStream } from '../../packages/sandbox/src/sse-parser';
 import {
   cleanupIsolatedSandbox,
   createUniqueSession,
@@ -82,67 +83,46 @@ describe('File Watch Workflow', () => {
       throw new Error(`Watch request failed: ${response.status}`);
     }
 
+    // watch() blocks until the watcher is established, so by the time
+    // the response arrives the filesystem watcher is ready.
+    const actionResult = await actions();
+
     const events: FileWatchSSEEvent[] = [];
     let watchId: string | null = null;
-    let actionResult: T;
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    let actionsExecuted = false;
-
-    // Use a cancellable timeout that resets after actions complete.
-    // The initial timeout covers watch establishment; after actions run,
-    // a fresh timeout gives the full timeoutMs for events to arrive.
-    let timeoutHandle = setTimeout(() => reader.cancel(), timeoutMs);
+    const signal = AbortSignal.timeout(timeoutMs);
 
     try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
+      for await (const event of parseSSEStream<FileWatchSSEEvent>(
+        response.body,
+        signal
+      )) {
+        events.push(event);
 
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
+        if (event.type === 'watching') {
+          watchId = event.watchId;
+        }
 
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const event = JSON.parse(line.slice(6)) as FileWatchSSEEvent;
-            events.push(event);
-
-            if (event.type === 'watching') {
-              watchId = event.watchId;
-              if (!actionsExecuted) {
-                actionsExecuted = true;
-                // Pause the timeout while executing actions so the full
-                // timeoutMs window is available for collecting events afterward
-                clearTimeout(timeoutHandle);
-                await new Promise((r) => setTimeout(r, 1500));
-                actionResult = await actions();
-                // Give events time to propagate through the SSE stream
-                await new Promise((r) => setTimeout(r, 3000));
-                // Reset the timeout so we have the full window to read events
-                timeoutHandle = setTimeout(() => reader.cancel(), timeoutMs);
-              }
-            }
-
-            if (
-              event.type === 'stopped' ||
-              event.type === 'error' ||
-              events.length >= stopAfterEvents
-            ) {
-              reader.cancel();
-              break;
-            }
-          }
+        if (
+          event.type === 'stopped' ||
+          event.type === 'error' ||
+          events.length >= stopAfterEvents
+        ) {
+          break;
         }
       }
-    } catch (e) {
-      // Reader cancelled - expected
-    } finally {
-      clearTimeout(timeoutHandle);
+    } catch (error) {
+      if (
+        !(
+          signal.aborted &&
+          error instanceof Error &&
+          error.message === 'Operation was aborted'
+        )
+      ) {
+        throw error;
+      }
     }
 
-    return { events, watchId, actionResult: actionResult! };
+    return { events, watchId, actionResult };
   }
 
   /**
@@ -229,7 +209,6 @@ describe('File Watch Workflow', () => {
     await createDir(testDir);
 
     // Start watch and create file after watch is confirmed ready
-    // timeoutMs must exceed: ~1s setup + 1500ms pre-action wait + action time + 3000ms post-action wait
     const { events } = await watchWithActions(
       testDir,
       { timeoutMs: 8000, stopAfterEvents: 5 },
@@ -254,7 +233,6 @@ describe('File Watch Workflow', () => {
     await createFile(`${testDir}/existing.txt`, 'initial');
 
     // Start watch and modify file after watch is confirmed ready
-    // timeoutMs must exceed: ~1s setup + 1500ms pre-action wait + action time + 3000ms post-action wait
     const { events } = await watchWithActions(
       testDir,
       { timeoutMs: 8000, stopAfterEvents: 5 },
@@ -283,8 +261,6 @@ describe('File Watch Workflow', () => {
       testDir,
       { timeoutMs: 8000, stopAfterEvents: 5 },
       async () => {
-        // Small delay to ensure watch is fully ready
-        await new Promise((r) => setTimeout(r, 500));
         await deleteFile(`${testDir}/todelete.txt`);
       }
     );
@@ -434,16 +410,10 @@ describe('File Watch Workflow', () => {
       testDir,
       { timeoutMs: 5000, stopAfterEvents: 5 },
       async () => {
-        // Small delay to ensure watch is fully ready
-        await new Promise((r) => setTimeout(r, 500));
         // Create files in excluded and non-excluded directories
-        // Add delays between operations to avoid race conditions
         await createFile(`${testDir}/app.ts`, 'app code');
-        await new Promise((r) => setTimeout(r, 300));
         await createFile(`${testDir}/node_modules/dep.js`, 'dependency');
-        await new Promise((r) => setTimeout(r, 300));
         await createFile(`${testDir}/.git/config`, 'git config');
-        await new Promise((r) => setTimeout(r, 300));
         await createFile(`${testDir}/index.ts`, 'index');
       }
     );

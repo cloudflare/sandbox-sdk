@@ -18,6 +18,7 @@ export async function* parseSSEStream<T>(
   const decoder = new TextDecoder();
   let buffer = '';
   let currentEvent: SSEPartialEvent = { data: [] };
+  let isAborted = signal?.aborted ?? false;
 
   const emitEvent = (data: string): T | undefined => {
     if (data === '[DONE]' || data.trim() === '') {
@@ -31,14 +32,29 @@ export async function* parseSSEStream<T>(
     }
   };
 
+  const onAbort = () => {
+    isAborted = true;
+    reader.cancel().catch(() => {
+      // Reader may already be closed or canceled.
+    });
+  };
+
+  if (signal && !signal.aborted) {
+    signal.addEventListener('abort', onAbort);
+  }
+
   try {
     while (true) {
-      // Check for cancellation
-      if (signal?.aborted) {
+      if (isAborted) {
         throw new Error('Operation was aborted');
       }
 
       const { done, value } = await reader.read();
+
+      if (isAborted) {
+        throw new Error('Operation was aborted');
+      }
+
       if (done) break;
 
       // Decode chunk and parse complete SSE frames
@@ -55,6 +71,10 @@ export async function* parseSSEStream<T>(
       }
     }
 
+    if (isAborted) {
+      throw new Error('Operation was aborted');
+    }
+
     // Flush any complete frame that can be parsed from remaining data
     const finalParsed = parseSSEFrames(`${buffer}\n\n`, currentEvent);
     for (const frame of finalParsed.events) {
@@ -64,6 +84,10 @@ export async function* parseSSEStream<T>(
       }
     }
   } finally {
+    if (signal) {
+      signal.removeEventListener('abort', onAbort);
+    }
+
     // Clean up resources
     try {
       await reader.cancel();

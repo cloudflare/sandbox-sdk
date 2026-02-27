@@ -1002,7 +1002,7 @@ console.log('Terminal server on port ' + port);
         const stream = await sandbox.watch(body.path, {
           recursive: body.recursive,
           include: body.include,
-          exclude: body.include ? [] : body.exclude,
+          exclude: body.exclude,
           sessionId: sessionId ?? undefined
         });
 

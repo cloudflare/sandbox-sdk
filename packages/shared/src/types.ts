@@ -689,7 +689,8 @@ export type FileChunk = string | Uint8Array;
 /**
  * Options for watching a directory.
  *
- * `watch()` returns an SSE stream that can be consumed with `parseSSEStream()`.
+ * `watch()` resolves only after the watcher is established on the filesystem.
+ * The returned SSE stream can be consumed with `parseSSEStream()`.
  */
 export interface WatchOptions {
   /**
@@ -699,13 +700,15 @@ export interface WatchOptions {
   recursive?: boolean;
 
   /**
-   * Glob patterns to include (e.g., '*.ts', '*.js')
-   * If not specified, all files are included
+   * Glob patterns to include (e.g., '*.ts', '*.js').
+   * If not specified, all files are included.
+   * Cannot be used together with `exclude`.
    */
   include?: string[];
 
   /**
-   * Glob patterns to exclude (e.g., 'node_modules', '.git')
+   * Glob patterns to exclude (e.g., 'node_modules', '.git').
+   * Cannot be used together with `include`.
    * @default ['.git', 'node_modules', '.DS_Store']
    */
   exclude?: string[];

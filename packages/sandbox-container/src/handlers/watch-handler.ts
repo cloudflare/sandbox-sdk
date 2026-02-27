@@ -106,6 +106,15 @@ export class WatchHandler extends BaseHandler<Request, Response> {
       };
     }
 
+    if (body.include?.length && body.exclude?.length) {
+      return {
+        message:
+          'include and exclude cannot be used together. Use include to whitelist patterns, or exclude to blacklist patterns.',
+        code: ErrorCode.VALIDATION_FAILED,
+        details: { include: body.include, exclude: body.exclude }
+      };
+    }
+
     if (!this.isStringArrayOrUndefined(body.include)) {
       return {
         message: 'include must be an array of strings',
