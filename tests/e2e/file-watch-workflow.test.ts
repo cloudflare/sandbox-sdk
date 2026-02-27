@@ -354,47 +354,13 @@ describe('File Watch Workflow', () => {
       })
     });
 
-    // Should get an error response (either 4xx/5xx or error in body)
-    if (!response.ok) {
-      const body = await response.text();
-      expect(body).toMatch(
-        /error|not found|does not exist|permission denied|file_not_found|permission_denied/i
-      );
-      return;
-    }
-
-    // If we get a 200, it should be an SSE stream with an error event
-    // Over WebSocket transport, errors may throw instead of returning data
-    if (response.body) {
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let text = '';
-      let streamError: Error | null = null;
-
-      // Read multiple chunks in case the error comes later
-      const timeout = setTimeout(() => reader.cancel(), 3000);
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          text += decoder.decode(value, { stream: true });
-          // Check if we have an error indication
-          if (text.match(/error|not found|does not exist/i)) {
-            break;
-          }
-        }
-      } catch (e) {
-        // Stream error or cancelled - capture the error
-        streamError = e instanceof Error ? e : new Error(String(e));
-      } finally {
-        clearTimeout(timeout);
-        reader.cancel().catch(() => {});
-      }
-
-      // Should contain an error message in either the text or the stream error
-      const errorContent = text || streamError?.message || '';
-      expect(errorContent).toMatch(/error|not found|does not exist/i);
-    }
+    // watch() throws when the watcher fails to establish, so the test
+    // worker's error handler converts it to a non-200 response.
+    expect(response.ok).toBe(false);
+    const body = await response.text();
+    expect(body).toMatch(
+      /error|not found|does not exist|permission denied|file_not_found|permission_denied/i
+    );
   }, 30000);
 
   test('should exclude patterns from events', async () => {
