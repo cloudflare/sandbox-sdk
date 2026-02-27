@@ -81,7 +81,7 @@ jobs:
       !contains(github.event.pull_request.title, 'Version Packages') &&
       github.event.pull_request.head.repo.full_name == github.repository
     timeout-minutes: 15
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04-16core
     outputs:
       image-tag: ${{ steps.tags.outputs.tag }}
     steps:
@@ -201,7 +201,7 @@ jobs:
   e2e-tests:
     needs: [unit-tests, build-docker]
     timeout-minutes: 20
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04-16core
     strategy:
       fail-fast: false
       matrix:
