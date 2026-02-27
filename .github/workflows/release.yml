@@ -85,7 +85,7 @@ jobs:
   e2e-tests:
     needs: [unit-tests]
     if: ${{ github.repository_owner == 'cloudflare' }}
-    runs-on: ubuntu-22.04-16core
+    runs-on: ubuntu-latest
     timeout-minutes: 20
 
     steps:
@@ -264,7 +264,7 @@ jobs:
   publish-release:
     needs: [unit-tests, e2e-tests]
     if: ${{ github.repository_owner == 'cloudflare' }}
-    runs-on: ubuntu-22.04-16core
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       id-token: write # Required for trusted publishing
