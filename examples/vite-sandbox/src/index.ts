@@ -32,17 +32,20 @@ export default {
       });
     }
 
-    const proxy = new Request(port.url, request);
+    const baseURL = `${port.url}sandbox`;
+    console.log("baseURL", baseURL)
+    const proxy = new Request(baseURL, request);
     const response = await proxyToSandbox(proxy, env);
 
     if (!response) {
       return new Response('Unexpected error', { status: 500 });
     }
 
+    console.log("response", response.ok)
     return new HTMLRewriter()
       .on('head', {
         element: (el) => {
-          el.before(`<base href="${port.url}" />\n`, { html: true });
+          el.before(`<base href="${baseURL}" />\n`, { html: true });
         }
       })
       .transform(response);

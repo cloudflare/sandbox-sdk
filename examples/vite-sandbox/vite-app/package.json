@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite --host 0.0.0.0 --port 5173"
+    "dev": "vite --base /sandbox --host 0.0.0.0 --port 5173"
   },
   "devDependencies": {
     "vite": "^6.0.0"
