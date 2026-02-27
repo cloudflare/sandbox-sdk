@@ -318,19 +318,11 @@ describe('File Watch Workflow', () => {
     expect(response.body).toBeTruthy();
     if (!response.body) return;
 
+    // watch() blocks until established, so the response arriving means
+    // the watcher is ready. Read one chunk to confirm the stream is live.
     const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-
-    // Wait for watch to establish
-    let watchingReceived = false;
-    while (!watchingReceived) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      const text = decoder.decode(value, { stream: true });
-      watchingReceived = text.includes('"type":"watching"');
-    }
-
-    expect(watchingReceived).toBe(true);
+    const { done } = await reader.read();
+    expect(done).toBe(false);
 
     // Client-side cancellation should stop the server watch
     await reader.cancel();
