@@ -1,5 +1,11 @@
 # @cloudflare/sandbox
 
+## 0.7.8
+
+### Patch Changes
+
+- [#427](https://github.com/cloudflare/sandbox-sdk/pull/427) [`04b4ccf`](https://github.com/cloudflare/sandbox-sdk/commit/04b4ccf5d6ff180d9e93ff582abd27b7f13ca36d) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Fix local development crash loops after Docker restarts or idle timeouts. The Sandbox now detects stale container state and automatically recovers.
+
 ## 0.7.7
 
 ### Patch Changes
@@ -72,13 +78,13 @@
   As a base image:
 
   ```dockerfile
-  FROM docker.io/cloudflare/sandbox:0.7.7-musl
+  FROM docker.io/cloudflare/sandbox:0.7.8-musl
   ```
 
   Or copy the binary into your own Alpine image:
 
   ```dockerfile
-  COPY --from=docker.io/cloudflare/sandbox:0.7.7-musl /container-server/sandbox /sandbox
+  COPY --from=docker.io/cloudflare/sandbox:0.7.8-musl /container-server/sandbox /sandbox
   ```
 
 - [#377](https://github.com/cloudflare/sandbox-sdk/pull/377) [`d83642e`](https://github.com/cloudflare/sandbox-sdk/commit/d83642e855f68e4fb8c15c2452709923e55a83fd) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Allow port 8787 in `exposePort()`. It was incorrectly blocked.
@@ -301,10 +307,10 @@
 
   ```dockerfile
   # Before
-  FROM cloudflare/sandbox:0.7.7
+  FROM cloudflare/sandbox:0.7.8
 
   # After
-  FROM cloudflare/sandbox:0.7.7-python
+  FROM cloudflare/sandbox:0.7.8-python
   ```
 
   Without this change, Python execution will fail with `PYTHON_NOT_AVAILABLE` error.
