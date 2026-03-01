@@ -6,7 +6,10 @@ const VITE_PORT = 5173;
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    const proxiedResponse = await proxyToSandbox(request, env);
+    const u = new URL(request.url);
+    u.host = request.headers.get('host') ?? u.host;
+    const r = new Request(u.href, request);
+    const proxiedResponse = await proxyToSandbox(r, env);
     if (proxiedResponse) {
       return proxiedResponse;
     }
