@@ -5,22 +5,19 @@
   "private": true,
   "description": "An example of running a Vite dev server inside a Cloudflare Sandbox",
   "scripts": {
-    "deploy": "wrangler deploy",
-    "dev": "wrangler dev",
-    "start": "wrangler dev",
-    "cf-typegen": "wrangler types",
-    "typecheck": "tsc --noEmit"
+    "deploy": "vite build && wrangler deploy",
+    "dev": "vite",
+    "start": "vite"
   },
   "devDependencies": {
     "@cloudflare/sandbox": "*",
-    "@types/node": "^24.10.1",
-    "typescript": "^5.9.3",
+    "@cloudflare/vite-plugin": "^1.0.0",
+    "@vitejs/plugin-react": "^4.0.0",
+    "react": "^18.0.0",
+    "react-dom": "^18.0.0",
+    "vite": "^6.0.0",
     "wrangler": "^4.63.0"
   },
   "author": "",
-  "license": "MIT",
-  "dependencies": {
-    "@cloudflare/vite-plugin": "^1.25.6",
-    "vite": "^7.3.1"
-  }
+  "license": "MIT"
 }
