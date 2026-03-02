@@ -23,12 +23,14 @@ export class BackupClient extends BaseHttpClient {
   async createArchive(
     dir: string,
     archivePath: string,
-    sessionId: string
+    sessionId: string,
+    exclude?: string[]
   ): Promise<CreateBackupResponse> {
     try {
       const data: CreateBackupRequest = {
         dir,
         archivePath,
+        exclude,
         sessionId
       };
 

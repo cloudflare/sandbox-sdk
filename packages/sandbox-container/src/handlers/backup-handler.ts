@@ -115,12 +115,28 @@ export class BackupHandler extends BaseHandler<Request, Response> {
       );
     }
 
+    if (
+      body.exclude !== undefined &&
+      (!Array.isArray(body.exclude) ||
+        body.exclude.some((pattern) => typeof pattern !== 'string'))
+    ) {
+      return this.createErrorResponse(
+        {
+          message: 'exclude must be an array of strings',
+          code: ErrorCode.INVALID_BACKUP_CONFIG
+        },
+        context,
+        Operation.BACKUP_CREATE
+      );
+    }
+
     const sessionId = body.sessionId ?? context.sessionId ?? 'default';
 
     const result = await this.backupService.createArchive(
       body.dir,
       body.archivePath,
-      sessionId
+      sessionId,
+      body.exclude
     );
 
     if (result.success) {
