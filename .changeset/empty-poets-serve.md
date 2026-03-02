@@ -4,13 +4,20 @@
 
 Add real-time file watching for detecting filesystem changes as they happen.
 
-Use `sandbox.watch()` to monitor directories for create, modify, delete, and rename events with native inotify:
+`sandbox.watch()` returns an SSE stream of create, modify, delete, and move events using native inotify. The stream can be proxied directly to a client or consumed server-side with `parseSSEStream`:
 
 ```typescript
-const watcher = await sandbox.watch('/app/src', {
+// Stream events to a browser client
+const stream = await sandbox.watch('/workspace/src', {
   recursive: true,
-  include: ['*.ts', '*.js'],
-  onEvent: (event) => console.log(event.type, event.path)
+  include: ['*.ts', '*.js']
 });
-await watcher.stop();
+return new Response(stream, {
+  headers: { 'Content-Type': 'text/event-stream' }
+});
+
+// Or consume server-side
+for await (const event of parseSSEStream<FileWatchSSEEvent>(stream)) {
+  console.log(event.type, event.path);
+}
 ```
