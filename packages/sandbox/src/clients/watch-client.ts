@@ -1,4 +1,9 @@
-import type { WatchRequest } from '@repo/shared';
+import {
+  type FileWatchSSEEvent,
+  parseSSEFrames,
+  type SSEPartialEvent,
+  type WatchRequest
+} from '@repo/shared';
 import { BaseHttpClient } from './base-client';
 
 /**
@@ -42,26 +47,57 @@ export class WatchClient extends BaseHttpClient {
     const reader = stream.getReader();
     const bufferedChunks: Uint8Array[] = [];
     const decoder = new TextDecoder();
-    let accumulated = '';
+    let buffer = '';
+    let currentEvent: SSEPartialEvent = { data: [] };
+    let watcherReady = false;
+
+    const processEventData = (eventData: string) => {
+      let event: FileWatchSSEEvent | undefined;
+      try {
+        event = JSON.parse(eventData) as FileWatchSSEEvent;
+      } catch {
+        return;
+      }
+
+      if (event.type === 'watching') {
+        watcherReady = true;
+      }
+
+      if (event.type === 'error') {
+        throw new Error(event.error || 'Watch failed to establish');
+      }
+    };
 
     try {
-      while (true) {
+      while (!watcherReady) {
         const { done, value } = await reader.read();
         if (done) {
+          const finalParsed = parseSSEFrames(`${buffer}\n\n`, currentEvent);
+          for (const frame of finalParsed.events) {
+            processEventData(frame.data);
+            if (watcherReady) {
+              break;
+            }
+          }
+
+          if (watcherReady) {
+            break;
+          }
+
           throw new Error('Watch stream ended before watcher was established');
         }
+
         bufferedChunks.push(value);
-        accumulated += decoder.decode(value, { stream: true });
+        buffer += decoder.decode(value, { stream: true });
+        const parsed = parseSSEFrames(buffer, currentEvent);
+        buffer = parsed.remaining;
+        currentEvent = parsed.currentEvent;
 
-        if (accumulated.includes('"type":"watching"')) {
-          break;
-        }
-
-        if (accumulated.includes('"type":"error"')) {
-          const match = accumulated.match(/"error"\s*:\s*"([^"]+)"/);
-          const msg = match?.[1] || 'Watch failed to establish';
-          reader.cancel().catch(() => {});
-          throw new Error(msg);
+        for (const frame of parsed.events) {
+          processEventData(frame.data);
+          if (watcherReady) {
+            break;
+          }
         }
       }
     } catch (error) {

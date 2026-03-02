@@ -1,11 +1,12 @@
 import { posix as pathPosix } from 'node:path';
 import type { Logger, WatchRequest } from '@repo/shared';
 import { ErrorCode } from '@repo/shared/errors';
+import { CONFIG } from '../config';
 import type { RequestContext } from '../core/types';
 import type { WatchService } from '../services/watch-service';
 import { BaseHandler } from './base-handler';
 
-const WORKSPACE_ROOT = '/workspace';
+const WORKSPACE_ROOT = CONFIG.DEFAULT_CWD;
 
 /**
  * Handler for file watch operations
