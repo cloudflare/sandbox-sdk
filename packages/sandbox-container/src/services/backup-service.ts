@@ -96,7 +96,8 @@ export class BackupService {
   async createArchive(
     dir: string,
     archivePath: string,
-    sessionId = 'default'
+    sessionId = 'default',
+    exclude?: string[]
   ): Promise<ServiceResult<CreateArchiveResult>> {
     const opLogger = this.logger.child({ operation: Operation.BACKUP_CREATE });
 
@@ -153,17 +154,39 @@ export class BackupService {
         });
       }
 
+      const excludeFilePath = `${archivePath}.exclude`;
+      if (exclude && exclude.length > 0) {
+        const writeExcludeResult = await this.sessionManager.executeInSession(
+          sessionId,
+          `printf '%s\\n' ${exclude.map(shellEscape).join(' ')} > ${shellEscape(excludeFilePath)}`
+        );
+        if (
+          !writeExcludeResult.success ||
+          writeExcludeResult.data.exitCode !== 0
+        ) {
+          return serviceError({
+            message: 'Failed to write exclude patterns file',
+            code: ErrorCode.BACKUP_CREATE_FAILED,
+            details: { dir, archivePath }
+          });
+        }
+      }
+
       // Create squashfs archive with zstd compression
       // -no-progress suppresses progress output
       // -noappend creates a fresh archive (no appending to existing)
-      const squashCmd = [
+      const squashCmdParts = [
         BIN.mksquashfs,
         shellEscape(dir),
         shellEscape(archivePath),
         '-comp zstd',
         '-no-progress',
         '-noappend'
-      ].join(' ');
+      ];
+      if (exclude && exclude.length > 0) {
+        squashCmdParts.push(`-ef ${shellEscape(excludeFilePath)}`);
+      }
+      const squashCmd = squashCmdParts.join(' ');
 
       opLogger.info('Creating squashfs archive', {
         dir,
@@ -175,6 +198,12 @@ export class BackupService {
         sessionId,
         squashCmd
       );
+
+      if (exclude && exclude.length > 0) {
+        await this.sessionManager
+          .executeInSession(sessionId, `rm -f ${shellEscape(excludeFilePath)}`)
+          .catch(() => {});
+      }
 
       if (!createResult.success) {
         return serviceError({

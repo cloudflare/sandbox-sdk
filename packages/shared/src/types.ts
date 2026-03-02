@@ -936,6 +936,20 @@ export interface BackupOptions {
   name?: string;
   /** Seconds until automatic garbage collection. Default: 259200 (3 days). No upper limit. */
   ttl?: number;
+  /**
+   * Optional mksquashfs exclude patterns.
+   *
+   * Patterns are passed directly to mksquashfs via `-ef` (one pattern per line).
+   * Common examples: `node_modules`, `.git`, `dist`, `*.log`.
+   */
+  exclude?: string[];
+  /**
+   * Add default exclude patterns for common dependency/build directories.
+   *
+   * Current defaults: `node_modules`, `.git`, `dist`, `build`, `.next`, `.turbo`, `.cache`.
+   * Default: false.
+   */
+  excludeDefaults?: boolean;
 }
 
 /**

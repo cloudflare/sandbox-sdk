@@ -3133,7 +3133,22 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     this.requirePresignedUrlSupport();
     const DEFAULT_TTL_SECONDS = 259200; // 3 days
     const MAX_NAME_LENGTH = 256;
-    const { dir, name, ttl = DEFAULT_TTL_SECONDS } = options;
+    const DEFAULT_BACKUP_EXCLUDE_PATTERNS = [
+      'node_modules',
+      '.git',
+      'dist',
+      'build',
+      '.next',
+      '.turbo',
+      '.cache'
+    ];
+    const {
+      dir,
+      name,
+      ttl = DEFAULT_TTL_SECONDS,
+      exclude,
+      excludeDefaults = false
+    } = options;
     Sandbox.validateBackupDir(dir, 'BackupOptions.dir');
     if (name !== undefined) {
       if (typeof name !== 'string' || name.length > MAX_NAME_LENGTH) {
@@ -3169,16 +3184,67 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       });
     }
 
+    if (typeof excludeDefaults !== 'boolean') {
+      throw new InvalidBackupConfigError({
+        message: 'BackupOptions.excludeDefaults must be a boolean',
+        code: ErrorCode.INVALID_BACKUP_CONFIG,
+        httpStatus: 400,
+        context: { reason: 'excludeDefaults must be a boolean' },
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    const hasControlChars = (value: string): boolean => {
+      for (let i = 0; i < value.length; i++) {
+        const code = value.charCodeAt(i);
+        if (code <= 31 || code === 127) {
+          return true;
+        }
+      }
+      return false;
+    };
+
+    if (
+      exclude !== undefined &&
+      (!Array.isArray(exclude) ||
+        exclude.some(
+          (pattern) => typeof pattern !== 'string' || hasControlChars(pattern)
+        ))
+    ) {
+      throw new InvalidBackupConfigError({
+        message:
+          'BackupOptions.exclude must be an array of strings without control characters',
+        code: ErrorCode.INVALID_BACKUP_CONFIG,
+        httpStatus: 400,
+        context: {
+          reason:
+            'exclude must be an array of strings without control characters'
+        },
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    const effectiveExclude = [
+      ...(excludeDefaults ? DEFAULT_BACKUP_EXCLUDE_PATTERNS : []),
+      ...(exclude ?? [])
+    ];
+
     const backupSession = await this.ensureBackupSession();
     const backupId = crypto.randomUUID();
     const archivePath = `/var/backups/${backupId}.sqsh`;
 
-    this.logger.info('Creating backup', { backupId, dir, name });
+    this.logger.info('Creating backup', {
+      backupId,
+      dir,
+      name,
+      excludeCount: effectiveExclude.length
+    });
 
     const createResult = await this.client.backup.createArchive(
       dir,
       archivePath,
-      backupSession
+      backupSession,
+      effectiveExclude.length > 0 ? effectiveExclude : undefined
     );
 
     if (!createResult.success) {
