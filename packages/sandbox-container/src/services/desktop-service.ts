@@ -164,7 +164,7 @@ export class DesktopService {
         x: request.x,
         y: request.y,
         button: request.button ?? 'left',
-        double: (request.clickCount ?? 1) > 1
+        clickCount: request.clickCount ?? 1
       });
       return { success: true };
     } catch (error) {

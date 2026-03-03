@@ -10,7 +10,7 @@ let lib: unknown = null;
 interface DesktopBindings {
   move: (x: number, y: number) => void;
   moveSmooth: (x: number, y: number, low: number, high: number) => void;
-  click: (button: string, double: boolean) => void;
+  click: (button: string, dblClick: number) => void;
   scroll: (x: number, y: number) => void;
   typeStr: (text: string, pid: number) => void;
   keyTap: (key: string, modifiers: string) => string;
@@ -68,7 +68,7 @@ function loadLibrary(): boolean {
       ]) as DesktopBindings['moveSmooth'],
       click: koffiLib.func('Click', 'void', [
         'str',
-        'bool'
+        'int'
       ]) as DesktopBindings['click'],
       scroll: koffiLib.func('Scroll', 'void', [
         'int',
@@ -149,11 +149,21 @@ self.onmessage = (event: MessageEvent) => {
         result = { success: true, path: args.path };
         break;
       }
-      case 'click':
+      case 'click': {
+        const btn = args.button || 'left';
+        const count = args.clickCount ?? 1;
         bindings.move!(args.x, args.y);
-        bindings.click!(args.button || 'left', args.double || false);
+        if (count <= 2) {
+          bindings.click!(btn, count === 2 ? 1 : 0);
+        } else {
+          // Triple-click and above: rapid single clicks (OS detects multi-click from timing)
+          for (let i = 0; i < count; i++) {
+            bindings.click!(btn, 0);
+          }
+        }
         result = { success: true };
         break;
+      }
       case 'move':
         bindings.move!(args.x, args.y);
         result = { success: true };
