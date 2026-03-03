@@ -23,6 +23,7 @@ jobs:
   build:
     permissions:
       contents: read
+      packages: write
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 15
     outputs:
@@ -70,9 +71,9 @@ jobs:
         if: ${{ !inputs.skip_docker }}
         uses: docker/setup-buildx-action@v3
 
-      - name: Login to CF registry (for cache)
+      - name: Login to GHCR (for build cache)
         if: ${{ !inputs.skip_docker }}
-        run: echo "${{ secrets.CLOUDFLARE_API_TOKEN }}" | docker login registry.cloudflare.com -u unused --password-stdin
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
       - name: Read Bun version
         id: bun-version
@@ -84,7 +85,7 @@ jobs:
         env:
           TAG: ${{ inputs.image_tag }}
           SANDBOX_VERSION: ${{ steps.version.outputs.version }}
-          CF_REGISTRY: registry.cloudflare.com/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CACHE_REPO: ghcr.io/${{ github.repository }}/cache
           BUN_VERSION: ${{ steps.bun-version.outputs.version }}
         with:
           files: docker-bake.hcl
