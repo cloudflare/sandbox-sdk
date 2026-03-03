@@ -42,17 +42,18 @@ function loadLibrary(): boolean {
     const HeapStr = koffi.disposable('HeapStr', 'str');
 
     const koffiLib = lib as {
-      func: (name: string, ret: unknown, args: string[]) => Function;
+      func: (name: string, ret: unknown, args: unknown[]) => Function;
     };
 
-    // Raw FFI bindings — out-pointer functions need wrapper logic
+    // Raw FFI bindings — out-pointer functions need wrapper logic.
+    // koffi.out() is required so koffi copies values back from C to JS.
     const rawGetScreenSize = koffiLib.func('GetScreenSize', 'void', [
-      'int*',
-      'int*'
+      koffi.out(koffi.pointer('int')),
+      koffi.out(koffi.pointer('int'))
     ]);
     const rawGetMousePos = koffiLib.func('GetMousePos', 'void', [
-      'int*',
-      'int*'
+      koffi.out(koffi.pointer('int')),
+      koffi.out(koffi.pointer('int'))
     ]);
 
     bindings = {

@@ -25,6 +25,9 @@ type CursorPositionResult = { success: boolean; x: number; y: number };
 type StreamUrlResult = { url: string };
 type ErrorResult = { error: string };
 
+const skipPortExposureTests =
+  process.env.TEST_WORKER_URL?.endsWith('.workers.dev') ?? false;
+
 describe('Desktop Environment', () => {
   let workerUrl: string;
   let headers: Record<string, string>;
@@ -159,19 +162,23 @@ describe('Desktop Environment', () => {
     expect(data.y).toBeGreaterThanOrEqual(0);
   }, 15000);
 
-  test('should generate desktop stream URL', async () => {
-    const response = await fetch(`${workerUrl}/api/desktop/stream-url`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({})
-    });
+  test.skipIf(skipPortExposureTests)(
+    'should generate desktop stream URL',
+    async () => {
+      const response = await fetch(`${workerUrl}/api/desktop/stream-url`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({})
+      });
 
-    expect(response.status).toBe(200);
-    const data = (await response.json()) as StreamUrlResult;
-    expect(data.url).toBeDefined();
-    expect(typeof data.url).toBe('string');
-    expect(data.url).toContain('6080');
-  }, 15000);
+      expect(response.status).toBe(200);
+      const data = (await response.json()) as StreamUrlResult;
+      expect(data.url).toBeDefined();
+      expect(typeof data.url).toBe('string');
+      expect(data.url).toContain('6080');
+    },
+    15000
+  );
 
   test('should move mouse to specified coordinates', async () => {
     const response = await fetch(`${workerUrl}/api/desktop/mouse/move`, {
