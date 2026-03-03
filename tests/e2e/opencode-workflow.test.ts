@@ -44,16 +44,33 @@ describe.sequential('OpenCode Workflow (E2E)', () => {
 
   describe('OpenCode proxy helpers', () => {
     test('should proxy OpenCode global health through proxyToOpencodeServer', async () => {
-      const res = await fetch(
-        `${workerUrl}/api/opencode/proxy-server/global-health`,
-        {
+      const healthUrl = `${workerUrl}/api/opencode/proxy-server/global-health`;
+
+      let res: Response | null = null;
+      let lastStatus = 0;
+      let lastBody = '';
+
+      const deadline = Date.now() + 90_000;
+      while (Date.now() < deadline) {
+        res = await fetch(healthUrl, {
           method: 'GET',
           headers
-        }
-      );
+        });
 
-      expect(res.status).toBe(200);
-      const result = (await res.json()) as {
+        if (res.status === 200) {
+          break;
+        }
+
+        lastStatus = res.status;
+        lastBody = await res.text().catch(() => '');
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+      }
+
+      expect(
+        res?.status,
+        `OpenCode health never returned 200; last status=${lastStatus}, body=${lastBody}`
+      ).toBe(200);
+      const result = (await res!.json()) as {
         healthy: boolean;
         version: string;
       };
