@@ -229,6 +229,10 @@ export class ProcessPoolManager {
       );
     }
 
+    this.logger.debug('Resolved JavaScript executor path', {
+      path: resolved
+    });
+
     this.javascriptExecutorPath = resolved;
     return resolved;
   }
@@ -565,9 +569,12 @@ export class ProcessPoolManager {
 
       childProcess.once('error', (err) => {
         clearTimeout(timeout);
+        const nodeError = err as NodeJS.ErrnoException;
         this.logger.debug('Interpreter spawn error', {
           language,
-          error: err.message
+          errorMessage: err.message,
+          errorCode: nodeError.code,
+          errorName: err.name
         });
         reject(err);
       });
@@ -797,7 +804,7 @@ export class ProcessPoolManager {
         this.logger.debug('Failed to pre-warm process', {
           executor,
           processIndex: i,
-          error: error instanceof Error ? error.message : String(error)
+          errorMessage: error instanceof Error ? error.message : String(error)
         });
 
         if (isMissingJavaScriptExecutorError(error)) {

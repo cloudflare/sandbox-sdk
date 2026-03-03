@@ -15,10 +15,22 @@
 
 import { type ChildProcess, spawn } from 'node:child_process';
 import { constants } from 'node:os';
+import { createInterface } from 'node:readline';
 import { createLogger } from '@repo/shared';
 import { registerShutdownHandlers, startServer } from './server';
 
 const logger = createLogger({ component: 'container' });
+const ANSI_ESCAPE_REGEX =
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: ANSI escape codes are intentional
+  /\u001b\[[0-9;]*[A-Za-z]/g;
+
+function normalizeLogLine(line: string): string | null {
+  const cleaned = line.replace(ANSI_ESCAPE_REGEX, '').trim();
+  if (!cleaned) {
+    return null;
+  }
+  return cleaned.slice(0, 4000);
+}
 
 async function main(): Promise<void> {
   const userCmd = process.argv.slice(2);
@@ -59,11 +71,40 @@ async function main(): Promise<void> {
     args: userCmd.slice(1)
   });
 
+  const useRawChildStdio = process.env.SANDBOX_RAW_CHILD_STDIO === '1';
+
   child = spawn(userCmd[0], userCmd.slice(1), {
-    stdio: 'inherit',
+    stdio: useRawChildStdio ? 'inherit' : 'pipe',
     env: process.env,
     shell: false
   });
+
+  if (!useRawChildStdio) {
+    const stdout = child.stdout;
+    const stderr = child.stderr;
+
+    if (stdout) {
+      const stdoutReader = createInterface({ input: stdout });
+      stdoutReader.on('line', (line) => {
+        const message = normalizeLogLine(line);
+        if (!message) {
+          return;
+        }
+        logger.info('User command stdout', { message });
+      });
+    }
+
+    if (stderr) {
+      const stderrReader = createInterface({ input: stderr });
+      stderrReader.on('line', (line) => {
+        const message = normalizeLogLine(line);
+        if (!message) {
+          return;
+        }
+        logger.warn('User command stderr', { message });
+      });
+    }
+  }
 
   child.on('error', (err) => {
     logger.error('Failed to spawn user command', err, { command: userCmd[0] });
