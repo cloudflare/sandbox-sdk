@@ -107,14 +107,6 @@ export class SessionManager {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(
-        'Failed to create session',
-        error instanceof Error ? error : undefined,
-        {
-          sessionId,
-          originalError: errorMessage
-        }
-      );
 
       return {
         success: false,
@@ -174,15 +166,6 @@ export class SessionManager {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
       const errorStack = error instanceof Error ? error.stack : undefined;
-
-      this.logger.error(
-        'Failed to create session',
-        error instanceof Error ? error : undefined,
-        {
-          sessionId: options.id,
-          originalError: errorMessage
-        }
-      );
 
       return {
         success: false,
@@ -264,14 +247,6 @@ export class SessionManager {
       } catch (error) {
         const errorMessage =
           error instanceof Error ? error.message : 'Unknown error';
-        this.logger.error(
-          'Failed to execute command',
-          error instanceof Error ? error : undefined,
-          {
-            sessionId,
-            command
-          }
-        );
 
         return {
           success: false,
@@ -364,11 +339,6 @@ export class SessionManager {
 
         const errorMessage =
           error instanceof Error ? error.message : 'Unknown error';
-        this.logger.error(
-          'withSession callback failed',
-          error instanceof Error ? error : undefined,
-          { sessionId }
-        );
 
         return serviceError<T>({
           message: `withSession callback failed for session '${sessionId}': ${errorMessage}`,
@@ -469,14 +439,6 @@ export class SessionManager {
       } catch (error) {
         const errorMessage =
           error instanceof Error ? error.message : 'Unknown error';
-        this.logger.error(
-          'Failed to execute streaming command',
-          error instanceof Error ? error : undefined,
-          {
-            sessionId,
-            command
-          }
-        );
 
         return {
           success: false,
@@ -573,14 +535,6 @@ export class SessionManager {
       } catch (error) {
         const errorMessage =
           error instanceof Error ? error.message : 'Unknown error';
-        this.logger.error(
-          'Failed to start streaming command',
-          error instanceof Error ? error : undefined,
-          {
-            sessionId,
-            command
-          }
-        );
 
         return {
           success: false as const,
@@ -613,23 +567,8 @@ export class SessionManager {
 
     // Continue streaming remaining events WITHOUT lock
     const continueStreaming = (async () => {
-      try {
-        for await (const event of startupResult.generator!) {
-          await onEvent(event);
-        }
-      } catch (error) {
-        const errorMessage =
-          error instanceof Error ? error.message : 'Unknown error';
-        this.logger.error(
-          'Error during background streaming',
-          error instanceof Error ? error : undefined,
-          {
-            sessionId,
-            commandId,
-            originalError: errorMessage
-          }
-        );
-        throw error;
+      for await (const event of startupResult.generator!) {
+        await onEvent(event);
       }
     })();
 
@@ -672,11 +611,6 @@ export class SessionManager {
 
         const errorMessage =
           error instanceof Error ? error.message : 'Unknown error';
-        this.logger.error(
-          'Failed to create PTY',
-          error instanceof Error ? error : undefined,
-          { sessionId }
-        );
 
         return {
           success: false,
@@ -729,14 +663,6 @@ export class SessionManager {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(
-        'Failed to kill command',
-        error instanceof Error ? error : undefined,
-        {
-          sessionId,
-          commandId
-        }
-      );
 
       return {
         success: false,
@@ -845,13 +771,6 @@ export class SessionManager {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(
-        'Failed to delete session',
-        error instanceof Error ? error : undefined,
-        {
-          sessionId
-        }
-      );
 
       return {
         success: false,
@@ -881,10 +800,6 @@ export class SessionManager {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(
-        'Failed to list sessions',
-        error instanceof Error ? error : undefined
-      );
 
       return {
         success: false,
@@ -906,14 +821,8 @@ export class SessionManager {
     for (const [sessionId, session] of this.sessions.entries()) {
       try {
         await session.destroy();
-      } catch (error) {
-        this.logger.error(
-          'Failed to destroy session',
-          error instanceof Error ? error : undefined,
-          {
-            sessionId
-          }
-        );
+      } catch {
+        // Session cleanup errors during shutdown are non-fatal
       }
     }
 

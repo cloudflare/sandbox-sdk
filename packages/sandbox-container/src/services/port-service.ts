@@ -1,6 +1,6 @@
 // Port Management Service
 
-import type { Logger, PortCheckRequest, PortCheckResponse } from '@repo/shared';
+import type { PortCheckRequest, PortCheckResponse } from '@repo/shared';
 import type {
   InvalidPortContext,
   PortAlreadyExposedContext,
@@ -77,8 +77,7 @@ export class PortService {
 
   constructor(
     private store: PortStore,
-    private security: SecurityService,
-    private logger: Logger
+    private security: SecurityService
   ) {
     this.manager = new PortManager();
     // Start cleanup process every hour
@@ -137,12 +136,6 @@ export class PortService {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(
-        'Failed to expose port',
-        error instanceof Error ? error : undefined,
-        { port, name }
-      );
-
       return {
         success: false,
         error: {
@@ -185,12 +178,6 @@ export class PortService {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(
-        'Failed to unexpose port',
-        error instanceof Error ? error : undefined,
-        { port }
-      );
-
       return {
         success: false,
         error: {
@@ -217,11 +204,6 @@ export class PortService {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(
-        'Failed to list exposed ports',
-        error instanceof Error ? error : undefined
-      );
-
       return {
         success: false,
         error: {
@@ -260,12 +242,6 @@ export class PortService {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(
-        'Failed to get port info',
-        error instanceof Error ? error : undefined,
-        { port }
-      );
-
       return {
         success: false,
         error: {
@@ -319,12 +295,6 @@ export class PortService {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(
-        'Proxy request failed',
-        error instanceof Error ? error : undefined,
-        { port }
-      );
-
       const errorResponse: ProxyErrorResponse = {
         error: 'Proxy error',
         message: `Failed to proxy request to port ${port}: ${errorMessage}`,
@@ -363,12 +333,6 @@ export class PortService {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(
-        'Failed to mark port as inactive',
-        error instanceof Error ? error : undefined,
-        { port }
-      );
-
       return {
         success: false,
         error: {
@@ -395,11 +359,6 @@ export class PortService {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(
-        'Failed to cleanup ports',
-        error instanceof Error ? error : undefined
-      );
-
       return {
         success: false,
         error: {

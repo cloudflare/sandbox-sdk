@@ -384,9 +384,9 @@ export class Session {
     } finally {
       event.duration = event.duration ?? Date.now() - startTime;
       if (event.outcome === 'error') {
-        this.logger.error('command.exec', undefined, event);
+        this.logger.error('Command execution failed', undefined, event);
       } else {
-        this.logger.info('command.exec', event);
+        this.logger.info('Command executed', event);
       }
     }
   }
@@ -449,10 +449,14 @@ export class Session {
       }
 
       // Wait for PID via FIFO (blocking read - guarantees synchronization)
-      const pid = await this.waitForPidViaPipe(pidPipe, pidFile);
+      const pidResult = await this.waitForPidViaPipe(pidPipe, pidFile);
+      const pid = pidResult.pid;
 
       if (pid === undefined) {
         event.pidTimeout = true;
+      }
+      if (pidResult.pidFallback) {
+        event.pidFallback = pidResult.pidFallback;
       }
 
       yield {
@@ -623,9 +627,9 @@ export class Session {
     } finally {
       event.duration = event.duration ?? Date.now() - startTime;
       if (event.outcome === 'error') {
-        this.logger.error('command.execStream', undefined, event);
+        this.logger.error('Streaming command failed', undefined, event);
       } else {
-        this.logger.info('command.execStream', event);
+        this.logger.info('Streaming command executed', event);
       }
     }
   }
@@ -1290,7 +1294,7 @@ export class Session {
     pidPipe: string,
     pidFile: string,
     timeoutMs: number = 5000
-  ): Promise<number | undefined> {
+  ): Promise<{ pid?: number; pidFallback?: string }> {
     const TIMEOUT_SENTINEL = Symbol('timeout');
 
     try {
@@ -1302,39 +1306,16 @@ export class Session {
       ]);
 
       if (typeof result === 'number') {
-        return result;
+        return { pid: result };
       }
 
       if (result === TIMEOUT_SENTINEL) {
         // The timed-out readPidFromPipe() is still blocked on open() - unblock it
         // to prevent leaking a file descriptor
         await this.unblockPidPipe(pidPipe);
-
-        this.logger.warn(
-          'PID pipe read timed out, falling back to file polling',
-          {
-            pidPipe,
-            pidFile,
-            timeoutMs
-          }
-        );
-      } else {
-        // readPidFromPipe returned undefined (empty or invalid content from shell)
-        this.logger.warn(
-          'PID pipe returned invalid content, falling back to file polling',
-          {
-            pidPipe,
-            pidFile
-          }
-        );
       }
-    } catch (error) {
+    } catch {
       // FIFO read failed, fall back to file polling
-      this.logger.warn('PID pipe read failed, falling back to file polling', {
-        pidPipe,
-        pidFile,
-        error: error instanceof Error ? error.message : String(error)
-      });
     } finally {
       // Clean up the pipe
       try {
@@ -1345,7 +1326,8 @@ export class Session {
     }
 
     // Fallback: poll the PID file (less reliable but works)
-    return this.waitForPidFile(pidFile, 1000);
+    const pid = await this.waitForPidFile(pidFile, 1000);
+    return { pid, pidFallback: 'file_polling' };
   }
 
   /**

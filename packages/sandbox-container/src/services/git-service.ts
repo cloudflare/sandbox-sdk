@@ -1,6 +1,5 @@
 // Git Operations Service
 
-import type { Logger } from '@repo/shared';
 import { sanitizeGitData, shellEscape } from '@repo/shared';
 import type {
   GitErrorContext,
@@ -21,7 +20,6 @@ export class GitService {
 
   constructor(
     private security: SecurityService,
-    private logger: Logger,
     private sessionManager: SessionManager
   ) {
     this.manager = new GitManager();
@@ -113,13 +111,6 @@ export class GitService {
           const result = await exec(command);
 
           if (result.exitCode !== 0) {
-            this.logger.error('Git clone failed', undefined, {
-              repoUrl,
-              targetDirectory,
-              exitCode: result.exitCode,
-              stderr: result.stderr
-            });
-
             const errorCode = this.manager.determineErrorCode(
               'clone',
               result.stderr || 'Unknown error',
@@ -171,12 +162,6 @@ export class GitService {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
-
-      this.logger.error(
-        'Failed to clone repository',
-        error instanceof Error ? error : undefined,
-        { repoUrl, options }
-      );
 
       return this.returnError({
         message: `Failed to clone repository '${repoUrl}': ${errorMessage}`,
@@ -250,13 +235,6 @@ export class GitService {
       const result = execResult.data;
 
       if (result.exitCode !== 0) {
-        this.logger.error('Git checkout failed', undefined, {
-          repoPath,
-          branch,
-          exitCode: result.exitCode,
-          stderr: result.stderr
-        });
-
         const errorCode = this.manager.determineErrorCode(
           'checkout',
           result.stderr || 'Unknown error',
@@ -282,12 +260,6 @@ export class GitService {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
-
-      this.logger.error(
-        'Failed to checkout branch',
-        error instanceof Error ? error : undefined,
-        { repoPath, branch }
-      );
 
       return this.returnError({
         message: `Failed to checkout branch '${branch}' in '${repoPath}': ${errorMessage}`,
@@ -365,12 +337,6 @@ export class GitService {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
 
-      this.logger.error(
-        'Failed to get current branch',
-        error instanceof Error ? error : undefined,
-        { repoPath }
-      );
-
       return this.returnError({
         message: `Failed to get current branch in '${repoPath}': ${errorMessage}`,
         code: ErrorCode.GIT_OPERATION_FAILED,
@@ -446,12 +412,6 @@ export class GitService {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
-
-      this.logger.error(
-        'Failed to list branches',
-        error instanceof Error ? error : undefined,
-        { repoPath }
-      );
 
       return this.returnError({
         message: `Failed to list branches in '${repoPath}': ${errorMessage}`,

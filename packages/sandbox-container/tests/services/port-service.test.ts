@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'bun:test';
-import type { Logger } from '@repo/shared';
 import type {
   PortInfo,
   PortNotFoundResponse,
@@ -25,15 +24,6 @@ const mockSecurityService: SecurityService = {
   validatePort: vi.fn()
 };
 
-const mockLogger = {
-  info: vi.fn(),
-  error: vi.fn(),
-  warn: vi.fn(),
-  debug: vi.fn(),
-  child: vi.fn()
-} as Logger;
-mockLogger.child = vi.fn(() => mockLogger);
-
 // Mock fetch for proxy testing
 const mockFetch = vi.fn();
 let originalFetch: typeof fetch;
@@ -55,11 +45,7 @@ describe('PortService', () => {
       errors: []
     });
 
-    portService = new PortService(
-      mockPortStore,
-      mockSecurityService,
-      mockLogger
-    );
+    portService = new PortService(mockPortStore, mockSecurityService);
   });
 
   afterEach(() => {

@@ -197,12 +197,6 @@ export class FileService implements FileSystemOperations {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(
-        'Failed to read file',
-        error instanceof Error ? error : undefined,
-        { path }
-      );
-
       return {
         success: false,
         error: {
@@ -328,12 +322,6 @@ export class FileService implements FileSystemOperations {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(
-        'Failed to write file',
-        error instanceof Error ? error : undefined,
-        { path }
-      );
-
       return {
         success: false,
         error: {
@@ -427,12 +415,6 @@ export class FileService implements FileSystemOperations {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(
-        'Failed to delete file',
-        error instanceof Error ? error : undefined,
-        { path }
-      );
-
       return {
         success: false,
         error: {
@@ -528,12 +510,6 @@ export class FileService implements FileSystemOperations {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(
-        'Failed to rename file',
-        error instanceof Error ? error : undefined,
-        { oldPath, newPath }
-      );
-
       return {
         success: false,
         error: {
@@ -630,12 +606,6 @@ export class FileService implements FileSystemOperations {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(
-        'Failed to move file',
-        error instanceof Error ? error : undefined,
-        { sourcePath, destinationPath }
-      );
-
       return {
         success: false,
         error: {
@@ -723,12 +693,6 @@ export class FileService implements FileSystemOperations {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(
-        'Failed to create directory',
-        error instanceof Error ? error : undefined,
-        { path }
-      );
-
       return {
         success: false,
         error: {
@@ -912,12 +876,6 @@ export class FileService implements FileSystemOperations {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(
-        'Failed to get file stats',
-        error instanceof Error ? error : undefined,
-        { path }
-      );
-
       return {
         success: false,
         error: {
@@ -1012,12 +970,6 @@ export class FileService implements FileSystemOperations {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(
-        'Failed to get file metadata',
-        error instanceof Error ? error : undefined,
-        { path }
-      );
-
       return {
         success: false,
         error: {
@@ -1289,12 +1241,6 @@ export class FileService implements FileSystemOperations {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(
-        'Failed to list files',
-        error instanceof Error ? error : undefined,
-        { path }
-      );
-
       return {
         success: false,
         error: {

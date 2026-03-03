@@ -81,11 +81,6 @@ export class ProcessService {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(
-        'Failed to execute command',
-        error instanceof Error ? error : undefined,
-        { command, options }
-      );
 
       return {
         success: false,
@@ -221,12 +216,7 @@ export class ProcessService {
       // Store streaming promise so getLogs() can await it for completed processes
       // This ensures all output is captured before returning logs
       processRecord.streamingComplete =
-        streamResult.data.continueStreaming.catch((error) => {
-          this.logger.error('Failed to execute streaming command', error, {
-            processId: processRecord.id,
-            command
-          });
-        });
+        streamResult.data.continueStreaming.catch(() => {});
 
       return {
         success: true,
@@ -235,11 +225,6 @@ export class ProcessService {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(
-        'Failed to start streaming command',
-        error instanceof Error ? error : undefined,
-        { command, options }
-      );
 
       return {
         success: false,
@@ -312,11 +297,6 @@ export class ProcessService {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(
-        'Failed to get process',
-        error instanceof Error ? error : undefined,
-        { processId: id }
-      );
 
       return {
         success: false,
@@ -373,11 +353,6 @@ export class ProcessService {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(
-        'Failed to kill process',
-        error instanceof Error ? error : undefined,
-        { processId: id }
-      );
 
       return {
         success: false,
@@ -406,11 +381,6 @@ export class ProcessService {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(
-        'Failed to list processes',
-        error instanceof Error ? error : undefined,
-        { filters }
-      );
 
       return {
         success: false,
@@ -445,10 +415,6 @@ export class ProcessService {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(
-        'Failed to kill all processes',
-        error instanceof Error ? error : undefined
-      );
 
       return {
         success: false,
@@ -545,11 +511,6 @@ export class ProcessService {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(
-        'Failed to stream process logs',
-        error instanceof Error ? error : undefined,
-        { processId: id }
-      );
 
       return {
         success: false,
