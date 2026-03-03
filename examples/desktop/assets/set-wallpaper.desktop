@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Set Wallpaper
+Exec=/usr/local/bin/set-wallpaper.sh
+Hidden=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true

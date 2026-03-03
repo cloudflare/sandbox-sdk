@@ -39,7 +39,7 @@ import {
   TraceContext
 } from '@repo/shared';
 import { AwsClient } from 'aws4fetch';
-import { type ExecuteResponse, SandboxClient } from './clients';
+import { type Desktop, type ExecuteResponse, SandboxClient } from './clients';
 import type { ErrorResponse } from './errors';
 import {
   BackupCreateError,
@@ -129,7 +129,15 @@ export function getSandbox<T extends Sandbox<any>>(
     },
     terminal: (request: Request, opts?: PtyOptions) =>
       proxyTerminal(stub, defaultSessionId, request, opts),
-    wsConnect: connect(stub)
+    wsConnect: connect(stub),
+    // Client-side proxy for desktop operations. Each method call is dispatched
+    // to the DO's callDesktop() method, avoiding RPC pipelining through getters.
+    desktop: new Proxy({} as Desktop, {
+      get(_, method) {
+        if (typeof method !== 'string' || method === 'then') return undefined;
+        return (...args: unknown[]) => stub.callDesktop(method, args);
+      }
+    })
   };
 
   // Proxy intercepts enhanced methods, passes all others to stub directly.
@@ -249,6 +257,63 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * Can be set via options, env vars, or defaults
    */
   private containerTimeouts = { ...this.DEFAULT_CONTAINER_TIMEOUTS };
+
+  /**
+   * Desktop environment operations.
+   * Within the DO, this getter provides direct access to DesktopClient.
+   * Over RPC, the getSandbox() proxy intercepts this property and routes
+   * calls through callDesktop() instead.
+   */
+  get desktop(): Desktop {
+    return this.client.desktop as unknown as Desktop;
+  }
+
+  /**
+   * Allowed desktop methods — derived from the Desktop interface.
+   * Restricts callDesktop() to a known set of operations.
+   */
+  private static readonly DESKTOP_METHODS = new Set([
+    'start',
+    'stop',
+    'status',
+    'screenshot',
+    'screenshotRegion',
+    'click',
+    'doubleClick',
+    'tripleClick',
+    'rightClick',
+    'middleClick',
+    'mouseDown',
+    'mouseUp',
+    'moveMouse',
+    'drag',
+    'scroll',
+    'getCursorPosition',
+    'type',
+    'press',
+    'keyDown',
+    'keyUp',
+    'getScreenSize',
+    'getProcessStatus'
+  ]);
+
+  /**
+   * Dispatch method for desktop operations.
+   * Called by the client-side proxy created in getSandbox() to provide
+   * the `sandbox.desktop.status()` API without relying on RPC pipelining
+   * through property getters.
+   */
+  async callDesktop(method: string, args: unknown[]): Promise<unknown> {
+    if (!Sandbox.DESKTOP_METHODS.has(method)) {
+      throw new Error(`Unknown desktop method: ${method}`);
+    }
+    const client = this.client.desktop;
+    const fn = client[method as keyof typeof client];
+    if (typeof fn !== 'function') {
+      throw new Error(`Unknown desktop method: ${method}`);
+    }
+    return (fn as (...a: unknown[]) => unknown).apply(client, args);
+  }
 
   /**
    * Create a SandboxClient with current transport settings
@@ -823,6 +888,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    */
   override async destroy(): Promise<void> {
     this.logger.info('Destroying sandbox container');
+
+    // Best-effort desktop stop — don't check status first as containerFetch
+    // can auto-start the container during teardown
+    try {
+      await this.client.desktop.stop();
+    } catch {
+      // Desktop may not be running or available — continue cleanup
+    }
 
     // Disconnect WebSocket transport if active
     this.client.disconnect();
@@ -2222,13 +2295,83 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   /**
+   * Get the noVNC preview URL for browser-based desktop viewing.
+   * Confirms desktop is active, then uses exposePort() to generate
+   * a token-authenticated preview URL for the noVNC port (6080).
+   *
+   * @param hostname - The custom domain hostname for preview URLs
+   *   (e.g., 'preview.example.com'). Required because preview URLs
+   *   use subdomain patterns that .workers.dev doesn't support.
+   * @param options - Optional settings
+   * @param options.token - Reuse an existing token instead of generating a new one
+   * @returns The authenticated noVNC preview URL
+   */
+  async getDesktopStreamUrl(
+    hostname: string,
+    options?: { token?: string }
+  ): Promise<{ url: string }> {
+    // Confirm desktop is running before generating a URL
+    const status = await this.client.desktop.status();
+    if (status.status === 'inactive') {
+      throw new Error(
+        'Desktop is not running. Call sandbox.desktop.start() first.'
+      );
+    }
+
+    let url: string;
+
+    // Try exposing port 6080; if already exposed, construct the URL from stored token
+    try {
+      const result = await this.exposePort(6080, {
+        hostname,
+        token: options?.token
+      });
+      url = result.url;
+    } catch {
+      // Port may already be exposed — look up the existing token from DO storage
+      const tokens =
+        (await this.ctx.storage.get<Record<string, string>>('portTokens')) ||
+        {};
+      const existingToken = tokens['6080'];
+      if (existingToken && this.sandboxName) {
+        url = this.constructPreviewUrl(
+          6080,
+          this.sandboxName,
+          hostname,
+          existingToken
+        );
+      } else {
+        throw new Error(
+          'Failed to get desktop stream URL: port 6080 could not be exposed and no existing token found.'
+        );
+      }
+    }
+
+    // Wait for the platform to detect port 6080 using the Containers runtime's
+    // built-in port readiness mechanism (getTcpPort polling). This ensures the
+    // preview URL is routable before returning it to the caller.
+    try {
+      await this.waitForPort({
+        portToCheck: 6080,
+        retries: 30,
+        waitInterval: 500
+      });
+    } catch {
+      // Best-effort: if detection times out after ~15s, return the URL anyway.
+      // noVNC's WebSocket auto-connect will retry on the client side.
+    }
+
+    return { url };
+  }
+
+  /**
    * Expose a port and get a preview URL for accessing services running in the sandbox
    *
    * @param port - Port number to expose (1024-65535)
    * @param options - Configuration options
    * @param options.hostname - Your Worker's domain name (required for preview URL construction)
    * @param options.name - Optional friendly name for the port
-   * @param options.token - Optional custom token for the preview URL (1-16 characters: lowercase letters, numbers, underscores)
+   * @param options.token - Optional custom token for the preview URL (1-16 characters: lowercase letters, numbers, hyphens, underscores)
    *                       If not provided, a random 16-character token will be generated automatically
    * @returns Preview URL information including the full URL, port number, and optional name
    *
@@ -2241,9 +2384,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * // With custom token for stable URLs across deployments
    * const { url } = await sandbox.exposePort(8080, {
    *   hostname: 'example.com',
-   *   token: 'my_token_v1'
+   *   token: 'my-token-v1'
    * });
-   * // url: https://8080-sandbox-id-my_token_v1.example.com
+   * // url: https://8080-sandbox-id-my-token-v1.example.com
    */
   async exposePort(
     port: number,
@@ -2926,15 +3069,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       '-X PUT',
       "-H 'Content-Type: application/octet-stream'",
       '--connect-timeout 10',
-      '--max-time 1800',
+      '--max-time 300',
       '--retry 2',
       '--retry-max-time 60',
-      `-T ${shellEscape(archivePath)}`,
+      `--data-binary @${shellEscape(archivePath)}`,
       shellEscape(presignedUrl)
     ].join(' ');
 
     const result = await this.execWithSession(curlCmd, backupSession, {
-      timeout: 1810_000
+      timeout: 310_000
     });
 
     if (result.exitCode !== 0) {
@@ -2951,18 +3094,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     const bucket = this.requireBackupBucket();
     const head = await bucket.head(r2Key);
     if (!head || head.size !== archiveSize) {
-      const actualSize = head?.size ?? 0;
-      // curl succeeded but R2 binding sees nothing — almost certainly a
-      // local-dev mismatch where presigned URLs target real R2 while the
-      // BACKUP_BUCKET binding points to local (miniflare) storage.
-      const localDevHint =
-        result.exitCode === 0 && actualSize === 0
-          ? ' This usually means the BACKUP_BUCKET R2 binding is using local storage ' +
-            'while presigned URLs upload to remote R2. Add `"remote": true` to your ' +
-            'BACKUP_BUCKET R2 binding in wrangler.jsonc to fix this.'
-          : '';
       throw new BackupCreateError({
-        message: `Upload verification failed: expected ${archiveSize} bytes, got ${actualSize}.${localDevHint}`,
+        message: `Upload verification failed: expected ${archiveSize} bytes, got ${head?.size ?? 0}`,
         code: ErrorCode.BACKUP_CREATE_FAILED,
         httpStatus: 500,
         context: { dir, backupId },
@@ -2998,7 +3131,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     const curlCmd = [
       'curl -sSf',
       '--connect-timeout 10',
-      '--max-time 1800',
+      '--max-time 300',
       '--retry 2',
       '--retry-max-time 60',
       `-o ${shellEscape(tmpPath)}`,
@@ -3006,7 +3139,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     ].join(' ');
 
     const result = await this.execWithSession(curlCmd, backupSession, {
-      timeout: 1810_000
+      timeout: 310_000
     });
 
     if (result.exitCode !== 0) {
