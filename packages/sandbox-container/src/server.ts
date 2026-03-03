@@ -189,6 +189,7 @@ export async function startServer(): Promise<ServerInstance> {
       if (!app.container.isInitialized()) return;
 
       try {
+        const desktopService = app.container.get('desktopService');
         const processService = app.container.get('processService');
         const portService = app.container.get('portService');
         const watchService = app.container.get('watchService');
@@ -200,6 +201,7 @@ export async function startServer(): Promise<ServerInstance> {
           });
         }
 
+        await desktopService.destroy();
         await processService.destroy();
         portService.destroy();
 

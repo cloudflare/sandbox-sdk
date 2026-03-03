@@ -14,6 +14,8 @@ import type {
   CommandErrorContext,
   CommandNotFoundContext,
   ContextNotFoundContext,
+  DesktopCoordinateErrorContext,
+  DesktopErrorContext,
   ErrorResponse,
   FileExistsContext,
   FileNotFoundContext,
@@ -768,5 +770,51 @@ export class BackupRestoreError extends SandboxError<BackupRestoreContext> {
   }
   get backupId() {
     return this.context.backupId;
+  }
+}
+
+// ============================================================================
+// Desktop Errors
+// ============================================================================
+
+export class DesktopNotStartedError extends SandboxError<DesktopErrorContext> {
+  constructor(errorResponse: ErrorResponse<DesktopErrorContext>) {
+    super(errorResponse);
+    this.name = 'DesktopNotStartedError';
+  }
+}
+
+export class DesktopStartFailedError extends SandboxError<DesktopErrorContext> {
+  constructor(errorResponse: ErrorResponse<DesktopErrorContext>) {
+    super(errorResponse);
+    this.name = 'DesktopStartFailedError';
+  }
+}
+
+export class DesktopUnavailableError extends SandboxError<DesktopErrorContext> {
+  constructor(errorResponse: ErrorResponse<DesktopErrorContext>) {
+    super(errorResponse);
+    this.name = 'DesktopUnavailableError';
+  }
+}
+
+export class DesktopProcessCrashedError extends SandboxError<DesktopErrorContext> {
+  constructor(errorResponse: ErrorResponse<DesktopErrorContext>) {
+    super(errorResponse);
+    this.name = 'DesktopProcessCrashedError';
+  }
+}
+
+export class DesktopInvalidOptionsError extends SandboxError<DesktopErrorContext> {
+  constructor(errorResponse: ErrorResponse<DesktopErrorContext>) {
+    super(errorResponse);
+    this.name = 'DesktopInvalidOptionsError';
+  }
+}
+
+export class DesktopInvalidCoordinatesError extends SandboxError<DesktopCoordinateErrorContext> {
+  constructor(errorResponse: ErrorResponse<DesktopCoordinateErrorContext>) {
+    super(errorResponse);
+    this.name = 'DesktopInvalidCoordinatesError';
   }
 }

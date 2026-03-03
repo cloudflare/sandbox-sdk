@@ -41,6 +41,14 @@ export const Operation = {
   BACKUP_RESTORE: 'backup.restore',
   BACKUP_UNMOUNT: 'backup.unmount',
 
+  // Desktop Operations
+  DESKTOP_START: 'desktop.start',
+  DESKTOP_STOP: 'desktop.stop',
+  DESKTOP_SCREENSHOT: 'desktop.screenshot',
+  DESKTOP_MOUSE: 'desktop.mouse',
+  DESKTOP_KEYBOARD: 'desktop.keyboard',
+  DESKTOP_STATUS: 'desktop.status',
+
   // Code Interpreter
   CODE_EXECUTE: 'code.execute',
   CODE_CONTEXT_CREATE: 'code.context.create',

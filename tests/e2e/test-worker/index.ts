@@ -41,6 +41,7 @@ export { Sandbox as SandboxPython };
 export { Sandbox as SandboxOpencode };
 export { Sandbox as SandboxStandalone };
 export { Sandbox as SandboxMusl };
+export { Sandbox as SandboxDesktop };
 
 interface Env {
   Sandbox: DurableObjectNamespace<Sandbox>;
@@ -48,6 +49,7 @@ interface Env {
   SandboxOpencode: DurableObjectNamespace<Sandbox>;
   SandboxStandalone: DurableObjectNamespace<Sandbox>;
   SandboxMusl: DurableObjectNamespace<Sandbox>;
+  SandboxDesktop: DurableObjectNamespace<Sandbox>;
   TEST_BUCKET: R2Bucket;
   BACKUP_BUCKET: R2Bucket;
   // R2 credentials for bucket mounting tests
@@ -149,7 +151,13 @@ const ERROR_NAME_MAP: Record<string, { status: number; code: string }> = {
   // Git errors (generic)
   GitError: { status: 500, code: 'GIT_OPERATION_FAILED' },
   // Validation errors
-  ValidationFailedError: { status: 400, code: 'VALIDATION_FAILED' }
+  ValidationFailedError: { status: 400, code: 'VALIDATION_FAILED' },
+  DesktopNotStartedError: { status: 400, code: 'DESKTOP_NOT_STARTED' },
+  DesktopAlreadyRunningError: { status: 409, code: 'DESKTOP_ALREADY_RUNNING' },
+  DesktopStartError: { status: 500, code: 'DESKTOP_START_FAILED' },
+  DesktopInputError: { status: 400, code: 'DESKTOP_INPUT_FAILED' },
+  DesktopScreenshotError: { status: 500, code: 'DESKTOP_SCREENSHOT_FAILED' },
+  DesktopProcessError: { status: 500, code: 'DESKTOP_PROCESS_ERROR' }
 };
 
 async function parseBody(request: Request): Promise<any> {
@@ -191,6 +199,8 @@ export default {
       sandboxNamespace = env.SandboxStandalone;
     } else if (sandboxType === 'musl') {
       sandboxNamespace = env.SandboxMusl;
+    } else if (sandboxType === 'desktop') {
+      sandboxNamespace = env.SandboxDesktop;
     } else {
       sandboxNamespace = env.Sandbox;
     }
@@ -1062,6 +1072,114 @@ console.log('Terminal server on port ' + port);
             rows: parseInt(url.searchParams.get('rows') || '24', 10)
           });
         }
+      }
+
+      if (url.pathname === '/api/desktop/start' && request.method === 'POST') {
+        const result = await sandbox.desktop.start(body);
+        return new Response(JSON.stringify(result), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (url.pathname === '/api/desktop/stop' && request.method === 'POST') {
+        const result = await sandbox.desktop.stop();
+        return new Response(JSON.stringify(result), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (url.pathname === '/api/desktop/status' && request.method === 'GET') {
+        const result = await sandbox.desktop.status();
+        return new Response(JSON.stringify(result), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (
+        url.pathname === '/api/desktop/screenshot' &&
+        request.method === 'POST'
+      ) {
+        const result = await sandbox.desktop.screenshot(body);
+        return new Response(JSON.stringify(result), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (url.pathname === '/api/desktop/click' && request.method === 'POST') {
+        await sandbox.desktop.click(body.x, body.y, body.options);
+        return new Response(JSON.stringify({ success: true }), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (
+        url.pathname === '/api/desktop/mouse/move' &&
+        request.method === 'POST'
+      ) {
+        await sandbox.desktop.moveMouse(body.x, body.y);
+        return new Response(JSON.stringify({ success: true }), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (
+        url.pathname === '/api/desktop/mouse/scroll' &&
+        request.method === 'POST'
+      ) {
+        await sandbox.desktop.scroll(
+          body.x,
+          body.y,
+          body.direction,
+          body.amount
+        );
+        return new Response(JSON.stringify({ success: true }), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (url.pathname === '/api/desktop/type' && request.method === 'POST') {
+        await sandbox.desktop.type(body.text, body.options);
+        return new Response(JSON.stringify({ success: true }), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (url.pathname === '/api/desktop/press' && request.method === 'POST') {
+        await sandbox.desktop.press(body.key);
+        return new Response(JSON.stringify({ success: true }), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (
+        url.pathname === '/api/desktop/screen/size' &&
+        request.method === 'GET'
+      ) {
+        const result = await sandbox.desktop.getScreenSize();
+        return new Response(JSON.stringify(result), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (
+        url.pathname === '/api/desktop/cursor/position' &&
+        request.method === 'GET'
+      ) {
+        const result = await sandbox.desktop.getCursorPosition();
+        return new Response(JSON.stringify(result), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (
+        url.pathname === '/api/desktop/stream-url' &&
+        request.method === 'POST'
+      ) {
+        const hostname = url.hostname + (url.port ? `:${url.port}` : '');
+        const result = await sandbox.getDesktopStreamUrl(hostname, body);
+        return new Response(JSON.stringify(result), {
+          headers: { 'Content-Type': 'application/json' }
+        });
       }
 
       return new Response('Not found', { status: 404 });
