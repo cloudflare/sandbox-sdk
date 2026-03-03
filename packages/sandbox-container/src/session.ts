@@ -847,16 +847,25 @@ export class Session {
     const hasScopedEnv = envSetupBlock.length > 0;
 
     const buildCommandBlock = (exitVar: string, indent: number): string => {
-      const lines: string[] = [];
+      const parts: string[] = [];
       if (hasScopedEnv) {
-        lines.push(envSetupBlock);
+        parts.push(indentLines(envSetupBlock, indent));
       }
-      lines.push(`  ${command}`);
-      lines.push(`  ${exitVar}=$?`);
+      // Indent only the first line of the user command to preserve
+      // multi-line constructs like heredocs, where subsequent lines
+      // (including terminators) must remain at their original positions.
+      const prefix = ' '.repeat(indent + 2);
+      const commandLines = command.split('\n');
+      const indentedCommand =
+        commandLines.length === 1
+          ? `${prefix}${command}`
+          : `${prefix}${commandLines[0]}\n${commandLines.slice(1).join('\n')}`;
+      parts.push(indentedCommand);
+      parts.push(indentLines(`  ${exitVar}=$?`, indent));
       if (envCleanupBlock) {
-        lines.push(envCleanupBlock);
+        parts.push(indentLines(envCleanupBlock, indent));
       }
-      return indentLines(lines.join('\n'), indent);
+      return parts.join('\n');
     };
 
     // Build the FIFO script

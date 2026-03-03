@@ -367,6 +367,39 @@ describe('Session', () => {
       expect(result2.exitCode).toBe(0);
       expect(result2.stdout.trim()).toBe('function works');
     });
+
+    it('should handle heredoc without hanging', async () => {
+      const result = await session.exec("cat << 'EOF'\nhello world\nEOF");
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout.trim()).toBe('hello world');
+    });
+
+    it('should handle heredoc with multiple lines', async () => {
+      const result = await session.exec(
+        "cat << 'EOF'\nline 1\nline 2\nline 3\nEOF"
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout.trim()).toBe('line 1\nline 2\nline 3');
+    });
+
+    it('should handle heredoc with variable expansion', async () => {
+      await session.exec('MY_VAR="expanded"');
+      const result = await session.exec('cat << EOF\n${MY_VAR}\nEOF');
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout.trim()).toBe('expanded');
+    });
+
+    it('should not block subsequent commands after heredoc', async () => {
+      const result1 = await session.exec("cat << 'EOF'\nhello\nEOF");
+      expect(result1.exitCode).toBe(0);
+
+      const result2 = await session.exec('echo "still works"');
+      expect(result2.exitCode).toBe(0);
+      expect(result2.stdout.trim()).toBe('still works');
+    });
   });
 
   describe('execStream', () => {
