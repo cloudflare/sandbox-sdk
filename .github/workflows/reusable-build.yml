@@ -1,0 +1,113 @@
+name: Build
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        type: string
+        default: 'ubuntu-latest'
+      skip_docker:
+        type: boolean
+        default: false
+        description: 'Skip Docker image builds (SDK-only, docs-only changes)'
+      image_tag:
+        type: string
+        required: true
+        description: 'Docker image tag (e.g., pr-42, main)'
+    outputs:
+      version:
+        description: 'Package version from package.json'
+        value: ${{ jobs.build.outputs.version }}
+
+jobs:
+  build:
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 15
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: 'npm'
+
+      - run: npm ci --prefer-offline --no-audit --no-fund
+
+      - name: Setup Turbo remote cache
+        uses: rharkor/caching-for-turbo@v1
+        with:
+          cache-prefix: turbo-
+
+      - name: Build packages
+        run: npx turbo run build
+
+      - name: Get package version
+        id: version
+        run: |
+          VERSION=$(node -p "require('./packages/sandbox/package.json').version")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Upload JS build artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: build-${{ github.sha }}
+          path: |
+            packages/sandbox/dist/
+            packages/shared/dist/
+          retention-days: 1
+
+      # --- Docker build (conditional) ---
+
+      - name: Set up Docker Buildx
+        if: ${{ !inputs.skip_docker }}
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to CF registry (for cache)
+        if: ${{ !inputs.skip_docker }}
+        run: echo "${{ secrets.CLOUDFLARE_API_TOKEN }}" | docker login registry.cloudflare.com -u unused --password-stdin
+
+      - name: Build Docker images (bake)
+        if: ${{ !inputs.skip_docker }}
+        uses: docker/bake-action@v6
+        env:
+          TAG: ${{ inputs.image_tag }}
+          SANDBOX_VERSION: ${{ steps.version.outputs.version }}
+          CF_REGISTRY: registry.cloudflare.com/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        with:
+          files: docker-bake.hcl
+          targets: main
+          load: true
+
+      - name: Push base image to CF registry
+        if: ${{ !inputs.skip_docker }}
+        run: wrangler containers push sandbox:${{ inputs.image_tag }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Build standalone image
+        if: ${{ !inputs.skip_docker }}
+        run: |
+          docker buildx build \
+            --build-arg BASE_IMAGE=registry.cloudflare.com/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/sandbox:${{ inputs.image_tag }} \
+            --load -t sandbox-standalone:${{ inputs.image_tag }} \
+            -f tests/e2e/test-worker/Dockerfile.standalone tests/e2e/test-worker
+
+      - name: Push remaining images to CF registry
+        if: ${{ !inputs.skip_docker }}
+        run: |
+          TAG="${{ inputs.image_tag }}"
+          wrangler containers push sandbox-python:${TAG} &
+          PID1=$!
+          wrangler containers push sandbox-opencode:${TAG} &
+          PID2=$!
+          wrangler containers push sandbox-standalone:${TAG} &
+          PID3=$!
+          wrangler containers push sandbox-musl:${TAG} &
+          PID4=$!
+          wait $PID1 $PID2 $PID3 $PID4
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
