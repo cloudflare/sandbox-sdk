@@ -160,3 +160,9 @@ tests/e2e/test-worker/wrangler.jsonc
 
 sites/**/.astro/
 perf-results/
+
+# Standalone binaries extracted from Docker during CI
+sandbox-linux-x64
+sandbox-linux-x64-musl
+sandbox-linux-x64.sha256
+sandbox-linux-x64-musl.sha256
