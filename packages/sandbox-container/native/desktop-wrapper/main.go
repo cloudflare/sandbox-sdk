@@ -18,30 +18,52 @@ func init() {
 }
 
 //export Move
-func Move(x, y C.int) {
+func Move(x, y C.int) *C.char {
 	robotgo.Move(int(x), int(y))
+	return C.CString("")
 }
 
 //export MoveSmooth
-func MoveSmooth(x, y C.int, low, high C.double) {
-	robotgo.MoveSmooth(int(x), int(y), float64(low), float64(high))
+func MoveSmooth(x, y C.int, low, high C.double) *C.char {
+	ok := robotgo.MoveSmooth(int(x), int(y), float64(low), float64(high))
+	if !ok {
+		return C.CString("smooth move failed to reach target")
+	}
+	return C.CString("")
 }
 
 //export Click
-func Click(button *C.char, dblClick C.int) {
+func Click(button *C.char, count C.int) *C.char {
 	btn := C.GoString(button)
-	isDouble := dblClick != 0
-	robotgo.Click(btn, isDouble)
+	n := int(count)
+	if n <= 0 {
+		n = 1
+	}
+	var err error
+	switch {
+	case n == 1:
+		err = robotgo.Click(btn, false)
+	case n == 2:
+		err = robotgo.Click(btn, true)
+	default:
+		err = robotgo.MultiClick(btn, n)
+	}
+	if err != nil {
+		return C.CString(err.Error())
+	}
+	return C.CString("")
 }
 
 //export Scroll
-func Scroll(x, y C.int) {
+func Scroll(x, y C.int) *C.char {
 	robotgo.Scroll(int(x), int(y))
+	return C.CString("")
 }
 
-//export TypeStr
-func TypeStr(text *C.char, pid C.int) {
-	robotgo.TypeStr(C.GoString(text), int(pid))
+//export TypeText
+func TypeText(text *C.char, pid C.int) *C.char {
+	robotgo.Type(C.GoString(text), int(pid))
+	return C.CString("")
 }
 
 //export KeyTap
@@ -69,11 +91,11 @@ func GetScreenSize(w, h *C.int) {
 	*h = C.int(height)
 }
 
-//export SaveCapture
-func SaveCapture(path *C.char, x, y, w, h C.int) *C.char {
+//export Screenshot
+func Screenshot(path *C.char, x, y, w, h C.int) *C.char {
 	p := C.GoString(path)
-	// Use robotgo.Capture (Go-native, xgb sockets) instead of
-	// robotgo.SaveCapture (C-based, XGetImage) which segfaults in c-shared mode
+	// robotgo.Capture uses pure-Go xgb sockets. robotgo.SaveCapture uses
+	// C-based XGetImage which segfaults in c-shared mode.
 	img, err := robotgo.Capture(int(x), int(y), int(w), int(h))
 	if err != nil {
 		return C.CString(err.Error())
@@ -93,23 +115,39 @@ func GetMousePos(x, y *C.int) {
 }
 
 //export MouseDown
-func MouseDown(button *C.char) {
-	robotgo.Toggle("down", C.GoString(button))
+func MouseDown(button *C.char) *C.char {
+	err := robotgo.MouseDown(C.GoString(button))
+	if err != nil {
+		return C.CString(err.Error())
+	}
+	return C.CString("")
 }
 
 //export MouseUp
-func MouseUp(button *C.char) {
-	robotgo.Toggle("up", C.GoString(button))
+func MouseUp(button *C.char) *C.char {
+	err := robotgo.MouseUp(C.GoString(button))
+	if err != nil {
+		return C.CString(err.Error())
+	}
+	return C.CString("")
 }
 
 //export KeyDown
-func KeyDown(key *C.char) {
-	robotgo.KeyToggle(C.GoString(key), "down")
+func KeyDown(key *C.char) *C.char {
+	err := robotgo.KeyDown(C.GoString(key))
+	if err != nil {
+		return C.CString(err.Error())
+	}
+	return C.CString("")
 }
 
 //export KeyUp
-func KeyUp(key *C.char) {
-	robotgo.KeyToggle(C.GoString(key), "up")
+func KeyUp(key *C.char) *C.char {
+	err := robotgo.KeyUp(C.GoString(key))
+	if err != nil {
+		return C.CString(err.Error())
+	}
+	return C.CString("")
 }
 
 // Required for c-shared build mode

@@ -8,14 +8,14 @@ declare var self: Worker;
 let lib: unknown = null;
 
 interface DesktopBindings {
-  move: (x: number, y: number) => void;
-  moveSmooth: (x: number, y: number, low: number, high: number) => void;
-  click: (button: string, dblClick: number) => void;
-  scroll: (x: number, y: number) => void;
-  typeStr: (text: string, pid: number) => void;
+  move: (x: number, y: number) => string;
+  moveSmooth: (x: number, y: number, low: number, high: number) => string;
+  click: (button: string, count: number) => string;
+  scroll: (x: number, y: number) => string;
+  typeText: (text: string, pid: number) => string;
   keyTap: (key: string, modifiers: string) => string;
   getScreenSize: () => { width: number; height: number };
-  saveCapture: (
+  screenshot: (
     path: string,
     x: number,
     y: number,
@@ -23,13 +23,20 @@ interface DesktopBindings {
     h: number
   ) => string;
   getMousePos: () => { x: number; y: number };
-  mouseDown: (button: string) => void;
-  mouseUp: (button: string) => void;
-  keyDown: (key: string) => void;
-  keyUp: (key: string) => void;
+  mouseDown: (button: string) => string;
+  mouseUp: (button: string) => string;
+  keyDown: (key: string) => string;
+  keyUp: (key: string) => string;
 }
 
 let bindings: Partial<DesktopBindings> = {};
+let loadError: string | null = null;
+
+function checkError(err: string, operation: string): void {
+  if (err) {
+    throw new Error(`${operation} failed: ${err}`);
+  }
+}
 
 function loadLibrary(): boolean {
   try {
@@ -46,62 +53,62 @@ function loadLibrary(): boolean {
     };
 
     // Raw FFI bindings — out-pointer functions need wrapper logic.
-    // koffi.out() is required so koffi copies values back from C to JS.
+    const IntOut = koffi.out(koffi.pointer('int'));
     const rawGetScreenSize = koffiLib.func('GetScreenSize', 'void', [
-      koffi.out(koffi.pointer('int')),
-      koffi.out(koffi.pointer('int'))
+      IntOut,
+      IntOut
     ]);
     const rawGetMousePos = koffiLib.func('GetMousePos', 'void', [
-      koffi.out(koffi.pointer('int')),
-      koffi.out(koffi.pointer('int'))
+      IntOut,
+      IntOut
     ]);
 
     bindings = {
-      move: koffiLib.func('Move', 'void', [
+      move: koffiLib.func('Move', HeapStr, [
         'int',
         'int'
       ]) as DesktopBindings['move'],
-      moveSmooth: koffiLib.func('MoveSmooth', 'void', [
+      moveSmooth: koffiLib.func('MoveSmooth', HeapStr, [
         'int',
         'int',
         'double',
         'double'
       ]) as DesktopBindings['moveSmooth'],
-      click: koffiLib.func('Click', 'void', [
+      click: koffiLib.func('Click', HeapStr, [
         'str',
         'int'
       ]) as DesktopBindings['click'],
-      scroll: koffiLib.func('Scroll', 'void', [
+      scroll: koffiLib.func('Scroll', HeapStr, [
         'int',
         'int'
       ]) as DesktopBindings['scroll'],
-      typeStr: koffiLib.func('TypeStr', 'void', [
+      typeText: koffiLib.func('TypeText', HeapStr, [
         'str',
         'int'
-      ]) as DesktopBindings['typeStr'],
+      ]) as DesktopBindings['typeText'],
       keyTap: koffiLib.func('KeyTap', HeapStr, [
         'str',
         'str'
       ]) as DesktopBindings['keyTap'],
-      mouseDown: koffiLib.func('MouseDown', 'void', [
+      mouseDown: koffiLib.func('MouseDown', HeapStr, [
         'str'
       ]) as DesktopBindings['mouseDown'],
-      mouseUp: koffiLib.func('MouseUp', 'void', [
+      mouseUp: koffiLib.func('MouseUp', HeapStr, [
         'str'
       ]) as DesktopBindings['mouseUp'],
-      keyDown: koffiLib.func('KeyDown', 'void', [
+      keyDown: koffiLib.func('KeyDown', HeapStr, [
         'str'
       ]) as DesktopBindings['keyDown'],
-      keyUp: koffiLib.func('KeyUp', 'void', [
+      keyUp: koffiLib.func('KeyUp', HeapStr, [
         'str'
       ]) as DesktopBindings['keyUp'],
-      saveCapture: koffiLib.func('SaveCapture', HeapStr, [
+      screenshot: koffiLib.func('Screenshot', HeapStr, [
         'str',
         'int',
         'int',
         'int',
         'int'
-      ]) as DesktopBindings['saveCapture'],
+      ]) as DesktopBindings['screenshot'],
 
       // Out-pointer wrappers: allocate output arrays and extract values
       getScreenSize: (() => {
@@ -120,6 +127,7 @@ function loadLibrary(): boolean {
     };
     return true;
   } catch (error) {
+    loadError = error instanceof Error ? error.message : String(error);
     return false;
   }
 }
@@ -129,7 +137,10 @@ self.onmessage = (event: MessageEvent) => {
 
   try {
     if (!lib && !loadLibrary()) {
-      self.postMessage({ id, error: 'Desktop library not available' });
+      self.postMessage({
+        id,
+        error: `Desktop library not available: ${loadError}`
+      });
       return;
     }
 
@@ -143,47 +154,58 @@ self.onmessage = (event: MessageEvent) => {
         if (sw <= 0 || sh <= 0) {
           throw new Error(`Invalid screenshot dimensions: ${sw}x${sh}`);
         }
-        const err = bindings.saveCapture!(args.path, sx, sy, sw, sh);
-        if (err && err !== '') {
-          throw new Error(`Screenshot capture failed: ${err}`);
-        }
+        checkError(
+          bindings.screenshot!(args.path, sx, sy, sw, sh),
+          'Screenshot'
+        );
         result = { success: true, path: args.path };
         break;
       }
       case 'click': {
         const btn = args.button || 'left';
         const count = args.clickCount ?? 1;
-        bindings.move!(args.x, args.y);
-        if (count <= 2) {
-          bindings.click!(btn, count === 2 ? 1 : 0);
-        } else {
-          // Triple-click and above: rapid single clicks (OS detects multi-click from timing)
-          for (let i = 0; i < count; i++) {
-            bindings.click!(btn, 0);
-          }
-        }
+        checkError(
+          bindings.move!(Math.trunc(args.x), Math.trunc(args.y)),
+          'Move'
+        );
+        checkError(bindings.click!(btn, count), 'Click');
         result = { success: true };
         break;
       }
       case 'move':
-        bindings.move!(args.x, args.y);
+        checkError(
+          bindings.move!(Math.trunc(args.x), Math.trunc(args.y)),
+          'Move'
+        );
         result = { success: true };
         break;
-      case 'moveSmooth':
-        bindings.moveSmooth!(args.x, args.y, args.low ?? 5, args.high ?? 10);
+      case 'moveSmooth': {
+        const mx = Math.trunc(args.x);
+        const my = Math.trunc(args.y);
+        checkError(
+          bindings.moveSmooth!(mx, my, args.low ?? 5, args.high ?? 10),
+          `MoveSmooth(${mx}, ${my})`
+        );
         result = { success: true };
         break;
+      }
       case 'scroll':
-        bindings.move!(args.x, args.y);
-        bindings.scroll!(args.scrollX ?? 0, args.scrollY ?? 0);
+        checkError(
+          bindings.move!(Math.trunc(args.x), Math.trunc(args.y)),
+          'Move'
+        );
+        checkError(
+          bindings.scroll!(args.scrollX ?? 0, args.scrollY ?? 0),
+          'Scroll'
+        );
         result = { success: true };
         break;
       case 'type':
-        bindings.typeStr!(args.text, args.pid ?? 0);
+        checkError(bindings.typeText!(args.text, args.pid ?? 0), 'TypeText');
         result = { success: true };
         break;
       case 'keyTap':
-        bindings.keyTap!(args.key, args.modifiers ?? '');
+        checkError(bindings.keyTap!(args.key, args.modifiers ?? ''), 'KeyTap');
         result = { success: true };
         break;
       case 'getScreenSize':
@@ -194,33 +216,47 @@ self.onmessage = (event: MessageEvent) => {
         break;
       case 'mouseDown':
         if (args.x !== undefined && args.y !== undefined) {
-          bindings.move!(args.x, args.y);
+          checkError(
+            bindings.move!(Math.trunc(args.x), Math.trunc(args.y)),
+            'Move'
+          );
         }
-        bindings.mouseDown!(args.button || 'left');
+        checkError(bindings.mouseDown!(args.button || 'left'), 'MouseDown');
         result = { success: true };
         break;
       case 'mouseUp':
         if (args.x !== undefined && args.y !== undefined) {
-          bindings.move!(args.x, args.y);
+          checkError(
+            bindings.move!(Math.trunc(args.x), Math.trunc(args.y)),
+            'Move'
+          );
         }
-        bindings.mouseUp!(args.button || 'left');
+        checkError(bindings.mouseUp!(args.button || 'left'), 'MouseUp');
         result = { success: true };
         break;
       case 'keyDown':
-        bindings.keyDown!(args.key);
+        checkError(bindings.keyDown!(args.key), 'KeyDown');
         result = { success: true };
         break;
       case 'keyUp':
-        bindings.keyUp!(args.key);
+        checkError(bindings.keyUp!(args.key), 'KeyUp');
         result = { success: true };
         break;
-      case 'drag':
-        bindings.move!(args.startX, args.startY);
-        bindings.mouseDown!(args.button || 'left');
-        bindings.moveSmooth!(args.endX, args.endY, 5, 10);
-        bindings.mouseUp!(args.button || 'left');
+      case 'drag': {
+        const sx = Math.trunc(args.startX);
+        const sy = Math.trunc(args.startY);
+        const ex = Math.trunc(args.endX);
+        const ey = Math.trunc(args.endY);
+        checkError(bindings.move!(sx, sy), 'Move');
+        checkError(bindings.mouseDown!(args.button || 'left'), 'MouseDown');
+        checkError(
+          bindings.moveSmooth!(ex, ey, 5, 10),
+          `MoveSmooth(${ex}, ${ey})`
+        );
+        checkError(bindings.mouseUp!(args.button || 'left'), 'MouseUp');
         result = { success: true };
         break;
+      }
       default:
         self.postMessage({ id, error: `Unknown operation: ${op}` });
         return;
