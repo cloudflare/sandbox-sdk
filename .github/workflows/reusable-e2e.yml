@@ -24,6 +24,8 @@ env:
 
 jobs:
   deploy:
+    permissions:
+      contents: read
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 5
     outputs:
@@ -88,6 +90,8 @@ jobs:
           echo "ws_url=https://${{ inputs.worker_name_prefix }}-websocket.${{ env.CF_ACCOUNT_SUBDOMAIN }}.workers.dev" >> $GITHUB_OUTPUT
 
   test-http:
+    permissions:
+      contents: read
     needs: deploy
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 10
@@ -116,6 +120,8 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
   test-websocket:
+    permissions:
+      contents: read
     needs: deploy
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 10
@@ -144,6 +150,8 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
   test-browser:
+    permissions:
+      contents: read
     needs: deploy
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 10

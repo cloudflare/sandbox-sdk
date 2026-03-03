@@ -9,6 +9,7 @@
 variable "TAG" { default = "dev" }
 variable "SANDBOX_VERSION" { default = "dev" }
 variable "CF_REGISTRY" { default = "" }
+variable "BUN_VERSION" { default = "1" }
 
 // main: all variants needed for E2E testing (CF registry)
 group "main" {
@@ -24,7 +25,7 @@ target "_common" {
   context    = "."
   dockerfile = "packages/sandbox/Dockerfile"
   platforms  = ["linux/amd64"]
-  args       = { SANDBOX_VERSION = SANDBOX_VERSION }
+  args       = { SANDBOX_VERSION = SANDBOX_VERSION, BUN_VERSION = BUN_VERSION }
   cache-from = [CF_REGISTRY != "" ? "type=registry,ref=${CF_REGISTRY}/cache:buildcache" : ""]
   cache-to   = [CF_REGISTRY != "" ? "type=registry,ref=${CF_REGISTRY}/cache:buildcache,mode=max" : ""]
 }

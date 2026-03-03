@@ -21,6 +21,8 @@ on:
 
 jobs:
   build:
+    permissions:
+      contents: read
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 15
     outputs:
@@ -32,6 +34,10 @@ jobs:
         with:
           node-version: 24
           cache: 'npm'
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
 
       - run: npm ci --prefer-offline --no-audit --no-fund
 
@@ -68,6 +74,10 @@ jobs:
         if: ${{ !inputs.skip_docker }}
         run: echo "${{ secrets.CLOUDFLARE_API_TOKEN }}" | docker login registry.cloudflare.com -u unused --password-stdin
 
+      - name: Read Bun version
+        id: bun-version
+        run: echo "version=$(cat .bun-version)" >> $GITHUB_OUTPUT
+
       - name: Build Docker images (bake)
         if: ${{ !inputs.skip_docker }}
         uses: docker/bake-action@v6
@@ -75,6 +85,7 @@ jobs:
           TAG: ${{ inputs.image_tag }}
           SANDBOX_VERSION: ${{ steps.version.outputs.version }}
           CF_REGISTRY: registry.cloudflare.com/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          BUN_VERSION: ${{ steps.bun-version.outputs.version }}
         with:
           files: docker-bake.hcl
           targets: main

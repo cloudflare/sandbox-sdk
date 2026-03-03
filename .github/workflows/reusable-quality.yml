@@ -18,6 +18,8 @@ on:
 
 jobs:
   lint-typecheck:
+    permissions:
+      contents: read
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 5
     steps:
@@ -59,6 +61,8 @@ jobs:
         run: node scripts/validate-changesets.js .changeset/*.md
 
   sdk-tests:
+    permissions:
+      contents: read
     if: ${{ inputs.run_sdk_tests }}
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 5
@@ -103,6 +107,8 @@ jobs:
           retention-days: 7
 
   container-tests:
+    permissions:
+      contents: read
     if: ${{ inputs.run_container_tests }}
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 5
@@ -116,7 +122,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version-file: .bun-version
 
       - run: npm ci --prefer-offline --no-audit --no-fund
 

@@ -1,3 +1,7 @@
+# Bun version — override via --build-arg BUN_VERSION=$(cat .bun-version)
+ARG BUN_VERSION=1
+FROM oven/bun:${BUN_VERSION} AS bun-binary
+
 # Sandbox container images (default and python variants)
 # Multi-stage build optimized for Turborepo monorepo
 
@@ -26,7 +30,7 @@ FROM node:20-slim AS builder
 WORKDIR /app
 
 # Install Bun runtime (glibc version for glibc-compatible standalone binary)
-COPY --from=oven/bun:1 /usr/local/bin/bun /usr/local/bin/bun
+COPY --from=bun-binary /usr/local/bin/bun /usr/local/bin/bun
 
 # Copy pruned lockfile and package.json files (for Docker layer caching)
 COPY --from=pruner /app/out/json/ .
@@ -126,7 +130,7 @@ RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm && \
     ln -s /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
 
 # Install Bun runtime from official image
-COPY --from=oven/bun:1 /usr/local/bin/bun /usr/local/bin/bun
+COPY --from=bun-binary /usr/local/bin/bun /usr/local/bin/bun
 
 # Copy standalone binary
 COPY --from=builder /app/packages/sandbox-container/dist/sandbox /container-server/sandbox
