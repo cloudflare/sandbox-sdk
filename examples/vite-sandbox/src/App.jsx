@@ -4,13 +4,11 @@ export default function App() {
 	const [sandboxUrl, setSandboxUrl] = useState(null);
 
 	useEffect(() => {
-		console.log("loading");
 		fetch("/api/sandbox")
 			.then((r) => r.json())
 			.then((data) => setSandboxUrl(data.url))
 			.catch((err) => console.error(err));
 	}, []);
-	console.log("sandboxURL", sandboxUrl);
 
 	return (
 		<div
@@ -30,7 +28,7 @@ export default function App() {
 					flexShrink: 0,
 				}}
 			>
-				Cloudflare Sandbox cats &mdash; Vite + React (host HMR enabled)
+				Cloudflare Sandbox &mdash; Vite + React (host HMR enabled)
 			</header>
 			{sandboxUrl ? (
 				<iframe
