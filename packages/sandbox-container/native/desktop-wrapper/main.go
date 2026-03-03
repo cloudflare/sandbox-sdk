@@ -62,7 +62,9 @@ func KeyTap(key *C.char, modifiers *C.char) *C.char {
 
 //export GetScreenSize
 func GetScreenSize(w, h *C.int) {
-	width, height := robotgo.GetScreenSize()
+	// robotgo.GetScreenSize() uses C-based XGetMainDisplay() singleton which
+	// returns 0 in c-shared mode. GetDisplayBounds uses pure-Go xgb instead.
+	_, _, width, height := robotgo.GetDisplayBounds(0)
 	*w = C.int(width)
 	*h = C.int(height)
 }
