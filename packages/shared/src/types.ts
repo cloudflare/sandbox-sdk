@@ -684,6 +684,92 @@ export interface FileMetadata {
  */
 export type FileChunk = string | Uint8Array;
 
+// File Watch Types
+
+/**
+ * Options for watching a directory.
+ *
+ * `watch()` resolves only after the watcher is established on the filesystem.
+ * The returned SSE stream can be consumed with `parseSSEStream()`.
+ */
+export interface WatchOptions {
+  /**
+   * Watch subdirectories recursively
+   * @default true
+   */
+  recursive?: boolean;
+
+  /**
+   * Glob patterns to include (e.g., '*.ts', '*.js').
+   * If not specified, all files are included.
+   * Cannot be used together with `exclude`.
+   */
+  include?: string[];
+
+  /**
+   * Glob patterns to exclude (e.g., 'node_modules', '.git').
+   * Cannot be used together with `include`.
+   * @default ['.git', 'node_modules', '.DS_Store']
+   */
+  exclude?: string[];
+
+  /**
+   * Session to run the watch in.
+   * If omitted, the default session is used.
+   */
+  sessionId?: string;
+}
+
+// Internal types for SSE protocol (not user-facing)
+
+/**
+ * @internal SSE event types for container communication
+ */
+export type FileWatchEventType =
+  | 'create'
+  | 'modify'
+  | 'delete'
+  | 'move_from'
+  | 'move_to'
+  | 'attrib';
+
+/**
+ * @internal Request body for starting a file watch
+ */
+export interface WatchRequest {
+  path: string;
+  recursive?: boolean;
+  events?: FileWatchEventType[];
+  include?: string[];
+  exclude?: string[];
+  sessionId?: string;
+}
+
+/**
+ * SSE events emitted by `sandbox.watch()`.
+ */
+export type FileWatchSSEEvent =
+  | {
+      type: 'watching';
+      path: string;
+      watchId: string;
+    }
+  | {
+      type: 'event';
+      eventType: FileWatchEventType;
+      path: string;
+      isDirectory: boolean;
+      timestamp: string;
+    }
+  | {
+      type: 'error';
+      error: string;
+    }
+  | {
+      type: 'stopped';
+      reason: string;
+    };
+
 // Process management result types
 export interface ProcessStartResult {
   success: boolean;
@@ -875,6 +961,10 @@ export interface ExecutionSession {
     options?: { encoding?: string }
   ): Promise<ReadFileResult>;
   readFileStream(path: string): Promise<ReadableStream<Uint8Array>>;
+  watch(
+    path: string,
+    options?: Omit<WatchOptions, 'sessionId'>
+  ): Promise<ReadableStream<Uint8Array>>;
   mkdir(path: string, options?: { recursive?: boolean }): Promise<MkdirResult>;
   deleteFile(path: string): Promise<DeleteFileResult>;
   renameFile(oldPath: string, newPath: string): Promise<RenameFileResult>;
@@ -1080,6 +1170,10 @@ export interface ISandbox {
     options?: { encoding?: string }
   ): Promise<ReadFileResult>;
   readFileStream(path: string): Promise<ReadableStream<Uint8Array>>;
+  watch(
+    path: string,
+    options?: WatchOptions
+  ): Promise<ReadableStream<Uint8Array>>;
   mkdir(path: string, options?: { recursive?: boolean }): Promise<MkdirResult>;
   deleteFile(path: string): Promise<DeleteFileResult>;
   renameFile(oldPath: string, newPath: string): Promise<RenameFileResult>;

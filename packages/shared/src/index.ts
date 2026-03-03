@@ -62,6 +62,9 @@ export type {
 } from './request-types.js';
 // Export shell utilities
 export { shellEscape } from './shell-escape.js';
+// Export SSE utilities
+export type { SSEEventFrame, SSEPartialEvent } from './sse.js';
+export { parseSSEFrames } from './sse.js';
 // Export all types from types.ts
 export type {
   // Backup types
@@ -87,6 +90,9 @@ export type {
   FileInfo,
   FileMetadata,
   FileStreamEvent,
+  // File watch types
+  FileWatchEventType,
+  FileWatchSSEEvent,
   GitCheckoutResult,
   // Miscellaneous result types
   HealthCheckResult,
@@ -133,6 +139,9 @@ export type {
   WaitForExitResult,
   WaitForLogResult,
   WaitForPortOptions,
+  // File watch types
+  WatchOptions,
+  WatchRequest,
   WriteFileResult
 } from './types.js';
 export {

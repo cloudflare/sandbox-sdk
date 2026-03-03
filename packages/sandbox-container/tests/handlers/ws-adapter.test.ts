@@ -146,6 +146,16 @@ describe('WebSocketAdapter', () => {
       expect(response.status).toBe(400);
     });
 
+    it('should ignore cancel message for unknown request id', async () => {
+      await adapter.onMessage(
+        mockWs as any,
+        JSON.stringify({ type: 'cancel', id: 'missing-request' })
+      );
+
+      expect(mockRouter.route).not.toHaveBeenCalled();
+      expect(mockWs.getSentMessages()).toHaveLength(0);
+    });
+
     it('should handle router errors gracefully', async () => {
       const request: WSRequest = {
         type: 'request',
@@ -229,6 +239,21 @@ describe('WebSocketAdapter', () => {
 
       await adapter.onMessage(mockWs as any, JSON.stringify(request));
 
+      // Streaming runs in background to avoid blocking the message handler.
+      // Wait for the final response which indicates streaming completed.
+      const waitForFinalResponse = async (maxWait = 1000) => {
+        const start = Date.now();
+        while (Date.now() - start < maxWait) {
+          const messages = mockWs.getSentMessages<any>();
+          const finalResponse = messages.find(
+            (m) => m.type === 'response' && m.done === true
+          );
+          if (finalResponse) return;
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+      };
+      await waitForFinalResponse();
+
       // Should have received stream chunks and final response
       const messages = mockWs.getSentMessages<any>();
 
@@ -240,6 +265,102 @@ describe('WebSocketAdapter', () => {
       const finalResponse = messages.find((m) => m.type === 'response');
       expect(finalResponse).toBeDefined();
       expect(finalResponse.done).toBe(true);
+    });
+
+    it('should ignore cancel from another connection for an active stream', async () => {
+      const ownerWs = new MockServerWebSocket({ connectionId: 'owner-conn' });
+      const otherWs = new MockServerWebSocket({ connectionId: 'other-conn' });
+
+      const request: WSRequest = {
+        type: 'request',
+        id: 'req-cross-cancel',
+        method: 'POST',
+        path: '/api/execute/stream',
+        body: { command: 'echo test' }
+      };
+
+      const stream = new ReadableStream<Uint8Array>({
+        start() {
+          // Keep stream open so activeStreams retains the request while cancel is tested.
+        }
+      });
+
+      (mockRouter.route as any).mockResolvedValue(
+        new Response(stream, {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' }
+        })
+      );
+
+      await adapter.onMessage(ownerWs as any, JSON.stringify(request));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      await adapter.onMessage(
+        otherWs as any,
+        JSON.stringify({ type: 'cancel', id: request.id })
+      );
+
+      const activeStreams = (adapter as any).activeStreams as Map<
+        string,
+        unknown
+      >;
+      expect(activeStreams.has(request.id)).toBe(true);
+
+      await adapter.onMessage(
+        ownerWs as any,
+        JSON.stringify({ type: 'cancel', id: request.id })
+      );
+      expect(activeStreams.has(request.id)).toBe(false);
+    });
+
+    it('should only cancel streams for the closing connection', async () => {
+      const wsA = new MockServerWebSocket({ connectionId: 'conn-a' });
+      const wsB = new MockServerWebSocket({ connectionId: 'conn-b' });
+
+      const requestA: WSRequest = {
+        type: 'request',
+        id: 'stream-a',
+        method: 'POST',
+        path: '/api/execute/stream',
+        body: { command: 'echo a' }
+      };
+
+      const requestB: WSRequest = {
+        type: 'request',
+        id: 'stream-b',
+        method: 'POST',
+        path: '/api/execute/stream',
+        body: { command: 'echo b' }
+      };
+
+      (mockRouter.route as any).mockImplementation(() => {
+        const stream = new ReadableStream<Uint8Array>({
+          start() {
+            // Keep each stream open so ownership can be tested via onClose.
+          }
+        });
+
+        return new Response(stream, {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' }
+        });
+      });
+
+      await adapter.onMessage(wsA as any, JSON.stringify(requestA));
+      await adapter.onMessage(wsB as any, JSON.stringify(requestB));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      const activeStreams = (adapter as any).activeStreams as Map<
+        string,
+        unknown
+      >;
+      expect(activeStreams.has('stream-a')).toBe(true);
+      expect(activeStreams.has('stream-b')).toBe(true);
+
+      adapter.onClose(wsA as any, 1000, 'Normal closure');
+
+      expect(activeStreams.has('stream-a')).toBe(false);
+      expect(activeStreams.has('stream-b')).toBe(true);
     });
 
     it('should handle Buffer messages', async () => {
