@@ -271,7 +271,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     const envObj = env as Record<string, unknown>;
     // Set sandbox environment variables from env object
-    const sandboxEnvKeys = ['SANDBOX_LOG_LEVEL', 'SANDBOX_LOG_FORMAT'] as const;
+    // SANDBOX_LOG_FORMAT is intentionally not forwarded to the container:
+    // the container's stdout/stderr goes through Cloudflare's log pipeline,
+    // which doesn't render ANSI color codes and splits multi-line output
+    // into separate log entries. The container defaults to JSON format.
+    const sandboxEnvKeys = ['SANDBOX_LOG_LEVEL'] as const;
     sandboxEnvKeys.forEach((key) => {
       if (envObj?.[key]) {
         this.envVars[key] = String(envObj[key]);
