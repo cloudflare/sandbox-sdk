@@ -122,6 +122,7 @@ export class DesktopManager {
           error: stopErr instanceof Error ? stopErr.message : String(stopErr)
         });
       });
+      this.state = 'inactive';
       throw error;
     }
   }
