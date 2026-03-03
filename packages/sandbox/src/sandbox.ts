@@ -320,10 +320,21 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * Create a SandboxClient with current transport settings
    */
   private createSandboxClient(): SandboxClient {
+    // Retry budget must cover the full container startup window (instance
+    // provisioning + port readiness) plus a margin for backoff delays,
+    // so the client doesn't give up before the DO finishes starting
+    // the container. 30 seconds of margin covers the maximum single
+    // backoff delay (capped at 30s in BaseTransport).
+    const startupBudgetMs =
+      this.containerTimeouts.instanceGetTimeoutMS +
+      this.containerTimeouts.portReadyTimeoutMS;
+    const retryTimeoutMs = Math.max(120_000, startupBudgetMs + 30_000);
+
     return new SandboxClient({
       logger: this.logger,
       port: 3000,
       stub: this,
+      retryTimeoutMs,
       ...(this.transport === 'websocket' && {
         transportMode: 'websocket' as const,
         wsUrl: 'ws://localhost:3000/ws'
@@ -408,6 +419,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           ...this.containerTimeouts,
           ...storedTimeouts
         };
+        // Recreate client so the transport retry budget reflects stored timeouts
+        this.client = this.createSandboxClient();
+        this.codeInterpreter = new CodeInterpreter(this);
       }
     });
   }
@@ -529,6 +543,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     // Persist to storage
     await this.ctx.storage.put('containerTimeouts', this.containerTimeouts);
+
+    // Recreate client so the transport retry budget reflects new timeouts
+    this.client = this.createSandboxClient();
+    this.codeInterpreter = new CodeInterpreter(this);
 
     this.logger.debug('Container timeouts updated', this.containerTimeouts);
   }

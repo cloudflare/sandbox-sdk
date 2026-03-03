@@ -37,7 +37,8 @@ export abstract class BaseHttpClient {
         wsUrl: options.wsUrl,
         logger: this.logger,
         stub: options.stub,
-        port: options.port
+        port: options.port,
+        retryTimeoutMs: options.retryTimeoutMs
       });
     }
   }

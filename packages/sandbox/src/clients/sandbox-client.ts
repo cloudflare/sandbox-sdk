@@ -48,7 +48,8 @@ export class SandboxClient {
         baseUrl: options.baseUrl,
         logger: options.logger,
         stub: options.stub,
-        port: options.port
+        port: options.port,
+        retryTimeoutMs: options.retryTimeoutMs
       });
     }
 
