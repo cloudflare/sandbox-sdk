@@ -890,12 +890,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   override async destroy(): Promise<void> {
     this.logger.info('Destroying sandbox container');
 
-    // Best-effort desktop stop — don't check status first as containerFetch
-    // can auto-start the container during teardown
-    try {
-      await this.client.desktop.stop();
-    } catch {
-      // Desktop may not be running or available — continue cleanup
+    // Best-effort desktop stop — only when container is already running
+    if (this.ctx.container?.running) {
+      try {
+        await this.client.desktop.stop();
+      } catch {
+        // Desktop may not be running or available — continue cleanup
+      }
     }
 
     // Disconnect WebSocket transport if active
