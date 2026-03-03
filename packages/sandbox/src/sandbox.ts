@@ -1023,9 +1023,20 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     );
 
     const state = await this.getState();
+    const containerRunning = this.ctx.container?.running;
 
-    // If container not healthy, start it with production timeouts
-    if (state.status !== 'healthy') {
+    // Start container if persisted state is not healthy OR if runtime reports container is not running.
+    // The runtime check catches stale persisted state (e.g., state says 'healthy' after DO recreation
+    // but Docker container is gone).
+    const staleStateDetected =
+      state.status === 'healthy' && containerRunning === false;
+    if (state.status !== 'healthy' || containerRunning === false) {
+      if (staleStateDetected) {
+        this.logger.debug(
+          'Stale container state detected: persisted state is healthy but container is not running'
+        );
+      }
+
       try {
         this.logger.debug('Starting container with configured timeouts', {
           instanceTimeout: this.containerTimeouts.instanceGetTimeoutMS,
@@ -1055,12 +1066,22 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
         // 2. Transient startup errors: Container starting, port not ready yet
         if (this.isTransientStartupError(e)) {
-          this.logger.debug(
-            'Transient container startup error, returning 503',
-            {
-              error: e instanceof Error ? e.message : String(e)
-            }
-          );
+          // If startup failed after detecting stale state, the container runtime is likely stuck
+          // (e.g., workerd can't restart after an unexpected container death). Abort the DO so the
+          // next request gets a fresh instance with a clean container binding. This mirrors the
+          // recovery pattern in the base Container class for 'Network connection lost' errors.
+          if (staleStateDetected) {
+            this.logger.warn(
+              'Container startup failed after stale state detection, aborting DO for recovery',
+              { error: e instanceof Error ? e.message : String(e) }
+            );
+            this.ctx.abort();
+          } else {
+            this.logger.debug(
+              'Transient container startup error, returning 503',
+              { error: e instanceof Error ? e.message : String(e) }
+            );
+          }
           return new Response(
             'Container is starting. Please retry in a moment.',
             {
@@ -1133,6 +1154,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
       // Monitor race conditions (workerd)
       'monitor failed to find container',
+
+      // Container crashed during startup or from previous run (@cloudflare/containers)
+      'container exited with unexpected exit code',
+      'container exited before we could determine',
 
       // Timeouts (various layers)
       'timed out',

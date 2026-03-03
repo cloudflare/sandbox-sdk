@@ -47,6 +47,7 @@ export type {
   FileExistsContext,
   FileNotFoundContext,
   FileSystemContext,
+  FileTooLargeContext,
   GitAuthFailedContext,
   GitBranchNotFoundContext,
   GitErrorContext,

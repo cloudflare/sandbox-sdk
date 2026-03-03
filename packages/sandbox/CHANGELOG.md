@@ -1,5 +1,24 @@
 # @cloudflare/sandbox
 
+## 0.7.8
+
+### Patch Changes
+
+- [#427](https://github.com/cloudflare/sandbox-sdk/pull/427) [`04b4ccf`](https://github.com/cloudflare/sandbox-sdk/commit/04b4ccf5d6ff180d9e93ff582abd27b7f13ca36d) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Fix local development crash loops after Docker restarts or idle timeouts. The Sandbox now detects stale container state and automatically recovers.
+
+## 0.7.7
+
+### Patch Changes
+
+- [#402](https://github.com/cloudflare/sandbox-sdk/pull/402) [`eb23055`](https://github.com/cloudflare/sandbox-sdk/commit/eb23055ca6d0cf8069628e60eb25290a2cfe90e4) Thanks [@scuffi](https://github.com/scuffi)! - Improve `readFile()` and `readFileStream()` performance by using native syscall file reads instead of shell-based reads.
+  This increases read transfer speeds and unblocks the max throughput from file streaming.
+
+  Improving file size handling: calls to `readFile()` now return a `413: File too large error` if the target file exceeds `32 MiB`. Previously such files would trigger a generic error; we're now explicit about the limitation and recommend using `readFileStream` for larger files.
+
+- [#421](https://github.com/cloudflare/sandbox-sdk/pull/421) [`1244660`](https://github.com/cloudflare/sandbox-sdk/commit/1244660a2fdffa27361f98a998c402ffc36c1151) Thanks [@scuffi](https://github.com/scuffi)! - Patch `proxyToSandbox` to pass redirect responses to the caller, instead of following them
+
+- [#430](https://github.com/cloudflare/sandbox-sdk/pull/430) [`364e366`](https://github.com/cloudflare/sandbox-sdk/commit/364e366e2cf15c9d71bd52fa8b7ac5ec93b82039) Thanks [@scuffi](https://github.com/scuffi)! - Patch `readFile` to strip MIME type parameters, e.g. `text/plain;charset=utf-8` -> `text/plain`
+
 ## 0.7.6
 
 ### Patch Changes
@@ -59,13 +78,13 @@
   As a base image:
 
   ```dockerfile
-  FROM docker.io/cloudflare/sandbox:0.7.6-musl
+  FROM docker.io/cloudflare/sandbox:0.7.8-musl
   ```
 
   Or copy the binary into your own Alpine image:
 
   ```dockerfile
-  COPY --from=docker.io/cloudflare/sandbox:0.7.6-musl /container-server/sandbox /sandbox
+  COPY --from=docker.io/cloudflare/sandbox:0.7.8-musl /container-server/sandbox /sandbox
   ```
 
 - [#377](https://github.com/cloudflare/sandbox-sdk/pull/377) [`d83642e`](https://github.com/cloudflare/sandbox-sdk/commit/d83642e855f68e4fb8c15c2452709923e55a83fd) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Allow port 8787 in `exposePort()`. It was incorrectly blocked.
@@ -288,10 +307,10 @@
 
   ```dockerfile
   # Before
-  FROM cloudflare/sandbox:0.7.6
+  FROM cloudflare/sandbox:0.7.8
 
   # After
-  FROM cloudflare/sandbox:0.7.6-python
+  FROM cloudflare/sandbox:0.7.8-python
   ```
 
   Without this change, Python execution will fail with `PYTHON_NOT_AVAILABLE` error.
