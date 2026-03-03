@@ -96,9 +96,9 @@ export default {
       await configureSandbox(sandbox, proxyBase, token);
 
       const result = await sandbox.exec(`
-        cd /tmp && rm -rf sandbox-scm-test
-        git clone https://github.com/ghostwriternr/sandbox-scm-test 2>&1
-        ls sandbox-scm-test
+        cd /tmp && rm -rf Hello-World
+        git clone https://github.com/octocat/Hello-World 2>&1
+        ls Hello-World
       `);
 
       return Response.json({

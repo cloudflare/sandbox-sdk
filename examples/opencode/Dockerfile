@@ -10,10 +10,10 @@ RUN curl -fsSL https://opencode.ai/install -o /tmp/install-opencode.sh \
     && opencode --version
 
 # Clone sample project for the web UI to work with
-RUN git clone --depth 1 https://github.com/cloudflare/agents.git /home/user/agents
+RUN git clone --depth 1 https://github.com/octocat/Hello-World.git /home/user/Hello-World
 
 # Start in the sample project directory
-WORKDIR /home/user/agents
+WORKDIR /home/user/Hello-World
 
 # Expose OpenCode server port
 EXPOSE 4096
