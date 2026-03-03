@@ -1,5 +1,19 @@
 # @cloudflare/sandbox
 
+## 0.7.10
+
+### Patch Changes
+
+- [#422](https://github.com/cloudflare/sandbox-sdk/pull/422) [`dc70649`](https://github.com/cloudflare/sandbox-sdk/commit/dc706497a3e3014cbca3ab20f456e7f207798097) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Add desktop environment support for AI computer-use workflows.
+
+  Start a full Linux desktop (Xvfb + XFCE4 + x11vnc + noVNC) inside the
+  sandbox and control it programmatically via `sandbox.desktop.*` methods.
+  Supports screenshots, mouse clicks, keyboard input, and live browser
+  streaming via noVNC preview URLs.
+
+  Enable with `sandbox.desktop.start()`. Requires the desktop container
+  image variant.
+
 ## 0.7.9
 
 ### Patch Changes
@@ -102,13 +116,13 @@
   As a base image:
 
   ```dockerfile
-  FROM docker.io/cloudflare/sandbox:0.7.9-musl
+  FROM docker.io/cloudflare/sandbox:0.7.10-musl
   ```
 
   Or copy the binary into your own Alpine image:
 
   ```dockerfile
-  COPY --from=docker.io/cloudflare/sandbox:0.7.9-musl /container-server/sandbox /sandbox
+  COPY --from=docker.io/cloudflare/sandbox:0.7.10-musl /container-server/sandbox /sandbox
   ```
 
 - [#377](https://github.com/cloudflare/sandbox-sdk/pull/377) [`d83642e`](https://github.com/cloudflare/sandbox-sdk/commit/d83642e855f68e4fb8c15c2452709923e55a83fd) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Allow port 8787 in `exposePort()`. It was incorrectly blocked.
@@ -331,10 +345,10 @@
 
   ```dockerfile
   # Before
-  FROM cloudflare/sandbox:0.7.9
+  FROM cloudflare/sandbox:0.7.10
 
   # After
-  FROM cloudflare/sandbox:0.7.9-python
+  FROM cloudflare/sandbox:0.7.10-python
   ```
 
   Without this change, Python execution will fail with `PYTHON_NOT_AVAILABLE` error.
