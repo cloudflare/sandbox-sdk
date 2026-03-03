@@ -26,7 +26,8 @@ import type {
   StreamOptions,
   WaitForExitResult,
   WaitForLogResult,
-  WaitForPortOptions
+  WaitForPortOptions,
+  WatchOptions
 } from '@repo/shared';
 import {
   createLogger,
@@ -2390,6 +2391,33 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   /**
+   * Watch a directory for file system changes using native inotify.
+   *
+   * The returned promise resolves only after the watcher is established on the
+   * filesystem, so callers can immediately perform actions that depend on the
+   * watch being active. The returned stream contains the full event sequence
+   * starting with the `watching` event.
+   *
+   * Consume the stream with `parseSSEStream<FileWatchSSEEvent>(stream)`.
+   *
+   * @param path - Path to watch (absolute or relative to /workspace)
+   * @param options - Watch options
+   */
+  async watch(
+    path: string,
+    options: WatchOptions = {}
+  ): Promise<ReadableStream<Uint8Array>> {
+    const sessionId = options.sessionId ?? (await this.ensureDefaultSession());
+    return this.client.watch.watch({
+      path,
+      recursive: options.recursive,
+      include: options.include,
+      exclude: options.exclude,
+      sessionId
+    });
+  }
+
+  /**
    * Expose a port and get a preview URL for accessing services running in the sandbox
    *
    * @param port - Port number to expose (1024-65535)
@@ -2423,6 +2451,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       );
     }
 
+    // Check if hostname is workers.dev domain (doesn't support wildcard subdomains)
     if (options.hostname.endsWith('.workers.dev')) {
       const errorResponse: ErrorResponse = {
         code: ErrorCode.CUSTOM_DOMAIN_REQUIRED,
@@ -2784,6 +2813,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       readFile: (path, options) =>
         this.readFile(path, { ...options, sessionId }),
       readFileStream: (path) => this.readFileStream(path, { sessionId }),
+      watch: (path, options) => this.watch(path, { ...options, sessionId }),
       mkdir: (path, options) => this.mkdir(path, { ...options, sessionId }),
       deleteFile: (path) => this.deleteFile(path, sessionId),
       renameFile: (oldPath, newPath) =>

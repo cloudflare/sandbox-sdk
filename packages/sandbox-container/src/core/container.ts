@@ -11,6 +11,7 @@ import { PortHandler } from '../handlers/port-handler';
 import { ProcessHandler } from '../handlers/process-handler';
 import { PtyWebSocketHandler } from '../handlers/pty-ws-handler';
 import { SessionHandler } from '../handlers/session-handler';
+import { WatchHandler } from '../handlers/watch-handler';
 import { CorsMiddleware } from '../middleware/cors';
 import { LoggingMiddleware } from '../middleware/logging';
 import { SecurityServiceAdapter } from '../security/security-adapter';
@@ -24,6 +25,7 @@ import { InMemoryPortStore, PortService } from '../services/port-service';
 import { ProcessService } from '../services/process-service';
 import { ProcessStore } from '../services/process-store';
 import { SessionManager } from '../services/session-manager';
+import { WatchService } from '../services/watch-service';
 
 export interface Dependencies {
   // Services
@@ -34,6 +36,7 @@ export interface Dependencies {
   interpreterService: InterpreterService;
   backupService: BackupService;
   desktopService: DesktopService;
+  watchService: WatchService;
 
   // Infrastructure
   logger: Logger;
@@ -51,6 +54,7 @@ export interface Dependencies {
   miscHandler: MiscHandler;
   desktopHandler: DesktopHandler;
   ptyWsHandler: PtyWebSocketHandler;
+  watchHandler: WatchHandler;
 
   // Middleware
   corsMiddleware: CorsMiddleware;
@@ -124,6 +128,7 @@ export class Container {
     const interpreterService = new InterpreterService(logger);
     const backupService = new BackupService(logger, sessionManager);
     const desktopService = new DesktopService(logger);
+    const watchService = new WatchService(logger);
 
     // Initialize handlers
     const backupHandler = new BackupHandler(backupService, logger);
@@ -140,6 +145,7 @@ export class Container {
     const miscHandler = new MiscHandler(logger);
     const desktopHandler = new DesktopHandler(desktopService, logger);
     const ptyWsHandler = new PtyWebSocketHandler(sessionManager, logger);
+    const watchHandler = new WatchHandler(watchService, logger);
 
     // Initialize middleware
     const corsMiddleware = new CorsMiddleware();
@@ -155,6 +161,7 @@ export class Container {
       interpreterService,
       backupService,
       desktopService,
+      watchService,
 
       // Infrastructure
       logger,
@@ -172,6 +179,7 @@ export class Container {
       miscHandler,
       desktopHandler,
       ptyWsHandler,
+      watchHandler,
 
       // Middleware
       corsMiddleware,

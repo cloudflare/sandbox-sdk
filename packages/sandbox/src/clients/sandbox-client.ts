@@ -13,6 +13,7 @@ import {
 } from './transport';
 import type { HttpClientOptions } from './types';
 import { UtilityClient } from './utility-client';
+import { WatchClient } from './watch-client';
 
 /**
  * Main sandbox client that composes all domain-specific clients
@@ -34,6 +35,7 @@ export class SandboxClient {
   public readonly interpreter: InterpreterClient;
   public readonly utils: UtilityClient;
   public readonly desktop: DesktopClient;
+  public readonly watch: WatchClient;
 
   private transport: ITransport | null = null;
 
@@ -68,6 +70,7 @@ export class SandboxClient {
     this.interpreter = new InterpreterClient(clientOptions);
     this.utils = new UtilityClient(clientOptions);
     this.desktop = new DesktopClient(clientOptions);
+    this.watch = new WatchClient(clientOptions);
   }
 
   /**
