@@ -96,9 +96,9 @@ export default {
       await configureSandbox(sandbox, proxyBase, token);
 
       const result = await sandbox.exec(`
-        cd /tmp && rm -rf Hello-World
-        git clone https://github.com/octocat/Hello-World 2>&1
-        ls Hello-World
+        cd /tmp && rm -rf gitignore
+        git clone https://github.com/github/gitignore 2>&1
+        ls gitignore
       `);
 
       return Response.json({
