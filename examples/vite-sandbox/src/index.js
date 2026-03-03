@@ -39,6 +39,7 @@ async function sandboxApi(url, env) {
 
 	const port = await sandbox.exposePort(VITE_PORT, { hostname: url.host });
 
+	// TODO: Pass host and port to vite server via VITE_* env variables.
 	await sandbox.startProcess("npm run dev", {
 		processId: "vite-dev-server",
 		cwd: "/app",

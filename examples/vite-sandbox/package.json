@@ -11,7 +11,7 @@
   },
   "devDependencies": {
     "@cloudflare/sandbox": "*",
-    "@cloudflare/vite-plugin": "^1.0.0",
+    "@cloudflare/vite-plugin": "https://pkg.pr.new/@cloudflare/vite-plugin@12743",
     "@vitejs/plugin-react": "^4.0.0",
     "react": "^18.0.0",
     "react-dom": "^18.0.0",
