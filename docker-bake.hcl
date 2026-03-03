@@ -12,12 +12,12 @@ variable "CF_REGISTRY" { default = "" }
 
 // main: all variants needed for E2E testing (CF registry)
 group "main" {
-  targets = ["default", "python", "opencode", "musl"]
+  targets = ["default", "python", "opencode", "musl", "desktop"]
 }
 
 // publish: variants published to Docker Hub (standalone excluded — CF registry only)
 group "publish" {
-  targets = ["default", "python", "opencode", "musl"]
+  targets = ["default", "python", "opencode", "musl", "desktop"]
 }
 
 target "_common" {
@@ -51,4 +51,10 @@ target "musl" {
   inherits = ["_common"]
   target   = "musl"
   tags     = ["sandbox-musl:${TAG}"]
+}
+
+target "desktop" {
+  inherits = ["_common"]
+  target   = "desktop"
+  tags     = ["sandbox-desktop:${TAG}"]
 }

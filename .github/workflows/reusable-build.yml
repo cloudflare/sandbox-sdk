@@ -107,7 +107,9 @@ jobs:
           PID3=$!
           wrangler containers push sandbox-musl:${TAG} &
           PID4=$!
-          wait $PID1 $PID2 $PID3 $PID4
+          wrangler containers push sandbox-desktop:${TAG} &
+          PID5=$!
+          wait $PID1 $PID2 $PID3 $PID4 $PID5
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
