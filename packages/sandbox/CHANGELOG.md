@@ -1,5 +1,29 @@
 # @cloudflare/sandbox
 
+## 0.7.9
+
+### Patch Changes
+
+- [#324](https://github.com/cloudflare/sandbox-sdk/pull/324) [`2af3c28`](https://github.com/cloudflare/sandbox-sdk/commit/2af3c283334ff9317f28e36c0b63cbc1b302f5ce) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - Add real-time file watching for detecting filesystem changes as they happen.
+
+  `sandbox.watch()` returns an SSE stream of create, modify, delete, and move events using native inotify. The stream can be proxied directly to a client or consumed server-side with `parseSSEStream`:
+
+  ```typescript
+  // Stream events to a browser client
+  const stream = await sandbox.watch('/workspace/src', {
+    recursive: true,
+    include: ['*.ts', '*.js']
+  });
+  return new Response(stream, {
+    headers: { 'Content-Type': 'text/event-stream' }
+  });
+
+  // Or consume server-side
+  for await (const event of parseSSEStream<FileWatchSSEEvent>(stream)) {
+    console.log(event.type, event.path);
+  }
+  ```
+
 ## 0.7.8
 
 ### Patch Changes
@@ -78,13 +102,13 @@
   As a base image:
 
   ```dockerfile
-  FROM docker.io/cloudflare/sandbox:0.7.8-musl
+  FROM docker.io/cloudflare/sandbox:0.7.9-musl
   ```
 
   Or copy the binary into your own Alpine image:
 
   ```dockerfile
-  COPY --from=docker.io/cloudflare/sandbox:0.7.8-musl /container-server/sandbox /sandbox
+  COPY --from=docker.io/cloudflare/sandbox:0.7.9-musl /container-server/sandbox /sandbox
   ```
 
 - [#377](https://github.com/cloudflare/sandbox-sdk/pull/377) [`d83642e`](https://github.com/cloudflare/sandbox-sdk/commit/d83642e855f68e4fb8c15c2452709923e55a83fd) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Allow port 8787 in `exposePort()`. It was incorrectly blocked.
@@ -307,10 +331,10 @@
 
   ```dockerfile
   # Before
-  FROM cloudflare/sandbox:0.7.8
+  FROM cloudflare/sandbox:0.7.9
 
   # After
-  FROM cloudflare/sandbox:0.7.8-python
+  FROM cloudflare/sandbox:0.7.9-python
   ```
 
   Without this change, Python execution will fail with `PYTHON_NOT_AVAILABLE` error.
