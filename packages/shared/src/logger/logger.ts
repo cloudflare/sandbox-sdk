@@ -168,6 +168,8 @@ export class CloudflareLogger implements Logger {
       commandId,
       operation,
       duration,
+      serviceVersion,
+      instanceId,
       error,
       ...rest
     } = data;

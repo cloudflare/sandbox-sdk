@@ -62,6 +62,16 @@ export interface LogContext {
   duration?: number;
 
   /**
+   * Service version (from SANDBOX_VERSION env var)
+   */
+  serviceVersion?: string;
+
+  /**
+   * Instance identifier (hostname or container ID)
+   */
+  instanceId?: string;
+
+  /**
    * Extensible for additional metadata
    */
   [key: string]: unknown;

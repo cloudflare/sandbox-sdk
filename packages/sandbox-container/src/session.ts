@@ -309,12 +309,12 @@ export class Session {
     const exitCodeFile = join(this.sessionDir!, `${commandId}.exit`);
     const pidFile = join(this.sessionDir!, `${commandId}.pid`);
 
-    this.logger.info('Command execution started', {
+    const event: Record<string, unknown> = {
       sessionId: this.id,
       commandId,
       operation: 'exec',
       command: command.substring(0, 100)
-    });
+    };
 
     try {
       // Track command
@@ -359,13 +359,11 @@ export class Session {
 
       const duration = Date.now() - startTime;
 
-      this.logger.info('Command execution completed', {
-        sessionId: this.id,
-        commandId,
-        operation: 'exec',
-        exitCode,
-        duration
-      });
+      event.exitCode = exitCode;
+      event.duration = duration;
+      event.stdoutLen = stdout.length;
+      event.stderrLen = stderr.length;
+      event.outcome = 'success';
 
       return {
         command,
@@ -376,19 +374,20 @@ export class Session {
         timestamp: new Date(startTime).toISOString()
       };
     } catch (error) {
-      this.logger.error(
-        'Command execution failed',
-        error instanceof Error ? error : new Error(String(error)),
-        {
-          sessionId: this.id,
-          commandId,
-          operation: 'exec'
-        }
-      );
+      event.outcome = 'error';
+      event.errorMessage =
+        error instanceof Error ? error.message : String(error);
       // Untrack and clean up on error
       this.untrackCommand(commandId);
       await this.cleanupCommandFiles(logFile, exitCodeFile);
       throw error;
+    } finally {
+      event.duration = event.duration ?? Date.now() - startTime;
+      if (event.outcome === 'error') {
+        this.logger.error('command.exec', undefined, event);
+      } else {
+        this.logger.info('command.exec', event);
+      }
     }
   }
 
@@ -415,12 +414,12 @@ export class Session {
       `${commandId}.labelers.done`
     );
 
-    this.logger.info('Streaming command execution started', {
+    const event: Record<string, unknown> = {
       sessionId: this.id,
       commandId,
       operation: 'execStream',
       command: command.substring(0, 100)
-    });
+    };
 
     try {
       // Track command
@@ -453,11 +452,7 @@ export class Session {
       const pid = await this.waitForPidViaPipe(pidPipe, pidFile);
 
       if (pid === undefined) {
-        this.logger.warn('PID not received within timeout', {
-          sessionId: this.id,
-          commandId,
-          pidPipe
-        });
+        event.pidTimeout = true;
       }
 
       yield {
@@ -540,11 +535,8 @@ export class Session {
       }
 
       if (!labelersDone) {
-        this.logger.warn('Output capture timeout - logs may be incomplete', {
-          commandId,
-          sessionId: this.id,
-          timeoutMs: maxWaitMs
-        });
+        event.labelerTimeout = true;
+        event.labelerTimeoutMs = maxWaitMs;
       }
 
       // Read final chunks from log file after labelers are done
@@ -591,13 +583,9 @@ export class Session {
 
       const duration = Date.now() - startTime;
 
-      this.logger.info('Streaming command execution completed', {
-        sessionId: this.id,
-        commandId,
-        operation: 'execStream',
-        exitCode,
-        duration
-      });
+      event.exitCode = exitCode;
+      event.duration = duration;
+      event.outcome = 'success';
 
       yield {
         type: 'complete',
@@ -620,15 +608,9 @@ export class Session {
       // Clean up temp files
       await this.cleanupCommandFiles(logFile, exitCodeFile);
     } catch (error) {
-      this.logger.error(
-        'Streaming command execution failed',
-        error instanceof Error ? error : new Error(String(error)),
-        {
-          sessionId: this.id,
-          commandId,
-          operation: 'execStream'
-        }
-      );
+      event.outcome = 'error';
+      event.errorMessage =
+        error instanceof Error ? error.message : String(error);
       // Untrack and clean up on error
       this.untrackCommand(commandId);
       await this.cleanupCommandFiles(logFile, exitCodeFile);
@@ -638,6 +620,13 @@ export class Session {
         timestamp: new Date().toISOString(),
         error: error instanceof Error ? error.message : String(error)
       };
+    } finally {
+      event.duration = event.duration ?? Date.now() - startTime;
+      if (event.outcome === 'error') {
+        this.logger.error('command.execStream', undefined, event);
+      } else {
+        this.logger.info('command.execStream', event);
+      }
     }
   }
 

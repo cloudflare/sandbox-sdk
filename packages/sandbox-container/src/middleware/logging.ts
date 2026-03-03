@@ -12,44 +12,45 @@ export class LoggingMiddleware implements Middleware {
   ): Promise<Response> {
     const startTime = Date.now();
     const method = request.method;
-    const pathname = new URL(request.url).pathname;
-
-    this.logger.info('Request started', {
+    const url = new URL(request.url);
+    const pathname = url.pathname;
+    const contentLength = request.headers.get('content-length');
+    const requestEvent: Record<string, unknown> = {
       requestId: context.requestId,
       method,
       pathname,
       sessionId: context.sessionId,
-      timestamp: context.timestamp.toISOString()
-    });
+      startedAt: context.timestamp.toISOString(),
+      userAgent: request.headers.get('user-agent') ?? undefined,
+      contentLength: contentLength ? Number(contentLength) : undefined
+    };
+
+    let response: Response | undefined;
+    let requestError: Error | undefined;
 
     try {
-      const response = await next();
-      const duration = Date.now() - startTime;
-
-      this.logger.info('Request completed', {
-        requestId: context.requestId,
-        method,
-        pathname,
-        status: response.status,
-        duration
-      });
-
+      response = await next();
       return response;
     } catch (error) {
-      const duration = Date.now() - startTime;
-
-      this.logger.error(
-        'Request failed',
-        error instanceof Error ? error : new Error('Unknown error'),
-        {
-          requestId: context.requestId,
-          method,
-          pathname,
-          duration
-        }
-      );
-
+      requestError =
+        error instanceof Error ? error : new Error('Unknown request failure');
       throw error;
+    } finally {
+      const statusCode = response?.status ?? 500;
+      const duration = Date.now() - startTime;
+      const isError = statusCode >= 500 || Boolean(requestError);
+      const wideEvent = {
+        ...requestEvent,
+        statusCode,
+        durationMs: duration,
+        outcome: isError ? 'error' : 'success'
+      };
+
+      if (isError) {
+        this.logger.error('HTTP request', requestError, wideEvent);
+      } else {
+        this.logger.info('HTTP request', wideEvent);
+      }
     }
   }
 }
