@@ -2425,7 +2425,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * @param options - Configuration options
    * @param options.hostname - Your Worker's domain name (required for preview URL construction)
    * @param options.name - Optional friendly name for the port
-   * @param options.token - Optional custom token for the preview URL (1-16 characters: lowercase letters, numbers, hyphens, underscores)
+   * @param options.token - Optional custom token for the preview URL (1-16 characters: lowercase letters, numbers, underscores)
    *                       If not provided, a random 16-character token will be generated automatically
    * @returns Preview URL information including the full URL, port number, and optional name
    *
@@ -2438,9 +2438,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * // With custom token for stable URLs across deployments
    * const { url } = await sandbox.exposePort(8080, {
    *   hostname: 'example.com',
-   *   token: 'my-token-v1'
+   *   token: 'my_token_v1'
    * });
-   * // url: https://8080-sandbox-id-my-token-v1.example.com
+   * // url: https://8080-sandbox-id-my_token_v1.example.com
    */
   async exposePort(
     port: number,
@@ -3125,15 +3125,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       '-X PUT',
       "-H 'Content-Type: application/octet-stream'",
       '--connect-timeout 10',
-      '--max-time 300',
+      '--max-time 1800',
       '--retry 2',
       '--retry-max-time 60',
-      `--data-binary @${shellEscape(archivePath)}`,
+      `-T ${shellEscape(archivePath)}`,
       shellEscape(presignedUrl)
     ].join(' ');
 
     const result = await this.execWithSession(curlCmd, backupSession, {
-      timeout: 310_000
+      timeout: 1810_000
     });
 
     if (result.exitCode !== 0) {
@@ -3150,8 +3150,18 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     const bucket = this.requireBackupBucket();
     const head = await bucket.head(r2Key);
     if (!head || head.size !== archiveSize) {
+      const actualSize = head?.size ?? 0;
+      // curl succeeded but R2 binding sees nothing — almost certainly a
+      // local-dev mismatch where presigned URLs target real R2 while the
+      // BACKUP_BUCKET binding points to local (miniflare) storage.
+      const localDevHint =
+        result.exitCode === 0 && actualSize === 0
+          ? ' This usually means the BACKUP_BUCKET R2 binding is using local storage ' +
+            'while presigned URLs upload to remote R2. Add `"remote": true` to your ' +
+            'BACKUP_BUCKET R2 binding in wrangler.jsonc to fix this.'
+          : '';
       throw new BackupCreateError({
-        message: `Upload verification failed: expected ${archiveSize} bytes, got ${head?.size ?? 0}`,
+        message: `Upload verification failed: expected ${archiveSize} bytes, got ${actualSize}.${localDevHint}`,
         code: ErrorCode.BACKUP_CREATE_FAILED,
         httpStatus: 500,
         context: { dir, backupId },
@@ -3187,7 +3197,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     const curlCmd = [
       'curl -sSf',
       '--connect-timeout 10',
-      '--max-time 300',
+      '--max-time 1800',
       '--retry 2',
       '--retry-max-time 60',
       `-o ${shellEscape(tmpPath)}`,
@@ -3195,7 +3205,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     ].join(' ');
 
     const result = await this.execWithSession(curlCmd, backupSession, {
-      timeout: 310_000
+      timeout: 1810_000
     });
 
     if (result.exitCode !== 0) {
