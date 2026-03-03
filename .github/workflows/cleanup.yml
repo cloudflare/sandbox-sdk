@@ -50,7 +50,7 @@ jobs:
           PR=${{ github.event.pull_request.number }}
           echo "Deleting PR images from Cloudflare registry..."
 
-          for image in sandbox sandbox-python sandbox-opencode sandbox-standalone sandbox-musl; do
+          for image in sandbox sandbox-python sandbox-opencode sandbox-standalone sandbox-musl sandbox-desktop; do
             echo "Deleting $image:pr-$PR..."
             npx wrangler containers images delete "$image:pr-$PR" || true
           done
