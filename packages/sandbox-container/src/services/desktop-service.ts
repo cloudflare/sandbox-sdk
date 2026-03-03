@@ -405,6 +405,15 @@ export class DesktopService {
           }
         }
       };
+      this.worker.onerror = (event) => {
+        const message = event instanceof Error ? event.message : String(event);
+        this.logger.error('Desktop worker crashed', undefined, { message });
+        for (const [id, handler] of this.pending) {
+          handler.reject(new Error(`Worker crashed: ${message}`));
+          this.pending.delete(id);
+        }
+        this.worker = null;
+      };
     }
   }
 

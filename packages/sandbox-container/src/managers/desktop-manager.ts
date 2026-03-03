@@ -117,7 +117,11 @@ export class DesktopManager {
         error instanceof Error ? error : undefined,
         { error }
       );
-      await this.stop();
+      await this.stop().catch((stopErr) => {
+        this.logger.warn('Cleanup stop also failed', {
+          error: stopErr instanceof Error ? stopErr.message : String(stopErr)
+        });
+      });
       throw error;
     }
   }
