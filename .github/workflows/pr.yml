@@ -1,0 +1,282 @@
+name: Pull Request
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
+  actions: write
+
+concurrency:
+  group: pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  CF_ACCOUNT_SUBDOMAIN: agents-b8a
+
+jobs:
+  # --- Change detection ---
+  detect-changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    outputs:
+      shared: ${{ steps.filter.outputs.shared }}
+      sdk: ${{ steps.filter.outputs.sdk }}
+      container: ${{ steps.filter.outputs.container }}
+      docker-config: ${{ steps.filter.outputs.docker-config }}
+      build-config: ${{ steps.filter.outputs.build-config }}
+      e2e-tests: ${{ steps.filter.outputs.e2e-tests }}
+      deps: ${{ steps.filter.outputs.deps }}
+      changesets: ${{ steps.filter.outputs.changesets }}
+      any-source: ${{ steps.filter.outputs.any-source }}
+      needs-docker: ${{ steps.derived.outputs.needs-docker }}
+      needs-e2e: ${{ steps.derived.outputs.needs-e2e }}
+      needs-sdk-tests: ${{ steps.derived.outputs.needs-sdk-tests }}
+      needs-container-tests: ${{ steps.derived.outputs.needs-container-tests }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            shared:
+              - 'packages/shared/src/**'
+              - 'packages/shared/package.json'
+            sdk:
+              - 'packages/sandbox/src/**'
+              - 'packages/sandbox/package.json'
+            container:
+              - 'packages/sandbox-container/src/**'
+              - 'packages/sandbox-container/package.json'
+            docker-config:
+              - 'packages/sandbox/Dockerfile'
+              - 'docker-bake.hcl'
+              - '.dockerignore'
+            build-config:
+              - 'tooling/**'
+              - 'turbo.json'
+              - '.npmrc'
+            e2e-tests:
+              - 'tests/e2e/**'
+              - 'vitest.e2e.config.ts'
+            deps:
+              - 'package.json'
+              - 'package-lock.json'
+              - 'packages/*/package.json'
+            changesets:
+              - '.changeset/**'
+            any-source:
+              - 'packages/**'
+              - 'tests/**'
+
+      - name: Derive conditions
+        id: derived
+        run: |
+          # Needs Docker rebuild?
+          if [[ "${{ steps.filter.outputs.shared }}" == "true" \
+             || "${{ steps.filter.outputs.container }}" == "true" \
+             || "${{ steps.filter.outputs.docker-config }}" == "true" \
+             || "${{ steps.filter.outputs.build-config }}" == "true" \
+             || "${{ steps.filter.outputs.deps }}" == "true" ]]; then
+            echo "needs-docker=true" >> $GITHUB_OUTPUT
+          else
+            echo "needs-docker=false" >> $GITHUB_OUTPUT
+          fi
+
+          # Needs E2E?
+          if [[ "${{ steps.filter.outputs.shared }}" == "true" \
+             || "${{ steps.filter.outputs.sdk }}" == "true" \
+             || "${{ steps.filter.outputs.container }}" == "true" \
+             || "${{ steps.filter.outputs.docker-config }}" == "true" \
+             || "${{ steps.filter.outputs.build-config }}" == "true" \
+             || "${{ steps.filter.outputs.e2e-tests }}" == "true" \
+             || "${{ steps.filter.outputs.deps }}" == "true" ]]; then
+            echo "needs-e2e=true" >> $GITHUB_OUTPUT
+          else
+            echo "needs-e2e=false" >> $GITHUB_OUTPUT
+          fi
+
+          # Needs SDK unit tests?
+          if [[ "${{ steps.filter.outputs.shared }}" == "true" \
+             || "${{ steps.filter.outputs.sdk }}" == "true" \
+             || "${{ steps.filter.outputs.build-config }}" == "true" \
+             || "${{ steps.filter.outputs.deps }}" == "true" ]]; then
+            echo "needs-sdk-tests=true" >> $GITHUB_OUTPUT
+          else
+            echo "needs-sdk-tests=false" >> $GITHUB_OUTPUT
+          fi
+
+          # Needs container unit tests?
+          if [[ "${{ steps.filter.outputs.shared }}" == "true" \
+             || "${{ steps.filter.outputs.container }}" == "true" \
+             || "${{ steps.filter.outputs.build-config }}" == "true" \
+             || "${{ steps.filter.outputs.deps }}" == "true" ]]; then
+            echo "needs-container-tests=true" >> $GITHUB_OUTPUT
+          else
+            echo "needs-container-tests=false" >> $GITHUB_OUTPUT
+          fi
+
+  # --- Build (always runs — JS build is cheap, Docker is conditional) ---
+  build:
+    needs: detect-changes
+    uses: ./.github/workflows/reusable-build.yml
+    with:
+      skip_docker: ${{ needs.detect-changes.outputs.needs-docker != 'true' }}
+      image_tag: pr-${{ github.event.pull_request.number }}
+    secrets: inherit
+
+  # --- Quality gates (always runs after build) ---
+  quality:
+    needs: [detect-changes, build]
+    uses: ./.github/workflows/reusable-quality.yml
+    with:
+      run_sdk_tests: ${{ needs.detect-changes.outputs.needs-sdk-tests == 'true' }}
+      run_container_tests: ${{ needs.detect-changes.outputs.needs-container-tests == 'true' }}
+      run_changeset_validation: ${{ needs.detect-changes.outputs.changesets == 'true' }}
+    secrets: inherit
+
+  # --- E2E tests (conditional) ---
+  e2e:
+    needs: [detect-changes, build]
+    if: |
+      needs.detect-changes.outputs.needs-e2e == 'true' &&
+      !contains(github.event.pull_request.title, 'Version Packages') &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    uses: ./.github/workflows/reusable-e2e.yml
+    with:
+      worker_name_prefix: sandbox-e2e-test-worker-pr-${{ github.event.pull_request.number }}
+      image_tag: pr-${{ github.event.pull_request.number }}
+      images_changed: ${{ needs.detect-changes.outputs.needs-docker }}
+    secrets: inherit
+
+  # --- Publish preview (inline job, absorbs pkg-pr-new.yml) ---
+  publish-preview:
+    needs: [detect-changes, build]
+    if: |
+      needs.detect-changes.outputs.any-source == 'true' &&
+      !contains(github.event.pull_request.title, 'Version Packages') &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: 'npm'
+
+      - run: npm ci --prefer-offline --no-audit --no-fund
+
+      - uses: actions/download-artifact@v5
+        with:
+          name: build-${{ github.sha }}
+
+      - name: Set preview version
+        id: version
+        run: |
+          VERSION="0.0.0-pr-${{ github.event.pull_request.number }}-$(git rev-parse --short HEAD)"
+          node -e "const fs=require('fs'); const p='./packages/sandbox/package.json'; const j=JSON.parse(fs.readFileSync(p,'utf8')); j.version='${VERSION}'; fs.writeFileSync(p,JSON.stringify(j,null,2)+'\n');"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - run: npx tsx .github/resolve-workspace-versions.ts
+
+      - name: Install crane
+        run: |
+          VERSION=0.20.3
+          curl -sL https://github.com/google/go-containerregistry/releases/download/v${VERSION}/go-containerregistry_Linux_x86_64.tar.gz | tar xz crane
+          sudo mv crane /usr/local/bin/
+
+      - name: Copy Docker images to Docker Hub
+        if: ${{ needs.detect-changes.outputs.needs-docker == 'true' }}
+        run: |
+          BUILD_TAG="pr-${{ github.event.pull_request.number }}"
+          PREVIEW="${{ steps.version.outputs.version }}"
+          crane auth login index.docker.io -u ${{ secrets.DOCKER_HUB_USERNAME }} -p ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
+          crane auth login registry.cloudflare.com -u unused -p ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          for suffix in "" "-python" "-opencode"; do
+            crane copy \
+              registry.cloudflare.com/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/sandbox${suffix}:${BUILD_TAG} \
+              docker.io/cloudflare/sandbox:${PREVIEW}${suffix}
+          done
+
+      - name: Extract standalone binary
+        if: ${{ needs.detect-changes.outputs.needs-docker == 'true' }}
+        run: |
+          BUILD_TAG="pr-${{ github.event.pull_request.number }}"
+          docker pull registry.cloudflare.com/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/sandbox:${BUILD_TAG}
+          CID=$(docker create registry.cloudflare.com/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/sandbox:${BUILD_TAG})
+          docker cp $CID:/container-server/sandbox ./sandbox-linux-x64
+          docker rm $CID
+          chmod +x ./sandbox-linux-x64
+
+      - uses: actions/upload-artifact@v7
+        if: ${{ needs.detect-changes.outputs.needs-docker == 'true' }}
+        with:
+          name: sandbox-binary
+          path: ./sandbox-linux-x64
+          retention-days: 3
+
+      - run: npx pkg-pr-new publish './packages/sandbox'
+
+      # PR comment with Docker image tags (from existing pkg-pr-new.yml)
+      - uses: actions/github-script@v7
+        if: ${{ needs.detect-changes.outputs.needs-docker == 'true' }}
+        with:
+          script: |
+            const fs = require('fs');
+            const version = '${{ steps.version.outputs.version }}';
+            const templatePath = '.github/templates/pr-preview-comment.md';
+            if (fs.existsSync(templatePath)) {
+              let body = fs.readFileSync(templatePath, 'utf8');
+              body = body.replace(/\{\{VERSION\}\}/g, version);
+              const { data: comments } = await github.rest.issues.listComments({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: context.issue.number
+              });
+              const existing = comments.find(c => c.body?.includes('Docker Preview'));
+              if (existing) {
+                await github.rest.issues.updateComment({
+                  owner: context.repo.owner, repo: context.repo.repo,
+                  comment_id: existing.id, body
+                });
+              } else {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner, repo: context.repo.repo,
+                  issue_number: context.issue.number, body
+                });
+              }
+            }
+
+  # --- Gate job (required check for branch protection) ---
+  gate:
+    if: always()
+    needs: [build, quality, e2e, publish-preview]
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - name: Check job results
+        run: |
+          echo "build: ${{ needs.build.result }}"
+          echo "quality: ${{ needs.quality.result }}"
+          echo "e2e: ${{ needs.e2e.result }}"
+          echo "publish-preview: ${{ needs.publish-preview.result }}"
+
+          # Fail if any required job failed (skipped is OK)
+          if [[ "${{ needs.build.result }}" == "failure" ]]; then
+            echo "::error::Build failed"
+            exit 1
+          fi
+          if [[ "${{ needs.quality.result }}" == "failure" ]]; then
+            echo "::error::Quality gates failed"
+            exit 1
+          fi
+          if [[ "${{ needs.e2e.result }}" == "failure" ]]; then
+            echo "::error::E2E tests failed"
+            exit 1
+          fi
+          echo "All required checks passed"
