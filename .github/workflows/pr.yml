@@ -41,6 +41,8 @@ jobs:
       deploy-hash: ${{ steps.hashes.outputs.deploy }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
 
       - uses: dorny/paths-filter@v3
         id: filter
