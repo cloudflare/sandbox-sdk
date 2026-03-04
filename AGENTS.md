@@ -97,11 +97,9 @@ npm run docker:rebuild     # Rebuild container image locally (includes clean bui
 
 **Note:** Docker images are automatically built and published by CI (`release.yml`):
 
-- Beta images on every main commit
-- Stable images when "Version Packages" PR is merged
-- Multi-arch builds (amd64, arm64) handled by CI
-
-**Critical:** Docker image version MUST match npm package version. This is enforced via `ARG SANDBOX_VERSION` in Dockerfile.
+- Images are built on every push to main (for E2E testing against CF registry)
+- Published to Docker Hub only when the "Version Packages" PR is merged (stable releases)
+  **Critical:** Docker image version MUST match npm package version. This is enforced via `ARG SANDBOX_VERSION` in Dockerfile.
 
 ### Development Server
 
@@ -161,8 +159,6 @@ npm run dev                # Start wrangler dev server (builds Docker on first r
 8. **Automated release** (no manual intervention):
    - Changesets action creates a "Version Packages" PR when changesets exist
    - Merging that PR triggers automated npm + Docker Hub publishing
-   - Beta releases published on every main commit
-   - Stable releases published when changesets are merged
 
 ## Testing Architecture
 
@@ -336,11 +332,11 @@ Enable with `useWebSocket: true` in sandbox options.
 **Releases are fully automated** via GitHub Actions (`.github/workflows/release.yml`) and changesets (`.changeset/`):
 
 - **Changesets**: Create a `.changeset/your-feature-name.md` file to document changes affecting published packages (see PR process above)
-- **Beta releases**: Published automatically on every push to main (`@beta` tag on npm)
-- **Stable releases**: When changesets exist, the "Version Packages" PR is auto-created. Merging it triggers:
+- **Releases**: When changesets exist on main, the "Version Packages" PR is auto-created. Merging it triggers:
   1. Version bump in `package.json`
-  2. Docker image build and push to Docker Hub (linux/amd64 architecture only to match production)
+  2. Docker images crane-copied from CF registry to Docker Hub (the exact images E2E tested)
   3. npm package publish with updated version
+  4. Standalone binaries extracted and uploaded to GitHub Release
 - **Version synchronization**: Docker image version always matches npm package version (enforced via `ARG SANDBOX_VERSION` in Dockerfile)
 - **Architecture**: Images are built for linux/amd64 only, matching Cloudflare's production container runtime. ARM Mac users will automatically use emulation (Rosetta/QEMU) for local development, ensuring perfect dev/prod parity.
 
