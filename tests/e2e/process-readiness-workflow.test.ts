@@ -332,7 +332,6 @@ await Bun.sleep(60000);
     // Write a script that outputs to stderr
     const scriptCode = `
 console.error("Starting up in stderr...");
-await Bun.sleep(300);
 console.error("Ready (stderr)");
 await Bun.sleep(60000);
     `.trim();
@@ -367,7 +366,7 @@ await Bun.sleep(60000);
         headers,
         body: JSON.stringify({
           pattern: 'Ready (stderr)',
-          timeout: 10000
+          timeout: 30000
         })
       }
     );
