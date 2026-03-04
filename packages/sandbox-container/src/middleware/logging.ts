@@ -14,16 +14,6 @@ export class LoggingMiddleware implements Middleware {
     const method = request.method;
     const url = new URL(request.url);
     const pathname = url.pathname;
-    const contentLength = request.headers.get('content-length');
-    const requestEvent: Record<string, unknown> = {
-      requestId: context.requestId,
-      method,
-      pathname,
-      sessionId: context.sessionId,
-      startedAt: context.timestamp.toISOString(),
-      userAgent: request.headers.get('user-agent') ?? undefined,
-      contentLength: contentLength ? Number(contentLength) : undefined
-    };
 
     let response: Response | undefined;
     let requestError: Error | undefined;
@@ -37,16 +27,17 @@ export class LoggingMiddleware implements Middleware {
       throw error;
     } finally {
       const statusCode = response?.status ?? 500;
-      const duration = Date.now() - startTime;
+      const durationMs = Date.now() - startTime;
       const isError = statusCode >= 500 || Boolean(requestError);
-      const wideEvent = {
-        ...requestEvent,
+
+      const wideEvent: Record<string, unknown> = {
         statusCode,
-        durationMs: duration,
-        outcome: isError ? 'error' : 'success'
+        durationMs,
+        requestId: context.requestId,
+        sessionId: context.sessionId
       };
 
-      const msg = `${method} ${pathname}`;
+      const msg = `${method} ${pathname} ${statusCode}`;
       if (isError) {
         this.logger.error(msg, requestError, wideEvent);
       } else {
