@@ -95,7 +95,7 @@ async function ensureOpencodeServer(
       try {
         await existingProcess.waitForPort(port, {
           mode: 'http',
-          path: '/global/health',
+          path: '/path',
           status: 200,
           timeout: OPENCODE_STARTUP_TIMEOUT_MS
         });
@@ -135,7 +135,7 @@ async function ensureOpencodeServer(
         try {
           await retryProcess.waitForPort(port, {
             mode: 'http',
-            path: '/global/health',
+            path: '/path',
             status: 200,
             timeout: OPENCODE_STARTUP_TIMEOUT_MS
           });
@@ -229,7 +229,7 @@ async function startOpencodeServer(
   try {
     await process.waitForPort(port, {
       mode: 'http',
-      path: '/global/health',
+      path: '/path',
       status: 200,
       timeout: OPENCODE_STARTUP_TIMEOUT_MS
     });
