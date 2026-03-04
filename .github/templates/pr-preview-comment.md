@@ -1,13 +1,12 @@
 ### 🐳 Docker Images Published
 
-| Variant            | Image                      |
-| ------------------ | -------------------------- |
-| Default            | `{{DEFAULT_TAG}}`          |
-| Python             | `{{PYTHON_TAG}}`           |
-| OpenCode           | `{{OPENCODE_TAG}}`         |
-| Desktop            | `{{DESKTOP_TAG}}`          |
-| Desktop + Python   | `{{DESKTOP_PYTHON_TAG}}`   |
-| Desktop + OpenCode | `{{DESKTOP_OPENCODE_TAG}}` |
+| Variant  | Image              |
+| -------- | ------------------ |
+| Default  | `{{DEFAULT_TAG}}`  |
+| Python   | `{{PYTHON_TAG}}`   |
+| OpenCode | `{{OPENCODE_TAG}}` |
+| Musl     | `{{MUSL_TAG}}`     |
+| Desktop  | `{{DESKTOP_TAG}}`  |
 
 **Usage:**
 

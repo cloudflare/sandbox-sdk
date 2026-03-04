@@ -255,7 +255,7 @@ jobs:
           BUILD_TAG="pr-${{ github.event.pull_request.number }}"
           PREVIEW="${{ steps.version.outputs.version }}"
           crane auth login index.docker.io -u ${{ secrets.DOCKER_HUB_USERNAME }} -p ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
-          for suffix in "" "-python" "-opencode"; do
+          for suffix in "" "-python" "-opencode" "-musl" "-desktop"; do
             crane copy \
               registry.cloudflare.com/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/sandbox${suffix}:${BUILD_TAG} \
               docker.io/cloudflare/sandbox:${PREVIEW}${suffix}
@@ -291,9 +291,8 @@ jobs:
             const defaultTag = `cloudflare/sandbox:${version}`;
             const pythonTag = `cloudflare/sandbox:${version}-python`;
             const opencodeTag = `cloudflare/sandbox:${version}-opencode`;
+            const muslTag = `cloudflare/sandbox:${version}-musl`;
             const desktopTag = `cloudflare/sandbox:${version}-desktop`;
-            const desktopPythonTag = `cloudflare/sandbox:${version}-desktop-python`;
-            const desktopOpencodeTag = `cloudflare/sandbox:${version}-desktop-opencode`;
             const templatePath = '.github/templates/pr-preview-comment.md';
             if (fs.existsSync(templatePath)) {
               let body = fs.readFileSync(templatePath, 'utf8');
@@ -303,9 +302,8 @@ jobs:
                 .replace(/\{\{DEFAULT_TAG\}\}/g, defaultTag)
                 .replace(/\{\{PYTHON_TAG\}\}/g, pythonTag)
                 .replace(/\{\{OPENCODE_TAG\}\}/g, opencodeTag)
-                .replace(/\{\{DESKTOP_TAG\}\}/g, desktopTag)
-                .replace(/\{\{DESKTOP_PYTHON_TAG\}\}/g, desktopPythonTag)
-                .replace(/\{\{DESKTOP_OPENCODE_TAG\}\}/g, desktopOpencodeTag);
+                .replace(/\{\{MUSL_TAG\}\}/g, muslTag)
+                .replace(/\{\{DESKTOP_TAG\}\}/g, desktopTag);
               const { data: comments } = await github.rest.issues.listComments({
                 owner: context.repo.owner, repo: context.repo.repo,
                 issue_number: context.issue.number
