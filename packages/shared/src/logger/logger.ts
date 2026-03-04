@@ -197,7 +197,9 @@ export class CloudflareLogger implements Logger {
     for (const [key, value] of Object.entries(rest)) {
       if (value === undefined || value === null) continue;
       const v =
-        typeof value === 'object' ? JSON.stringify(value) : String(value);
+        typeof value === 'object'
+          ? JSON.stringify(value)
+          : this.sanitizePrettyValue(String(value));
       pairs.push(`${key}=${v}`);
     }
 
@@ -208,9 +210,12 @@ export class CloudflareLogger implements Logger {
         stack?: string;
         name?: string;
       };
-      if (errorObj.name) pairs.push(`err.name=${errorObj.name}`);
-      if (errorObj.message) pairs.push(`err.msg=${errorObj.message}`);
-      if (errorObj.stack) pairs.push(`err.stack=${errorObj.stack}`);
+      if (errorObj.name)
+        pairs.push(`err.name=${this.sanitizePrettyValue(errorObj.name)}`);
+      if (errorObj.message)
+        pairs.push(`err.msg=${this.sanitizePrettyValue(errorObj.message)}`);
+      if (errorObj.stack)
+        pairs.push(`err.stack=${this.sanitizePrettyValue(errorObj.stack)}`);
     }
 
     if (pairs.length > 0) {
@@ -219,6 +224,15 @@ export class CloudflareLogger implements Logger {
 
     // Single consoleFn call = single log entry in the dashboard
     consoleFn(logLine);
+  }
+
+  /**
+   * Collapse newlines so a single consoleFn() call stays on one line.
+   * Cloudflare's log pipeline splits on literal newlines, which fragments
+   * stack traces and multi-line error messages into separate entries.
+   */
+  private sanitizePrettyValue(value: string): string {
+    return value.replace(/\r/g, '\\r').replace(/\n/g, '\\n');
   }
 
   /**

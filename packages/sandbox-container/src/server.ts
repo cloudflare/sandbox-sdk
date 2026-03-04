@@ -121,6 +121,13 @@ export async function startServer(): Promise<ServerInstance> {
   serve<WSData>({
     idleTimeout: 255,
     fetch: (req, server) => app.fetch(req, server),
+    error(error) {
+      logger.error(
+        'Unhandled server error',
+        error instanceof Error ? error : new Error(String(error))
+      );
+      return new Response('Internal Server Error', { status: 500 });
+    },
     hostname: '0.0.0.0',
     port: SERVER_PORT,
     websocket: {
