@@ -64,6 +64,24 @@ jobs:
           R2_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
+      - name: Inject HTTP worker secrets
+        run: |
+          jq -n \
+            --arg a "$AWS_ACCESS_KEY_ID" \
+            --arg b "$AWS_SECRET_ACCESS_KEY" \
+            --arg c "$CLOUDFLARE_ACCOUNT_ID" \
+            --arg d "$R2_ACCESS_KEY_ID" \
+            --arg e "$R2_SECRET_ACCESS_KEY" \
+            '{AWS_ACCESS_KEY_ID:$a, AWS_SECRET_ACCESS_KEY:$b, CLOUDFLARE_ACCOUNT_ID:$c, R2_ACCESS_KEY_ID:$d, R2_SECRET_ACCESS_KEY:$e}' \
+          | npx wrangler secret:bulk --name "${{ inputs.worker_name_prefix }}-http"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          R2_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
       - name: Deploy WebSocket worker
         run: |
           cd tests/e2e/test-worker
@@ -75,6 +93,24 @@ jobs:
           npx wrangler deploy \
             --name "${{ inputs.worker_name_prefix }}-websocket" \
             ${{ inputs.images_changed == 'true' && '--containers-rollout immediate' || '' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          R2_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+      - name: Inject WebSocket worker secrets
+        run: |
+          jq -n \
+            --arg a "$AWS_ACCESS_KEY_ID" \
+            --arg b "$AWS_SECRET_ACCESS_KEY" \
+            --arg c "$CLOUDFLARE_ACCOUNT_ID" \
+            --arg d "$R2_ACCESS_KEY_ID" \
+            --arg e "$R2_SECRET_ACCESS_KEY" \
+            '{AWS_ACCESS_KEY_ID:$a, AWS_SECRET_ACCESS_KEY:$b, CLOUDFLARE_ACCOUNT_ID:$c, R2_ACCESS_KEY_ID:$d, R2_SECRET_ACCESS_KEY:$e}' \
+          | npx wrangler secret:bulk --name "${{ inputs.worker_name_prefix }}-websocket"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
