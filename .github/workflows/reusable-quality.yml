@@ -32,7 +32,14 @@ jobs:
           node-version: 24
           cache: 'npm'
 
+      - uses: actions/cache@v5
+        id: nm-cache
+        with:
+          path: node_modules
+          key: node-modules-${{ hashFiles('package-lock.json') }}
+
       - run: npm ci --prefer-offline --no-audit --no-fund
+        if: steps.nm-cache.outputs.cache-hit != 'true'
 
       - uses: actions/download-artifact@v8
         with:
@@ -74,7 +81,14 @@ jobs:
           node-version: 24
           cache: 'npm'
 
+      - uses: actions/cache@v5
+        id: nm-cache
+        with:
+          path: node_modules
+          key: node-modules-${{ hashFiles('package-lock.json') }}
+
       - run: npm ci --prefer-offline --no-audit --no-fund
+        if: steps.nm-cache.outputs.cache-hit != 'true'
 
       - uses: actions/download-artifact@v8
         with:
@@ -127,7 +141,14 @@ jobs:
         with:
           bun-version-file: .bun-version
 
+      - uses: actions/cache@v5
+        id: nm-cache
+        with:
+          path: node_modules
+          key: node-modules-${{ hashFiles('package-lock.json') }}
+
       - run: npm ci --prefer-offline --no-audit --no-fund
+        if: steps.nm-cache.outputs.cache-hit != 'true'
 
       - uses: actions/download-artifact@v8
         with:

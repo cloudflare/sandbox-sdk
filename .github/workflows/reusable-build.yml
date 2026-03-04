@@ -49,7 +49,14 @@ jobs:
         with:
           bun-version-file: .bun-version
 
+      - uses: actions/cache@v5
+        id: nm-cache
+        with:
+          path: node_modules
+          key: node-modules-${{ hashFiles('package-lock.json') }}
+
       - run: npm ci --prefer-offline --no-audit --no-fund
+        if: steps.nm-cache.outputs.cache-hit != 'true'
 
       - name: Build packages
         run: npx turbo run build
