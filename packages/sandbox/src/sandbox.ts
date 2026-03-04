@@ -2756,7 +2756,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     await this.client.utils.createSession({
       id: sessionId,
       ...(envPayload && { env: envPayload }),
-      ...(options?.cwd && { cwd: options.cwd })
+      ...(options?.cwd && { cwd: options.cwd }),
+      ...(options?.commandTimeoutMs && {
+        commandTimeoutMs: options.commandTimeoutMs
+      })
     });
 
     // Return wrapper that binds sessionId to all operations

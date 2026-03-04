@@ -51,23 +51,27 @@ export class SessionHandler extends BaseHandler<Request, Response> {
     let sessionId: string;
     let env: Record<string, string>;
     let cwd: string;
+    let commandTimeoutMs: number | undefined;
 
     try {
       const body = (await request.json()) as any;
       sessionId = body.id || this.generateSessionId();
       env = body.env || {};
       cwd = body.cwd || '/workspace';
+      commandTimeoutMs = body.commandTimeoutMs || undefined;
     } catch {
       // If no body or invalid JSON, use defaults
       sessionId = this.generateSessionId();
       env = {};
       cwd = '/workspace';
+      commandTimeoutMs = undefined;
     }
 
     const result = await this.sessionManager.createSession({
       id: sessionId,
       env,
-      cwd
+      cwd,
+      commandTimeoutMs
     });
 
     if (result.success) {

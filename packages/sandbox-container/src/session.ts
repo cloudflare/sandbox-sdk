@@ -163,6 +163,8 @@ interface ExecOptions {
   cwd?: string;
   /** Environment variables for this command only (does not persist in session). Undefined values are skipped. */
   env?: Record<string, string | undefined>;
+  /** Maximum execution time in milliseconds */
+  timeoutMs?: number;
 }
 
 /** Command handle for tracking and killing running commands */
@@ -320,7 +322,8 @@ export class Session {
       sessionId: this.id,
       commandId,
       operation: 'exec',
-      command: command.substring(0, 100)
+      command: command.substring(0, 100),
+      ...(options?.timeoutMs && { timeout: options.timeoutMs })
     });
 
     try {
@@ -352,7 +355,7 @@ export class Session {
       // 2. Shell death (shell process exits unexpectedly)
       // This allows us to detect shell termination (e.g., from 'exit' command) immediately
       const exitCode = await Promise.race([
-        this.waitForExitCode(exitCodeFile),
+        this.waitForExitCode(exitCodeFile, options?.timeoutMs),
         shellExitedPromise
       ]);
 
@@ -1120,7 +1123,10 @@ export class Session {
    *
    * Any mechanism that detects the file first wins (via `resolved` flag).
    */
-  private async waitForExitCode(exitCodeFile: string): Promise<number> {
+  private async waitForExitCode(
+    exitCodeFile: string,
+    timeoutMs?: number
+  ): Promise<number> {
     return new Promise((resolve, reject) => {
       const dir = dirname(exitCodeFile);
       const filename = basename(exitCodeFile);
@@ -1163,17 +1169,16 @@ export class Session {
       }, 50); // Poll every 50ms as fallback
 
       // STEP 3: Set up timeout if configured
-      if (this.commandTimeoutMs !== undefined) {
+      const timeout = timeoutMs ?? this.commandTimeoutMs;
+      if (timeout !== undefined) {
         setTimeout(() => {
           if (!resolved) {
             resolved = true;
             watcher.close();
             clearInterval(pollInterval);
-            reject(
-              new Error(`Command timeout after ${this.commandTimeoutMs}ms`)
-            );
+            reject(new Error(`Command timeout after ${timeout}ms`));
           }
-        }, this.commandTimeoutMs);
+        }, timeout);
       }
 
       // STEP 4: Check if file already exists
