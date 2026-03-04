@@ -58,13 +58,12 @@ export class SessionHandler extends BaseHandler<Request, Response> {
       sessionId = body.id || this.generateSessionId();
       env = body.env || {};
       cwd = body.cwd || '/workspace';
-      commandTimeoutMs = body.commandTimeoutMs || undefined;
+      commandTimeoutMs = body.commandTimeoutMs;
     } catch {
       // If no body or invalid JSON, use defaults
       sessionId = this.generateSessionId();
       env = {};
       cwd = '/workspace';
-      commandTimeoutMs = undefined;
     }
 
     const result = await this.sessionManager.createSession({

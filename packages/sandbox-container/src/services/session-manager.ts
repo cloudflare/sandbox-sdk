@@ -316,7 +316,11 @@ export class SessionManager {
 
         const result = await session.exec(
           command,
-          cwd || env || timeoutMs ? { cwd, env, timeoutMs } : undefined
+          timeoutMs !== undefined
+            ? { cwd, env, timeoutMs }
+            : cwd || env
+              ? { cwd, env }
+              : undefined
         );
 
         return {

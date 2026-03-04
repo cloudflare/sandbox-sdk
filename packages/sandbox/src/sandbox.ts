@@ -2757,7 +2757,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       id: sessionId,
       ...(envPayload && { env: envPayload }),
       ...(options?.cwd && { cwd: options.cwd }),
-      ...(options?.commandTimeoutMs && {
+      ...(options?.commandTimeoutMs !== undefined && {
         commandTimeoutMs: options.commandTimeoutMs
       })
     });
