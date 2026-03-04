@@ -1,5 +1,13 @@
 # @cloudflare/sandbox
 
+## 0.7.11
+
+### Patch Changes
+
+- [#446](https://github.com/cloudflare/sandbox-sdk/pull/446) [`bbaba54`](https://github.com/cloudflare/sandbox-sdk/commit/bbaba5403e1bc7e062f36c37bfdd72e6683ff965) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - Fix heredoc commands (e.g. `cat << 'EOF'`) hanging permanently and making the session unusable for subsequent commands.
+
+- [#447](https://github.com/cloudflare/sandbox-sdk/pull/447) [`4088435`](https://github.com/cloudflare/sandbox-sdk/commit/4088435d9dc2ea8965518836d09b966dfe3ae661) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Fix three reliability issues: OpenCode readiness probe returning healthy before the binary is ready, file watch race condition where stale watchers could linger after cancellation, and SSE stream handler registering output listeners after replaying buffered logs — causing intermittent `waitForLog` timeouts on HTTP transport.
+
 ## 0.7.10
 
 ### Patch Changes
@@ -116,13 +124,13 @@
   As a base image:
 
   ```dockerfile
-  FROM docker.io/cloudflare/sandbox:0.7.10-musl
+  FROM docker.io/cloudflare/sandbox:0.7.11-musl
   ```
 
   Or copy the binary into your own Alpine image:
 
   ```dockerfile
-  COPY --from=docker.io/cloudflare/sandbox:0.7.10-musl /container-server/sandbox /sandbox
+  COPY --from=docker.io/cloudflare/sandbox:0.7.11-musl /container-server/sandbox /sandbox
   ```
 
 - [#377](https://github.com/cloudflare/sandbox-sdk/pull/377) [`d83642e`](https://github.com/cloudflare/sandbox-sdk/commit/d83642e855f68e4fb8c15c2452709923e55a83fd) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Allow port 8787 in `exposePort()`. It was incorrectly blocked.
@@ -345,10 +353,10 @@
 
   ```dockerfile
   # Before
-  FROM cloudflare/sandbox:0.7.10
+  FROM cloudflare/sandbox:0.7.11
 
   # After
-  FROM cloudflare/sandbox:0.7.10-python
+  FROM cloudflare/sandbox:0.7.11-python
   ```
 
   Without this change, Python execution will fail with `PYTHON_NOT_AVAILABLE` error.
