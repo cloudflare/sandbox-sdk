@@ -1,26 +1,20 @@
 ### 🐳 Docker Images Published
 
-**Default:**
+| Variant  | Image              |
+| -------- | ------------------ |
+| Default  | `{{DEFAULT_TAG}}`  |
+| Python   | `{{PYTHON_TAG}}`   |
+| OpenCode | `{{OPENCODE_TAG}}` |
+| Musl     | `{{MUSL_TAG}}`     |
+| Desktop  | `{{DESKTOP_TAG}}`  |
+
+**Usage:**
 
 ```dockerfile
 FROM {{DEFAULT_TAG}}
 ```
 
-**With Python:**
-
-```dockerfile
-FROM {{PYTHON_TAG}}
-```
-
-**With OpenCode:**
-
-```dockerfile
-FROM {{OPENCODE_TAG}}
-```
-
 **Version:** `{{VERSION}}`
-
-Use the `-python` variant if you need Python code execution, or `-opencode` for the variant with OpenCode AI coding agent pre-installed.
 
 ---
 

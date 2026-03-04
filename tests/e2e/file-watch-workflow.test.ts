@@ -20,34 +20,32 @@ import {
 } from 'vitest';
 import { parseSSEStream } from '../../packages/sandbox/src/sse-parser';
 import {
-  cleanupIsolatedSandbox,
+  cleanupTestSandbox,
+  createTestSandbox,
   createUniqueSession,
-  getIsolatedSandbox,
-  type SharedSandbox,
-  uniqueTestPath
+  type TestSandbox
 } from './helpers/global-sandbox';
 
 describe('File Watch Workflow', () => {
-  let sandbox: SharedSandbox | null = null;
+  let sandbox: TestSandbox | null = null;
   let workerUrl: string;
   let headers: Record<string, string>;
   let testDir: string;
 
   beforeAll(async () => {
-    sandbox = await getIsolatedSandbox();
+    sandbox = await createTestSandbox();
     workerUrl = sandbox.workerUrl;
   }, 120000);
 
   beforeEach(async () => {
     if (!sandbox) {
-      throw new Error('Isolated sandbox not initialized');
+      throw new Error('Test sandbox not initialized');
     }
-    headers = sandbox.createHeaders(createUniqueSession());
+    headers = sandbox.headers(createUniqueSession());
   });
 
   afterAll(async () => {
-    await cleanupIsolatedSandbox(sandbox);
-    sandbox = null;
+    await cleanupTestSandbox(sandbox);
   });
 
   /**
@@ -187,7 +185,7 @@ describe('File Watch Workflow', () => {
   }
 
   test('should establish watch and receive watching event', async () => {
-    testDir = uniqueTestPath('watch-establish');
+    testDir = sandbox!.uniquePath('watch-establish');
     await createDir(testDir);
 
     const { events, watchId } = await watchAndCollect(testDir, {
@@ -205,7 +203,7 @@ describe('File Watch Workflow', () => {
   }, 30000);
 
   test('should detect file creation', async () => {
-    testDir = uniqueTestPath('watch-create');
+    testDir = sandbox!.uniquePath('watch-create');
     await createDir(testDir);
 
     // Start watch and create file after watch is confirmed ready
@@ -228,7 +226,7 @@ describe('File Watch Workflow', () => {
   }, 30000);
 
   test('should detect file modification', async () => {
-    testDir = uniqueTestPath('watch-modify');
+    testDir = sandbox!.uniquePath('watch-modify');
     await createDir(testDir);
     await createFile(`${testDir}/existing.txt`, 'initial');
 
@@ -252,7 +250,7 @@ describe('File Watch Workflow', () => {
   }, 30000);
 
   test('should detect file deletion', async () => {
-    testDir = uniqueTestPath('watch-delete');
+    testDir = sandbox!.uniquePath('watch-delete');
     await createDir(testDir);
     await createFile(`${testDir}/todelete.txt`, 'delete me');
 
@@ -276,7 +274,7 @@ describe('File Watch Workflow', () => {
   }, 30000);
 
   test('should filter events with include pattern', async () => {
-    testDir = uniqueTestPath('watch-filter');
+    testDir = sandbox!.uniquePath('watch-filter');
     await createDir(testDir);
 
     // Start watch and create files after watch is confirmed ready
@@ -306,7 +304,7 @@ describe('File Watch Workflow', () => {
   }, 30000);
 
   test('should stop watch when client closes stream', async () => {
-    testDir = uniqueTestPath('watch-stop');
+    testDir = sandbox!.uniquePath('watch-stop');
     await createDir(testDir);
 
     const response = await fetch(`${workerUrl}/api/watch`, {
@@ -356,7 +354,7 @@ describe('File Watch Workflow', () => {
   }, 30000);
 
   test('should exclude patterns from events', async () => {
-    testDir = uniqueTestPath('watch-exclude');
+    testDir = sandbox!.uniquePath('watch-exclude');
     await createDir(testDir);
     await createDir(`${testDir}/node_modules`);
     await createDir(`${testDir}/.git`);

@@ -60,6 +60,7 @@ interface Env {
   R2_ACCESS_KEY_ID?: string;
   R2_SECRET_ACCESS_KEY?: string;
   BACKUP_BUCKET_NAME?: string;
+  DEPLOY_HASH?: string;
 }
 
 /**
@@ -418,7 +419,10 @@ console.log('Terminal server on port ' + port);
 
       // Health check
       if (url.pathname === '/health') {
-        const response: HealthResponse = { status: 'ok' };
+        const response: HealthResponse = {
+          status: 'ok',
+          deploy_hash: env.DEPLOY_HASH
+        };
         return new Response(JSON.stringify(response), {
           headers: { 'Content-Type': 'application/json' }
         });
@@ -706,8 +710,7 @@ console.log('Terminal server on port ' + port);
       ) {
         const pathParts = url.pathname.split('/');
         const processId = pathParts[3];
-        const processes = await executor.listProcesses();
-        const process = processes.find((p) => p.id === processId);
+        const process = await executor.getProcess(processId);
         if (!process) {
           return new Response(JSON.stringify({ error: 'Process not found' }), {
             status: 404,
@@ -738,8 +741,7 @@ console.log('Terminal server on port ' + port);
       ) {
         const pathParts = url.pathname.split('/');
         const processId = pathParts[3];
-        const processes = await executor.listProcesses();
-        const process = processes.find((p) => p.id === processId);
+        const process = await executor.getProcess(processId);
         if (!process) {
           return new Response(JSON.stringify({ error: 'Process not found' }), {
             status: 404,
@@ -772,8 +774,7 @@ console.log('Terminal server on port ' + port);
       ) {
         const pathParts = url.pathname.split('/');
         const processId = pathParts[3];
-        const processes = await executor.listProcesses();
-        const process = processes.find((p) => p.id === processId);
+        const process = await executor.getProcess(processId);
         if (!process) {
           return new Response(JSON.stringify({ error: 'Process not found' }), {
             status: 404,

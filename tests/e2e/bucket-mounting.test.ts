@@ -1,8 +1,10 @@
 import type { ExecResult } from '@repo/shared';
-import { beforeAll, describe, expect, test } from 'vitest';
+import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import {
+  cleanupTestSandbox,
+  createTestSandbox,
   createUniqueSession,
-  getSharedSandbox
+  type TestSandbox
 } from './helpers/global-sandbox';
 import type { BucketGetResponse, SuccessResponse } from './test-worker/types';
 
@@ -28,6 +30,7 @@ describe('Bucket Mounting E2E', () => {
   }
 
   describe('local', () => {
+    let sandbox: TestSandbox | null = null;
     let workerUrl: string;
     let headers: Record<string, string>;
 
@@ -37,9 +40,9 @@ describe('Bucket Mounting E2E', () => {
     const TEST_CONTENT = `Bucket mounting E2E test - ${new Date().toISOString()}`;
 
     beforeAll(async () => {
-      const sandbox = await getSharedSandbox();
+      sandbox = await createTestSandbox();
       workerUrl = sandbox.workerUrl;
-      headers = sandbox.createHeaders(createUniqueSession());
+      headers = sandbox.headers(createUniqueSession());
     }, 120000);
 
     test('should mount bucket and perform bidirectional file operations', async () => {
@@ -159,5 +162,10 @@ describe('Bucket Mounting E2E', () => {
         throw error;
       }
     }, 120000); // 2 minute timeout
+
+    afterAll(async () => {
+      await cleanupTestSandbox(sandbox);
+      sandbox = null;
+    }, 120000);
   });
 });

@@ -17,11 +17,11 @@
     "@cloudflare/sandbox": "*",
     "ai": "^6.0.57",
     "workers-ai-provider": "^3.0.3",
-    "zod": "^3.25.76"
+    "zod": "^4.0.0"
   },
   "devDependencies": {
     "@types/node": "^24.10.1",
     "typescript": "^5.9.3",
-    "wrangler": "^4.63.0"
+    "wrangler": "^4.70.0"
   }
 }

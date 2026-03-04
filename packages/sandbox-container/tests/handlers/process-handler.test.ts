@@ -24,7 +24,6 @@ const mockProcessService = {
   killProcess: vi.fn(),
   killAllProcesses: vi.fn(),
   listProcesses: vi.fn(),
-  streamProcessLogs: vi.fn(),
   executeCommand: vi.fn()
 } as unknown as ProcessService;
 
@@ -491,9 +490,6 @@ describe('ProcessHandler', () => {
         statusListeners: new Set()
       };
 
-      (mockProcessService.streamProcessLogs as any).mockResolvedValue({
-        success: true
-      });
       (mockProcessService.getProcess as any).mockResolvedValue({
         success: true,
         data: mockProcessInfo
@@ -527,11 +523,11 @@ describe('ProcessHandler', () => {
       reader.releaseLock();
     });
 
-    it('should handle stream setup failures', async () => {
-      (mockProcessService.streamProcessLogs as any).mockResolvedValue({
+    it('should handle process not found during stream', async () => {
+      (mockProcessService.getProcess as any).mockResolvedValue({
         success: false,
         error: {
-          message: 'Stream setup failed',
+          message: 'Process not found',
           code: 'PROCESS_NOT_FOUND'
         }
       });
@@ -545,24 +541,20 @@ describe('ProcessHandler', () => {
 
       const response = await processHandler.handle(request, mockContext);
 
-      // HTTP status is auto-mapped based on error code
       expect(response.status).toBe(404);
       const responseData = (await response.json()) as ErrorResponse;
       expect(responseData.code).toBe('PROCESS_NOT_FOUND');
-      expect(responseData.message).toBe('Stream setup failed');
+      expect(responseData.message).toBe('Process not found');
       expect(responseData.httpStatus).toBe(404);
       expect(responseData.timestamp).toBeDefined();
     });
 
-    it('should handle process not found during stream setup', async () => {
-      (mockProcessService.streamProcessLogs as any).mockResolvedValue({
-        success: true
-      });
+    it('should handle internal error during stream setup', async () => {
       (mockProcessService.getProcess as any).mockResolvedValue({
         success: false,
         error: {
-          message: 'Process not found for streaming',
-          code: 'PROCESS_NOT_FOUND'
+          message: 'Internal error retrieving process',
+          code: 'INTERNAL_ERROR'
         }
       });
 
@@ -575,12 +567,11 @@ describe('ProcessHandler', () => {
 
       const response = await processHandler.handle(request, mockContext);
 
-      // HTTP status is auto-mapped: PROCESS_NOT_FOUND → 404
-      expect(response.status).toBe(404);
+      expect(response.status).toBe(500);
       const responseData = (await response.json()) as ErrorResponse;
-      expect(responseData.code).toBe('PROCESS_NOT_FOUND');
-      expect(responseData.message).toBe('Process not found for streaming');
-      expect(responseData.httpStatus).toBe(404);
+      expect(responseData.code).toBe('INTERNAL_ERROR');
+      expect(responseData.message).toBe('Internal error retrieving process');
+      expect(responseData.httpStatus).toBe(500);
       expect(responseData.timestamp).toBeDefined();
     });
   });

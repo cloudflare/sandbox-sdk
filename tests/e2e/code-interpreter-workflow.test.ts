@@ -16,21 +16,29 @@
  */
 
 import type { CodeContext, ExecutionResult } from '@repo/shared';
-import { beforeAll, describe, expect, test } from 'vitest';
+import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import {
+  cleanupTestSandbox,
+  createTestSandbox,
   createUniqueSession,
-  getSharedSandbox
+  type TestSandbox
 } from './helpers/global-sandbox';
+import { createTestHeaders } from './helpers/test-fixtures';
 import type { ErrorResponse } from './test-worker/types';
 
 describe('Code Interpreter Workflow (E2E)', () => {
+  let sandbox: TestSandbox | null = null;
   let workerUrl: string;
   let headers: Record<string, string>;
 
   beforeAll(async () => {
-    const sandbox = await getSharedSandbox();
+    sandbox = await createTestSandbox({ type: 'python' });
     workerUrl = sandbox.workerUrl;
-    headers = sandbox.createPythonHeaders(createUniqueSession());
+    headers = sandbox.headers(createUniqueSession());
+  }, 120000);
+
+  afterAll(async () => {
+    await cleanupTestSandbox(sandbox);
   }, 120000);
 
   // Helper to create context
@@ -472,8 +480,8 @@ for i in range(3):
     expect(deleteFakeError.error).toBeTruthy();
 
     // Python unavailable on base image
-    const sandbox = await getSharedSandbox();
-    const baseImageHeaders = sandbox.createHeaders(createUniqueSession());
+    // Use base image headers (without python type) for this specific test
+    const baseImageHeaders = createTestHeaders(sandbox!.sandboxId);
     const pythonUnavailableResponse = await fetch(
       `${workerUrl}/api/code/context/create`,
       {
