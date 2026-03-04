@@ -287,15 +287,32 @@ jobs:
           script: |
             const fs = require('fs');
             const version = '${{ steps.version.outputs.version }}';
+            const runId = '${{ github.run_id }}';
+            const defaultTag = `cloudflare/sandbox:${version}`;
+            const pythonTag = `cloudflare/sandbox:${version}-python`;
+            const opencodeTag = `cloudflare/sandbox:${version}-opencode`;
+            const desktopTag = `cloudflare/sandbox:${version}-desktop`;
+            const desktopPythonTag = `cloudflare/sandbox:${version}-desktop-python`;
+            const desktopOpencodeTag = `cloudflare/sandbox:${version}-desktop-opencode`;
             const templatePath = '.github/templates/pr-preview-comment.md';
             if (fs.existsSync(templatePath)) {
               let body = fs.readFileSync(templatePath, 'utf8');
-              body = body.replace(/\{\{VERSION\}\}/g, version);
+              body = body
+                .replace(/\{\{VERSION\}\}/g, version)
+                .replace(/\{\{RUN_ID\}\}/g, runId)
+                .replace(/\{\{DEFAULT_TAG\}\}/g, defaultTag)
+                .replace(/\{\{PYTHON_TAG\}\}/g, pythonTag)
+                .replace(/\{\{OPENCODE_TAG\}\}/g, opencodeTag)
+                .replace(/\{\{DESKTOP_TAG\}\}/g, desktopTag)
+                .replace(/\{\{DESKTOP_PYTHON_TAG\}\}/g, desktopPythonTag)
+                .replace(/\{\{DESKTOP_OPENCODE_TAG\}\}/g, desktopOpencodeTag);
               const { data: comments } = await github.rest.issues.listComments({
                 owner: context.repo.owner, repo: context.repo.repo,
                 issue_number: context.issue.number
               });
-              const existing = comments.find(c => c.body?.includes('Docker Preview'));
+              const existing = comments.find(c =>
+                c.user.type === 'Bot' && c.body?.includes('Docker Images Published')
+              );
               if (existing) {
                 await github.rest.issues.updateComment({
                   owner: context.repo.owner, repo: context.repo.repo,
