@@ -36,11 +36,6 @@ jobs:
         with:
           name: build-${{ github.sha }}
 
-      - name: Setup Turbo remote cache
-        uses: rharkor/caching-for-turbo@v1
-        with:
-          cache-prefix: turbo-
-
       - name: Lint
         run: npx biome check
 

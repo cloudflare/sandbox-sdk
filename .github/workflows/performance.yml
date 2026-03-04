@@ -46,13 +46,6 @@ jobs:
           node-version: 24
           cache: 'npm'
 
-      - run: npm ci --prefer-offline --no-audit --no-fund
-
-      - name: Setup Turbo remote cache
-        uses: rharkor/caching-for-turbo@v1
-        with:
-          cache-prefix: turbo-
-
       - name: Build packages
         run: npx turbo run build
 
