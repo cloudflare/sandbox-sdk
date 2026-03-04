@@ -67,7 +67,7 @@ describe('Git Clone Error Handling', () => {
  * Git Shallow Clone Tests
  *
  * Tests the depth option for shallow clones.
- * Uses github/gitignore for real-remote coverage with faster clone times.
+ * Uses octocat/Spoon-Knife for real-remote coverage with faster clone times.
  */
 describe('Git Shallow Clone', () => {
   let workerUrl: string;
@@ -87,7 +87,7 @@ describe('Git Shallow Clone', () => {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        repoUrl: 'https://github.com/github/gitignore',
+        repoUrl: 'https://github.com/octocat/Spoon-Knife',
         targetDir: testDir,
         depth: 1
       })
@@ -137,7 +137,7 @@ describe('Git Shallow Clone', () => {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        repoUrl: 'https://github.com/github/gitignore',
+        repoUrl: 'https://github.com/octocat/Spoon-Knife',
         branch: 'main',
         targetDir: testDir,
         depth: 1
