@@ -73,7 +73,7 @@ jobs:
             --arg d "$R2_ACCESS_KEY_ID" \
             --arg e "$R2_SECRET_ACCESS_KEY" \
             '{AWS_ACCESS_KEY_ID:$a, AWS_SECRET_ACCESS_KEY:$b, CLOUDFLARE_ACCOUNT_ID:$c, R2_ACCESS_KEY_ID:$d, R2_SECRET_ACCESS_KEY:$e}' \
-          | npx wrangler secret:bulk --name "${{ inputs.worker_name_prefix }}-http"
+          | npx wrangler secret bulk --name "${{ inputs.worker_name_prefix }}-http"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -110,7 +110,7 @@ jobs:
             --arg d "$R2_ACCESS_KEY_ID" \
             --arg e "$R2_SECRET_ACCESS_KEY" \
             '{AWS_ACCESS_KEY_ID:$a, AWS_SECRET_ACCESS_KEY:$b, CLOUDFLARE_ACCOUNT_ID:$c, R2_ACCESS_KEY_ID:$d, R2_SECRET_ACCESS_KEY:$e}' \
-          | npx wrangler secret:bulk --name "${{ inputs.worker_name_prefix }}-websocket"
+          | npx wrangler secret bulk --name "${{ inputs.worker_name_prefix }}-websocket"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
