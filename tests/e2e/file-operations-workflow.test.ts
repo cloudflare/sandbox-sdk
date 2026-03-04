@@ -148,62 +148,87 @@ describe('File Operations Error Handling', () => {
     expect(fileAsDirData.error).toMatch(/not a directory|is not a directory/i);
   }, 90000);
 
-  test('should handle hidden files correctly', async () => {
-    const hiddenFile = `${testDir}/.hidden-file`;
-    const hiddenDir = `${testDir}/.hidden-dir`;
+  // Regression test for #196: hidden files in hidden directories
+  test('should list files in hidden directories with includeHidden flag', async () => {
+    const hiddenDir = `${testDir}/.hidden/foo`;
 
-    // Create hidden file
-    const writeResponse = await fetch(`${workerUrl}/api/file/write`, {
+    // Create hidden directory structure
+    await fetch(`${workerUrl}/api/file/mkdir`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ path: `${hiddenDir}/bar`, recursive: true })
+    });
+
+    // Write visible files in hidden directory
+    await fetch(`${workerUrl}/api/file/write`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        path: hiddenFile,
-        content: 'hidden content'
+        path: `${hiddenDir}/visible1.txt`,
+        content: 'Visible 1'
       })
     });
-    expect(writeResponse.status).toBe(200);
-
-    // Create hidden directory
-    const mkdirResponse = await fetch(`${workerUrl}/api/file/mkdir`, {
+    await fetch(`${workerUrl}/api/file/write`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        path: hiddenDir,
-        recursive: true
+        path: `${hiddenDir}/visible2.txt`,
+        content: 'Visible 2'
       })
     });
-    expect(mkdirResponse.status).toBe(200);
 
-    // List files should include hidden files
+    // Write hidden file in hidden directory
+    await fetch(`${workerUrl}/api/file/write`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        path: `${hiddenDir}/.hiddenfile.txt`,
+        content: 'Hidden'
+      })
+    });
+
+    // List WITHOUT includeHidden - should NOT show .hiddenfile.txt
     const listResponse = await fetch(`${workerUrl}/api/list-files`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({
-        path: testDir
-      })
+      body: JSON.stringify({ path: hiddenDir })
     });
 
     expect(listResponse.status).toBe(200);
     const listData = (await listResponse.json()) as ListFilesResult;
-    expect(
-      listData.files.some((f: FileInfo) => f.name === '.hidden-file')
-    ).toBe(true);
-    expect(listData.files.some((f: FileInfo) => f.name === '.hidden-dir')).toBe(
-      true
-    );
+    expect(listData.success).toBe(true);
 
-    // Read hidden file
-    const readResponse = await fetch(`${workerUrl}/api/file/read`, {
+    const visibleFiles = listData.files.filter(
+      (f: FileInfo) => !f.name.startsWith('.')
+    );
+    expect(visibleFiles.length).toBe(3); // visible1.txt, visible2.txt, bar/
+
+    const hiddenFile = listData.files.find(
+      (f: FileInfo) => f.name === '.hiddenfile.txt'
+    );
+    expect(hiddenFile).toBeUndefined();
+
+    // List WITH includeHidden - should show all files
+    const listWithHiddenResponse = await fetch(`${workerUrl}/api/list-files`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        path: hiddenFile
+        path: hiddenDir,
+        options: { includeHidden: true }
       })
     });
 
-    expect(readResponse.status).toBe(200);
-    const readData = (await readResponse.json()) as ReadFileResult;
-    expect(readData.content).toBe('hidden content');
+    expect(listWithHiddenResponse.status).toBe(200);
+    const listWithHiddenData =
+      (await listWithHiddenResponse.json()) as ListFilesResult;
+
+    expect(listWithHiddenData.success).toBe(true);
+    expect(listWithHiddenData.files.length).toBe(4); // +.hiddenfile.txt
+
+    const hiddenFileWithFlag = listWithHiddenData.files.find(
+      (f: FileInfo) => f.name === '.hiddenfile.txt'
+    );
+    expect(hiddenFileWithFlag).toBeDefined();
   }, 90000);
 
   test('should handle rename errors appropriately', async () => {
@@ -215,8 +240,8 @@ describe('File Operations Error Handling', () => {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        path: sourcePath,
-        newName: 'dest.txt'
+        oldPath: sourcePath,
+        newPath: destPath
       })
     });
 
@@ -235,8 +260,8 @@ describe('File Operations Error Handling', () => {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        path: sourcePath,
-        newPath: `${destDir}/source.txt`
+        sourcePath: sourcePath,
+        destinationPath: `${destDir}/source.txt`
       })
     });
 
