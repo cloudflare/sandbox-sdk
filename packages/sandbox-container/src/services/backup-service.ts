@@ -227,9 +227,9 @@ export class BackupService {
     } finally {
       event.durationMs = Date.now() - startTime;
       if (event.outcome === 'error') {
-        this.logger.error('Backup archive creation failed', undefined, event);
+        this.logger.error('backup.create', undefined, event);
       } else {
-        this.logger.info('Backup archive created', event);
+        this.logger.info('backup.create', event);
       }
     }
   }
@@ -427,9 +427,9 @@ export class BackupService {
     } finally {
       event.durationMs = Date.now() - startTime;
       if (event.outcome === 'error') {
-        this.logger.error('Backup restore failed', undefined, event);
+        this.logger.error('backup.restore', undefined, event);
       } else {
-        this.logger.info('Backup restored', event);
+        this.logger.info('backup.restore', event);
       }
     }
   }
@@ -532,9 +532,9 @@ export class BackupService {
     } finally {
       event.durationMs = Date.now() - startTime;
       if (event.outcome === 'error') {
-        this.logger.error('Snapshot unmount failed', undefined, event);
+        this.logger.error('snapshot.unmount', undefined, event);
       } else {
-        this.logger.info('Snapshot unmounted', event);
+        this.logger.info('snapshot.unmount', event);
       }
     }
   }

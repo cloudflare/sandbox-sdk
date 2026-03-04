@@ -46,10 +46,11 @@ export class LoggingMiddleware implements Middleware {
         outcome: isError ? 'error' : 'success'
       };
 
+      const msg = `${method} ${pathname}`;
       if (isError) {
-        this.logger.error('HTTP request', requestError, wideEvent);
+        this.logger.error(msg, requestError, wideEvent);
       } else {
-        this.logger.info('HTTP request', wideEvent);
+        this.logger.info(msg, wideEvent);
       }
     }
   }

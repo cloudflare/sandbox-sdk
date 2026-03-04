@@ -384,9 +384,9 @@ export class Session {
     } finally {
       event.duration = event.duration ?? Date.now() - startTime;
       if (event.outcome === 'error') {
-        this.logger.error('Command execution failed', undefined, event);
+        this.logger.error('command.exec', undefined, event);
       } else {
-        this.logger.info('Command executed', event);
+        this.logger.info('command.exec', event);
       }
     }
   }
@@ -627,9 +627,9 @@ export class Session {
     } finally {
       event.duration = event.duration ?? Date.now() - startTime;
       if (event.outcome === 'error') {
-        this.logger.error('Streaming command failed', undefined, event);
+        this.logger.error('command.stream', undefined, event);
       } else {
-        this.logger.info('Streaming command executed', event);
+        this.logger.info('command.stream', event);
       }
     }
   }
