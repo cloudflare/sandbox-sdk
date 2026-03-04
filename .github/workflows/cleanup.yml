@@ -46,7 +46,7 @@ jobs:
         continue-on-error: true
         run: |
           PR=${{ github.event.pull_request.number }}
-          CONTAINERS=$(wrangler containers list --json 2>/dev/null || echo "[]")
+          CONTAINERS=$(wrangler containers list 2>/dev/null || echo "[]")
 
           for suffix in "-http" "-websocket"; do
             WORKER="sandbox-e2e-test-worker-pr-${PR}${suffix}"
@@ -72,7 +72,7 @@ jobs:
       - name: Clean stale resources
         timeout-minutes: 10
         run: |
-          CONTAINERS=$(wrangler containers list --json 2>/dev/null || echo "[]")
+          CONTAINERS=$(wrangler containers list 2>/dev/null || echo "[]")
           PR_NUMBERS=$(echo "$CONTAINERS" | jq -r '.[].name' 2>/dev/null \
             | grep -oE 'pr-[0-9]+' | sed 's/pr-//' | sort -u)
 
