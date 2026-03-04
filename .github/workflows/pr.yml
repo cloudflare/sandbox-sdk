@@ -35,6 +35,8 @@ jobs:
       needs-e2e: ${{ steps.derived.outputs.needs-e2e }}
       needs-sdk-tests: ${{ steps.derived.outputs.needs-sdk-tests }}
       needs-container-tests: ${{ steps.derived.outputs.needs-container-tests }}
+      docker-hash: ${{ steps.hashes.outputs.docker }}
+      deploy-hash: ${{ steps.hashes.outputs.deploy }}
     steps:
       - uses: actions/checkout@v6
 
@@ -119,6 +121,43 @@ jobs:
             echo "needs-container-tests=false" >> $GITHUB_OUTPUT
           fi
 
+      - name: Compute content hashes
+        id: hashes
+        run: |
+          echo "docker=${{ hashFiles(
+            'packages/sandbox/Dockerfile',
+            'docker-bake.hcl',
+            '.dockerignore',
+            'package-lock.json',
+            'package.json',
+            'turbo.json',
+            'packages/*/package.json',
+            'packages/shared/**',
+            'packages/sandbox-container/**',
+            'tooling/typescript-config/**',
+            'biome.json',
+            '.bun-version',
+            'tests/e2e/test-worker/Dockerfile.standalone'
+          ) }}" >> $GITHUB_OUTPUT
+          echo "deploy=${{ hashFiles(
+            'packages/sandbox/Dockerfile',
+            'docker-bake.hcl',
+            '.dockerignore',
+            'package-lock.json',
+            'package.json',
+            'turbo.json',
+            'packages/*/package.json',
+            'packages/shared/**',
+            'packages/sandbox-container/**',
+            'tooling/typescript-config/**',
+            'biome.json',
+            '.bun-version',
+            'tests/e2e/test-worker/Dockerfile.standalone',
+            'packages/sandbox/src/**',
+            'tests/e2e/test-worker/**',
+            'vitest.e2e.config.ts'
+          ) }}" >> $GITHUB_OUTPUT
+
   # --- Build (always runs — JS build is cheap, Docker is conditional) ---
   build:
     needs: detect-changes
@@ -126,6 +165,7 @@ jobs:
     with:
       skip_docker: ${{ needs.detect-changes.outputs.needs-docker != 'true' }}
       image_tag: pr-${{ github.event.pull_request.number }}
+      docker_hash: ${{ needs.detect-changes.outputs.docker-hash }}
     secrets: inherit
 
   # --- Quality gates (always runs after build) ---
@@ -150,6 +190,7 @@ jobs:
       worker_name_prefix: sandbox-e2e-test-worker-pr-${{ github.event.pull_request.number }}
       image_tag: pr-${{ github.event.pull_request.number }}
       images_changed: ${{ needs.detect-changes.outputs.needs-docker }}
+      deploy_hash: ${{ needs.detect-changes.outputs.deploy-hash }}
     secrets: inherit
 
   # --- Publish preview (inline job, absorbs pkg-pr-new.yml) ---
