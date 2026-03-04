@@ -314,9 +314,9 @@ export class Session {
 
     const startTime = Date.now();
     const commandId = randomUUID();
-    const logFile = join(sessionDir, `${commandId}.log`);
-    const exitCodeFile = join(sessionDir, `${commandId}.exit`);
-    const pidFile = join(sessionDir, `${commandId}.pid`);
+    const logFile = join(this.sessionDir!, `${commandId}.log`);
+    const exitCodeFile = join(this.sessionDir!, `${commandId}.exit`);
+    const pidFile = join(this.sessionDir!, `${commandId}.pid`);
 
     this.logger.info('Command execution started', {
       sessionId: this.id,
