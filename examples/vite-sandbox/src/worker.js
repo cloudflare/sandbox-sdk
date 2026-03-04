@@ -41,8 +41,10 @@ async function sandboxApi(url, env) {
 
 	// TODO: Pass host and port to vite server via VITE_* env variables.
 	await sandbox.startProcess("npm run dev", {
+		sandboxId: sandbox.id,
 		processId: "vite-dev-server",
 		cwd: "/app",
+		env: { VITE_CLIENT_PORT: url.port },
 	});
 	await sandbox.waitForPort({ portToCheck: VITE_PORT });
 	await sandbox.startProcess("bun /app/counter.js", {
