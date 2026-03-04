@@ -3508,8 +3508,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
 
     const effectiveExclude = [
-      ...(excludeDefaults ? DEFAULT_BACKUP_EXCLUDE_PATTERNS : []),
-      ...(exclude ?? [])
+      ...new Set([
+        ...(excludeDefaults ? DEFAULT_BACKUP_EXCLUDE_PATTERNS : []),
+        ...(exclude ?? [])
+      ])
     ];
 
     const backupSession = await this.ensureBackupSession();
