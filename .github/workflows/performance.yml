@@ -126,10 +126,14 @@ jobs:
           node-version: 24
           cache: 'npm'
 
-      - uses: actions/cache@v5
+      - uses: actions/cache/restore@v5
         id: nm-cache
         with:
-          path: node_modules
+          path: |
+            node_modules
+            packages/*/node_modules
+            examples/*/node_modules
+            sites/*/node_modules
           key: node-modules-${{ hashFiles('package-lock.json') }}
 
       - run: npm ci --prefer-offline --no-audit --no-fund
