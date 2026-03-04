@@ -59,11 +59,11 @@ jobs:
       contents: write
       pull-requests: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 24
           registry-url: 'https://registry.npmjs.org'
@@ -74,10 +74,10 @@ jobs:
 
       - run: npm ci --prefer-offline --no-audit --no-fund
 
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v8
         with:
           name: build-${{ github.sha }}
-
+          path: packages
       - name: Install crane
         run: |
           VERSION=0.20.3
@@ -86,9 +86,19 @@ jobs:
 
       - name: Login to registries
         run: |
-          crane auth login registry.cloudflare.com -u unused -p ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CREDS=$(curl -sf -X POST \
+            "https://api.cloudflare.com/client/v4/accounts/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/containers/registries/registry.cloudflare.com/credentials" \
+            -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '{"expiration_minutes": 15, "permissions": ["pull"]}')
+          CF_USER=$(echo "$CREDS" | jq -r '.result.username')
+          CF_PASS=$(echo "$CREDS" | jq -r '.result.password')
+          echo "$CF_PASS" | docker login registry.cloudflare.com -u "$CF_USER" --password-stdin
+          crane auth login registry.cloudflare.com -u "$CF_USER" -p "$CF_PASS"
           crane auth login index.docker.io -u ${{ secrets.DOCKER_HUB_USERNAME }} -p ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
-
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       - id: changesets
         uses: changesets/action@v1
         with:
@@ -112,7 +122,7 @@ jobs:
         if: steps.changesets.outputs.published == 'true'
         run: |
           VERSION=${{ needs.build.outputs.version }}
-          crane auth login registry.cloudflare.com -u unused -p ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          # Docker already authenticated from 'Login to registries' step
           # Default variant
           docker pull registry.cloudflare.com/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/sandbox:main
           CID=$(docker create registry.cloudflare.com/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/sandbox:main)

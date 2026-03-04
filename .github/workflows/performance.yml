@@ -22,6 +22,7 @@ on:
 permissions:
   contents: read
   id-token: write
+  packages: write
 
 concurrency:
   group: perf-${{ github.ref }}
@@ -39,9 +40,9 @@ jobs:
       worker_url: ${{ steps.deploy.outputs.worker_url }}
       version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 24
           cache: 'npm'
@@ -65,15 +66,20 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
-      - name: Login to CF registry (for cache)
-        run: echo "${{ secrets.CLOUDFLARE_API_TOKEN }}" | docker login registry.cloudflare.com -u unused --password-stdin
+      - name: Login to GHCR (for build cache)
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Read Bun version
+        id: bun-version
+        run: echo "version=$(cat .bun-version)" >> $GITHUB_OUTPUT
 
       - name: Build default Docker image
         uses: docker/bake-action@v6
         env:
           TAG: perf
           SANDBOX_VERSION: ${{ steps.version.outputs.version }}
-          CF_REGISTRY: registry.cloudflare.com/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CACHE_REPO: ghcr.io/${{ github.repository }}/cache
+          BUN_VERSION: ${{ steps.bun-version.outputs.version }}
         with:
           files: docker-bake.hcl
           targets: default
@@ -109,18 +115,19 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 24
           cache: 'npm'
 
       - run: npm ci --prefer-offline --no-audit --no-fund
 
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v8
         with:
           name: build-${{ github.sha }}
+          path: packages
 
       - name: Create output directory
         run: mkdir -p perf-results

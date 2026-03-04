@@ -32,19 +32,19 @@ jobs:
       http-url: ${{ steps.urls.outputs.http_url }}
       ws-url: ${{ steps.urls.outputs.ws_url }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 24
           cache: 'npm'
 
       - run: npm ci --prefer-offline --no-audit --no-fund
 
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v8
         with:
           name: build-${{ github.sha }}
-
+          path: packages
       - name: Deploy HTTP worker
         run: |
           cd tests/e2e/test-worker
@@ -96,19 +96,19 @@ jobs:
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 24
           cache: 'npm'
 
       - run: npm ci --prefer-offline --no-audit --no-fund
 
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v8
         with:
           name: build-${{ github.sha }}
-
+          path: packages
       - name: E2E tests (HTTP transport)
         run: npx vitest run --config vitest.e2e.config.ts
         env:
@@ -126,19 +126,19 @@ jobs:
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 24
           cache: 'npm'
 
       - run: npm ci --prefer-offline --no-audit --no-fund
 
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v8
         with:
           name: build-${{ github.sha }}
-
+          path: packages
       - name: E2E tests (WebSocket transport)
         run: npx vitest run --config vitest.e2e.config.ts
         env:
@@ -156,21 +156,21 @@ jobs:
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 24
           cache: 'npm'
 
       - run: npm ci --prefer-offline --no-audit --no-fund
 
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v8
         with:
           name: build-${{ github.sha }}
-
+          path: packages
       - name: Cache Playwright browsers
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ hashFiles('package-lock.json') }}
