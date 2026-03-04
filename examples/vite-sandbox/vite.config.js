@@ -86,6 +86,7 @@ const sandbox = createPlugin("sandbox", (ctx) => ({
 }));
 
 export default defineConfig({
+	appType: "custom",
 	plugins: [
 		cloudflare({ experimental: { additionalPlugins: [sandbox] } }),
 		react(),
