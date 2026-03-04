@@ -33,8 +33,10 @@ jobs:
       any-source: ${{ steps.filter.outputs.any-source }}
       needs-docker: ${{ steps.derived.outputs.needs-docker }}
       needs-e2e: ${{ steps.derived.outputs.needs-e2e }}
+      needs-quality: ${{ steps.derived.outputs.needs-quality }}
       needs-sdk-tests: ${{ steps.derived.outputs.needs-sdk-tests }}
       needs-container-tests: ${{ steps.derived.outputs.needs-container-tests }}
+      workflows: ${{ steps.filter.outputs.workflows }}
       docker-hash: ${{ steps.hashes.outputs.docker }}
       deploy-hash: ${{ steps.hashes.outputs.deploy }}
     steps:
@@ -61,6 +63,7 @@ jobs:
               - 'tooling/**'
               - 'turbo.json'
               - '.npmrc'
+              - 'biome.json'
             e2e-tests:
               - 'tests/e2e/**'
               - 'vitest.e2e.config.ts'
@@ -73,16 +76,20 @@ jobs:
             any-source:
               - 'packages/**'
               - 'tests/**'
+            workflows:
+              - '.github/**'
 
       - name: Derive conditions
         id: derived
         run: |
-          # Needs Docker rebuild?
+          # Needs Docker rebuild? (includes workflows — pipeline validation needs images,
+          # content-addressed skip avoids redundant builds)
           if [[ "${{ steps.filter.outputs.shared }}" == "true" \
              || "${{ steps.filter.outputs.container }}" == "true" \
              || "${{ steps.filter.outputs.docker-config }}" == "true" \
              || "${{ steps.filter.outputs.build-config }}" == "true" \
-             || "${{ steps.filter.outputs.deps }}" == "true" ]]; then
+             || "${{ steps.filter.outputs.deps }}" == "true" \
+             || "${{ steps.filter.outputs.workflows }}" == "true" ]]; then
             echo "needs-docker=true" >> $GITHUB_OUTPUT
           else
             echo "needs-docker=false" >> $GITHUB_OUTPUT
@@ -95,7 +102,8 @@ jobs:
              || "${{ steps.filter.outputs.docker-config }}" == "true" \
              || "${{ steps.filter.outputs.build-config }}" == "true" \
              || "${{ steps.filter.outputs.e2e-tests }}" == "true" \
-             || "${{ steps.filter.outputs.deps }}" == "true" ]]; then
+             || "${{ steps.filter.outputs.deps }}" == "true" \
+             || "${{ steps.filter.outputs.workflows }}" == "true" ]]; then
             echo "needs-e2e=true" >> $GITHUB_OUTPUT
           else
             echo "needs-e2e=false" >> $GITHUB_OUTPUT
@@ -119,6 +127,16 @@ jobs:
             echo "needs-container-tests=true" >> $GITHUB_OUTPUT
           else
             echo "needs-container-tests=false" >> $GITHUB_OUTPUT
+          fi
+
+          # Needs quality checks? (source or config changes)
+          if [[ "${{ steps.filter.outputs.any-source }}" == "true" \
+             || "${{ steps.filter.outputs.build-config }}" == "true" \
+             || "${{ steps.filter.outputs.deps }}" == "true" \
+             || "${{ steps.filter.outputs.changesets }}" == "true" ]]; then
+            echo "needs-quality=true" >> $GITHUB_OUTPUT
+          else
+            echo "needs-quality=false" >> $GITHUB_OUTPUT
           fi
 
       - name: Compute content hashes
@@ -158,9 +176,12 @@ jobs:
             'vitest.e2e.config.ts'
           ) }}" >> $GITHUB_OUTPUT
 
-  # --- Build (always runs — JS build is cheap, Docker is conditional) ---
+  # --- Build (skipped for docs-only changes) ---
   build:
     needs: detect-changes
+    if: |
+      needs.detect-changes.outputs.needs-quality == 'true' ||
+      needs.detect-changes.outputs.workflows == 'true'
     uses: ./.github/workflows/reusable-build.yml
     with:
       skip_docker: ${{ needs.detect-changes.outputs.needs-docker != 'true' }}
@@ -168,9 +189,10 @@ jobs:
       docker_hash: ${{ needs.detect-changes.outputs.docker-hash }}
     secrets: inherit
 
-  # --- Quality gates (always runs after build) ---
+  # --- Quality gates (source-related changes only) ---
   quality:
     needs: [detect-changes, build]
+    if: needs.detect-changes.outputs.needs-quality == 'true'
     uses: ./.github/workflows/reusable-quality.yml
     with:
       run_sdk_tests: ${{ needs.detect-changes.outputs.needs-sdk-tests == 'true' }}
@@ -338,17 +360,17 @@ jobs:
           echo "e2e: ${{ needs.e2e.result }}"
           echo "publish-preview: ${{ needs.publish-preview.result }}"
 
-          # Fail if any required job failed (skipped is OK)
-          if [[ "${{ needs.build.result }}" == "failure" ]]; then
-            echo "::error::Build failed"
+          # Fail if any required job failed or was cancelled (skipped is OK)
+          if [[ "${{ needs.build.result }}" == "failure" || "${{ needs.build.result }}" == "cancelled" ]]; then
+            echo "::error::Build failed or was cancelled"
             exit 1
           fi
-          if [[ "${{ needs.quality.result }}" == "failure" ]]; then
-            echo "::error::Quality gates failed"
+          if [[ "${{ needs.quality.result }}" == "failure" || "${{ needs.quality.result }}" == "cancelled" ]]; then
+            echo "::error::Quality gates failed or were cancelled"
             exit 1
           fi
-          if [[ "${{ needs.e2e.result }}" == "failure" ]]; then
-            echo "::error::E2E tests failed"
+          if [[ "${{ needs.e2e.result }}" == "failure" || "${{ needs.e2e.result }}" == "cancelled" ]]; then
+            echo "::error::E2E tests failed or were cancelled"
             exit 1
           fi
           echo "All required checks passed"

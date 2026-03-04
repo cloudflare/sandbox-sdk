@@ -114,10 +114,12 @@ jobs:
           REGISTRY="registry.cloudflare.com/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}"
           HASH="${{ inputs.docker_hash }}"
           TAG="${{ inputs.image_tag }}"
+          pids=()
           for image in sandbox sandbox-python sandbox-opencode sandbox-standalone sandbox-musl sandbox-desktop; do
             crane copy "${REGISTRY}/${image}:ci-${HASH}" "${REGISTRY}/${image}:${TAG}" &
+            pids+=($!)
           done
-          wait
+          for pid in "${pids[@]}"; do wait "$pid"; done
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
@@ -177,7 +179,7 @@ jobs:
           PID4=$!
           npx wrangler containers push sandbox-desktop:${TAG} &
           PID5=$!
-          wait $PID1 $PID2 $PID3 $PID4 $PID5
+          for pid in $PID1 $PID2 $PID3 $PID4 $PID5; do wait "$pid"; done
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -188,9 +190,11 @@ jobs:
           REGISTRY="registry.cloudflare.com/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}"
           HASH="${{ inputs.docker_hash }}"
           TAG="${{ inputs.image_tag }}"
+          pids=()
           for image in sandbox sandbox-python sandbox-opencode sandbox-standalone sandbox-musl sandbox-desktop; do
             crane copy "${REGISTRY}/${image}:${TAG}" "${REGISTRY}/${image}:ci-${HASH}" &
+            pids+=($!)
           done
-          wait
+          for pid in "${pids[@]}"; do wait "$pid"; done
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
