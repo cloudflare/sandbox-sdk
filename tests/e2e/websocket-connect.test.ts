@@ -9,7 +9,7 @@ import {
 /**
  * WebSocket Connection Tests
  *
- * Tests WebSocket routing via wsConnect(). Uses SHARED sandbox.
+ * Tests WebSocket routing via wsConnect().
  */
 describe('WebSocket Connections', () => {
   let sandbox: TestSandbox | null = null;

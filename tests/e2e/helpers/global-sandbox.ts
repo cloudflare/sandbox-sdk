@@ -6,11 +6,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import {
-  cleanupSandbox,
-  createSandboxId,
-  createTestHeaders
-} from './test-fixtures';
+import { createSandboxId, createTestHeaders } from './test-fixtures';
 
 export type SandboxType =
   | 'default'
@@ -23,6 +19,8 @@ export type SandboxType =
 export interface TestSandbox {
   workerUrl: string;
   sandboxId: string;
+  /** Sandbox image type used for routing. */
+  type: SandboxType;
   /** Create headers with optional session ID. Includes sandbox type. */
   headers: (sessionId?: string) => Record<string, string>;
   /** Generate a unique path for test isolation within this sandbox. */
@@ -73,6 +71,7 @@ export async function createTestSandbox(
   return {
     workerUrl,
     sandboxId,
+    type,
     headers: makeHeaders,
     uniquePath: (prefix: string) =>
       `/workspace/test-${randomUUID().slice(0, 8)}/${prefix}`
@@ -87,7 +86,21 @@ export async function cleanupTestSandbox(
   sandbox: TestSandbox | null
 ): Promise<void> {
   if (!sandbox) return;
-  await cleanupSandbox(sandbox.workerUrl, sandbox.sandboxId);
+  try {
+    const response = await fetch(`${sandbox.workerUrl}/cleanup`, {
+      method: 'POST',
+      headers: sandbox.headers()
+    });
+    if (!response.ok) {
+      console.warn(
+        `Failed to cleanup sandbox ${sandbox.sandboxId}: ${response.status}`
+      );
+    } else {
+      console.log(`Cleaned up sandbox: ${sandbox.sandboxId}`);
+    }
+  } catch (error) {
+    console.warn(`Error cleaning up sandbox ${sandbox.sandboxId}:`, error);
+  }
 }
 
 /**

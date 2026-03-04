@@ -12,7 +12,7 @@ import type { ErrorResponse } from './test-worker/types';
  * Build and Test Workflow Integration Tests
  *
  * Tests the README "Build and Test Code" example.
- * Uses the shared sandbox with a unique session.
+ * Uses an isolated sandbox with a unique session.
  */
 describe('Build and Test Workflow', () => {
   describe('local', () => {
