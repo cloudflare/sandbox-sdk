@@ -1,8 +1,10 @@
 import type { ExecResult, ReadFileResult, WriteFileResult } from '@repo/shared';
 import { beforeAll, describe, expect, test } from 'vitest';
 import {
+  cleanupTestSandbox,
+  createTestSandbox,
   createUniqueSession,
-  getSharedSandbox
+  type TestSandbox
 } from './helpers/global-sandbox';
 import type { ErrorResponse } from './test-worker/types';
 
@@ -14,13 +16,14 @@ import type { ErrorResponse } from './test-worker/types';
  */
 describe('Build and Test Workflow', () => {
   describe('local', () => {
+    let sandbox: TestSandbox | null = null;
     let workerUrl: string;
     let headers: Record<string, string>;
 
     beforeAll(async () => {
-      const sandbox = await getSharedSandbox();
+      sandbox = await createTestSandbox();
       workerUrl = sandbox.workerUrl;
-      headers = sandbox.createHeaders(createUniqueSession());
+      headers = sandbox.headers(createUniqueSession());
     }, 120000);
 
     test('should execute basic commands and verify file operations', async () => {
@@ -99,5 +102,10 @@ describe('Build and Test Workflow', () => {
       expect(data.error).toMatch(/shell terminated unexpectedly/i);
       expect(data.error).toMatch(/exit code.*1/i);
     });
+
+    afterAll(async () => {
+      await cleanupTestSandbox(sandbox);
+      sandbox = null;
+    }, 120000);
   });
 });

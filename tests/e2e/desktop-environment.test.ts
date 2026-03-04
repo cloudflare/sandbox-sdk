@@ -1,9 +1,9 @@
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import {
-  cleanupIsolatedSandbox,
+  cleanupTestSandbox,
+  createTestSandbox,
   createUniqueSession,
-  getIsolatedSandbox,
-  type SharedSandbox
+  type TestSandbox
 } from './helpers/global-sandbox';
 
 type DesktopStartResult = { success: boolean; resolution?: [number, number] };
@@ -31,12 +31,12 @@ const skipPortExposureTests =
 describe('Desktop Environment', () => {
   let workerUrl: string;
   let headers: Record<string, string>;
-  let sandbox: SharedSandbox | null = null;
+  let sandbox: TestSandbox | null = null;
 
   beforeAll(async () => {
-    sandbox = await getIsolatedSandbox();
+    sandbox = await createTestSandbox({ type: 'desktop' });
     workerUrl = sandbox.workerUrl;
-    headers = sandbox.createDesktopHeaders(createUniqueSession());
+    headers = sandbox.headers(createUniqueSession());
   }, 120000);
 
   afterAll(async () => {
@@ -46,7 +46,7 @@ describe('Desktop Environment', () => {
         headers
       });
     } catch {}
-    await cleanupIsolatedSandbox(sandbox);
+    await cleanupTestSandbox(sandbox);
   }, 30000);
 
   test('should start desktop and report active status', async () => {

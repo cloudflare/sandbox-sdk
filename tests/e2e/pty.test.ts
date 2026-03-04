@@ -1,15 +1,25 @@
 import { beforeAll, describe, expect, test } from 'vitest';
 import WebSocket from 'ws';
-import { getSharedSandbox } from './helpers/global-sandbox';
+import {
+  cleanupTestSandbox,
+  createTestSandbox,
+  type TestSandbox
+} from './helpers/global-sandbox';
 
 describe('PTY', () => {
+  let sandbox: TestSandbox | null = null;
   let workerUrl: string;
   let sandboxId: string;
 
   beforeAll(async () => {
-    const sandbox = await getSharedSandbox();
+    sandbox = await createTestSandbox();
     workerUrl = sandbox.workerUrl;
     sandboxId = sandbox.sandboxId;
+  }, 120000);
+
+  afterAll(async () => {
+    await cleanupTestSandbox(sandbox);
+    sandbox = null;
   }, 120000);
 
   async function connectWebSocket(sessionId?: string): Promise<{

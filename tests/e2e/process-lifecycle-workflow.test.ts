@@ -1,8 +1,10 @@
 import type { Process, ProcessLogsResult } from '@repo/shared';
 import { beforeAll, describe, expect, test } from 'vitest';
 import {
+  cleanupTestSandbox,
+  createTestSandbox,
   createUniqueSession,
-  getSharedSandbox
+  type TestSandbox
 } from './helpers/global-sandbox';
 
 // Dedicated port for this test file's port exposure error tests
@@ -23,19 +25,25 @@ const skipPortExposureTests =
  * - Foreground operations not blocking on background processes
  */
 describe('Process Lifecycle Error Handling', () => {
+  let sandbox: TestSandbox | null = null;
   let workerUrl: string;
   let headers: Record<string, string>;
   let portHeaders: Record<string, string>;
 
   beforeAll(async () => {
-    const sandbox = await getSharedSandbox();
+    sandbox = await createTestSandbox();
     workerUrl = sandbox.workerUrl;
-    headers = sandbox.createHeaders(createUniqueSession());
+    headers = sandbox.headers(createUniqueSession());
     // Port exposure requires sandbox headers (not session headers)
     portHeaders = {
       'X-Sandbox-Id': sandbox.sandboxId,
       'Content-Type': 'application/json'
     };
+  }, 120000);
+
+  afterAll(async () => {
+    await cleanupTestSandbox(sandbox);
+    sandbox = null;
   }, 120000);
 
   test('should return error when killing nonexistent process', async () => {
