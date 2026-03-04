@@ -12,6 +12,7 @@
 // Health check endpoint
 export interface HealthResponse {
   status: string;
+  deploy_hash?: string;
 }
 
 // Session management wrapper responses

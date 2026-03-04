@@ -146,7 +146,8 @@ describe('createOpencode', () => {
 
     expect(mockProcess.waitForPort).toHaveBeenCalledWith(4096, {
       mode: 'http',
-      path: '/',
+      path: '/path',
+      status: 200,
       timeout: 180_000
     });
   });
@@ -210,7 +211,8 @@ describe('createOpencode', () => {
       // Should wait for the existing process
       expect(startingProcess.waitForPort).toHaveBeenCalledWith(4096, {
         mode: 'http',
-        path: '/',
+        path: '/path',
+        status: 200,
         timeout: 180_000
       });
     });

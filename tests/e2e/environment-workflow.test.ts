@@ -1,9 +1,11 @@
 import type { ExecEvent, ExecResult } from '@repo/shared';
-import { beforeAll, describe, expect, test } from 'vitest';
+import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import { parseSSEStream } from '../../packages/sandbox/src/sse-parser';
 import {
+  cleanupTestSandbox,
+  createTestSandbox,
   createUniqueSession,
-  getSharedSandbox
+  type TestSandbox
 } from './helpers/global-sandbox';
 
 /**
@@ -21,13 +23,19 @@ import {
  * 3. Dockerfile ENV
  */
 describe('Environment Variables', () => {
+  let sandbox: TestSandbox | null = null;
   let workerUrl: string;
   let headers: Record<string, string>;
 
   beforeAll(async () => {
-    const sandbox = await getSharedSandbox();
+    sandbox = await createTestSandbox();
     workerUrl = sandbox.workerUrl;
-    headers = sandbox.createHeaders(createUniqueSession());
+    headers = sandbox.headers(createUniqueSession());
+  }, 120000);
+
+  afterAll(async () => {
+    await cleanupTestSandbox(sandbox);
+    sandbox = null;
   }, 120000);
 
   test('should have Dockerfile ENV vars available', async () => {
@@ -163,8 +171,7 @@ describe('Environment Variables', () => {
 
   test('should override Dockerfile ENV with session setEnvVars', async () => {
     // Create a fresh session to test clean override
-    const sandbox = await getSharedSandbox();
-    const freshHeaders = sandbox.createHeaders(createUniqueSession());
+    const freshHeaders = sandbox!.headers(createUniqueSession());
 
     // First read Dockerfile value
     const beforeResponse = await fetch(`${workerUrl}/api/execute`, {

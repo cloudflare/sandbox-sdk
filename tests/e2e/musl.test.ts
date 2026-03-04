@@ -11,20 +11,28 @@
  */
 
 import type { ExecResult, ReadFileResult } from '@repo/shared';
-import { beforeAll, describe, expect, test } from 'vitest';
+import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import {
+  cleanupTestSandbox,
+  createTestSandbox,
   createUniqueSession,
-  getSharedSandbox
+  type TestSandbox
 } from './helpers/global-sandbox';
 
 describe('Musl Image Variant', () => {
+  let sandbox: TestSandbox | null = null;
   let workerUrl: string;
   let headers: Record<string, string>;
 
   beforeAll(async () => {
-    const sandbox = await getSharedSandbox();
+    sandbox = await createTestSandbox({ type: 'musl' });
     workerUrl = sandbox.workerUrl;
-    headers = sandbox.createMuslHeaders(createUniqueSession());
+    headers = sandbox.headers(createUniqueSession());
+  }, 120000);
+
+  afterAll(async () => {
+    await cleanupTestSandbox(sandbox);
+    sandbox = null;
   }, 120000);
 
   test('musl binary works on Alpine base image', async () => {

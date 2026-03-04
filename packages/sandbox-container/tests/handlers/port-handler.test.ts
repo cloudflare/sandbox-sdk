@@ -51,8 +51,7 @@ const mockProcessService = {
   startProcess: vi.fn(),
   killProcess: vi.fn(),
   listProcesses: vi.fn(),
-  killAllProcesses: vi.fn(),
-  streamProcessLogs: vi.fn()
+  killAllProcesses: vi.fn()
 } as unknown as ProcessService;
 
 // Mock request context

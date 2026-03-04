@@ -9,25 +9,25 @@
 import type { ExecResult } from '@repo/shared';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import {
-  cleanupIsolatedSandbox,
-  getIsolatedSandbox,
-  type SharedSandbox
+  cleanupTestSandbox,
+  createTestSandbox,
+  createUniqueSession,
+  type TestSandbox
 } from './helpers/global-sandbox';
 
 describe.sequential('OpenCode Workflow (E2E)', () => {
   let workerUrl: string;
   let headers: Record<string, string>;
-  let sandbox: SharedSandbox | null = null;
+  let sandbox: TestSandbox | null = null;
 
   beforeEach(async () => {
-    sandbox = await getIsolatedSandbox();
+    sandbox = await createTestSandbox({ type: 'opencode' });
     workerUrl = sandbox.workerUrl;
-    headers = sandbox.createOpencodeHeaders();
+    headers = sandbox.headers(createUniqueSession());
   }, 120000);
 
   afterEach(async () => {
-    await cleanupIsolatedSandbox(sandbox);
-    sandbox = null;
+    await cleanupTestSandbox(sandbox);
   }, 120000);
 
   test('should have opencode CLI available', async () => {

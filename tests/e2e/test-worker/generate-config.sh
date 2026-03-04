@@ -37,6 +37,7 @@ if [[ "$IMAGE_MODE" == "local" ]]; then
   IMAGE_OPENCODE="./Dockerfile.opencode"
   IMAGE_STANDALONE="./Dockerfile.standalone"
   IMAGE_MUSL="./Dockerfile.musl"
+  IMAGE_DESKTOP="./Dockerfile.desktop"
 elif [[ "$IMAGE_MODE" == registry:* ]]; then
   TAG="${IMAGE_MODE#registry:}"
   if [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
@@ -48,6 +49,7 @@ elif [[ "$IMAGE_MODE" == registry:* ]]; then
   IMAGE_OPENCODE="registry.cloudflare.com/$CLOUDFLARE_ACCOUNT_ID/sandbox-opencode:$TAG"
   IMAGE_STANDALONE="registry.cloudflare.com/$CLOUDFLARE_ACCOUNT_ID/sandbox-standalone:$TAG"
   IMAGE_MUSL="registry.cloudflare.com/$CLOUDFLARE_ACCOUNT_ID/sandbox-musl:$TAG"
+  IMAGE_DESKTOP="registry.cloudflare.com/$CLOUDFLARE_ACCOUNT_ID/sandbox-desktop:$TAG"
 else
   echo "Error: Unknown image mode: $IMAGE_MODE"
   echo "Use 'local' or 'registry:<tag>'"
@@ -60,6 +62,7 @@ echo "    Python: $IMAGE_PYTHON"
 echo "    Opencode: $IMAGE_OPENCODE"
 echo "    Standalone: $IMAGE_STANDALONE"
 echo "    Musl: $IMAGE_MUSL"
+echo "    Desktop: $IMAGE_DESKTOP"
 
 # Read template and replace placeholders
 # Using | as delimiter since image URLs contain /
@@ -71,6 +74,7 @@ sed -e "s|{{WORKER_NAME}}|$WORKER_NAME|g" \
     -e "s|{{IMAGE_OPENCODE}}|$IMAGE_OPENCODE|g" \
     -e "s|{{IMAGE_STANDALONE}}|$IMAGE_STANDALONE|g" \
     -e "s|{{IMAGE_MUSL}}|$IMAGE_MUSL|g" \
+    -e "s|{{IMAGE_DESKTOP}}|$IMAGE_DESKTOP|g" \
   wrangler.template.jsonc > wrangler.jsonc
 
 echo "✅ Generated wrangler.jsonc"

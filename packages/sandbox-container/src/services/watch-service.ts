@@ -14,11 +14,13 @@ interface ActiveWatch {
   path: string;
   process: Subprocess;
   startedAt: Date;
+  stopPromise?: Promise<void>;
 }
 
 const WATCH_SETUP_TIMEOUT_MS = 10000;
 const EVENT_COALESCE_WINDOW_MS = 75;
 const MAX_PENDING_EVENTS = 1000;
+const STOP_TIMEOUT_MS = 5000;
 
 /**
  * Service for watching filesystem changes using inotifywait
@@ -42,6 +44,18 @@ export class WatchService {
   ): Promise<ServiceResult<ReadableStream<Uint8Array>>> {
     const watchId = `watch-${++this.watchCounter}-${Date.now()}`;
     const watchLogger = this.logger.child({ watchId, path });
+
+    // Clean up any existing watches on this path before starting a new one.
+    // Snapshot matching IDs first to avoid mutating the map during iteration.
+    const staleWatchIds = Array.from(this.activeWatches.entries())
+      .filter(([, w]) => w.path === path)
+      .map(([id]) => id);
+    if (staleWatchIds.length > 0) {
+      watchLogger.debug('Cleaning up existing watches on path', {
+        staleWatchIds
+      });
+      await Promise.all(staleWatchIds.map((id) => this.stopWatch(id)));
+    }
 
     // Verify path exists
     const pathCheck = Bun.spawnSync(['test', '-e', path]);
@@ -90,21 +104,9 @@ export class WatchService {
    * Stop all active watches
    */
   async stopAllWatches(): Promise<number> {
-    let count = 0;
-    for (const [watchId, watch] of this.activeWatches) {
-      try {
-        watch.process.kill();
-        count++;
-      } catch (error) {
-        this.logger.warn('Failed to kill watch process', {
-          watchId,
-          error: error instanceof Error ? error.message : String(error),
-          path: watch.path
-        });
-      }
-    }
-    this.activeWatches.clear();
-    return count;
+    const watchIds = Array.from(this.activeWatches.keys());
+    await Promise.all(watchIds.map((id) => this.stopWatch(id)));
+    return watchIds.length;
   }
 
   /**
@@ -116,6 +118,49 @@ export class WatchService {
       path: w.path,
       startedAt: w.startedAt
     }));
+  }
+
+  /**
+   * Stop a specific watch by ID. Idempotent via stored stopPromise.
+   * Sends SIGTERM, waits for exit with timeout, escalates to SIGKILL if needed.
+   */
+  private stopWatch(watchId: string): Promise<void> {
+    const watch = this.activeWatches.get(watchId);
+    if (!watch) return Promise.resolve();
+
+    // Return existing stop promise if already stopping
+    if (watch.stopPromise) return watch.stopPromise;
+
+    const cleanup = async () => {
+      try {
+        watch.process.kill();
+      } catch {
+        // Process may have already exited
+      }
+
+      // Wait for graceful exit with timeout, escalate to SIGKILL if needed
+      let timeoutHandle: ReturnType<typeof setTimeout>;
+      const exitedCleanly = await Promise.race([
+        watch.process.exited.then(() => true as const),
+        new Promise<false>((resolve) => {
+          timeoutHandle = setTimeout(() => resolve(false), STOP_TIMEOUT_MS);
+        })
+      ]);
+      clearTimeout(timeoutHandle!);
+
+      if (!exitedCleanly) {
+        try {
+          watch.process.kill(9); // SIGKILL
+        } catch {
+          // Already dead
+        }
+      }
+
+      this.activeWatches.delete(watchId);
+    };
+
+    watch.stopPromise = cleanup();
+    return watch.stopPromise;
   }
 
   private buildInotifyArgs(path: string, options: WatchRequest): string[] {
@@ -279,12 +324,7 @@ export class WatchService {
               logger
             );
           } catch {
-            try {
-              proc.kill();
-            } catch {
-              // Process may have already exited.
-            }
-            self.activeWatches.delete(watchId);
+            await self.stopWatch(watchId);
             controller.close();
             return;
           }
@@ -420,41 +460,14 @@ export class WatchService {
           );
           controller.close();
         } finally {
-          // Ensure process is killed on any exit path
-          try {
-            proc.kill();
-          } catch (killError) {
-            const code =
-              killError instanceof Error
-                ? (killError as NodeJS.ErrnoException).code
-                : undefined;
-            // ESRCH means the process already exited, which is expected
-            if (code !== 'ESRCH') {
-              logger.warn('Failed to kill watch process during cleanup', {
-                watchId,
-                error:
-                  killError instanceof Error
-                    ? killError.message
-                    : String(killError)
-              });
-            }
-          }
-          self.activeWatches.delete(watchId);
+          await self.stopWatch(watchId);
         }
       },
 
       cancel() {
-        // Clean up when stream is cancelled
-        try {
-          proc.kill();
-        } catch (error) {
-          logger.warn('Failed to kill watch process on cancel', {
-            watchId,
-            error: error instanceof Error ? error.message : 'Unknown error'
-          });
-        }
-        self.activeWatches.delete(watchId);
-        logger.info('Watch cancelled', { watchId });
+        // Fire-and-forget: stopWatch handles kill + await exit + map cleanup.
+        // Returning the promise lets the stream machinery await it if needed.
+        return self.stopWatch(watchId);
       }
     });
   }

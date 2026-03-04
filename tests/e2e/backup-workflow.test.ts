@@ -1,7 +1,9 @@
-import { beforeAll, describe, expect, test } from 'vitest';
+import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import {
+  cleanupTestSandbox,
+  createTestSandbox,
   createUniqueSession,
-  getSharedSandbox
+  type TestSandbox
 } from './helpers/global-sandbox';
 
 // Response types for type assertions
@@ -65,14 +67,15 @@ describe('Backup Workflow E2E', () => {
     return;
   }
 
+  let sandbox: TestSandbox | null = null;
   let workerUrl: string;
   let headers: Record<string, string>;
   let backupBucketAvailable = false;
 
   beforeAll(async () => {
-    const sandbox = await getSharedSandbox();
+    sandbox = await createTestSandbox();
     workerUrl = sandbox.workerUrl;
-    headers = sandbox.createHeaders(createUniqueSession());
+    headers = sandbox.headers(createUniqueSession());
 
     // Probe for BACKUP_BUCKET availability once at suite level
     const probeResponse = await fetch(`${workerUrl}/api/backup/create`, {
@@ -91,6 +94,11 @@ describe('Backup Workflow E2E', () => {
     } else {
       backupBucketAvailable = true;
     }
+  }, 120000);
+
+  afterAll(async () => {
+    await cleanupTestSandbox(sandbox);
+    sandbox = null;
   }, 120000);
 
   describe('Basic backup and restore', () => {
