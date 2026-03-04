@@ -1,5 +1,5 @@
 import type { ExecResult, GitCheckoutResult } from '@repo/shared';
-import { beforeAll, describe, expect, test } from 'vitest';
+import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import {
   cleanupTestSandbox,
   createTestSandbox,
@@ -143,7 +143,7 @@ describe('Git Shallow Clone', () => {
   }, 120000);
 
   test('should clone repository with branch and depth combined', async () => {
-    const testDir = uniqueTestPath('shallow-branch');
+    const testDir = sandbox!.uniquePath('shallow-branch');
 
     // Clone specific branch with depth: 1
     const cloneResponse = await fetch(`${workerUrl}/api/git/clone`, {

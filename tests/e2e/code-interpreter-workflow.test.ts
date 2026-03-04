@@ -19,11 +19,11 @@ import type { CodeContext, ExecutionResult } from '@repo/shared';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import {
   cleanupTestSandbox,
-  createTestHeaders,
   createTestSandbox,
   createUniqueSession,
   type TestSandbox
 } from './helpers/global-sandbox';
+import { createTestHeaders } from './helpers/test-fixtures';
 import type { ErrorResponse } from './test-worker/types';
 
 describe('Code Interpreter Workflow (E2E)', () => {

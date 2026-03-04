@@ -1,5 +1,5 @@
 import type { ExecResult, ReadFileResult, WriteFileResult } from '@repo/shared';
-import { beforeAll, describe, expect, test } from 'vitest';
+import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import {
   cleanupTestSandbox,
   createTestSandbox,

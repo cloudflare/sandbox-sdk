@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, test } from 'vitest';
+import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import WebSocket from 'ws';
 import {
   cleanupTestSandbox,
