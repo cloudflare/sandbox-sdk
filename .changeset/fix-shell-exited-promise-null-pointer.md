@@ -2,4 +2,4 @@
 '@cloudflare/sandbox': patch
 ---
 
-Fix crash when a session is destroyed while a streaming command is in flight. Previously this caused `TypeError: null is not an object` from a null `shellExitedPromise`. Now returns a typed `SessionDestroyedError` (HTTP 410) instead.
+Fix crash when destroying a session that has an active streaming command. The stream now terminates cleanly instead of throwing a null pointer error.
