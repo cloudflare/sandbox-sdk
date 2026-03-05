@@ -367,13 +367,34 @@ export class GitService {
     const pathError = this.validateRepoPath(repoPath);
     if (pathError) return this.returnError(pathError);
 
-    const result = await this.runGitCommand(
-      'add',
-      repoPath,
-      sessionId,
-      this.manager.buildAddArgs(options?.files, options?.all),
-      { files: options?.files, all: options?.all }
-    );
+    let args: string[];
+    try {
+      args = this.manager.buildAddArgs(options?.files, options?.all);
+    } catch (error) {
+      return this.returnError({
+        message: `Invalid add options: ${
+          error instanceof Error ? error.message : 'Unknown error'
+        }`,
+        code: ErrorCode.VALIDATION_FAILED,
+        details: {
+          validationErrors: [
+            {
+              field: 'add',
+              message:
+                error instanceof Error
+                  ? error.message
+                  : 'Unknown validation error',
+              code: 'INVALID_ADD_OPTIONS'
+            }
+          ]
+        } satisfies ValidationFailedContext
+      });
+    }
+
+    const result = await this.runGitCommand('add', repoPath, sessionId, args, {
+      files: options?.files,
+      all: options?.all
+    });
 
     return result.success ? this.returnVoidSuccess() : result;
   }

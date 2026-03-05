@@ -340,6 +340,18 @@ describe('GitService', () => {
       expect(mockSessionManager.executeInSession).not.toHaveBeenCalled();
     });
 
+    it('should return error when branch name starts with a hyphen', async () => {
+      const result = await gitService.checkoutBranch('/tmp/repo', '-malicious');
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.code).toBe('VALIDATION_FAILED');
+        expect(result.error.message).toContain('cannot start with a hyphen');
+      }
+
+      expect(mockSessionManager.executeInSession).not.toHaveBeenCalled();
+    });
+
     it('should return error when git checkout fails', async () => {
       mocked(mockSessionManager.executeInSession).mockResolvedValue({
         success: true,
@@ -502,6 +514,21 @@ describe('GitService', () => {
           { path: 'new.ts', indexStatus: 'R', workingTreeStatus: ' ' }
         ]);
       }
+    });
+  });
+
+  describe('add validation', () => {
+    it('should reject all: false with no files', async () => {
+      const result = await gitService.add('/tmp/repo', 'session-1', {
+        all: false
+      });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.code).toBe('VALIDATION_FAILED');
+        expect(result.error.message).toContain('Invalid add options');
+      }
+      expect(mockSessionManager.executeInSession).not.toHaveBeenCalled();
     });
   });
 

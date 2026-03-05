@@ -4,7 +4,14 @@ export class GitWorkingTreeCommands {
       return ['git', 'add', '--', ...files];
     }
 
-    return ['git', 'add', all ? '-A' : '.'];
+    if (!all) {
+      throw new Error(
+        'Either files must be specified or all must be true. ' +
+          "Pass { all: true } to stage all changes, or provide specific files with { files: ['...'] }."
+      );
+    }
+
+    return ['git', 'add', '-A'];
   }
 
   buildCommitArgs(
@@ -72,18 +79,14 @@ export class GitWorkingTreeCommands {
       throw new Error('At least one path is required.');
     }
 
-    let staged = options.staged;
-    let worktree = options.worktree;
+    // Resolve staged/worktree to concrete booleans so every generated
+    // command includes an explicit --worktree and/or --staged flag.
+    // When neither is specified, defaults to worktree-only restore
+    // (matches git's own default, but spelled out explicitly).
+    const staged = options.staged ?? false;
+    const worktree = options.worktree ?? (options.staged ? false : true);
 
-    if (staged === undefined && worktree === undefined) {
-      worktree = true;
-    } else if (staged === true && worktree === undefined) {
-      worktree = false;
-    } else if (staged === undefined && worktree !== undefined) {
-      staged = false;
-    }
-
-    if (staged === false && worktree === false) {
+    if (!staged && !worktree) {
       throw new Error('At least one of staged or worktree must be true.');
     }
 

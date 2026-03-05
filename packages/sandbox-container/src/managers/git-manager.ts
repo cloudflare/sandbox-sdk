@@ -250,6 +250,13 @@ export class GitManager {
       };
     }
 
+    if (branch.startsWith('-')) {
+      return {
+        isValid: false,
+        error: 'Branch name cannot start with a hyphen'
+      };
+    }
+
     return { isValid: true };
   }
 

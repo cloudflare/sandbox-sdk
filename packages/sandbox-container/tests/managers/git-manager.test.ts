@@ -139,6 +139,62 @@ describe('GitManager', () => {
     });
   });
 
+  describe('buildDeleteBranchArgs', () => {
+    it('should include -- separator before branch name', () => {
+      expect(manager.buildDeleteBranchArgs('feature/old')).toEqual([
+        'git',
+        'branch',
+        '-d',
+        '--',
+        'feature/old'
+      ]);
+    });
+
+    it('should use -D for force delete with -- separator', () => {
+      expect(manager.buildDeleteBranchArgs('feature/old', true)).toEqual([
+        'git',
+        'branch',
+        '-D',
+        '--',
+        'feature/old'
+      ]);
+    });
+  });
+
+  describe('buildAddArgs', () => {
+    it('should default to git add -A when no options given', () => {
+      expect(manager.buildAddArgs()).toEqual(['git', 'add', '-A']);
+    });
+
+    it('should stage specific files with -- separator', () => {
+      expect(manager.buildAddArgs(['src/a.ts', 'src/b.ts'])).toEqual([
+        'git',
+        'add',
+        '--',
+        'src/a.ts',
+        'src/b.ts'
+      ]);
+    });
+
+    it('should stage specific files even when all is false', () => {
+      expect(manager.buildAddArgs(['src/a.ts'], false)).toEqual([
+        'git',
+        'add',
+        '--',
+        'src/a.ts'
+      ]);
+    });
+
+    it('should throw when all is false and no files are provided', () => {
+      expect(() => manager.buildAddArgs(undefined, false)).toThrow(
+        'Either files must be specified or all must be true'
+      );
+      expect(() => manager.buildAddArgs([], false)).toThrow(
+        'Either files must be specified or all must be true'
+      );
+    });
+  });
+
   describe('buildGetCurrentBranchArgs', () => {
     it('should build get current branch args', () => {
       expect(manager.buildGetCurrentBranchArgs()).toEqual([
@@ -306,6 +362,16 @@ UU conflict.ts`);
       const whitespaceResult = manager.validateBranchName('   ');
       expect(whitespaceResult.isValid).toBe(false);
       expect(whitespaceResult.error).toBe('Branch name cannot be empty');
+    });
+
+    it('should reject branch names starting with a hyphen', () => {
+      const result = manager.validateBranchName('-malicious');
+      expect(result.isValid).toBe(false);
+      expect(result.error).toBe('Branch name cannot start with a hyphen');
+
+      const doubleHyphen = manager.validateBranchName('--delete');
+      expect(doubleHyphen.isValid).toBe(false);
+      expect(doubleHyphen.error).toBe('Branch name cannot start with a hyphen');
     });
   });
 

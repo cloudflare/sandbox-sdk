@@ -695,7 +695,9 @@ export interface GitResetOptions {
 
 export interface GitRestoreOptions {
   paths: string[];
+  /** Restore staged (index) changes. Defaults to false. */
   staged?: boolean;
+  /** Restore working tree changes. Defaults to true when staged is not set. */
   worktree?: boolean;
   source?: string;
 }

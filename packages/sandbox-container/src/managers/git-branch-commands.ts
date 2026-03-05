@@ -8,7 +8,7 @@ export class GitBranchCommands {
   }
 
   buildDeleteBranchArgs(branch: string, force = false): string[] {
-    return ['git', 'branch', force ? '-D' : '-d', branch];
+    return ['git', 'branch', force ? '-D' : '-d', '--', branch];
   }
 
   buildGetCurrentBranchArgs(): string[] {
