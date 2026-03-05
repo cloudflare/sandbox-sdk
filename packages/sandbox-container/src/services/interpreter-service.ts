@@ -227,9 +227,10 @@ export class InterpreterService {
           contextId,
           context.language as InterpreterLanguage
         );
-      } catch {
+      } catch (error) {
         throw new Error(
-          `Failed to release executor for context '${contextId}'`
+          `Failed to release executor for context '${contextId}'`,
+          { cause: error }
         );
       } finally {
         // Always remove context from map, even if release fails

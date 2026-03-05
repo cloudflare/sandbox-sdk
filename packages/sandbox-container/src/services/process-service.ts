@@ -243,7 +243,13 @@ export class ProcessService {
       // Store streaming promise so getLogs() can await it for completed processes
       // This ensures all output is captured before returning logs
       processRecord.streamingComplete =
-        streamResult.data.continueStreaming.catch(() => {});
+        streamResult.data.continueStreaming.catch((error) => {
+          this.logger.debug('process.streamComplete', {
+            processId: processRecord.id,
+            outcome: 'error',
+            errorMessage: error instanceof Error ? error.message : String(error)
+          });
+        });
 
       return {
         success: true,

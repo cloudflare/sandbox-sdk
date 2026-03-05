@@ -53,6 +53,8 @@ describe('LoggingMiddleware', () => {
       mockLogger.info as ReturnType<typeof vi.fn>
     ).mock.calls[0];
     expect(message).toBe('POST /api/exec 200');
+    expect(loggedContext.method).toBe('POST');
+    expect(loggedContext.pathname).toBe('/api/exec');
     expect(loggedContext.sandboxId).toBe('sandbox-abc123');
     expect(loggedContext.requestId).toBe('req-test-1');
     expect(loggedContext.sessionId).toBe('session-default');

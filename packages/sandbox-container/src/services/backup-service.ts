@@ -535,9 +535,9 @@ export class BackupService {
     } finally {
       event.durationMs = Date.now() - startTime;
       if (event.outcome === 'error') {
-        this.logger.error('snapshot.unmount', caughtError, event);
+        this.logger.error('backup.unmount', caughtError, event);
       } else {
-        this.logger.info('snapshot.unmount', event);
+        this.logger.info('backup.unmount', event);
       }
     }
   }

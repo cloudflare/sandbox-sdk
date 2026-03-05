@@ -31,6 +31,8 @@ export class LoggingMiddleware implements Middleware {
       const isError = statusCode >= 500 || Boolean(requestError);
 
       const wideEvent: Record<string, unknown> = {
+        method,
+        pathname,
         statusCode,
         durationMs,
         requestId: context.requestId,
