@@ -531,7 +531,7 @@ console.log('Terminal server on port ' + port);
       }
 
       if (url.pathname === '/api/git/branches' && request.method === 'POST') {
-        const result = await executor.listBranches(body.repoPath);
+        const result = await executor.gitListBranches(body.repoPath);
         return new Response(JSON.stringify(result), {
           headers: { 'Content-Type': 'application/json' }
         });
@@ -541,7 +541,7 @@ console.log('Terminal server on port ' + port);
         url.pathname === '/api/git/checkout-branch' &&
         request.method === 'POST'
       ) {
-        const result = await executor.checkoutBranch(
+        const result = await executor.gitCheckoutBranch(
           body.repoPath,
           body.branch
         );
@@ -554,7 +554,10 @@ console.log('Terminal server on port ' + port);
         url.pathname === '/api/git/create-branch' &&
         request.method === 'POST'
       ) {
-        const result = await executor.createBranch(body.repoPath, body.branch);
+        const result = await executor.gitCreateBranch(
+          body.repoPath,
+          body.branch
+        );
         return new Response(JSON.stringify(result), {
           headers: { 'Content-Type': 'application/json' }
         });
@@ -575,6 +578,43 @@ console.log('Terminal server on port ' + port);
           authorName: body.authorName,
           authorEmail: body.authorEmail,
           allowEmpty: body.allowEmpty
+        });
+        return new Response(JSON.stringify(result), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (
+        url.pathname === '/api/git/delete-branch' &&
+        request.method === 'POST'
+      ) {
+        const result = await executor.gitDeleteBranch(
+          body.repoPath,
+          body.branch,
+          { force: body.force }
+        );
+        return new Response(JSON.stringify(result), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (url.pathname === '/api/git/reset' && request.method === 'POST') {
+        const result = await executor.gitReset(body.repoPath, {
+          mode: body.mode,
+          target: body.target,
+          paths: body.paths
+        });
+        return new Response(JSON.stringify(result), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (url.pathname === '/api/git/restore' && request.method === 'POST') {
+        const result = await executor.gitRestore(body.repoPath, {
+          paths: body.paths,
+          staged: body.staged,
+          worktree: body.worktree,
+          source: body.source
         });
         return new Response(JSON.stringify(result), {
           headers: { 'Content-Type': 'application/json' }

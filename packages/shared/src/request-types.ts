@@ -160,7 +160,7 @@ export interface GitCommitRequest extends GitRepoPathRequest {
   allowEmpty?: boolean;
 }
 
-export type GitResetMode = 'soft' | 'mixed' | 'hard' | 'merge' | 'keep';
+import type { GitResetMode } from './types.js';
 
 /**
  * Request to reset repository state

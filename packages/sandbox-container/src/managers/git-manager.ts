@@ -112,6 +112,7 @@ export class GitManager {
       })
       .map((line) => line.replace(/^remotes\/origin\//, ''))
       .filter((line) => !line.startsWith('HEAD'))
+      .filter((line) => !line.startsWith('(HEAD detached'))
       .filter((line, index, array) => array.indexOf(line) === index);
 
     return {
@@ -197,7 +198,7 @@ export class GitManager {
 
     const indexStatus = line[0] || ' ';
     const workingTreeStatus = line[1] || ' ';
-    const rawPath = line.slice(3).trim();
+    const rawPath = line.slice(3);
 
     if (!rawPath) {
       return null;
@@ -227,7 +228,15 @@ export class GitManager {
   private normalizeQuotedPath(path: string): string {
     if (path.startsWith('"') && path.endsWith('"') && path.length >= 2) {
       const unquoted = path.slice(1, -1);
-      return unquoted.replaceAll('\\"', '"').replaceAll('\\\\', '\\');
+      // Order matters: replace \\ first to avoid consuming backslashes
+      // that are part of other escape sequences like \"
+      return unquoted
+        .replaceAll('\\\\', '\x00')
+        .replaceAll('\\"', '"')
+        .replaceAll('\\n', '\n')
+        .replaceAll('\\t', '\t')
+        .replaceAll('\\r', '\r')
+        .replaceAll('\x00', '\\');
     }
 
     return path;
@@ -343,7 +352,8 @@ export class GitManager {
 
   isSshUrl(url: string): boolean {
     return (
-      url.startsWith('git@') || (url.includes(':') && !url.startsWith('http'))
+      url.startsWith('git@') ||
+      (url.includes(':') && !url.startsWith('http') && !url.startsWith('file'))
     );
   }
 

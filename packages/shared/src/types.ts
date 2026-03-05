@@ -952,28 +952,43 @@ export interface ExecutionSession {
       depth?: number;
     }
   ): Promise<GitCheckoutResult>;
+  /** Get the working tree status of a repository */
   gitStatus(repoPath: string): Promise<GitStatusResult>;
-  listBranches(repoPath: string): Promise<GitBranchListResult>;
-  checkoutBranch(repoPath: string, branch: string): Promise<GitOperationResult>;
-  createBranch(repoPath: string, branch: string): Promise<GitOperationResult>;
-  deleteBranch(
+  /** List all local and remote branches */
+  gitListBranches(repoPath: string): Promise<GitBranchListResult>;
+  /** Switch to an existing branch */
+  gitCheckoutBranch(
+    repoPath: string,
+    branch: string
+  ): Promise<GitOperationResult>;
+  /** Create a new branch and switch to it */
+  gitCreateBranch(
+    repoPath: string,
+    branch: string
+  ): Promise<GitOperationResult>;
+  /** Delete a local branch */
+  gitDeleteBranch(
     repoPath: string,
     branch: string,
     options?: { force?: boolean }
   ): Promise<GitOperationResult>;
+  /** Stage files for commit */
   gitAdd(
     repoPath: string,
     options?: GitAddOptions
   ): Promise<GitOperationResult>;
+  /** Create a commit with the staged changes */
   gitCommit(
     repoPath: string,
     message: string,
     options?: GitCommitOptions
   ): Promise<GitOperationResult>;
+  /** Reset the current HEAD to a specified state */
   gitReset(
     repoPath: string,
     options?: GitResetOptions
   ): Promise<GitOperationResult>;
+  /** Restore working tree files */
   gitRestore(
     repoPath: string,
     options: GitRestoreOptions
@@ -1183,28 +1198,43 @@ export interface ISandbox {
       depth?: number;
     }
   ): Promise<GitCheckoutResult>;
+  /** Get the working tree status of a repository */
   gitStatus(repoPath: string): Promise<GitStatusResult>;
-  listBranches(repoPath: string): Promise<GitBranchListResult>;
-  checkoutBranch(repoPath: string, branch: string): Promise<GitOperationResult>;
-  createBranch(repoPath: string, branch: string): Promise<GitOperationResult>;
-  deleteBranch(
+  /** List all local and remote branches */
+  gitListBranches(repoPath: string): Promise<GitBranchListResult>;
+  /** Switch to an existing branch */
+  gitCheckoutBranch(
+    repoPath: string,
+    branch: string
+  ): Promise<GitOperationResult>;
+  /** Create a new branch and switch to it */
+  gitCreateBranch(
+    repoPath: string,
+    branch: string
+  ): Promise<GitOperationResult>;
+  /** Delete a local branch */
+  gitDeleteBranch(
     repoPath: string,
     branch: string,
     options?: { force?: boolean }
   ): Promise<GitOperationResult>;
+  /** Stage files for commit */
   gitAdd(
     repoPath: string,
     options?: GitAddOptions
   ): Promise<GitOperationResult>;
+  /** Create a commit with the staged changes */
   gitCommit(
     repoPath: string,
     message: string,
     options?: GitCommitOptions
   ): Promise<GitOperationResult>;
+  /** Reset the current HEAD to a specified state */
   gitReset(
     repoPath: string,
     options?: GitResetOptions
   ): Promise<GitOperationResult>;
+  /** Restore working tree files */
   gitRestore(
     repoPath: string,
     options: GitRestoreOptions

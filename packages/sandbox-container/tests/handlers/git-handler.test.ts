@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'bun:test';
-import type { GitCheckoutResult, Logger } from '@repo/shared';
+import type {
+  GitBranchListResult,
+  GitCheckoutResult,
+  GitOperationResult,
+  GitStatusResult,
+  Logger
+} from '@repo/shared';
 import type { ErrorResponse } from '@repo/shared/errors';
 import type { RequestContext } from '@sandbox-container/core/types';
 import { GitHandler } from '@sandbox-container/handlers/git-handler';
@@ -347,7 +353,7 @@ describe('GitHandler', () => {
 
       const response = await gitHandler.handle(request, mockContext);
       expect(response.status).toBe(200);
-      const responseData = (await response.json()) as any;
+      const responseData = (await response.json()) as GitStatusResult;
       expect(responseData.currentBranch).toBe('main');
       expect(responseData.fileStatus).toHaveLength(1);
     });
@@ -369,7 +375,7 @@ describe('GitHandler', () => {
 
       const response = await gitHandler.handle(request, mockContext);
       expect(response.status).toBe(200);
-      const responseData = (await response.json()) as any;
+      const responseData = (await response.json()) as GitBranchListResult;
       expect(responseData.currentBranch).toBe('develop');
       expect(responseData.branches).toEqual(['develop', 'main']);
     });
@@ -391,7 +397,7 @@ describe('GitHandler', () => {
 
       const response = await gitHandler.handle(request, mockContext);
       expect(response.status).toBe(200);
-      const responseData = (await response.json()) as any;
+      const responseData = (await response.json()) as GitOperationResult;
       expect(responseData.success).toBe(true);
       expect(responseData.repoPath).toBe('/workspace/repo');
     });

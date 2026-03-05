@@ -53,7 +53,7 @@ export class GitService {
   }
 
   private returnVoidSuccess(): ServiceResult<void> {
-    return { success: true };
+    return serviceSuccess(undefined) as ServiceResult<void>;
   }
 
   private validateRepoPath(repoPath: string): ServiceError | null {
@@ -196,6 +196,25 @@ export class GitService {
             message: e,
             code: 'INVALID_PATH'
           }))
+        } satisfies ValidationFailedContext
+      });
+    }
+
+    if (
+      options.depth !== undefined &&
+      (!Number.isInteger(options.depth) || options.depth <= 0)
+    ) {
+      return this.returnError({
+        message: `Invalid depth value '${options.depth}': must be a positive integer`,
+        code: ErrorCode.VALIDATION_FAILED,
+        details: {
+          validationErrors: [
+            {
+              field: 'depth',
+              message: 'Depth must be a positive integer',
+              code: 'INVALID_DEPTH'
+            }
+          ]
         } satisfies ValidationFailedContext
       });
     }

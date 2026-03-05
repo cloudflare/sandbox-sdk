@@ -4,11 +4,11 @@
 
 Add first-class Git repository operations beyond clone.
 
-You can now inspect repository state with `gitStatus()` and `listBranches()` (including `currentBranch` in the response), and manage local repository workflows with:
+You can now inspect repository state with `gitStatus()` and `gitListBranches()` (including `currentBranch` in the response), and manage local repository workflows with:
 
-- `checkoutBranch()`
-- `createBranch()`
-- `deleteBranch()`
+- `gitCheckoutBranch()`
+- `gitCreateBranch()`
+- `gitDeleteBranch()`
 - `gitAdd()`
 - `gitCommit()`
 - `gitReset()`

@@ -2144,17 +2144,20 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     });
   }
 
+  /** Get the working tree status of a repository */
   async gitStatus(repoPath: string, options?: { sessionId?: string }) {
     const session = options?.sessionId ?? (await this.ensureDefaultSession());
     return this.client.git.status(repoPath, session);
   }
 
-  async listBranches(repoPath: string, options?: { sessionId?: string }) {
+  /** List all local and remote branches */
+  async gitListBranches(repoPath: string, options?: { sessionId?: string }) {
     const session = options?.sessionId ?? (await this.ensureDefaultSession());
     return this.client.git.listBranches(repoPath, session);
   }
 
-  async checkoutBranch(
+  /** Switch to an existing branch */
+  async gitCheckoutBranch(
     repoPath: string,
     branch: string,
     options?: { sessionId?: string }
@@ -2163,7 +2166,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     return this.client.git.checkoutBranch(repoPath, branch, session);
   }
 
-  async createBranch(
+  /** Create a new branch and switch to it */
+  async gitCreateBranch(
     repoPath: string,
     branch: string,
     options?: { sessionId?: string }
@@ -2172,7 +2176,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     return this.client.git.createBranch(repoPath, branch, session);
   }
 
-  async deleteBranch(
+  /** Delete a local branch */
+  async gitDeleteBranch(
     repoPath: string,
     branch: string,
     options?: { force?: boolean; sessionId?: string }
@@ -2183,6 +2188,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     });
   }
 
+  /** Stage files for commit */
   async gitAdd(
     repoPath: string,
     options?: { files?: string[]; all?: boolean; sessionId?: string }
@@ -2194,6 +2200,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     });
   }
 
+  /** Create a commit with the staged changes */
   async gitCommit(
     repoPath: string,
     message: string,
@@ -2212,6 +2219,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     });
   }
 
+  /** Reset the current HEAD to a specified state */
   async gitReset(
     repoPath: string,
     options?: {
@@ -2229,6 +2237,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     });
   }
 
+  /** Restore working tree files */
   async gitRestore(
     repoPath: string,
     options: {
@@ -2734,13 +2743,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       gitCheckout: (repoUrl, options) =>
         this.gitCheckout(repoUrl, { ...options, sessionId }),
       gitStatus: (repoPath) => this.gitStatus(repoPath, { sessionId }),
-      listBranches: (repoPath) => this.listBranches(repoPath, { sessionId }),
-      checkoutBranch: (repoPath, branch) =>
-        this.checkoutBranch(repoPath, branch, { sessionId }),
-      createBranch: (repoPath, branch) =>
-        this.createBranch(repoPath, branch, { sessionId }),
-      deleteBranch: (repoPath, branch, options) =>
-        this.deleteBranch(repoPath, branch, { ...options, sessionId }),
+      gitListBranches: (repoPath) =>
+        this.gitListBranches(repoPath, { sessionId }),
+      gitCheckoutBranch: (repoPath, branch) =>
+        this.gitCheckoutBranch(repoPath, branch, { sessionId }),
+      gitCreateBranch: (repoPath, branch) =>
+        this.gitCreateBranch(repoPath, branch, { sessionId }),
+      gitDeleteBranch: (repoPath, branch, options) =>
+        this.gitDeleteBranch(repoPath, branch, { ...options, sessionId }),
       gitAdd: (repoPath, options) =>
         this.gitAdd(repoPath, { ...options, sessionId }),
       gitCommit: (repoPath, message, options) =>

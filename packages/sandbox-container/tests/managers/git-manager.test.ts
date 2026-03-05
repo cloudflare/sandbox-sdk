@@ -191,7 +191,7 @@ describe('GitManager', () => {
       const summary = manager.parseBranchSummary(`* (HEAD detached at abc123)
   main`);
       expect(summary.currentBranch).toBe('HEAD');
-      expect(summary.branches).toEqual(['(HEAD detached at abc123)', 'main']);
+      expect(summary.branches).toEqual(['main']);
     });
 
     it('should handle empty and single branch lists', () => {
@@ -415,6 +415,10 @@ UU conflict.ts`);
 
     it('should return false for HTTPS URLs', () => {
       expect(manager.isSshUrl('https://github.com/user/repo.git')).toBe(false);
+    });
+
+    it('should return false for file:// URLs', () => {
+      expect(manager.isSshUrl('file:///path/to/repo')).toBe(false);
     });
   });
 

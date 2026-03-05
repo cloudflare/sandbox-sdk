@@ -95,6 +95,19 @@ const cases: Array<{ file: string; expected: FixtureExpectation }> = [
         }
       ]
     }
+  },
+  {
+    file: 'detached-head.txt',
+    expected: {
+      currentBranch: 'HEAD',
+      ahead: 0,
+      behind: 0,
+      branchPublished: false,
+      fileStatus: [
+        { path: 'src/index.ts', indexStatus: 'M', workingTreeStatus: ' ' },
+        { path: 'scratch.txt', indexStatus: '?', workingTreeStatus: '?' }
+      ]
+    }
   }
 ];
 

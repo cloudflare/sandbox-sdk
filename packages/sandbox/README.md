@@ -121,8 +121,8 @@ export default {
 
 For Git workflows, start with the core methods:
 
-- `gitCheckout()`, `gitStatus()`, `listBranches()`
-- `checkoutBranch()`, `createBranch()`, `deleteBranch()`
+- `gitCheckout()`, `gitStatus()`, `gitListBranches()`
+- `gitCheckoutBranch()`, `gitCreateBranch()`, `gitDeleteBranch()`
 - `gitAdd()`, `gitCommit()`
 
 Advanced methods are available for targeted workflows:
