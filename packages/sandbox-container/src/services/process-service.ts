@@ -104,6 +104,7 @@ export class ProcessService {
     command: string,
     options: ProcessOptions = {}
   ): Promise<ServiceResult<ProcessRecord>> {
+    const startTime = Date.now();
     try {
       // 1. Validate command (business logic via manager)
       const validation = this.manager.validateCommand(command);
@@ -148,6 +149,16 @@ export class ProcessService {
           if (event.type === 'start' && event.pid !== undefined) {
             processRecord.pid = event.pid;
             await this.store.update(processRecord.id, { pid: event.pid });
+            this.logger.info('process.start', {
+              processId: processRecord.id,
+              pid: event.pid,
+              command:
+                command.length > 100
+                  ? `${command.substring(0, 100)}…`
+                  : command,
+              sessionId,
+              durationMs: Date.now() - startTime
+            });
           } else if (event.type === 'stdout' && event.data) {
             processRecord.stdout += event.data;
             processRecord.outputListeners.forEach((listener) => {
@@ -166,6 +177,22 @@ export class ProcessService {
             processRecord.status = status;
             processRecord.endTime = endTime;
             processRecord.exitCode = exitCode;
+
+            this.logger.info('process.exit', {
+              processId: processRecord.id,
+              pid: processRecord.pid,
+              command:
+                command.length > 100
+                  ? `${command.substring(0, 100)}…`
+                  : command,
+              sessionId,
+              exitCode,
+              outcome: status,
+              durationMs:
+                processRecord.startTime instanceof Date
+                  ? endTime.getTime() - processRecord.startTime.getTime()
+                  : Date.now() - startTime
+            });
 
             processRecord.statusListeners.forEach((listener) => {
               listener(status);

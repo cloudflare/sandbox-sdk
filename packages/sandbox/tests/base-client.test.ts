@@ -284,6 +284,70 @@ describe('BaseHttpClient', () => {
     });
   });
 
+  describe('defaultHeaders', () => {
+    it('should merge defaultHeaders into every request', async () => {
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify({ success: true, data: 'ok' }), {
+          status: 200
+        })
+      );
+
+      const clientWithHeaders = new TestHttpClient({
+        baseUrl: 'http://test.com',
+        port: 3000,
+        defaultHeaders: {
+          'X-Sandbox-Id': 'sandbox-abc123',
+          'X-Custom-Header': 'custom-value'
+        }
+      });
+
+      await clientWithHeaders.testRequest('/api/test');
+
+      const [, options] = mockFetch.mock.calls[0];
+      expect(options.headers['X-Sandbox-Id']).toBe('sandbox-abc123');
+      expect(options.headers['X-Custom-Header']).toBe('custom-value');
+    });
+
+    it('should not add extra headers when defaultHeaders is not set', async () => {
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify({ success: true, data: 'ok' }), {
+          status: 200
+        })
+      );
+
+      await client.testRequest('/api/test');
+
+      const [, options] = mockFetch.mock.calls[0];
+      const headers = options.headers ?? {};
+      expect(headers['X-Sandbox-Id']).toBeUndefined();
+    });
+
+    it('should not allow defaultHeaders to override Content-Type on POST', async () => {
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify({ success: true, id: '1' }), {
+          status: 201
+        })
+      );
+
+      const clientWithHeaders = new TestHttpClient({
+        baseUrl: 'http://test.com',
+        port: 3000,
+        defaultHeaders: {
+          'X-Sandbox-Id': 'sandbox-xyz',
+          'Content-Type': 'text/plain' // should be overridden by POST logic
+        }
+      });
+
+      await clientWithHeaders.testRequest('/api/create', { name: 'test' });
+
+      const [, options] = mockFetch.mock.calls[0];
+      // POST Content-Type should always be application/json regardless of defaultHeaders
+      expect(options.headers['Content-Type']).toBe('application/json');
+      // Custom header should still be present
+      expect(options.headers['X-Sandbox-Id']).toBe('sandbox-xyz');
+    });
+  });
+
   describe('stub integration', () => {
     it('should use stub when provided instead of fetch', async () => {
       const stubFetch = vi.fn().mockResolvedValue(

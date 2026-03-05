@@ -181,8 +181,11 @@ export class CloudflareLogger implements Logger {
     const levelColor = this.getLevelColor(levelStr);
     const componentBadge = component ? `[${component}]` : '';
 
-    // Start with level and component
-    let logLine = `${levelColor}${levelStr.padEnd(5)}${COLORS.reset} ${componentBadge} ${msg}`;
+    const timeStr = timestamp
+      ? `${COLORS.dim}${new Date(timestamp as string).toISOString().substring(11, 23)}${COLORS.reset} `
+      : '';
+
+    let logLine = `${timeStr}${levelColor}${levelStr.padEnd(5)}${COLORS.reset} ${componentBadge} ${msg}`;
 
     // Append all context as compact key=value pairs on the same line
     const pairs: string[] = [];

@@ -34,7 +34,8 @@ export class LoggingMiddleware implements Middleware {
         statusCode,
         durationMs,
         requestId: context.requestId,
-        sessionId: context.sessionId
+        sessionId: context.sessionId,
+        sandboxId: context.sandboxId
       };
 
       const msg = `${method} ${pathname} ${statusCode}`;

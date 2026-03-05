@@ -320,7 +320,7 @@ export class Session {
       sessionId: this.id,
       commandId,
       operation: 'exec',
-      command: command.substring(0, 100)
+      command: command.length > 100 ? `${command.substring(0, 100)}…` : command
     };
     let caughtError: Error | undefined;
 
@@ -431,7 +431,7 @@ export class Session {
       sessionId: this.id,
       commandId,
       operation: 'execStream',
-      command: command.substring(0, 100)
+      command: command.length > 100 ? `${command.substring(0, 100)}…` : command
     };
     let caughtError: Error | undefined;
 

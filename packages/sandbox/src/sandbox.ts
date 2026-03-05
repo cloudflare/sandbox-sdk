@@ -340,6 +340,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       port: 3000,
       stub: this,
       retryTimeoutMs: this.computeRetryTimeoutMs(),
+      defaultHeaders: {
+        'X-Sandbox-Id': this.ctx.id.toString()
+      },
       ...(this.transport === 'websocket' && {
         transportMode: 'websocket' as const,
         wsUrl: 'ws://localhost:3000/ws'
@@ -1370,6 +1373,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     const timestamp = new Date().toISOString();
 
     let timeoutId: NodeJS.Timeout | undefined;
+    let execOutcome: { exitCode: number; success: boolean } | undefined;
+    let execError: Error | undefined;
 
     try {
       // Handle cancellation
@@ -1416,6 +1421,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         );
       }
 
+      execOutcome = { exitCode: result.exitCode, success: result.success };
+
       // Call completion callback if provided
       if (options?.onComplete) {
         options.onComplete(result);
@@ -1423,6 +1430,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
       return result;
     } catch (error) {
+      execError = error instanceof Error ? error : new Error(String(error));
       if (options?.onError && error instanceof Error) {
         options.onError(error);
       }
@@ -1430,6 +1438,22 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     } finally {
       if (timeoutId) {
         clearTimeout(timeoutId);
+      }
+      const event: Record<string, unknown> = {
+        sessionId,
+        command:
+          command.length > 200 ? `${command.substring(0, 200)}…` : command,
+        durationMs: Date.now() - startTime,
+        outcome: execError ? 'error' : 'success',
+        exitCode: execOutcome?.exitCode
+      };
+      if (execError) {
+        this.logger.debug('sandbox.exec', {
+          ...event,
+          errorMessage: execError.message
+        });
+      } else {
+        this.logger.debug('sandbox.exec', event);
       }
     }
   }
@@ -2502,6 +2526,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       );
     }
 
+    const exposeStartTime = Date.now();
     const sessionId = await this.ensureDefaultSession();
     await this.client.ports.exposePort(port, sessionId, options?.name);
 
@@ -2514,6 +2539,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       options.hostname,
       token
     );
+
+    this.logger.debug('port.expose', {
+      port,
+      name: options?.name,
+      hostname: options.hostname,
+      outcome: 'success',
+      durationMs: Date.now() - exposeStartTime
+    });
 
     return {
       url,
@@ -2529,6 +2562,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       );
     }
 
+    const unexposeStartTime = Date.now();
     const sessionId = await this.ensureDefaultSession();
     await this.client.ports.unexposePort(port, sessionId);
 
@@ -2539,6 +2573,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       delete tokens[port.toString()];
       await this.ctx.storage.put('portTokens', tokens);
     }
+
+    this.logger.debug('port.unexpose', {
+      port,
+      outcome: 'success',
+      durationMs: Date.now() - unexposeStartTime
+    });
   }
 
   async getExposedPorts(hostname: string) {

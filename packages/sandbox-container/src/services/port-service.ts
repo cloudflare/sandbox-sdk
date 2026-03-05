@@ -1,6 +1,6 @@
 // Port Management Service
 
-import type { PortCheckRequest, PortCheckResponse } from '@repo/shared';
+import type { Logger, PortCheckRequest, PortCheckResponse } from '@repo/shared';
 import type {
   InvalidPortContext,
   PortAlreadyExposedContext,
@@ -77,7 +77,8 @@ export class PortService {
 
   constructor(
     private store: PortStore,
-    private security: SecurityService
+    private security: SecurityService,
+    private logger: Logger
   ) {
     this.manager = new PortManager();
     // Start cleanup process every hour
@@ -88,6 +89,10 @@ export class PortService {
     port: number,
     name?: string
   ): Promise<ServiceResult<PortInfo>> {
+    const startTime = Date.now();
+    let outcome: 'success' | 'error' = 'error';
+    let caughtError: Error | undefined;
+
     try {
       // Validate port number
       const validation = this.security.validatePort(port);
@@ -129,13 +134,14 @@ export class PortService {
 
       await this.store.expose(port, portInfo);
 
+      outcome = 'success';
       return {
         success: true,
         data: portInfo
       };
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : 'Unknown error';
+      caughtError = error instanceof Error ? error : new Error(String(error));
+      const errorMessage = caughtError.message;
       return {
         success: false,
         error: {
@@ -150,10 +156,26 @@ export class PortService {
           } satisfies PortErrorContext
         }
       };
+    } finally {
+      const logEvent: Record<string, unknown> = {
+        port,
+        name,
+        outcome,
+        durationMs: Date.now() - startTime
+      };
+      if (caughtError) {
+        this.logger.error('port.expose', caughtError, logEvent);
+      } else {
+        this.logger.info('port.expose', logEvent);
+      }
     }
   }
 
   async unexposePort(port: number): Promise<ServiceResult<void>> {
+    const startTime = Date.now();
+    let outcome: 'success' | 'error' = 'error';
+    let caughtError: Error | undefined;
+
     try {
       // Check if port is exposed
       const existing = await this.store.get(port);
@@ -172,12 +194,13 @@ export class PortService {
 
       await this.store.unexpose(port);
 
+      outcome = 'success';
       return {
         success: true
       };
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : 'Unknown error';
+      caughtError = error instanceof Error ? error : new Error(String(error));
+      const errorMessage = caughtError.message;
       return {
         success: false,
         error: {
@@ -189,6 +212,17 @@ export class PortService {
           } satisfies PortErrorContext
         }
       };
+    } finally {
+      const logEvent: Record<string, unknown> = {
+        port,
+        outcome,
+        durationMs: Date.now() - startTime
+      };
+      if (caughtError) {
+        this.logger.error('port.unexpose', caughtError, logEvent);
+      } else {
+        this.logger.info('port.unexpose', logEvent);
+      }
     }
   }
 

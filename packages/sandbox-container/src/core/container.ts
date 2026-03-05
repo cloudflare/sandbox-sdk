@@ -119,8 +119,8 @@ export class Container {
       logger,
       sessionManager
     );
-    const portService = new PortService(portStore, securityAdapter);
-    const gitService = new GitService(securityAdapter, sessionManager);
+    const portService = new PortService(portStore, securityAdapter, logger);
+    const gitService = new GitService(securityAdapter, sessionManager, logger);
     const interpreterService = new InterpreterService(logger);
     const backupService = new BackupService(logger, sessionManager);
     const desktopService = new DesktopService(logger);

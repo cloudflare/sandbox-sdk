@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'bun:test';
+import type { Logger } from '@repo/shared';
 import { ErrorCode, type ValidationFailedContext } from '@repo/shared/errors';
 import type {
   CloneOptions,
@@ -17,6 +18,15 @@ const mockSecurityService: SecurityService = {
   validateGitUrl: vi.fn(),
   validatePath: vi.fn()
 };
+
+const mockLogger = {
+  info: vi.fn(),
+  error: vi.fn(),
+  warn: vi.fn(),
+  debug: vi.fn(),
+  child: vi.fn()
+} as Logger;
+mockLogger.child = vi.fn(() => mockLogger);
 
 // Properly typed mock SessionManager
 const mockSessionManager = {
@@ -93,7 +103,11 @@ describe('GitService', () => {
       }
     );
 
-    gitService = new GitService(mockSecurityService, mockSessionManager);
+    gitService = new GitService(
+      mockSecurityService,
+      mockSessionManager,
+      mockLogger
+    );
   });
 
   describe('cloneRepository', () => {

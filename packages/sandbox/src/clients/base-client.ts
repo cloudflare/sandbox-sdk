@@ -64,6 +64,16 @@ export abstract class BaseHttpClient {
     path: string,
     options?: RequestInit
   ): Promise<Response> {
+    const { defaultHeaders } = this.options;
+    if (defaultHeaders) {
+      options = {
+        ...options,
+        headers: {
+          ...defaultHeaders,
+          ...(options?.headers as Record<string, string> | undefined)
+        }
+      };
+    }
     return this.transport.fetch(path, options);
   }
 

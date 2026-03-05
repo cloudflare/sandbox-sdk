@@ -137,6 +137,10 @@ export class SessionManager {
   async createSession(
     options: SessionOptions
   ): Promise<ServiceResult<Session>> {
+    const startTime = Date.now();
+    let outcome: 'success' | 'error' = 'error';
+    let caughtError: Error | undefined;
+
     try {
       // Check if session already exists
       if (this.sessions.has(options.id)) {
@@ -161,14 +165,15 @@ export class SessionManager {
 
       this.sessions.set(options.id, session);
 
+      outcome = 'success';
       return {
         success: true,
         data: session
       };
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : 'Unknown error';
-      const errorStack = error instanceof Error ? error.stack : undefined;
+      caughtError = error instanceof Error ? error : new Error(String(error));
+      const errorMessage = caughtError.message;
+      const errorStack = caughtError.stack;
 
       return {
         success: false,
@@ -182,6 +187,18 @@ export class SessionManager {
           } satisfies InternalErrorContext
         }
       };
+    } finally {
+      const logEvent: Record<string, unknown> = {
+        sessionId: options.id,
+        cwd: options.cwd,
+        outcome,
+        durationMs: Date.now() - startTime
+      };
+      if (caughtError) {
+        this.logger.error('session.create', caughtError, logEvent);
+      } else {
+        this.logger.info('session.create', logEvent);
+      }
     }
   }
 
@@ -835,6 +852,10 @@ export class SessionManager {
    * Delete a session
    */
   async deleteSession(sessionId: string): Promise<ServiceResult<void>> {
+    const startTime = Date.now();
+    let outcome: 'success' | 'error' = 'error';
+    let caughtError: Error | undefined;
+
     try {
       const session = this.sessions.get(sessionId);
 
@@ -864,12 +885,13 @@ export class SessionManager {
       this.sessionLocks.delete(sessionId);
       this.creatingLocks.delete(sessionId);
 
+      outcome = 'success';
       return {
         success: true
       };
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : 'Unknown error';
+      caughtError = error instanceof Error ? error : new Error(String(error));
+      const errorMessage = caughtError.message;
 
       return {
         success: false,
@@ -882,6 +904,17 @@ export class SessionManager {
           } satisfies InternalErrorContext
         }
       };
+    } finally {
+      const logEvent: Record<string, unknown> = {
+        sessionId,
+        outcome,
+        durationMs: Date.now() - startTime
+      };
+      if (caughtError) {
+        this.logger.error('session.destroy', caughtError, logEvent);
+      } else {
+        this.logger.info('session.destroy', logEvent);
+      }
     }
   }
 
