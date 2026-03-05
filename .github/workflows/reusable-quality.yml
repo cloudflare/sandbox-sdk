@@ -5,7 +5,7 @@ on:
     inputs:
       runner:
         type: string
-        default: 'ubuntu-latest'
+        default: 'ubuntu-24.04-4core'
       run_sdk_tests:
         type: boolean
         default: true

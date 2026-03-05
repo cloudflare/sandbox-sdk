@@ -5,7 +5,7 @@ on:
     inputs:
       runner:
         type: string
-        default: 'ubuntu-latest'
+        default: 'ubuntu-24.04-8core'
       skip_docker:
         type: boolean
         default: false

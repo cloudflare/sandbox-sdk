@@ -34,7 +34,7 @@ env:
 
 jobs:
   setup:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-8core
     timeout-minutes: 15
     outputs:
       worker_url: ${{ steps.deploy.outputs.worker_url }}
@@ -114,7 +114,7 @@ jobs:
 
   performance-tests:
     needs: setup
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-8core
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v6
