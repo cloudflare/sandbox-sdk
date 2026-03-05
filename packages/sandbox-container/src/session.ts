@@ -99,6 +99,7 @@ import type { ExecEvent, Logger } from '@repo/shared';
 import { createNoOpLogger } from '@repo/shared';
 import type { Subprocess } from 'bun';
 import { CONFIG } from './config';
+import { SessionDestroyedError, ShellTerminatedError } from './errors';
 import type { Pty } from './pty';
 
 // Binary prefixes for output labeling (won't appear in normal text)
@@ -248,35 +249,29 @@ export class Session {
       stderr: 'ignore' // Ignore bash diagnostics
     });
 
-    // Shell death sentinel: a Promise<never> that NEVER resolves, only rejects.
-    //
-    // Used in Promise.race to detect unexpected shell termination:
-    //   await Promise.race([waitForExitCode(...), this.shellExitedPromise])
-    //
-    // If shell dies (e.g., user runs `exit`), this rejects immediately,
-    // letting us report "shell terminated" instead of hanging forever.
+    // Rejects on any shell exit, whether unexpected (user ran `exit`) or
+    // intentional (destroy() killed the shell). Raced against waitForExitCode()
+    // so callers unblock immediately when the shell dies.
     this.shellExitedPromise = new Promise<never>((_, reject) => {
       this.shell!.exited.then((exitCode) => {
-        // If we're intentionally destroying the session, don't log error or reject
-        if (this.isDestroying) {
-          return;
+        // Always reject regardless of isDestroying — concurrent code
+        // awaiting this promise must settle promptly.
+        if (!this.isDestroying) {
+          this.logger.error(
+            'Shell process exited unexpectedly',
+            new Error(`Exit code: ${exitCode ?? 'unknown'}`),
+            {
+              sessionId: this.id,
+              exitCode: exitCode ?? 'unknown'
+            }
+          );
         }
-
-        this.logger.error(
-          'Shell process exited unexpectedly',
-          new Error(`Exit code: ${exitCode ?? 'unknown'}`),
-          {
-            sessionId: this.id,
-            exitCode: exitCode ?? 'unknown'
-          }
-        );
         this.ready = false;
 
-        // Reject with clear error message
         reject(
-          new Error(
-            `Shell terminated unexpectedly (exit code: ${exitCode ?? 'unknown'}). Session is dead and cannot execute further commands.`
-          )
+          this.isDestroying
+            ? new SessionDestroyedError(this.id)
+            : new ShellTerminatedError(this.id, exitCode ?? null)
         );
       }).catch((error) => {
         // Handle any errors from shell.exited promise
@@ -288,9 +283,15 @@ export class Session {
               sessionId: this.id
             }
           );
-          this.ready = false;
-          reject(error);
         }
+        this.ready = false;
+        reject(
+          this.isDestroying
+            ? new SessionDestroyedError(this.id)
+            : error instanceof Error
+              ? error
+              : new Error(String(error))
+        );
       });
     });
 
@@ -303,11 +304,17 @@ export class Session {
   async exec(command: string, options?: ExecOptions): Promise<RawExecResult> {
     this.ensureReady();
 
+    // Local copies of mutable fields — used throughout this method so
+    // concurrent destroy() calls don't invalidate references mid-execution.
+    const sessionDir = this.sessionDir!;
+    const shell = this.shell!;
+    const shellExitedPromise = this.shellExitedPromise!;
+
     const startTime = Date.now();
     const commandId = randomUUID();
-    const logFile = join(this.sessionDir!, `${commandId}.log`);
-    const exitCodeFile = join(this.sessionDir!, `${commandId}.exit`);
-    const pidFile = join(this.sessionDir!, `${commandId}.pid`);
+    const logFile = join(sessionDir, `${commandId}.log`);
+    const exitCodeFile = join(sessionDir, `${commandId}.exit`);
+    const pidFile = join(sessionDir, `${commandId}.pid`);
 
     this.logger.info('Command execution started', {
       sessionId: this.id,
@@ -327,14 +334,15 @@ export class Session {
         commandId,
         logFile,
         exitCodeFile,
+        sessionDir,
         options?.cwd,
         false,
         options?.env
       );
 
       // Write script to shell's stdin
-      if (this.shell!.stdin && typeof this.shell!.stdin !== 'number') {
-        this.shell!.stdin.write(`${bashScript}\n`);
+      if (shell.stdin && typeof shell.stdin !== 'number') {
+        shell.stdin.write(`${bashScript}\n`);
       } else {
         throw new Error('Shell stdin is not available');
       }
@@ -345,7 +353,7 @@ export class Session {
       // This allows us to detect shell termination (e.g., from 'exit' command) immediately
       const exitCode = await Promise.race([
         this.waitForExitCode(exitCodeFile),
-        this.shellExitedPromise!
+        shellExitedPromise
       ]);
 
       // Read log file and parse prefixes
@@ -404,16 +412,20 @@ export class Session {
   ): AsyncGenerator<ExecEvent> {
     this.ensureReady();
 
+    // Local copies of mutable fields — used throughout this generator so
+    // concurrent destroy() calls don't invalidate references mid-execution.
+    // shellExitedPromise is read from the instance field (not captured) each
+    // iteration, allowing the polling loop to observe null when destroyed.
+    const sessionDir = this.sessionDir!;
+    const shell = this.shell!;
+
     const startTime = Date.now();
     const commandId = options?.commandId || randomUUID();
-    const logFile = join(this.sessionDir!, `${commandId}.log`);
-    const exitCodeFile = join(this.sessionDir!, `${commandId}.exit`);
-    const pidFile = join(this.sessionDir!, `${commandId}.pid`);
-    const pidPipe = join(this.sessionDir!, `${commandId}.pid.pipe`);
-    const labelersDoneFile = join(
-      this.sessionDir!,
-      `${commandId}.labelers.done`
-    );
+    const logFile = join(sessionDir, `${commandId}.log`);
+    const exitCodeFile = join(sessionDir, `${commandId}.exit`);
+    const pidFile = join(sessionDir, `${commandId}.pid`);
+    const pidPipe = join(sessionDir, `${commandId}.pid.pipe`);
+    const labelersDoneFile = join(sessionDir, `${commandId}.labelers.done`);
 
     this.logger.info('Streaming command execution started', {
       sessionId: this.id,
@@ -437,14 +449,15 @@ export class Session {
         commandId,
         logFile,
         exitCodeFile,
+        sessionDir,
         options?.cwd,
         true,
         options?.env,
         pidPipe
       );
 
-      if (this.shell!.stdin && typeof this.shell!.stdin !== 'number') {
-        this.shell!.stdin.write(`${bashScript}\n`);
+      if (shell.stdin && typeof shell.stdin !== 'number') {
+        shell.stdin.write(`${bashScript}\n`);
       } else {
         throw new Error('Shell stdin is not available');
       }
@@ -474,12 +487,13 @@ export class Session {
 
       // Wait until exit code file exists, checking for shell death on each iteration
       while (true) {
-        // Check if shell is still alive (will be false if shell died)
         if (!this.isReady()) {
-          // Shell died - throw the error from shellExitedPromise
-          await this.shellExitedPromise!.catch((error) => {
-            throw error;
-          });
+          if (this.shellExitedPromise) {
+            await this.shellExitedPromise.catch((error) => {
+              throw error;
+            });
+          }
+          throw new SessionDestroyedError(this.id);
         }
 
         const exitFile = Bun.file(exitCodeFile);
@@ -531,6 +545,7 @@ export class Session {
       const startWait = Date.now();
       let labelersDone = false;
       while (Date.now() - startWait < maxWaitMs) {
+        if (!this.isReady()) break;
         const doneFile = Bun.file(labelersDoneFile);
         if (await doneFile.exists()) {
           labelersDone = true;
@@ -649,6 +664,15 @@ export class Session {
   }
 
   /**
+   * Check if the session is being torn down by an explicit destroy() call.
+   * Distinguishes "session destroyed via API" from "shell died on its own"
+   * (e.g., user ran `exit`).
+   */
+  wasDestroyed(): boolean {
+    return this.isDestroying;
+  }
+
+  /**
    * Kill a running command by its ID
    *
    * NOTE: Only works for BACKGROUND commands started via execStream()/startProcess().
@@ -704,9 +728,15 @@ export class Session {
    * Destroy the session and clean up resources
    */
   async destroy(): Promise<void> {
-    // Mark as destroying to prevent shell exit monitor from logging errors
+    // Suppresses error logging for the expected shell exit that follows
     this.isDestroying = true;
 
+    // Absorb the shellExitedPromise rejection caused by our own kill below.
+    // In-flight code awaiting the same promise receives the rejection
+    // through their own .catch() handlers (promise rejection is multicast).
+    if (this.shellExitedPromise) {
+      this.shellExitedPromise.catch(() => {});
+    }
     if (this.pty) {
       await this.pty.destroy();
       this.pty = null;
@@ -812,23 +842,24 @@ export class Session {
     cmdId: string,
     logFile: string,
     exitCodeFile: string,
+    sessionDir: string,
     cwd?: string,
     isBackground = false,
     env?: Record<string, string | undefined>,
     pidPipe?: string
   ): string {
     // Create unique FIFO names to prevent collisions
-    const stdoutPipe = join(this.sessionDir!, `${cmdId}.stdout.pipe`);
-    const stderrPipe = join(this.sessionDir!, `${cmdId}.stderr.pipe`);
-    const pidFile = join(this.sessionDir!, `${cmdId}.pid`);
-    const labelersDoneFile = join(this.sessionDir!, `${cmdId}.labelers.done`);
+    const stdoutPipe = join(sessionDir, `${cmdId}.stdout.pipe`);
+    const stderrPipe = join(sessionDir, `${cmdId}.stderr.pipe`);
+    const pidFile = join(sessionDir, `${cmdId}.pid`);
+    const labelersDoneFile = join(sessionDir, `${cmdId}.labelers.done`);
 
     // Escape paths for safe shell usage
     const safeStdoutPipe = this.escapeShellPath(stdoutPipe);
     const safeStderrPipe = this.escapeShellPath(stderrPipe);
     const safeLogFile = this.escapeShellPath(logFile);
     const safeExitCodeFile = this.escapeShellPath(exitCodeFile);
-    const safeSessionDir = this.escapeShellPath(this.sessionDir!);
+    const safeSessionDir = this.escapeShellPath(sessionDir);
     const safePidFile = this.escapeShellPath(pidFile);
     const safeLabelersDoneFile = this.escapeShellPath(labelersDoneFile);
     const safePidPipe = pidPipe ? this.escapeShellPath(pidPipe) : null;

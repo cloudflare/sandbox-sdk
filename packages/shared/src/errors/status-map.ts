@@ -45,6 +45,9 @@ export const ERROR_STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.RESOURCE_BUSY]: 409,
   [ErrorCode.SESSION_ALREADY_EXISTS]: 409,
 
+  // 410 Gone
+  [ErrorCode.SESSION_DESTROYED]: 410,
+
   // 413 Content Too Large
   [ErrorCode.FILE_TOO_LARGE]: 413,
 
