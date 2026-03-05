@@ -30,6 +30,10 @@ export abstract class BaseTransport implements ITransport {
   abstract disconnect(): void;
   abstract isConnected(): boolean;
 
+  setRetryTimeoutMs(ms: number): void {
+    this.retryTimeoutMs = ms;
+  }
+
   /**
    * Fetch with automatic retry for 503 (container starting)
    *

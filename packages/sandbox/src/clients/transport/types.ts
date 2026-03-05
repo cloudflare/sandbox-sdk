@@ -80,4 +80,9 @@ export interface ITransport {
    * Check if connected (always true for HTTP)
    */
   isConnected(): boolean;
+
+  /**
+   * Update the 503 retry budget without recreating the transport
+   */
+  setRetryTimeoutMs(ms: number): void;
 }

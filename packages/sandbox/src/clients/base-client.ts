@@ -44,6 +44,13 @@ export abstract class BaseHttpClient {
   }
 
   /**
+   * Update the transport's 503 retry budget
+   */
+  setRetryTimeoutMs(ms: number): void {
+    this.transport.setRetryTimeoutMs(ms);
+  }
+
+  /**
    * Check if using WebSocket transport
    */
   protected isWebSocketMode(): boolean {

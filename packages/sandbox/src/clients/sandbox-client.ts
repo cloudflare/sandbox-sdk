@@ -75,6 +75,32 @@ export class SandboxClient {
   }
 
   /**
+   * Update the 503 retry budget on all transports without recreating the client.
+   *
+   * In WebSocket mode a single shared transport is used, so one update covers
+   * every sub-client. In HTTP mode each sub-client owns its own transport, so
+   * all of them are updated individually.
+   */
+  setRetryTimeoutMs(ms: number): void {
+    if (this.transport) {
+      // WebSocket mode — single shared transport
+      this.transport.setRetryTimeoutMs(ms);
+    } else {
+      // HTTP mode — each sub-client has its own transport
+      this.backup.setRetryTimeoutMs(ms);
+      this.commands.setRetryTimeoutMs(ms);
+      this.files.setRetryTimeoutMs(ms);
+      this.processes.setRetryTimeoutMs(ms);
+      this.ports.setRetryTimeoutMs(ms);
+      this.git.setRetryTimeoutMs(ms);
+      this.interpreter.setRetryTimeoutMs(ms);
+      this.utils.setRetryTimeoutMs(ms);
+      this.desktop.setRetryTimeoutMs(ms);
+      this.watch.setRetryTimeoutMs(ms);
+    }
+  }
+
+  /**
    * Get the current transport mode
    */
   getTransportMode(): TransportMode {
