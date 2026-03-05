@@ -29,6 +29,7 @@ docker build \
   --platform linux/amd64 \
   --build-arg SANDBOX_VERSION="$VERSION" \
   -t "$IMAGE:$VERSION-opencode" \
+  --secret id=wrangler_ca,src="${NODE_EXTRA_CA_CERTS:-/dev/null}" \
   .
 
 docker build \

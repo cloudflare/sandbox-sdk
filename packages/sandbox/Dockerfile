@@ -199,6 +199,12 @@ ENTRYPOINT ["/container-server/sandbox"]
 # ============================================================================
 FROM runtime-base AS opencode
 
+RUN --mount=type=secret,id=wrangler_ca \
+    if [ -f /run/secrets/wrangler_ca ] && [ -s /run/secrets/wrangler_ca ]; then \
+        cp /run/secrets/wrangler_ca /usr/local/share/ca-certificates/wrangler-dev-ca.crt && \
+        update-ca-certificates; \
+    fi
+
 # Install OpenCode CLI via npm (avoids GitHub API rate limits)
 RUN npm i -g opencode-ai \
     && opencode --version
