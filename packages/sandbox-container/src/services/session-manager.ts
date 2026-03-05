@@ -17,10 +17,12 @@ import { ErrorCode } from '@repo/shared/errors';
 import { Mutex } from 'async-mutex';
 import { CONFIG } from '../config';
 import {
+  type ServiceError,
   type ServiceResult,
   serviceError,
   serviceSuccess
 } from '../core/types';
+import { SessionDestroyedError, ShellTerminatedError } from '../errors';
 import { Pty } from '../pty';
 import { type RawExecResult, Session, type SessionOptions } from '../session';
 
@@ -244,6 +246,48 @@ export class SessionManager {
   }
 
   /**
+   * Determine whether a command error stems from API-initiated session
+   * destruction or a genuine command failure. Resolves the error message,
+   * incorporating explicit exit-command detection.
+   */
+  private classifyCommandError(
+    error: unknown,
+    command: string,
+    sessionId: string
+  ): { errorMessage: string; sessionDestroyed: boolean } {
+    if (error instanceof SessionDestroyedError) {
+      return { errorMessage: error.message, sessionDestroyed: true };
+    }
+
+    if (error instanceof ShellTerminatedError) {
+      return { errorMessage: error.message, sessionDestroyed: false };
+    }
+
+    // Untyped error fallback (non-shell failures like I/O errors)
+    let errorMessage = error instanceof Error ? error.message : 'Unknown error';
+
+    const explicitExitCode = this.parseExitCommandExitCode(command);
+    if (explicitExitCode !== null) {
+      errorMessage = `Shell terminated unexpectedly (exit code: ${explicitExitCode}). Session is dead and cannot execute further commands.`;
+    }
+
+    const session = this.sessions.get(sessionId);
+    const sessionDestroyed = !!(
+      session?.wasDestroyed() && explicitExitCode === null
+    );
+
+    return { errorMessage, sessionDestroyed };
+  }
+
+  private sessionDestroyedError(sessionId: string): ServiceError {
+    return {
+      message: `Session '${sessionId}' was destroyed during command execution`,
+      code: ErrorCode.SESSION_DESTROYED,
+      details: { sessionId } satisfies SessionDestroyedContext
+    };
+  }
+
+  /**
    * Execute a command in a session with per-session locking.
    * Commands to the same session are serialized; different sessions run in parallel.
    */
@@ -280,53 +324,27 @@ export class SessionManager {
           data: result
         };
       } catch (error) {
-        let errorMessage =
-          error instanceof Error ? error.message : 'Unknown error';
-
-        const explicitExitCode = this.parseExitCommandExitCode(command);
-        if (
-          explicitExitCode !== null &&
-          !/shell terminated unexpectedly/i.test(errorMessage)
-        ) {
-          errorMessage = `Shell terminated unexpectedly (exit code: ${explicitExitCode}). Session is dead and cannot execute further commands.`;
-        }
-
-        // Detect explicit destroy() teardown. A session can also become not-ready
-        // because the shell exited on its own (for example, user ran `exit`).
-        // Preserve shell-termination errors instead of masking them as destroy().
-        const session = this.sessions.get(sessionId);
-        const isShellTermination = /shell terminated unexpectedly/i.test(
-          errorMessage
+        const { errorMessage, sessionDestroyed } = this.classifyCommandError(
+          error,
+          command,
+          sessionId
         );
-        if (
-          session?.wasDestroyed() &&
-          !isShellTermination &&
-          explicitExitCode === null
-        ) {
+
+        if (sessionDestroyed) {
           this.logger.warn('Session destroyed during command execution', {
             sessionId,
             command
           });
-
           return {
             success: false,
-            error: {
-              message: `Session '${sessionId}' was destroyed during command execution`,
-              code: ErrorCode.SESSION_DESTROYED,
-              details: {
-                sessionId
-              } satisfies SessionDestroyedContext
-            }
+            error: this.sessionDestroyedError(sessionId)
           };
         }
 
         this.logger.error(
           'Failed to execute command',
           error instanceof Error ? error : undefined,
-          {
-            sessionId,
-            command
-          }
+          { sessionId, command }
         );
 
         return {
@@ -523,50 +541,27 @@ export class SessionManager {
           data: { continueStreaming: Promise.resolve() }
         };
       } catch (error) {
-        let errorMessage =
-          error instanceof Error ? error.message : 'Unknown error';
-
-        const explicitExitCode = this.parseExitCommandExitCode(command);
-        if (
-          explicitExitCode !== null &&
-          !/shell terminated unexpectedly/i.test(errorMessage)
-        ) {
-          errorMessage = `Shell terminated unexpectedly (exit code: ${explicitExitCode}). Session is dead and cannot execute further commands.`;
-        }
-
-        const session = this.sessions.get(sessionId);
-        const isShellTermination = /shell terminated unexpectedly/i.test(
-          errorMessage
+        const { errorMessage, sessionDestroyed } = this.classifyCommandError(
+          error,
+          command,
+          sessionId
         );
-        if (
-          session?.wasDestroyed() &&
-          !isShellTermination &&
-          explicitExitCode === null
-        ) {
+
+        if (sessionDestroyed) {
           this.logger.warn('Session destroyed during streaming command', {
             sessionId,
             command
           });
-
           return {
             success: false,
-            error: {
-              message: `Session '${sessionId}' was destroyed during command execution`,
-              code: ErrorCode.SESSION_DESTROYED,
-              details: {
-                sessionId
-              } satisfies SessionDestroyedContext
-            }
+            error: this.sessionDestroyedError(sessionId)
           };
         }
 
         this.logger.error(
           'Failed to execute streaming command',
           error instanceof Error ? error : undefined,
-          {
-            sessionId,
-            command
-          }
+          { sessionId, command }
         );
 
         return {
@@ -662,50 +657,27 @@ export class SessionManager {
           firstEvent: firstResult.value
         };
       } catch (error) {
-        let errorMessage =
-          error instanceof Error ? error.message : 'Unknown error';
-
-        const explicitExitCode = this.parseExitCommandExitCode(command);
-        if (
-          explicitExitCode !== null &&
-          !/shell terminated unexpectedly/i.test(errorMessage)
-        ) {
-          errorMessage = `Shell terminated unexpectedly (exit code: ${explicitExitCode}). Session is dead and cannot execute further commands.`;
-        }
-
-        const session = this.sessions.get(sessionId);
-        const isShellTermination = /shell terminated unexpectedly/i.test(
-          errorMessage
+        const { errorMessage, sessionDestroyed } = this.classifyCommandError(
+          error,
+          command,
+          sessionId
         );
-        if (
-          session?.wasDestroyed() &&
-          !isShellTermination &&
-          explicitExitCode === null
-        ) {
+
+        if (sessionDestroyed) {
           this.logger.warn(
             'Session destroyed during streaming command startup',
             { sessionId, command }
           );
-
           return {
             success: false as const,
-            error: {
-              message: `Session '${sessionId}' was destroyed during command execution`,
-              code: ErrorCode.SESSION_DESTROYED,
-              details: {
-                sessionId
-              } satisfies SessionDestroyedContext
-            }
+            error: this.sessionDestroyedError(sessionId)
           };
         }
 
         this.logger.error(
           'Failed to start streaming command',
           error instanceof Error ? error : undefined,
-          {
-            sessionId,
-            command
-          }
+          { sessionId, command }
         );
 
         return {
@@ -960,10 +932,8 @@ export class SessionManager {
         };
       }
 
-      // Acquire the per-session lock so destroy() waits for any
-      // in-flight foreground command to finish before tearing down
-      // session state. Background streaming (where the lock is already
-      // released) is protected by null guards in session.ts instead.
+      // Per-session lock ensures in-flight foreground commands complete
+      // before session state is torn down.
       const lock = this.getSessionLock(sessionId);
       await lock.runExclusive(async () => {
         await session.destroy();
@@ -1038,9 +1008,15 @@ export class SessionManager {
    * Cleanup method for graceful shutdown
    */
   async destroy(): Promise<void> {
+    // Acquire each per-session lock before destroying, matching the
+    // pattern in deleteSession(). This ensures in-flight foreground
+    // commands finish before their session state is torn down.
     for (const [sessionId, session] of this.sessions.entries()) {
       try {
-        await session.destroy();
+        const lock = this.getSessionLock(sessionId);
+        await lock.runExclusive(async () => {
+          await session.destroy();
+        });
       } catch (error) {
         this.logger.error(
           'Failed to destroy session',

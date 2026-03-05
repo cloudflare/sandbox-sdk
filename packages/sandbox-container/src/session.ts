@@ -99,6 +99,7 @@ import type { ExecEvent, Logger } from '@repo/shared';
 import { createNoOpLogger } from '@repo/shared';
 import type { Subprocess } from 'bun';
 import { CONFIG } from './config';
+import { SessionDestroyedError, ShellTerminatedError } from './errors';
 import type { Pty } from './pty';
 
 // Binary prefixes for output labeling (won't appear in normal text)
@@ -248,35 +249,29 @@ export class Session {
       stderr: 'ignore' // Ignore bash diagnostics
     });
 
-    // Shell death sentinel: a Promise<never> that NEVER resolves, only rejects.
-    //
-    // Used in Promise.race to detect unexpected shell termination:
-    //   await Promise.race([waitForExitCode(...), this.shellExitedPromise])
-    //
-    // If shell dies (e.g., user runs `exit`), this rejects immediately,
-    // letting us report "shell terminated" instead of hanging forever.
+    // Rejects on any shell exit, whether unexpected (user ran `exit`) or
+    // intentional (destroy() killed the shell). Raced against waitForExitCode()
+    // so callers unblock immediately when the shell dies.
     this.shellExitedPromise = new Promise<never>((_, reject) => {
       this.shell!.exited.then((exitCode) => {
-        // If we're intentionally destroying the session, don't log error or reject
-        if (this.isDestroying) {
-          return;
+        // Always reject regardless of isDestroying — concurrent code
+        // awaiting this promise must settle promptly.
+        if (!this.isDestroying) {
+          this.logger.error(
+            'Shell process exited unexpectedly',
+            new Error(`Exit code: ${exitCode ?? 'unknown'}`),
+            {
+              sessionId: this.id,
+              exitCode: exitCode ?? 'unknown'
+            }
+          );
         }
-
-        this.logger.error(
-          'Shell process exited unexpectedly',
-          new Error(`Exit code: ${exitCode ?? 'unknown'}`),
-          {
-            sessionId: this.id,
-            exitCode: exitCode ?? 'unknown'
-          }
-        );
         this.ready = false;
 
-        // Reject with clear error message
         reject(
-          new Error(
-            `Shell terminated unexpectedly (exit code: ${exitCode ?? 'unknown'}). Session is dead and cannot execute further commands.`
-          )
+          this.isDestroying
+            ? new SessionDestroyedError(this.id)
+            : new ShellTerminatedError(this.id, exitCode ?? null)
         );
       }).catch((error) => {
         // Handle any errors from shell.exited promise
@@ -288,9 +283,15 @@ export class Session {
               sessionId: this.id
             }
           );
-          this.ready = false;
-          reject(error);
         }
+        this.ready = false;
+        reject(
+          this.isDestroying
+            ? new SessionDestroyedError(this.id)
+            : error instanceof Error
+              ? error
+              : new Error(String(error))
+        );
       });
     });
 
@@ -303,8 +304,8 @@ export class Session {
   async exec(command: string, options?: ExecOptions): Promise<RawExecResult> {
     this.ensureReady();
 
-    // Capture references to mutable fields so they remain valid for the
-    // lifetime of this call even if destroy() nulls the instance fields.
+    // Local copies of mutable fields — used throughout this method so
+    // concurrent destroy() calls don't invalidate references mid-execution.
     const sessionDir = this.sessionDir!;
     const shell = this.shell!;
     const shellExitedPromise = this.shellExitedPromise!;
@@ -411,11 +412,10 @@ export class Session {
   ): AsyncGenerator<ExecEvent> {
     this.ensureReady();
 
-    // Capture references to mutable fields so they remain valid for the
-    // lifetime of this generator even if destroy() nulls the instance fields.
-    // NOTE: shellExitedPromise is intentionally NOT captured here — the
-    // polling loop reads this.shellExitedPromise fresh each iteration so
-    // the null guard can detect when destroy() has cleared it.
+    // Local copies of mutable fields — used throughout this generator so
+    // concurrent destroy() calls don't invalidate references mid-execution.
+    // shellExitedPromise is read from the instance field (not captured) each
+    // iteration, allowing the polling loop to observe null when destroyed.
     const sessionDir = this.sessionDir!;
     const shell = this.shell!;
 
@@ -487,19 +487,13 @@ export class Session {
 
       // Wait until exit code file exists, checking for shell death on each iteration
       while (true) {
-        // Check if shell is still alive (will be false if shell died)
         if (!this.isReady()) {
-          // Shell died — get the exit error if the promise still exists.
-          // If shellExitedPromise is null, destroy() already ran and
-          // cleared it, so throw a descriptive error instead of crashing.
           if (this.shellExitedPromise) {
             await this.shellExitedPromise.catch((error) => {
               throw error;
             });
           }
-          throw new Error(
-            `Session '${this.id}' was destroyed during command execution`
-          );
+          throw new SessionDestroyedError(this.id);
         }
 
         const exitFile = Bun.file(exitCodeFile);
@@ -551,6 +545,7 @@ export class Session {
       const startWait = Date.now();
       let labelersDone = false;
       while (Date.now() - startWait < maxWaitMs) {
+        if (!this.isReady()) break;
         const doneFile = Bun.file(labelersDoneFile);
         if (await doneFile.exists()) {
           labelersDone = true;
@@ -733,9 +728,15 @@ export class Session {
    * Destroy the session and clean up resources
    */
   async destroy(): Promise<void> {
-    // Mark as destroying to prevent shell exit monitor from logging errors
+    // Suppresses error logging for the expected shell exit that follows
     this.isDestroying = true;
 
+    // Absorb the shellExitedPromise rejection caused by our own kill below.
+    // In-flight code awaiting the same promise receives the rejection
+    // through their own .catch() handlers (promise rejection is multicast).
+    if (this.shellExitedPromise) {
+      this.shellExitedPromise.catch(() => {});
+    }
     if (this.pty) {
       await this.pty.destroy();
       this.pty = null;
