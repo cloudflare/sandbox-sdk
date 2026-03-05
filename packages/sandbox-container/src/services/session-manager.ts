@@ -266,11 +266,14 @@ export class SessionManager {
         const errorMessage =
           error instanceof Error ? error.message : 'Unknown error';
 
-        // Detect explicit destroy() teardown. A session can be not-ready
-        // because the shell exited on its own (for example, user ran `exit`),
-        // which should still surface the shell termination error.
+        // Detect explicit destroy() teardown. A session can also become not-ready
+        // because the shell exited on its own (for example, user ran `exit`).
+        // Preserve shell-termination errors instead of masking them as destroy().
         const session = this.sessions.get(sessionId);
-        if (session?.wasDestroyed()) {
+        const isShellTermination = /shell terminated unexpectedly/i.test(
+          errorMessage
+        );
+        if (session?.wasDestroyed() && !isShellTermination) {
           this.logger.warn('Session destroyed during command execution', {
             sessionId,
             command
@@ -495,7 +498,10 @@ export class SessionManager {
           error instanceof Error ? error.message : 'Unknown error';
 
         const session = this.sessions.get(sessionId);
-        if (session?.wasDestroyed()) {
+        const isShellTermination = /shell terminated unexpectedly/i.test(
+          errorMessage
+        );
+        if (session?.wasDestroyed() && !isShellTermination) {
           this.logger.warn('Session destroyed during streaming command', {
             sessionId,
             command
@@ -619,7 +625,10 @@ export class SessionManager {
           error instanceof Error ? error.message : 'Unknown error';
 
         const session = this.sessions.get(sessionId);
-        if (session?.wasDestroyed()) {
+        const isShellTermination = /shell terminated unexpectedly/i.test(
+          errorMessage
+        );
+        if (session?.wasDestroyed() && !isShellTermination) {
           this.logger.warn(
             'Session destroyed during streaming command startup',
             { sessionId, command }
