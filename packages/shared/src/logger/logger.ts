@@ -170,6 +170,7 @@ export class CloudflareLogger implements Logger {
       commandId,
       operation,
       duration,
+      durationMs,
       serviceVersion,
       instanceId,
       error,
@@ -191,7 +192,8 @@ export class CloudflareLogger implements Logger {
     if (sandboxId) pairs.push(`sandbox=${sandboxId}`);
     if (sessionId) pairs.push(`session=${String(sessionId).substring(0, 12)}`);
     if (processId) pairs.push(`proc=${processId}`);
-    if (duration !== undefined) pairs.push(`dur=${duration}ms`);
+    const dur = durationMs ?? duration;
+    if (dur !== undefined) pairs.push(`dur=${dur}ms`);
 
     // Append remaining context fields inline
     for (const [key, value] of Object.entries(rest)) {

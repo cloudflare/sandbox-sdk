@@ -315,6 +315,7 @@ export class Session {
       operation: 'exec',
       command: command.substring(0, 100)
     };
+    let caughtError: Error | undefined;
 
     try {
       // Track command
@@ -360,7 +361,7 @@ export class Session {
       const duration = Date.now() - startTime;
 
       event.exitCode = exitCode;
-      event.duration = duration;
+      event.durationMs = duration;
       event.stdoutLen = stdout.length;
       event.stderrLen = stderr.length;
       event.outcome = 'success';
@@ -374,17 +375,17 @@ export class Session {
         timestamp: new Date(startTime).toISOString()
       };
     } catch (error) {
+      caughtError = error instanceof Error ? error : new Error(String(error));
       event.outcome = 'error';
-      event.errorMessage =
-        error instanceof Error ? error.message : String(error);
+      event.errorMessage = caughtError.message;
       // Untrack and clean up on error
       this.untrackCommand(commandId);
       await this.cleanupCommandFiles(logFile, exitCodeFile);
       throw error;
     } finally {
-      event.duration = event.duration ?? Date.now() - startTime;
+      event.durationMs = event.durationMs ?? Date.now() - startTime;
       if (event.outcome === 'error') {
-        this.logger.error('command.exec', undefined, event);
+        this.logger.error('command.exec', caughtError, event);
       } else {
         this.logger.info('command.exec', event);
       }
@@ -420,6 +421,7 @@ export class Session {
       operation: 'execStream',
       command: command.substring(0, 100)
     };
+    let caughtError: Error | undefined;
 
     try {
       // Track command
@@ -588,7 +590,7 @@ export class Session {
       const duration = Date.now() - startTime;
 
       event.exitCode = exitCode;
-      event.duration = duration;
+      event.durationMs = duration;
       event.outcome = 'success';
 
       yield {
@@ -612,9 +614,9 @@ export class Session {
       // Clean up temp files
       await this.cleanupCommandFiles(logFile, exitCodeFile);
     } catch (error) {
+      caughtError = error instanceof Error ? error : new Error(String(error));
       event.outcome = 'error';
-      event.errorMessage =
-        error instanceof Error ? error.message : String(error);
+      event.errorMessage = caughtError.message;
       // Untrack and clean up on error
       this.untrackCommand(commandId);
       await this.cleanupCommandFiles(logFile, exitCodeFile);
@@ -622,12 +624,12 @@ export class Session {
       yield {
         type: 'error',
         timestamp: new Date().toISOString(),
-        error: error instanceof Error ? error.message : String(error)
+        error: caughtError.message
       };
     } finally {
-      event.duration = event.duration ?? Date.now() - startTime;
+      event.durationMs = event.durationMs ?? Date.now() - startTime;
       if (event.outcome === 'error') {
-        this.logger.error('command.stream', undefined, event);
+        this.logger.error('command.stream', caughtError, event);
       } else {
         this.logger.info('command.stream', event);
       }

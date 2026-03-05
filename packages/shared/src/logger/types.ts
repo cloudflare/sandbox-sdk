@@ -58,8 +58,14 @@ export interface LogContext {
 
   /**
    * Duration in milliseconds
+   * @deprecated Use durationMs for clarity
    */
   duration?: number;
+
+  /**
+   * Duration in milliseconds (preferred over duration)
+   */
+  durationMs?: number;
 
   /**
    * Service version (from SANDBOX_VERSION env var)

@@ -113,6 +113,7 @@ export class BackupService {
       dir,
       archivePath
     };
+    let caughtError: Error | undefined;
 
     try {
       // Ensure the work directory exists
@@ -216,18 +217,18 @@ export class BackupService {
         archivePath
       });
     } catch (error) {
+      caughtError = error instanceof Error ? error : new Error(String(error));
       event.outcome = 'error';
-      event.errorMessage =
-        error instanceof Error ? error.message : String(error);
+      event.errorMessage = caughtError.message;
       return serviceError({
-        message: `Unexpected error creating backup: ${error instanceof Error ? error.message : String(error)}`,
+        message: `Unexpected error creating backup: ${caughtError.message}`,
         code: ErrorCode.BACKUP_CREATE_FAILED,
         details: { dir, archivePath }
       });
     } finally {
       event.durationMs = Date.now() - startTime;
       if (event.outcome === 'error') {
-        this.logger.error('backup.create', undefined, event);
+        this.logger.error('backup.create', caughtError, event);
       } else {
         this.logger.info('backup.create', event);
       }
@@ -283,6 +284,7 @@ export class BackupService {
       backupId,
       restoreId
     };
+    let caughtError: Error | undefined;
 
     try {
       // Verify the archive exists
@@ -403,9 +405,9 @@ export class BackupService {
 
       return serviceSuccess<RestoreArchiveResult>({ dir });
     } catch (error) {
+      caughtError = error instanceof Error ? error : new Error(String(error));
       event.outcome = 'error';
-      event.errorMessage =
-        error instanceof Error ? error.message : String(error);
+      event.errorMessage = caughtError.message;
       // Best-effort cleanup of any FUSE mounts that may have been established
       await this.sessionManager
         .executeInSession(
@@ -420,14 +422,14 @@ export class BackupService {
         )
         .catch(() => {});
       return serviceError({
-        message: `Unexpected error restoring backup: ${error instanceof Error ? error.message : String(error)}`,
+        message: `Unexpected error restoring backup: ${caughtError.message}`,
         code: ErrorCode.BACKUP_RESTORE_FAILED,
         details: { dir, archivePath }
       });
     } finally {
       event.durationMs = Date.now() - startTime;
       if (event.outcome === 'error') {
-        this.logger.error('backup.restore', undefined, event);
+        this.logger.error('backup.restore', caughtError, event);
       } else {
         this.logger.info('backup.restore', event);
       }
@@ -480,6 +482,7 @@ export class BackupService {
       dir,
       backupId
     };
+    let caughtError: Error | undefined;
 
     try {
       // Unmount overlayfs first
@@ -521,18 +524,18 @@ export class BackupService {
 
       return serviceSuccess({ success: true });
     } catch (error) {
+      caughtError = error instanceof Error ? error : new Error(String(error));
       event.outcome = 'error';
-      event.errorMessage =
-        error instanceof Error ? error.message : String(error);
+      event.errorMessage = caughtError.message;
       return serviceError({
-        message: `Failed to unmount snapshot: ${error instanceof Error ? error.message : String(error)}`,
+        message: `Failed to unmount snapshot: ${caughtError.message}`,
         code: ErrorCode.BACKUP_RESTORE_FAILED,
         details: { dir, backupId }
       });
     } finally {
       event.durationMs = Date.now() - startTime;
       if (event.outcome === 'error') {
-        this.logger.error('snapshot.unmount', undefined, event);
+        this.logger.error('snapshot.unmount', caughtError, event);
       } else {
         this.logger.info('snapshot.unmount', event);
       }

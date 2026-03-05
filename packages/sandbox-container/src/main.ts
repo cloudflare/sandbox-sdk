@@ -24,12 +24,17 @@ const ANSI_ESCAPE_REGEX =
   // biome-ignore lint/suspicious/noControlCharactersInRegex: ANSI escape codes are intentional
   /\u001b\[[0-9;]*[A-Za-z]/g;
 
+const MAX_LOG_LINE_LENGTH = 4000;
+
 function normalizeLogLine(line: string): string | null {
   const cleaned = line.replace(ANSI_ESCAPE_REGEX, '').trim();
   if (!cleaned) {
     return null;
   }
-  return cleaned.slice(0, 4000);
+  if (cleaned.length > MAX_LOG_LINE_LENGTH) {
+    return `${cleaned.slice(0, MAX_LOG_LINE_LENGTH)}...[truncated ${cleaned.length - MAX_LOG_LINE_LENGTH} chars]`;
+  }
+  return cleaned;
 }
 
 async function main(): Promise<void> {

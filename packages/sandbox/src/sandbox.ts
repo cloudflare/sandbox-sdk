@@ -703,7 +703,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         provider: provider || 'unknown',
         prefix,
         outcome: 'success',
-        duration: Date.now() - mountStartTime
+        durationMs: Date.now() - mountStartTime
       });
     } catch (error) {
       // Clean up password file on failure
@@ -750,7 +750,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       mountPath,
       bucket: mountInfo.bucket,
       outcome: 'success',
-      duration: Date.now() - unmountStartTime
+      durationMs: Date.now() - unmountStartTime
     });
   }
 
@@ -934,7 +934,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     this.logger.info('sandbox.destroy', {
       mountsProcessed: mountResults.length,
       mountResults,
-      duration: Date.now() - startTime
+      durationMs: Date.now() - startTime
     });
 
     await super.destroy();
