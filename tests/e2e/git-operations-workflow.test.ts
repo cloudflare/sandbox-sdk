@@ -4,11 +4,12 @@ import type {
   GitOperationResult,
   GitStatusResult
 } from '@repo/shared';
-import { beforeAll, describe, expect, test } from 'vitest';
+import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import {
+  cleanupTestSandbox,
+  createTestSandbox,
   createUniqueSession,
-  getSharedSandbox,
-  uniqueTestPath
+  type TestSandbox
 } from './helpers/global-sandbox';
 
 interface E2EErrorResponse {
@@ -17,13 +18,19 @@ interface E2EErrorResponse {
 }
 
 describe('Git Operations Workflow', () => {
+  let sandbox: TestSandbox | null = null;
   let workerUrl: string;
   let headers: Record<string, string>;
 
   beforeAll(async () => {
-    const sandbox = await getSharedSandbox();
+    sandbox = await createTestSandbox();
     workerUrl = sandbox.workerUrl;
-    headers = sandbox.createHeaders(createUniqueSession());
+    headers = sandbox.headers(createUniqueSession());
+  }, 120000);
+
+  afterAll(async () => {
+    await cleanupTestSandbox(sandbox);
+    sandbox = null;
   }, 120000);
 
   const setupGitRepo = async (repoPath: string, commands: string[]) => {
@@ -48,7 +55,7 @@ describe('Git Operations Workflow', () => {
   };
 
   test('should create and checkout a branch through git endpoints', async () => {
-    const repoPath = uniqueTestPath('git-ops-branch');
+    const repoPath = sandbox!.uniquePath('git-ops-branch');
 
     await setupGitRepo(repoPath, [
       "echo 'hello' > README.md",
@@ -103,7 +110,7 @@ describe('Git Operations Workflow', () => {
   }, 120000);
 
   test('should stage, commit, and report clean status', async () => {
-    const repoPath = uniqueTestPath('git-ops-commit');
+    const repoPath = sandbox!.uniquePath('git-ops-commit');
 
     await setupGitRepo(repoPath, [
       "echo 'base' > README.md",
@@ -151,7 +158,7 @@ describe('Git Operations Workflow', () => {
   }, 120000);
 
   test('should return structured validation error for invalid branch name', async () => {
-    const repoPath = uniqueTestPath('git-ops-validation');
+    const repoPath = sandbox!.uniquePath('git-ops-validation');
 
     await setupGitRepo(repoPath, [
       "echo 'base' > README.md",
