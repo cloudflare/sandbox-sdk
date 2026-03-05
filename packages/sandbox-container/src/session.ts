@@ -303,11 +303,17 @@ export class Session {
   async exec(command: string, options?: ExecOptions): Promise<RawExecResult> {
     this.ensureReady();
 
+    // Capture references to mutable fields so they remain valid for the
+    // lifetime of this call even if destroy() nulls the instance fields.
+    const sessionDir = this.sessionDir!;
+    const shell = this.shell!;
+    const shellExitedPromise = this.shellExitedPromise!;
+
     const startTime = Date.now();
     const commandId = randomUUID();
-    const logFile = join(this.sessionDir!, `${commandId}.log`);
-    const exitCodeFile = join(this.sessionDir!, `${commandId}.exit`);
-    const pidFile = join(this.sessionDir!, `${commandId}.pid`);
+    const logFile = join(sessionDir, `${commandId}.log`);
+    const exitCodeFile = join(sessionDir, `${commandId}.exit`);
+    const pidFile = join(sessionDir, `${commandId}.pid`);
 
     this.logger.info('Command execution started', {
       sessionId: this.id,
@@ -333,8 +339,8 @@ export class Session {
       );
 
       // Write script to shell's stdin
-      if (this.shell!.stdin && typeof this.shell!.stdin !== 'number') {
-        this.shell!.stdin.write(`${bashScript}\n`);
+      if (shell.stdin && typeof shell.stdin !== 'number') {
+        shell.stdin.write(`${bashScript}\n`);
       } else {
         throw new Error('Shell stdin is not available');
       }
@@ -345,7 +351,7 @@ export class Session {
       // This allows us to detect shell termination (e.g., from 'exit' command) immediately
       const exitCode = await Promise.race([
         this.waitForExitCode(exitCodeFile),
-        this.shellExitedPromise!
+        shellExitedPromise
       ]);
 
       // Read log file and parse prefixes
@@ -404,16 +410,18 @@ export class Session {
   ): AsyncGenerator<ExecEvent> {
     this.ensureReady();
 
+    // Capture references to mutable fields so they remain valid for the
+    // lifetime of this generator even if destroy() nulls the instance fields.
+    const sessionDir = this.sessionDir!;
+    const shell = this.shell!;
+
     const startTime = Date.now();
     const commandId = options?.commandId || randomUUID();
-    const logFile = join(this.sessionDir!, `${commandId}.log`);
-    const exitCodeFile = join(this.sessionDir!, `${commandId}.exit`);
-    const pidFile = join(this.sessionDir!, `${commandId}.pid`);
-    const pidPipe = join(this.sessionDir!, `${commandId}.pid.pipe`);
-    const labelersDoneFile = join(
-      this.sessionDir!,
-      `${commandId}.labelers.done`
-    );
+    const logFile = join(sessionDir, `${commandId}.log`);
+    const exitCodeFile = join(sessionDir, `${commandId}.exit`);
+    const pidFile = join(sessionDir, `${commandId}.pid`);
+    const pidPipe = join(sessionDir, `${commandId}.pid.pipe`);
+    const labelersDoneFile = join(sessionDir, `${commandId}.labelers.done`);
 
     this.logger.info('Streaming command execution started', {
       sessionId: this.id,
@@ -443,8 +451,8 @@ export class Session {
         pidPipe
       );
 
-      if (this.shell!.stdin && typeof this.shell!.stdin !== 'number') {
-        this.shell!.stdin.write(`${bashScript}\n`);
+      if (shell.stdin && typeof shell.stdin !== 'number') {
+        shell.stdin.write(`${bashScript}\n`);
       } else {
         throw new Error('Shell stdin is not available');
       }
@@ -476,10 +484,17 @@ export class Session {
       while (true) {
         // Check if shell is still alive (will be false if shell died)
         if (!this.isReady()) {
-          // Shell died - throw the error from shellExitedPromise
-          await this.shellExitedPromise!.catch((error) => {
-            throw error;
-          });
+          // Shell died — get the exit error if the promise still exists.
+          // If shellExitedPromise is null, destroy() already ran and
+          // cleared it, so throw a descriptive error instead of crashing.
+          if (this.shellExitedPromise) {
+            await this.shellExitedPromise.catch((error) => {
+              throw error;
+            });
+          }
+          throw new Error(
+            `Session '${this.id}' was destroyed during command execution`
+          );
         }
 
         const exitFile = Bun.file(exitCodeFile);

@@ -71,6 +71,7 @@ export type {
   ProcessExitedBeforeReadyContext,
   ProcessNotFoundContext,
   ProcessReadyTimeoutContext,
+  SessionDestroyedContext,
   ValidationFailedContext
 } from '@repo/shared/errors';
 // Re-export shared types and constants
@@ -132,6 +133,7 @@ export {
   ServiceNotRespondingError,
   // Session Errors
   SessionAlreadyExistsError,
+  SessionDestroyedError,
   // Validation Errors
   ValidationFailedError
 } from './classes';

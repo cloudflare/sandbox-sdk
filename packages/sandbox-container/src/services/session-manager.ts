@@ -10,7 +10,8 @@ import {
 import type {
   CommandErrorContext,
   CommandNotFoundContext,
-  InternalErrorContext
+  InternalErrorContext,
+  SessionDestroyedContext
 } from '@repo/shared/errors';
 import { ErrorCode } from '@repo/shared/errors';
 import { Mutex } from 'async-mutex';
@@ -264,6 +265,28 @@ export class SessionManager {
       } catch (error) {
         const errorMessage =
           error instanceof Error ? error.message : 'Unknown error';
+
+        // Detect session-destroyed errors: if the session is no longer
+        // ready, the failure is due to the session being torn down.
+        const session = this.sessions.get(sessionId);
+        if (session && !session.isReady()) {
+          this.logger.warn('Session destroyed during command execution', {
+            sessionId,
+            command
+          });
+
+          return {
+            success: false,
+            error: {
+              message: `Session '${sessionId}' was destroyed during command execution`,
+              code: ErrorCode.SESSION_DESTROYED,
+              details: {
+                sessionId
+              } satisfies SessionDestroyedContext
+            }
+          };
+        }
+
         this.logger.error(
           'Failed to execute command',
           error instanceof Error ? error : undefined,
@@ -469,6 +492,26 @@ export class SessionManager {
       } catch (error) {
         const errorMessage =
           error instanceof Error ? error.message : 'Unknown error';
+
+        const session = this.sessions.get(sessionId);
+        if (session && !session.isReady()) {
+          this.logger.warn('Session destroyed during streaming command', {
+            sessionId,
+            command
+          });
+
+          return {
+            success: false,
+            error: {
+              message: `Session '${sessionId}' was destroyed during command execution`,
+              code: ErrorCode.SESSION_DESTROYED,
+              details: {
+                sessionId
+              } satisfies SessionDestroyedContext
+            }
+          };
+        }
+
         this.logger.error(
           'Failed to execute streaming command',
           error instanceof Error ? error : undefined,
@@ -573,6 +616,26 @@ export class SessionManager {
       } catch (error) {
         const errorMessage =
           error instanceof Error ? error.message : 'Unknown error';
+
+        const session = this.sessions.get(sessionId);
+        if (session && !session.isReady()) {
+          this.logger.warn(
+            'Session destroyed during streaming command startup',
+            { sessionId, command }
+          );
+
+          return {
+            success: false as const,
+            error: {
+              message: `Session '${sessionId}' was destroyed during command execution`,
+              code: ErrorCode.SESSION_DESTROYED,
+              details: {
+                sessionId
+              } satisfies SessionDestroyedContext
+            }
+          };
+        }
+
         this.logger.error(
           'Failed to start streaming command',
           error instanceof Error ? error : undefined,
@@ -834,7 +897,16 @@ export class SessionManager {
         };
       }
 
-      await session.destroy();
+      // Acquire the per-session lock so destroy() waits for any
+      // in-flight foreground command to finish before tearing down
+      // session state. Background streaming (where the lock is already
+      // released) is protected by null guards in session.ts instead.
+      const lock = this.getSessionLock(sessionId);
+      await lock.runExclusive(async () => {
+        await session.destroy();
+      });
+
+      // Clean up maps after the lock is released
       this.sessions.delete(sessionId);
       this.sessionLocks.delete(sessionId);
       this.creatingLocks.delete(sessionId);

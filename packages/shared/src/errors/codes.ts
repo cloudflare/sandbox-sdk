@@ -49,6 +49,9 @@ export const ErrorCode = {
   // Session Errors (409)
   SESSION_ALREADY_EXISTS: 'SESSION_ALREADY_EXISTS',
 
+  // Session Errors (410)
+  SESSION_DESTROYED: 'SESSION_DESTROYED',
+
   // Port Errors (409)
   PORT_ALREADY_EXPOSED: 'PORT_ALREADY_EXPOSED',
   PORT_IN_USE: 'PORT_IN_USE',

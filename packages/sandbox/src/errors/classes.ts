@@ -37,6 +37,7 @@ import type {
   ProcessNotFoundContext,
   ProcessReadyTimeoutContext,
   SessionAlreadyExistsContext,
+  SessionDestroyedContext,
   ValidationFailedContext
 } from '@repo/shared/errors';
 
@@ -274,6 +275,21 @@ export class SessionAlreadyExistsError extends SandboxError<SessionAlreadyExists
   }
 
   // Type-safe accessors
+  get sessionId() {
+    return this.context.sessionId;
+  }
+}
+
+/**
+ * Error thrown when a session was destroyed while a command was executing
+ */
+export class SessionDestroyedError extends SandboxError<SessionDestroyedContext> {
+  constructor(errorResponse: ErrorResponse<SessionDestroyedContext>) {
+    super(errorResponse);
+    this.name = 'SessionDestroyedError';
+  }
+
+  // Type-safe accessor
   get sessionId() {
     return this.context.sessionId;
   }
