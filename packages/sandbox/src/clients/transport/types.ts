@@ -30,6 +30,12 @@ export interface TransportConfig {
 
   /** Connection timeout in milliseconds (WebSocket only) */
   connectTimeoutMs?: number;
+
+  /** Total retry budget in milliseconds for 503 retries during container startup.
+   *  Defaults to 120_000 (2 minutes). Should be at least as large as the sum of
+   *  instanceGetTimeoutMS + portReadyTimeoutMS to avoid the client giving up
+   *  before the container has finished starting. */
+  retryTimeoutMs?: number;
 }
 
 /**
@@ -74,4 +80,9 @@ export interface ITransport {
    * Check if connected (always true for HTTP)
    */
   isConnected(): boolean;
+
+  /**
+   * Update the 503 retry budget without recreating the transport
+   */
+  setRetryTimeoutMs(ms: number): void;
 }
