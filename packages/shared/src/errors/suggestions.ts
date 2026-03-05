@@ -33,6 +33,9 @@ export function getSuggestion(
     case ErrorCode.SESSION_ALREADY_EXISTS:
       return `Session "${context.sessionId}" already exists. Use a different session ID or reuse the existing session`;
 
+    case ErrorCode.SESSION_DESTROYED:
+      return `Session "${context.sessionId}" was destroyed. Create a new session to continue executing commands`;
+
     case ErrorCode.INVALID_PORT:
       return `Port must be between 1 and 65535. Port ${context.port} is ${context.reason}`;
 

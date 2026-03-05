@@ -10,16 +10,19 @@ import {
 import type {
   CommandErrorContext,
   CommandNotFoundContext,
-  InternalErrorContext
+  InternalErrorContext,
+  SessionDestroyedContext
 } from '@repo/shared/errors';
 import { ErrorCode } from '@repo/shared/errors';
 import { Mutex } from 'async-mutex';
 import { CONFIG } from '../config';
 import {
+  type ServiceError,
   type ServiceResult,
   serviceError,
   serviceSuccess
 } from '../core/types';
+import { SessionDestroyedError, ShellTerminatedError } from '../errors';
 import { Pty } from '../pty';
 import { type RawExecResult, Session, type SessionOptions } from '../session';
 
@@ -209,6 +212,65 @@ export class SessionManager {
   }
 
   /**
+   * Return the explicit exit code when command is a direct shell-exit command.
+   */
+  private parseExitCommandExitCode(command: string): number | null {
+    const match = command.match(/^\s*exit(?:\s+(-?\d+))?\s*;?\s*$/);
+    if (!match) {
+      return null;
+    }
+
+    if (!match[1]) {
+      return 0;
+    }
+
+    const exitCode = Number.parseInt(match[1], 10);
+    return Number.isNaN(exitCode) ? null : exitCode;
+  }
+
+  /**
+   * Determine whether a command error stems from API-initiated session
+   * destruction or a genuine command failure. Resolves the error message,
+   * incorporating explicit exit-command detection.
+   */
+  private classifyCommandError(
+    error: unknown,
+    command: string,
+    sessionId: string
+  ): { errorMessage: string; sessionDestroyed: boolean } {
+    if (error instanceof SessionDestroyedError) {
+      return { errorMessage: error.message, sessionDestroyed: true };
+    }
+
+    if (error instanceof ShellTerminatedError) {
+      return { errorMessage: error.message, sessionDestroyed: false };
+    }
+
+    // Untyped error fallback (non-shell failures like I/O errors)
+    let errorMessage = error instanceof Error ? error.message : 'Unknown error';
+
+    const explicitExitCode = this.parseExitCommandExitCode(command);
+    if (explicitExitCode !== null) {
+      errorMessage = `Shell terminated unexpectedly (exit code: ${explicitExitCode}). Session is dead and cannot execute further commands.`;
+    }
+
+    const session = this.sessions.get(sessionId);
+    const sessionDestroyed = !!(
+      session?.wasDestroyed() && explicitExitCode === null
+    );
+
+    return { errorMessage, sessionDestroyed };
+  }
+
+  private sessionDestroyedError(sessionId: string): ServiceError {
+    return {
+      message: `Session '${sessionId}' was destroyed during command execution`,
+      code: ErrorCode.SESSION_DESTROYED,
+      details: { sessionId } satisfies SessionDestroyedContext
+    };
+  }
+
+  /**
    * Execute a command in a session with per-session locking.
    * Commands to the same session are serialized; different sessions run in parallel.
    */
@@ -245,8 +307,18 @@ export class SessionManager {
           data: result
         };
       } catch (error) {
-        const errorMessage =
-          error instanceof Error ? error.message : 'Unknown error';
+        const { errorMessage, sessionDestroyed } = this.classifyCommandError(
+          error,
+          command,
+          sessionId
+        );
+
+        if (sessionDestroyed) {
+          return {
+            success: false,
+            error: this.sessionDestroyedError(sessionId)
+          };
+        }
 
         return {
           success: false,
@@ -437,8 +509,18 @@ export class SessionManager {
           data: { continueStreaming: Promise.resolve() }
         };
       } catch (error) {
-        const errorMessage =
-          error instanceof Error ? error.message : 'Unknown error';
+        const { errorMessage, sessionDestroyed } = this.classifyCommandError(
+          error,
+          command,
+          sessionId
+        );
+
+        if (sessionDestroyed) {
+          return {
+            success: false,
+            error: this.sessionDestroyedError(sessionId)
+          };
+        }
 
         return {
           success: false,
@@ -533,8 +615,18 @@ export class SessionManager {
           firstEvent: firstResult.value
         };
       } catch (error) {
-        const errorMessage =
-          error instanceof Error ? error.message : 'Unknown error';
+        const { errorMessage, sessionDestroyed } = this.classifyCommandError(
+          error,
+          command,
+          sessionId
+        );
+
+        if (sessionDestroyed) {
+          return {
+            success: false as const,
+            error: this.sessionDestroyedError(sessionId)
+          };
+        }
 
         return {
           success: false as const,
@@ -760,7 +852,14 @@ export class SessionManager {
         };
       }
 
-      await session.destroy();
+      // Per-session lock ensures in-flight foreground commands complete
+      // before session state is torn down.
+      const lock = this.getSessionLock(sessionId);
+      await lock.runExclusive(async () => {
+        await session.destroy();
+      });
+
+      // Clean up maps after the lock is released
       this.sessions.delete(sessionId);
       this.sessionLocks.delete(sessionId);
       this.creatingLocks.delete(sessionId);
@@ -818,9 +917,15 @@ export class SessionManager {
    * Cleanup method for graceful shutdown
    */
   async destroy(): Promise<void> {
+    // Acquire each per-session lock before destroying, matching the
+    // pattern in deleteSession(). This ensures in-flight foreground
+    // commands finish before their session state is torn down.
     for (const [sessionId, session] of this.sessions.entries()) {
       try {
-        await session.destroy();
+        const lock = this.getSessionLock(sessionId);
+        await lock.runExclusive(async () => {
+          await session.destroy();
+        });
       } catch {
         // Session cleanup errors during shutdown are non-fatal
       }

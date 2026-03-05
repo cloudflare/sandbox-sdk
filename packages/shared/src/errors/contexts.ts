@@ -59,6 +59,10 @@ export interface SessionAlreadyExistsContext {
   sessionId: string;
 }
 
+export interface SessionDestroyedContext {
+  sessionId: string;
+}
+
 /**
  * Process readiness error contexts
  */
