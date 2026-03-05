@@ -218,6 +218,14 @@ ENTRYPOINT ["/container-server/sandbox"]
 # ============================================================================
 FROM golang:1.24-bookworm AS go-builder
 
+RUN mkdir -p /usr/local/share/ca-certificates
+RUN --mount=type=secret,id=wrangler_ca \
+    if [ -f /run/secrets/wrangler_ca ] && [ -s /run/secrets/wrangler_ca ]; then \
+        cp /run/secrets/wrangler_ca /usr/local/share/ca-certificates/wrangler-dev-ca.crt && \
+        apt-get update && apt-get install -y --no-install-recommends ca-certificates && \
+        update-ca-certificates; \
+    fi
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc libx11-dev libxtst-dev libxinerama-dev libpng-dev \
     && rm -rf /var/lib/apt/lists/*

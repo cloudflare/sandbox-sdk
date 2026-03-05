@@ -31,6 +31,15 @@ docker build \
   -t "$IMAGE:$VERSION-opencode" \
   .
 
+docker build \
+  -f packages/sandbox/Dockerfile \
+  --target desktop \
+  --platform linux/amd64 \
+  --build-arg SANDBOX_VERSION="$VERSION" \
+  -t "$IMAGE:$VERSION-desktop" \
+  --secret id=wrangler_ca,src="${NODE_EXTRA_CA_CERTS:-/dev/null}" \
+  .
+
 STANDALONE_DIR="tests/e2e/test-worker"
 sed -E "s|$IMAGE:[0-9]+\.[0-9]+\.[0-9]+|$IMAGE:$VERSION|g" \
   "$STANDALONE_DIR/Dockerfile.standalone" > "$STANDALONE_DIR/Dockerfile.standalone.tmp"
