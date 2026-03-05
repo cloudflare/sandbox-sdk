@@ -3477,21 +3477,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       });
     }
 
-    const hasControlChars = (value: string): boolean => {
-      for (let i = 0; i < value.length; i++) {
-        const code = value.charCodeAt(i);
-        if (code <= 31 || code === 127) {
-          return true;
-        }
-      }
-      return false;
-    };
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: intentionally matching control chars
+    const CONTROL_CHAR_RE = /[\u0000-\u001f\u007f]/;
 
     if (
       exclude !== undefined &&
       (!Array.isArray(exclude) ||
         exclude.some(
-          (pattern) => typeof pattern !== 'string' || hasControlChars(pattern)
+          (pattern) =>
+            typeof pattern !== 'string' || CONTROL_CHAR_RE.test(pattern)
         ))
     ) {
       throw new InvalidBackupConfigError({

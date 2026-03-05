@@ -202,7 +202,12 @@ export class BackupService {
       if (exclude && exclude.length > 0) {
         await this.sessionManager
           .executeInSession(sessionId, `rm -f ${shellEscape(excludeFilePath)}`)
-          .catch(() => {});
+          .catch((err) => {
+            opLogger.warn('Failed to clean up exclude file', {
+              excludeFilePath,
+              error: err instanceof Error ? err.message : String(err)
+            });
+          });
       }
 
       if (!createResult.success) {
