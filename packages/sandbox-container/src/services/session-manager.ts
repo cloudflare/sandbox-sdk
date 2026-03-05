@@ -227,6 +227,23 @@ export class SessionManager {
   }
 
   /**
+   * Return the explicit exit code when command is a direct shell-exit command.
+   */
+  private parseExitCommandExitCode(command: string): number | null {
+    const match = command.match(/^\s*exit(?:\s+(-?\d+))?\s*;?\s*$/);
+    if (!match) {
+      return null;
+    }
+
+    if (!match[1]) {
+      return 0;
+    }
+
+    const exitCode = Number.parseInt(match[1], 10);
+    return Number.isNaN(exitCode) ? null : exitCode;
+  }
+
+  /**
    * Execute a command in a session with per-session locking.
    * Commands to the same session are serialized; different sessions run in parallel.
    */
@@ -263,8 +280,16 @@ export class SessionManager {
           data: result
         };
       } catch (error) {
-        const errorMessage =
+        let errorMessage =
           error instanceof Error ? error.message : 'Unknown error';
+
+        const explicitExitCode = this.parseExitCommandExitCode(command);
+        if (
+          explicitExitCode !== null &&
+          !/shell terminated unexpectedly/i.test(errorMessage)
+        ) {
+          errorMessage = `Shell terminated unexpectedly (exit code: ${explicitExitCode}). Session is dead and cannot execute further commands.`;
+        }
 
         // Detect explicit destroy() teardown. A session can also become not-ready
         // because the shell exited on its own (for example, user ran `exit`).
@@ -273,7 +298,11 @@ export class SessionManager {
         const isShellTermination = /shell terminated unexpectedly/i.test(
           errorMessage
         );
-        if (session?.wasDestroyed() && !isShellTermination) {
+        if (
+          session?.wasDestroyed() &&
+          !isShellTermination &&
+          explicitExitCode === null
+        ) {
           this.logger.warn('Session destroyed during command execution', {
             sessionId,
             command
@@ -494,14 +523,26 @@ export class SessionManager {
           data: { continueStreaming: Promise.resolve() }
         };
       } catch (error) {
-        const errorMessage =
+        let errorMessage =
           error instanceof Error ? error.message : 'Unknown error';
+
+        const explicitExitCode = this.parseExitCommandExitCode(command);
+        if (
+          explicitExitCode !== null &&
+          !/shell terminated unexpectedly/i.test(errorMessage)
+        ) {
+          errorMessage = `Shell terminated unexpectedly (exit code: ${explicitExitCode}). Session is dead and cannot execute further commands.`;
+        }
 
         const session = this.sessions.get(sessionId);
         const isShellTermination = /shell terminated unexpectedly/i.test(
           errorMessage
         );
-        if (session?.wasDestroyed() && !isShellTermination) {
+        if (
+          session?.wasDestroyed() &&
+          !isShellTermination &&
+          explicitExitCode === null
+        ) {
           this.logger.warn('Session destroyed during streaming command', {
             sessionId,
             command
@@ -621,14 +662,26 @@ export class SessionManager {
           firstEvent: firstResult.value
         };
       } catch (error) {
-        const errorMessage =
+        let errorMessage =
           error instanceof Error ? error.message : 'Unknown error';
+
+        const explicitExitCode = this.parseExitCommandExitCode(command);
+        if (
+          explicitExitCode !== null &&
+          !/shell terminated unexpectedly/i.test(errorMessage)
+        ) {
+          errorMessage = `Shell terminated unexpectedly (exit code: ${explicitExitCode}). Session is dead and cannot execute further commands.`;
+        }
 
         const session = this.sessions.get(sessionId);
         const isShellTermination = /shell terminated unexpectedly/i.test(
           errorMessage
         );
-        if (session?.wasDestroyed() && !isShellTermination) {
+        if (
+          session?.wasDestroyed() &&
+          !isShellTermination &&
+          explicitExitCode === null
+        ) {
           this.logger.warn(
             'Session destroyed during streaming command startup',
             { sessionId, command }
