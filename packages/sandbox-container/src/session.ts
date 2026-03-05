@@ -333,6 +333,7 @@ export class Session {
         commandId,
         logFile,
         exitCodeFile,
+        sessionDir,
         options?.cwd,
         false,
         options?.env
@@ -412,6 +413,9 @@ export class Session {
 
     // Capture references to mutable fields so they remain valid for the
     // lifetime of this generator even if destroy() nulls the instance fields.
+    // NOTE: shellExitedPromise is intentionally NOT captured here — the
+    // polling loop reads this.shellExitedPromise fresh each iteration so
+    // the null guard can detect when destroy() has cleared it.
     const sessionDir = this.sessionDir!;
     const shell = this.shell!;
 
@@ -445,6 +449,7 @@ export class Session {
         commandId,
         logFile,
         exitCodeFile,
+        sessionDir,
         options?.cwd,
         true,
         options?.env,
@@ -827,23 +832,24 @@ export class Session {
     cmdId: string,
     logFile: string,
     exitCodeFile: string,
+    sessionDir: string,
     cwd?: string,
     isBackground = false,
     env?: Record<string, string | undefined>,
     pidPipe?: string
   ): string {
     // Create unique FIFO names to prevent collisions
-    const stdoutPipe = join(this.sessionDir!, `${cmdId}.stdout.pipe`);
-    const stderrPipe = join(this.sessionDir!, `${cmdId}.stderr.pipe`);
-    const pidFile = join(this.sessionDir!, `${cmdId}.pid`);
-    const labelersDoneFile = join(this.sessionDir!, `${cmdId}.labelers.done`);
+    const stdoutPipe = join(sessionDir, `${cmdId}.stdout.pipe`);
+    const stderrPipe = join(sessionDir, `${cmdId}.stderr.pipe`);
+    const pidFile = join(sessionDir, `${cmdId}.pid`);
+    const labelersDoneFile = join(sessionDir, `${cmdId}.labelers.done`);
 
     // Escape paths for safe shell usage
     const safeStdoutPipe = this.escapeShellPath(stdoutPipe);
     const safeStderrPipe = this.escapeShellPath(stderrPipe);
     const safeLogFile = this.escapeShellPath(logFile);
     const safeExitCodeFile = this.escapeShellPath(exitCodeFile);
-    const safeSessionDir = this.escapeShellPath(this.sessionDir!);
+    const safeSessionDir = this.escapeShellPath(sessionDir);
     const safePidFile = this.escapeShellPath(pidFile);
     const safeLabelersDoneFile = this.escapeShellPath(labelersDoneFile);
     const safePidPipe = pidPipe ? this.escapeShellPath(pidPipe) : null;

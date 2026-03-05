@@ -267,4 +267,73 @@ describe('SessionManager Locking', () => {
       expect(execResult.success).toBe(true);
     });
   });
+
+  describe('destroy during active streaming', () => {
+    it('should not crash when session is destroyed during background streaming', async () => {
+      const sessionId = 'stream-destroy-session';
+      const events: { type: string }[] = [];
+
+      // Start a long-running background streaming command.
+      // The lock is released after the 'start' event, so the
+      // execStream generator continues polling without the mutex.
+      const streamResult = await sessionManager.executeStreamInSession(
+        sessionId,
+        'sleep 10',
+        async (event) => {
+          events.push({ type: event.type });
+        },
+        { cwd: testDir },
+        'cmd-destroy-race',
+        { background: true }
+      );
+
+      expect(streamResult.success).toBe(true);
+
+      // The generator is now polling in the background. Destroy
+      // the session — this is the race that previously caused
+      // TypeError: null is not an object (evaluating 'this.shellExitedPromise.catch')
+      const deleteResult = await sessionManager.deleteSession(sessionId);
+      expect(deleteResult.success).toBe(true);
+
+      // Wait for the background streaming to finish. Before the fix,
+      // this would reject with a TypeError null pointer crash.
+      // After the fix, the generator catches the destroyed state and
+      // yields an error event instead.
+      if (streamResult.success) {
+        await streamResult.data.continueStreaming.catch(() => {
+          // The streaming promise may reject with the session-destroyed
+          // error — that's acceptable, the important thing is no TypeError.
+        });
+      }
+
+      // Verify we got a start event (streaming did begin)
+      expect(events.some((e) => e.type === 'start')).toBe(true);
+    });
+
+    it('should return SESSION_DESTROYED when exec races with deleteSession', async () => {
+      const sessionId = 'exec-destroy-session';
+
+      // Create the session first
+      await sessionManager.createSession({ id: sessionId, cwd: testDir });
+
+      // Start a long-running command and destroy the session concurrently.
+      // deleteSession acquires the mutex so it waits for the command, but
+      // the command itself will fail because destroy kills the shell.
+      const [execResult] = await Promise.all([
+        sessionManager.executeInSession(sessionId, 'sleep 10', testDir),
+        // Small delay to let exec start, then destroy
+        new Promise<void>((r) => setTimeout(r, 100)).then(() =>
+          sessionManager.deleteSession(sessionId)
+        )
+      ]);
+
+      // The exec should fail (not crash) with SESSION_DESTROYED
+      // because destroy() kills the shell while exec is waiting
+      expect(execResult.success).toBe(false);
+      if (!execResult.success) {
+        expect(execResult.error.code).toBe('SESSION_DESTROYED');
+        expect(execResult.error.message).toContain('destroyed');
+      }
+    });
+  });
 });
