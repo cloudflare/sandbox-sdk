@@ -48,6 +48,8 @@ export type {
   CommandErrorContext,
   CommandNotFoundContext,
   ContextNotFoundContext,
+  DesktopCoordinateErrorContext,
+  DesktopErrorContext,
   ErrorCodeType,
   ErrorResponse,
   FileExistsContext,
@@ -69,6 +71,7 @@ export type {
   ProcessExitedBeforeReadyContext,
   ProcessNotFoundContext,
   ProcessReadyTimeoutContext,
+  SessionDestroyedContext,
   ValidationFailedContext
 } from '@repo/shared/errors';
 // Re-export shared types and constants
@@ -89,10 +92,18 @@ export {
   CommandNotFoundError,
   ContextNotFoundError,
   CustomDomainRequiredError,
+  // Desktop Errors
+  DesktopInvalidCoordinatesError,
+  DesktopInvalidOptionsError,
+  DesktopNotStartedError,
+  DesktopProcessCrashedError,
+  DesktopStartFailedError,
+  DesktopUnavailableError,
   FileExistsError,
   // File System Errors
   FileNotFoundError,
   FileSystemError,
+  FileTooLargeError,
   GitAuthenticationError,
   GitBranchNotFoundError,
   GitCheckoutError,
@@ -122,6 +133,7 @@ export {
   ServiceNotRespondingError,
   // Session Errors
   SessionAlreadyExistsError,
+  SessionDestroyedError,
   // Validation Errors
   ValidationFailedError
 } from './classes';

@@ -347,4 +347,80 @@ describe('Sandbox.containerFetch() error classification', () => {
       parentContainerFetch.mockRestore();
     });
   });
+
+  describe('stale persisted state recovery', () => {
+    it('triggers startup with Sandbox timeouts when state is healthy but container is not running', async () => {
+      vi.spyOn(sandbox as any, 'getState').mockResolvedValueOnce({
+        status: 'healthy'
+      });
+      (sandbox as any).ctx.container = { running: false };
+      startAndWaitSpy.mockResolvedValueOnce(undefined);
+
+      const parentContainerFetch = vi
+        .spyOn(
+          Object.getPrototypeOf(Object.getPrototypeOf(sandbox)),
+          'containerFetch'
+        )
+        .mockResolvedValueOnce(new Response('OK'));
+
+      const response = await sandbox.containerFetch(
+        new Request('http://localhost/test'),
+        {},
+        3000
+      );
+
+      expect(startAndWaitSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cancellationOptions: expect.objectContaining({
+            instanceGetTimeoutMS: 30_000,
+            portReadyTimeoutMS: 90_000
+          })
+        })
+      );
+      expect(response.status).toBe(200);
+      parentContainerFetch.mockRestore();
+    });
+
+    it('aborts DO when startup fails after stale state detection', async () => {
+      vi.spyOn(sandbox as any, 'getState').mockResolvedValueOnce({
+        status: 'healthy'
+      });
+      (sandbox as any).ctx.container = { running: false };
+      const abortSpy = vi.fn();
+      (sandbox as any).ctx.abort = abortSpy;
+      startAndWaitSpy.mockRejectedValueOnce(
+        new Error('container port not found')
+      );
+
+      const response = await sandbox.containerFetch(
+        new Request('http://localhost/test'),
+        {},
+        3000
+      );
+
+      expect(abortSpy).toHaveBeenCalled();
+      expect(response.status).toBe(503);
+    });
+
+    it('does not abort DO on transient startup error without stale state', async () => {
+      // State is unhealthy (not stale — container correctly knows it is down)
+      vi.spyOn(sandbox as any, 'getState').mockResolvedValueOnce({
+        status: 'unhealthy'
+      });
+      const abortSpy = vi.fn();
+      (sandbox as any).ctx.abort = abortSpy;
+      startAndWaitSpy.mockRejectedValueOnce(
+        new Error('container port not found')
+      );
+
+      const response = await sandbox.containerFetch(
+        new Request('http://localhost/test'),
+        {},
+        3000
+      );
+
+      expect(abortSpy).not.toHaveBeenCalled();
+      expect(response.status).toBe(503);
+    });
+  });
 });

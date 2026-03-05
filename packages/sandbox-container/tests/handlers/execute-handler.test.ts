@@ -20,8 +20,7 @@ const mockProcessService = {
   startProcess: vi.fn(),
   getProcess: vi.fn(),
   killProcess: vi.fn(),
-  listProcesses: vi.fn(),
-  streamProcessLogs: vi.fn()
+  listProcesses: vi.fn()
 } as unknown as ProcessService;
 
 const mockLogger = {

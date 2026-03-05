@@ -42,9 +42,12 @@ export type {
   CommandErrorContext,
   CommandNotFoundContext,
   ContextNotFoundContext,
+  DesktopCoordinateErrorContext,
+  DesktopErrorContext,
   FileExistsContext,
   FileNotFoundContext,
   FileSystemContext,
+  FileTooLargeContext,
   GitAuthFailedContext,
   GitBranchNotFoundContext,
   GitErrorContext,
@@ -64,6 +67,7 @@ export type {
   ProcessNotFoundContext,
   ProcessReadyTimeoutContext,
   SessionAlreadyExistsContext,
+  SessionDestroyedContext,
   ValidationFailedContext
 } from './contexts';
 // Export utility functions

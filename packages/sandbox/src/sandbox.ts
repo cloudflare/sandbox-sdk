@@ -26,7 +26,8 @@ import type {
   StreamOptions,
   WaitForExitResult,
   WaitForLogResult,
-  WaitForPortOptions
+  WaitForPortOptions,
+  WatchOptions
 } from '@repo/shared';
 import {
   createLogger,
@@ -39,7 +40,7 @@ import {
   TraceContext
 } from '@repo/shared';
 import { AwsClient } from 'aws4fetch';
-import { type ExecuteResponse, SandboxClient } from './clients';
+import { type Desktop, type ExecuteResponse, SandboxClient } from './clients';
 import type { ErrorResponse } from './errors';
 import {
   BackupCreateError,
@@ -129,7 +130,15 @@ export function getSandbox<T extends Sandbox<any>>(
     },
     terminal: (request: Request, opts?: PtyOptions) =>
       proxyTerminal(stub, defaultSessionId, request, opts),
-    wsConnect: connect(stub)
+    wsConnect: connect(stub),
+    // Client-side proxy for desktop operations. Each method call is dispatched
+    // to the DO's callDesktop() method, avoiding RPC pipelining through getters.
+    desktop: new Proxy({} as Desktop, {
+      get(_, method) {
+        if (typeof method !== 'string' || method === 'then') return undefined;
+        return (...args: unknown[]) => stub.callDesktop(method, args);
+      }
+    })
   };
 
   // Proxy intercepts enhanced methods, passes all others to stub directly.
@@ -251,6 +260,78 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private containerTimeouts = { ...this.DEFAULT_CONTAINER_TIMEOUTS };
 
   /**
+   * Desktop environment operations.
+   * Within the DO, this getter provides direct access to DesktopClient.
+   * Over RPC, the getSandbox() proxy intercepts this property and routes
+   * calls through callDesktop() instead.
+   */
+  get desktop(): Desktop {
+    return this.client.desktop as unknown as Desktop;
+  }
+
+  /**
+   * Allowed desktop methods — derived from the Desktop interface.
+   * Restricts callDesktop() to a known set of operations.
+   */
+  private static readonly DESKTOP_METHODS = new Set([
+    'start',
+    'stop',
+    'status',
+    'screenshot',
+    'screenshotRegion',
+    'click',
+    'doubleClick',
+    'tripleClick',
+    'rightClick',
+    'middleClick',
+    'mouseDown',
+    'mouseUp',
+    'moveMouse',
+    'drag',
+    'scroll',
+    'getCursorPosition',
+    'type',
+    'press',
+    'keyDown',
+    'keyUp',
+    'getScreenSize',
+    'getProcessStatus'
+  ]);
+
+  /**
+   * Dispatch method for desktop operations.
+   * Called by the client-side proxy created in getSandbox() to provide
+   * the `sandbox.desktop.status()` API without relying on RPC pipelining
+   * through property getters.
+   */
+  async callDesktop(method: string, args: unknown[]): Promise<unknown> {
+    if (!Sandbox.DESKTOP_METHODS.has(method)) {
+      throw new Error(`Unknown desktop method: ${method}`);
+    }
+    const client = this.client.desktop;
+    const fn = client[method as keyof typeof client];
+    if (typeof fn !== 'function') {
+      throw new Error(`Unknown desktop method: ${method}`);
+    }
+    return (fn as (...a: unknown[]) => unknown).apply(client, args);
+  }
+
+  /**
+   * Compute the transport retry budget from current container timeouts.
+   *
+   * The budget covers the full container startup window (instance provisioning
+   * + port readiness) plus a 30s margin for the maximum single backoff delay
+   * (capped at 30s in BaseTransport). The 120s floor preserves the previous
+   * default for short timeout configurations.
+   */
+  private computeRetryTimeoutMs(): number {
+    const startupBudgetMs =
+      this.containerTimeouts.instanceGetTimeoutMS +
+      this.containerTimeouts.portReadyTimeoutMS;
+    return Math.max(120_000, startupBudgetMs + 30_000);
+  }
+
+  /**
    * Create a SandboxClient with current transport settings
    */
   private createSandboxClient(): SandboxClient {
@@ -258,6 +339,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       logger: this.logger,
       port: 3000,
       stub: this,
+      retryTimeoutMs: this.computeRetryTimeoutMs(),
       ...(this.transport === 'websocket' && {
         transportMode: 'websocket' as const,
         wsUrl: 'ws://localhost:3000/ws'
@@ -342,6 +424,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           ...this.containerTimeouts,
           ...storedTimeouts
         };
+        // Update the transport retry budget to reflect stored timeouts
+        this.client.setRetryTimeoutMs(this.computeRetryTimeoutMs());
       }
     });
   }
@@ -463,6 +547,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     // Persist to storage
     await this.ctx.storage.put('containerTimeouts', this.containerTimeouts);
+
+    // Update the transport retry budget to reflect new timeouts
+    this.client.setRetryTimeoutMs(this.computeRetryTimeoutMs());
 
     this.logger.debug('Container timeouts updated', this.containerTimeouts);
   }
@@ -824,6 +911,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   override async destroy(): Promise<void> {
     this.logger.info('Destroying sandbox container');
 
+    // Best-effort desktop stop — only when container is already running
+    if (this.ctx.container?.running) {
+      try {
+        await this.client.desktop.stop();
+      } catch {
+        // Desktop may not be running or available — continue cleanup
+      }
+    }
+
     // Disconnect WebSocket transport if active
     this.client.disconnect();
 
@@ -950,9 +1046,20 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     );
 
     const state = await this.getState();
+    const containerRunning = this.ctx.container?.running;
 
-    // If container not healthy, start it with production timeouts
-    if (state.status !== 'healthy') {
+    // Start container if persisted state is not healthy OR if runtime reports container is not running.
+    // The runtime check catches stale persisted state (e.g., state says 'healthy' after DO recreation
+    // but Docker container is gone).
+    const staleStateDetected =
+      state.status === 'healthy' && containerRunning === false;
+    if (state.status !== 'healthy' || containerRunning === false) {
+      if (staleStateDetected) {
+        this.logger.debug(
+          'Stale container state detected: persisted state is healthy but container is not running'
+        );
+      }
+
       try {
         this.logger.debug('Starting container with configured timeouts', {
           instanceTimeout: this.containerTimeouts.instanceGetTimeoutMS,
@@ -982,12 +1089,22 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
         // 2. Transient startup errors: Container starting, port not ready yet
         if (this.isTransientStartupError(e)) {
-          this.logger.debug(
-            'Transient container startup error, returning 503',
-            {
-              error: e instanceof Error ? e.message : String(e)
-            }
-          );
+          // If startup failed after detecting stale state, the container runtime is likely stuck
+          // (e.g., workerd can't restart after an unexpected container death). Abort the DO so the
+          // next request gets a fresh instance with a clean container binding. This mirrors the
+          // recovery pattern in the base Container class for 'Network connection lost' errors.
+          if (staleStateDetected) {
+            this.logger.warn(
+              'Container startup failed after stale state detection, aborting DO for recovery',
+              { error: e instanceof Error ? e.message : String(e) }
+            );
+            this.ctx.abort();
+          } else {
+            this.logger.debug(
+              'Transient container startup error, returning 503',
+              { error: e instanceof Error ? e.message : String(e) }
+            );
+          }
           return new Response(
             'Container is starting. Please retry in a moment.',
             {
@@ -1060,6 +1177,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
       // Monitor race conditions (workerd)
       'monitor failed to find container',
+
+      // Container crashed during startup or from previous run (@cloudflare/containers)
+      'container exited with unexpected exit code',
+      'container exited before we could determine',
 
       // Timeouts (various layers)
       'timed out',
@@ -2335,13 +2456,110 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   /**
+   * Get the noVNC preview URL for browser-based desktop viewing.
+   * Confirms desktop is active, then uses exposePort() to generate
+   * a token-authenticated preview URL for the noVNC port (6080).
+   *
+   * @param hostname - The custom domain hostname for preview URLs
+   *   (e.g., 'preview.example.com'). Required because preview URLs
+   *   use subdomain patterns that .workers.dev doesn't support.
+   * @param options - Optional settings
+   * @param options.token - Reuse an existing token instead of generating a new one
+   * @returns The authenticated noVNC preview URL
+   */
+  async getDesktopStreamUrl(
+    hostname: string,
+    options?: { token?: string }
+  ): Promise<{ url: string }> {
+    // Confirm desktop is running before generating a URL
+    const status = await this.client.desktop.status();
+    if (status.status === 'inactive') {
+      throw new Error(
+        'Desktop is not running. Call sandbox.desktop.start() first.'
+      );
+    }
+
+    let url: string;
+
+    // Try exposing port 6080; if already exposed, construct the URL from stored token
+    try {
+      const result = await this.exposePort(6080, {
+        hostname,
+        token: options?.token
+      });
+      url = result.url;
+    } catch {
+      // Port may already be exposed — look up the existing token from DO storage
+      const tokens =
+        (await this.ctx.storage.get<Record<string, string>>('portTokens')) ||
+        {};
+      const existingToken = tokens['6080'];
+      if (existingToken && this.sandboxName) {
+        url = this.constructPreviewUrl(
+          6080,
+          this.sandboxName,
+          hostname,
+          existingToken
+        );
+      } else {
+        throw new Error(
+          'Failed to get desktop stream URL: port 6080 could not be exposed and no existing token found.'
+        );
+      }
+    }
+
+    // Wait for the platform to detect port 6080 using the Containers runtime's
+    // built-in port readiness mechanism (getTcpPort polling). This ensures the
+    // preview URL is routable before returning it to the caller.
+    try {
+      await this.waitForPort({
+        portToCheck: 6080,
+        retries: 30,
+        waitInterval: 500
+      });
+    } catch {
+      // Best-effort: if detection times out after ~15s, return the URL anyway.
+      // noVNC's WebSocket auto-connect will retry on the client side.
+    }
+
+    return { url };
+  }
+
+  /**
+   * Watch a directory for file system changes using native inotify.
+   *
+   * The returned promise resolves only after the watcher is established on the
+   * filesystem, so callers can immediately perform actions that depend on the
+   * watch being active. The returned stream contains the full event sequence
+   * starting with the `watching` event.
+   *
+   * Consume the stream with `parseSSEStream<FileWatchSSEEvent>(stream)`.
+   *
+   * @param path - Path to watch (absolute or relative to /workspace)
+   * @param options - Watch options
+   */
+  async watch(
+    path: string,
+    options: WatchOptions = {}
+  ): Promise<ReadableStream<Uint8Array>> {
+    const sessionId = options.sessionId ?? (await this.ensureDefaultSession());
+    return this.client.watch.watch({
+      path,
+      recursive: options.recursive,
+      include: options.include,
+      exclude: options.exclude,
+      sessionId
+    });
+  }
+
+  /**
    * Expose a port and get a preview URL for accessing services running in the sandbox
    *
    * @param port - Port number to expose (1024-65535)
    * @param options - Configuration options
    * @param options.hostname - Your Worker's domain name (required for preview URL construction)
    * @param options.name - Optional friendly name for the port
-   * @param options.token - Optional custom token for the preview URL (1-16 characters: lowercase letters, numbers, hyphens, underscores)
+   * @param options.token - Optional custom token for the preview URL (1-16 characters: lowercase letters, numbers, underscores)
    *                       If not provided, a random 16-character token will be generated automatically
    * @returns Preview URL information including the full URL, port number, and optional name
    *
@@ -2354,9 +2572,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * // With custom token for stable URLs across deployments
    * const { url } = await sandbox.exposePort(8080, {
    *   hostname: 'example.com',
-   *   token: 'my-token-v1'
+   *   token: 'my_token_v1'
    * });
-   * // url: https://8080-sandbox-id-my-token-v1.example.com
+   * // url: https://8080-sandbox-id-my_token_v1.example.com
    */
   async exposePort(
     port: number,
@@ -2368,6 +2586,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       );
     }
 
+    // Check if hostname is workers.dev domain (doesn't support wildcard subdomains)
     if (options.hostname.endsWith('.workers.dev')) {
       const errorResponse: ErrorResponse = {
         code: ErrorCode.CUSTOM_DOMAIN_REQUIRED,
@@ -2729,6 +2948,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       readFile: (path, options) =>
         this.readFile(path, { ...options, sessionId }),
       readFileStream: (path) => this.readFileStream(path, { sessionId }),
+      watch: (path, options) => this.watch(path, { ...options, sessionId }),
       mkdir: (path, options) => this.mkdir(path, { ...options, sessionId }),
       deleteFile: (path) => this.deleteFile(path, sessionId),
       renameFile: (oldPath, newPath) =>

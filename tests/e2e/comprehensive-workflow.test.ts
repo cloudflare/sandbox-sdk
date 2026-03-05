@@ -31,23 +31,30 @@ import type {
   ReadFileResult,
   WriteFileResult
 } from '@repo/shared';
-import { beforeAll, describe, expect, test } from 'vitest';
+import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import { parseSSEStream } from '../../packages/sandbox/src/sse-parser';
 import {
+  cleanupTestSandbox,
+  createTestSandbox,
   createUniqueSession,
-  getSharedSandbox,
-  uniqueTestPath
+  type TestSandbox
 } from './helpers/global-sandbox';
 
 describe('Comprehensive Workflow', () => {
+  let sandbox: TestSandbox | null = null;
   let workerUrl: string;
   let headers: Record<string, string>;
 
   beforeAll(async () => {
-    // Use the shared sandbox with a unique session for this test file
-    const sandbox = await getSharedSandbox();
+    // Create isolated sandbox for this test file
+    sandbox = await createTestSandbox();
     workerUrl = sandbox.workerUrl;
-    headers = sandbox.createHeaders(createUniqueSession());
+    headers = sandbox.headers(createUniqueSession());
+  }, 120000);
+
+  afterAll(async () => {
+    await cleanupTestSandbox(sandbox);
+    sandbox = null;
   }, 120000);
 
   /**
@@ -66,7 +73,7 @@ describe('Comprehensive Workflow', () => {
     // ========================================
     // Phase 1: Clone a repository
     // ========================================
-    const testDir = uniqueTestPath('hello-world');
+    const testDir = sandbox!.uniquePath('hello-world');
     const cloneResponse = await fetch(`${workerUrl}/api/git/clone`, {
       method: 'POST',
       headers,

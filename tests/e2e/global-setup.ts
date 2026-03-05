@@ -2,110 +2,43 @@
  * Global Setup for E2E Tests
  *
  * Runs ONCE before any test threads spawn.
- * Creates the shared sandbox and passes info via a temp file (env vars don't work across processes).
+ * Resolves the worker URL and passes it via a temp file.
+ * Does NOT create any sandboxes — each test file creates its own.
  */
 
 import { existsSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  cleanupSandbox,
-  createPythonImageHeaders,
-  createSandboxId,
-  createTestHeaders
-} from './helpers/test-fixtures';
-import {
   getTestWorkerUrl,
   type WranglerDevRunner
 } from './helpers/wrangler-runner';
 
-// Shared state file path
-export const SHARED_STATE_FILE = join(tmpdir(), 'e2e-shared-sandbox.json');
+export const SHARED_STATE_FILE = join(tmpdir(), 'e2e-global-state.json');
 
 let runner: WranglerDevRunner | null = null;
-let sandboxId: string | null = null;
-let workerUrl: string | null = null;
 
 export async function setup() {
-  console.log(
-    '\n[GlobalSetup] Starting wrangler and creating shared sandbox...'
-  );
+  console.log('\n[GlobalSetup] Resolving worker URL...');
 
-  // Clean up stale state from crashed runs
   if (existsSync(SHARED_STATE_FILE)) {
     unlinkSync(SHARED_STATE_FILE);
   }
 
   const result = await getTestWorkerUrl();
   runner = result.runner;
-  workerUrl = result.url;
-  sandboxId = createSandboxId();
 
-  // Initialize the sandboxes
-  const headers = createTestHeaders(sandboxId);
-  const initResponse = await fetch(`${workerUrl}/api/execute`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({ command: 'echo "Global sandbox initialized"' })
-  });
-
-  if (!initResponse.ok) {
-    throw new Error(`Failed to initialize sandbox: ${initResponse.status}`);
-  }
-
-  const pythonHeaders = createPythonImageHeaders(sandboxId);
-  const pythonInitResponse = await fetch(`${workerUrl}/api/execute`, {
-    method: 'POST',
-    headers: pythonHeaders,
-    body: JSON.stringify({ command: 'echo "Python sandbox initialized"' })
-  });
-
-  if (!pythonInitResponse.ok) {
-    console.warn(
-      `Warning: Failed to initialize Python sandbox: ${pythonInitResponse.status}`
-    );
-  }
-
-  const opencodeHeaders = {
-    ...createTestHeaders(sandboxId),
-    'X-Sandbox-Type': 'opencode'
-  };
-  const opencodeInitResponse = await fetch(`${workerUrl}/api/execute`, {
-    method: 'POST',
-    headers: opencodeHeaders,
-    body: JSON.stringify({ command: 'opencode --version' })
-  });
-
-  if (!opencodeInitResponse.ok) {
-    console.warn(
-      `Warning: Failed to initialize OpenCode sandbox: ${opencodeInitResponse.status}`
-    );
-  }
-
-  // Write state to temp file for worker threads to read
-  writeFileSync(SHARED_STATE_FILE, JSON.stringify({ workerUrl, sandboxId }));
-
-  console.log(
-    `[GlobalSetup] Ready! URL: ${workerUrl}, Sandbox: ${sandboxId}\n`
-  );
+  writeFileSync(SHARED_STATE_FILE, JSON.stringify({ workerUrl: result.url }));
+  console.log(`[GlobalSetup] Ready! URL: ${result.url}\n`);
 }
 
 export async function teardown() {
   console.log('\n[GlobalTeardown] Cleaning up...');
 
-  if (sandboxId && workerUrl) {
-    try {
-      await cleanupSandbox(workerUrl, sandboxId);
-    } catch (e) {
-      console.warn('[GlobalTeardown] Cleanup error:', e);
-    }
-  }
-
   if (runner) {
     await runner.stop();
   }
 
-  // Clean up state file
   if (existsSync(SHARED_STATE_FILE)) {
     unlinkSync(SHARED_STATE_FILE);
   }

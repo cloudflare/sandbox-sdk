@@ -1,6 +1,5 @@
 name: Performance Tests
 
-# On-demand + pre-release triggers
 on:
   workflow_dispatch:
     inputs:
@@ -15,53 +14,43 @@ on:
           - sustained-throughput
           - bursty-traffic
           - concurrent-creation
-
-  # Run before releases
   release:
     types: [published]
-
-  # Schedule for baseline tracking (weekly)
   schedule:
-    - cron: '0 0 * * 0' # Sunday midnight UTC
+    - cron: '0 0 * * 0'
 
 permissions:
   contents: read
   id-token: write
+  packages: write
 
 concurrency:
   group: perf-${{ github.ref }}
   cancel-in-progress: true
 
 env:
-  # Account subdomain for workers.dev URLs (found in Cloudflare dashboard)
   CF_ACCOUNT_SUBDOMAIN: agents-b8a
+  PERF_WORKER_NAME: sandbox-perf-test-worker
 
 jobs:
   setup:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-8core
     timeout-minutes: 15
     outputs:
       worker_url: ${{ steps.deploy.outputs.worker_url }}
-      worker_name: ${{ steps.worker-name.outputs.name }}
       version: ${{ steps.version.outputs.version }}
-
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 24
           cache: 'npm'
 
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-
-      - name: Install dependencies
-        run: npm ci
-
       - name: Build packages
-        run: npm run build
+        run: npx turbo run build
 
       - name: Get package version
         id: version
@@ -69,29 +58,45 @@ jobs:
           VERSION=$(node -p "require('./packages/sandbox/package.json').version")
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-      - name: Generate unique worker name
-        id: worker-name
-        run: |
-          # Use run_id for unique worker per run (allows concurrent runs)
-          WORKER_NAME="sandbox-perf-${{ github.run_id }}"
-          echo "name=$WORKER_NAME" >> $GITHUB_OUTPUT
+      - uses: actions/upload-artifact@v7
+        with:
+          name: build-${{ github.sha }}
+          path: |
+            packages/sandbox/dist/
+            packages/shared/dist/
+          retention-days: 1
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v3
 
-      - name: Build Docker image (default only)
-        run: |
-          VERSION=${{ steps.version.outputs.version }}
-          # Perf tests only use default sandbox type - skip python/opencode/standalone
-          docker build -f packages/sandbox/Dockerfile --target default --platform linux/amd64 \
-            --build-arg SANDBOX_VERSION=$VERSION -t cloudflare/sandbox-test:$VERSION .
+      - name: Login to GHCR (for build cache)
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
-      - name: Generate wrangler config (perf-specific)
+      - name: Read Bun version
+        id: bun-version
+        run: echo "version=$(cat .bun-version)" >> $GITHUB_OUTPUT
+
+      - name: Build default Docker image
+        uses: docker/bake-action@v6
+        env:
+          TAG: perf
+          SANDBOX_VERSION: ${{ steps.version.outputs.version }}
+          CACHE_REPO: ghcr.io/${{ github.repository }}/cache
+          BUN_VERSION: ${{ steps.bun-version.outputs.version }}
+        with:
+          files: docker-bake.hcl
+          targets: default
+          load: true
+
+      - name: Push image to CF registry
+        run: npx wrangler containers push sandbox:perf
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Generate wrangler config
         run: |
           cd tests/e2e/test-worker
-          WORKER_NAME="${{ steps.worker-name.outputs.name }}"
-          # Use perf-specific template with only default Sandbox container
-          sed "s/{{WORKER_NAME}}/$WORKER_NAME/g; s/{{CONTAINER_NAME}}/$WORKER_NAME/g" \
+          sed "s/{{WORKER_NAME}}/${{ env.PERF_WORKER_NAME }}/g; s/{{CONTAINER_NAME}}/${{ env.PERF_WORKER_NAME }}/g" \
             wrangler.perf.template.jsonc > wrangler.jsonc
 
       - name: Deploy test worker
@@ -99,36 +104,45 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: deploy --name ${{ steps.worker-name.outputs.name }}
+          command: deploy --name ${{ env.PERF_WORKER_NAME }}
           workingDirectory: tests/e2e/test-worker
 
-      - name: Set worker URL output
+      - name: Set worker URL
         id: deploy
         run: |
-          echo "worker_url=https://${{ steps.worker-name.outputs.name }}.${{ env.CF_ACCOUNT_SUBDOMAIN }}.workers.dev" >> $GITHUB_OUTPUT
+          echo "worker_url=https://${{ env.PERF_WORKER_NAME }}.${{ env.CF_ACCOUNT_SUBDOMAIN }}.workers.dev" >> $GITHUB_OUTPUT
 
   performance-tests:
     needs: setup
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-8core
     timeout-minutes: 60
-
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 24
           cache: 'npm'
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/cache/restore@v5
+        id: nm-cache
         with:
-          bun-version: latest
+          path: |
+            node_modules
+            packages/*/node_modules
+            examples/*/node_modules
+            sites/*/node_modules
+          key: node-modules-${{ hashFiles('package-lock.json') }}
 
-      - name: Install dependencies
-        run: npm ci
+      - run: npm ci --prefer-offline --no-audit --no-fund
+        if: steps.nm-cache.outputs.cache-hit != 'true'
 
-      - name: Build packages
-        run: npm run build
+      - uses: actions/download-artifact@v8
+        with:
+          name: build-${{ github.sha }}
+          path: packages
 
       - name: Create output directory
         run: mkdir -p perf-results
@@ -145,34 +159,17 @@ jobs:
           fi
 
       - name: Upload performance results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: perf-results-${{ github.run_id }}
           path: perf-results/
-          retention-days: 90
+          retention-days: 7
 
-      - name: Upload latest results for comparison
-        uses: actions/upload-artifact@v4
+      - name: Upload baseline
+        uses: actions/upload-artifact@v7
         if: success()
         with:
           name: perf-baseline
           path: perf-results/latest.json
-          retention-days: 365
-
-  cleanup:
-    needs: [setup, performance-tests]
-    if: always()
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Cleanup test worker
-        continue-on-error: true
-        run: |
-          scripts/cleanup-test-deployment.sh ${{ needs.setup.outputs.worker_name }}
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          retention-days: 7

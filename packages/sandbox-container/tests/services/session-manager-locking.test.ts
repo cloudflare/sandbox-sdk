@@ -267,4 +267,79 @@ describe('SessionManager Locking', () => {
       expect(execResult.success).toBe(true);
     });
   });
+
+  describe('destroy during active streaming', () => {
+    it('should not crash when session is destroyed during background streaming', async () => {
+      const sessionId = 'stream-destroy-session';
+      const events: { type: string; error?: string }[] = [];
+
+      // Background mode releases the lock after the 'start' event,
+      // so the execStream generator continues polling without the mutex.
+      const streamResult = await sessionManager.executeStreamInSession(
+        sessionId,
+        'sleep 10',
+        async (event) => {
+          events.push({
+            type: event.type,
+            error:
+              event.type === 'error'
+                ? (event as { error?: string }).error
+                : undefined
+          });
+        },
+        { cwd: testDir },
+        'cmd-destroy-race',
+        { background: true }
+      );
+
+      expect(streamResult.success).toBe(true);
+
+      // The generator is now polling in the background.
+      // Destroying the session while it polls exercises the
+      // concurrent destroy + streaming code path.
+      const deleteResult = await sessionManager.deleteSession(sessionId);
+      expect(deleteResult.success).toBe(true);
+
+      // The streaming promise must settle (not hang). Race against
+      // a timeout to catch both crashes and stuck promises.
+      if (streamResult.success) {
+        const timeout = new Promise<'timeout'>((resolve) =>
+          setTimeout(() => resolve('timeout'), 5000)
+        );
+        const result = await Promise.race([
+          streamResult.data.continueStreaming
+            .then(() => 'resolved' as const)
+            .catch(() => 'rejected' as const),
+          timeout
+        ]);
+
+        expect(result).not.toBe('timeout');
+      }
+
+      // Verify we got a start event (streaming did begin)
+      expect(events.some((e) => e.type === 'start')).toBe(true);
+
+      // The generator yields an error event when the session is destroyed
+      const errorEvent = events.find((e) => e.type === 'error');
+      expect(errorEvent).toBeDefined();
+      expect(errorEvent!.error).toMatch(/destroyed|terminated/i);
+    });
+
+    it('should preserve shell-terminated errors for exit commands', async () => {
+      const sessionId = 'exit-shell-session';
+
+      const result = await sessionManager.executeInSession(
+        sessionId,
+        'exit 1',
+        testDir
+      );
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.code).toBe('COMMAND_EXECUTION_ERROR');
+        expect(result.error.message).toMatch(/shell terminated unexpectedly/i);
+        expect(result.error.message).toMatch(/exit code.*1/i);
+      }
+    });
+  });
 });

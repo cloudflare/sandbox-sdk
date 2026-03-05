@@ -5,7 +5,7 @@ import type { ITransport, TransportConfig, TransportMode } from './types';
 /**
  * Container startup retry configuration
  */
-const TIMEOUT_MS = 120_000; // 2 minutes total retry budget
+const DEFAULT_RETRY_TIMEOUT_MS = 120_000; // 2 minutes total retry budget
 const MIN_TIME_FOR_RETRY_MS = 15_000; // Need at least 15s remaining to retry
 
 /**
@@ -17,16 +17,22 @@ const MIN_TIME_FOR_RETRY_MS = 15_000; // Need at least 15s remaining to retry
 export abstract class BaseTransport implements ITransport {
   protected config: TransportConfig;
   protected logger: Logger;
+  private retryTimeoutMs: number;
 
   constructor(config: TransportConfig) {
     this.config = config;
     this.logger = config.logger ?? createNoOpLogger();
+    this.retryTimeoutMs = config.retryTimeoutMs ?? DEFAULT_RETRY_TIMEOUT_MS;
   }
 
   abstract getMode(): TransportMode;
   abstract connect(): Promise<void>;
   abstract disconnect(): void;
   abstract isConnected(): boolean;
+
+  setRetryTimeoutMs(ms: number): void {
+    this.retryTimeoutMs = ms;
+  }
 
   /**
    * Fetch with automatic retry for 503 (container starting)
@@ -44,7 +50,7 @@ export abstract class BaseTransport implements ITransport {
       // Check for retryable 503 (container starting)
       if (response.status === 503) {
         const elapsed = Date.now() - startTime;
-        const remaining = TIMEOUT_MS - elapsed;
+        const remaining = this.retryTimeoutMs - elapsed;
 
         if (remaining > MIN_TIME_FOR_RETRY_MS) {
           const delay = Math.min(3000 * 2 ** attempt, 30000);

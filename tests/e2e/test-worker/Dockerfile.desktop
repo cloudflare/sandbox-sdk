@@ -1,0 +1,11 @@
+# E2E test Dockerfile for Desktop environment
+# Uses the -desktop variant for testing desktop/computer-use features
+FROM docker.io/cloudflare/sandbox-test:0.7.12-desktop
+
+# Install snapshot tools: squashfs-tools (create), squashfuse (mount), fuse-overlayfs (COW)
+RUN apt-get update && apt-get install -y squashfs-tools squashfuse fuse-overlayfs && rm -rf /var/lib/apt/lists/*
+
+# Expose ports used for testing
+# 6080: noVNC web interface
+# 8080: general testing
+EXPOSE 6080 8080

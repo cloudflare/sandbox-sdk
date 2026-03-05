@@ -14,10 +14,13 @@ import type {
   CommandErrorContext,
   CommandNotFoundContext,
   ContextNotFoundContext,
+  DesktopCoordinateErrorContext,
+  DesktopErrorContext,
   ErrorResponse,
   FileExistsContext,
   FileNotFoundContext,
   FileSystemContext,
+  FileTooLargeContext,
   GitAuthFailedContext,
   GitBranchNotFoundContext,
   GitErrorContext,
@@ -34,6 +37,7 @@ import type {
   ProcessNotFoundContext,
   ProcessReadyTimeoutContext,
   SessionAlreadyExistsContext,
+  SessionDestroyedContext,
   ValidationFailedContext
 } from '@repo/shared/errors';
 
@@ -113,6 +117,21 @@ export class FileExistsError extends SandboxError<FileExistsContext> {
   constructor(errorResponse: ErrorResponse<FileExistsContext>) {
     super(errorResponse);
     this.name = 'FileExistsError';
+  }
+
+  // Type-safe accessor
+  get path() {
+    return this.context.path;
+  }
+}
+
+/**
+ * Error thrown when a file is too large
+ */
+export class FileTooLargeError extends SandboxError<FileTooLargeContext> {
+  constructor(errorResponse: ErrorResponse<FileTooLargeContext>) {
+    super(errorResponse);
+    this.name = 'FileTooLargeError';
   }
 
   // Type-safe accessor
@@ -256,6 +275,21 @@ export class SessionAlreadyExistsError extends SandboxError<SessionAlreadyExists
   }
 
   // Type-safe accessors
+  get sessionId() {
+    return this.context.sessionId;
+  }
+}
+
+/**
+ * Error thrown when a session was destroyed while a command was executing
+ */
+export class SessionDestroyedError extends SandboxError<SessionDestroyedContext> {
+  constructor(errorResponse: ErrorResponse<SessionDestroyedContext>) {
+    super(errorResponse);
+    this.name = 'SessionDestroyedError';
+  }
+
+  // Type-safe accessor
   get sessionId() {
     return this.context.sessionId;
   }
@@ -752,5 +786,51 @@ export class BackupRestoreError extends SandboxError<BackupRestoreContext> {
   }
   get backupId() {
     return this.context.backupId;
+  }
+}
+
+// ============================================================================
+// Desktop Errors
+// ============================================================================
+
+export class DesktopNotStartedError extends SandboxError<DesktopErrorContext> {
+  constructor(errorResponse: ErrorResponse<DesktopErrorContext>) {
+    super(errorResponse);
+    this.name = 'DesktopNotStartedError';
+  }
+}
+
+export class DesktopStartFailedError extends SandboxError<DesktopErrorContext> {
+  constructor(errorResponse: ErrorResponse<DesktopErrorContext>) {
+    super(errorResponse);
+    this.name = 'DesktopStartFailedError';
+  }
+}
+
+export class DesktopUnavailableError extends SandboxError<DesktopErrorContext> {
+  constructor(errorResponse: ErrorResponse<DesktopErrorContext>) {
+    super(errorResponse);
+    this.name = 'DesktopUnavailableError';
+  }
+}
+
+export class DesktopProcessCrashedError extends SandboxError<DesktopErrorContext> {
+  constructor(errorResponse: ErrorResponse<DesktopErrorContext>) {
+    super(errorResponse);
+    this.name = 'DesktopProcessCrashedError';
+  }
+}
+
+export class DesktopInvalidOptionsError extends SandboxError<DesktopErrorContext> {
+  constructor(errorResponse: ErrorResponse<DesktopErrorContext>) {
+    super(errorResponse);
+    this.name = 'DesktopInvalidOptionsError';
+  }
+}
+
+export class DesktopInvalidCoordinatesError extends SandboxError<DesktopCoordinateErrorContext> {
+  constructor(errorResponse: ErrorResponse<DesktopCoordinateErrorContext>) {
+    super(errorResponse);
+    this.name = 'DesktopInvalidCoordinatesError';
   }
 }

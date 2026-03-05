@@ -1,67 +1,136 @@
-name: Cleanup PR Resources
-
-permissions:
-  contents: read
-  actions: write # Required for gh cache delete
+name: Cleanup
 
 on:
   pull_request:
     types: [closed]
+  schedule:
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+  pull-requests: read
 
 jobs:
-  cleanup:
-    if: github.event.pull_request.head.repo.full_name == github.repository
+  # --- PR close: targeted cleanup ---
+  cleanup-pr:
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 5
-
     steps:
-      - uses: actions/checkout@v4
+      - name: Install wrangler
+        run: npm install -g wrangler@latest
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Set worker name prefix
-        id: worker-name
-        run: |
-          echo "worker_prefix=sandbox-e2e-test-worker-pr-${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
-
-      - name: Cleanup test deployments
-        continue-on-error: true
-        run: |
-          cd tests/e2e/test-worker
-          # Clean up both transport variants
-          for suffix in "-http" "-websocket"; do
-            WORKER="${{ steps.worker-name.outputs.worker_prefix }}${suffix}"
-            echo "Cleaning up: $WORKER"
-            ../../../scripts/cleanup-test-deployment.sh "$WORKER" || true
-          done
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-
-      - name: Cleanup Cloudflare registry images
+      - name: Delete registry images
+        timeout-minutes: 2
         continue-on-error: true
         run: |
           PR=${{ github.event.pull_request.number }}
-          echo "Deleting PR images from Cloudflare registry..."
-
-          for image in sandbox sandbox-python sandbox-opencode sandbox-standalone sandbox-musl; do
-            echo "Deleting $image:pr-$PR..."
-            npx wrangler containers images delete "$image:pr-$PR" || true
+          for image in sandbox sandbox-python sandbox-opencode sandbox-standalone sandbox-musl sandbox-desktop; do
+            wrangler containers images delete "$image:pr-$PR" || true
           done
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
-      - name: Cleanup GHA cache for PR branch
+      - name: Delete GHA caches
+        timeout-minutes: 1
+        continue-on-error: true
+        run: gh cache delete --all --ref "refs/pull/${{ github.event.pull_request.number }}/merge" || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Delete test workers and containers
+        timeout-minutes: 3
         continue-on-error: true
         run: |
-          echo "Deleting GHA caches for PR #${{ github.event.pull_request.number }}..."
-          gh cache delete --all --ref "refs/pull/${{ github.event.pull_request.number }}/merge" || true
+          PR=${{ github.event.pull_request.number }}
+          CONTAINERS=$(wrangler containers list 2>/dev/null || echo "[]")
+
+          for suffix in "-http" "-websocket"; do
+            WORKER="sandbox-e2e-test-worker-pr-${PR}${suffix}"
+            IDS=$(echo "$CONTAINERS" | jq -r ".[] | select(.name | startswith(\"$WORKER\")) | .id" 2>/dev/null)
+            wrangler delete --name "$WORKER" 2>/dev/null || true
+            for id in $IDS; do
+              wrangler containers delete "$id" 2>/dev/null || true
+            done
+          done
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+  # --- Daily sweep: catch anything PR-close missed ---
+  cleanup-stale:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Install wrangler
+        run: npm install -g wrangler@latest
+
+      - name: Clean stale resources
+        timeout-minutes: 10
+        run: |
+          CONTAINERS=$(wrangler containers list 2>/dev/null || echo "[]")
+          PR_NUMBERS=$(echo "$CONTAINERS" | jq -r '.[].name' 2>/dev/null \
+            | grep -oE 'pr-[0-9]+' | sed 's/pr-//' | sort -u)
+
+          STALE_THRESHOLD=$((7 * 24 * 60 * 60))
+          NOW=$(date +%s)
+          declare -A SHOULD_CLEAN
+
+          for PR in $PR_NUMBERS; do
+            PR_INFO=$(gh pr view "$PR" --json state,updatedAt 2>/dev/null || echo "")
+            if [ -z "$PR_INFO" ]; then
+              SHOULD_CLEAN[$PR]=true
+              continue
+            fi
+            STATE=$(echo "$PR_INFO" | jq -r '.state')
+            if [ "$STATE" = "CLOSED" ] || [ "$STATE" = "MERGED" ]; then
+              SHOULD_CLEAN[$PR]=true
+            elif [ "$STATE" = "OPEN" ]; then
+              UPDATED=$(echo "$PR_INFO" | jq -r '.updatedAt')
+              UPDATED_EPOCH=$(date -d "$UPDATED" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%SZ" "$UPDATED" +%s 2>/dev/null)
+              if [ $((NOW - UPDATED_EPOCH)) -gt $STALE_THRESHOLD ]; then
+                SHOULD_CLEAN[$PR]=true
+              else
+                SHOULD_CLEAN[$PR]=false
+              fi
+            fi
+          done
+
+          for PR in $PR_NUMBERS; do
+            if [ "${SHOULD_CLEAN[$PR]}" = "true" ]; then
+              echo "PR #$PR is stale — cleaning up"
+              for suffix in "-http" "-websocket"; do
+                WORKER="sandbox-e2e-test-worker-pr-${PR}${suffix}"
+                IDS=$(echo "$CONTAINERS" | jq -r ".[] | select(.name | startswith(\"$WORKER\")) | .id" 2>/dev/null)
+                wrangler delete --name "$WORKER" 2>/dev/null || true
+                for id in $IDS; do
+                  wrangler containers delete "$id" 2>/dev/null || true
+                done
+              done
+              for image in sandbox sandbox-python sandbox-opencode sandbox-standalone sandbox-musl sandbox-desktop; do
+                wrangler containers images delete "$image:pr-$PR" || true
+              done
+            fi
+          done
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Clean stale GHA caches
+        timeout-minutes: 2
+        run: |
+          CACHES=$(gh cache list --json ref -q '.[].ref' 2>/dev/null || echo "")
+          echo "$CACHES" | grep -E 'refs/pull/[0-9]+/merge' | while read -r REF; do
+            PR=$(echo "$REF" | grep -oE '[0-9]+')
+            STATE=$(gh pr view "$PR" --json state -q '.state' 2>/dev/null || echo "NOT_FOUND")
+            if [ "$STATE" = "CLOSED" ] || [ "$STATE" = "MERGED" ] || [ "$STATE" = "NOT_FOUND" ]; then
+              gh cache delete --all --ref "$REF" || true
+            fi
+          done
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
