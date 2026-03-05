@@ -669,6 +669,15 @@ export class Session {
   }
 
   /**
+   * Check if the session is being torn down by an explicit destroy() call.
+   * Distinguishes "session destroyed via API" from "shell died on its own"
+   * (e.g., user ran `exit`).
+   */
+  wasDestroyed(): boolean {
+    return this.isDestroying;
+  }
+
+  /**
    * Kill a running command by its ID
    *
    * NOTE: Only works for BACKGROUND commands started via execStream()/startProcess().

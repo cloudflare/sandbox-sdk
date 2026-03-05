@@ -310,29 +310,20 @@ describe('SessionManager Locking', () => {
       expect(events.some((e) => e.type === 'start')).toBe(true);
     });
 
-    it('should return SESSION_DESTROYED when exec races with deleteSession', async () => {
-      const sessionId = 'exec-destroy-session';
+    it('should preserve shell-terminated errors for exit commands', async () => {
+      const sessionId = 'exit-shell-session';
 
-      // Create the session first
-      await sessionManager.createSession({ id: sessionId, cwd: testDir });
+      const result = await sessionManager.executeInSession(
+        sessionId,
+        'exit 1',
+        testDir
+      );
 
-      // Start a long-running command and destroy the session concurrently.
-      // deleteSession acquires the mutex so it waits for the command, but
-      // the command itself will fail because destroy kills the shell.
-      const [execResult] = await Promise.all([
-        sessionManager.executeInSession(sessionId, 'sleep 10', testDir),
-        // Small delay to let exec start, then destroy
-        new Promise<void>((r) => setTimeout(r, 100)).then(() =>
-          sessionManager.deleteSession(sessionId)
-        )
-      ]);
-
-      // The exec should fail (not crash) with SESSION_DESTROYED
-      // because destroy() kills the shell while exec is waiting
-      expect(execResult.success).toBe(false);
-      if (!execResult.success) {
-        expect(execResult.error.code).toBe('SESSION_DESTROYED');
-        expect(execResult.error.message).toContain('destroyed');
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.code).toBe('COMMAND_EXECUTION_ERROR');
+        expect(result.error.message).toMatch(/shell terminated unexpectedly/i);
+        expect(result.error.message).toMatch(/exit code.*1/i);
       }
     });
   });

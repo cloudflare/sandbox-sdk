@@ -266,10 +266,11 @@ export class SessionManager {
         const errorMessage =
           error instanceof Error ? error.message : 'Unknown error';
 
-        // Detect session-destroyed errors: if the session is no longer
-        // ready, the failure is due to the session being torn down.
+        // Detect explicit destroy() teardown. A session can be not-ready
+        // because the shell exited on its own (for example, user ran `exit`),
+        // which should still surface the shell termination error.
         const session = this.sessions.get(sessionId);
-        if (session && !session.isReady()) {
+        if (session?.wasDestroyed()) {
           this.logger.warn('Session destroyed during command execution', {
             sessionId,
             command
@@ -494,7 +495,7 @@ export class SessionManager {
           error instanceof Error ? error.message : 'Unknown error';
 
         const session = this.sessions.get(sessionId);
-        if (session && !session.isReady()) {
+        if (session?.wasDestroyed()) {
           this.logger.warn('Session destroyed during streaming command', {
             sessionId,
             command
@@ -618,7 +619,7 @@ export class SessionManager {
           error instanceof Error ? error.message : 'Unknown error';
 
         const session = this.sessions.get(sessionId);
-        if (session && !session.isReady()) {
+        if (session?.wasDestroyed()) {
           this.logger.warn(
             'Session destroyed during streaming command startup',
             { sessionId, command }
