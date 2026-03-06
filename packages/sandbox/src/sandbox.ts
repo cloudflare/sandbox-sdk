@@ -74,7 +74,7 @@ import {
 import type { MountInfo } from './storage-mount/types';
 import { SDK_VERSION } from './version';
 
-/** Returns a stub for the named sandbox, creating a new one if it doesn't already exist. */
+/** Returns a stub for the named sandbox, creating one if needed. */
 export function getSandbox<T extends Sandbox<any>>(
   ns: DurableObjectNamespace<T>,
   id: string,
