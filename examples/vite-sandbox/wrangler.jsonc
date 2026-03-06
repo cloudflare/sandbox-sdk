@@ -1,0 +1,37 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "sandbox-vite",
+  "main": "src/worker.js",
+  "assets": {
+    "binding": "Assets",
+    "html_handling": "none",
+    "run_worker_first": ["/*"]
+  },
+  "compatibility_date": "2025-05-06",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true
+  },
+  "containers": [
+    {
+      "class_name": "Sandbox",
+      "image": "./Dockerfile",
+      "instance_type": "lite",
+      "max_instances": 1
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "class_name": "Sandbox",
+        "name": "Sandbox"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "new_sqlite_classes": ["Sandbox"],
+      "tag": "v1"
+    }
+  ]
+}
