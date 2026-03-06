@@ -40,8 +40,9 @@ vi.mock('@cloudflare/containers', () => {
  * Tests for Sandbox.containerFetch() error classification logic.
  *
  * The containerFetch() method classifies errors from the container layer into:
- * - 503 (Service Unavailable): Transient errors that should trigger client retry
- * - 500 (Internal Server Error): Permanent errors that should NOT be retried
+ * - 503 (Service Unavailable) + Retry-After: 3: Known transient errors (port not ready, etc.)
+ * - 503 (Service Unavailable) + Retry-After: 10: Container VM still provisioning
+ * - 503 (Service Unavailable) + Retry-After: 5: Unrecognized errors (safe to retry)
  *
  * This test suite verifies that real error messages from workerd and
  * @cloudflare/containers are correctly classified.
@@ -81,9 +82,9 @@ describe('Sandbox.containerFetch() error classification', () => {
     'the operation was aborted'
   ];
 
-  // Permanent errors that should NOT match transient patterns
-  // These come from workerd container-client.c++ lines 307-309
-  const PERMANENT_ERRORS = [
+  // Unrecognized errors that don't match any transient pattern
+  // These return 503 with Retry-After: 5 (safe to retry since retries are idempotent)
+  const UNRECOGNIZED_ERRORS = [
     'no such image available named myimage',
     'container already exists',
     'permission denied: cannot access docker socket',
@@ -158,9 +159,16 @@ describe('Sandbox.containerFetch() error classification', () => {
 
       expect(response.status).toBe(503);
       expect(response.headers.get('Retry-After')).toBe('3');
-      expect(await response.text()).toBe(
+      const body = (await response.json()) as {
+        code: string;
+        message: string;
+        context: { phase: string };
+      };
+      expect(body.code).toBe('INTERNAL_ERROR');
+      expect(body.message).toBe(
         'Container is starting. Please retry in a moment.'
       );
+      expect(body.context.phase).toBe('startup');
     });
 
     it('returns 503 for "the container is not listening" (@cloudflare/containers)', async () => {
@@ -219,7 +227,10 @@ describe('Sandbox.containerFetch() error classification', () => {
 
       expect(response.status).toBe(503);
       expect(response.headers.get('Retry-After')).toBe('10');
-      expect(await response.text()).toContain('provisioning');
+      expect(
+        ((await response.json()) as { context: { phase: string } }).context
+          .phase
+      ).toBe('provisioning');
     });
 
     it('returns 503 for case-insensitive "No Container Instance" match', async () => {
@@ -232,52 +243,51 @@ describe('Sandbox.containerFetch() error classification', () => {
     });
   });
 
-  describe('permanent errors → 500 (should not retry)', () => {
-    it('returns 500 for "no such image" errors (workerd)', async () => {
+  describe('unrecognized errors → 503 (safe to retry)', () => {
+    it('returns 503 for "no such image" errors (workerd)', async () => {
       const response = await triggerContainerFetchWithError(
         'No such image available named myapp:latest'
       );
 
-      expect(response.status).toBe(500);
-      expect(response.headers.get('Retry-After')).toBeNull();
-      const body = await response.text();
-      expect(body).toContain('Failed to start container');
-      expect(body).toContain('No such image');
+      expect(response.status).toBe(503);
+      expect(response.headers.get('Retry-After')).toBe('5');
     });
 
-    it('returns 500 for "container already exists" errors (workerd)', async () => {
+    it('returns 503 for "container already exists" errors (workerd)', async () => {
       const response = await triggerContainerFetchWithError(
         'Container already exists with name sandbox-123'
       );
 
-      expect(response.status).toBe(500);
+      expect(response.status).toBe(503);
+      expect(response.headers.get('Retry-After')).toBe('5');
     });
 
-    it('returns 500 for permission errors', async () => {
+    it('returns 503 for permission errors', async () => {
       const response = await triggerContainerFetchWithError(
         'permission denied: cannot access /var/run/docker.sock'
       );
 
-      expect(response.status).toBe(500);
+      expect(response.status).toBe(503);
+      expect(response.headers.get('Retry-After')).toBe('5');
     });
 
-    it('returns 500 for unknown/unrecognized errors', async () => {
+    it('returns 503 for unknown/unrecognized errors', async () => {
       const response = await triggerContainerFetchWithError(
         'Something completely unexpected happened'
       );
 
-      expect(response.status).toBe(500);
-      expect(await response.text()).toContain('Failed to start container');
+      expect(response.status).toBe(503);
+      expect(response.headers.get('Retry-After')).toBe('5');
     });
 
-    // Parameterized test for permanent errors
-    it.each(PERMANENT_ERRORS)(
-      'returns 500 for permanent error: "%s"',
+    // Parameterized test for unrecognized errors
+    it.each(UNRECOGNIZED_ERRORS)(
+      'returns 503 for unrecognized error: "%s"',
       async (errorMessage) => {
         const response = await triggerContainerFetchWithError(errorMessage);
 
-        expect(response.status).toBe(500);
-        expect(response.headers.get('Retry-After')).toBeNull();
+        expect(response.status).toBe(503);
+        expect(response.headers.get('Retry-After')).toBe('5');
       }
     );
   });
@@ -301,21 +311,23 @@ describe('Sandbox.containerFetch() error classification', () => {
       expect(response.headers.get('Retry-After')).toBe('10');
     });
 
-    it('500 responses include original error message in body', async () => {
+    it('503 responses for unrecognized errors include Retry-After: 5', async () => {
       const originalError = 'Docker daemon is not running';
       const response = await triggerContainerFetchWithError(originalError);
 
-      expect(response.status).toBe(500);
-      const body = await response.text();
-      expect(body).toContain(originalError);
+      expect(response.status).toBe(503);
+      expect(response.headers.get('Retry-After')).toBe('5');
     });
 
-    it('500 responses do not include Retry-After header', async () => {
+    it('503 responses for unrecognized errors include retry message in body', async () => {
       const response =
         await triggerContainerFetchWithError('permanent failure');
 
-      expect(response.status).toBe(500);
-      expect(response.headers.get('Retry-After')).toBeNull();
+      expect(response.status).toBe(503);
+      expect(response.headers.get('Retry-After')).toBe('5');
+      expect(
+        ((await response.json()) as { message: string }).message
+      ).toContain('Container is starting');
     });
   });
 

@@ -1078,13 +1078,23 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       } catch (e) {
         // 1. Provisioning: Container VM not yet available
         if (this.isNoInstanceError(e)) {
-          return new Response(
-            'Container is currently provisioning. This can take several minutes on first deployment. Please retry in a moment.',
-            {
-              status: 503,
-              headers: { 'Retry-After': '10' }
+          const errorBody: ErrorResponse = {
+            code: ErrorCode.INTERNAL_ERROR,
+            message:
+              'Container is currently provisioning. This can take several minutes on first deployment.',
+            context: { phase: 'provisioning' },
+            httpStatus: 503,
+            timestamp: new Date().toISOString(),
+            suggestion:
+              'This is expected during first deployment. The SDK will retry automatically.'
+          };
+          return new Response(JSON.stringify(errorBody), {
+            status: 503,
+            headers: {
+              'Content-Type': 'application/json',
+              'Retry-After': '10'
             }
-          );
+          });
         }
 
         // 2. Transient startup errors: Container starting, port not ready yet
@@ -1105,24 +1115,52 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
               { error: e instanceof Error ? e.message : String(e) }
             );
           }
-          return new Response(
-            'Container is starting. Please retry in a moment.',
-            {
-              status: 503,
-              headers: { 'Retry-After': '3' }
+          const errorBody: ErrorResponse = {
+            code: ErrorCode.INTERNAL_ERROR,
+            message: 'Container is starting. Please retry in a moment.',
+            context: {
+              phase: 'startup',
+              error: e instanceof Error ? e.message : String(e)
+            },
+            httpStatus: 503,
+            timestamp: new Date().toISOString(),
+            suggestion:
+              'The container is booting. The SDK will retry automatically.'
+          };
+          return new Response(JSON.stringify(errorBody), {
+            status: 503,
+            headers: {
+              'Content-Type': 'application/json',
+              'Retry-After': '3'
             }
-          );
+          });
         }
 
-        // 3. Permanent errors: Configuration issues, missing images, etc.
-        this.logger.error(
-          'Container startup failed with permanent error',
-          e instanceof Error ? e : new Error(String(e))
+        // 3. Unrecognized errors: Treat as transient since retries are safe
+        // and new platform error messages may not yet be in our pattern list.
+        this.logger.warn(
+          'Unrecognized container startup error, returning 503 for retry',
+          { error: e instanceof Error ? e.message : String(e) }
         );
-        return new Response(
-          `Failed to start container: ${e instanceof Error ? e.message : String(e)}`,
-          { status: 500 }
-        );
+        const errorBody: ErrorResponse = {
+          code: ErrorCode.INTERNAL_ERROR,
+          message: 'Container is starting. Please retry in a moment.',
+          context: {
+            phase: 'startup',
+            error: e instanceof Error ? e.message : String(e)
+          },
+          httpStatus: 503,
+          timestamp: new Date().toISOString(),
+          suggestion:
+            'The SDK will retry automatically. If this persists, the container may need redeployment.'
+        };
+        return new Response(JSON.stringify(errorBody), {
+          status: 503,
+          headers: {
+            'Content-Type': 'application/json',
+            'Retry-After': '5'
+          }
+        });
       }
     }
 
