@@ -52,7 +52,7 @@ jobs:
   # --- Authorization check (no checkout, no secrets used) ---
   policy:
     needs: remove-label
-    if: ${{ needs.remove-label.result == 'success' || needs.remove-label.result == 'skipped' }}
+    if: ${{ always() && (needs.remove-label.result == 'success' || needs.remove-label.result == 'skipped') }}
     runs-on: ubuntu-latest
     permissions:
       pull-requests: read
