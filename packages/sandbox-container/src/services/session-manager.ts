@@ -316,7 +316,11 @@ export class SessionManager {
 
         const result = await session.exec(
           command,
-          cwd || env ? { cwd, env } : undefined
+          timeoutMs !== undefined
+            ? { cwd, env, timeoutMs }
+            : cwd || env
+              ? { cwd, env }
+              : undefined
         );
 
         return {
@@ -380,7 +384,11 @@ export class SessionManager {
     fn: (
       exec: (
         command: string,
-        options?: { cwd?: string; env?: Record<string, string | undefined> }
+        options?: {
+          cwd?: string;
+          env?: Record<string, string | undefined>;
+          timeoutMs?: number;
+        }
       ) => Promise<RawExecResult>
     ) => Promise<T>,
     cwd?: string
@@ -403,7 +411,11 @@ export class SessionManager {
         // Provide exec function that uses the session directly (already under lock)
         const exec = async (
           command: string,
-          options?: { cwd?: string; env?: Record<string, string | undefined> }
+          options?: {
+            cwd?: string;
+            env?: Record<string, string | undefined>;
+            timeoutMs?: number;
+          }
         ): Promise<RawExecResult> => {
           return session.exec(command, options);
         };
