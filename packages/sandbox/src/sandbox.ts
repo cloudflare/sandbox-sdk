@@ -646,14 +646,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     };
   }
 
-  /*
+  /**
    * Mount an S3-compatible bucket as a local directory.
    *
    * In production, uses S3FS-FUSE inside the container.
    * When `options.localBucket` is true, uses bidirectional sync between the
    * R2 binding and a container directory via the existing file/watch APIs.
    *
-   * @param bucket - Bucket name
+   * @param bucket - Bucket name (or R2 binding name when localBucket is true)
    * @param mountPath - Absolute path in container to mount at
    * @param options - Mount configuration
    * @throws MissingCredentialsError if no credentials found in environment
@@ -683,7 +683,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     mountPath: string,
     options: MountBucketOptions
   ): Promise<void> {
-    // Resolve the R2 binding from the DO's own env using the bucket name
     const envObj = this.env as Record<string, unknown>;
     const r2Binding = envObj[bucket];
     if (!r2Binding || !isR2Bucket(r2Binding)) {
@@ -693,14 +692,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       );
     }
 
-    // Validate mount path
     if (!mountPath || !mountPath.startsWith('/')) {
       throw new InvalidMountConfigError(
         `Invalid mount path: "${mountPath}". Must be an absolute path starting with /`
       );
     }
 
-    // Check for duplicate mounts
     if (this.activeMounts.has(mountPath)) {
       throw new InvalidMountConfigError(
         `Mount path already in use: ${mountPath}`
@@ -710,7 +707,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     const sessionId = await this.ensureDefaultSession();
 
     const syncManager = new LocalMountSyncManager({
-      bucket: r2Binding as R2Bucket,
+      bucket: r2Binding,
       mountPath,
       prefix: options.prefix,
       readOnly: options.readOnly ?? false,
@@ -719,7 +716,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       logger: this.logger
     });
 
-    // Reserve mount path
     const mountInfo: LocalSyncMountInfo = {
       mountType: 'local-sync',
       bucket,
@@ -754,10 +750,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     this.validateMountOptions(bucket, mountPath, { ...options, prefix });
 
-    // Build s3fs source: bucket name with optional prefix (e.g., "mybucket:/prefix/")
     const s3fsSource = buildS3fsSource(bucket, prefix);
-
-    // Detect provider from explicit option or URL pattern
     const provider: BucketProvider | null =
       options.provider || detectProviderFromUrl(options.endpoint);
 
@@ -766,14 +759,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       prefix
     });
 
-    // Detect credentials
     const credentials = detectCredentials(options, this.envVars);
-
-    // Generate unique password file path
     const passwordFilePath = this.generatePasswordFilePath();
 
     // Reserve mount path before async operations so concurrent mounts see it
-    this.activeMounts.set(mountPath, {
+    const mountInfo: FuseMountInfo = {
       mountType: 'fuse',
       bucket: s3fsSource,
       mountPath,
@@ -781,16 +771,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       provider,
       passwordFilePath,
       mounted: false
-    });
+    };
+    this.activeMounts.set(mountPath, mountInfo);
 
     try {
-      // Create password file with credentials (uses bucket name only, not prefix)
       await this.createPasswordFile(passwordFilePath, bucket, credentials);
-
-      // Create mount directory
       await this.exec(`mkdir -p ${shellEscape(mountPath)}`);
-
-      // Execute S3FS mount with password file (uses full s3fs source with prefix)
       await this.executeS3FSMount(
         s3fsSource,
         mountPath,
@@ -799,23 +785,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         passwordFilePath
       );
 
-      // Mark as successfully mounted
-      this.activeMounts.set(mountPath, {
-        mountType: 'fuse',
-        bucket: s3fsSource,
-        mountPath,
-        endpoint: options.endpoint,
-        provider,
-        passwordFilePath,
-        mounted: true
-      });
-
+      mountInfo.mounted = true;
       this.logger.info(`Successfully mounted bucket ${bucket} to ${mountPath}`);
     } catch (error) {
-      // Clean up password file on failure
       await this.deletePasswordFile(passwordFilePath);
-
-      // Clean up reservation on failure
       this.activeMounts.delete(mountPath);
       throw error;
     }
@@ -1120,8 +1093,17 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   override async onStop() {
     this.logger.debug('Sandbox stopped');
 
-    // Clear in-memory state that references the old container
-    // This prevents stale references after container restarts
+    // Stop local sync managers before clearing the map to avoid leaking timers
+    for (const [, mountInfo] of this.activeMounts) {
+      if (mountInfo.mountType === 'local-sync') {
+        try {
+          await mountInfo.syncManager.stop();
+        } catch {
+          // Best-effort during shutdown
+        }
+      }
+    }
+
     this.defaultSession = null;
     this.activeMounts.clear();
 
