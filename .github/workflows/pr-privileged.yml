@@ -14,18 +14,22 @@ env:
   CF_ACCOUNT_SUBDOMAIN: agents-b8a
 
 jobs:
-  # --- Auto-remove ok-to-test label on new pushes (fork PRs only) ---
-  remove-label:
-    if: >
-      github.event.action == 'synchronize' &&
-      github.event.pull_request.head.repo.full_name != github.repository
+  # --- Authorization gate (includes label management for fork PRs) ---
+  policy:
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
       issues: write
     timeout-minutes: 1
+    outputs:
+      authorized: ${{ steps.check.outputs.authorized }}
+      run_privileged: ${{ steps.check.outputs.run_privileged }}
     steps:
-      - uses: actions/github-script@v8
+      - name: Remove ok-to-test label on new pushes (fork PRs only)
+        if: >
+          github.event.action == 'synchronize' &&
+          github.event.pull_request.head.repo.full_name != github.repository
+        uses: actions/github-script@v8
         with:
           script: |
             try {
@@ -49,18 +53,6 @@ jobs:
               }
             }
 
-  # --- Authorization check (no checkout, no secrets used) ---
-  policy:
-    needs: remove-label
-    if: ${{ always() && (needs.remove-label.result == 'success' || needs.remove-label.result == 'skipped') }}
-    runs-on: ubuntu-latest
-    permissions:
-      pull-requests: read
-    timeout-minutes: 1
-    outputs:
-      authorized: ${{ steps.check.outputs.authorized }}
-      run_privileged: ${{ steps.check.outputs.run_privileged }}
-    steps:
       - name: Check authorization
         id: check
         env:
