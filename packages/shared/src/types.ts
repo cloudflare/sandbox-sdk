@@ -1084,9 +1084,9 @@ export interface MountBucketOptions {
    * - AWS S3: 'https://s3.us-west-2.amazonaws.com'
    * - GCS: 'https://storage.googleapis.com'
    *
-   * Required field
+   * Required when `localBucket` is false
    */
-  endpoint: string;
+  endpoint?: string;
 
   /**
    * Optional provider hint for automatic s3fs flag configuration

@@ -27,8 +27,8 @@ interface LocalMountSyncOptions {
 /**
  * Manages bidirectional sync between an R2 binding and a container directory.
  *
- * R2→Container: polls bucket.list() to detect changes, then transfers diffs.
- * Container→R2: uses inotifywait via the watch API to detect file changes.
+ * R2 -> Container: polls bucket.list() to detect changes, then transfers diffs.
+ * Container -> R2: uses inotifywait via the watch API to detect file changes.
  */
 export class LocalMountSyncManager {
   private readonly bucket: R2Bucket;
@@ -116,6 +116,7 @@ export class LocalMountSyncManager {
     const objects = await this.listAllR2Objects();
     const newSnapshot = new Map<string, R2ObjectSnapshot>();
 
+    // No echo suppression needed: this runs before startContainerWatch() in start().
     // Process in batches to limit concurrent HTTP requests
     for (let i = 0; i < objects.length; i += SYNC_CONCURRENCY) {
       const batch = objects.slice(i, i + SYNC_CONCURRENCY);
@@ -130,7 +131,7 @@ export class LocalMountSyncManager {
     }
 
     this.snapshot = newSnapshot;
-    this.logger.debug('Initial R2→Container sync complete', {
+    this.logger.debug('Initial R2 -> Container sync complete', {
       objectCount: objects.length
     });
   }
@@ -165,21 +166,30 @@ export class LocalMountSyncManager {
     const objects = await this.listAllR2Objects();
     const newSnapshot = new Map<string, R2ObjectSnapshot>();
 
+    // Collect changed objects first, then transfer in batches
+    const changed: Array<{ key: string; action: 'created' | 'modified' }> = [];
     for (const obj of objects) {
       newSnapshot.set(obj.key, { etag: obj.etag, size: obj.size });
-
       const existing = this.snapshot.get(obj.key);
       if (!existing || existing.etag !== obj.etag) {
-        const containerPath = this.r2KeyToContainerPath(obj.key);
-        await this.ensureParentDir(containerPath);
-        this.suppressEcho(containerPath);
-        await this.transferR2ObjectToContainer(obj.key, containerPath);
-
-        this.logger.debug('R2→Container: synced object', {
+        changed.push({
           key: obj.key,
           action: existing ? 'modified' : 'created'
         });
       }
+    }
+
+    for (let i = 0; i < changed.length; i += SYNC_CONCURRENCY) {
+      const batch = changed.slice(i, i + SYNC_CONCURRENCY);
+      await Promise.all(
+        batch.map(async ({ key, action }) => {
+          const containerPath = this.r2KeyToContainerPath(key);
+          await this.ensureParentDir(containerPath);
+          this.suppressEcho(containerPath);
+          await this.transferR2ObjectToContainer(key, containerPath);
+          this.logger.debug('R2 -> Container: synced object', { key, action });
+        })
+      );
     }
 
     for (const [key] of this.snapshot) {
@@ -189,7 +199,7 @@ export class LocalMountSyncManager {
 
         try {
           await this.client.files.deleteFile(containerPath, this.sessionId);
-          this.logger.debug('R2→Container: deleted file', { key });
+          this.logger.debug('R2 -> Container: deleted file', { key });
         } catch {
           // File may already be gone
         }
@@ -279,7 +289,7 @@ export class LocalMountSyncManager {
 
       const containerPath = event.path;
 
-      // Skip echo from our own R2→Container writes
+      // Skip echo from our own R2 -> Container writes
       if (this.echoSuppressSet.has(containerPath)) continue;
 
       const r2Key = this.containerPathToR2Key(containerPath);
@@ -291,7 +301,7 @@ export class LocalMountSyncManager {
           case 'modify':
           case 'move_to': {
             await this.uploadFileToR2(containerPath, r2Key);
-            this.logger.debug('Container→R2: synced file', {
+            this.logger.debug('Container -> R2: synced file', {
               path: containerPath,
               key: r2Key,
               action: event.eventType
@@ -303,7 +313,7 @@ export class LocalMountSyncManager {
           case 'move_from': {
             await this.bucket.delete(r2Key);
             this.snapshot.delete(r2Key);
-            this.logger.debug('Container→R2: deleted object', {
+            this.logger.debug('Container -> R2: deleted object', {
               path: containerPath,
               key: r2Key
             });
@@ -312,7 +322,7 @@ export class LocalMountSyncManager {
         }
       } catch (error) {
         this.logger.error(
-          `Container→R2 sync failed for ${containerPath}`,
+          `Container -> R2 sync failed for ${containerPath}`,
           error instanceof Error ? error : new Error(String(error))
         );
       }
