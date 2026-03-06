@@ -25,8 +25,16 @@ export interface TransportConfig {
   /** Port number */
   port?: number;
 
-  /** Request timeout in milliseconds */
+  /** Request timeout in milliseconds (non-streaming requests) */
   requestTimeoutMs?: number;
+
+  /**
+   * Idle timeout for streaming requests in milliseconds (WebSocket only).
+   * The timer resets on every chunk, so streams stay alive as long as data
+   * is flowing. Only triggers when the stream is silent for this duration.
+   * @default 300000 (5 minutes)
+   */
+  streamIdleTimeoutMs?: number;
 
   /** Connection timeout in milliseconds (WebSocket only) */
   connectTimeoutMs?: number;
@@ -85,4 +93,13 @@ export interface ITransport {
    * Update the 503 retry budget without recreating the transport
    */
   setRetryTimeoutMs(ms: number): void;
+
+  /**
+   * Update transport timeout configuration without recreating the transport.
+   * New values take effect on the next request or timer reset.
+   */
+  setTransportTimeouts(timeouts: {
+    requestTimeoutMs?: number;
+    streamIdleTimeoutMs?: number;
+  }): void;
 }

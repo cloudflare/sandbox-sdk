@@ -309,7 +309,7 @@ describe('WebSocket Protocol Types', () => {
       try {
         const transport = new WebSocketTransport({
           wsUrl: 'ws://localhost:3000/ws',
-          requestTimeoutMs: 1000
+          streamIdleTimeoutMs: 1000
         });
 
         (transport as any).connect = vi.fn().mockResolvedValue(undefined);
@@ -333,7 +333,7 @@ describe('WebSocket Protocol Types', () => {
         vi.advanceTimersByTime(1001);
 
         await expect(streamPromise).rejects.toThrow(
-          'Stream timeout after 1000ms'
+          'Stream idle timeout after 1000ms'
         );
         expect((transport as any).pendingRequests.size).toBe(0);
 
@@ -349,7 +349,7 @@ describe('WebSocket Protocol Types', () => {
       try {
         const transport = new WebSocketTransport({
           wsUrl: 'ws://localhost:3000/ws',
-          requestTimeoutMs: 1000
+          streamIdleTimeoutMs: 1000
         });
 
         (transport as any).connect = vi.fn().mockResolvedValue(undefined);
@@ -390,7 +390,7 @@ describe('WebSocket Protocol Types', () => {
         vi.advanceTimersByTime(1001);
 
         await expect(reader.read()).rejects.toThrow(
-          'Stream timeout after 1000ms'
+          'Stream idle timeout after 1000ms'
         );
         expect((transport as any).pendingRequests.size).toBe(0);
       } finally {

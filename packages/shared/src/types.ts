@@ -478,6 +478,42 @@ export interface SandboxOptions {
   normalizeId?: boolean;
 
   /**
+   * Transport timeout configuration (WebSocket mode only)
+   *
+   * Controls timeouts for the WebSocket transport layer. These are separate from
+   * container startup timeouts (containerTimeouts).
+   *
+   * @example
+   * // Long-running streaming operations (agent-driven code execution)
+   * getSandbox(ns, id, {
+   *   transportTimeouts: { streamIdleTimeoutMs: 600_000 }
+   * })
+   *
+   * @example
+   * // Fast-fail for short requests
+   * getSandbox(ns, id, {
+   *   transportTimeouts: { requestTimeoutMs: 30_000 }
+   * })
+   */
+  transportTimeouts?: {
+    /**
+     * Timeout for non-streaming requests in milliseconds.
+     * If a response is not received within this duration, the request fails.
+     * @default 120000 (2 minutes)
+     */
+    requestTimeoutMs?: number;
+
+    /**
+     * Idle timeout for streaming requests in milliseconds.
+     * The timer resets on every chunk received, so streams stay alive as long
+     * as data is flowing. Only triggers when the stream produces no output for
+     * this duration.
+     * @default 300000 (5 minutes)
+     */
+    streamIdleTimeoutMs?: number;
+  };
+
+  /**
    * Container startup timeout configuration
    *
    * Tune timeouts based on your container's characteristics. SDK defaults (30s instance, 90s ports)

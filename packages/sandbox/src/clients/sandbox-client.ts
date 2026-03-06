@@ -49,7 +49,9 @@ export class SandboxClient {
         logger: options.logger,
         stub: options.stub,
         port: options.port,
-        retryTimeoutMs: options.retryTimeoutMs
+        retryTimeoutMs: options.retryTimeoutMs,
+        requestTimeoutMs: options.requestTimeoutMs,
+        streamIdleTimeoutMs: options.streamIdleTimeoutMs
       });
     }
 
@@ -132,6 +134,19 @@ export class SandboxClient {
   disconnect(): void {
     if (this.transport) {
       this.transport.disconnect();
+    }
+  }
+
+  /**
+   * Update transport timeout configuration without recreating the client.
+   * New values take effect on the next request or timer reset.
+   */
+  setTransportTimeouts(timeouts: {
+    requestTimeoutMs?: number;
+    streamIdleTimeoutMs?: number;
+  }): void {
+    if (this.transport) {
+      this.transport.setTransportTimeouts(timeouts);
     }
   }
 }
