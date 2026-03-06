@@ -1078,16 +1078,56 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       } catch (e) {
         // 1. Provisioning: Container VM not yet available
         if (this.isNoInstanceError(e)) {
-          return new Response(
-            'Container is currently provisioning. This can take several minutes on first deployment. Please retry in a moment.',
-            {
-              status: 503,
-              headers: { 'Retry-After': '10' }
+          const errorBody: ErrorResponse = {
+            code: ErrorCode.INTERNAL_ERROR,
+            message:
+              'Container is currently provisioning. This can take several minutes on first deployment.',
+            context: { phase: 'provisioning' },
+            httpStatus: 503,
+            timestamp: new Date().toISOString(),
+            suggestion:
+              'This is expected during first deployment. The SDK will retry automatically.'
+          };
+          return new Response(JSON.stringify(errorBody), {
+            status: 503,
+            headers: {
+              'Content-Type': 'application/json',
+              'Retry-After': '10'
             }
-          );
+          });
         }
 
-        // 2. Transient startup errors: Container starting, port not ready yet
+        // 2. Permanent errors: Resource exhaustion, misconfiguration, bad image
+        // These will never recover on retry — fail fast so the caller gets a clear signal.
+        // Checked before transient to avoid broad transient patterns (e.g., "container did not
+        // start") masking specific permanent causes in wrapped error messages.
+        if (this.isPermanentStartupError(e)) {
+          this.logger.error(
+            'Permanent container startup error, returning 500',
+            e instanceof Error ? e : new Error(String(e))
+          );
+          const errorBody: ErrorResponse = {
+            code: ErrorCode.INTERNAL_ERROR,
+            message:
+              'Container failed to start due to a permanent error. Check your container configuration.',
+            context: {
+              phase: 'startup',
+              error: e instanceof Error ? e.message : String(e)
+            },
+            httpStatus: 500,
+            timestamp: new Date().toISOString(),
+            suggestion:
+              'This error will not resolve with retries. Check container logs, image name, and resource limits.'
+          };
+          return new Response(JSON.stringify(errorBody), {
+            status: 500,
+            headers: {
+              'Content-Type': 'application/json'
+            }
+          });
+        }
+
+        // 3. Transient startup errors: Container starting, port not ready yet
         if (this.isTransientStartupError(e)) {
           // If startup failed after detecting stale state, the container runtime is likely stuck
           // (e.g., workerd can't restart after an unexpected container death). Abort the DO so the
@@ -1105,24 +1145,52 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
               { error: e instanceof Error ? e.message : String(e) }
             );
           }
-          return new Response(
-            'Container is starting. Please retry in a moment.',
-            {
-              status: 503,
-              headers: { 'Retry-After': '3' }
+          const errorBody: ErrorResponse = {
+            code: ErrorCode.INTERNAL_ERROR,
+            message: 'Container is starting. Please retry in a moment.',
+            context: {
+              phase: 'startup',
+              error: e instanceof Error ? e.message : String(e)
+            },
+            httpStatus: 503,
+            timestamp: new Date().toISOString(),
+            suggestion:
+              'The container is booting. The SDK will retry automatically.'
+          };
+          return new Response(JSON.stringify(errorBody), {
+            status: 503,
+            headers: {
+              'Content-Type': 'application/json',
+              'Retry-After': '3'
             }
-          );
+          });
         }
 
-        // 3. Permanent errors: Configuration issues, missing images, etc.
-        this.logger.error(
-          'Container startup failed with permanent error',
-          e instanceof Error ? e : new Error(String(e))
+        // 4. Unrecognized errors: Treat as transient since retries are safe
+        // and new platform error messages may not yet be in our pattern list.
+        this.logger.warn(
+          'Unrecognized container startup error, returning 503 for retry',
+          { error: e instanceof Error ? e.message : String(e) }
         );
-        return new Response(
-          `Failed to start container: ${e instanceof Error ? e.message : String(e)}`,
-          { status: 500 }
-        );
+        const errorBody: ErrorResponse = {
+          code: ErrorCode.INTERNAL_ERROR,
+          message: 'Container is starting. Please retry in a moment.',
+          context: {
+            phase: 'startup',
+            error: e instanceof Error ? e.message : String(e)
+          },
+          httpStatus: 503,
+          timestamp: new Date().toISOString(),
+          suggestion:
+            'The SDK will retry automatically. If this persists, the container may need redeployment.'
+        };
+        return new Response(JSON.stringify(errorBody), {
+          status: 503,
+          headers: {
+            'Content-Type': 'application/json',
+            'Retry-After': '5'
+          }
+        });
       }
     }
 
@@ -1189,6 +1257,42 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     ];
 
     return transientPatterns.some((pattern) => msg.includes(pattern));
+  }
+
+  /**
+   * Helper: Check if error is a permanent startup failure that will never recover
+   *
+   * These errors indicate resource exhaustion, misconfiguration, or missing images.
+   * Retrying will never succeed, so the SDK should fail fast with HTTP 500.
+   *
+   * Error sources (traced from platform internals):
+   *   - Container runtime: OOM, PID limit
+   *   - Scheduling/provisioning: no matching app, no namespace configured
+   *   - workerd container-client.c++: no such image
+   *   - @cloudflare/containers: did not call start
+   */
+  private isPermanentStartupError(error: unknown): boolean {
+    if (!(error instanceof Error)) return false;
+
+    const msg = error.message.toLowerCase();
+
+    const permanentPatterns = [
+      // Resource exhaustion (container runtime)
+      'ran out of memory',
+      'too many subprocesses',
+
+      // Misconfiguration (scheduling/provisioning)
+      'no application that matches',
+      'no container application assigned',
+
+      // Missing image (workerd container-client.c++)
+      'no such image',
+
+      // User error (@cloudflare/containers)
+      'did not call start'
+    ];
+
+    return permanentPatterns.some((pattern) => msg.includes(pattern));
   }
 
   /**
@@ -1682,12 +1786,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     try {
       // Process stream
       const streamProcessor = async (): Promise<WaitForLogResult> => {
-        const DEBOUNCE_MS = 50;
-        let lastCheckTime = 0;
-        let pendingCheck = false;
-
         const checkPattern = (): WaitForLogResult | null => {
-          // Check both stdout and stderr buffers
           const stdoutResult = this.matchPattern(collectedStdout, pattern);
           if (stdoutResult) return stdoutResult;
           const stderrResult = this.matchPattern(collectedStderr, pattern);
@@ -1696,7 +1795,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         };
 
         for await (const event of parseSSEStream<LogEvent>(stream)) {
-          // Handle different event types
           if (event.type === 'stdout' || event.type === 'stderr') {
             const data = event.data || '';
 
@@ -1705,24 +1803,16 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
             } else {
               collectedStderr += data;
             }
-            pendingCheck = true;
 
-            // Debounce pattern matching - check at most every 50ms
-            const now = Date.now();
-            if (now - lastCheckTime >= DEBOUNCE_MS) {
-              lastCheckTime = now;
-              pendingCheck = false;
-              const result = checkPattern();
-              if (result) return result;
-            }
+            const result = checkPattern();
+            if (result) return result;
           }
 
           // Process exited - do final check before throwing
           if (event.type === 'exit') {
-            if (pendingCheck) {
-              const result = checkPattern();
-              if (result) return result;
-            }
+            // Final check in case pattern arrived in last chunk
+            const result = checkPattern();
+            if (result) return result;
             throw this.createExitedBeforeReadyError(
               processId,
               command,
@@ -1732,11 +1822,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           }
         }
 
-        // Stream ended - do final check before throwing
-        if (pendingCheck) {
-          const result = checkPattern();
-          if (result) return result;
-        }
+        // Stream ended without exit event — do final check
+        const finalResult = checkPattern();
+        if (finalResult) return finalResult;
         // Stream ended without finding pattern - this indicates process exited
         throw this.createExitedBeforeReadyError(
           processId,
