@@ -1079,9 +1079,9 @@ export interface MountBucketOptions {
    * - AWS S3: 'https://s3.us-west-2.amazonaws.com'
    * - GCS: 'https://storage.googleapis.com'
    *
-   * Required field
+   * Required when `localBucket` is false
    */
-  endpoint: string;
+  endpoint?: string;
 
   /**
    * Optional provider hint for automatic s3fs flag configuration
@@ -1129,6 +1129,15 @@ export interface MountBucketOptions {
    * Must start with '/' (e.g., '/sessions/user123' or '/data/uploads/')
    */
   prefix?: string;
+
+  /**
+   * Set to true when the bucket name refers to a local R2 binding
+   * (e.g., during local development with `wrangler dev`).
+   *
+   * When true, the Durable Object resolves the R2 binding from its own env
+   * using the `bucket` parameter and syncs files via polling instead of s3fs-FUSE.
+   */
+  localBucket?: boolean;
 }
 
 // Main Sandbox interface
