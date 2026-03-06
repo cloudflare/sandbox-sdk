@@ -22,6 +22,18 @@ on:
         type: string
         default: ''
         description: 'Content hash of deploy inputs (enables deploy skip via worker health check)'
+      checkout_ref:
+        type: string
+        default: ''
+        description: 'Git ref to checkout (for fork PRs via pull_request_target). Empty = default behavior.'
+      checkout_repo:
+        type: string
+        default: ''
+        description: 'Repository to checkout (for fork PRs). Empty = default behavior.'
+      cache_readonly:
+        type: boolean
+        default: false
+        description: 'When true, skip cache writes (security: prevents cache poisoning from fork PRs)'
 
 env:
   CF_ACCOUNT_SUBDOMAIN: agents-b8a
@@ -61,13 +73,16 @@ jobs:
       - uses: actions/checkout@v6
         if: ${{ steps.deploy-check.outputs.skip != 'true' }}
         with:
+          repository: ${{ inputs.checkout_repo || github.repository }}
+          ref: ${{ inputs.checkout_ref || '' }}
+          persist-credentials: false
           fetch-depth: 1
 
       - uses: actions/setup-node@v6
         if: ${{ steps.deploy-check.outputs.skip != 'true' }}
         with:
           node-version: 24
-          cache: 'npm'
+          cache: ${{ !inputs.cache_readonly && 'npm' || '' }}
 
       - uses: actions/cache/restore@v5
         id: nm-cache
@@ -187,12 +202,15 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          repository: ${{ inputs.checkout_repo || github.repository }}
+          ref: ${{ inputs.checkout_ref || '' }}
+          persist-credentials: false
           fetch-depth: 1
 
       - uses: actions/setup-node@v6
         with:
           node-version: 24
-          cache: 'npm'
+          cache: ${{ !inputs.cache_readonly && 'npm' || '' }}
 
       - uses: actions/cache/restore@v5
         id: nm-cache
@@ -230,12 +248,15 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          repository: ${{ inputs.checkout_repo || github.repository }}
+          ref: ${{ inputs.checkout_ref || '' }}
+          persist-credentials: false
           fetch-depth: 1
 
       - uses: actions/setup-node@v6
         with:
           node-version: 24
-          cache: 'npm'
+          cache: ${{ !inputs.cache_readonly && 'npm' || '' }}
 
       - uses: actions/cache/restore@v5
         id: nm-cache
@@ -273,12 +294,15 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          repository: ${{ inputs.checkout_repo || github.repository }}
+          ref: ${{ inputs.checkout_ref || '' }}
+          persist-credentials: false
           fetch-depth: 1
 
       - uses: actions/setup-node@v6
         with:
           node-version: 24
-          cache: 'npm'
+          cache: ${{ !inputs.cache_readonly && 'npm' || '' }}
 
       - uses: actions/cache/restore@v5
         id: nm-cache
@@ -297,14 +321,22 @@ jobs:
         with:
           name: build-${{ github.sha }}
           path: packages
-      - name: Cache Playwright browsers
-        uses: actions/cache@v5
+      - name: Restore Playwright browsers
+        uses: actions/cache/restore@v5
+        id: pw-cache
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ hashFiles('package-lock.json') }}
 
       - name: Install Playwright browsers
         run: npx playwright install chromium
+
+      # Save cache only from trusted contexts (not fork PRs via pull_request_target)
+      - uses: actions/cache/save@v5
+        if: steps.pw-cache.outputs.cache-hit != 'true' && !inputs.cache_readonly
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ hashFiles('package-lock.json') }}
 
       - name: E2E tests (browser)
         run: npx playwright test --config tests/e2e/browser/playwright.config.ts
