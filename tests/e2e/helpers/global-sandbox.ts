@@ -63,8 +63,9 @@ export async function createTestSandbox(
   });
 
   if (!initResponse.ok) {
+    const body = await initResponse.text().catch(() => '<unreadable>');
     throw new Error(
-      `Failed to initialize ${type} sandbox: ${initResponse.status}`
+      `Failed to initialize ${type} sandbox: ${initResponse.status} - ${body}`
     );
   }
 
