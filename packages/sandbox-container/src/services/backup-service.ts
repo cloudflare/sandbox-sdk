@@ -98,8 +98,6 @@ export class BackupService {
     archivePath: string,
     sessionId = 'default'
   ): Promise<ServiceResult<CreateArchiveResult>> {
-    const opLogger = this.logger.child({ operation: Operation.BACKUP_CREATE });
-
     const pathError = validateBackupPaths(dir, archivePath);
     if (pathError) {
       return serviceError({
@@ -108,6 +106,14 @@ export class BackupService {
         details: { dir, archivePath }
       });
     }
+
+    const startTime = Date.now();
+    const event: Record<string, unknown> = {
+      operation: Operation.BACKUP_CREATE,
+      dir,
+      archivePath
+    };
+    let caughtError: Error | undefined;
 
     try {
       // Ensure the work directory exists
@@ -165,12 +171,6 @@ export class BackupService {
         '-noappend'
       ].join(' ');
 
-      opLogger.info('Creating squashfs archive', {
-        dir,
-        archivePath,
-        command: squashCmd
-      });
-
       const createResult = await this.sessionManager.executeInSession(
         sessionId,
         squashCmd
@@ -209,22 +209,29 @@ export class BackupService {
         sizeBytes = parseInt(statResult.data.stdout.trim(), 10) || 0;
       }
 
-      opLogger.info('Archive created', { dir, archivePath, sizeBytes });
+      event.outcome = 'success';
+      event.sizeBytes = sizeBytes;
 
       return serviceSuccess<CreateArchiveResult>({
         sizeBytes,
         archivePath
       });
     } catch (error) {
-      opLogger.error(
-        'Unexpected error creating archive',
-        error instanceof Error ? error : new Error(String(error))
-      );
+      caughtError = error instanceof Error ? error : new Error(String(error));
+      event.outcome = 'error';
+      event.errorMessage = caughtError.message;
       return serviceError({
-        message: `Unexpected error creating backup: ${error instanceof Error ? error.message : String(error)}`,
+        message: `Unexpected error creating backup: ${caughtError.message}`,
         code: ErrorCode.BACKUP_CREATE_FAILED,
         details: { dir, archivePath }
       });
+    } finally {
+      event.durationMs = Date.now() - startTime;
+      if (event.outcome === 'error') {
+        this.logger.error('backup.create', caughtError, event);
+      } else {
+        this.logger.info('backup.create', event);
+      }
     }
   }
 
@@ -246,10 +253,6 @@ export class BackupService {
     archivePath: string,
     sessionId = 'default'
   ): Promise<ServiceResult<RestoreArchiveResult>> {
-    const opLogger = this.logger.child({
-      operation: Operation.BACKUP_RESTORE
-    });
-
     const pathError = validateBackupPaths(dir, archivePath);
     if (pathError) {
       return serviceError({
@@ -273,6 +276,16 @@ export class BackupService {
     const upperDir = `${mountBase}/upper`;
     const workDir = `${mountBase}/work`;
 
+    const startTime = Date.now();
+    const event: Record<string, unknown> = {
+      operation: Operation.BACKUP_RESTORE,
+      dir,
+      archivePath,
+      backupId,
+      restoreId
+    };
+    let caughtError: Error | undefined;
+
     try {
       // Verify the archive exists
       const checkResult = await this.sessionManager.executeInSession(
@@ -286,13 +299,6 @@ export class BackupService {
           details: { dir, archivePath }
         });
       }
-
-      opLogger.info('Restoring snapshot with overlayfs', {
-        dir,
-        archivePath,
-        backupId,
-        restoreId
-      });
 
       // Unmount the overlay on `dir` (from a previous restore of any backup).
       await this.sessionManager.executeInSession(
@@ -395,18 +401,13 @@ export class BackupService {
         });
       }
 
-      opLogger.info('Snapshot restored with overlayfs', {
-        dir,
-        archivePath,
-        backupId
-      });
+      event.outcome = 'success';
 
       return serviceSuccess<RestoreArchiveResult>({ dir });
     } catch (error) {
-      opLogger.error(
-        'Unexpected error restoring archive',
-        error instanceof Error ? error : new Error(String(error))
-      );
+      caughtError = error instanceof Error ? error : new Error(String(error));
+      event.outcome = 'error';
+      event.errorMessage = caughtError.message;
       // Best-effort cleanup of any FUSE mounts that may have been established
       await this.sessionManager
         .executeInSession(
@@ -421,10 +422,17 @@ export class BackupService {
         )
         .catch(() => {});
       return serviceError({
-        message: `Unexpected error restoring backup: ${error instanceof Error ? error.message : String(error)}`,
+        message: `Unexpected error restoring backup: ${caughtError.message}`,
         code: ErrorCode.BACKUP_RESTORE_FAILED,
         details: { dir, archivePath }
       });
+    } finally {
+      event.durationMs = Date.now() - startTime;
+      if (event.outcome === 'error') {
+        this.logger.error('backup.restore', caughtError, event);
+      } else {
+        this.logger.info('backup.restore', event);
+      }
     }
   }
 
@@ -440,10 +448,6 @@ export class BackupService {
     backupId: string,
     sessionId = 'default'
   ): Promise<ServiceResult<{ success: boolean }>> {
-    const opLogger = this.logger.child({
-      operation: Operation.BACKUP_UNMOUNT
-    });
-
     // Validate inputs before constructing paths used in rm -rf
     if (
       !dir ||
@@ -472,9 +476,15 @@ export class BackupService {
 
     const mountGlob = `${BACKUP_MOUNTS_DIR}/${backupId}`;
 
-    try {
-      opLogger.info('Unmounting snapshot', { dir, backupId });
+    const startTime = Date.now();
+    const event: Record<string, unknown> = {
+      operation: Operation.BACKUP_UNMOUNT,
+      dir,
+      backupId
+    };
+    let caughtError: Error | undefined;
 
+    try {
       // Unmount overlayfs first
       await this.sessionManager.executeInSession(
         sessionId,
@@ -494,10 +504,9 @@ export class BackupService {
         `mountpoint -q ${shellEscape(dir)} 2>/dev/null && echo "mounted" || echo "unmounted"`
       );
       if (mountCheck.success && mountCheck.data.stdout.trim() === 'mounted') {
-        opLogger.warn('Overlay mount still active after unmount attempt', {
-          dir,
-          backupId
-        });
+        event.outcome = 'error';
+        event.errorMessage = `Overlay mount still active at ${dir}`;
+        event.mountStillActive = true;
         return serviceError({
           message: `Failed to unmount overlay at ${dir}. Mount is still active.`,
           code: ErrorCode.BACKUP_RESTORE_FAILED,
@@ -511,19 +520,25 @@ export class BackupService {
         `rm -rf ${shellEscape(mountGlob)}_* ${shellEscape(mountGlob)} 2>/dev/null; true`
       );
 
-      opLogger.info('Snapshot unmounted', { dir, backupId });
+      event.outcome = 'success';
 
       return serviceSuccess({ success: true });
     } catch (error) {
-      opLogger.error(
-        'Error unmounting snapshot',
-        error instanceof Error ? error : new Error(String(error))
-      );
+      caughtError = error instanceof Error ? error : new Error(String(error));
+      event.outcome = 'error';
+      event.errorMessage = caughtError.message;
       return serviceError({
-        message: `Failed to unmount snapshot: ${error instanceof Error ? error.message : String(error)}`,
+        message: `Failed to unmount snapshot: ${caughtError.message}`,
         code: ErrorCode.BACKUP_RESTORE_FAILED,
         details: { dir, backupId }
       });
+    } finally {
+      event.durationMs = Date.now() - startTime;
+      if (event.outcome === 'error') {
+        this.logger.error('backup.unmount', caughtError, event);
+      } else {
+        this.logger.info('backup.unmount', event);
+      }
     }
   }
 }

@@ -32,8 +32,7 @@ export class PtyWebSocketHandler {
 
   async onOpen(ws: ServerWebSocket<PtyWSData>): Promise<void> {
     const { sessionId, connectionId, cols, rows } = ws.data;
-
-    this.logger.debug('PTY WebSocket opened', { sessionId, connectionId });
+    // Lifecycle captured in onClose canonical log line
 
     const result = await this.sessionManager.getPty(sessionId, { cols, rows });
 
@@ -77,7 +76,10 @@ export class PtyWebSocketHandler {
     const conn = this.connections.get(connectionId);
 
     if (!conn) {
-      this.logger.warn('Message for unknown PTY connection', { connectionId });
+      this.logger.warn('pty.message', {
+        connectionId,
+        outcome: 'unknown_connection'
+      });
       return;
     }
 
@@ -91,11 +93,12 @@ export class PtyWebSocketHandler {
   onClose(ws: ServerWebSocket<PtyWSData>, code: number, reason: string): void {
     const { connectionId, sessionId } = ws.data;
 
-    this.logger.debug('PTY WebSocket closed', {
+    this.logger.debug('pty.connection', {
       sessionId,
       connectionId,
       code,
-      reason
+      reason,
+      outcome: 'closed'
     });
 
     const conn = this.connections.get(connectionId);
@@ -107,7 +110,7 @@ export class PtyWebSocketHandler {
 
   onDrain(ws: ServerWebSocket<PtyWSData>): void {
     const { connectionId } = ws.data;
-    this.logger.debug('PTY WebSocket drained', { connectionId });
+    this.logger.debug('pty.drain', { connectionId });
   }
 
   private sendPtyData(
@@ -118,7 +121,7 @@ export class PtyWebSocketHandler {
     const result = ws.sendBinary(data);
 
     if (result === 0) {
-      this.logger.debug('PTY send failed - connection dead', { connectionId });
+      this.logger.debug('pty.send', { connectionId, outcome: 'dead' });
       const conn = this.connections.get(connectionId);
       if (conn) {
         conn.subscription.dispose();
@@ -145,10 +148,17 @@ export class PtyWebSocketHandler {
         }
         pty.resize(control.cols, control.rows);
       } else {
-        this.logger.warn('Unknown PTY control message', { control });
+        this.logger.warn('pty.control', {
+          connectionId: ws.data.connectionId,
+          controlType: control.type,
+          outcome: 'unknown_type'
+        });
       }
     } catch (err) {
-      this.logger.error('Failed to parse PTY control message', err as Error);
+      this.logger.error('pty.control', err as Error, {
+        connectionId: ws.data.connectionId,
+        outcome: 'parse_error'
+      });
       this.sendStatus(ws, {
         type: 'error',
         message: 'Invalid control message'
@@ -163,7 +173,7 @@ export class PtyWebSocketHandler {
     try {
       ws.send(JSON.stringify(status));
     } catch (err) {
-      this.logger.error('Failed to send PTY status', err as Error);
+      this.logger.error('pty.sendStatus', err as Error);
     }
   }
 }

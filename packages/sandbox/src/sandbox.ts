@@ -340,6 +340,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       port: 3000,
       stub: this,
       retryTimeoutMs: this.computeRetryTimeoutMs(),
+      defaultHeaders: {
+        'X-Sandbox-Id': this.ctx.id.toString()
+      },
       ...(this.transport === 'websocket' && {
         transportMode: 'websocket' as const,
         wsUrl: 'ws://localhost:3000/ws'
@@ -352,7 +355,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     const envObj = env as Record<string, unknown>;
     // Set sandbox environment variables from env object
-    const sandboxEnvKeys = ['SANDBOX_LOG_LEVEL', 'SANDBOX_LOG_FORMAT'] as const;
+    // SANDBOX_LOG_FORMAT is intentionally not forwarded to the container:
+    // the container's stdout/stderr goes through Cloudflare's log pipeline,
+    // which doesn't render ANSI color codes and splits multi-line output
+    // into separate log entries. The container defaults to JSON format.
+    const sandboxEnvKeys = ['SANDBOX_LOG_LEVEL'] as const;
     sandboxEnvKeys.forEach((key) => {
       if (envObj?.[key]) {
         this.envVars[key] = String(envObj[key]);
@@ -659,7 +666,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     mountPath: string,
     options: MountBucketOptions
   ): Promise<void> {
-    this.logger.info(`Mounting bucket ${bucket} to ${mountPath}`);
+    const mountStartTime = Date.now();
 
     const prefix = options.prefix || undefined;
 
@@ -671,11 +678,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     // Detect provider from explicit option or URL pattern
     const provider: BucketProvider | null =
       options.provider || detectProviderFromUrl(options.endpoint);
-
-    this.logger.debug(`Detected provider: ${provider || 'unknown'}`, {
-      explicitProvider: options.provider,
-      prefix
-    });
 
     // Detect credentials
     const credentials = detectCredentials(options, this.envVars);
@@ -719,7 +721,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         mounted: true
       });
 
-      this.logger.info(`Successfully mounted bucket ${bucket} to ${mountPath}`);
+      this.logger.info('bucket.mount', {
+        bucket,
+        mountPath,
+        provider: provider || 'unknown',
+        prefix,
+        outcome: 'success',
+        durationMs: Date.now() - mountStartTime
+      });
     } catch (error) {
       // Clean up password file on failure
       await this.deletePasswordFile(passwordFilePath);
@@ -737,7 +746,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * @throws InvalidMountConfigError if mount path doesn't exist or isn't mounted
    */
   async unmountBucket(mountPath: string): Promise<void> {
-    this.logger.info(`Unmounting bucket from ${mountPath}`);
+    const unmountStartTime = Date.now();
 
     // Look up mount by path
     const mountInfo = this.activeMounts.get(mountPath);
@@ -761,7 +770,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       await this.deletePasswordFile(mountInfo.passwordFilePath);
     }
 
-    this.logger.info(`Successfully unmounted bucket from ${mountPath}`);
+    this.logger.info('bucket.unmount', {
+      mountPath,
+      bucket: mountInfo.bucket,
+      outcome: 'success',
+      durationMs: Date.now() - unmountStartTime
+    });
   }
 
   /**
@@ -834,8 +848,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     await this.writeFile(passwordFilePath, content);
 
     await this.exec(`chmod 0600 ${shellEscape(passwordFilePath)}`);
-
-    this.logger.debug(`Created password file: ${passwordFilePath}`);
   }
 
   /**
@@ -844,9 +856,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private async deletePasswordFile(passwordFilePath: string): Promise<void> {
     try {
       await this.exec(`rm -f ${shellEscape(passwordFilePath)}`);
-      this.logger.debug(`Deleted password file: ${passwordFilePath}`);
     } catch (error) {
-      this.logger.warn(`Failed to delete password file ${passwordFilePath}`, {
+      this.logger.warn('password file cleanup failed', {
+        passwordFilePath,
         error: error instanceof Error ? error.message : String(error)
       });
     }
@@ -886,13 +898,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     const optionsStr = shellEscape(s3fsArgs.join(','));
     const mountCmd = `s3fs ${shellEscape(bucket)} ${shellEscape(mountPath)} -o ${optionsStr}`;
 
-    this.logger.debug('Executing s3fs mount', {
-      bucket,
-      mountPath,
-      provider,
-      resolvedOptions
-    });
-
     // Execute mount command
     const result = await this.exec(mountCmd);
 
@@ -901,15 +906,18 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         `S3FS mount failed: ${result.stderr || result.stdout || 'Unknown error'}`
       );
     }
-
-    this.logger.debug('Mount command executed successfully');
   }
 
   /**
    * Cleanup and destroy the sandbox container
    */
   override async destroy(): Promise<void> {
-    this.logger.info('Destroying sandbox container');
+    const startTime = Date.now();
+    const mountResults: Array<{
+      mountPath: string;
+      bucket: string;
+      outcome: string;
+    }> = [];
 
     // Best-effort desktop stop — only when container is already running
     if (this.ctx.container?.running) {
@@ -927,23 +935,31 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     for (const [mountPath, mountInfo] of this.activeMounts.entries()) {
       if (mountInfo.mounted) {
         try {
-          this.logger.info(
-            `Unmounting bucket ${mountInfo.bucket} from ${mountPath}`
-          );
           await this.exec(`fusermount -u ${shellEscape(mountPath)}`);
           mountInfo.mounted = false;
+          mountResults.push({
+            mountPath,
+            bucket: mountInfo.bucket,
+            outcome: 'success'
+          });
         } catch (error) {
-          const errorMsg =
-            error instanceof Error ? error.message : String(error);
-          this.logger.warn(
-            `Failed to unmount bucket ${mountInfo.bucket} from ${mountPath}: ${errorMsg}`
-          );
+          mountResults.push({
+            mountPath,
+            bucket: mountInfo.bucket,
+            outcome: error instanceof Error ? error.message : String(error)
+          });
         }
       }
 
       // Always cleanup password file
       await this.deletePasswordFile(mountInfo.passwordFilePath);
     }
+
+    this.logger.info('sandbox.destroy', {
+      mountsProcessed: mountResults.length,
+      mountResults,
+      durationMs: Date.now() - startTime
+    });
 
     await super.destroy();
   }
@@ -965,46 +981,31 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * Logs a warning if there's a mismatch
    */
   private async checkVersionCompatibility(): Promise<void> {
+    const sdkVersion = SDK_VERSION;
+    let containerVersion: string | undefined;
+    let outcome: string;
+
     try {
-      // Get the SDK version (imported from version.ts)
-      const sdkVersion = SDK_VERSION;
+      containerVersion = await this.client.utils.getVersion();
 
-      // Get container version
-      const containerVersion = await this.client.utils.getVersion();
-
-      // If container version is unknown, it's likely an old container without the endpoint
       if (containerVersion === 'unknown') {
-        this.logger.warn(
-          'Container version check: Container version could not be determined. ' +
-            'This may indicate an outdated container image. ' +
-            'Please update your container to match SDK version ' +
-            sdkVersion
-        );
-        return;
-      }
-
-      // Check if versions match
-      if (containerVersion !== sdkVersion) {
-        const message =
-          `Version mismatch detected! SDK version (${sdkVersion}) does not match ` +
-          `container version (${containerVersion}). This may cause compatibility issues. ` +
-          `Please update your container image to version ${sdkVersion}`;
-
-        // Log warning - we can't reliably detect dev vs prod environment in Durable Objects
-        // so we always use warning level as requested by the user
-        this.logger.warn(message);
+        outcome = 'container_version_unknown';
+      } else if (containerVersion !== sdkVersion) {
+        outcome = 'version_mismatch';
       } else {
-        this.logger.debug('Version check passed', {
-          sdkVersion,
-          containerVersion
-        });
+        outcome = 'compatible';
       }
     } catch (error) {
-      // Don't fail the sandbox initialization if version check fails
-      this.logger.debug('Version compatibility check encountered an error', {
-        error: error instanceof Error ? error.message : String(error)
-      });
+      outcome = 'check_failed';
+      containerVersion = undefined;
     }
+
+    const level = outcome === 'compatible' ? 'debug' : 'warn';
+    this.logger[level]('version.check', {
+      sdkVersion,
+      containerVersion,
+      outcome
+    });
   }
 
   override async onStop() {
@@ -1054,18 +1055,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     const staleStateDetected =
       state.status === 'healthy' && containerRunning === false;
     if (state.status !== 'healthy' || containerRunning === false) {
-      if (staleStateDetected) {
-        this.logger.debug(
-          'Stale container state detected: persisted state is healthy but container is not running'
-        );
-      }
-
       try {
-        this.logger.debug('Starting container with configured timeouts', {
-          instanceTimeout: this.containerTimeouts.instanceGetTimeoutMS,
-          portTimeout: this.containerTimeouts.portReadyTimeoutMS
-        });
-
         await this.startAndWaitForPorts({
           ports: port,
           cancellationOptions: {
@@ -1094,16 +1084,18 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           // next request gets a fresh instance with a clean container binding. This mirrors the
           // recovery pattern in the base Container class for 'Network connection lost' errors.
           if (staleStateDetected) {
-            this.logger.warn(
-              'Container startup failed after stale state detection, aborting DO for recovery',
-              { error: e instanceof Error ? e.message : String(e) }
-            );
+            this.logger.warn('container.startup', {
+              outcome: 'stale_state_abort',
+              staleStateDetected: true,
+              error: e instanceof Error ? e.message : String(e)
+            });
             this.ctx.abort();
           } else {
-            this.logger.debug(
-              'Transient container startup error, returning 503',
-              { error: e instanceof Error ? e.message : String(e) }
-            );
+            this.logger.debug('container.startup', {
+              outcome: 'transient_error',
+              staleStateDetected,
+              error: e instanceof Error ? e.message : String(e)
+            });
           }
           return new Response(
             'Container is starting. Please retry in a moment.',
@@ -1116,8 +1108,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
         // 3. Permanent errors: Configuration issues, missing images, etc.
         this.logger.error(
-          'Container startup failed with permanent error',
-          e instanceof Error ? e : new Error(String(e))
+          'container.startup',
+          e instanceof Error ? e : new Error(String(e)),
+          { outcome: 'permanent_error', staleStateDetected }
         );
         return new Response(
           `Failed to start container: ${e instanceof Error ? e.message : String(e)}`,
@@ -1380,6 +1373,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     const timestamp = new Date().toISOString();
 
     let timeoutId: NodeJS.Timeout | undefined;
+    let execOutcome: { exitCode: number; success: boolean } | undefined;
+    let execError: Error | undefined;
 
     try {
       // Handle cancellation
@@ -1426,6 +1421,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         );
       }
 
+      execOutcome = { exitCode: result.exitCode, success: result.success };
+
       // Call completion callback if provided
       if (options?.onComplete) {
         options.onComplete(result);
@@ -1433,6 +1430,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
       return result;
     } catch (error) {
+      execError = error instanceof Error ? error : new Error(String(error));
       if (options?.onError && error instanceof Error) {
         options.onError(error);
       }
@@ -1440,6 +1438,22 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     } finally {
       if (timeoutId) {
         clearTimeout(timeoutId);
+      }
+      const event: Record<string, unknown> = {
+        sessionId,
+        command:
+          command.length > 200 ? `${command.substring(0, 200)}…` : command,
+        durationMs: Date.now() - startTime,
+        outcome: execError ? 'error' : 'success',
+        exitCode: execOutcome?.exitCode
+      };
+      if (execError) {
+        this.logger.debug('sandbox.exec', {
+          ...event,
+          errorMessage: execError.message
+        });
+      } else {
+        this.logger.debug('sandbox.exec', event);
       }
     }
   }
@@ -2512,6 +2526,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       );
     }
 
+    const exposeStartTime = Date.now();
     const sessionId = await this.ensureDefaultSession();
     await this.client.ports.exposePort(port, sessionId, options?.name);
 
@@ -2524,6 +2539,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       options.hostname,
       token
     );
+
+    this.logger.debug('port.expose', {
+      port,
+      name: options?.name,
+      hostname: options.hostname,
+      outcome: 'success',
+      durationMs: Date.now() - exposeStartTime
+    });
 
     return {
       url,
@@ -2539,6 +2562,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       );
     }
 
+    const unexposeStartTime = Date.now();
     const sessionId = await this.ensureDefaultSession();
     await this.client.ports.unexposePort(port, sessionId);
 
@@ -2549,6 +2573,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       delete tokens[port.toString()];
       await this.ctx.storage.put('portTokens', tokens);
     }
+
+    this.logger.debug('port.unexpose', {
+      port,
+      outcome: 'success',
+      durationMs: Date.now() - unexposeStartTime
+    });
   }
 
   async getExposedPorts(hostname: string) {
@@ -3135,12 +3165,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   ): Promise<void> {
     const presignedUrl = await this.generatePresignedPutUrl(r2Key);
 
-    this.logger.info('Uploading backup via presigned PUT', {
-      r2Key,
-      archiveSize,
-      backupId
-    });
-
     const curlCmd = [
       'curl -sSf',
       '-X PUT',
@@ -3205,12 +3229,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     backupSession: string
   ): Promise<void> {
     const presignedUrl = await this.generatePresignedGetUrl(r2Key);
-
-    this.logger.info('Downloading backup via presigned GET', {
-      r2Key,
-      expectedSize,
-      backupId
-    });
 
     await this.execWithSession('mkdir -p /var/backups', backupSession);
 
@@ -3368,8 +3386,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     const backupId = crypto.randomUUID();
     const archivePath = `/var/backups/${backupId}.sqsh`;
 
-    this.logger.info('Creating backup', { backupId, dir, name });
-
     const createResult = await this.client.backup.createArchive(
       dir,
       archivePath,
@@ -3411,10 +3427,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       };
       await bucket.put(metaKey, JSON.stringify(metadata));
 
-      this.logger.info('Backup uploaded to R2', {
+      this.logger.info('backup.create', {
         backupId,
+        dir,
+        name,
         r2Key,
-        sizeBytes: createResult.sizeBytes
+        sizeBytes: createResult.sizeBytes,
+        outcome: 'success'
       });
 
       // Step 5: Clean up the local archive in the container
@@ -3496,8 +3515,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       });
     }
     Sandbox.validateBackupDir(dir, 'Invalid backup: dir');
-
-    this.logger.info('Restoring backup', { backupId, dir });
 
     // Step 1: Read metadata to check TTL
     const metaKey = `backups/${backupId}/meta.json`;
@@ -3624,7 +3641,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         });
       }
 
-      this.logger.info('Backup restored', { backupId, dir });
+      this.logger.info('backup.restore', {
+        backupId,
+        dir,
+        outcome: 'success'
+      });
 
       return {
         success: true,

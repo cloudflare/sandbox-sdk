@@ -105,8 +105,8 @@ describe('GitService', () => {
 
     gitService = new GitService(
       mockSecurityService,
-      mockLogger,
-      mockSessionManager
+      mockSessionManager,
+      mockLogger
     );
   });
 

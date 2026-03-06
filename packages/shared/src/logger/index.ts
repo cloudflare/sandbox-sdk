@@ -93,7 +93,14 @@ export function createLogger(
   const baseContext: LogContext = {
     ...context,
     traceId: context.traceId || TraceContext.generate(),
-    component: context.component
+    component: context.component,
+    serviceVersion:
+      context.serviceVersion || getEnvVar('SANDBOX_VERSION') || undefined,
+    instanceId:
+      context.instanceId ||
+      getEnvVar('HOSTNAME') ||
+      getEnvVar('SANDBOX_INSTANCE_ID') ||
+      undefined
   };
 
   return new CloudflareLogger(baseContext, minLevel, pretty);
