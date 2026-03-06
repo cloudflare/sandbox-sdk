@@ -1112,14 +1112,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     this.logger.debug('Sandbox stopped');
 
     // Stop local sync managers before clearing the map to avoid leaking timers
-    for (const [, mountInfo] of this.activeMounts) {
-      if (mountInfo.mountType === 'local-sync') {
-        try {
-          await mountInfo.syncManager.stop();
-        } catch {
-          // Best-effort during shutdown
-        }
-      }
+    for (const [, m] of this.activeMounts) {
+      if (m.mountType === 'local-sync')
+        await m.syncManager.stop().catch(() => {});
     }
 
     this.defaultSession = null;
