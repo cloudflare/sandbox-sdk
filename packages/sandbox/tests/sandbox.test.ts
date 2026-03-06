@@ -49,6 +49,16 @@ vi.mock('@cloudflare/containers', () => {
     renewActivityTimeout() {
       // Mock implementation - reschedules activity timeout
     }
+    async schedule(when: number, callback: string, payload?: any) {
+      // Mock implementation - schedules a callback
+      return { id: 'mock-schedule-id' };
+    }
+    deleteSchedules(name: string) {
+      // Mock implementation - deletes schedules by name
+    }
+    async onActivityExpired() {
+      // Mock implementation - called when activity expires
+    }
   };
 
   return {
@@ -1008,6 +1018,183 @@ describe('Sandbox - Automatic Session Management', () => {
 
       expect((sandbox as any).sleepAfter).toBe(3600);
       expect(renewSpy).toHaveBeenCalled();
+    });
+  });
+
+  describe('keepAlive heartbeat', () => {
+    it('should schedule heartbeat when keepAlive is enabled', async () => {
+      // Spy on schedule method (inherited from Container)
+      const scheduleSpy = vi
+        .spyOn(sandbox as any, 'schedule')
+        .mockResolvedValue({});
+      const deleteSchedulesSpy = vi
+        .spyOn(sandbox as any, 'deleteSchedules')
+        .mockImplementation(() => {});
+
+      await sandbox.setKeepAlive(true);
+
+      // Verify keepAliveEnabled was set and persisted
+      expect((sandbox as any).keepAliveEnabled).toBe(true);
+      expect(mockCtx.storage?.put).toHaveBeenCalledWith(
+        'keepAliveEnabled',
+        true
+      );
+
+      // Verify heartbeat was scheduled
+      expect(deleteSchedulesSpy).toHaveBeenCalledWith('keepAliveHeartbeat');
+      expect(scheduleSpy).toHaveBeenCalledWith(30, 'keepAliveHeartbeat');
+    });
+
+    it('should cancel heartbeat when keepAlive is disabled', async () => {
+      // First enable keepAlive
+      vi.spyOn(sandbox as any, 'schedule').mockResolvedValue({});
+      const deleteSchedulesSpy = vi
+        .spyOn(sandbox as any, 'deleteSchedules')
+        .mockImplementation(() => {});
+
+      await sandbox.setKeepAlive(true);
+      deleteSchedulesSpy.mockClear();
+
+      // Now disable keepAlive
+      await sandbox.setKeepAlive(false);
+
+      // Verify keepAliveEnabled was set and persisted
+      expect((sandbox as any).keepAliveEnabled).toBe(false);
+      expect(mockCtx.storage?.put).toHaveBeenCalledWith(
+        'keepAliveEnabled',
+        false
+      );
+
+      // Verify heartbeat was cancelled
+      expect(deleteSchedulesSpy).toHaveBeenCalledWith('keepAliveHeartbeat');
+    });
+
+    it('should not reschedule when keepAlive is already enabled', async () => {
+      // First enable keepAlive
+      const scheduleSpy = vi
+        .spyOn(sandbox as any, 'schedule')
+        .mockResolvedValue({});
+      vi.spyOn(sandbox as any, 'deleteSchedules').mockImplementation(() => {});
+
+      await sandbox.setKeepAlive(true);
+      scheduleSpy.mockClear();
+
+      // Call setKeepAlive(true) again
+      await sandbox.setKeepAlive(true);
+
+      // Should not schedule again (already enabled)
+      expect(scheduleSpy).not.toHaveBeenCalled();
+    });
+
+    it('should ping container and reschedule on heartbeat callback', async () => {
+      // Enable keepAlive first
+      vi.spyOn(sandbox as any, 'schedule').mockResolvedValue({});
+      vi.spyOn(sandbox as any, 'deleteSchedules').mockImplementation(() => {});
+      await sandbox.setKeepAlive(true);
+
+      // Mock the ping call
+      const pingSpy = vi
+        .spyOn(sandbox.client.utils, 'ping')
+        .mockResolvedValue('pong');
+      const scheduleSpy = vi
+        .spyOn(sandbox as any, 'schedule')
+        .mockResolvedValue({});
+      scheduleSpy.mockClear();
+
+      // Invoke the heartbeat callback
+      await (sandbox as any).keepAliveHeartbeat();
+
+      // Verify ping was called
+      expect(pingSpy).toHaveBeenCalled();
+
+      // Verify next heartbeat was scheduled
+      expect(scheduleSpy).toHaveBeenCalledWith(30, 'keepAliveHeartbeat');
+    });
+
+    it('should not reschedule heartbeat if keepAlive was disabled', async () => {
+      // Enable then disable keepAlive
+      vi.spyOn(sandbox as any, 'schedule').mockResolvedValue({});
+      vi.spyOn(sandbox as any, 'deleteSchedules').mockImplementation(() => {});
+      await sandbox.setKeepAlive(true);
+      await sandbox.setKeepAlive(false);
+
+      const pingSpy = vi
+        .spyOn(sandbox.client.utils, 'ping')
+        .mockResolvedValue('pong');
+      const scheduleSpy = vi
+        .spyOn(sandbox as any, 'schedule')
+        .mockResolvedValue({});
+      scheduleSpy.mockClear();
+
+      // Invoke the heartbeat callback (as if alarm fired after disable)
+      await (sandbox as any).keepAliveHeartbeat();
+
+      // Ping should NOT be called since keepAlive is disabled
+      expect(pingSpy).not.toHaveBeenCalled();
+
+      // Next heartbeat should NOT be scheduled
+      expect(scheduleSpy).not.toHaveBeenCalled();
+    });
+
+    it('should continue heartbeat even if ping fails', async () => {
+      // Enable keepAlive
+      vi.spyOn(sandbox as any, 'schedule').mockResolvedValue({});
+      vi.spyOn(sandbox as any, 'deleteSchedules').mockImplementation(() => {});
+      await sandbox.setKeepAlive(true);
+
+      // Mock ping to fail
+      const pingSpy = vi
+        .spyOn(sandbox.client.utils, 'ping')
+        .mockRejectedValue(new Error('Container unavailable'));
+      const scheduleSpy = vi
+        .spyOn(sandbox as any, 'schedule')
+        .mockResolvedValue({});
+      scheduleSpy.mockClear();
+
+      // Invoke the heartbeat callback - should not throw
+      await (sandbox as any).keepAliveHeartbeat();
+
+      // Ping was attempted
+      expect(pingSpy).toHaveBeenCalled();
+
+      // Next heartbeat should still be scheduled despite ping failure
+      expect(scheduleSpy).toHaveBeenCalledWith(30, 'keepAliveHeartbeat');
+    });
+
+    it('should renew activity timeout in onActivityExpired when keepAlive is enabled', async () => {
+      // Enable keepAlive
+      vi.spyOn(sandbox as any, 'schedule').mockResolvedValue({});
+      vi.spyOn(sandbox as any, 'deleteSchedules').mockImplementation(() => {});
+      await sandbox.setKeepAlive(true);
+
+      const renewSpy = vi.spyOn(sandbox as any, 'renewActivityTimeout');
+
+      // Call onActivityExpired
+      await (sandbox as any).onActivityExpired();
+
+      // Should renew activity timeout instead of stopping
+      expect(renewSpy).toHaveBeenCalled();
+    });
+
+    it('should call parent onActivityExpired when keepAlive is disabled', async () => {
+      // Ensure keepAlive is disabled
+      expect((sandbox as any).keepAliveEnabled).toBe(false);
+
+      // The parent's onActivityExpired is from the mock Container class
+      // We can't easily spy on super.onActivityExpired, but we can verify
+      // renewActivityTimeout is NOT called when keepAlive is false
+      const renewSpy = vi.spyOn(sandbox as any, 'renewActivityTimeout');
+
+      // Call onActivityExpired - this will try to call super.onActivityExpired()
+      // which doesn't exist in our mock, so we catch the error
+      try {
+        await (sandbox as any).onActivityExpired();
+      } catch {
+        // Expected - mock Container doesn't have onActivityExpired
+      }
+
+      // renewActivityTimeout should NOT be called
+      expect(renewSpy).not.toHaveBeenCalled();
     });
   });
 });
