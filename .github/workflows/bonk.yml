@@ -12,7 +12,7 @@ jobs:
       github.event.sender.type != 'Bot' &&
       contains(fromJson('["OWNER","MEMBER"]'), github.event.comment.author_association)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 25
     concurrency:
       group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
       cancel-in-progress: false
