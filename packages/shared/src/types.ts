@@ -1129,6 +1129,15 @@ export interface MountBucketOptions {
    * Must start with '/' (e.g., '/sessions/user123' or '/data/uploads/')
    */
   prefix?: string;
+
+  /**
+   * Name of the R2 bucket binding in the Worker's env (e.g., 'MY_BUCKET').
+   *
+   * Required for local development where s3fs-FUSE is not available.
+   * The Durable Object resolves the R2 binding from its own env at mount time.
+   * Ignored in production (where s3fs uses the endpoint + credentials instead).
+   */
+  bindingName?: string;
 }
 
 // Main Sandbox interface
