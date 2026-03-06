@@ -44,7 +44,9 @@ export class Pty {
       }
     });
 
-    this.process = Bun.spawn(['bash'], {
+    const shell = options.shell ?? 'bash';
+
+    this.process = Bun.spawn([shell], {
       terminal: this.terminal,
       cwd: this.cwd,
       env: {

@@ -19,6 +19,7 @@ export async function proxyTerminal(
   const params = new URLSearchParams({ sessionId });
   if (options?.cols) params.set('cols', String(options.cols));
   if (options?.rows) params.set('rows', String(options.rows));
+  if (options?.shell) params.set('shell', options.shell);
 
   const ptyUrl = `http://localhost/ws/pty?${params}`;
   const ptyRequest = new Request(ptyUrl, request);

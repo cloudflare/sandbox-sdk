@@ -14,6 +14,7 @@ export interface PtyWSData {
   connectionId: string;
   cols?: number;
   rows?: number;
+  shell?: string;
 }
 
 interface PtyConnection {
@@ -31,11 +32,15 @@ export class PtyWebSocketHandler {
   ) {}
 
   async onOpen(ws: ServerWebSocket<PtyWSData>): Promise<void> {
-    const { sessionId, connectionId, cols, rows } = ws.data;
+    const { sessionId, connectionId, cols, rows, shell } = ws.data;
 
     this.logger.debug('PTY WebSocket opened', { sessionId, connectionId });
 
-    const result = await this.sessionManager.getPty(sessionId, { cols, rows });
+    const result = await this.sessionManager.getPty(sessionId, {
+      cols,
+      rows,
+      shell
+    });
 
     if (!result.success) {
       this.sendStatus(ws, {

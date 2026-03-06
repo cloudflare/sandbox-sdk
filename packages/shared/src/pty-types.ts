@@ -1,6 +1,7 @@
 export interface PtyOptions {
   cols?: number;
   rows?: number;
+  shell?: string;
 }
 
 export type PtyControlMessage = {
