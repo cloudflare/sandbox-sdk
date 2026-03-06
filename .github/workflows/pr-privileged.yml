@@ -18,7 +18,7 @@ jobs:
   policy:
     runs-on: ubuntu-latest
     permissions:
-      pull-requests: write
+      pull-requests: read
       issues: write
     timeout-minutes: 1
     outputs:
@@ -123,6 +123,7 @@ jobs:
     timeout-minutes: 1
     outputs:
       needs-docker: ${{ steps.derived.outputs.needs-docker }}
+      docker-changed: ${{ steps.derived.outputs.docker-changed }}
       needs-e2e: ${{ steps.derived.outputs.needs-e2e }}
       any-source: ${{ steps.filter.outputs.any-source }}
       docker-hash: ${{ steps.hashes.outputs.docker }}
@@ -150,18 +151,19 @@ jobs:
       - name: Derive conditions
         id: derived
         run: |
-          # Needs Docker rebuild?
+          # Did Docker inputs actually change?
+          DOCKER_CHANGED=false
           if [[ "${{ steps.filter.outputs.shared }}" == "true" \
              || "${{ steps.filter.outputs.container }}" == "true" \
              || "${{ steps.filter.outputs.docker-config }}" == "true" \
              || "${{ steps.filter.outputs.build-config }}" == "true" \
              || "${{ steps.filter.outputs.deps }}" == "true" ]]; then
-            echo "needs-docker=true" >> $GITHUB_OUTPUT
-          else
-            echo "needs-docker=false" >> $GITHUB_OUTPUT
+            DOCKER_CHANGED=true
           fi
+          echo "docker-changed=$DOCKER_CHANGED" >> $GITHUB_OUTPUT
 
           # Needs E2E?
+          NEEDS_E2E=false
           if [[ "${{ steps.filter.outputs.shared }}" == "true" \
              || "${{ steps.filter.outputs.sdk }}" == "true" \
              || "${{ steps.filter.outputs.container }}" == "true" \
@@ -169,10 +171,17 @@ jobs:
              || "${{ steps.filter.outputs.build-config }}" == "true" \
              || "${{ steps.filter.outputs.e2e-tests }}" == "true" \
              || "${{ steps.filter.outputs.deps }}" == "true" ]]; then
-            echo "needs-e2e=true" >> $GITHUB_OUTPUT
-          else
-            echo "needs-e2e=false" >> $GITHUB_OUTPUT
+            NEEDS_E2E=true
           fi
+          echo "needs-e2e=$NEEDS_E2E" >> $GITHUB_OUTPUT
+
+          # Docker images must exist whenever e2e will run (content-addressed
+          # cache makes this a fast retag when Docker inputs haven't changed)
+          NEEDS_DOCKER=$DOCKER_CHANGED
+          if [[ "$NEEDS_E2E" == "true" ]]; then
+            NEEDS_DOCKER=true
+          fi
+          echo "needs-docker=$NEEDS_DOCKER" >> $GITHUB_OUTPUT
 
       - name: Compute content hashes
         id: hashes
@@ -242,7 +251,7 @@ jobs:
     with:
       worker_name_prefix: sandbox-e2e-test-worker-pr-${{ github.event.pull_request.number }}
       image_tag: pr-${{ github.event.pull_request.number }}
-      images_changed: ${{ needs.detect-changes.outputs.needs-docker }}
+      images_changed: ${{ needs.detect-changes.outputs.docker-changed }}
       deploy_hash: ${{ needs.detect-changes.outputs.deploy-hash }}
       checkout_ref: ${{ github.event.pull_request.head.sha }}
       checkout_repo: ${{ github.event.pull_request.head.repo.full_name }}
@@ -312,7 +321,7 @@ jobs:
           rm -f "${TARBALL}" checksums.txt
 
       - name: Login to CF registry
-        if: ${{ needs.detect-changes.outputs.needs-docker == 'true' }}
+        if: ${{ needs.detect-changes.outputs.docker-changed == 'true' }}
         run: |
           CREDS=$(curl -sf -X POST \
             "https://api.cloudflare.com/client/v4/accounts/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/containers/registries/registry.cloudflare.com/credentials" \
@@ -328,7 +337,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       - name: Copy Docker images to Docker Hub
-        if: ${{ needs.detect-changes.outputs.needs-docker == 'true' }}
+        if: ${{ needs.detect-changes.outputs.docker-changed == 'true' }}
         run: |
           BUILD_TAG="pr-${{ github.event.pull_request.number }}"
           PREVIEW="${{ steps.version.outputs.version }}"
@@ -340,7 +349,7 @@ jobs:
           done
 
       - name: Extract standalone binary
-        if: ${{ needs.detect-changes.outputs.needs-docker == 'true' }}
+        if: ${{ needs.detect-changes.outputs.docker-changed == 'true' }}
         run: |
           BUILD_TAG="pr-${{ github.event.pull_request.number }}"
           docker pull registry.cloudflare.com/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/sandbox:${BUILD_TAG}
@@ -350,7 +359,7 @@ jobs:
           chmod +x ./sandbox-linux-x64
 
       - uses: actions/upload-artifact@v7
-        if: ${{ needs.detect-changes.outputs.needs-docker == 'true' }}
+        if: ${{ needs.detect-changes.outputs.docker-changed == 'true' }}
         with:
           name: sandbox-binary
           path: ./sandbox-linux-x64
@@ -360,7 +369,7 @@ jobs:
 
       # PR comment with Docker image tags
       - uses: actions/github-script@v8
-        if: ${{ needs.detect-changes.outputs.needs-docker == 'true' }}
+        if: ${{ needs.detect-changes.outputs.docker-changed == 'true' }}
         with:
           script: |
             const fs = require('fs');
