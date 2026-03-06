@@ -31,7 +31,9 @@
       "!**/tsconfig.json",
       "!**/normalize.css",
       "!coverage",
-      "!**/coverage"
+      "!**/coverage",
+      "!**/build",
+      "!**/.react-router"
     ]
   },
   "formatter": {

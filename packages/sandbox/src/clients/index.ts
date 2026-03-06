@@ -11,12 +11,14 @@ export { SandboxClient } from './sandbox-client';
 
 export { BackupClient } from './backup-client';
 export { CommandClient } from './command-client';
+export { DesktopClient } from './desktop-client';
 export { FileClient } from './file-client';
 export { GitClient } from './git-client';
 export { InterpreterClient } from './interpreter-client';
 export { PortClient } from './port-client';
 export { ProcessClient } from './process-client';
 export { UtilityClient } from './utility-client';
+export { WatchClient } from './watch-client';
 
 // =============================================================================
 // Transport layer
@@ -39,8 +41,27 @@ export {
 // Client types and interfaces
 // =============================================================================
 
+export type { WatchRequest } from '@repo/shared';
 // Command client types
 export type { ExecuteRequest, ExecuteResponse } from './command-client';
+// Desktop client types
+export type {
+  ClickOptions,
+  CursorPositionResponse,
+  Desktop,
+  DesktopStartOptions,
+  DesktopStartResponse,
+  DesktopStatusResponse,
+  DesktopStopResponse,
+  KeyInput,
+  ScreenSizeResponse,
+  ScreenshotBytesResponse,
+  ScreenshotOptions,
+  ScreenshotRegion,
+  ScreenshotResponse,
+  ScrollDirection,
+  TypeOptions
+} from './desktop-client';
 // File client types
 export type {
   FileOperationRequest,
@@ -80,7 +101,6 @@ export type {
   ResponseHandler,
   SessionRequest
 } from './types';
-
 // Utility client types
 export type {
   CommandsResponse,

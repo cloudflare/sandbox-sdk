@@ -1,9 +1,11 @@
 import type { ExecEvent } from '@repo/shared';
-import { beforeAll, describe, expect, test } from 'vitest';
+import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import { parseSSEStream } from '../../packages/sandbox/src/sse-parser';
 import {
+  cleanupTestSandbox,
+  createTestSandbox,
   createUniqueSession,
-  getSharedSandbox
+  type TestSandbox
 } from './helpers/global-sandbox';
 
 /**
@@ -19,13 +21,19 @@ import {
  * - File content streaming
  */
 describe('Streaming Operations Edge Cases', () => {
+  let sandbox: TestSandbox | null = null;
   let workerUrl: string;
   let headers: Record<string, string>;
 
   beforeAll(async () => {
-    const sandbox = await getSharedSandbox();
+    sandbox = await createTestSandbox();
     workerUrl = sandbox.workerUrl;
-    headers = sandbox.createHeaders(createUniqueSession());
+    headers = sandbox.headers(createUniqueSession());
+  }, 120000);
+
+  afterAll(async () => {
+    await cleanupTestSandbox(sandbox);
+    sandbox = null;
   }, 120000);
 
   async function collectSSEEvents(

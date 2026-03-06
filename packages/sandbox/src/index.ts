@@ -4,6 +4,7 @@
 export {
   BackupClient,
   CommandClient,
+  DesktopClient,
   FileClient,
   GitClient,
   PortClient,
@@ -32,6 +33,8 @@ export type {
   FileChunk,
   FileMetadata,
   FileStreamEvent,
+  // File watch types
+  FileWatchSSEEvent,
   GitCheckoutResult,
   ISandbox,
   ListFilesOptions,
@@ -47,21 +50,31 @@ export type {
   SessionOptions,
   StreamOptions,
   WaitForLogResult,
-  WaitForPortOptions
+  WaitForPortOptions,
+  WatchOptions
 } from '@repo/shared';
 // Export type guards for runtime validation
 export { isExecResult, isProcess, isProcessStatus } from '@repo/shared';
 // Export all client types from new architecture
 export type {
   BaseApiResponse,
+
+  // Desktop client types
+  ClickOptions,
   CommandsResponse,
   ContainerStub,
 
   // Utility client types
   CreateSessionRequest,
   CreateSessionResponse,
+  CursorPositionResponse,
   DeleteSessionRequest,
   DeleteSessionResponse,
+  Desktop,
+  DesktopStartOptions,
+  DesktopStartResponse,
+  DesktopStatusResponse,
+  DesktopStopResponse,
   ErrorResponse,
 
   // Command client types
@@ -76,6 +89,7 @@ export type {
   GitCheckoutRequest,
   // Base client types
   HttpClientOptions as SandboxClientOptions,
+  KeyInput,
 
   // File client types
   MkdirRequest,
@@ -92,10 +106,17 @@ export type {
   ReadFileRequest,
   RequestConfig,
   ResponseHandler,
+  ScreenSizeResponse,
+  ScreenshotBytesResponse,
+  ScreenshotOptions,
+  ScreenshotRegion,
+  ScreenshotResponse,
+  ScrollDirection,
   SessionRequest,
 
   // Process client types
   StartProcessRequest,
+  TypeOptions,
   UnexposePortRequest,
   WriteFileRequest
 } from './clients';
@@ -109,6 +130,12 @@ export {
   BackupExpiredError,
   BackupNotFoundError,
   BackupRestoreError,
+  DesktopInvalidCoordinatesError,
+  DesktopInvalidOptionsError,
+  DesktopNotStartedError,
+  DesktopProcessCrashedError,
+  DesktopStartFailedError,
+  DesktopUnavailableError,
   InvalidBackupConfigError,
   ProcessExitedBeforeReadyError,
   ProcessReadyTimeoutError

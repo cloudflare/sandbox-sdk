@@ -1,5 +1,84 @@
 # @cloudflare/sandbox
 
+## 0.7.13
+
+### Patch Changes
+
+- [#459](https://github.com/cloudflare/sandbox-sdk/pull/459) [`f3e264a`](https://github.com/cloudflare/sandbox-sdk/commit/f3e264ad6d74d50e7410703c9ac51e7f6f656496) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Fix four root causes of intermittent sandbox failures: a debounce deadlock in log pattern matching that caused startups to time out, incorrect HTTP 500 classification for transient startup errors that prevented retries, a WebSocket chunk race where streaming responses dropped data before the controller was ready, and missing timeout protection on git clone operations that could hang indefinitely on slow or unreachable remotes.
+
+## 0.7.12
+
+### Patch Changes
+
+- [#452](https://github.com/cloudflare/sandbox-sdk/pull/452) [`5cce034`](https://github.com/cloudflare/sandbox-sdk/commit/5cce03430392fd47e4fb4bd011add5279d09db2e) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - Fix crash when destroying a session that has an active streaming command. The stream now terminates cleanly instead of throwing a null pointer error.
+
+- [#449](https://github.com/cloudflare/sandbox-sdk/pull/449) [`909e8c5`](https://github.com/cloudflare/sandbox-sdk/commit/909e8c55d257b76dac65dd22e76996a9f0622a23) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - Fix sandbox creation timing out for large container images even when startup timeouts are configured to allow enough time. The transport retry budget now automatically scales to match configured startup timeouts instead of being hard-coded at 120 seconds.
+
+## 0.7.11
+
+### Patch Changes
+
+- [#446](https://github.com/cloudflare/sandbox-sdk/pull/446) [`bbaba54`](https://github.com/cloudflare/sandbox-sdk/commit/bbaba5403e1bc7e062f36c37bfdd72e6683ff965) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - Fix heredoc commands (e.g. `cat << 'EOF'`) hanging permanently and making the session unusable for subsequent commands.
+
+- [#447](https://github.com/cloudflare/sandbox-sdk/pull/447) [`4088435`](https://github.com/cloudflare/sandbox-sdk/commit/4088435d9dc2ea8965518836d09b966dfe3ae661) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Fix three reliability issues: OpenCode readiness probe returning healthy before the binary is ready, file watch race condition where stale watchers could linger after cancellation, and SSE stream handler registering output listeners after replaying buffered logs — causing intermittent `waitForLog` timeouts on HTTP transport.
+
+## 0.7.10
+
+### Patch Changes
+
+- [#422](https://github.com/cloudflare/sandbox-sdk/pull/422) [`dc70649`](https://github.com/cloudflare/sandbox-sdk/commit/dc706497a3e3014cbca3ab20f456e7f207798097) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Add desktop environment support for AI computer-use workflows.
+
+  Start a full Linux desktop (Xvfb + XFCE4 + x11vnc + noVNC) inside the
+  sandbox and control it programmatically via `sandbox.desktop.*` methods.
+  Supports screenshots, mouse clicks, keyboard input, and live browser
+  streaming via noVNC preview URLs.
+
+  Enable with `sandbox.desktop.start()`. Requires the desktop container
+  image variant.
+
+## 0.7.9
+
+### Patch Changes
+
+- [#324](https://github.com/cloudflare/sandbox-sdk/pull/324) [`2af3c28`](https://github.com/cloudflare/sandbox-sdk/commit/2af3c283334ff9317f28e36c0b63cbc1b302f5ce) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - Add real-time file watching for detecting filesystem changes as they happen.
+
+  `sandbox.watch()` returns an SSE stream of create, modify, delete, and move events using native inotify. The stream can be proxied directly to a client or consumed server-side with `parseSSEStream`:
+
+  ```typescript
+  // Stream events to a browser client
+  const stream = await sandbox.watch('/workspace/src', {
+    recursive: true,
+    include: ['*.ts', '*.js']
+  });
+  return new Response(stream, {
+    headers: { 'Content-Type': 'text/event-stream' }
+  });
+
+  // Or consume server-side
+  for await (const event of parseSSEStream<FileWatchSSEEvent>(stream)) {
+    console.log(event.type, event.path);
+  }
+  ```
+
+## 0.7.8
+
+### Patch Changes
+
+- [#427](https://github.com/cloudflare/sandbox-sdk/pull/427) [`04b4ccf`](https://github.com/cloudflare/sandbox-sdk/commit/04b4ccf5d6ff180d9e93ff582abd27b7f13ca36d) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Fix local development crash loops after Docker restarts or idle timeouts. The Sandbox now detects stale container state and automatically recovers.
+
+## 0.7.7
+
+### Patch Changes
+
+- [#402](https://github.com/cloudflare/sandbox-sdk/pull/402) [`eb23055`](https://github.com/cloudflare/sandbox-sdk/commit/eb23055ca6d0cf8069628e60eb25290a2cfe90e4) Thanks [@scuffi](https://github.com/scuffi)! - Improve `readFile()` and `readFileStream()` performance by using native syscall file reads instead of shell-based reads.
+  This increases read transfer speeds and unblocks the max throughput from file streaming.
+
+  Improving file size handling: calls to `readFile()` now return a `413: File too large error` if the target file exceeds `32 MiB`. Previously such files would trigger a generic error; we're now explicit about the limitation and recommend using `readFileStream` for larger files.
+
+- [#421](https://github.com/cloudflare/sandbox-sdk/pull/421) [`1244660`](https://github.com/cloudflare/sandbox-sdk/commit/1244660a2fdffa27361f98a998c402ffc36c1151) Thanks [@scuffi](https://github.com/scuffi)! - Patch `proxyToSandbox` to pass redirect responses to the caller, instead of following them
+
+- [#430](https://github.com/cloudflare/sandbox-sdk/pull/430) [`364e366`](https://github.com/cloudflare/sandbox-sdk/commit/364e366e2cf15c9d71bd52fa8b7ac5ec93b82039) Thanks [@scuffi](https://github.com/scuffi)! - Patch `readFile` to strip MIME type parameters, e.g. `text/plain;charset=utf-8` -> `text/plain`
+
 ## 0.7.6
 
 ### Patch Changes
@@ -59,13 +138,13 @@
   As a base image:
 
   ```dockerfile
-  FROM docker.io/cloudflare/sandbox:0.7.6-musl
+  FROM docker.io/cloudflare/sandbox:0.7.13-musl
   ```
 
   Or copy the binary into your own Alpine image:
 
   ```dockerfile
-  COPY --from=docker.io/cloudflare/sandbox:0.7.6-musl /container-server/sandbox /sandbox
+  COPY --from=docker.io/cloudflare/sandbox:0.7.13-musl /container-server/sandbox /sandbox
   ```
 
 - [#377](https://github.com/cloudflare/sandbox-sdk/pull/377) [`d83642e`](https://github.com/cloudflare/sandbox-sdk/commit/d83642e855f68e4fb8c15c2452709923e55a83fd) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Allow port 8787 in `exposePort()`. It was incorrectly blocked.
@@ -288,10 +367,10 @@
 
   ```dockerfile
   # Before
-  FROM cloudflare/sandbox:0.7.6
+  FROM cloudflare/sandbox:0.7.13
 
   # After
-  FROM cloudflare/sandbox:0.7.6-python
+  FROM cloudflare/sandbox:0.7.13-python
   ```
 
   Without this change, Python execution will fail with `PYTHON_NOT_AVAILABLE` error.

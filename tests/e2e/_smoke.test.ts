@@ -1,5 +1,9 @@
-import { beforeAll, describe, expect, test } from 'vitest';
-import { getSharedSandbox } from './helpers/global-sandbox';
+import { afterAll, beforeAll, describe, expect, test } from 'vitest';
+import {
+  cleanupTestSandbox,
+  createTestSandbox,
+  type TestSandbox
+} from './helpers/global-sandbox';
 import type { HealthResponse } from './test-worker/types';
 
 /**
@@ -8,17 +12,21 @@ import type { HealthResponse } from './test-worker/types';
  * This test validates that:
  * 1. Can get worker URL (deployed in CI, wrangler dev locally)
  * 2. Worker is running and responding
- * 3. Shared sandbox initializes correctly
- *
- * NOTE: This test runs first (sorted by name) and initializes the shared sandbox.
+ * 3. Isolated sandbox initializes correctly
  */
 describe('Integration Infrastructure Smoke Test', () => {
+  let sandbox: TestSandbox | null = null;
   let workerUrl: string;
 
   beforeAll(async () => {
-    // Initialize shared sandbox - this will be reused by all other tests
-    const sandbox = await getSharedSandbox();
+    // Create isolated sandbox for this test file
+    sandbox = await createTestSandbox();
     workerUrl = sandbox.workerUrl;
+  }, 120000);
+
+  afterAll(async () => {
+    await cleanupTestSandbox(sandbox);
+    sandbox = null;
   }, 120000);
 
   test('should verify worker is running with health check', async () => {

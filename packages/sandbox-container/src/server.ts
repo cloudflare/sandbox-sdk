@@ -189,9 +189,19 @@ export async function startServer(): Promise<ServerInstance> {
       if (!app.container.isInitialized()) return;
 
       try {
+        const desktopService = app.container.get('desktopService');
         const processService = app.container.get('processService');
         const portService = app.container.get('portService');
+        const watchService = app.container.get('watchService');
 
+        const stoppedWatches = await watchService.stopAllWatches();
+        if (stoppedWatches > 0) {
+          logger.info('Stopped file watches during shutdown', {
+            count: stoppedWatches
+          });
+        }
+
+        await desktopService.destroy();
         await processService.destroy();
         portService.destroy();
 

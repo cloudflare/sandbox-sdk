@@ -67,6 +67,12 @@ export interface HttpClientOptions {
    * When provided, clients will use this transport instead of creating their own.
    */
   transport?: ITransport;
+
+  /**
+   * Total retry budget in milliseconds for 503 retries during container startup.
+   * Passed through to the transport layer. Defaults to 120_000 (2 minutes).
+   */
+  retryTimeoutMs?: number;
 }
 
 /**

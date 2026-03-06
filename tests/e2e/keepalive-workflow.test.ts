@@ -1,10 +1,10 @@
 import type { ExecResult, Process, ReadFileResult } from '@repo/shared';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import {
-  cleanupIsolatedSandbox,
+  cleanupTestSandbox,
+  createTestSandbox,
   createUniqueSession,
-  getIsolatedSandbox,
-  type SharedSandbox
+  type TestSandbox
 } from './helpers/global-sandbox';
 
 /**
@@ -22,18 +22,17 @@ import {
 describe('KeepAlive Feature', () => {
   let workerUrl: string;
   let headers: Record<string, string>;
-  let sandbox: SharedSandbox | null = null;
+  let sandbox: TestSandbox | null = null;
 
   beforeAll(async () => {
-    sandbox = await getIsolatedSandbox();
+    sandbox = await createTestSandbox();
     workerUrl = sandbox.workerUrl;
-    headers = sandbox.createHeaders(createUniqueSession());
+    headers = sandbox.headers(createUniqueSession());
   }, 120000);
 
   afterAll(async () => {
-    await cleanupIsolatedSandbox(sandbox);
+    await cleanupTestSandbox(sandbox);
   }, 120000);
-
   test('should accept keepAlive header and execute commands', async () => {
     const keepAliveHeaders = { ...headers, 'X-Sandbox-KeepAlive': 'true' };
 

@@ -1,3 +1,7 @@
+# Bun version — override via --build-arg BUN_VERSION=$(cat .bun-version)
+ARG BUN_VERSION=1
+FROM oven/bun:${BUN_VERSION} AS bun-binary
+
 # Sandbox container images (default and python variants)
 # Multi-stage build optimized for Turborepo monorepo
 
@@ -26,7 +30,7 @@ FROM node:20-slim AS builder
 WORKDIR /app
 
 # Install Bun runtime (glibc version for glibc-compatible standalone binary)
-COPY --from=oven/bun:1 /usr/local/bin/bun /usr/local/bin/bun
+COPY --from=bun-binary /usr/local/bin/bun /usr/local/bin/bun
 
 # Copy pruned lockfile and package.json files (for Docker layer caching)
 COPY --from=pruner /app/out/json/ .
@@ -111,6 +115,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
     s3fs fuse3 squashfs-tools squashfuse fuse-overlayfs \
     ca-certificates curl wget procps git unzip zip jq file \
+    inotify-tools \
     libssl3 zlib1g libbz2-1.0 libreadline8 libsqlite3-0 \
     libncursesw6 libtinfo6 libxml2 libxmlsec1 libffi8 liblzma5 libtk8.6 && \
     update-ca-certificates
@@ -125,7 +130,7 @@ RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm && \
     ln -s /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
 
 # Install Bun runtime from official image
-COPY --from=oven/bun:1 /usr/local/bin/bun /usr/local/bin/bun
+COPY --from=bun-binary /usr/local/bin/bun /usr/local/bin/bun
 
 # Copy standalone binary
 COPY --from=builder /app/packages/sandbox-container/dist/sandbox /container-server/sandbox
@@ -194,6 +199,12 @@ ENTRYPOINT ["/container-server/sandbox"]
 # ============================================================================
 FROM runtime-base AS opencode
 
+RUN --mount=type=secret,id=wrangler_ca \
+    if [ -f /run/secrets/wrangler_ca ] && [ -s /run/secrets/wrangler_ca ]; then \
+        cp /run/secrets/wrangler_ca /usr/local/share/ca-certificates/wrangler-dev-ca.crt && \
+        update-ca-certificates; \
+    fi
+
 # Install OpenCode CLI via npm (avoids GitHub API rate limits)
 RUN npm i -g opencode-ai \
     && opencode --version
@@ -209,6 +220,60 @@ EXPOSE 4096
 ENTRYPOINT ["/container-server/sandbox"]
 
 # ============================================================================
+# Desktop variant — full Linux desktop with robotgo native control
+# ============================================================================
+FROM golang:1.24-bookworm AS go-builder
+
+RUN mkdir -p /usr/local/share/ca-certificates
+RUN --mount=type=secret,id=wrangler_ca \
+    if [ -f /run/secrets/wrangler_ca ] && [ -s /run/secrets/wrangler_ca ]; then \
+        cp /run/secrets/wrangler_ca /usr/local/share/ca-certificates/wrangler-dev-ca.crt && \
+        apt-get update && apt-get install -y --no-install-recommends ca-certificates && \
+        update-ca-certificates; \
+    fi
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc libx11-dev libxtst-dev libxinerama-dev libpng-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY packages/sandbox-container/native/desktop-wrapper/ /build/
+WORKDIR /build
+RUN go mod tidy && go build -buildmode=c-shared -o /usr/lib/desktop.so .
+
+FROM runtime-base AS desktop
+
+# Install display stack
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    rm -f /etc/apt/apt.conf.d/docker-clean && \
+    echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' >/etc/apt/apt.conf.d/keep-cache && \
+    apt-get update && apt-get install -y --no-install-recommends \
+    xvfb x11vnc novnc websockify \
+    xfce4 xfce4-terminal dbus-x11 \
+    libx11-6 libxrandr2 libxext6 libxrender1 libxfixes3 \
+    libxss1 libxtst6 libxi6 libxinerama1 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=go-builder /usr/lib/desktop.so /usr/lib/desktop.so
+COPY --from=go-builder /usr/lib/desktop.h /usr/lib/desktop.h
+
+COPY --from=builder /app/packages/sandbox-container/dist/sandbox /container-server/sandbox
+COPY --from=builder /app/packages/sandbox-container/dist/workers/ /container-server/workers/
+
+# Install koffi for FFI worker thread
+WORKDIR /container-server
+RUN npm init -y && npm install koffi
+
+EXPOSE 6080
+
+ENV DISPLAY=:99
+ENV PYTHON_POOL_MIN_SIZE=0
+ENV JAVASCRIPT_POOL_MIN_SIZE=0
+ENV TYPESCRIPT_POOL_MIN_SIZE=0
+
+ENTRYPOINT ["/container-server/sandbox"]
+
+# ============================================================================
 # Stage 5d: Musl image - Alpine-based with musl-linked binary
 # ============================================================================
 FROM alpine:3.21 AS musl
@@ -217,7 +282,19 @@ ARG SANDBOX_VERSION=unknown
 
 ENV SANDBOX_VERSION=${SANDBOX_VERSION}
 
-RUN apk add --no-cache bash file git ca-certificates curl libstdc++ libgcc s3fs-fuse fuse
+# CA certificate installation
+RUN mkdir -p /usr/local/share/ca-certificates
+RUN --mount=type=secret,id=wrangler_ca \
+    if [ -f /run/secrets/wrangler_ca ] && [ -s /run/secrets/wrangler_ca ]; then \
+        cp /run/secrets/wrangler_ca /usr/local/share/ca-certificates/wrangler-dev-ca.crt && \
+        cat /run/secrets/wrangler_ca >> /etc/ssl/certs/ca-certificates.crt && \
+        apk add --no-cache ca-certificates && \
+        update-ca-certificates; \
+    else \
+        apk add --no-cache ca-certificates; \
+    fi
+
+RUN apk add --no-cache bash file git curl libstdc++ libgcc s3fs-fuse fuse
 
 RUN sed -i 's/#user_allow_other/user_allow_other/' /etc/fuse.conf
 

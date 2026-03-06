@@ -1,10 +1,10 @@
 import type { PortExposeResult, Process } from '@repo/shared';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import {
-  cleanupIsolatedSandbox,
+  cleanupTestSandbox,
+  createTestSandbox,
   createUniqueSession,
-  getIsolatedSandbox,
-  type SharedSandbox
+  type TestSandbox
 } from './helpers/global-sandbox';
 
 // Port exposure tests require custom domain with wildcard DNS routing
@@ -23,12 +23,12 @@ describe('Redirect Proxy Workflow', () => {
   let workerUrl: string;
   let headers: Record<string, string>;
   let portHeaders: Record<string, string>;
-  let sandbox: SharedSandbox | null = null;
+  let sandbox: TestSandbox | null = null;
 
   beforeAll(async () => {
-    sandbox = await getIsolatedSandbox();
+    sandbox = await createTestSandbox();
     workerUrl = sandbox.workerUrl;
-    headers = sandbox.createHeaders(createUniqueSession());
+    headers = sandbox.headers(createUniqueSession());
     portHeaders = {
       'X-Sandbox-Id': sandbox.sandboxId,
       'Content-Type': 'application/json'
@@ -36,7 +36,7 @@ describe('Redirect Proxy Workflow', () => {
   }, 120000);
 
   afterAll(async () => {
-    await cleanupIsolatedSandbox(sandbox);
+    await cleanupTestSandbox(sandbox);
   }, 120000);
 
   test.skipIf(skipPortExposureTests)(

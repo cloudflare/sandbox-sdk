@@ -38,10 +38,18 @@ export abstract class BaseHttpClient {
         logger: this.logger,
         stub: options.stub,
         port: options.port,
+        retryTimeoutMs: options.retryTimeoutMs,
         requestTimeoutMs: options.requestTimeoutMs,
         streamIdleTimeoutMs: options.streamIdleTimeoutMs
       });
     }
+  }
+
+  /**
+   * Update the transport's 503 retry budget
+   */
+  setRetryTimeoutMs(ms: number): void {
+    this.transport.setRetryTimeoutMs(ms);
   }
 
   /**

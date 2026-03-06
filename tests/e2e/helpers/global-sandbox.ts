@@ -1,331 +1,136 @@
 /**
- * Global Sandbox Manager
+ * Per-File Sandbox Helper
  *
- * Provides a single shared sandbox for all e2e tests to dramatically reduce
- * container startup/shutdown overhead.
- *
- * Architecture:
- * - ONE sandbox (container) is created on first access
- * - Each test file gets a unique SESSION within that sandbox
- * - Sessions provide isolated shell environments (env, cwd, shell state)
- * - File system and process space are SHARED (tests must use unique paths)
- *
- * Usage in test files:
- * ```typescript
- * import { getSharedSandbox, createUniqueSession } from './helpers/global-sandbox';
- *
- * describe('My Tests', () => {
- *   let workerUrl: string;
- *   let headers: Record<string, string>;
- *
- *   beforeAll(async () => {
- *     const sandbox = await getSharedSandbox();
- *     workerUrl = sandbox.workerUrl;
- *     headers = sandbox.createHeaders(createUniqueSession());
- *   });
- *
- *   test('my test', async () => {
- *     const res = await fetch(`${workerUrl}/api/execute`, { headers, ... });
- *   });
- * });
- * ```
+ * Each test file creates its own isolated sandbox via createTestSandbox().
+ * No shared state between test files.
  */
 
 import { randomUUID } from 'node:crypto';
-import {
-  cleanupSandbox,
-  createSandboxId,
-  createTestHeaders
-} from './test-fixtures';
-import { getTestWorkerUrl, type WranglerDevRunner } from './wrangler-runner';
+import { createSandboxId, createTestHeaders } from './test-fixtures';
 
-export interface SharedSandbox {
-  /** The worker URL to make requests to */
+export type SandboxType =
+  | 'default'
+  | 'python'
+  | 'opencode'
+  | 'standalone'
+  | 'musl'
+  | 'desktop';
+
+export interface TestSandbox {
   workerUrl: string;
-  /** The sandbox ID */
   sandboxId: string;
-  /** Create headers for a specific session (base image) */
-  createHeaders: (sessionId?: string) => Record<string, string>;
-  /** Create headers for Python image sandbox (with Python) */
-  createPythonHeaders: (sessionId?: string) => Record<string, string>;
-  /** Create headers for OpenCode image sandbox (with OpenCode CLI) */
-  createOpencodeHeaders: (sessionId?: string) => Record<string, string>;
-  /** Create headers for standalone binary sandbox (arbitrary base image) */
-  createStandaloneHeaders: (sessionId?: string) => Record<string, string>;
-  /** Create headers for musl-based Alpine image sandbox */
-  createMuslHeaders: (sessionId?: string) => Record<string, string>;
-  /** Generate a unique file path prefix for test isolation */
+  /** Sandbox image type used for routing. */
+  type: SandboxType;
+  /** Create headers with optional session ID. Includes sandbox type. */
+  headers: (sessionId?: string) => Record<string, string>;
+  /** Generate a unique path for test isolation within this sandbox. */
   uniquePath: (prefix: string) => string;
 }
 
-// Singleton state - persists across test files in the same process
-let sharedSandbox: SharedSandbox | null = null;
-let runner: WranglerDevRunner | null = null;
-let initPromise: Promise<SharedSandbox> | null = null;
-
-/**
- * Get or create the shared sandbox.
- * First call initializes, subsequent calls return the same instance.
- * Thread-safe via promise caching.
- */
-export async function getSharedSandbox(): Promise<SharedSandbox> {
-  // Return existing sandbox
-  if (sharedSandbox) {
-    return sharedSandbox;
-  }
-
-  // If initialization in progress, wait for it
-  if (initPromise) {
-    return initPromise;
-  }
-
-  // Start initialization (only happens once)
-  initPromise = initializeSharedSandbox();
-  return initPromise;
+export interface CreateTestSandboxOptions {
+  /** Container image type. Defaults to 'default' (base image). */
+  type?: SandboxType;
+  /** Command to run for initialization. Defaults to 'echo ready'. */
+  initCommand?: string;
 }
 
 /**
- * Create a sandbox dedicated to one test file.
- *
- * Unlike getSharedSandbox(), this creates a fresh container instance every time.
- * Use this for lifecycle-sensitive suites (process/alarm/keepAlive tests) where
- * cross-file process state introduces flakiness.
+ * Create an isolated sandbox for a test file.
+ * Each call creates a new container instance.
  */
-export async function getIsolatedSandbox(): Promise<SharedSandbox> {
-  const workerContext = await getWorkerContext();
+export async function createTestSandbox(
+  options: CreateTestSandboxOptions = {}
+): Promise<TestSandbox> {
+  const { type = 'default', initCommand = 'echo ready' } = options;
+  const workerUrl = await getWorkerUrl();
   const sandboxId = createSandboxId();
 
-  const headers = createTestHeaders(sandboxId);
-  const initResponse = await fetch(`${workerContext.workerUrl}/api/execute`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({ command: 'echo "Isolated sandbox initialized"' })
-  });
-
-  if (!initResponse.ok) {
-    throw new Error(
-      `Failed to initialize isolated sandbox: ${initResponse.status}`
-    );
-  }
-
-  return createSandboxFacade(workerContext.workerUrl, sandboxId);
-}
-
-/**
- * Cleanup helper for sandboxes returned by getIsolatedSandbox().
- */
-export async function cleanupIsolatedSandbox(
-  sandbox: Pick<SharedSandbox, 'workerUrl' | 'sandboxId'> | null
-): Promise<void> {
-  if (!sandbox) {
-    return;
-  }
-
-  await cleanupSandbox(sandbox.workerUrl, sandbox.sandboxId);
-}
-
-/**
- * Create a unique session ID for test isolation.
- * Each test file should use a unique session.
- */
-export function createUniqueSession(): string {
-  return `session-${randomUUID()}`;
-}
-
-/**
- * Generate a unique file path for test isolation.
- * Use this to avoid file conflicts between tests.
- */
-export function uniqueTestPath(prefix: string): string {
-  return `/workspace/test-${randomUUID().slice(0, 8)}/${prefix}`;
-}
-
-async function initializeSharedSandbox(): Promise<SharedSandbox> {
-  // Check if global setup already created the sandbox (read from temp file)
-  const sharedState = await readGlobalSetupState();
-
-  if (sharedState?.sandboxId) {
-    console.log(
-      `[SharedSandbox] Using global setup sandbox: ${sharedState.sandboxId.slice(0, 12)}...`
-    );
-    sharedSandbox = createSandboxFacade(
-      sharedState.workerUrl,
-      sharedState.sandboxId
-    );
-    return sharedSandbox;
-  }
-
-  // Fallback: create sandbox ourselves (single-threaded mode or no global setup)
-  console.log('\n[SharedSandbox] Initializing (this only happens once)...');
-
-  const workerContext = await getWorkerContext();
-  const sandboxId = createSandboxId();
-
-  // Initialize the sandbox with a simple command
-  const initResponse = await fetch(`${workerContext.workerUrl}/api/execute`, {
-    method: 'POST',
-    headers: createTestHeaders(sandboxId),
-    body: JSON.stringify({ command: 'echo "Shared sandbox initialized"' })
-  });
-
-  if (!initResponse.ok) {
-    throw new Error(
-      `Failed to initialize shared sandbox: ${initResponse.status}`
-    );
-  }
-
-  console.log(`[SharedSandbox] Ready! ID: ${sandboxId}\n`);
-
-  sharedSandbox = createSandboxFacade(workerContext.workerUrl, sandboxId);
-
-  // Register cleanup on process exit (only when we created it)
-  process.on('beforeExit', async () => {
-    await cleanupSharedSandbox();
-  });
-
-  // Handle SIGTERM/SIGINT for graceful shutdown (e.g., Ctrl+C, CI termination)
-  const handleSignal = async (signal: string) => {
-    console.log(`\n[SharedSandbox] Received ${signal}, cleaning up...`);
-    await cleanupSharedSandbox();
+  const makeHeaders = (sessionId?: string): Record<string, string> => {
+    const h: Record<string, string> = {
+      ...createTestHeaders(sandboxId, sessionId)
+    };
+    if (type !== 'default') {
+      h['X-Sandbox-Type'] = type;
+    }
+    return h;
   };
-  process.on('SIGTERM', () => handleSignal('SIGTERM'));
-  process.on('SIGINT', () => handleSignal('SIGINT'));
 
-  return sharedSandbox;
-}
+  // Initialize the container with a simple command
+  const initResponse = await fetch(`${workerUrl}/api/execute`, {
+    method: 'POST',
+    headers: makeHeaders(),
+    body: JSON.stringify({ command: initCommand })
+  });
 
-function createSandboxFacade(
-  workerUrl: string,
-  sandboxId: string
-): SharedSandbox {
-  const baseHeaders = createTestHeaders(sandboxId);
+  if (!initResponse.ok) {
+    const body = await initResponse.text().catch(() => '<unreadable>');
+    throw new Error(
+      `Failed to initialize ${type} sandbox: ${initResponse.status} - ${body}`
+    );
+  }
 
   return {
     workerUrl,
     sandboxId,
-    createHeaders: (sessionId?: string) => {
-      const headers = { ...baseHeaders };
-      if (sessionId) {
-        headers['X-Session-Id'] = sessionId;
-      }
-      return headers;
-    },
-    createPythonHeaders: (sessionId?: string) => {
-      const headers: Record<string, string> = {
-        ...baseHeaders,
-        'X-Sandbox-Type': 'python'
-      };
-      if (sessionId) {
-        headers['X-Session-Id'] = sessionId;
-      }
-      return headers;
-    },
-    createOpencodeHeaders: (sessionId?: string) => {
-      const headers: Record<string, string> = {
-        ...baseHeaders,
-        'X-Sandbox-Type': 'opencode'
-      };
-      if (sessionId) {
-        headers['X-Session-Id'] = sessionId;
-      }
-      return headers;
-    },
-    createStandaloneHeaders: (sessionId?: string) => {
-      const headers: Record<string, string> = {
-        ...baseHeaders,
-        'X-Sandbox-Type': 'standalone'
-      };
-      if (sessionId) {
-        headers['X-Session-Id'] = sessionId;
-      }
-      return headers;
-    },
-    createMuslHeaders: (sessionId?: string) => {
-      const headers: Record<string, string> = {
-        ...baseHeaders,
-        'X-Sandbox-Type': 'musl'
-      };
-      if (sessionId) {
-        headers['X-Session-Id'] = sessionId;
-      }
-      return headers;
-    },
+    type,
+    headers: makeHeaders,
     uniquePath: (prefix: string) =>
       `/workspace/test-${randomUUID().slice(0, 8)}/${prefix}`
   };
 }
 
-async function readGlobalSetupState(): Promise<{
-  workerUrl: string;
-  sandboxId?: string;
-} | null> {
+/**
+ * Clean up a sandbox created by createTestSandbox().
+ * Safe to call with null (no-op).
+ */
+export async function cleanupTestSandbox(
+  sandbox: TestSandbox | null
+): Promise<void> {
+  if (!sandbox) return;
+  try {
+    const response = await fetch(`${sandbox.workerUrl}/cleanup`, {
+      method: 'POST',
+      headers: sandbox.headers()
+    });
+    if (!response.ok) {
+      console.warn(
+        `Failed to cleanup sandbox ${sandbox.sandboxId}: ${response.status}`
+      );
+    } else {
+      console.log(`Cleaned up sandbox: ${sandbox.sandboxId}`);
+    }
+  } catch (error) {
+    console.warn(`Error cleaning up sandbox ${sandbox.sandboxId}:`, error);
+  }
+}
+
+/**
+ * Create a unique session ID for test isolation within a sandbox.
+ */
+export function createUniqueSession(): string {
+  return `session-${randomUUID()}`;
+}
+
+// -- Internal --
+
+async function getWorkerUrl(): Promise<string> {
   const { readFileSync, existsSync } = await import('node:fs');
   const { tmpdir } = await import('node:os');
   const { join } = await import('node:path');
 
-  const stateFile = join(tmpdir(), 'e2e-shared-sandbox.json');
+  const stateFile = join(tmpdir(), 'e2e-global-state.json');
 
-  if (!existsSync(stateFile)) {
-    return null;
-  }
-
-  try {
-    const state = JSON.parse(readFileSync(stateFile, 'utf-8')) as {
-      workerUrl?: string;
-      sandboxId?: string;
-    };
-
-    if (!state.workerUrl) {
-      return null;
+  if (existsSync(stateFile)) {
+    try {
+      const state = JSON.parse(readFileSync(stateFile, 'utf-8'));
+      if (state.workerUrl) return state.workerUrl;
+    } catch {
+      // Fall through
     }
-
-    return {
-      workerUrl: state.workerUrl,
-      sandboxId: state.sandboxId
-    };
-  } catch {
-    console.warn(
-      '[SharedSandbox] Failed to read state file, creating new sandbox'
-    );
-    return null;
-  }
-}
-
-async function getWorkerContext(): Promise<{ workerUrl: string }> {
-  const sharedState = await readGlobalSetupState();
-  if (sharedState?.workerUrl) {
-    return { workerUrl: sharedState.workerUrl };
   }
 
+  // Fallback: get URL directly (single-thread mode / no global setup)
+  const { getTestWorkerUrl } = await import('./wrangler-runner');
   const result = await getTestWorkerUrl();
-  runner = result.runner;
-  return { workerUrl: result.url };
-}
-
-async function cleanupSharedSandbox(): Promise<void> {
-  if (!sharedSandbox) return;
-
-  console.log('\n[SharedSandbox] Cleaning up...');
-
-  try {
-    await cleanupSandbox(sharedSandbox.workerUrl, sharedSandbox.sandboxId);
-  } catch (error) {
-    console.warn('[SharedSandbox] Cleanup error:', error);
-  }
-
-  if (runner) {
-    await runner.stop();
-    runner = null;
-  }
-
-  sharedSandbox = null;
-  initPromise = null;
-  console.log('[SharedSandbox] Cleanup complete\n');
-}
-
-/**
- * Force cleanup - can be called manually if needed
- */
-export async function forceCleanupSharedSandbox(): Promise<void> {
-  await cleanupSharedSandbox();
+  return result.url;
 }

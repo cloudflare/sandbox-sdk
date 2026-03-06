@@ -222,117 +222,147 @@ export class ProcessHandler extends BaseHandler<Request, Response> {
     context: RequestContext,
     processId: string
   ): Promise<Response> {
-    const result = await this.processService.streamProcessLogs(processId);
+    const processResult = await this.processService.getProcess(processId);
+    if (!processResult.success) {
+      return this.createErrorResponse(processResult.error, context);
+    }
 
-    if (result.success) {
-      // Create SSE stream for process logs
-      const processResult = await this.processService.getProcess(processId);
-      if (!processResult.success) {
-        return this.createErrorResponse(processResult.error, context);
-      }
+    const process = processResult.data;
 
-      const process = processResult.data;
+    // Hoist listener references so cancel() can access them
+    let outputListener:
+      | ((stream: 'stdout' | 'stderr', data: string) => void)
+      | undefined;
+    let statusListener: ((status: string) => void) | undefined;
+    const logger = this.logger;
 
-      const stream = new ReadableStream({
-        start(controller) {
-          // Send initial process info
-          const initialData = `data: ${JSON.stringify({
-            type: 'process_info',
-            processId: process.id,
-            command: process.command,
-            status: process.status,
-            timestamp: new Date().toISOString()
-          })}\n\n`;
-          controller.enqueue(new TextEncoder().encode(initialData));
+    const removeListeners = () => {
+      if (outputListener) process.outputListeners.delete(outputListener);
+      if (statusListener) process.statusListeners.delete(statusListener);
+    };
 
-          // Send existing logs
-          if (process.stdout) {
-            const stdoutData = `data: ${JSON.stringify({
-              type: 'stdout',
-              data: process.stdout,
-              processId: process.id,
-              timestamp: new Date().toISOString()
-            })}\n\n`;
-            controller.enqueue(new TextEncoder().encode(stdoutData));
-          }
+    const stream = new ReadableStream({
+      start(controller) {
+        const encoder = new TextEncoder();
 
-          if (process.stderr) {
-            const stderrData = `data: ${JSON.stringify({
-              type: 'stderr',
-              data: process.stderr,
-              processId: process.id,
-              timestamp: new Date().toISOString()
-            })}\n\n`;
-            controller.enqueue(new TextEncoder().encode(stderrData));
-          }
+        const enqueueSSE = (payload: Record<string, unknown>) => {
+          controller.enqueue(
+            encoder.encode(`data: ${JSON.stringify(payload)}\n\n`)
+          );
+        };
 
-          // Set up listeners for new output
-          const outputListener = (
-            stream: 'stdout' | 'stderr',
-            data: string
-          ) => {
-            const eventData = `data: ${JSON.stringify({
-              type: stream, // 'stdout' or 'stderr' directly
+        enqueueSSE({
+          type: 'process_info',
+          processId: process.id,
+          command: process.command,
+          status: process.status,
+          timestamp: new Date().toISOString()
+        });
+
+        // Register listeners BEFORE replaying buffered output so no
+        // chunk emitted between the snapshot read and registration is
+        // lost. Duplicates from replay + listener overlap are harmless;
+        // missing data is not.
+        outputListener = (stream: 'stdout' | 'stderr', data: string) => {
+          try {
+            enqueueSSE({
+              type: stream,
               data,
               processId: process.id,
               timestamp: new Date().toISOString()
-            })}\n\n`;
-            controller.enqueue(new TextEncoder().encode(eventData));
-          };
+            });
+          } catch (err) {
+            if (err instanceof TypeError) {
+              // Stream was closed or cancelled — remove self to stop further writes
+              removeListeners();
+            } else {
+              logger.error(
+                'Unexpected error in output listener',
+                err instanceof Error ? err : new Error(String(err))
+              );
+              controller.error(err);
+              removeListeners();
+            }
+          }
+        };
 
-          const statusListener = (status: string) => {
-            // Close stream when process completes
-            if (['completed', 'failed', 'killed', 'error'].includes(status)) {
-              const finalData = `data: ${JSON.stringify({
+        statusListener = (status: string) => {
+          if (['completed', 'failed', 'killed', 'error'].includes(status)) {
+            try {
+              enqueueSSE({
                 type: 'exit',
                 processId: process.id,
                 exitCode: process.exitCode,
                 data: `Process ${status} with exit code ${process.exitCode}`,
                 timestamp: new Date().toISOString()
-              })}\n\n`;
-              controller.enqueue(new TextEncoder().encode(finalData));
+              });
               controller.close();
+              removeListeners();
+            } catch (err) {
+              if (err instanceof TypeError) {
+                // Stream already closed — just clean up listeners
+                removeListeners();
+              } else {
+                logger.error(
+                  'Unexpected error in status listener',
+                  err instanceof Error ? err : new Error(String(err))
+                );
+                controller.error(err);
+                removeListeners();
+              }
             }
-          };
-
-          // Add listeners
-          process.outputListeners.add(outputListener);
-          process.statusListeners.add(statusListener);
-
-          // If process already completed, send exit event immediately
-          if (
-            ['completed', 'failed', 'killed', 'error'].includes(process.status)
-          ) {
-            const finalData = `data: ${JSON.stringify({
-              type: 'exit',
-              processId: process.id,
-              exitCode: process.exitCode,
-              data: `Process ${process.status} with exit code ${process.exitCode}`,
-              timestamp: new Date().toISOString()
-            })}\n\n`;
-            controller.enqueue(new TextEncoder().encode(finalData));
-            controller.close();
           }
+        };
 
-          // Cleanup when stream is cancelled
-          return () => {
-            process.outputListeners.delete(outputListener);
-            process.statusListeners.delete(statusListener);
-          };
-        }
-      });
+        process.outputListeners.add(outputListener);
+        process.statusListeners.add(statusListener);
 
-      return new Response(stream, {
-        status: 200,
-        headers: {
-          'Content-Type': 'text/event-stream',
-          'Cache-Control': 'no-cache',
-          Connection: 'keep-alive',
-          ...context.corsHeaders
+        // Replay buffered output collected before the listener was added
+        if (process.stdout) {
+          enqueueSSE({
+            type: 'stdout',
+            data: process.stdout,
+            processId: process.id,
+            timestamp: new Date().toISOString()
+          });
         }
-      });
-    } else {
-      return this.createErrorResponse(result.error, context);
-    }
+
+        if (process.stderr) {
+          enqueueSSE({
+            type: 'stderr',
+            data: process.stderr,
+            processId: process.id,
+            timestamp: new Date().toISOString()
+          });
+        }
+
+        if (
+          ['completed', 'failed', 'killed', 'error'].includes(process.status)
+        ) {
+          enqueueSSE({
+            type: 'exit',
+            processId: process.id,
+            exitCode: process.exitCode,
+            data: `Process ${process.status} with exit code ${process.exitCode}`,
+            timestamp: new Date().toISOString()
+          });
+          controller.close();
+          removeListeners();
+        }
+      },
+      cancel() {
+        removeListeners();
+      }
+    });
+
+    return new Response(stream, {
+      status: 200,
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        ...context.corsHeaders
+      }
+    });
   }
 }

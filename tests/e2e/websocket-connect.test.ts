@@ -1,18 +1,23 @@
-import { beforeAll, describe, expect, test } from 'vitest';
+import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import WebSocket from 'ws';
-import { getSharedSandbox } from './helpers/global-sandbox';
+import {
+  cleanupTestSandbox,
+  createTestSandbox,
+  type TestSandbox
+} from './helpers/global-sandbox';
 
 /**
  * WebSocket Connection Tests
  *
- * Tests WebSocket routing via wsConnect(). Uses SHARED sandbox.
+ * Tests WebSocket routing via wsConnect().
  */
 describe('WebSocket Connections', () => {
+  let sandbox: TestSandbox | null = null;
   let workerUrl: string;
   let sandboxId: string;
 
   beforeAll(async () => {
-    const sandbox = await getSharedSandbox();
+    sandbox = await createTestSandbox();
     workerUrl = sandbox.workerUrl;
     sandboxId = sandbox.sandboxId;
 
@@ -22,6 +27,11 @@ describe('WebSocket Connections', () => {
       headers: { 'X-Sandbox-Id': sandboxId }
     });
     expect(initRes.status).toBe(200);
+  }, 120000);
+
+  afterAll(async () => {
+    await cleanupTestSandbox(sandbox);
+    sandbox = null;
   }, 120000);
 
   test('should establish WebSocket connection and echo messages', async () => {

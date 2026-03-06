@@ -19,8 +19,11 @@ interface PendingRequest {
   resolve: (response: WSResponse) => void;
   reject: (error: Error) => void;
   streamController?: ReadableStreamDefaultController<Uint8Array>;
+  bufferedChunks?: Uint8Array[];
   isStreaming: boolean;
   timeoutId?: ReturnType<typeof setTimeout>;
+  /** Called when first stream chunk is received (for deferred stream return) */
+  onFirstChunk?: () => void;
 }
 
 /**
@@ -349,6 +352,10 @@ export class WebSocketTransport extends BaseTransport {
    * The stream will receive data chunks as they arrive over the WebSocket.
    * Format matches SSE for compatibility with existing streaming code.
    *
+   * This method waits for the first message before returning. If the server
+   * responds with an error (non-streaming response), it throws immediately
+   * rather than returning a stream that will error later.
+   *
    * Uses an inactivity timeout instead of a total-duration timeout so that
    * long-running streams (e.g. execStream from an agent) stay alive as long
    * as data is flowing. The timer resets on every chunk or response message.
@@ -369,78 +376,152 @@ export class WebSocketTransport extends BaseTransport {
       body
     };
 
-    return new ReadableStream<Uint8Array>({
-      start: (controller) => {
-        const idleTimeoutMs = this.config.streamIdleTimeoutMs ?? 300_000;
+    const idleTimeoutMs = this.config.streamIdleTimeoutMs ?? 300_000;
 
-        const resetTimeout = (): ReturnType<typeof setTimeout> => {
+    // We need to wait for the first message to determine if this is a streaming
+    // response or an immediate error. This prevents returning a stream that will
+    // error on first read.
+    return new Promise((resolveStream, rejectStream) => {
+      let streamController: ReadableStreamDefaultController<Uint8Array>;
+      let firstMessageReceived = false;
+
+      const createIdleTimeout = (): ReturnType<typeof setTimeout> => {
+        return setTimeout(() => {
+          this.pendingRequests.delete(id);
+          const error = new Error(
+            `Stream idle timeout after ${idleTimeoutMs}ms: ${method} ${path}`
+          );
+          if (firstMessageReceived) {
+            streamController?.error(error);
+          } else {
+            rejectStream(error);
+          }
+        }, idleTimeoutMs);
+      };
+
+      const timeoutId = createIdleTimeout();
+
+      // Create the stream but don't return it until we get the first message
+      const stream = new ReadableStream<Uint8Array>({
+        start: (controller) => {
+          streamController = controller;
+        },
+        cancel: () => {
           const pending = this.pendingRequests.get(id);
           if (pending?.timeoutId) {
             clearTimeout(pending.timeoutId);
           }
-          return setTimeout(() => {
-            this.pendingRequests.delete(id);
-            controller.error(
-              new Error(
-                `Stream idle timeout after ${idleTimeoutMs}ms: ${method} ${path}`
-              )
-            );
-          }, idleTimeoutMs);
-        };
 
-        const timeoutId = resetTimeout();
+          // Best-effort server-side cancellation for active streaming requests.
+          try {
+            this.send({ type: 'cancel', id });
+          } catch (error) {
+            this.logger.debug('Failed to send stream cancel message', {
+              id,
+              error: error instanceof Error ? error.message : String(error)
+            });
+          }
 
-        this.pendingRequests.set(id, {
-          resolve: (response: WSResponse) => {
-            const pending = this.pendingRequests.get(id);
-            if (pending?.timeoutId) {
-              clearTimeout(pending.timeoutId);
-            }
-            this.pendingRequests.delete(id);
-            // Final response - close the stream
-            if (response.status >= 400) {
-              controller.error(
-                new Error(
-                  `Stream error: ${response.status} - ${JSON.stringify(response.body)}`
-                )
-              );
-            } else {
-              controller.close();
-            }
-          },
-          reject: (error: Error) => {
-            const pending = this.pendingRequests.get(id);
-            if (pending?.timeoutId) {
-              clearTimeout(pending.timeoutId);
-            }
-            this.pendingRequests.delete(id);
-            controller.error(error);
-          },
-          streamController: controller,
-          isStreaming: true,
-          timeoutId
-        });
+          this.pendingRequests.delete(id);
+        }
+      });
 
-        try {
-          this.send(request);
-        } catch (error) {
+      this.pendingRequests.set(id, {
+        resolve: (response: WSResponse) => {
           const pending = this.pendingRequests.get(id);
           if (pending?.timeoutId) {
             clearTimeout(pending.timeoutId);
           }
           this.pendingRequests.delete(id);
-          controller.error(
-            error instanceof Error ? error : new Error(String(error))
-          );
+
+          if (!firstMessageReceived) {
+            // First message is a final response (not streaming) - this is an error case
+            firstMessageReceived = true;
+            if (response.status >= 400) {
+              rejectStream(
+                new Error(
+                  `Stream error: ${response.status} - ${JSON.stringify(response.body)}`
+                )
+              );
+            } else {
+              // Successful non-streaming response - close immediately
+              streamController?.close();
+              resolveStream(stream);
+            }
+          } else {
+            // Stream was already returned, now closing
+            if (response.status >= 400) {
+              streamController?.error(
+                new Error(
+                  `Stream error: ${response.status} - ${JSON.stringify(response.body)}`
+                )
+              );
+            } else {
+              streamController?.close();
+            }
+          }
+        },
+        reject: (error: Error) => {
+          const pending = this.pendingRequests.get(id);
+          if (pending?.timeoutId) {
+            clearTimeout(pending.timeoutId);
+          }
+          this.pendingRequests.delete(id);
+          if (firstMessageReceived) {
+            try {
+              streamController?.error(error);
+            } catch {
+              // Stream controller may already be closed/errored
+            }
+          } else {
+            rejectStream(error);
+          }
+        },
+        streamController: undefined, // Set after first chunk
+        isStreaming: true,
+        timeoutId,
+        // Custom handler for first stream chunk
+        onFirstChunk: () => {
+          if (!firstMessageReceived) {
+            firstMessageReceived = true;
+            // Update the pending request with the actual controller
+            const pending = this.pendingRequests.get(id);
+            if (pending) {
+              pending.streamController = streamController;
+              // Flush any chunks that arrived before the controller was set
+              if (pending.bufferedChunks) {
+                try {
+                  for (const buffered of pending.bufferedChunks) {
+                    streamController.enqueue(buffered);
+                  }
+                } catch (error) {
+                  this.logger.debug(
+                    'Failed to flush buffered chunks, cleaning up',
+                    {
+                      id,
+                      error:
+                        error instanceof Error ? error.message : String(error)
+                    }
+                  );
+                  if (pending.timeoutId) {
+                    clearTimeout(pending.timeoutId);
+                  }
+                  this.pendingRequests.delete(id);
+                }
+                pending.bufferedChunks = undefined;
+              }
+            }
+            resolveStream(stream);
+          }
         }
-      },
-      cancel: () => {
-        const pending = this.pendingRequests.get(id);
-        if (pending?.timeoutId) {
-          clearTimeout(pending.timeoutId);
-        }
+      });
+
+      try {
+        this.send(request);
+      } catch (error) {
+        clearTimeout(timeoutId);
         this.pendingRequests.delete(id);
-        // Could send a cancel message to server if needed
+        rejectStream(error instanceof Error ? error : new Error(String(error)));
       }
     });
   }
@@ -448,7 +529,7 @@ export class WebSocketTransport extends BaseTransport {
   /**
    * Send a message over the WebSocket
    */
-  private send(message: WSRequest): void {
+  private send(message: WSRequest | { type: 'cancel'; id: string }): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       throw new Error('WebSocket not connected');
     }
@@ -456,8 +537,9 @@ export class WebSocketTransport extends BaseTransport {
     this.ws.send(JSON.stringify(message));
     this.logger.debug('WebSocket sent', {
       id: message.id,
-      method: message.method,
-      path: message.path
+      type: message.type,
+      method: message.type === 'request' ? message.method : undefined,
+      path: message.type === 'request' ? message.path : undefined
     });
   }
 
@@ -517,7 +599,7 @@ export class WebSocketTransport extends BaseTransport {
    */
   private handleStreamChunk(chunk: WSStreamChunk): void {
     const pending = this.pendingRequests.get(chunk.id);
-    if (!pending || !pending.streamController) {
+    if (!pending) {
       this.logger.warn('Received stream chunk for unknown request', {
         id: chunk.id
       });
@@ -527,6 +609,28 @@ export class WebSocketTransport extends BaseTransport {
     // Reset the idle timeout since we received activity
     if (pending.isStreaming) {
       this.resetStreamIdleTimeout(chunk.id, pending);
+    }
+
+    // Call onFirstChunk if this is the first chunk (triggers stream return)
+    if (pending.onFirstChunk) {
+      pending.onFirstChunk();
+      pending.onFirstChunk = undefined; // Only call once
+    }
+
+    // Buffer chunks if controller not set yet (race between onFirstChunk and enqueue)
+    if (!pending.streamController) {
+      if (!pending.bufferedChunks) {
+        pending.bufferedChunks = [];
+      }
+      const encoder = new TextEncoder();
+      let sseData: string;
+      if (chunk.event) {
+        sseData = `event: ${chunk.event}\ndata: ${chunk.data}\n\n`;
+      } else {
+        sseData = `data: ${chunk.data}\n\n`;
+      }
+      pending.bufferedChunks.push(encoder.encode(sseData));
+      return;
     }
 
     // Convert to SSE format for compatibility with existing parsers

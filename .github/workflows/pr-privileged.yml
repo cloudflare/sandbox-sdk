@@ -1,0 +1,467 @@
+name: PR Privileged
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, labeled]
+
+permissions: {}
+
+concurrency:
+  group: pr-privileged-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  CF_ACCOUNT_SUBDOMAIN: agents-b8a
+
+jobs:
+  # --- Authorization gate (includes label management for fork PRs) ---
+  policy:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    timeout-minutes: 1
+    outputs:
+      authorized: ${{ steps.check.outputs.authorized }}
+      run_privileged: ${{ steps.check.outputs.run_privileged }}
+    steps:
+      - name: Generate app token for label management
+        id: app-token
+        if: >
+          github.event.action == 'synchronize' &&
+          github.event.pull_request.head.repo.full_name != github.repository
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - name: Remove ok-to-test label on new pushes (fork PRs only)
+        if: >
+          github.event.action == 'synchronize' &&
+          github.event.pull_request.head.repo.full_name != github.repository
+        uses: actions/github-script@v8
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            try {
+              await github.rest.issues.removeLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.pull_request.number,
+                name: 'ok-to-test'
+              });
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.pull_request.number,
+                body: 'New commits pushed -- `ok-to-test` label removed. A maintainer must re-review and re-apply the label to run the full CI pipeline.'
+              });
+            } catch (error) {
+              if (error.status === 404) {
+                core.info('ok-to-test label not present — nothing to remove');
+              } else {
+                throw error;
+              }
+            }
+
+      - name: Check authorization
+        id: check
+        env:
+          IS_FORK: ${{ github.event.pull_request.head.repo.full_name != github.repository }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+
+          # Internal PRs are always authorized and run privileged CI
+          if [[ "$IS_FORK" == "false" ]]; then
+            echo "authorized=true" >> $GITHUB_OUTPUT
+            echo "run_privileged=true" >> $GITHUB_OUTPUT
+            echo "::notice::Authorized — internal PR"
+            exit 0
+          fi
+
+          # Fail-closed docs-only classification: any file NOT in the allowlist = privileged
+          # Capture file list first — if the API call fails, set -e aborts the step
+          FILES=$(gh api --paginate "repos/$GH_REPO/pulls/$PR_NUMBER/files" --jq '.[].filename')
+          if [[ -z "$FILES" ]]; then
+            echo "::error::GitHub API returned no files — refusing to classify (fail-closed)"
+            exit 1
+          fi
+
+          NEEDS_PRIVILEGED=false
+          while IFS= read -r file; do
+            case "$file" in
+              docs/*|*.md|LICENSE|.github/ISSUE_TEMPLATE/*|.github/PULL_REQUEST_TEMPLATE/*|.github/CODEOWNERS|.github/FUNDING.yml|.changeset/*.md)
+                ;; # docs/config-only, safe
+              *)
+                NEEDS_PRIVILEGED=true
+                echo "::notice::Privileged file detected: $file"
+                break
+                ;;
+            esac
+          done <<< "$FILES"
+
+          # Fork PRs with only docs/config changes are auto-authorized but skip privileged jobs
+          if [[ "$NEEDS_PRIVILEGED" == "false" ]]; then
+            echo "authorized=true" >> $GITHUB_OUTPUT
+            echo "run_privileged=false" >> $GITHUB_OUTPUT
+            echo "::notice::Authorized — docs-only PR, no privileged CI needed"
+            exit 0
+          fi
+
+          # Fork PRs with privileged changes need ok-to-test label
+          LABELS=$(gh api "repos/$GH_REPO/pulls/$PR_NUMBER" --jq '.labels[].name')
+          if echo "$LABELS" | grep -qx 'ok-to-test'; then
+            echo "authorized=true" >> $GITHUB_OUTPUT
+            echo "run_privileged=true" >> $GITHUB_OUTPUT
+            echo "::notice::Authorized — ok-to-test label verified via API"
+          else
+            echo "authorized=false" >> $GITHUB_OUTPUT
+            echo "run_privileged=false" >> $GITHUB_OUTPUT
+            echo "::notice::Not authorized — fork PR without ok-to-test label"
+          fi
+
+  # --- Change detection (only when authorized) ---
+  detect-changes:
+    needs: policy
+    if: needs.policy.outputs.run_privileged == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    timeout-minutes: 1
+    outputs:
+      needs-docker: ${{ steps.derived.outputs.needs-docker }}
+      docker-changed: ${{ steps.derived.outputs.docker-changed }}
+      needs-e2e: ${{ steps.derived.outputs.needs-e2e }}
+      any-source: ${{ steps.filter.outputs.any-source }}
+      docker-hash: ${{ steps.hashes.outputs.docker }}
+      deploy-hash: ${{ steps.hashes.outputs.deploy }}
+    steps:
+      # Checkout base branch (trusted) for filter definitions
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      # Path filter reads trusted .github/path-filters.yml + uses GitHub API for file list
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: .github/path-filters.yml
+
+      # Checkout fork code for content hashing
+      - uses: actions/checkout@v6
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Derive conditions
+        id: derived
+        run: |
+          # Did Docker inputs actually change?
+          DOCKER_CHANGED=false
+          if [[ "${{ steps.filter.outputs.shared }}" == "true" \
+             || "${{ steps.filter.outputs.container }}" == "true" \
+             || "${{ steps.filter.outputs.docker-config }}" == "true" \
+             || "${{ steps.filter.outputs.build-config }}" == "true" \
+             || "${{ steps.filter.outputs.deps }}" == "true" ]]; then
+            DOCKER_CHANGED=true
+          fi
+          echo "docker-changed=$DOCKER_CHANGED" >> $GITHUB_OUTPUT
+
+          # Needs E2E?
+          NEEDS_E2E=false
+          if [[ "${{ steps.filter.outputs.shared }}" == "true" \
+             || "${{ steps.filter.outputs.sdk }}" == "true" \
+             || "${{ steps.filter.outputs.container }}" == "true" \
+             || "${{ steps.filter.outputs.docker-config }}" == "true" \
+             || "${{ steps.filter.outputs.build-config }}" == "true" \
+             || "${{ steps.filter.outputs.e2e-tests }}" == "true" \
+             || "${{ steps.filter.outputs.deps }}" == "true" ]]; then
+            NEEDS_E2E=true
+          fi
+          echo "needs-e2e=$NEEDS_E2E" >> $GITHUB_OUTPUT
+
+          # Docker images must exist whenever e2e will run (content-addressed
+          # cache makes this a fast retag when Docker inputs haven't changed)
+          NEEDS_DOCKER=$DOCKER_CHANGED
+          if [[ "$NEEDS_E2E" == "true" ]]; then
+            NEEDS_DOCKER=true
+          fi
+          echo "needs-docker=$NEEDS_DOCKER" >> $GITHUB_OUTPUT
+
+      - name: Compute content hashes
+        id: hashes
+        run: |
+          echo "docker=${{ hashFiles(
+            'packages/sandbox/Dockerfile',
+            'docker-bake.hcl',
+            '.dockerignore',
+            'package-lock.json',
+            'package.json',
+            'turbo.json',
+            'packages/*/package.json',
+            'packages/shared/**',
+            'packages/sandbox-container/**',
+            'tooling/typescript-config/**',
+            'biome.json',
+            '.bun-version',
+            'tests/e2e/test-worker/Dockerfile.standalone'
+          ) }}" >> $GITHUB_OUTPUT
+          echo "deploy=${{ hashFiles(
+            'packages/sandbox/Dockerfile',
+            'docker-bake.hcl',
+            '.dockerignore',
+            'package-lock.json',
+            'package.json',
+            'turbo.json',
+            'packages/*/package.json',
+            'packages/shared/**',
+            'packages/sandbox-container/**',
+            'tooling/typescript-config/**',
+            'biome.json',
+            '.bun-version',
+            'tests/e2e/test-worker/Dockerfile.standalone',
+            'packages/sandbox/src/**',
+            'tests/e2e/test-worker/**',
+            'vitest.e2e.config.ts'
+          ) }}" >> $GITHUB_OUTPUT
+
+  # --- Docker build (authorized only) ---
+  build:
+    needs: [policy, detect-changes]
+    if: needs.policy.outputs.run_privileged == 'true'
+    permissions:
+      contents: read
+      packages: write
+      actions: write
+    uses: ./.github/workflows/reusable-build.yml
+    with:
+      skip_docker: ${{ needs.detect-changes.outputs.needs-docker != 'true' }}
+      image_tag: pr-${{ github.event.pull_request.number }}
+      docker_hash: ${{ needs.detect-changes.outputs.docker-hash }}
+      checkout_ref: ${{ github.event.pull_request.head.sha }}
+      checkout_repo: ${{ github.event.pull_request.head.repo.full_name }}
+      cache_readonly: true
+    secrets: inherit
+
+  # --- E2E tests (authorized only, conditional) ---
+  e2e:
+    needs: [policy, detect-changes, build]
+    permissions:
+      contents: read
+    if: |
+      needs.policy.outputs.run_privileged == 'true' &&
+      needs.detect-changes.outputs.needs-e2e == 'true' &&
+      !contains(github.event.pull_request.title, 'Version Packages')
+    uses: ./.github/workflows/reusable-e2e.yml
+    with:
+      worker_name_prefix: sandbox-e2e-test-worker-pr-${{ github.event.pull_request.number }}
+      image_tag: pr-${{ github.event.pull_request.number }}
+      images_changed: ${{ needs.detect-changes.outputs.docker-changed }}
+      deploy_hash: ${{ needs.detect-changes.outputs.deploy-hash }}
+      checkout_ref: ${{ github.event.pull_request.head.sha }}
+      checkout_repo: ${{ github.event.pull_request.head.repo.full_name }}
+      cache_readonly: true
+    secrets: inherit
+
+  # --- Publish preview packages + Docker images (authorized only) ---
+  publish-preview:
+    needs: [policy, detect-changes, build]
+    if: |
+      needs.policy.outputs.run_privileged == 'true' &&
+      needs.detect-changes.outputs.any-source == 'true' &&
+      !contains(github.event.pull_request.title, 'Version Packages')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - uses: actions/cache/restore@v5
+        id: nm-cache
+        with:
+          path: |
+            node_modules
+            packages/*/node_modules
+            examples/*/node_modules
+            sites/*/node_modules
+          key: node-modules-${{ hashFiles('package-lock.json') }}
+
+      - run: npm ci --prefer-offline --no-audit --no-fund
+        if: steps.nm-cache.outputs.cache-hit != 'true'
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: build-${{ github.sha }}
+          path: packages
+
+      - name: Set preview version
+        id: version
+        run: |
+          VERSION="0.0.0-pr-${{ github.event.pull_request.number }}-$(git rev-parse --short HEAD)"
+          node -e "const fs=require('fs'); const p='./packages/sandbox/package.json'; const j=JSON.parse(fs.readFileSync(p,'utf8')); j.version='${VERSION}'; fs.writeFileSync(p,JSON.stringify(j,null,2)+'\n');"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - run: npx tsx .github/resolve-workspace-versions.ts
+
+      - name: Install crane
+        run: |
+          VERSION=0.20.3
+          TARBALL="go-containerregistry_Linux_x86_64.tar.gz"
+          curl -sLO "https://github.com/google/go-containerregistry/releases/download/v${VERSION}/${TARBALL}"
+          curl -sLO "https://github.com/google/go-containerregistry/releases/download/v${VERSION}/checksums.txt"
+          grep "${TARBALL}" checksums.txt | sha256sum -c
+          tar xzf "${TARBALL}" crane
+          sudo mv crane /usr/local/bin/
+          rm -f "${TARBALL}" checksums.txt
+
+      - name: Login to CF registry
+        if: ${{ needs.detect-changes.outputs.docker-changed == 'true' }}
+        run: |
+          CREDS=$(curl -sf -X POST \
+            "https://api.cloudflare.com/client/v4/accounts/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/containers/registries/registry.cloudflare.com/credentials" \
+            -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '{"expiration_minutes": 15, "permissions": ["pull"]}')
+          USERNAME=$(echo "$CREDS" | jq -r '.result.username')
+          PASSWORD=$(echo "$CREDS" | jq -r '.result.password')
+          echo "$PASSWORD" | docker login registry.cloudflare.com -u "$USERNAME" --password-stdin
+          echo "$PASSWORD" | crane auth login registry.cloudflare.com --password-stdin -u "$USERNAME"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Copy Docker images to Docker Hub
+        if: ${{ needs.detect-changes.outputs.docker-changed == 'true' }}
+        run: |
+          BUILD_TAG="pr-${{ github.event.pull_request.number }}"
+          PREVIEW="${{ steps.version.outputs.version }}"
+          echo "${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}" | crane auth login index.docker.io --password-stdin -u "${{ secrets.DOCKER_HUB_USERNAME }}"
+          for suffix in "" "-python" "-opencode" "-musl" "-desktop"; do
+            crane copy \
+              registry.cloudflare.com/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/sandbox${suffix}:${BUILD_TAG} \
+              docker.io/cloudflare/sandbox:${PREVIEW}${suffix}
+          done
+
+      - name: Extract standalone binary
+        if: ${{ needs.detect-changes.outputs.docker-changed == 'true' }}
+        run: |
+          BUILD_TAG="pr-${{ github.event.pull_request.number }}"
+          docker pull registry.cloudflare.com/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/sandbox:${BUILD_TAG}
+          CID=$(docker create registry.cloudflare.com/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/sandbox:${BUILD_TAG})
+          docker cp $CID:/container-server/sandbox ./sandbox-linux-x64
+          docker rm $CID
+          chmod +x ./sandbox-linux-x64
+
+      - uses: actions/upload-artifact@v7
+        if: ${{ needs.detect-changes.outputs.docker-changed == 'true' }}
+        with:
+          name: sandbox-binary
+          path: ./sandbox-linux-x64
+          retention-days: 3
+
+      - run: npx pkg-pr-new publish './packages/sandbox'
+
+      # PR comment with preview info
+      - uses: actions/github-script@v8
+        with:
+          script: |
+            const fs = require('fs');
+            const version = '${{ steps.version.outputs.version }}';
+            const dockerChanged = '${{ needs.detect-changes.outputs.docker-changed }}' === 'true';
+            const prNumber = '${{ github.event.pull_request.number }}';
+            const templatePath = dockerChanged
+              ? '.github/templates/pr-preview-comment.md'
+              : '.github/templates/pr-preview-main-comment.md';
+            if (fs.existsSync(templatePath)) {
+              let body = fs.readFileSync(templatePath, 'utf8');
+              body = body.replace(/\{\{VERSION\}\}/g, version);
+              body = body.replace(/\{\{PR_NUMBER\}\}/g, prNumber);
+              if (dockerChanged) {
+                const runId = '${{ github.run_id }}';
+                const defaultTag = `cloudflare/sandbox:${version}`;
+                body = body
+                  .replace(/\{\{RUN_ID\}\}/g, runId)
+                  .replace(/\{\{DEFAULT_TAG\}\}/g, defaultTag)
+                  .replace(/\{\{PYTHON_TAG\}\}/g, `cloudflare/sandbox:${version}-python`)
+                  .replace(/\{\{OPENCODE_TAG\}\}/g, `cloudflare/sandbox:${version}-opencode`)
+                  .replace(/\{\{MUSL_TAG\}\}/g, `cloudflare/sandbox:${version}-musl`)
+                  .replace(/\{\{DESKTOP_TAG\}\}/g, `cloudflare/sandbox:${version}-desktop`);
+              }
+              const { data: comments } = await github.rest.issues.listComments({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: context.issue.number
+              });
+              const existing = comments.find(c =>
+                c.user.type === 'Bot' && c.body?.includes('<!-- sandbox-preview -->')
+              );
+              if (existing) {
+                await github.rest.issues.updateComment({
+                  owner: context.repo.owner, repo: context.repo.repo,
+                  comment_id: existing.id, body
+                });
+              } else {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner, repo: context.repo.repo,
+                  issue_number: context.issue.number, body
+                });
+              }
+            }
+
+  # --- Gate job (required check for branch protection) ---
+  gate:
+    name: ci/gate
+    if: always()
+    needs: [policy, detect-changes, build, e2e, publish-preview]
+    runs-on: ubuntu-latest
+    permissions: {}
+    timeout-minutes: 1
+    steps:
+      - name: Evaluate gate
+        run: |
+          echo "policy.authorized: ${{ needs.policy.outputs.authorized }}"
+          echo "policy.run_privileged: ${{ needs.policy.outputs.run_privileged }}"
+          echo "detect-changes: ${{ needs.detect-changes.result }}"
+          echo "build: ${{ needs.build.result }}"
+          echo "e2e: ${{ needs.e2e.result }}"
+          echo "publish-preview: ${{ needs.publish-preview.result }}"
+
+          # Gate 1: Authorization
+          if [[ "${{ needs.policy.outputs.authorized }}" != "true" ]]; then
+            echo "::error::Fork PR requires 'ok-to-test' label. A maintainer must review the code and add the label to run the full CI pipeline."
+            exit 1
+          fi
+
+          # Gate 2: When privileged CI ran, detect-changes must have succeeded
+          if [[ "${{ needs.policy.outputs.run_privileged }}" == "true" ]]; then
+            if [[ "${{ needs.detect-changes.result }}" != "success" ]]; then
+              echo "::error::Change detection failed or was cancelled"
+              exit 1
+            fi
+          fi
+
+          # Gate 3: Privileged jobs must not have failed or been cancelled
+          # (skipped is OK — means change detection determined they weren't needed)
+          for result in "${{ needs.build.result }}" "${{ needs.e2e.result }}" "${{ needs.publish-preview.result }}"; do
+            if [[ "$result" == "failure" || "$result" == "cancelled" ]]; then
+              echo "::error::One or more privileged CI jobs failed or were cancelled"
+              exit 1
+            fi
+          done
+
+          echo "All privileged checks passed"

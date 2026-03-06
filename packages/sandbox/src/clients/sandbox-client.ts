@@ -1,5 +1,6 @@
 import { BackupClient } from './backup-client';
 import { CommandClient } from './command-client';
+import { DesktopClient } from './desktop-client';
 import { FileClient } from './file-client';
 import { GitClient } from './git-client';
 import { InterpreterClient } from './interpreter-client';
@@ -12,6 +13,7 @@ import {
 } from './transport';
 import type { HttpClientOptions } from './types';
 import { UtilityClient } from './utility-client';
+import { WatchClient } from './watch-client';
 
 /**
  * Main sandbox client that composes all domain-specific clients
@@ -32,6 +34,8 @@ export class SandboxClient {
   public readonly git: GitClient;
   public readonly interpreter: InterpreterClient;
   public readonly utils: UtilityClient;
+  public readonly desktop: DesktopClient;
+  public readonly watch: WatchClient;
 
   private transport: ITransport | null = null;
 
@@ -45,6 +49,7 @@ export class SandboxClient {
         logger: options.logger,
         stub: options.stub,
         port: options.port,
+        retryTimeoutMs: options.retryTimeoutMs,
         requestTimeoutMs: options.requestTimeoutMs,
         streamIdleTimeoutMs: options.streamIdleTimeoutMs
       });
@@ -67,6 +72,34 @@ export class SandboxClient {
     this.git = new GitClient(clientOptions);
     this.interpreter = new InterpreterClient(clientOptions);
     this.utils = new UtilityClient(clientOptions);
+    this.desktop = new DesktopClient(clientOptions);
+    this.watch = new WatchClient(clientOptions);
+  }
+
+  /**
+   * Update the 503 retry budget on all transports without recreating the client.
+   *
+   * In WebSocket mode a single shared transport is used, so one update covers
+   * every sub-client. In HTTP mode each sub-client owns its own transport, so
+   * all of them are updated individually.
+   */
+  setRetryTimeoutMs(ms: number): void {
+    if (this.transport) {
+      // WebSocket mode — single shared transport
+      this.transport.setRetryTimeoutMs(ms);
+    } else {
+      // HTTP mode — each sub-client has its own transport
+      this.backup.setRetryTimeoutMs(ms);
+      this.commands.setRetryTimeoutMs(ms);
+      this.files.setRetryTimeoutMs(ms);
+      this.processes.setRetryTimeoutMs(ms);
+      this.ports.setRetryTimeoutMs(ms);
+      this.git.setRetryTimeoutMs(ms);
+      this.interpreter.setRetryTimeoutMs(ms);
+      this.utils.setRetryTimeoutMs(ms);
+      this.desktop.setRetryTimeoutMs(ms);
+      this.watch.setRetryTimeoutMs(ms);
+    }
   }
 
   /**

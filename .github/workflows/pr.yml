@@ -1,0 +1,115 @@
+name: Pull Request
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  # --- Change detection ---
+  detect-changes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    timeout-minutes: 1
+    outputs:
+      needs-quality: ${{ steps.derived.outputs.needs-quality }}
+      needs-sdk-tests: ${{ steps.derived.outputs.needs-sdk-tests }}
+      needs-container-tests: ${{ steps.derived.outputs.needs-container-tests }}
+      changesets: ${{ steps.filter.outputs.changesets }}
+    steps:
+      # Checkout base branch (trusted) so path-filters.yml can't be tampered by fork PRs
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: .github/path-filters.yml
+
+      - name: Derive conditions
+        id: derived
+        run: |
+          # Needs SDK unit tests?
+          if [[ "${{ steps.filter.outputs.shared }}" == "true" \
+             || "${{ steps.filter.outputs.sdk }}" == "true" \
+             || "${{ steps.filter.outputs.build-config }}" == "true" \
+             || "${{ steps.filter.outputs.deps }}" == "true" ]]; then
+            echo "needs-sdk-tests=true" >> $GITHUB_OUTPUT
+          else
+            echo "needs-sdk-tests=false" >> $GITHUB_OUTPUT
+          fi
+
+          # Needs container unit tests?
+          if [[ "${{ steps.filter.outputs.shared }}" == "true" \
+             || "${{ steps.filter.outputs.container }}" == "true" \
+             || "${{ steps.filter.outputs.build-config }}" == "true" \
+             || "${{ steps.filter.outputs.deps }}" == "true" ]]; then
+            echo "needs-container-tests=true" >> $GITHUB_OUTPUT
+          else
+            echo "needs-container-tests=false" >> $GITHUB_OUTPUT
+          fi
+
+          # Needs quality checks? (source or config changes)
+          if [[ "${{ steps.filter.outputs.any-source }}" == "true" \
+             || "${{ steps.filter.outputs.build-config }}" == "true" \
+             || "${{ steps.filter.outputs.deps }}" == "true" \
+             || "${{ steps.filter.outputs.changesets }}" == "true" ]]; then
+            echo "needs-quality=true" >> $GITHUB_OUTPUT
+          else
+            echo "needs-quality=false" >> $GITHUB_OUTPUT
+          fi
+
+  # --- Build (JS only, no Docker — Docker moves to pr-privileged.yml) ---
+  build:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.needs-quality == 'true'
+    uses: ./.github/workflows/reusable-build.yml
+    with:
+      skip_docker: true
+      image_tag: pr-${{ github.event.pull_request.number }}
+    secrets: inherit
+
+  # --- Quality gates (source-related changes only) ---
+  quality:
+    needs: [detect-changes, build]
+    if: needs.detect-changes.outputs.needs-quality == 'true'
+    uses: ./.github/workflows/reusable-quality.yml
+    with:
+      run_sdk_tests: ${{ needs.detect-changes.outputs.needs-sdk-tests == 'true' }}
+      run_container_tests: ${{ needs.detect-changes.outputs.needs-container-tests == 'true' }}
+      run_changeset_validation: ${{ needs.detect-changes.outputs.changesets == 'true' }}
+    secrets: inherit
+
+  # --- Basic gate (required check for branch protection) ---
+  basic-gate:
+    name: ci/basic
+    if: always()
+    needs: [build, quality]
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - name: Check job results
+        run: |
+          echo "build: ${{ needs.build.result }}"
+          echo "quality: ${{ needs.quality.result }}"
+
+          if [[ "${{ needs.build.result }}" == "failure" || "${{ needs.build.result }}" == "cancelled" ]]; then
+            echo "::error::Build failed or was cancelled"
+            exit 1
+          fi
+          if [[ "${{ needs.quality.result }}" == "failure" || "${{ needs.quality.result }}" == "cancelled" ]]; then
+            echo "::error::Quality gates failed or were cancelled"
+            exit 1
+          fi
+          echo "All basic checks passed"

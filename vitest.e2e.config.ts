@@ -4,8 +4,8 @@ import { defineConfig } from 'vitest/config';
 config();
 
 /**
- * E2E tests using shared sandbox - runs in parallel
- * Tests use unique sessions for isolation within one container.
+ * E2E tests with per-file sandbox isolation - runs in parallel.
+ * Each test file creates its own sandbox via createTestSandbox().
  * Bucket-mounting tests self-skip locally (require FUSE/CI).
  */
 export default defineConfig({
@@ -19,10 +19,10 @@ export default defineConfig({
     hookTimeout: 60000,
     teardownTimeout: 30000,
 
-    // Global setup creates sandbox BEFORE threads spawn, passes info through a tmp file
+    // Global setup resolves worker URL, passes it through a tmp file
     globalSetup: ['tests/e2e/global-setup.ts'],
 
-    // Threads run in parallel - they all use the same sandbox through a tmp file
+    // Threads run in parallel - each file creates its own sandbox
     pool: 'threads',
     poolOptions: {
       threads: {
@@ -30,8 +30,6 @@ export default defineConfig({
         isolate: false
       }
     },
-    fileParallelism: true,
-
-    retry: 1
+    fileParallelism: true
   }
 });

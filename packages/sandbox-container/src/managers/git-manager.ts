@@ -18,6 +18,9 @@ import { extractRepoName } from '@repo/shared';
 import { ErrorCode } from '@repo/shared/errors';
 import type { CloneOptions } from '../core/types';
 
+/** Wall-clock timeout in seconds for git clone operations. */
+export const GIT_CLONE_TIMEOUT_SECONDS = 120;
+
 /**
  * GitManager contains pure business logic for git operations.
  * No Bun APIs, no I/O - just pure functions that can be unit tested instantly.
@@ -36,14 +39,29 @@ export class GitManager {
 
   /**
    * Build git clone command arguments
-   * Returns array of args to pass to spawn (e.g., ['git', 'clone', '--branch', 'main', 'url', 'path'])
+   *
+   * Wraps the command with `timeout -k 5 120` to enforce a 2-minute wall-clock
+   * limit, and configures git's own stalled-transfer detection via
+   * http.lowSpeedLimit and http.lowSpeedTime.
    */
   buildCloneArgs(
     repoUrl: string,
     targetDir: string,
     options: CloneOptions = {}
   ): string[] {
-    const args = ['git', 'clone', '--filter=blob:none'];
+    const args = [
+      'timeout',
+      '-k',
+      '5',
+      String(GIT_CLONE_TIMEOUT_SECONDS),
+      'git',
+      '-c',
+      'http.lowSpeedLimit=1024',
+      '-c',
+      'http.lowSpeedTime=30',
+      'clone',
+      '--filter=blob:none'
+    ];
 
     if (options.branch) {
       args.push('--branch', options.branch);
@@ -129,7 +147,12 @@ export class GitManager {
     const errorMessage = typeof error === 'string' ? error : error.message;
     const lowerMessage = errorMessage.toLowerCase();
 
-    // Check exit code patterns first
+    // Exit code 124: timeout command killed the process
+    if (exitCode === 124) {
+      return ErrorCode.GIT_NETWORK_ERROR;
+    }
+
+    // Exit code 128: git-specific fatal errors
     if (exitCode === 128) {
       if (lowerMessage.includes('not a git repository')) {
         return ErrorCode.GIT_OPERATION_FAILED;

@@ -11,7 +11,7 @@ import {
   isWSResponse,
   isWSStreamChunk
 } from '@repo/shared';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { WebSocketTransport } from '../src/clients/transport';
 
 /**
@@ -184,6 +184,218 @@ describe('WebSocket Protocol Types', () => {
       expect(isWSStreamChunk(null)).toBe(false);
       expect(isWSStreamChunk({ type: 'response' })).toBe(false);
       expect(isWSStreamChunk({ type: 'error' })).toBe(false);
+    });
+  });
+
+  describe('stream request first-message handling', () => {
+    it('should reject before returning stream when first message is an error response', async () => {
+      vi.useFakeTimers();
+      try {
+        const transport = new WebSocketTransport({
+          wsUrl: 'ws://localhost:3000/ws',
+          requestTimeoutMs: 1000
+        });
+
+        (transport as any).connect = vi.fn().mockResolvedValue(undefined);
+        const wsSend = vi.fn();
+        (transport as any).ws = {
+          readyState: WebSocket.OPEN,
+          send: wsSend,
+          addEventListener: vi.fn(),
+          removeEventListener: vi.fn(),
+          close: vi.fn()
+        };
+
+        const streamPromise = (transport as any).requestStream(
+          'POST',
+          '/api/watch',
+          { path: '/workspace' }
+        ) as Promise<ReadableStream<Uint8Array>>;
+
+        await Promise.resolve();
+
+        expect(wsSend).toHaveBeenCalledTimes(1);
+
+        const pendingIds = Array.from(
+          ((transport as any).pendingRequests as Map<string, unknown>).keys()
+        );
+        expect(pendingIds).toHaveLength(1);
+        const requestId = pendingIds[0]!;
+
+        (transport as any).handleResponse({
+          type: 'response',
+          id: requestId,
+          status: 500,
+          body: { error: 'failed' },
+          done: true
+        });
+
+        await expect(streamPromise).rejects.toThrow('Stream error: 500');
+        expect((transport as any).pendingRequests.size).toBe(0);
+
+        vi.advanceTimersByTime(5000);
+        expect((transport as any).pendingRequests.size).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('should resolve stream on first chunk and clean up after done response', async () => {
+      vi.useFakeTimers();
+      try {
+        const transport = new WebSocketTransport({
+          wsUrl: 'ws://localhost:3000/ws',
+          requestTimeoutMs: 1000
+        });
+
+        (transport as any).connect = vi.fn().mockResolvedValue(undefined);
+        const wsSend = vi.fn();
+        (transport as any).ws = {
+          readyState: WebSocket.OPEN,
+          send: wsSend,
+          addEventListener: vi.fn(),
+          removeEventListener: vi.fn(),
+          close: vi.fn()
+        };
+
+        const streamPromise = (transport as any).requestStream(
+          'POST',
+          '/api/watch',
+          { path: '/workspace' }
+        ) as Promise<ReadableStream<Uint8Array>>;
+
+        await Promise.resolve();
+
+        const pendingIds = Array.from(
+          ((transport as any).pendingRequests as Map<string, unknown>).keys()
+        );
+        expect(pendingIds).toHaveLength(1);
+        const requestId = pendingIds[0]!;
+
+        (transport as any).handleStreamChunk({
+          type: 'stream',
+          id: requestId,
+          data: '{"type":"watching"}'
+        });
+
+        const stream = await streamPromise;
+        const reader = stream.getReader();
+        const firstRead = await reader.read();
+        expect(firstRead.done).toBe(false);
+
+        const firstChunk = new TextDecoder().decode(firstRead.value);
+        expect(firstChunk).toContain('data: {"type":"watching"}');
+
+        (transport as any).handleResponse({
+          type: 'response',
+          id: requestId,
+          status: 200,
+          done: true
+        });
+
+        const secondRead = await reader.read();
+        expect(secondRead.done).toBe(true);
+        expect((transport as any).pendingRequests.size).toBe(0);
+
+        vi.advanceTimersByTime(5000);
+        expect((transport as any).pendingRequests.size).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('should reject and clean up when timeout fires before first message', async () => {
+      vi.useFakeTimers();
+      try {
+        const transport = new WebSocketTransport({
+          wsUrl: 'ws://localhost:3000/ws',
+          streamIdleTimeoutMs: 1000
+        });
+
+        (transport as any).connect = vi.fn().mockResolvedValue(undefined);
+        (transport as any).ws = {
+          readyState: WebSocket.OPEN,
+          send: vi.fn(),
+          addEventListener: vi.fn(),
+          removeEventListener: vi.fn(),
+          close: vi.fn()
+        };
+
+        const streamPromise = (transport as any).requestStream(
+          'POST',
+          '/api/watch',
+          { path: '/workspace' }
+        ) as Promise<ReadableStream<Uint8Array>>;
+
+        await Promise.resolve();
+        expect((transport as any).pendingRequests.size).toBe(1);
+
+        vi.advanceTimersByTime(1001);
+
+        await expect(streamPromise).rejects.toThrow(
+          'Stream idle timeout after 1000ms'
+        );
+        expect((transport as any).pendingRequests.size).toBe(0);
+
+        vi.advanceTimersByTime(5000);
+        expect((transport as any).pendingRequests.size).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('should error stream and clean up when timeout fires after first chunk', async () => {
+      vi.useFakeTimers();
+      try {
+        const transport = new WebSocketTransport({
+          wsUrl: 'ws://localhost:3000/ws',
+          streamIdleTimeoutMs: 1000
+        });
+
+        (transport as any).connect = vi.fn().mockResolvedValue(undefined);
+        (transport as any).ws = {
+          readyState: WebSocket.OPEN,
+          send: vi.fn(),
+          addEventListener: vi.fn(),
+          removeEventListener: vi.fn(),
+          close: vi.fn()
+        };
+
+        const streamPromise = (transport as any).requestStream(
+          'POST',
+          '/api/watch',
+          { path: '/workspace' }
+        ) as Promise<ReadableStream<Uint8Array>>;
+
+        await Promise.resolve();
+
+        const pendingIds = Array.from(
+          ((transport as any).pendingRequests as Map<string, unknown>).keys()
+        );
+        expect(pendingIds).toHaveLength(1);
+        const requestId = pendingIds[0]!;
+
+        (transport as any).handleStreamChunk({
+          type: 'stream',
+          id: requestId,
+          data: '{"type":"watching"}'
+        });
+
+        const stream = await streamPromise;
+        const reader = stream.getReader();
+
+        const firstRead = await reader.read();
+        expect(firstRead.done).toBe(false);
+
+        vi.advanceTimersByTime(1001);
+
+        await expect(reader.read()).rejects.toThrow(
+          'Stream idle timeout after 1000ms'
+        );
+        expect((transport as any).pendingRequests.size).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 });
