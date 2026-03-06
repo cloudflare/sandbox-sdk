@@ -35,6 +35,20 @@ export abstract class BaseTransport implements ITransport {
   }
 
   /**
+   * Update transport timeout configuration without recreating the transport.
+   * New values take effect on the next request or timer reset.
+   */
+  setTransportTimeouts(timeouts: {
+    requestTimeoutMs?: number;
+    streamIdleTimeoutMs?: number;
+  }): void {
+    this.config = {
+      ...this.config,
+      ...timeouts
+    };
+  }
+
+  /**
    * Fetch with automatic retry for 503 (container starting)
    *
    * This is the primary entry point for making requests. It wraps the

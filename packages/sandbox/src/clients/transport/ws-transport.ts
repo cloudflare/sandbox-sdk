@@ -13,6 +13,13 @@ import { BaseTransport } from './base-transport';
 import type { TransportConfig, TransportMode } from './types';
 
 /**
+ * Default timeout values (all in milliseconds)
+ */
+const DEFAULT_REQUEST_TIMEOUT_MS = 120_000; // 2 minutes for non-streaming requests
+const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 300_000; // 5 minutes idle timeout for streams
+const DEFAULT_CONNECT_TIMEOUT_MS = 30_000; // 30 seconds for WebSocket connection
+
+/**
  * Pending request tracker for response matching
  */
 interface PendingRequest {
@@ -183,7 +190,8 @@ export class WebSocketTransport extends BaseTransport {
    * parent Container class that supports the WebSocket protocol.
    */
   private async connectViaFetch(): Promise<void> {
-    const timeoutMs = this.config.connectTimeoutMs ?? 30000;
+    const timeoutMs =
+      this.config.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS;
 
     // Create abort controller for timeout
     const controller = new AbortController();
@@ -249,7 +257,8 @@ export class WebSocketTransport extends BaseTransport {
    */
   private connectViaWebSocket(): Promise<void> {
     return new Promise<void>((resolve, reject) => {
-      const timeoutMs = this.config.connectTimeoutMs ?? 30000;
+      const timeoutMs =
+        this.config.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS;
       const timeout = setTimeout(() => {
         this.cleanup();
         reject(new Error(`WebSocket connection timeout after ${timeoutMs}ms`));
@@ -313,7 +322,8 @@ export class WebSocketTransport extends BaseTransport {
     };
 
     return new Promise((resolve, reject) => {
-      const timeoutMs = this.config.requestTimeoutMs ?? 120000;
+      const timeoutMs =
+        this.config.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
       const timeoutId = setTimeout(() => {
         this.pendingRequests.delete(id);
         reject(
@@ -376,7 +386,8 @@ export class WebSocketTransport extends BaseTransport {
       body
     };
 
-    const idleTimeoutMs = this.config.streamIdleTimeoutMs ?? 300_000;
+    const idleTimeoutMs =
+      this.config.streamIdleTimeoutMs ?? DEFAULT_STREAM_IDLE_TIMEOUT_MS;
 
     // We need to wait for the first message to determine if this is a streaming
     // response or an immediate error. This prevents returning a stream that will
@@ -606,15 +617,15 @@ export class WebSocketTransport extends BaseTransport {
       return;
     }
 
-    // Reset the idle timeout since we received activity
-    if (pending.isStreaming) {
-      this.resetStreamIdleTimeout(chunk.id, pending);
-    }
-
-    // Call onFirstChunk if this is the first chunk (triggers stream return)
+    // Call onFirstChunk FIRST to set up the stream controller
     if (pending.onFirstChunk) {
       pending.onFirstChunk();
       pending.onFirstChunk = undefined; // Only call once
+    }
+
+    // NOW reset the idle timeout - controller is guaranteed to exist
+    if (pending.isStreaming) {
+      this.resetStreamIdleTimeout(chunk.id, pending);
     }
 
     // Buffer chunks if controller not set yet (race between onFirstChunk and enqueue)
@@ -667,7 +678,8 @@ export class WebSocketTransport extends BaseTransport {
       clearTimeout(pending.timeoutId);
     }
 
-    const idleTimeoutMs = this.config.streamIdleTimeoutMs ?? 300_000;
+    const idleTimeoutMs =
+      this.config.streamIdleTimeoutMs ?? DEFAULT_STREAM_IDLE_TIMEOUT_MS;
     pending.timeoutId = setTimeout(() => {
       this.pendingRequests.delete(id);
       if (pending.streamController) {

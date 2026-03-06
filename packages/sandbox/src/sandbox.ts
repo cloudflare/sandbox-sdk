@@ -505,11 +505,40 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   async setTransportTimeouts(
     timeouts: NonNullable<SandboxOptions['transportTimeouts']>
   ): Promise<void> {
-    this.transportTimeouts = { ...this.transportTimeouts, ...timeouts };
+    // Validate timeout values to avoid zero/negative values that would break timers
+    if (timeouts.requestTimeoutMs !== undefined) {
+      this.validateTimeout(
+        timeouts.requestTimeoutMs,
+        'requestTimeoutMs',
+        1_000, // Min 1s
+        600_000 // Max 10min
+      );
+    }
+    if (timeouts.streamIdleTimeoutMs !== undefined) {
+      this.validateTimeout(
+        timeouts.streamIdleTimeoutMs,
+        'streamIdleTimeoutMs',
+        1_000, // Min 1s
+        3_600_000 // Max 1 hour
+      );
+    }
 
-    // Recreate client so the new timeouts take effect
-    this.client.disconnect();
-    this.client = this.createSandboxClient();
+    // Check if values actually changed
+    const newTimeouts = { ...this.transportTimeouts, ...timeouts };
+    const changed =
+      newTimeouts.requestTimeoutMs !==
+        this.transportTimeouts.requestTimeoutMs ||
+      newTimeouts.streamIdleTimeoutMs !==
+        this.transportTimeouts.streamIdleTimeoutMs;
+
+    if (!changed) {
+      return;
+    }
+
+    this.transportTimeouts = newTimeouts;
+
+    // Update client config in-place instead of recreating (avoids killing in-flight requests)
+    this.client.setTransportTimeouts(this.transportTimeouts);
 
     this.logger.debug('Transport timeouts updated', this.transportTimeouts);
   }
