@@ -226,6 +226,21 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private backupInProgress: Promise<unknown> = Promise.resolve();
 
   /**
+   * Tracks the number of in-progress container operations (exec, writeFile, streaming, etc.).
+   *
+   * This is in-memory state — it resets if the Durable Object is evicted and
+   * re-instantiated. This is acceptable because eviction kills all in-flight
+   * operations, so there is nothing to guard against on restart.
+   *
+   * Used by `onActivityExpired()` to prevent the `sleepAfter` alarm from
+   * killing the container while operations are still running.
+   */
+  private activeOperations = 0;
+  private operationStartTimes: Map<number, number> = new Map();
+  private operationIdCounter = 0;
+  private static readonly MAX_OPERATION_DURATION_MS = 30 * 60 * 1000; // 30 minutes safety valve
+
+  /**
    * R2 presigned URL credentials for direct container-to-R2 transfers.
    * All four fields plus the R2 binding must be configured for backup to work.
    */
@@ -467,44 +482,46 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   async setEnvVars(envVars: Record<string, string | undefined>): Promise<void> {
-    const { toSet, toUnset } = partitionEnvVars(envVars);
+    return this.withActivityTracking(async () => {
+      const { toSet, toUnset } = partitionEnvVars(envVars);
 
-    for (const key of toUnset) {
-      delete this.envVars[key];
-    }
-    this.envVars = { ...this.envVars, ...toSet };
-
-    if (this.defaultSession) {
       for (const key of toUnset) {
-        const unsetCommand = `unset ${key}`;
+        delete this.envVars[key];
+      }
+      this.envVars = { ...this.envVars, ...toSet };
 
-        const result = await this.client.commands.execute(
-          unsetCommand,
-          this.defaultSession
-        );
+      if (this.defaultSession) {
+        for (const key of toUnset) {
+          const unsetCommand = `unset ${key}`;
 
-        if (result.exitCode !== 0) {
-          throw new Error(
-            `Failed to unset ${key}: ${result.stderr || 'Unknown error'}`
+          const result = await this.client.commands.execute(
+            unsetCommand,
+            this.defaultSession
           );
+
+          if (result.exitCode !== 0) {
+            throw new Error(
+              `Failed to unset ${key}: ${result.stderr || 'Unknown error'}`
+            );
+          }
+        }
+
+        for (const [key, value] of Object.entries(toSet)) {
+          const exportCommand = `export ${key}=${shellEscape(value)}`;
+
+          const result = await this.client.commands.execute(
+            exportCommand,
+            this.defaultSession
+          );
+
+          if (result.exitCode !== 0) {
+            throw new Error(
+              `Failed to set ${key}: ${result.stderr || 'Unknown error'}`
+            );
+          }
         }
       }
-
-      for (const [key, value] of Object.entries(toSet)) {
-        const exportCommand = `export ${key}=${shellEscape(value)}`;
-
-        const result = await this.client.commands.execute(
-          exportCommand,
-          this.defaultSession
-        );
-
-        if (result.exitCode !== 0) {
-          throw new Error(
-            `Failed to set ${key}: ${result.stderr || 'Unknown error'}`
-          );
-        }
-      }
-    }
+    });
   }
 
   /**
@@ -1333,21 +1350,82 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     return { request, port };
   }
 
-  /**
-   * Override onActivityExpired to prevent automatic shutdown when keepAlive is enabled
-   * When keepAlive is disabled, calls parent implementation which stops the container
-   */
   override async onActivityExpired(): Promise<void> {
     if (this.keepAliveEnabled) {
       this.logger.debug(
         'Activity expired but keepAlive is enabled - container will stay alive'
       );
-      // Do nothing - don't call stop(), container stays alive
-    } else {
-      // Default behavior: stop the container
-      this.logger.debug('Activity expired - stopping container');
-      await super.onActivityExpired();
+      return;
     }
+
+    if (this.activeOperations > 0) {
+      const now = Date.now();
+      const allExpired = [...this.operationStartTimes.values()].every(
+        (startTime) => now - startTime > Sandbox.MAX_OPERATION_DURATION_MS
+      );
+
+      if (allExpired) {
+        this.logger.warn(
+          `Activity expired with ${this.activeOperations} operations tracked for over 30 minutes — safety valve triggered, proceeding with shutdown`,
+          { activeOperations: this.activeOperations }
+        );
+      } else {
+        this.logger.debug(
+          `Activity expired but ${this.activeOperations} operations in progress - deferring shutdown`
+        );
+        return;
+      }
+    }
+
+    this.logger.debug('Activity expired - stopping container');
+    await super.onActivityExpired();
+  }
+
+  private async withActivityTracking<T>(fn: () => Promise<T>): Promise<T> {
+    const opId = ++this.operationIdCounter;
+    this.activeOperations++;
+    this.operationStartTimes.set(opId, Date.now());
+    try {
+      return await fn();
+    } finally {
+      this.activeOperations--;
+      this.operationStartTimes.delete(opId);
+    }
+  }
+
+  private trackStream(
+    stream: ReadableStream<Uint8Array>
+  ): ReadableStream<Uint8Array> {
+    const opId = ++this.operationIdCounter;
+    this.activeOperations++;
+    this.operationStartTimes.set(opId, Date.now());
+    let decremented = false;
+
+    const releaseOperation = () => {
+      if (!decremented) {
+        decremented = true;
+        this.activeOperations--;
+        this.operationStartTimes.delete(opId);
+      }
+    };
+
+    const transform = new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        controller.enqueue(chunk);
+      },
+      flush() {
+        releaseOperation();
+      },
+      cancel() {
+        releaseOperation();
+      }
+    });
+
+    stream.pipeTo(transform.writable).catch(() => {
+      releaseOperation();
+    });
+
+    return transform.readable;
   }
 
   // Override fetch to route internal container requests to appropriate ports
@@ -1467,8 +1545,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   // Enhanced exec method - always returns ExecResult with optional streaming
   // This replaces the old exec method to match ISandbox interface
   async exec(command: string, options?: ExecOptions): Promise<ExecResult> {
-    const session = await this.ensureDefaultSession();
-    return this.execWithSession(command, session, options);
+    return this.withActivityTracking(async () => {
+      const session = await this.ensureDefaultSession();
+      return this.execWithSession(command, session, options);
+    });
   }
 
   /**
@@ -1714,136 +1794,138 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     pattern: string | RegExp,
     timeout?: number
   ): Promise<WaitForLogResult> {
-    const startTime = Date.now();
-    const conditionStr = this.conditionToString(pattern);
-    let collectedStdout = '';
-    let collectedStderr = '';
+    return this.withActivityTracking(async () => {
+      const startTime = Date.now();
+      const conditionStr = this.conditionToString(pattern);
+      let collectedStdout = '';
+      let collectedStderr = '';
 
-    // First check existing logs
-    try {
-      const existingLogs = await this.getProcessLogs(processId);
-      // Ensure existing logs end with newline for proper line separation from streamed output
-      collectedStdout = existingLogs.stdout;
-      if (collectedStdout && !collectedStdout.endsWith('\n')) {
-        collectedStdout += '\n';
-      }
-      collectedStderr = existingLogs.stderr;
-      if (collectedStderr && !collectedStderr.endsWith('\n')) {
-        collectedStderr += '\n';
-      }
-
-      // Check stdout
-      const stdoutResult = this.matchPattern(existingLogs.stdout, pattern);
-      if (stdoutResult) {
-        return stdoutResult;
-      }
-
-      // Check stderr
-      const stderrResult = this.matchPattern(existingLogs.stderr, pattern);
-      if (stderrResult) {
-        return stderrResult;
-      }
-    } catch (error) {
-      // Process might have already exited, continue to streaming
-      this.logger.debug('Could not get existing logs, will stream', {
-        processId,
-        error: error instanceof Error ? error.message : String(error)
-      });
-    }
-
-    // Stream new logs and check for pattern
-    const stream = await this.streamProcessLogs(processId);
-
-    // Set up timeout if specified
-    let timeoutId: ReturnType<typeof setTimeout> | undefined;
-    let timeoutPromise: Promise<never> | undefined;
-
-    if (timeout !== undefined) {
-      const remainingTime = timeout - (Date.now() - startTime);
-      if (remainingTime <= 0) {
-        throw this.createReadyTimeoutError(
-          processId,
-          command,
-          conditionStr,
-          timeout
-        );
-      }
-
-      timeoutPromise = new Promise<never>((_, reject) => {
-        timeoutId = setTimeout(() => {
-          reject(
-            this.createReadyTimeoutError(
-              processId,
-              command,
-              conditionStr,
-              timeout
-            )
-          );
-        }, remainingTime);
-      });
-    }
-
-    try {
-      // Process stream
-      const streamProcessor = async (): Promise<WaitForLogResult> => {
-        const checkPattern = (): WaitForLogResult | null => {
-          const stdoutResult = this.matchPattern(collectedStdout, pattern);
-          if (stdoutResult) return stdoutResult;
-          const stderrResult = this.matchPattern(collectedStderr, pattern);
-          if (stderrResult) return stderrResult;
-          return null;
-        };
-
-        for await (const event of parseSSEStream<LogEvent>(stream)) {
-          if (event.type === 'stdout' || event.type === 'stderr') {
-            const data = event.data || '';
-
-            if (event.type === 'stdout') {
-              collectedStdout += data;
-            } else {
-              collectedStderr += data;
-            }
-
-            const result = checkPattern();
-            if (result) return result;
-          }
-
-          // Process exited - do final check before throwing
-          if (event.type === 'exit') {
-            // Final check in case pattern arrived in last chunk
-            const result = checkPattern();
-            if (result) return result;
-            throw this.createExitedBeforeReadyError(
-              processId,
-              command,
-              conditionStr,
-              event.exitCode ?? 1
-            );
-          }
+      // First check existing logs
+      try {
+        const existingLogs = await this.getProcessLogs(processId);
+        // Ensure existing logs end with newline for proper line separation from streamed output
+        collectedStdout = existingLogs.stdout;
+        if (collectedStdout && !collectedStdout.endsWith('\n')) {
+          collectedStdout += '\n';
+        }
+        collectedStderr = existingLogs.stderr;
+        if (collectedStderr && !collectedStderr.endsWith('\n')) {
+          collectedStderr += '\n';
         }
 
-        // Stream ended without exit event — do final check
-        const finalResult = checkPattern();
-        if (finalResult) return finalResult;
-        // Stream ended without finding pattern - this indicates process exited
-        throw this.createExitedBeforeReadyError(
-          processId,
-          command,
-          conditionStr,
-          0
-        );
-      };
+        // Check stdout
+        const stdoutResult = this.matchPattern(existingLogs.stdout, pattern);
+        if (stdoutResult) {
+          return stdoutResult;
+        }
 
-      // Race with timeout if specified, otherwise just run stream processor
-      if (timeoutPromise) {
-        return await Promise.race([streamProcessor(), timeoutPromise]);
+        // Check stderr
+        const stderrResult = this.matchPattern(existingLogs.stderr, pattern);
+        if (stderrResult) {
+          return stderrResult;
+        }
+      } catch (error) {
+        // Process might have already exited, continue to streaming
+        this.logger.debug('Could not get existing logs, will stream', {
+          processId,
+          error: error instanceof Error ? error.message : String(error)
+        });
       }
-      return await streamProcessor();
-    } finally {
-      if (timeoutId) {
-        clearTimeout(timeoutId);
+
+      // Stream new logs and check for pattern
+      const stream = await this.streamProcessLogs(processId);
+
+      // Set up timeout if specified
+      let timeoutId: ReturnType<typeof setTimeout> | undefined;
+      let timeoutPromise: Promise<never> | undefined;
+
+      if (timeout !== undefined) {
+        const remainingTime = timeout - (Date.now() - startTime);
+        if (remainingTime <= 0) {
+          throw this.createReadyTimeoutError(
+            processId,
+            command,
+            conditionStr,
+            timeout
+          );
+        }
+
+        timeoutPromise = new Promise<never>((_, reject) => {
+          timeoutId = setTimeout(() => {
+            reject(
+              this.createReadyTimeoutError(
+                processId,
+                command,
+                conditionStr,
+                timeout
+              )
+            );
+          }, remainingTime);
+        });
       }
-    }
+
+      try {
+        // Process stream
+        const streamProcessor = async (): Promise<WaitForLogResult> => {
+          const checkPattern = (): WaitForLogResult | null => {
+            const stdoutResult = this.matchPattern(collectedStdout, pattern);
+            if (stdoutResult) return stdoutResult;
+            const stderrResult = this.matchPattern(collectedStderr, pattern);
+            if (stderrResult) return stderrResult;
+            return null;
+          };
+
+          for await (const event of parseSSEStream<LogEvent>(stream)) {
+            if (event.type === 'stdout' || event.type === 'stderr') {
+              const data = event.data || '';
+
+              if (event.type === 'stdout') {
+                collectedStdout += data;
+              } else {
+                collectedStderr += data;
+              }
+
+              const result = checkPattern();
+              if (result) return result;
+            }
+
+            // Process exited - do final check before throwing
+            if (event.type === 'exit') {
+              // Final check in case pattern arrived in last chunk
+              const result = checkPattern();
+              if (result) return result;
+              throw this.createExitedBeforeReadyError(
+                processId,
+                command,
+                conditionStr,
+                event.exitCode ?? 1
+              );
+            }
+          }
+
+          // Stream ended without exit event — do final check
+          const finalResult = checkPattern();
+          if (finalResult) return finalResult;
+          // Stream ended without finding pattern - this indicates process exited
+          throw this.createExitedBeforeReadyError(
+            processId,
+            command,
+            conditionStr,
+            0
+          );
+        };
+
+        // Race with timeout if specified, otherwise just run stream processor
+        if (timeoutPromise) {
+          return await Promise.race([streamProcessor(), timeoutPromise]);
+        }
+        return await streamProcessor();
+      } finally {
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+        }
+      }
+    });
   }
 
   /**
@@ -1855,86 +1937,88 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     port: number,
     options?: WaitForPortOptions
   ): Promise<void> {
-    const {
-      mode = 'http',
-      path = '/',
-      status = { min: 200, max: 399 },
-      timeout,
-      interval = 500
-    } = options ?? {};
+    return this.withActivityTracking(async () => {
+      const {
+        mode = 'http',
+        path = '/',
+        status = { min: 200, max: 399 },
+        timeout,
+        interval = 500
+      } = options ?? {};
 
-    const conditionStr =
-      mode === 'http' ? `port ${port} (HTTP ${path})` : `port ${port} (TCP)`;
+      const conditionStr =
+        mode === 'http' ? `port ${port} (HTTP ${path})` : `port ${port} (TCP)`;
 
-    // Normalize status to min/max
-    const statusMin = typeof status === 'number' ? status : status.min;
-    const statusMax = typeof status === 'number' ? status : status.max;
+      // Normalize status to min/max
+      const statusMin = typeof status === 'number' ? status : status.min;
+      const statusMax = typeof status === 'number' ? status : status.max;
 
-    // Open streaming watch - container handles internal polling
-    const stream = await this.client.ports.watchPort({
-      port,
-      mode,
-      path,
-      statusMin,
-      statusMax,
-      processId,
-      interval
-    });
-
-    // Set up timeout if specified
-    let timeoutId: ReturnType<typeof setTimeout> | undefined;
-    let timeoutPromise: Promise<never> | undefined;
-
-    if (timeout !== undefined) {
-      timeoutPromise = new Promise<never>((_, reject) => {
-        timeoutId = setTimeout(() => {
-          reject(
-            this.createReadyTimeoutError(
-              processId,
-              command,
-              conditionStr,
-              timeout
-            )
-          );
-        }, timeout);
+      // Open streaming watch - container handles internal polling
+      const stream = await this.client.ports.watchPort({
+        port,
+        mode,
+        path,
+        statusMin,
+        statusMax,
+        processId,
+        interval
       });
-    }
 
-    try {
-      const streamProcessor = async (): Promise<void> => {
-        for await (const event of parseSSEStream<PortWatchEvent>(stream)) {
-          switch (event.type) {
-            case 'ready':
-              return; // Success!
-            case 'process_exited':
-              throw this.createExitedBeforeReadyError(
+      // Set up timeout if specified
+      let timeoutId: ReturnType<typeof setTimeout> | undefined;
+      let timeoutPromise: Promise<never> | undefined;
+
+      if (timeout !== undefined) {
+        timeoutPromise = new Promise<never>((_, reject) => {
+          timeoutId = setTimeout(() => {
+            reject(
+              this.createReadyTimeoutError(
                 processId,
                 command,
                 conditionStr,
-                event.exitCode ?? 1
-              );
-            case 'error':
-              throw new Error(event.error || 'Port watch failed');
-            // 'watching' - continue
-          }
-        }
-        throw new Error('Port watch stream ended unexpectedly');
-      };
+                timeout
+              )
+            );
+          }, timeout);
+        });
+      }
 
-      if (timeoutPromise) {
-        await Promise.race([streamProcessor(), timeoutPromise]);
-      } else {
-        await streamProcessor();
-      }
-    } finally {
-      if (timeoutId) clearTimeout(timeoutId);
-      // Cancel the stream to stop container-side polling
       try {
-        await stream.cancel();
-      } catch {
-        // Stream may already be closed
+        const streamProcessor = async (): Promise<void> => {
+          for await (const event of parseSSEStream<PortWatchEvent>(stream)) {
+            switch (event.type) {
+              case 'ready':
+                return; // Success!
+              case 'process_exited':
+                throw this.createExitedBeforeReadyError(
+                  processId,
+                  command,
+                  conditionStr,
+                  event.exitCode ?? 1
+                );
+              case 'error':
+                throw new Error(event.error || 'Port watch failed');
+              // 'watching' - continue
+            }
+          }
+          throw new Error('Port watch stream ended unexpectedly');
+        };
+
+        if (timeoutPromise) {
+          await Promise.race([streamProcessor(), timeoutPromise]);
+        } else {
+          await streamProcessor();
+        }
+      } finally {
+        if (timeoutId) clearTimeout(timeoutId);
+        // Cancel the stream to stop container-side polling
+        try {
+          await stream.cancel();
+        } catch {
+          // Stream may already be closed
+        }
       }
-    }
+    });
   }
 
   /**
@@ -1946,52 +2030,54 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     command: string,
     timeout?: number
   ): Promise<WaitForExitResult> {
-    const stream = await this.streamProcessLogs(processId);
+    return this.withActivityTracking(async () => {
+      const stream = await this.streamProcessLogs(processId);
 
-    // Set up timeout if specified
-    let timeoutId: ReturnType<typeof setTimeout> | undefined;
-    let timeoutPromise: Promise<never> | undefined;
+      // Set up timeout if specified
+      let timeoutId: ReturnType<typeof setTimeout> | undefined;
+      let timeoutPromise: Promise<never> | undefined;
 
-    if (timeout !== undefined) {
-      timeoutPromise = new Promise<never>((_, reject) => {
-        timeoutId = setTimeout(() => {
-          reject(
-            this.createReadyTimeoutError(
-              processId,
-              command,
-              'process exit',
-              timeout
-            )
-          );
-        }, timeout);
-      });
-    }
+      if (timeout !== undefined) {
+        timeoutPromise = new Promise<never>((_, reject) => {
+          timeoutId = setTimeout(() => {
+            reject(
+              this.createReadyTimeoutError(
+                processId,
+                command,
+                'process exit',
+                timeout
+              )
+            );
+          }, timeout);
+        });
+      }
 
-    try {
-      const streamProcessor = async (): Promise<WaitForExitResult> => {
-        for await (const event of parseSSEStream<LogEvent>(stream)) {
-          if (event.type === 'exit') {
-            return {
-              exitCode: event.exitCode ?? 1
-            };
+      try {
+        const streamProcessor = async (): Promise<WaitForExitResult> => {
+          for await (const event of parseSSEStream<LogEvent>(stream)) {
+            if (event.type === 'exit') {
+              return {
+                exitCode: event.exitCode ?? 1
+              };
+            }
           }
+
+          // Stream ended without exit event - shouldn't happen, but handle gracefully
+          throw new Error(
+            `Process ${processId} stream ended unexpectedly without exit event`
+          );
+        };
+
+        if (timeoutPromise) {
+          return await Promise.race([streamProcessor(), timeoutPromise]);
         }
-
-        // Stream ended without exit event - shouldn't happen, but handle gracefully
-        throw new Error(
-          `Process ${processId} stream ended unexpectedly without exit event`
-        );
-      };
-
-      if (timeoutPromise) {
-        return await Promise.race([streamProcessor(), timeoutPromise]);
+        return await streamProcessor();
+      } finally {
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+        }
       }
-      return await streamProcessor();
-    } finally {
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-      }
-    }
+    });
   }
 
   /**
@@ -2098,64 +2184,70 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     options?: ProcessOptions,
     sessionId?: string
   ): Promise<Process> {
-    // Use the new HttpClient method to start the process
-    try {
-      const session = sessionId ?? (await this.ensureDefaultSession());
-      const requestOptions = {
-        ...(options?.processId !== undefined && {
-          processId: options.processId
-        }),
-        ...(options?.timeout !== undefined && { timeoutMs: options.timeout }),
-        ...(options?.env !== undefined && { env: filterEnvVars(options.env) }),
-        ...(options?.cwd !== undefined && { cwd: options.cwd }),
-        ...(options?.encoding !== undefined && { encoding: options.encoding }),
-        ...(options?.autoCleanup !== undefined && {
-          autoCleanup: options.autoCleanup
-        })
-      };
+    return this.withActivityTracking(async () => {
+      // Use the new HttpClient method to start the process
+      try {
+        const session = sessionId ?? (await this.ensureDefaultSession());
+        const requestOptions = {
+          ...(options?.processId !== undefined && {
+            processId: options.processId
+          }),
+          ...(options?.timeout !== undefined && { timeoutMs: options.timeout }),
+          ...(options?.env !== undefined && {
+            env: filterEnvVars(options.env)
+          }),
+          ...(options?.cwd !== undefined && { cwd: options.cwd }),
+          ...(options?.encoding !== undefined && {
+            encoding: options.encoding
+          }),
+          ...(options?.autoCleanup !== undefined && {
+            autoCleanup: options.autoCleanup
+          })
+        };
 
-      const response = await this.client.processes.startProcess(
-        command,
-        session,
-        requestOptions
-      );
-
-      const processObj = this.createProcessFromDTO(
-        {
-          id: response.processId,
-          pid: response.pid,
-          command: response.command,
-          status: 'running' as ProcessStatus,
-          startTime: new Date(),
-          endTime: undefined,
-          exitCode: undefined
-        },
-        session
-      );
-
-      // Call onStart callback if provided
-      if (options?.onStart) {
-        options.onStart(processObj);
-      }
-
-      // Start background streaming if output/exit callbacks are provided
-      if (options?.onOutput || options?.onExit) {
-        // Fire and forget - don't await, let it run in background
-        this.startProcessCallbackStream(response.processId, options).catch(
-          () => {
-            // Error already handled in startProcessCallbackStream
-          }
+        const response = await this.client.processes.startProcess(
+          command,
+          session,
+          requestOptions
         );
-      }
 
-      return processObj;
-    } catch (error) {
-      if (options?.onError && error instanceof Error) {
-        options.onError(error);
-      }
+        const processObj = this.createProcessFromDTO(
+          {
+            id: response.processId,
+            pid: response.pid,
+            command: response.command,
+            status: 'running' as ProcessStatus,
+            startTime: new Date(),
+            endTime: undefined,
+            exitCode: undefined
+          },
+          session
+        );
 
-      throw error;
-    }
+        // Call onStart callback if provided
+        if (options?.onStart) {
+          options.onStart(processObj);
+        }
+
+        // Start background streaming if output/exit callbacks are provided
+        if (options?.onOutput || options?.onExit) {
+          // Fire and forget - don't await, let it run in background
+          this.startProcessCallbackStream(response.processId, options).catch(
+            () => {
+              // Error already handled in startProcessCallbackStream
+            }
+          );
+        }
+
+        return processObj;
+      } catch (error) {
+        if (options?.onError && error instanceof Error) {
+          options.onError(error);
+        }
+
+        throw error;
+      }
+    });
   }
 
   /**
@@ -2166,54 +2258,82 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     processId: string,
     options: ProcessOptions
   ): Promise<void> {
-    try {
-      const stream = await this.client.processes.streamProcessLogs(processId);
+    return this.withActivityTracking(async () => {
+      try {
+        const stream = await this.client.processes.streamProcessLogs(processId);
 
-      for await (const event of parseSSEStream<{
-        type: string;
-        data?: string;
-        exitCode?: number;
-        processId?: string;
-      }>(stream)) {
-        switch (event.type) {
-          case 'stdout':
-            if (event.data && options.onOutput) {
-              options.onOutput('stdout', event.data);
-            }
-            break;
-          case 'stderr':
-            if (event.data && options.onOutput) {
-              options.onOutput('stderr', event.data);
-            }
-            break;
-          case 'exit':
-          case 'complete':
-            if (options.onExit) {
-              options.onExit(event.exitCode ?? null);
-            }
-            return; // Stream complete
+        for await (const event of parseSSEStream<{
+          type: string;
+          data?: string;
+          exitCode?: number;
+          processId?: string;
+        }>(stream)) {
+          switch (event.type) {
+            case 'stdout':
+              if (event.data && options.onOutput) {
+                options.onOutput('stdout', event.data);
+              }
+              break;
+            case 'stderr':
+              if (event.data && options.onOutput) {
+                options.onOutput('stderr', event.data);
+              }
+              break;
+            case 'exit':
+            case 'complete':
+              if (options.onExit) {
+                options.onExit(event.exitCode ?? null);
+              }
+              return; // Stream complete
+          }
         }
+      } catch (error) {
+        // Call onError if streaming fails
+        if (options.onError && error instanceof Error) {
+          options.onError(error);
+        }
+        // Don't rethrow - background streaming failure shouldn't crash the caller
+        this.logger.error(
+          'Background process streaming failed',
+          error instanceof Error ? error : new Error(String(error)),
+          { processId }
+        );
       }
-    } catch (error) {
-      // Call onError if streaming fails
-      if (options.onError && error instanceof Error) {
-        options.onError(error);
-      }
-      // Don't rethrow - background streaming failure shouldn't crash the caller
-      this.logger.error(
-        'Background process streaming failed',
-        error instanceof Error ? error : new Error(String(error)),
-        { processId }
-      );
-    }
+    });
   }
 
   async listProcesses(sessionId?: string): Promise<Process[]> {
-    const session = sessionId ?? (await this.ensureDefaultSession());
-    const response = await this.client.processes.listProcesses();
+    return this.withActivityTracking(async () => {
+      const session = sessionId ?? (await this.ensureDefaultSession());
+      const response = await this.client.processes.listProcesses();
 
-    return response.processes.map((processData) =>
-      this.createProcessFromDTO(
+      return response.processes.map((processData) =>
+        this.createProcessFromDTO(
+          {
+            id: processData.id,
+            pid: processData.pid,
+            command: processData.command,
+            status: processData.status,
+            startTime: processData.startTime,
+            endTime: processData.endTime,
+            exitCode: processData.exitCode
+          },
+          session
+        )
+      );
+    });
+  }
+
+  async getProcess(id: string, sessionId?: string): Promise<Process | null> {
+    return this.withActivityTracking(async () => {
+      const session = sessionId ?? (await this.ensureDefaultSession());
+      const response = await this.client.processes.getProcess(id);
+      if (!response.process) {
+        return null;
+      }
+
+      const processData = response.process;
+      return this.createProcessFromDTO(
         {
           id: processData.id,
           pid: processData.pid,
@@ -2224,30 +2344,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           exitCode: processData.exitCode
         },
         session
-      )
-    );
-  }
-
-  async getProcess(id: string, sessionId?: string): Promise<Process | null> {
-    const session = sessionId ?? (await this.ensureDefaultSession());
-    const response = await this.client.processes.getProcess(id);
-    if (!response.process) {
-      return null;
-    }
-
-    const processData = response.process;
-    return this.createProcessFromDTO(
-      {
-        id: processData.id,
-        pid: processData.pid,
-        command: processData.command,
-        status: processData.status,
-        startTime: processData.startTime,
-        endTime: processData.endTime,
-        exitCode: processData.exitCode
-      },
-      session
-    );
+      );
+    });
   }
 
   async killProcess(
@@ -2255,8 +2353,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     signal?: string,
     sessionId?: string
   ): Promise<void> {
-    // Note: signal parameter is not currently supported by the HTTP client
-    await this.client.processes.killProcess(id);
+    return this.withActivityTracking(async () => {
+      // Note: signal parameter is not currently supported by the HTTP client
+      await this.client.processes.killProcess(id);
+    });
   }
 
   async killAllProcesses(sessionId?: string): Promise<number> {
@@ -2273,12 +2373,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     id: string,
     sessionId?: string
   ): Promise<{ stdout: string; stderr: string; processId: string }> {
-    const response = await this.client.processes.getProcessLogs(id);
-    return {
-      stdout: response.stdout,
-      stderr: response.stderr,
-      processId: response.processId
-    };
+    return this.withActivityTracking(async () => {
+      const response = await this.client.processes.getProcessLogs(id);
+      return {
+        stdout: response.stdout,
+        stderr: response.stderr,
+        processId: response.processId
+      };
+    });
   }
 
   // Streaming methods - return ReadableStream for RPC compatibility
@@ -2292,12 +2394,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
 
     const session = await this.ensureDefaultSession();
-    // Get the stream from CommandClient
-    return this.client.commands.executeStream(command, session, {
+    const stream = await this.client.commands.executeStream(command, session, {
       timeoutMs: options?.timeout,
       env: options?.env,
       cwd: options?.cwd
     });
+    return this.trackStream(stream);
   }
 
   /**
@@ -2313,11 +2415,16 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       throw new Error('Operation was aborted');
     }
 
-    return this.client.commands.executeStream(command, sessionId, {
-      timeoutMs: options?.timeout,
-      env: options?.env,
-      cwd: options?.cwd
-    });
+    const stream = await this.client.commands.executeStream(
+      command,
+      sessionId,
+      {
+        timeoutMs: options?.timeout,
+        env: options?.env,
+        cwd: options?.cwd
+      }
+    );
+    return this.trackStream(stream);
   }
 
   /**
@@ -2332,7 +2439,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       throw new Error('Operation was aborted');
     }
 
-    return this.client.processes.streamProcessLogs(processId);
+    const stream = await this.client.processes.streamProcessLogs(processId);
+    return this.trackStream(stream);
   }
 
   async gitCheckout(
@@ -2345,11 +2453,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       depth?: number;
     }
   ) {
-    const session = options?.sessionId ?? (await this.ensureDefaultSession());
-    return this.client.git.checkout(repoUrl, session, {
-      branch: options?.branch,
-      targetDir: options?.targetDir,
-      depth: options?.depth
+    return this.withActivityTracking(async () => {
+      const session = options?.sessionId ?? (await this.ensureDefaultSession());
+      return this.client.git.checkout(repoUrl, session, {
+        branch: options?.branch,
+        targetDir: options?.targetDir,
+        depth: options?.depth
+      });
     });
   }
 
@@ -2357,9 +2467,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     path: string,
     options: { recursive?: boolean; sessionId?: string } = {}
   ) {
-    const session = options.sessionId ?? (await this.ensureDefaultSession());
-    return this.client.files.mkdir(path, session, {
-      recursive: options.recursive
+    return this.withActivityTracking(async () => {
+      const session = options.sessionId ?? (await this.ensureDefaultSession());
+      return this.client.files.mkdir(path, session, {
+        recursive: options.recursive
+      });
     });
   }
 
@@ -2368,20 +2480,26 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     content: string,
     options: { encoding?: string; sessionId?: string } = {}
   ) {
-    const session = options.sessionId ?? (await this.ensureDefaultSession());
-    return this.client.files.writeFile(path, content, session, {
-      encoding: options.encoding
+    return this.withActivityTracking(async () => {
+      const session = options.sessionId ?? (await this.ensureDefaultSession());
+      return this.client.files.writeFile(path, content, session, {
+        encoding: options.encoding
+      });
     });
   }
 
   async deleteFile(path: string, sessionId?: string) {
-    const session = sessionId ?? (await this.ensureDefaultSession());
-    return this.client.files.deleteFile(path, session);
+    return this.withActivityTracking(async () => {
+      const session = sessionId ?? (await this.ensureDefaultSession());
+      return this.client.files.deleteFile(path, session);
+    });
   }
 
   async renameFile(oldPath: string, newPath: string, sessionId?: string) {
-    const session = sessionId ?? (await this.ensureDefaultSession());
-    return this.client.files.renameFile(oldPath, newPath, session);
+    return this.withActivityTracking(async () => {
+      const session = sessionId ?? (await this.ensureDefaultSession());
+      return this.client.files.renameFile(oldPath, newPath, session);
+    });
   }
 
   async moveFile(
@@ -2389,17 +2507,21 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     destinationPath: string,
     sessionId?: string
   ) {
-    const session = sessionId ?? (await this.ensureDefaultSession());
-    return this.client.files.moveFile(sourcePath, destinationPath, session);
+    return this.withActivityTracking(async () => {
+      const session = sessionId ?? (await this.ensureDefaultSession());
+      return this.client.files.moveFile(sourcePath, destinationPath, session);
+    });
   }
 
   async readFile(
     path: string,
     options: { encoding?: string; sessionId?: string } = {}
   ) {
-    const session = options.sessionId ?? (await this.ensureDefaultSession());
-    return this.client.files.readFile(path, session, {
-      encoding: options.encoding
+    return this.withActivityTracking(async () => {
+      const session = options.sessionId ?? (await this.ensureDefaultSession());
+      return this.client.files.readFile(path, session, {
+        encoding: options.encoding
+      });
     });
   }
 
@@ -2414,20 +2536,25 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     options: { sessionId?: string } = {}
   ): Promise<ReadableStream<Uint8Array>> {
     const session = options.sessionId ?? (await this.ensureDefaultSession());
-    return this.client.files.readFileStream(path, session);
+    const stream = await this.client.files.readFileStream(path, session);
+    return this.trackStream(stream);
   }
 
   async listFiles(
     path: string,
     options?: { recursive?: boolean; includeHidden?: boolean }
   ) {
-    const session = await this.ensureDefaultSession();
-    return this.client.files.listFiles(path, session, options);
+    return this.withActivityTracking(async () => {
+      const session = await this.ensureDefaultSession();
+      return this.client.files.listFiles(path, session, options);
+    });
   }
 
   async exists(path: string, sessionId?: string) {
-    const session = sessionId ?? (await this.ensureDefaultSession());
-    return this.client.files.exists(path, session);
+    return this.withActivityTracking(async () => {
+      const session = sessionId ?? (await this.ensureDefaultSession());
+      return this.client.files.exists(path, session);
+    });
   }
 
   /**
@@ -2518,13 +2645,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     options: WatchOptions = {}
   ): Promise<ReadableStream<Uint8Array>> {
     const sessionId = options.sessionId ?? (await this.ensureDefaultSession());
-    return this.client.watch.watch({
+    const stream = await this.client.watch.watch({
       path,
       recursive: options.recursive,
       include: options.include,
       exclude: options.exclude,
       sessionId
     });
+    return this.trackStream(stream);
   }
 
   /**
@@ -2555,123 +2683,132 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     port: number,
     options: { name?: string; hostname: string; token?: string }
   ) {
-    if (!validatePort(port)) {
-      throw new SecurityError(
-        `Invalid port number: ${port}. Must be 1024-65535, excluding 3000 (sandbox control plane).`
-      );
-    }
-
-    // Check if hostname is workers.dev domain (doesn't support wildcard subdomains)
-    if (options.hostname.endsWith('.workers.dev')) {
-      const errorResponse: ErrorResponse = {
-        code: ErrorCode.CUSTOM_DOMAIN_REQUIRED,
-        message: `Port exposure requires a custom domain. .workers.dev domains do not support wildcard subdomains required for port proxying.`,
-        context: { originalError: options.hostname },
-        httpStatus: 400,
-        timestamp: new Date().toISOString()
-      };
-      throw new CustomDomainRequiredError(errorResponse);
-    }
-
-    // We need the sandbox name to construct preview URLs
-    if (!this.sandboxName) {
-      throw new Error(
-        'Sandbox name not available. Ensure sandbox is accessed through getSandbox()'
-      );
-    }
-
-    let token: string;
-    if (options.token !== undefined) {
-      this.validateCustomToken(options.token);
-      token = options.token;
-    } else {
-      token = this.generatePortToken();
-    }
-
-    // Allow re-exposing same port with same token, but reject if another port uses this token
-    const tokens =
-      (await this.ctx.storage.get<Record<string, string>>('portTokens')) || {};
-    const existingPort = Object.entries(tokens).find(
-      ([p, t]) => t === token && p !== port.toString()
-    );
-    if (existingPort) {
-      throw new SecurityError(
-        `Token '${token}' is already in use by port ${existingPort[0]}. Please use a different token.`
-      );
-    }
-
-    const sessionId = await this.ensureDefaultSession();
-    await this.client.ports.exposePort(port, sessionId, options?.name);
-
-    tokens[port.toString()] = token;
-    await this.ctx.storage.put('portTokens', tokens);
-
-    const url = this.constructPreviewUrl(
-      port,
-      this.sandboxName,
-      options.hostname,
-      token
-    );
-
-    return {
-      url,
-      port,
-      name: options?.name
-    };
-  }
-
-  async unexposePort(port: number) {
-    if (!validatePort(port)) {
-      throw new SecurityError(
-        `Invalid port number: ${port}. Must be 1024-65535, excluding 3000 (sandbox control plane).`
-      );
-    }
-
-    const sessionId = await this.ensureDefaultSession();
-    await this.client.ports.unexposePort(port, sessionId);
-
-    // Clean up token for this port (storage is protected by input gates)
-    const tokens =
-      (await this.ctx.storage.get<Record<string, string>>('portTokens')) || {};
-    if (tokens[port.toString()]) {
-      delete tokens[port.toString()];
-      await this.ctx.storage.put('portTokens', tokens);
-    }
-  }
-
-  async getExposedPorts(hostname: string) {
-    const sessionId = await this.ensureDefaultSession();
-    const response = await this.client.ports.getExposedPorts(sessionId);
-
-    // We need the sandbox name to construct preview URLs
-    if (!this.sandboxName) {
-      throw new Error(
-        'Sandbox name not available. Ensure sandbox is accessed through getSandbox()'
-      );
-    }
-
-    // Read all tokens from storage (protected by input gates)
-    const tokens =
-      (await this.ctx.storage.get<Record<string, string>>('portTokens')) || {};
-
-    return response.ports.map((port) => {
-      const token = tokens[port.port.toString()];
-      if (!token) {
-        throw new Error(
-          `Port ${port.port} is exposed but has no token. This should not happen.`
+    return this.withActivityTracking(async () => {
+      if (!validatePort(port)) {
+        throw new SecurityError(
+          `Invalid port number: ${port}. Must be 1024-65535, excluding 3000 (sandbox control plane).`
         );
       }
 
+      // Check if hostname is workers.dev domain (doesn't support wildcard subdomains)
+      if (options.hostname.endsWith('.workers.dev')) {
+        const errorResponse: ErrorResponse = {
+          code: ErrorCode.CUSTOM_DOMAIN_REQUIRED,
+          message: `Port exposure requires a custom domain. .workers.dev domains do not support wildcard subdomains required for port proxying.`,
+          context: { originalError: options.hostname },
+          httpStatus: 400,
+          timestamp: new Date().toISOString()
+        };
+        throw new CustomDomainRequiredError(errorResponse);
+      }
+
+      // We need the sandbox name to construct preview URLs
+      if (!this.sandboxName) {
+        throw new Error(
+          'Sandbox name not available. Ensure sandbox is accessed through getSandbox()'
+        );
+      }
+
+      let token: string;
+      if (options.token !== undefined) {
+        this.validateCustomToken(options.token);
+        token = options.token;
+      } else {
+        token = this.generatePortToken();
+      }
+
+      // Allow re-exposing same port with same token, but reject if another port uses this token
+      const tokens =
+        (await this.ctx.storage.get<Record<string, string>>('portTokens')) ||
+        {};
+      const existingPort = Object.entries(tokens).find(
+        ([p, t]) => t === token && p !== port.toString()
+      );
+      if (existingPort) {
+        throw new SecurityError(
+          `Token '${token}' is already in use by port ${existingPort[0]}. Please use a different token.`
+        );
+      }
+
+      const sessionId = await this.ensureDefaultSession();
+      await this.client.ports.exposePort(port, sessionId, options?.name);
+
+      tokens[port.toString()] = token;
+      await this.ctx.storage.put('portTokens', tokens);
+
+      const url = this.constructPreviewUrl(
+        port,
+        this.sandboxName,
+        options.hostname,
+        token
+      );
+
       return {
-        url: this.constructPreviewUrl(
-          port.port,
-          this.sandboxName!,
-          hostname,
-          token
-        ),
-        port: port.port,
-        status: port.status
+        url,
+        port,
+        name: options?.name
       };
+    });
+  }
+
+  async unexposePort(port: number) {
+    return this.withActivityTracking(async () => {
+      if (!validatePort(port)) {
+        throw new SecurityError(
+          `Invalid port number: ${port}. Must be 1024-65535, excluding 3000 (sandbox control plane).`
+        );
+      }
+
+      const sessionId = await this.ensureDefaultSession();
+      await this.client.ports.unexposePort(port, sessionId);
+
+      // Clean up token for this port (storage is protected by input gates)
+      const tokens =
+        (await this.ctx.storage.get<Record<string, string>>('portTokens')) ||
+        {};
+      if (tokens[port.toString()]) {
+        delete tokens[port.toString()];
+        await this.ctx.storage.put('portTokens', tokens);
+      }
+    });
+  }
+
+  async getExposedPorts(hostname: string) {
+    return this.withActivityTracking(async () => {
+      const sessionId = await this.ensureDefaultSession();
+      const response = await this.client.ports.getExposedPorts(sessionId);
+
+      // We need the sandbox name to construct preview URLs
+      if (!this.sandboxName) {
+        throw new Error(
+          'Sandbox name not available. Ensure sandbox is accessed through getSandbox()'
+        );
+      }
+
+      // Read all tokens from storage (protected by input gates)
+      const tokens =
+        (await this.ctx.storage.get<Record<string, string>>('portTokens')) ||
+        {};
+
+      return response.ports.map((port) => {
+        const token = tokens[port.port.toString()];
+        if (!token) {
+          throw new Error(
+            `Port ${port.port} is exposed but has no token. This should not happen.`
+          );
+        }
+
+        return {
+          url: this.constructPreviewUrl(
+            port.port,
+            this.sandboxName!,
+            hostname,
+            token
+          ),
+          port: port.port,
+          status: port.status
+        };
+      });
     });
   }
 
@@ -2830,25 +2967,27 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * Returns ExecutionSession with full sandbox API bound to specific session
    */
   async createSession(options?: SessionOptions): Promise<ExecutionSession> {
-    const sessionId = options?.id || `session-${Date.now()}`;
+    return this.withActivityTracking(async () => {
+      const sessionId = options?.id || `session-${Date.now()}`;
 
-    const mergedEnv = {
-      ...this.envVars,
-      ...(options?.env ?? {})
-    };
-    const filteredEnv = filterEnvVars(mergedEnv);
-    const envPayload =
-      Object.keys(filteredEnv).length > 0 ? filteredEnv : undefined;
+      const mergedEnv = {
+        ...this.envVars,
+        ...(options?.env ?? {})
+      };
+      const filteredEnv = filterEnvVars(mergedEnv);
+      const envPayload =
+        Object.keys(filteredEnv).length > 0 ? filteredEnv : undefined;
 
-    // Create session in container
-    await this.client.utils.createSession({
-      id: sessionId,
-      ...(envPayload && { env: envPayload }),
-      ...(options?.cwd && { cwd: options.cwd })
+      // Create session in container
+      await this.client.utils.createSession({
+        id: sessionId,
+        ...(envPayload && { env: envPayload }),
+        ...(options?.cwd && { cwd: options.cwd })
+      });
+
+      // Return wrapper that binds sessionId to all operations
+      return this.getSessionWrapper(sessionId);
     });
-
-    // Return wrapper that binds sessionId to all operations
-    return this.getSessionWrapper(sessionId);
   }
 
   /**
@@ -2877,21 +3016,23 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * @throws Error if attempting to delete the default session
    */
   async deleteSession(sessionId: string): Promise<SessionDeleteResult> {
-    // Prevent deletion of default session
-    if (this.defaultSession && sessionId === this.defaultSession) {
-      throw new Error(
-        `Cannot delete default session '${sessionId}'. Use sandbox.destroy() to terminate the sandbox.`
-      );
-    }
+    return this.withActivityTracking(async () => {
+      // Prevent deletion of default session
+      if (this.defaultSession && sessionId === this.defaultSession) {
+        throw new Error(
+          `Cannot delete default session '${sessionId}'. Use sandbox.destroy() to terminate the sandbox.`
+        );
+      }
 
-    const response = await this.client.utils.deleteSession(sessionId);
+      const response = await this.client.utils.deleteSession(sessionId);
 
-    // Map HTTP response to result type
-    return {
-      success: response.success,
-      sessionId: response.sessionId,
-      timestamp: response.timestamp
-    };
+      // Map HTTP response to result type
+      return {
+        success: response.success,
+        sessionId: response.sessionId,
+        timestamp: response.timestamp
+      };
+    });
   }
 
   private getSessionWrapper(sessionId: string): ExecutionSession {
@@ -3012,30 +3153,41 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   async createCodeContext(
     options?: CreateContextOptions
   ): Promise<CodeContext> {
-    return this.codeInterpreter.createCodeContext(options);
+    return this.withActivityTracking(async () => {
+      return this.codeInterpreter.createCodeContext(options);
+    });
   }
 
   async runCode(
     code: string,
     options?: RunCodeOptions
   ): Promise<ExecutionResult> {
-    const execution = await this.codeInterpreter.runCode(code, options);
-    return execution.toJSON();
+    return this.withActivityTracking(async () => {
+      const execution = await this.codeInterpreter.runCode(code, options);
+      return execution.toJSON();
+    });
   }
 
   async runCodeStream(
     code: string,
     options?: RunCodeOptions
   ): Promise<ReadableStream> {
-    return this.codeInterpreter.runCodeStream(code, options);
+    const stream = await this.codeInterpreter.runCodeStream(code, options);
+    return this.trackStream(
+      stream as ReadableStream<Uint8Array>
+    ) as ReadableStream;
   }
 
   async listCodeContexts(): Promise<CodeContext[]> {
-    return this.codeInterpreter.listCodeContexts();
+    return this.withActivityTracking(async () => {
+      return this.codeInterpreter.listCodeContexts();
+    });
   }
 
   async deleteCodeContext(contextId: string): Promise<void> {
-    return this.codeInterpreter.deleteCodeContext(contextId);
+    return this.withActivityTracking(async () => {
+      return this.codeInterpreter.deleteCodeContext(contextId);
+    });
   }
 
   // ============================================================================
