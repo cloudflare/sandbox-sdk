@@ -1,0 +1,30 @@
+shared:
+  - 'packages/shared/src/**'
+  - 'packages/shared/package.json'
+sdk:
+  - 'packages/sandbox/src/**'
+  - 'packages/sandbox/package.json'
+container:
+  - 'packages/sandbox-container/src/**'
+  - 'packages/sandbox-container/package.json'
+docker-config:
+  - 'packages/sandbox/Dockerfile'
+  - 'docker-bake.hcl'
+  - '.dockerignore'
+build-config:
+  - 'tooling/**'
+  - 'turbo.json'
+  - '.npmrc'
+  - 'biome.json'
+e2e-tests:
+  - 'tests/e2e/**'
+  - 'vitest.e2e.config.ts'
+deps:
+  - 'package.json'
+  - 'package-lock.json'
+  - 'packages/*/package.json'
+changesets:
+  - '.changeset/**'
+any-source:
+  - 'packages/**'
+  - 'tests/**'
