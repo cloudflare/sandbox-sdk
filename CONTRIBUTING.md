@@ -1,6 +1,6 @@
 # Contributing to Cloudflare Sandbox SDK
 
-Thank you for your interest in contributing to the Cloudflare Sandbox SDK! This guide will help you get started.
+Thank you for your interest in contributing to the Cloudflare Sandbox SDK! This guide will help you get started with development.
 
 ## Getting Started
 
