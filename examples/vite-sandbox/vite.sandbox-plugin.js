@@ -1,6 +1,6 @@
 import { createPlugin } from "@cloudflare/vite-plugin";
-import { WebSocketServer } from "ws";
 import { CoreHeaders, coupleWebSocket } from "miniflare";
+import { WebSocketServer } from "ws";
 
 // Convert nodejs headers to web standards.
 function createHeaders(req) {
@@ -22,20 +22,20 @@ export default function sandboxSDKPlugin() {
 			const entryWorkerName = entryWorkerConfig.name;
 
 			// Register middleware before default middleware.
-			server.middlewares.use(async (req, res, next) => {
-				console.log("request", req.url);
-				const port = server.httpServer.address()?.port ?? 3000;
-				const pattern = new URLPattern(
-					`http://:port(\\d{4,})-:sandbox-:token.localhost:${port}`,
-				);
+			// server.middlewares.use(async (req, res, next) => {
+			// 	console.log("request", req.url);
+			// 	const port = server.httpServer.address()?.port ?? 3000;
+			// 	const pattern = new URLPattern(
+			// 		`http://:port(\\d{4,})-:sandbox-:token.localhost:${port}`,
+			// 	);
 
-				// If the inbound request matches a sandbox preview URL forward it on...
-				if (pattern.test(req.url)) {
-					req.headers.set(CoreHeaders.ROUTE_OVERRIDE, entryWorkerName);
-					return ctx.miniflare.dispatchFetch(req, { redirect: "manual" });
-				}
-				next();
-			});
+			// 	// If the inbound request matches a sandbox preview URL forward it on...
+			// 	if (pattern.test(req.url)) {
+			// 		req.headers.set(CoreHeaders.ROUTE_OVERRIDE, entryWorkerName);
+			// 		return ctx.miniflare.dispatchFetch(req, { redirect: "manual" });
+			// 	}
+			// 	next();
+			// });
 
 			// Handle sandbox HMR websocket upgrade. This assumes that the HMR for the host
 			// server is running on a different port.

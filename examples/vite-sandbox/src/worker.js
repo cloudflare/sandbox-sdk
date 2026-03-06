@@ -43,12 +43,12 @@ async function sandboxApi(url, env) {
 	await sandbox.startProcess("npm run dev", {
 		processId: "vite-dev-server",
 		cwd: "/app",
-		env: { VITE_CLIENT_PORT: url.port },
+		env: {
+			VITE_PORT: VITE_PORT,
+			VITE_HMR_CLIENT_PORT: url.port,
+		},
 	});
 	await sandbox.waitForPort({ portToCheck: VITE_PORT });
-	await sandbox.startProcess("bun /app/counter.js", {
-		processId: "counter",
-	});
 
 	return Response.json({ url: `${port.url}` });
 }
