@@ -1136,13 +1136,13 @@ export interface MountBucketOptions {
   prefix?: string;
 
   /**
-   * Name of the R2 bucket binding in the Worker's env (e.g., 'MY_BUCKET').
+   * Set to true when the bucket name refers to a local R2 binding
+   * (e.g., during local development with `wrangler dev`).
    *
-   * Required for local development where s3fs-FUSE is not available.
-   * The Durable Object resolves the R2 binding from its own env at mount time.
-   * Ignored in production (where s3fs uses the endpoint + credentials instead).
+   * When true, the Durable Object resolves the R2 binding from its own env
+   * using the `bucket` parameter and syncs files via polling instead of s3fs-FUSE.
    */
-  bindingName?: string;
+  localBucket?: boolean;
 }
 
 // Main Sandbox interface

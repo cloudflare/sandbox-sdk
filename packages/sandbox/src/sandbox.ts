@@ -650,24 +650,16 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     };
   }
 
-  /**
-   * Check whether the sandbox is running in local development.
-   * Defaults to true. Override this method to provide a real check.
-   */
-  isLocalDev(): boolean {
-    return true;
-  }
-
   /*
    * Mount an S3-compatible bucket as a local directory.
    *
    * In production, uses S3FS-FUSE inside the container.
-   * In local dev (isLocalDev() === true), uses bidirectional sync between the
+   * When `options.localBucket` is true, uses bidirectional sync between the
    * R2 binding and a container directory via the existing file/watch APIs.
    *
    * @param bucket - Bucket name
    * @param mountPath - Absolute path in container to mount at
-   * @param options - Mount configuration. In local dev, `bindingName` is required.
+   * @param options - Mount configuration
    * @throws MissingCredentialsError if no credentials found in environment
    * @throws S3FSMountError if S3FS mount command fails
    * @throws InvalidMountConfigError if bucket name, mount path, or endpoint is invalid
@@ -679,8 +671,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   ): Promise<void> {
     this.logger.info(`Mounting bucket ${bucket} to ${mountPath}`);
 
-    // Branch: local dev uses R2 binding sync instead of FUSE
-    if (this.isLocalDev()) {
+    if (options.localBucket) {
       await this.mountBucketLocal(bucket, mountPath, options);
       return;
     }
@@ -696,20 +687,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     mountPath: string,
     options: MountBucketOptions
   ): Promise<void> {
-    if (!options.bindingName) {
-      throw new InvalidMountConfigError(
-        'Local development requires an R2 bucket binding name. ' +
-          "Pass { bindingName: 'MY_BUCKET' } in options (the name of the R2 binding in your Worker's env)."
-      );
-    }
-
-    // Resolve the R2 binding from the DO's own env
+    // Resolve the R2 binding from the DO's own env using the bucket name
     const envObj = this.env as Record<string, unknown>;
-    const r2Binding = envObj[options.bindingName];
+    const r2Binding = envObj[bucket];
     if (!r2Binding || !isR2Bucket(r2Binding)) {
       throw new InvalidMountConfigError(
-        `R2 binding "${options.bindingName}" not found in env or is not an R2Bucket. ` +
-          'Make sure the binding is configured in your wrangler.jsonc.'
+        `R2 binding "${bucket}" not found in env or is not an R2Bucket. ` +
+          'Make sure the binding name matches your wrangler.jsonc R2 binding.'
       );
     }
 
