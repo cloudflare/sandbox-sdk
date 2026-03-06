@@ -755,8 +755,22 @@ export class SessionManager {
         return { success: true, data: session.pty };
       }
 
+      // Capture the session shell's current environment so the PTY
+      // inherits env vars set via setEnvVars().
+      const envResult = await session.exec('env -0');
+      const sessionEnv: Record<string, string> = {};
+      if (envResult.exitCode === 0 && envResult.stdout) {
+        for (const entry of envResult.stdout.split('\0')) {
+          const idx = entry.indexOf('=');
+          if (idx > 0) {
+            sessionEnv[entry.slice(0, idx)] = entry.slice(idx + 1);
+          }
+        }
+      }
+
       const pty = new Pty({
         cwd: CONFIG.DEFAULT_CWD,
+        env: sessionEnv,
         logger: this.logger
       });
 
