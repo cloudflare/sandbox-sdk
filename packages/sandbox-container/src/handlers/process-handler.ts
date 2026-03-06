@@ -229,6 +229,18 @@ export class ProcessHandler extends BaseHandler<Request, Response> {
 
     const process = processResult.data;
 
+    // Hoist listener references so cancel() can access them
+    let outputListener:
+      | ((stream: 'stdout' | 'stderr', data: string) => void)
+      | undefined;
+    let statusListener: ((status: string) => void) | undefined;
+    const logger = this.logger;
+
+    const removeListeners = () => {
+      if (outputListener) process.outputListeners.delete(outputListener);
+      if (statusListener) process.statusListeners.delete(statusListener);
+    };
+
     const stream = new ReadableStream({
       start(controller) {
         const encoder = new TextEncoder();
@@ -251,25 +263,54 @@ export class ProcessHandler extends BaseHandler<Request, Response> {
         // chunk emitted between the snapshot read and registration is
         // lost. Duplicates from replay + listener overlap are harmless;
         // missing data is not.
-        const outputListener = (stream: 'stdout' | 'stderr', data: string) => {
-          enqueueSSE({
-            type: stream,
-            data,
-            processId: process.id,
-            timestamp: new Date().toISOString()
-          });
-        };
-
-        const statusListener = (status: string) => {
-          if (['completed', 'failed', 'killed', 'error'].includes(status)) {
+        outputListener = (stream: 'stdout' | 'stderr', data: string) => {
+          try {
             enqueueSSE({
-              type: 'exit',
+              type: stream,
+              data,
               processId: process.id,
-              exitCode: process.exitCode,
-              data: `Process ${status} with exit code ${process.exitCode}`,
               timestamp: new Date().toISOString()
             });
-            controller.close();
+          } catch (err) {
+            if (err instanceof TypeError) {
+              // Stream was closed or cancelled — remove self to stop further writes
+              removeListeners();
+            } else {
+              logger.error(
+                'Unexpected error in output listener',
+                err instanceof Error ? err : new Error(String(err))
+              );
+              controller.error(err);
+              removeListeners();
+            }
+          }
+        };
+
+        statusListener = (status: string) => {
+          if (['completed', 'failed', 'killed', 'error'].includes(status)) {
+            try {
+              enqueueSSE({
+                type: 'exit',
+                processId: process.id,
+                exitCode: process.exitCode,
+                data: `Process ${status} with exit code ${process.exitCode}`,
+                timestamp: new Date().toISOString()
+              });
+              controller.close();
+              removeListeners();
+            } catch (err) {
+              if (err instanceof TypeError) {
+                // Stream already closed — just clean up listeners
+                removeListeners();
+              } else {
+                logger.error(
+                  'Unexpected error in status listener',
+                  err instanceof Error ? err : new Error(String(err))
+                );
+                controller.error(err);
+                removeListeners();
+              }
+            }
           }
         };
 
@@ -306,12 +347,11 @@ export class ProcessHandler extends BaseHandler<Request, Response> {
             timestamp: new Date().toISOString()
           });
           controller.close();
+          removeListeners();
         }
-
-        return () => {
-          process.outputListeners.delete(outputListener);
-          process.statusListeners.delete(statusListener);
-        };
+      },
+      cancel() {
+        removeListeners();
       }
     });
 

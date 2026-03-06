@@ -576,6 +576,54 @@ describe('ProcessHandler', () => {
     });
   });
 
+  it('should clean up listeners when stream is cancelled', async () => {
+    const outputListeners = new Set<
+      (stream: 'stdout' | 'stderr', data: string) => void
+    >();
+    const statusListeners = new Set<(status: string) => void>();
+
+    const mockProcessInfo: ProcessInfo = {
+      id: 'proc-cancel',
+      pid: 99999,
+      command: 'long-running',
+      status: 'running',
+      startTime: new Date('2023-01-01T00:00:00Z'),
+      sessionId: 'session-456',
+      stdout: '',
+      stderr: '',
+      outputListeners,
+      statusListeners
+    };
+
+    (mockProcessService.getProcess as any).mockResolvedValue({
+      success: true,
+      data: mockProcessInfo
+    });
+
+    const request = new Request(
+      'http://localhost:3000/api/process/proc-cancel/stream',
+      { method: 'GET' }
+    );
+
+    const response = await processHandler.handle(request, mockContext);
+    expect(response.status).toBe(200);
+
+    // Read the initial chunks to ensure listeners are registered
+    const reader = response.body!.getReader();
+    await reader.read(); // process_info event
+
+    // Listeners should be registered
+    expect(outputListeners.size).toBe(1);
+    expect(statusListeners.size).toBe(1);
+
+    // Cancel the stream
+    await reader.cancel();
+
+    // Listeners should be cleaned up
+    expect(outputListeners.size).toBe(0);
+    expect(statusListeners.size).toBe(0);
+  });
+
   describe('route handling', () => {
     it('should return 404 for invalid endpoints', async () => {
       // Mock getProcess to return process not found for invalid process ID
