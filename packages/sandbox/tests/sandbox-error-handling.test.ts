@@ -40,16 +40,19 @@ vi.mock('@cloudflare/containers', () => {
  * Tests for Sandbox.containerFetch() error classification logic.
  *
  * The containerFetch() method classifies errors from the container layer into:
- * - 503 (Service Unavailable) + Retry-After: 3: Known transient errors (port not ready, etc.)
  * - 503 (Service Unavailable) + Retry-After: 10: Container VM still provisioning
+ * - 500 (Internal Server Error): Known permanent errors (OOM, bad image, etc.)
+ * - 503 (Service Unavailable) + Retry-After: 3: Known transient errors (port not ready, etc.)
  * - 503 (Service Unavailable) + Retry-After: 5: Unrecognized errors (safe to retry)
  *
- * This test suite verifies that real error messages from workerd and
- * @cloudflare/containers are correctly classified.
+ * This test suite verifies that real error messages from workerd,
+ * @cloudflare/containers, and the container runtime are correctly classified.
  *
  * Error sources:
- * - workerd/src/workerd/server/container-client.c++ (port mapping, monitor errors)
+ * - workerd/src/workerd/server/container-client.c++ (port mapping, monitor, image errors)
  * - @cloudflare/containers/src/lib/container.ts (startup, listening errors)
+ * - Container runtime (OOM, PID limit)
+ * - Scheduling/provisioning layer (no app, no namespace)
  */
 describe('Sandbox.containerFetch() error classification', () => {
   let sandbox: Sandbox;
@@ -82,10 +85,27 @@ describe('Sandbox.containerFetch() error classification', () => {
     'the operation was aborted'
   ];
 
-  // Unrecognized errors that don't match any transient pattern
+  // Known permanent errors that will never recover on retry
+  // These return 500 with no Retry-After (fail fast)
+  const PERMANENT_PATTERNS = [
+    // Resource exhaustion (container runtime)
+    'container crashed because it ran out of memory',
+    'container crashed because it spawned too many subprocesses',
+
+    // Misconfiguration (scheduling/provisioning)
+    'there is no application that matches the provided constraints',
+    'there is no container application assigned to this Durable Object namespace',
+
+    // Missing image (workerd container-client.c++)
+    'No such image available named myapp:latest',
+
+    // User error (@cloudflare/containers)
+    'durable object container did not call start'
+  ];
+
+  // Unrecognized errors that don't match any transient or permanent pattern
   // These return 503 with Retry-After: 5 (safe to retry since retries are idempotent)
   const UNRECOGNIZED_ERRORS = [
-    'no such image available named myimage',
     'container already exists',
     'permission denied: cannot access docker socket',
     'invalid container configuration',
@@ -243,10 +263,84 @@ describe('Sandbox.containerFetch() error classification', () => {
     });
   });
 
-  describe('unrecognized errors → 503 (safe to retry)', () => {
-    it('returns 503 for "no such image" errors (workerd)', async () => {
+  describe('permanent errors → 500 (fail fast, no retry)', () => {
+    it('returns 500 for OOM error (container runtime)', async () => {
+      const response = await triggerContainerFetchWithError(
+        'container crashed because it ran out of memory'
+      );
+
+      expect(response.status).toBe(500);
+      expect(response.headers.get('Retry-After')).toBeNull();
+      const body = (await response.json()) as {
+        code: string;
+        message: string;
+        context: { phase: string };
+      };
+      expect(body.code).toBe('INTERNAL_ERROR');
+      expect(body.message).toContain('permanent error');
+      expect(body.context.phase).toBe('startup');
+    });
+
+    it('returns 500 for "no such image" errors (workerd)', async () => {
       const response = await triggerContainerFetchWithError(
         'No such image available named myapp:latest'
+      );
+
+      expect(response.status).toBe(500);
+      expect(response.headers.get('Retry-After')).toBeNull();
+    });
+
+    it('returns 500 for PID limit error (container runtime)', async () => {
+      const response = await triggerContainerFetchWithError(
+        'container crashed because it spawned too many subprocesses'
+      );
+
+      expect(response.status).toBe(500);
+      expect(response.headers.get('Retry-After')).toBeNull();
+    });
+
+    it('returns 500 for misconfiguration error (scheduling layer)', async () => {
+      const response = await triggerContainerFetchWithError(
+        'there is no application that matches the provided constraints'
+      );
+
+      expect(response.status).toBe(500);
+      expect(response.headers.get('Retry-After')).toBeNull();
+    });
+
+    // Parameterized test for comprehensive coverage of all permanent patterns
+    it.each(PERMANENT_PATTERNS)(
+      'returns 500 for permanent error: "%s"',
+      async (errorMessage) => {
+        const response = await triggerContainerFetchWithError(errorMessage);
+
+        expect(response.status).toBe(500);
+        expect(response.headers.get('Retry-After')).toBeNull();
+      }
+    );
+
+    it('returns 500 when permanent cause is wrapped in transient message', async () => {
+      // Platform can wrap permanent causes like "No such image" inside the generic
+      // "container did not start" message. Permanent must be checked before transient
+      // so the specific cause wins over the broad wrapper.
+      const response = await triggerContainerFetchWithError(
+        'container did not start: No such image available named myapp:v999'
+      );
+
+      expect(response.status).toBe(500);
+      expect(response.headers.get('Retry-After')).toBeNull();
+      const body = (await response.json()) as { context: { error: string } };
+      expect(body.context.error).toContain('No such image');
+    });
+  });
+  describe('unrecognized errors → 503 (safe to retry)', () => {
+    it('returns 503 for max instances exceeded (recoverable capacity limit)', async () => {
+      // Confirmed via platform source: TOOMANYDURABLEOBJECTS resets the retry timer
+      // and adds 10s backoff, expecting the condition to clear as load drops.
+      // Lands in unrecognized tier (Retry-After: 5) since the message doesn't
+      // match a known transient pattern, but still gets 503 for safe retry.
+      const response = await triggerContainerFetchWithError(
+        'maximum number of running container instances exceeded. Try again later, or try configuring a higher value for max_instances'
       );
 
       expect(response.status).toBe(503);
@@ -319,15 +413,36 @@ describe('Sandbox.containerFetch() error classification', () => {
       expect(response.headers.get('Retry-After')).toBe('5');
     });
 
+    it('500 responses for permanent errors have no Retry-After', async () => {
+      const response = await triggerContainerFetchWithError(
+        'container crashed because it ran out of memory'
+      );
+
+      expect(response.status).toBe(500);
+      expect(response.headers.get('Retry-After')).toBeNull();
+    });
+
     it('503 responses for unrecognized errors include retry message in body', async () => {
-      const response =
-        await triggerContainerFetchWithError('permanent failure');
+      const response = await triggerContainerFetchWithError(
+        'some new platform error'
+      );
 
       expect(response.status).toBe(503);
       expect(response.headers.get('Retry-After')).toBe('5');
       expect(
         ((await response.json()) as { message: string }).message
       ).toContain('Container is starting');
+    });
+
+    it('500 responses for permanent errors include configuration message in body', async () => {
+      const response = await triggerContainerFetchWithError(
+        'No such image available named myapp:v999'
+      );
+
+      expect(response.status).toBe(500);
+      expect(
+        ((await response.json()) as { message: string }).message
+      ).toContain('permanent error');
     });
   });
 

@@ -1097,7 +1097,37 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           });
         }
 
-        // 2. Transient startup errors: Container starting, port not ready yet
+        // 2. Permanent errors: Resource exhaustion, misconfiguration, bad image
+        // These will never recover on retry — fail fast so the caller gets a clear signal.
+        // Checked before transient to avoid broad transient patterns (e.g., "container did not
+        // start") masking specific permanent causes in wrapped error messages.
+        if (this.isPermanentStartupError(e)) {
+          this.logger.error(
+            'Permanent container startup error, returning 500',
+            e instanceof Error ? e : new Error(String(e))
+          );
+          const errorBody: ErrorResponse = {
+            code: ErrorCode.INTERNAL_ERROR,
+            message:
+              'Container failed to start due to a permanent error. Check your container configuration.',
+            context: {
+              phase: 'startup',
+              error: e instanceof Error ? e.message : String(e)
+            },
+            httpStatus: 500,
+            timestamp: new Date().toISOString(),
+            suggestion:
+              'This error will not resolve with retries. Check container logs, image name, and resource limits.'
+          };
+          return new Response(JSON.stringify(errorBody), {
+            status: 500,
+            headers: {
+              'Content-Type': 'application/json'
+            }
+          });
+        }
+
+        // 3. Transient startup errors: Container starting, port not ready yet
         if (this.isTransientStartupError(e)) {
           // If startup failed after detecting stale state, the container runtime is likely stuck
           // (e.g., workerd can't restart after an unexpected container death). Abort the DO so the
@@ -1136,7 +1166,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           });
         }
 
-        // 3. Unrecognized errors: Treat as transient since retries are safe
+        // 4. Unrecognized errors: Treat as transient since retries are safe
         // and new platform error messages may not yet be in our pattern list.
         this.logger.warn(
           'Unrecognized container startup error, returning 503 for retry',
@@ -1227,6 +1257,42 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     ];
 
     return transientPatterns.some((pattern) => msg.includes(pattern));
+  }
+
+  /**
+   * Helper: Check if error is a permanent startup failure that will never recover
+   *
+   * These errors indicate resource exhaustion, misconfiguration, or missing images.
+   * Retrying will never succeed, so the SDK should fail fast with HTTP 500.
+   *
+   * Error sources (traced from platform internals):
+   *   - Container runtime: OOM, PID limit
+   *   - Scheduling/provisioning: no matching app, no namespace configured
+   *   - workerd container-client.c++: no such image
+   *   - @cloudflare/containers: did not call start
+   */
+  private isPermanentStartupError(error: unknown): boolean {
+    if (!(error instanceof Error)) return false;
+
+    const msg = error.message.toLowerCase();
+
+    const permanentPatterns = [
+      // Resource exhaustion (container runtime)
+      'ran out of memory',
+      'too many subprocesses',
+
+      // Misconfiguration (scheduling/provisioning)
+      'no application that matches',
+      'no container application assigned',
+
+      // Missing image (workerd container-client.c++)
+      'no such image',
+
+      // User error (@cloudflare/containers)
+      'did not call start'
+    ];
+
+    return permanentPatterns.some((pattern) => msg.includes(pattern));
   }
 
   /**
