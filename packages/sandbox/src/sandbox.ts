@@ -1682,12 +1682,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     try {
       // Process stream
       const streamProcessor = async (): Promise<WaitForLogResult> => {
-        const DEBOUNCE_MS = 50;
-        let lastCheckTime = 0;
-        let pendingCheck = false;
-
         const checkPattern = (): WaitForLogResult | null => {
-          // Check both stdout and stderr buffers
           const stdoutResult = this.matchPattern(collectedStdout, pattern);
           if (stdoutResult) return stdoutResult;
           const stderrResult = this.matchPattern(collectedStderr, pattern);
@@ -1696,7 +1691,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         };
 
         for await (const event of parseSSEStream<LogEvent>(stream)) {
-          // Handle different event types
           if (event.type === 'stdout' || event.type === 'stderr') {
             const data = event.data || '';
 
@@ -1705,24 +1699,16 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
             } else {
               collectedStderr += data;
             }
-            pendingCheck = true;
 
-            // Debounce pattern matching - check at most every 50ms
-            const now = Date.now();
-            if (now - lastCheckTime >= DEBOUNCE_MS) {
-              lastCheckTime = now;
-              pendingCheck = false;
-              const result = checkPattern();
-              if (result) return result;
-            }
+            const result = checkPattern();
+            if (result) return result;
           }
 
           // Process exited - do final check before throwing
           if (event.type === 'exit') {
-            if (pendingCheck) {
-              const result = checkPattern();
-              if (result) return result;
-            }
+            // Final check in case pattern arrived in last chunk
+            const result = checkPattern();
+            if (result) return result;
             throw this.createExitedBeforeReadyError(
               processId,
               command,
@@ -1732,11 +1718,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           }
         }
 
-        // Stream ended - do final check before throwing
-        if (pendingCheck) {
-          const result = checkPattern();
-          if (result) return result;
-        }
+        // Stream ended without exit event — do final check
+        const finalResult = checkPattern();
+        if (finalResult) return finalResult;
         // Stream ended without finding pattern - this indicates process exited
         throw this.createExitedBeforeReadyError(
           processId,
