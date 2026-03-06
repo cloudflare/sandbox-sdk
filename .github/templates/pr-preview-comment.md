@@ -1,3 +1,5 @@
+<!-- sandbox-preview -->
+
 ### 🐳 Docker Images Published
 
 | Variant  | Image              |
