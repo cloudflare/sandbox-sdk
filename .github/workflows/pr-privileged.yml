@@ -19,18 +19,28 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       pull-requests: read
-      issues: write
     timeout-minutes: 1
     outputs:
       authorized: ${{ steps.check.outputs.authorized }}
       run_privileged: ${{ steps.check.outputs.run_privileged }}
     steps:
+      - name: Generate app token for label management
+        id: app-token
+        if: >
+          github.event.action == 'synchronize' &&
+          github.event.pull_request.head.repo.full_name != github.repository
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
       - name: Remove ok-to-test label on new pushes (fork PRs only)
         if: >
           github.event.action == 'synchronize' &&
           github.event.pull_request.head.repo.full_name != github.repository
         uses: actions/github-script@v8
         with:
+          github-token: ${{ steps.app-token.outputs.token }}
           script: |
             try {
               await github.rest.issues.removeLabel({
