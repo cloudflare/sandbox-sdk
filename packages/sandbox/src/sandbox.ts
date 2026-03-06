@@ -649,10 +649,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   /**
    * Mount an S3-compatible bucket as a local directory.
    *
-   * In production, uses S3FS-FUSE inside the container.
-   * When `options.localBucket` is true, uses bidirectional sync between the
-   * R2 binding and a container directory via the existing file/watch APIs.
-   *
    * @param bucket - Bucket name (or R2 binding name when localBucket is true)
    * @param mountPath - Absolute path in container to mount at
    * @param options - Mount configuration
@@ -751,8 +747,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     this.validateMountOptions(bucket, mountPath, { ...options, prefix });
 
     const s3fsSource = buildS3fsSource(bucket, prefix);
+    // endpoint is guaranteed non-null after validateMountOptions
+    const endpoint = options.endpoint!;
     const provider: BucketProvider | null =
-      options.provider || detectProviderFromUrl(options.endpoint);
+      options.provider || detectProviderFromUrl(endpoint);
 
     this.logger.debug(`Detected provider: ${provider || 'unknown'}`, {
       explicitProvider: options.provider,
@@ -767,7 +765,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       mountType: 'fuse',
       bucket: s3fsSource,
       mountPath,
-      endpoint: options.endpoint,
+      endpoint,
       provider,
       passwordFilePath,
       mounted: false
@@ -950,7 +948,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
 
     // Add endpoint URL
-    s3fsArgs.push(`url=${options.endpoint}`);
+    s3fsArgs.push(`url=${options.endpoint!}`);
 
     // Build final command with escaped options
     const optionsStr = shellEscape(s3fsArgs.join(','));
