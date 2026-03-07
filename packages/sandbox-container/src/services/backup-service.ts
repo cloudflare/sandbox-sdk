@@ -198,6 +198,7 @@ export class BackupService {
         '-noappend'
       ];
       if (excludePatterns.length > 0) {
+        squashCmdParts.push('-wildcards');
         squashCmdParts.push(`-ef ${shellEscape(excludeFilePath)}`);
       }
       const squashCmd = squashCmdParts.join(' ');
