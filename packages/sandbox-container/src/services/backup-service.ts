@@ -74,8 +74,13 @@ function normalizeExcludePattern(pattern: string, prefix: string): string {
     return '';
   }
 
-  if (prefix && trimmedPattern.startsWith(prefix)) {
-    return trimmedPattern.slice(prefix.length);
+  // Normalize prefix: ensure it ends with / for proper directory matching
+  // but don't add if it's already empty or already ends with /
+  const normalizedPrefix =
+    prefix && !prefix.endsWith('/') ? `${prefix}/` : prefix;
+
+  if (normalizedPrefix && trimmedPattern.startsWith(normalizedPrefix)) {
+    return trimmedPattern.slice(normalizedPrefix.length);
   }
 
   return trimmedPattern;
