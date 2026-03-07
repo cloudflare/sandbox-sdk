@@ -32,6 +32,16 @@ const ALLOWED_PREFIXES = ['/workspace', '/home', '/tmp', '/var/tmp'];
  */
 const FORBIDDEN_DIRS = new Set(['/']);
 
+function isSafeAbsolutePath(path: string): boolean {
+  return (
+    typeof path === 'string' &&
+    path.startsWith('/') &&
+    !path.includes('..') &&
+    !path.includes('\0') &&
+    !FORBIDDEN_DIRS.has(path)
+  );
+}
+
 /**
  * Validate that dir and archivePath are safe for backup operations.
  * Defense-in-depth: the DO already validates, but the container
@@ -40,8 +50,8 @@ const FORBIDDEN_DIRS = new Set(['/']);
  * Uses allowlist approach: only paths under /workspace, /home, /tmp, /var/tmp are permitted.
  */
 function validateBackupPaths(dir: string, archivePath: string): string | null {
-  if (!dir.startsWith('/') || FORBIDDEN_DIRS.has(dir)) {
-    return `Unsafe directory: ${dir}`;
+  if (!isSafeAbsolutePath(dir)) {
+    return `Backup directory must be an absolute path under /workspace or /tmp: ${dir}`;
   }
   // Allowlist check: dir must start with one of the allowed prefixes
   const isAllowed = ALLOWED_PREFIXES.some(
@@ -66,24 +76,6 @@ interface CreateArchiveResult {
 
 interface RestoreArchiveResult {
   dir: string;
-}
-
-function normalizeExcludePattern(pattern: string, prefix: string): string {
-  const trimmedPattern = pattern.trim().replace(/\/+$/, '');
-  if (!trimmedPattern) {
-    return '';
-  }
-
-  // Normalize prefix: ensure it ends with / for proper directory matching
-  // but don't add if it's already empty or already ends with /
-  const normalizedPrefix =
-    prefix && !prefix.endsWith('/') ? `${prefix}/` : prefix;
-
-  if (normalizedPrefix && trimmedPattern.startsWith(normalizedPrefix)) {
-    return trimmedPattern.slice(normalizedPrefix.length);
-  }
-
-  return trimmedPattern;
 }
 
 /**
@@ -313,35 +305,23 @@ export class BackupService {
       return [];
     }
 
-    const prefixResult = await this.sessionManager.executeInSession(
-      sessionId,
-      `git -C ${shellEscape(dir)} rev-parse --show-prefix`
-    );
-    if (!prefixResult.success || prefixResult.data.exitCode !== 0) {
-      opLogger.warn('Failed to resolve git prefix for backup directory', {
-        dir
-      });
-      return [];
-    }
-
-    // Keep file-level ignored entries instead of collapsing to directories so
-    // mixed trees (ignored + non-ignored files) always produce usable patterns.
+    // Scope the query to the backup directory so Git returns ignored paths
+    // relative to the directory mksquashfs will archive.
     const ignoredFilesResult = await this.sessionManager.executeInSession(
       sessionId,
-      `git -C ${shellEscape(dir)} ls-files --others -i --exclude-standard`
+      `git -C ${shellEscape(dir)} ls-files --others -i --exclude-standard -- .`
     );
     if (!ignoredFilesResult.success || ignoredFilesResult.data.exitCode !== 0) {
       opLogger.warn('Failed to resolve gitignored backup paths', { dir });
       return [];
     }
 
-    const prefix = prefixResult.data.stdout.trim();
     return [
       ...new Set([
         '.git',
         ...ignoredFilesResult.data.stdout
           .split('\n')
-          .map((pattern) => normalizeExcludePattern(pattern, prefix))
+          .map((pattern) => pattern.trim().replace(/\/+$/, ''))
           .filter((pattern) => pattern.length > 0)
       ])
     ];
