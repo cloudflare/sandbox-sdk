@@ -193,18 +193,20 @@ describe('Backup Workflow E2E', () => {
   });
 
   describe('Backup excludes', () => {
-    test('should exclude files from BackupOptions.exclude', async () => {
+    test('should respect gitignore rules by default', async () => {
       if (!backupBucketAvailable) return;
 
-      const TEST_DIR = `/workspace/exclude-backup-test-${crypto.randomUUID().slice(0, 8)}`;
+      const REPO_DIR = `/workspace/gitignore-backup-test-${crypto.randomUUID().slice(0, 8)}`;
+      const TEST_DIR = `${REPO_DIR}/app`;
 
-      // Create files where one path should be excluded from backup
       const setupResponse = await fetch(`${workerUrl}/api/execute`, {
         method: 'POST',
         headers,
         body: JSON.stringify({
           command: [
+            `git init ${REPO_DIR}`,
             `mkdir -p ${TEST_DIR}/node_modules`,
+            `printf 'app/node_modules/\n' > ${REPO_DIR}/.gitignore`,
             `echo "keep" > ${TEST_DIR}/keep.txt`,
             `echo "exclude-me" > ${TEST_DIR}/node_modules/a.txt`
           ].join(' && ')
@@ -216,14 +218,12 @@ describe('Backup Workflow E2E', () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          dir: TEST_DIR,
-          exclude: ['node_modules']
+          dir: TEST_DIR
         })
       });
       expect(backupResponse.ok).toBe(true);
       const backup = (await backupResponse.json()) as BackupResponse;
 
-      // Remove all original content before restore
       await fetch(`${workerUrl}/api/execute`, {
         method: 'POST',
         headers,
@@ -254,22 +254,24 @@ describe('Backup Workflow E2E', () => {
       expect(verifyResult.stdout).toContain('keep:yes');
       expect(verifyResult.stdout).toContain('excluded:yes');
 
-      await cleanupDir(workerUrl, headers, TEST_DIR);
+      await cleanupDir(workerUrl, headers, REPO_DIR);
     }, 60000);
 
-    test('should apply excludeDefaults for common build/dependency dirs', async () => {
+    test('should include gitignored files when useGitignore is false', async () => {
       if (!backupBucketAvailable) return;
 
-      const TEST_DIR = `/workspace/exclude-defaults-test-${crypto.randomUUID().slice(0, 8)}`;
+      const REPO_DIR = `/workspace/gitignore-opt-out-test-${crypto.randomUUID().slice(0, 8)}`;
+      const TEST_DIR = `${REPO_DIR}/app`;
 
       const setupResponse = await fetch(`${workerUrl}/api/execute`, {
         method: 'POST',
         headers,
         body: JSON.stringify({
           command: [
-            `mkdir -p ${TEST_DIR}/.git ${TEST_DIR}/dist`,
+            `git init ${REPO_DIR}`,
+            `mkdir -p ${TEST_DIR}/dist`,
+            `printf 'app/dist/\n' > ${REPO_DIR}/.gitignore`,
             `echo "keep" > ${TEST_DIR}/keep.txt`,
-            `echo "git-config" > ${TEST_DIR}/.git/config`,
             `echo "bundle" > ${TEST_DIR}/dist/app.js`
           ].join(' && ')
         })
@@ -281,7 +283,7 @@ describe('Backup Workflow E2E', () => {
         headers,
         body: JSON.stringify({
           dir: TEST_DIR,
-          excludeDefaults: true
+          useGitignore: false
         })
       });
       expect(backupResponse.ok).toBe(true);
@@ -308,18 +310,141 @@ describe('Backup Workflow E2E', () => {
         body: JSON.stringify({
           command: [
             `test -f ${TEST_DIR}/keep.txt && echo keep:yes || echo keep:no`,
-            `test -e ${TEST_DIR}/.git/config && echo git:no || echo git:yes`,
-            `test -e ${TEST_DIR}/dist/app.js && echo dist:no || echo dist:yes`
+            `test -e ${TEST_DIR}/dist/app.js && echo dist:yes || echo dist:no`
           ].join('; ')
         })
       });
       const verifyResult = (await verifyResponse.json()) as ExecuteResponse;
       expect(verifyResult.exitCode).toBe(0);
       expect(verifyResult.stdout).toContain('keep:yes');
-      expect(verifyResult.stdout).toContain('git:yes');
+      expect(verifyResult.stdout).toContain('dist:yes');
+
+      await cleanupDir(workerUrl, headers, REPO_DIR);
+    }, 60000);
+
+    test('should backup non-git directories without exclusions', async () => {
+      if (!backupBucketAvailable) return;
+
+      const TEST_DIR = `/workspace/non-git-backup-test-${crypto.randomUUID().slice(0, 8)}`;
+
+      const setupResponse = await fetch(`${workerUrl}/api/execute`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          command: [
+            `mkdir -p ${TEST_DIR}/dist`,
+            `echo "keep" > ${TEST_DIR}/keep.txt`,
+            `echo "bundle" > ${TEST_DIR}/dist/app.js`
+          ].join(' && ')
+        })
+      });
+      expect(setupResponse.ok).toBe(true);
+
+      const backupResponse = await fetch(`${workerUrl}/api/backup/create`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ dir: TEST_DIR })
+      });
+      expect(backupResponse.ok).toBe(true);
+      const backup = (await backupResponse.json()) as BackupResponse;
+
+      await fetch(`${workerUrl}/api/execute`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          command: `rm -rf ${TEST_DIR} && mkdir -p ${TEST_DIR}`
+        })
+      });
+
+      const restoreResponse = await fetch(`${workerUrl}/api/backup/restore`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ id: backup.id, dir: TEST_DIR })
+      });
+      expect(restoreResponse.ok).toBe(true);
+
+      const verifyResponse = await fetch(`${workerUrl}/api/execute`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          command: [
+            `test -f ${TEST_DIR}/keep.txt && echo keep:yes || echo keep:no`,
+            `test -e ${TEST_DIR}/dist/app.js && echo dist:yes || echo dist:no`
+          ].join('; ')
+        })
+      });
+      const verifyResult = (await verifyResponse.json()) as ExecuteResponse;
+      expect(verifyResult.exitCode).toBe(0);
+      expect(verifyResult.stdout).toContain('keep:yes');
       expect(verifyResult.stdout).toContain('dist:yes');
 
       await cleanupDir(workerUrl, headers, TEST_DIR);
+    }, 60000);
+
+    test('should resolve nested gitignore rules from the backup directory context', async () => {
+      if (!backupBucketAvailable) return;
+
+      const REPO_DIR = `/workspace/nested-gitignore-backup-test-${crypto.randomUUID().slice(0, 8)}`;
+      const TEST_DIR = `${REPO_DIR}/apps/web`;
+
+      const setupResponse = await fetch(`${workerUrl}/api/execute`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          command: [
+            `git init ${REPO_DIR}`,
+            `mkdir -p ${TEST_DIR}/dist`,
+            `printf '*.log\n' > ${REPO_DIR}/.gitignore`,
+            `printf 'dist/\n' > ${TEST_DIR}/.gitignore`,
+            `echo "keep" > ${TEST_DIR}/keep.txt`,
+            `echo "bundle" > ${TEST_DIR}/dist/app.js`,
+            `echo "ignored" > ${TEST_DIR}/server.log`
+          ].join(' && ')
+        })
+      });
+      expect(setupResponse.ok).toBe(true);
+
+      const backupResponse = await fetch(`${workerUrl}/api/backup/create`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ dir: TEST_DIR })
+      });
+      expect(backupResponse.ok).toBe(true);
+      const backup = (await backupResponse.json()) as BackupResponse;
+
+      await fetch(`${workerUrl}/api/execute`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          command: `rm -rf ${TEST_DIR} && mkdir -p ${TEST_DIR}`
+        })
+      });
+
+      const restoreResponse = await fetch(`${workerUrl}/api/backup/restore`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ id: backup.id, dir: TEST_DIR })
+      });
+      expect(restoreResponse.ok).toBe(true);
+
+      const verifyResponse = await fetch(`${workerUrl}/api/execute`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          command: [
+            `test -f ${TEST_DIR}/keep.txt && echo keep:yes || echo keep:no`,
+            `test -e ${TEST_DIR}/dist/app.js && echo dist:no || echo dist:yes`,
+            `test -e ${TEST_DIR}/server.log && echo log:no || echo log:yes`
+          ].join('; ')
+        })
+      });
+      const verifyResult = (await verifyResponse.json()) as ExecuteResponse;
+      expect(verifyResult.exitCode).toBe(0);
+      expect(verifyResult.stdout).toContain('keep:yes');
+      expect(verifyResult.stdout).toContain('dist:yes');
+      expect(verifyResult.stdout).toContain('log:yes');
+
+      await cleanupDir(workerUrl, headers, REPO_DIR);
     }, 60000);
   });
 

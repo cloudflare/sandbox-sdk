@@ -151,8 +151,8 @@ export interface CreateBackupRequest {
   dir: string;
   /** Path where the container should write the archive */
   archivePath: string;
-  /** Optional mksquashfs exclude patterns (passed to `-ef`) */
-  exclude?: string[];
+  /** Respect git ignore rules when the directory is inside a git repository */
+  useGitignore?: boolean;
   sessionId?: string;
 }
 

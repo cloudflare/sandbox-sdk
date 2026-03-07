@@ -115,26 +115,18 @@ export class BackupHandler extends BaseHandler<Request, Response> {
       );
     }
 
-    if (body.exclude !== undefined) {
-      // biome-ignore lint/suspicious/noControlCharactersInRegex: intentionally matching control chars
-      const CONTROL_CHAR_RE = /[\u0000-\u001f\u007f]/;
-      if (
-        !Array.isArray(body.exclude) ||
-        body.exclude.some(
-          (pattern) =>
-            typeof pattern !== 'string' || CONTROL_CHAR_RE.test(pattern)
-        )
-      ) {
-        return this.createErrorResponse(
-          {
-            message:
-              'exclude must be an array of strings without control characters',
-            code: ErrorCode.INVALID_BACKUP_CONFIG
-          },
-          context,
-          Operation.BACKUP_CREATE
-        );
-      }
+    if (
+      body.useGitignore !== undefined &&
+      typeof body.useGitignore !== 'boolean'
+    ) {
+      return this.createErrorResponse(
+        {
+          message: 'useGitignore must be a boolean',
+          code: ErrorCode.INVALID_BACKUP_CONFIG
+        },
+        context,
+        Operation.BACKUP_CREATE
+      );
     }
 
     const sessionId = body.sessionId ?? context.sessionId ?? 'default';
@@ -143,7 +135,7 @@ export class BackupHandler extends BaseHandler<Request, Response> {
       body.dir,
       body.archivePath,
       sessionId,
-      body.exclude
+      body.useGitignore ?? true
     );
 
     if (result.success) {

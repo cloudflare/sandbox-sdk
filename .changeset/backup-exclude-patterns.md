@@ -2,6 +2,6 @@
 '@cloudflare/sandbox': patch
 ---
 
-Add backup exclude support so `createBackup()` can skip files and directories.
-Use `exclude` for custom patterns and `excludeDefaults: true` to skip common
-build and dependency paths like `node_modules`, `.git`, and `dist`.
+Update `createBackup()` to respect `.gitignore` by default when the target
+directory is inside a git repository.
+Use `useGitignore: false` to opt out and include gitignored files in backups.

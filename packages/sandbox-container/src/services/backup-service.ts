@@ -68,6 +68,19 @@ interface RestoreArchiveResult {
   dir: string;
 }
 
+function normalizeExcludePattern(pattern: string, prefix: string): string {
+  const trimmedPattern = pattern.trim().replace(/\/+$/, '');
+  if (!trimmedPattern) {
+    return '';
+  }
+
+  if (prefix && trimmedPattern.startsWith(prefix)) {
+    return trimmedPattern.slice(prefix.length);
+  }
+
+  return trimmedPattern;
+}
+
 /**
  * Creates and restores squashfs-based directory archives.
  *
@@ -97,7 +110,7 @@ export class BackupService {
     dir: string,
     archivePath: string,
     sessionId = 'default',
-    exclude?: string[]
+    useGitignore = true
   ): Promise<ServiceResult<CreateArchiveResult>> {
     const opLogger = this.logger.child({ operation: Operation.BACKUP_CREATE });
 
@@ -155,10 +168,14 @@ export class BackupService {
       }
 
       const excludeFilePath = `${archivePath}.exclude`;
-      if (exclude && exclude.length > 0) {
+      const excludePatterns = useGitignore
+        ? await this.resolveGitignoreExcludePatterns(dir, sessionId, opLogger)
+        : [];
+
+      if (excludePatterns.length > 0) {
         const writeExcludeResult = await this.sessionManager.executeInSession(
           sessionId,
-          `printf '%s\\n' ${exclude.map(shellEscape).join(' ')} > ${shellEscape(excludeFilePath)}`
+          `printf '%s\\n' ${excludePatterns.map(shellEscape).join(' ')} > ${shellEscape(excludeFilePath)}`
         );
         if (
           !writeExcludeResult.success ||
@@ -183,7 +200,7 @@ export class BackupService {
         '-no-progress',
         '-noappend'
       ];
-      if (exclude && exclude.length > 0) {
+      if (excludePatterns.length > 0) {
         squashCmdParts.push(`-ef ${shellEscape(excludeFilePath)}`);
       }
       const squashCmd = squashCmdParts.join(' ');
@@ -199,7 +216,7 @@ export class BackupService {
         squashCmd
       );
 
-      if (exclude && exclude.length > 0) {
+      if (excludePatterns.length > 0) {
         await this.sessionManager
           .executeInSession(sessionId, `rm -f ${shellEscape(excludeFilePath)}`)
           .catch((err) => {
@@ -260,6 +277,67 @@ export class BackupService {
         details: { dir, archivePath }
       });
     }
+  }
+
+  private async resolveGitignoreExcludePatterns(
+    dir: string,
+    sessionId: string,
+    opLogger: Logger
+  ): Promise<string[]> {
+    const gitAvailableResult = await this.sessionManager.executeInSession(
+      sessionId,
+      'command -v git >/dev/null 2>&1'
+    );
+    if (!gitAvailableResult.success || gitAvailableResult.data.exitCode !== 0) {
+      opLogger.warn('Git is unavailable; skipping gitignore exclusions', {
+        dir
+      });
+      return [];
+    }
+
+    const insideWorkTreeResult = await this.sessionManager.executeInSession(
+      sessionId,
+      `git -C ${shellEscape(dir)} rev-parse --is-inside-work-tree`
+    );
+    if (
+      !insideWorkTreeResult.success ||
+      insideWorkTreeResult.data.exitCode !== 0 ||
+      insideWorkTreeResult.data.stdout.trim() !== 'true'
+    ) {
+      opLogger.info('Backup directory is not inside a git repository', { dir });
+      return [];
+    }
+
+    const prefixResult = await this.sessionManager.executeInSession(
+      sessionId,
+      `git -C ${shellEscape(dir)} rev-parse --show-prefix`
+    );
+    if (!prefixResult.success || prefixResult.data.exitCode !== 0) {
+      opLogger.warn('Failed to resolve git prefix for backup directory', {
+        dir
+      });
+      return [];
+    }
+
+    const ignoredFilesResult = await this.sessionManager.executeInSession(
+      sessionId,
+      `git -C ${shellEscape(dir)} ls-files --others -i --exclude-standard --directory --no-empty-directory`
+    );
+    if (!ignoredFilesResult.success || ignoredFilesResult.data.exitCode !== 0) {
+      opLogger.warn('Failed to resolve gitignored backup paths', { dir });
+      return [];
+    }
+
+    const prefix = prefixResult.data.stdout.trim();
+    return [
+      ...new Set([
+        '.git',
+        ...ignoredFilesResult.data.stdout
+          .split('\n')
+          .map((pattern) => normalizeExcludePattern(pattern, prefix))
+          .filter((pattern) => pattern.length > 0)
+      ])
+    ];
   }
 
   /**

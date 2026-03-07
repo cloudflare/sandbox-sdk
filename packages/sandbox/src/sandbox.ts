@@ -3416,21 +3416,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     this.requirePresignedUrlSupport();
     const DEFAULT_TTL_SECONDS = 259200; // 3 days
     const MAX_NAME_LENGTH = 256;
-    const DEFAULT_BACKUP_EXCLUDE_PATTERNS = [
-      'node_modules',
-      '.git',
-      'dist',
-      'build',
-      '.next',
-      '.turbo',
-      '.cache'
-    ];
     const {
       dir,
       name,
       ttl = DEFAULT_TTL_SECONDS,
-      exclude,
-      excludeDefaults = false
+      useGitignore = true
     } = options;
     Sandbox.validateBackupDir(dir, 'BackupOptions.dir');
     if (name !== undefined) {
@@ -3467,46 +3457,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       });
     }
 
-    if (typeof excludeDefaults !== 'boolean') {
+    if (typeof useGitignore !== 'boolean') {
       throw new InvalidBackupConfigError({
-        message: 'BackupOptions.excludeDefaults must be a boolean',
+        message: 'BackupOptions.useGitignore must be a boolean',
         code: ErrorCode.INVALID_BACKUP_CONFIG,
         httpStatus: 400,
-        context: { reason: 'excludeDefaults must be a boolean' },
+        context: { reason: 'useGitignore must be a boolean' },
         timestamp: new Date().toISOString()
       });
     }
-
-    // biome-ignore lint/suspicious/noControlCharactersInRegex: intentionally matching control chars
-    const CONTROL_CHAR_RE = /[\u0000-\u001f\u007f]/;
-
-    if (
-      exclude !== undefined &&
-      (!Array.isArray(exclude) ||
-        exclude.some(
-          (pattern) =>
-            typeof pattern !== 'string' || CONTROL_CHAR_RE.test(pattern)
-        ))
-    ) {
-      throw new InvalidBackupConfigError({
-        message:
-          'BackupOptions.exclude must be an array of strings without control characters',
-        code: ErrorCode.INVALID_BACKUP_CONFIG,
-        httpStatus: 400,
-        context: {
-          reason:
-            'exclude must be an array of strings without control characters'
-        },
-        timestamp: new Date().toISOString()
-      });
-    }
-
-    const effectiveExclude = [
-      ...new Set([
-        ...(excludeDefaults ? DEFAULT_BACKUP_EXCLUDE_PATTERNS : []),
-        ...(exclude ?? [])
-      ])
-    ];
 
     const backupSession = await this.ensureBackupSession();
     const backupId = crypto.randomUUID();
@@ -3516,14 +3475,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       backupId,
       dir,
       name,
-      excludeCount: effectiveExclude.length
+      useGitignore
     });
 
     const createResult = await this.client.backup.createArchive(
       dir,
       archivePath,
       backupSession,
-      effectiveExclude.length > 0 ? effectiveExclude : undefined
+      useGitignore
     );
 
     if (!createResult.success) {

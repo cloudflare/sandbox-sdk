@@ -1027,19 +1027,12 @@ export interface BackupOptions {
   /** Seconds until automatic garbage collection. Default: 259200 (3 days). No upper limit. */
   ttl?: number;
   /**
-   * Optional mksquashfs exclude patterns.
+   * Respect git ignore rules for the backup directory when it is inside a git repository.
    *
-   * Patterns are passed directly to mksquashfs via `-ef` (one pattern per line).
-   * Common examples: `node_modules`, `.git`, `dist`, `*.log`.
+   * Default: true.
+   * If the directory is not inside a git repository, no git-based exclusions are applied.
    */
-  exclude?: string[];
-  /**
-   * Add default exclude patterns for common dependency/build directories.
-   *
-   * Current defaults: `node_modules`, `.git`, `dist`, `build`, `.next`, `.turbo`, `.cache`.
-   * Default: false.
-   */
-  excludeDefaults?: boolean;
+  useGitignore?: boolean;
 }
 
 /**
