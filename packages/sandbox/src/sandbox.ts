@@ -3416,7 +3416,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     this.requirePresignedUrlSupport();
     const DEFAULT_TTL_SECONDS = 259200; // 3 days
     const MAX_NAME_LENGTH = 256;
-    const { dir, name, ttl = DEFAULT_TTL_SECONDS } = options;
+    const {
+      dir,
+      name,
+      ttl = DEFAULT_TTL_SECONDS,
+      useGitignore = true
+    } = options;
     Sandbox.validateBackupDir(dir, 'BackupOptions.dir');
     if (name !== undefined) {
       if (typeof name !== 'string' || name.length > MAX_NAME_LENGTH) {
@@ -3452,16 +3457,32 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       });
     }
 
+    if (typeof useGitignore !== 'boolean') {
+      throw new InvalidBackupConfigError({
+        message: 'BackupOptions.useGitignore must be a boolean',
+        code: ErrorCode.INVALID_BACKUP_CONFIG,
+        httpStatus: 400,
+        context: { reason: 'useGitignore must be a boolean' },
+        timestamp: new Date().toISOString()
+      });
+    }
+
     const backupSession = await this.ensureBackupSession();
     const backupId = crypto.randomUUID();
     const archivePath = `/var/backups/${backupId}.sqsh`;
 
-    this.logger.info('Creating backup', { backupId, dir, name });
+    this.logger.info('Creating backup', {
+      backupId,
+      dir,
+      name,
+      useGitignore
+    });
 
     const createResult = await this.client.backup.createArchive(
       dir,
       archivePath,
-      backupSession
+      backupSession,
+      useGitignore
     );
 
     if (!createResult.success) {

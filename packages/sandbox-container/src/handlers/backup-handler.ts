@@ -115,12 +115,27 @@ export class BackupHandler extends BaseHandler<Request, Response> {
       );
     }
 
+    if (
+      body.useGitignore !== undefined &&
+      typeof body.useGitignore !== 'boolean'
+    ) {
+      return this.createErrorResponse(
+        {
+          message: 'useGitignore must be a boolean',
+          code: ErrorCode.INVALID_BACKUP_CONFIG
+        },
+        context,
+        Operation.BACKUP_CREATE
+      );
+    }
+
     const sessionId = body.sessionId ?? context.sessionId ?? 'default';
 
     const result = await this.backupService.createArchive(
       body.dir,
       body.archivePath,
-      sessionId
+      sessionId,
+      body.useGitignore ?? true
     );
 
     if (result.success) {

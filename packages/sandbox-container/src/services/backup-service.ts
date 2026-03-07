@@ -32,6 +32,16 @@ const ALLOWED_PREFIXES = ['/workspace', '/home', '/tmp', '/var/tmp'];
  */
 const FORBIDDEN_DIRS = new Set(['/']);
 
+function isSafeAbsolutePath(path: string): boolean {
+  return (
+    typeof path === 'string' &&
+    path.startsWith('/') &&
+    !path.includes('..') &&
+    !path.includes('\0') &&
+    !FORBIDDEN_DIRS.has(path)
+  );
+}
+
 /**
  * Validate that dir and archivePath are safe for backup operations.
  * Defense-in-depth: the DO already validates, but the container
@@ -40,8 +50,8 @@ const FORBIDDEN_DIRS = new Set(['/']);
  * Uses allowlist approach: only paths under /workspace, /home, /tmp, /var/tmp are permitted.
  */
 function validateBackupPaths(dir: string, archivePath: string): string | null {
-  if (!dir.startsWith('/') || FORBIDDEN_DIRS.has(dir)) {
-    return `Unsafe directory: ${dir}`;
+  if (!isSafeAbsolutePath(dir)) {
+    return `Backup directory must be an absolute path under /workspace or /tmp: ${dir}`;
   }
   // Allowlist check: dir must start with one of the allowed prefixes
   const isAllowed = ALLOWED_PREFIXES.some(
@@ -96,7 +106,8 @@ export class BackupService {
   async createArchive(
     dir: string,
     archivePath: string,
-    sessionId = 'default'
+    sessionId = 'default',
+    useGitignore = true
   ): Promise<ServiceResult<CreateArchiveResult>> {
     const opLogger = this.logger.child({ operation: Operation.BACKUP_CREATE });
 
@@ -153,17 +164,44 @@ export class BackupService {
         });
       }
 
+      const excludeFilePath = `${archivePath}.exclude`;
+      const excludePatterns = useGitignore
+        ? await this.resolveGitignoreExcludePatterns(dir, sessionId, opLogger)
+        : [];
+
+      if (excludePatterns.length > 0) {
+        const writeExcludeResult = await this.sessionManager.executeInSession(
+          sessionId,
+          `printf '%s\\n' ${excludePatterns.map(shellEscape).join(' ')} > ${shellEscape(excludeFilePath)}`
+        );
+        if (
+          !writeExcludeResult.success ||
+          writeExcludeResult.data.exitCode !== 0
+        ) {
+          return serviceError({
+            message: 'Failed to write exclude patterns file',
+            code: ErrorCode.BACKUP_CREATE_FAILED,
+            details: { dir, archivePath }
+          });
+        }
+      }
+
       // Create squashfs archive with zstd compression
       // -no-progress suppresses progress output
       // -noappend creates a fresh archive (no appending to existing)
-      const squashCmd = [
+      const squashCmdParts = [
         BIN.mksquashfs,
         shellEscape(dir),
         shellEscape(archivePath),
         '-comp zstd',
         '-no-progress',
         '-noappend'
-      ].join(' ');
+      ];
+      if (excludePatterns.length > 0) {
+        squashCmdParts.push('-wildcards');
+        squashCmdParts.push(`-ef ${shellEscape(excludeFilePath)}`);
+      }
+      const squashCmd = squashCmdParts.join(' ');
 
       opLogger.info('Creating squashfs archive', {
         dir,
@@ -175,6 +213,17 @@ export class BackupService {
         sessionId,
         squashCmd
       );
+
+      if (excludePatterns.length > 0) {
+        await this.sessionManager
+          .executeInSession(sessionId, `rm -f ${shellEscape(excludeFilePath)}`)
+          .catch((err) => {
+            opLogger.warn('Failed to clean up exclude file', {
+              excludeFilePath,
+              error: err instanceof Error ? err.message : String(err)
+            });
+          });
+      }
 
       if (!createResult.success) {
         return serviceError({
@@ -226,6 +275,54 @@ export class BackupService {
         details: { dir, archivePath }
       });
     }
+  }
+
+  private async resolveGitignoreExcludePatterns(
+    dir: string,
+    sessionId: string,
+    opLogger: Logger
+  ): Promise<string[]> {
+    const gitAvailableResult = await this.sessionManager.executeInSession(
+      sessionId,
+      'command -v git >/dev/null 2>&1'
+    );
+    if (!gitAvailableResult.success || gitAvailableResult.data.exitCode !== 0) {
+      opLogger.warn('Git is unavailable; skipping gitignore exclusions', {
+        dir
+      });
+      return [];
+    }
+
+    const insideWorkTreeResult = await this.sessionManager.executeInSession(
+      sessionId,
+      `git -C ${shellEscape(dir)} rev-parse --is-inside-work-tree`
+    );
+    if (
+      !insideWorkTreeResult.success ||
+      insideWorkTreeResult.data.exitCode !== 0 ||
+      insideWorkTreeResult.data.stdout.trim() !== 'true'
+    ) {
+      opLogger.info('Backup directory is not inside a git repository', { dir });
+      return [];
+    }
+
+    // Scope the query to the backup directory so Git returns ignored paths
+    // relative to the directory mksquashfs will archive.
+    const ignoredFilesResult = await this.sessionManager.executeInSession(
+      sessionId,
+      `git -C ${shellEscape(dir)} ls-files --others -i --exclude-standard -- .`
+    );
+    if (!ignoredFilesResult.success || ignoredFilesResult.data.exitCode !== 0) {
+      opLogger.warn('Failed to resolve gitignored backup paths', { dir });
+      return [];
+    }
+
+    const relativePaths = ignoredFilesResult.data.stdout
+      .split('\n')
+      .map((line) => line.trim().replace(/\/+$/, ''))
+      .filter((line) => line.length > 0);
+
+    return [...new Set(['.git', ...relativePaths])];
   }
 
   /**

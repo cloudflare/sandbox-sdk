@@ -1026,6 +1026,13 @@ export interface BackupOptions {
   name?: string;
   /** Seconds until automatic garbage collection. Default: 259200 (3 days). No upper limit. */
   ttl?: number;
+  /**
+   * Respect git ignore rules for the backup directory when it is inside a git repository.
+   *
+   * Default: true.
+   * If the directory is not inside a git repository, no git-based exclusions are applied.
+   */
+  useGitignore?: boolean;
 }
 
 /**
