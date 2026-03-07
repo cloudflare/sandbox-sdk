@@ -106,9 +106,16 @@ describe('BackupService', () => {
     const squashCommand = callArgs.find((command) =>
       command.startsWith('/usr/bin/mksquashfs ')
     );
+    const writeExcludeCommand = callArgs.find((command) =>
+      command.startsWith("printf '%s\\n' ")
+    );
     expect(squashCommand).toBeDefined();
+    expect(writeExcludeCommand).toBeDefined();
     expect(squashCommand).toContain('-wildcards');
     expect(squashCommand).toContain("-ef '/var/backups/test.sqsh.exclude'");
+    expect(writeExcludeCommand).toContain("'node_modules/a.txt'");
+    expect(writeExcludeCommand).toContain("'.git'");
+    expect(writeExcludeCommand).not.toContain("'/workspace/repo/app/");
   });
 
   it('does not add exclude flags when git exclusions are unavailable', async () => {

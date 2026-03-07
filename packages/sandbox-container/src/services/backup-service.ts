@@ -317,24 +317,12 @@ export class BackupService {
       return [];
     }
 
-    const normalizedDir = dir.replace(/\/+$/, '');
-
-    // mksquashfs -ef patterns containing '/' are matched against the full
-    // absolute source path, so relative paths from git ls-files must be
-    // converted to absolute paths rooted at the backup directory.
     const relativePaths = ignoredFilesResult.data.stdout
       .split('\n')
       .map((line) => line.trim().replace(/\/+$/, ''))
       .filter((line) => line.length > 0);
 
-    const absolutePaths = relativePaths.map((rel) => `${normalizedDir}/${rel}`);
-
-    // Exclude the .git directory when it lives inside the backup directory.
-    // When backing up a subdirectory of a repo, .git is at the repo root
-    // and outside the archive scope, so this is a harmless no-op.
-    absolutePaths.push(`${normalizedDir}/.git`);
-
-    return [...new Set(absolutePaths)];
+    return [...new Set(['.git', ...relativePaths])];
   }
 
   /**
