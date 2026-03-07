@@ -324,9 +324,11 @@ export class BackupService {
       return [];
     }
 
+    // Keep file-level ignored entries instead of collapsing to directories so
+    // mixed trees (ignored + non-ignored files) always produce usable patterns.
     const ignoredFilesResult = await this.sessionManager.executeInSession(
       sessionId,
-      `git -C ${shellEscape(dir)} ls-files --others -i --exclude-standard --directory --no-empty-directory`
+      `git -C ${shellEscape(dir)} ls-files --others -i --exclude-standard`
     );
     if (!ignoredFilesResult.success || ignoredFilesResult.data.exitCode !== 0) {
       opLogger.warn('Failed to resolve gitignored backup paths', { dir });
