@@ -322,7 +322,16 @@ export class BackupService {
       .map((line) => line.trim().replace(/\/+$/, ''))
       .filter((line) => line.length > 0);
 
-    return [...new Set(['.git', ...relativePaths])];
+    // Include both direct relative paths and sticky "... " patterns.
+    // mksquashfs path matching differs depending on how the source directory
+    // is represented in the archive, so emitting both forms ensures ignored
+    // content is excluded whether entries appear at the archive root or below
+    // the source directory basename.
+    const excludePatterns = ['.git', ...relativePaths].flatMap((path) => [
+      path,
+      `... ${path}`
+    ]);
+    return [...new Set(excludePatterns)];
   }
 
   /**

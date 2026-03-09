@@ -115,7 +115,8 @@ describe('BackupService', () => {
     expect(squashCommand).toContain("-ef '/var/backups/test.sqsh.exclude'");
     expect(writeExcludeCommand).toContain("'node_modules/a.txt'");
     expect(writeExcludeCommand).toContain("'.git'");
-    expect(writeExcludeCommand).not.toContain("'/workspace/repo/app/");
+    expect(writeExcludeCommand).toContain("'... node_modules/a.txt'");
+    expect(writeExcludeCommand).toContain("'... .git'");
   });
 
   it('does not add exclude flags when git exclusions are unavailable', async () => {
