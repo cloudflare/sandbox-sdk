@@ -1560,72 +1560,74 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     sessionId: string,
     options?: ExecOptions
   ): Promise<ExecResult> {
-    const startTime = Date.now();
-    const timestamp = new Date().toISOString();
+    return this.withActivityTracking(async () => {
+      const startTime = Date.now();
+      const timestamp = new Date().toISOString();
 
-    let timeoutId: NodeJS.Timeout | undefined;
+      let timeoutId: NodeJS.Timeout | undefined;
 
-    try {
-      // Handle cancellation
-      if (options?.signal?.aborted) {
-        throw new Error('Operation was aborted');
+      try {
+        // Handle cancellation
+        if (options?.signal?.aborted) {
+          throw new Error('Operation was aborted');
+        }
+
+        let result: ExecResult;
+
+        if (options?.stream && options?.onOutput) {
+          // Streaming with callbacks - we need to collect the final result
+          result = await this.executeWithStreaming(
+            command,
+            sessionId,
+            options,
+            startTime,
+            timestamp
+          );
+        } else {
+          // Regular execution with session
+          const commandOptions =
+            options &&
+            (options.timeout !== undefined ||
+              options.env !== undefined ||
+              options.cwd !== undefined)
+              ? {
+                  timeoutMs: options.timeout,
+                  env: options.env,
+                  cwd: options.cwd
+                }
+              : undefined;
+
+          const response = await this.client.commands.execute(
+            command,
+            sessionId,
+            commandOptions
+          );
+
+          const duration = Date.now() - startTime;
+          result = this.mapExecuteResponseToExecResult(
+            response,
+            duration,
+            sessionId
+          );
+        }
+
+        // Call completion callback if provided
+        if (options?.onComplete) {
+          options.onComplete(result);
+        }
+
+        return result;
+      } catch (error) {
+        if (options?.onError && error instanceof Error) {
+          options.onError(error);
+        }
+        throw error;
+      } finally {
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+        }
       }
-
-      let result: ExecResult;
-
-      if (options?.stream && options?.onOutput) {
-        // Streaming with callbacks - we need to collect the final result
-        result = await this.executeWithStreaming(
-          command,
-          sessionId,
-          options,
-          startTime,
-          timestamp
-        );
-      } else {
-        // Regular execution with session
-        const commandOptions =
-          options &&
-          (options.timeout !== undefined ||
-            options.env !== undefined ||
-            options.cwd !== undefined)
-            ? {
-                timeoutMs: options.timeout,
-                env: options.env,
-                cwd: options.cwd
-              }
-            : undefined;
-
-        const response = await this.client.commands.execute(
-          command,
-          sessionId,
-          commandOptions
-        );
-
-        const duration = Date.now() - startTime;
-        result = this.mapExecuteResponseToExecResult(
-          response,
-          duration,
-          sessionId
-        );
-      }
-
-      // Call completion callback if provided
-      if (options?.onComplete) {
-        options.onComplete(result);
-      }
-
-      return result;
-    } catch (error) {
-      if (options?.onError && error instanceof Error) {
-        options.onError(error);
-      }
-      throw error;
-    } finally {
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-      }
-    }
+    });
   }
 
   private async executeWithStreaming(
@@ -2360,8 +2362,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   async killAllProcesses(sessionId?: string): Promise<number> {
-    const response = await this.client.processes.killAllProcesses();
-    return response.cleanedCount;
+    return this.withActivityTracking(async () => {
+      const response = await this.client.processes.killAllProcesses();
+      return response.cleanedCount;
+    });
   }
 
   async cleanupCompletedProcesses(sessionId?: string): Promise<number> {
@@ -3035,6 +3039,54 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     });
   }
 
+  private async setEnvVarsWithSession(
+    sessionId: string,
+    envVars: Record<string, string | undefined>
+  ): Promise<void> {
+    return this.withActivityTracking(async () => {
+      const { toSet, toUnset } = partitionEnvVars(envVars);
+
+      try {
+        for (const key of toUnset) {
+          const unsetCommand = `unset ${key}`;
+
+          const result = await this.client.commands.execute(
+            unsetCommand,
+            sessionId
+          );
+
+          if (result.exitCode !== 0) {
+            throw new Error(
+              `Failed to unset ${key}: ${result.stderr || 'Unknown error'}`
+            );
+          }
+        }
+
+        for (const [key, value] of Object.entries(toSet)) {
+          const exportCommand = `export ${key}=${shellEscape(value)}`;
+
+          const result = await this.client.commands.execute(
+            exportCommand,
+            sessionId
+          );
+
+          if (result.exitCode !== 0) {
+            throw new Error(
+              `Failed to set ${key}: ${result.stderr || 'Unknown error'}`
+            );
+          }
+        }
+      } catch (error) {
+        this.logger.error(
+          'Failed to set environment variables',
+          error instanceof Error ? error : new Error(String(error)),
+          { sessionId }
+        );
+        throw error;
+      }
+    });
+  }
+
   private getSessionWrapper(sessionId: string): ExecutionSession {
     // terminal: null here, added client-side by getSandbox() (WebSockets can't cross RPC)
     return {
@@ -3071,69 +3123,21 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         this.renameFile(oldPath, newPath, sessionId),
       moveFile: (sourcePath, destPath) =>
         this.moveFile(sourcePath, destPath, sessionId),
-      listFiles: (path, options) =>
-        this.client.files.listFiles(path, sessionId, options),
+      listFiles: (path, options) => this.listFiles(path, options),
       exists: (path) => this.exists(path, sessionId),
 
       // Git operations
       gitCheckout: (repoUrl, options) =>
         this.gitCheckout(repoUrl, { ...options, sessionId }),
 
-      setEnvVars: async (envVars: Record<string, string | undefined>) => {
-        const { toSet, toUnset } = partitionEnvVars(envVars);
+      setEnvVars: (envVars) => this.setEnvVarsWithSession(sessionId, envVars),
 
-        try {
-          for (const key of toUnset) {
-            const unsetCommand = `unset ${key}`;
-
-            const result = await this.client.commands.execute(
-              unsetCommand,
-              sessionId
-            );
-
-            if (result.exitCode !== 0) {
-              throw new Error(
-                `Failed to unset ${key}: ${result.stderr || 'Unknown error'}`
-              );
-            }
-          }
-
-          for (const [key, value] of Object.entries(toSet)) {
-            const exportCommand = `export ${key}=${shellEscape(value)}`;
-
-            const result = await this.client.commands.execute(
-              exportCommand,
-              sessionId
-            );
-
-            if (result.exitCode !== 0) {
-              throw new Error(
-                `Failed to set ${key}: ${result.stderr || 'Unknown error'}`
-              );
-            }
-          }
-        } catch (error) {
-          this.logger.error(
-            'Failed to set environment variables',
-            error instanceof Error ? error : new Error(String(error)),
-            { sessionId }
-          );
-          throw error;
-        }
-      },
-
-      // Code interpreter methods - delegate to sandbox's code interpreter
-      createCodeContext: (options) =>
-        this.codeInterpreter.createCodeContext(options),
-      runCode: async (code, options) => {
-        const execution = await this.codeInterpreter.runCode(code, options);
-        return execution.toJSON();
-      },
-      runCodeStream: (code, options) =>
-        this.codeInterpreter.runCodeStream(code, options),
-      listCodeContexts: () => this.codeInterpreter.listCodeContexts(),
-      deleteCodeContext: (contextId) =>
-        this.codeInterpreter.deleteCodeContext(contextId),
+      // Code interpreter methods - route through tracked sandbox methods
+      createCodeContext: (options) => this.createCodeContext(options),
+      runCode: (code, options) => this.runCode(code, options),
+      runCodeStream: (code, options) => this.runCodeStream(code, options),
+      listCodeContexts: () => this.listCodeContexts(),
+      deleteCodeContext: (contextId) => this.deleteCodeContext(contextId),
 
       // Bucket mounting - sandbox-level operations
       mountBucket: (bucket, mountPath, options) =>
