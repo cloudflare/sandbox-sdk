@@ -1372,9 +1372,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     if (this.activeOperations > 0) {
       const now = Date.now();
-      const allExpired = [...this.operationStartTimes.values()].every(
-        (startTime) => now - startTime > Sandbox.MAX_OPERATION_DURATION_MS
-      );
+      const allExpired =
+        this.operationStartTimes.size > 0 &&
+        [...this.operationStartTimes.values()].every(
+          (startTime) => now - startTime > Sandbox.MAX_OPERATION_DURATION_MS
+        );
 
       if (allExpired) {
         this.logger.warn(
