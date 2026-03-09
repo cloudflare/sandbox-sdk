@@ -1,5 +1,13 @@
 # @cloudflare/sandbox
 
+## 0.7.14
+
+### Patch Changes
+
+- [#476](https://github.com/cloudflare/sandbox-sdk/pull/476) [`440eb1f`](https://github.com/cloudflare/sandbox-sdk/commit/440eb1fa929b8e57d69c055f256f9b9c40f2d36e) Thanks [@berry1001](https://github.com/berry1001)! - Fix sandboxes staying awake indefinitely after disabling `keepAlive`. Calling `setKeepAlive(false)` now correctly re-arms the `sleepAfter` timeout so the sandbox returns to its configured sleep lifecycle.
+
+- [#469](https://github.com/cloudflare/sandbox-sdk/pull/469) [`856f4dd`](https://github.com/cloudflare/sandbox-sdk/commit/856f4dd80c853fe857f4ecb88c3dc52a3e0bf110) Thanks [@maschwenk](https://github.com/maschwenk)! - Add `shell` option to `PtyOptions` to allow specifying which shell to spawn (e.g. `zsh`, `sh`, `fish`). Defaults to `bash` when not specified.
+
 ## 0.7.13
 
 ### Patch Changes
@@ -138,13 +146,13 @@
   As a base image:
 
   ```dockerfile
-  FROM docker.io/cloudflare/sandbox:0.7.13-musl
+  FROM docker.io/cloudflare/sandbox:0.7.14-musl
   ```
 
   Or copy the binary into your own Alpine image:
 
   ```dockerfile
-  COPY --from=docker.io/cloudflare/sandbox:0.7.13-musl /container-server/sandbox /sandbox
+  COPY --from=docker.io/cloudflare/sandbox:0.7.14-musl /container-server/sandbox /sandbox
   ```
 
 - [#377](https://github.com/cloudflare/sandbox-sdk/pull/377) [`d83642e`](https://github.com/cloudflare/sandbox-sdk/commit/d83642e855f68e4fb8c15c2452709923e55a83fd) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Allow port 8787 in `exposePort()`. It was incorrectly blocked.
@@ -367,10 +375,10 @@
 
   ```dockerfile
   # Before
-  FROM cloudflare/sandbox:0.7.13
+  FROM cloudflare/sandbox:0.7.14
 
   # After
-  FROM cloudflare/sandbox:0.7.13-python
+  FROM cloudflare/sandbox:0.7.14-python
   ```
 
   Without this change, Python execution will fail with `PYTHON_NOT_AVAILABLE` error.
