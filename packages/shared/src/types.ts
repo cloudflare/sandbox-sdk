@@ -424,6 +424,11 @@ export interface SessionOptions {
    * Enable PID namespace isolation (requires CAP_SYS_ADMIN)
    */
   isolation?: boolean;
+
+  /**
+   * Maximum amount of time a command can run in milliseconds
+   */
+  commandTimeoutMs?: number;
 }
 
 // Sandbox configuration options

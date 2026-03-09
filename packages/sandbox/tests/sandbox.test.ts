@@ -1010,4 +1010,22 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(renewSpy).toHaveBeenCalled();
     });
   });
+
+  describe('keepAlive configuration', () => {
+    it('should reschedule activity timeout when keepAlive is disabled', async () => {
+      const renewSpy = vi.spyOn(sandbox as any, 'renewActivityTimeout');
+
+      await sandbox.setKeepAlive(true);
+      expect(renewSpy).not.toHaveBeenCalled();
+
+      await sandbox.setKeepAlive(false);
+
+      expect(mockCtx.storage.put).toHaveBeenNthCalledWith(
+        2,
+        'keepAliveEnabled',
+        false
+      );
+      expect(renewSpy).toHaveBeenCalledTimes(1);
+    });
+  });
 });
