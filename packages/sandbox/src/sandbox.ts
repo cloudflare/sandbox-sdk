@@ -320,15 +320,17 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * through property getters.
    */
   async callDesktop(method: string, args: unknown[]): Promise<unknown> {
-    if (!Sandbox.DESKTOP_METHODS.has(method)) {
-      throw new Error(`Unknown desktop method: ${method}`);
-    }
-    const client = this.client.desktop;
-    const fn = client[method as keyof typeof client];
-    if (typeof fn !== 'function') {
-      throw new Error(`Unknown desktop method: ${method}`);
-    }
-    return (fn as (...a: unknown[]) => unknown).apply(client, args);
+    return this.withActivityTracking(async () => {
+      if (!Sandbox.DESKTOP_METHODS.has(method)) {
+        throw new Error(`Unknown desktop method: ${method}`);
+      }
+      const client = this.client.desktop;
+      const fn = client[method as keyof typeof client];
+      if (typeof fn !== 'function') {
+        throw new Error(`Unknown desktop method: ${method}`);
+      }
+      return (fn as (...a: unknown[]) => unknown).apply(client, args);
+    });
   }
 
   /**
@@ -676,75 +678,79 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     mountPath: string,
     options: MountBucketOptions
   ): Promise<void> {
-    this.logger.info(`Mounting bucket ${bucket} to ${mountPath}`);
+    return this.withActivityTracking(async () => {
+      this.logger.info(`Mounting bucket ${bucket} to ${mountPath}`);
 
-    const prefix = options.prefix || undefined;
+      const prefix = options.prefix || undefined;
 
-    this.validateMountOptions(bucket, mountPath, { ...options, prefix });
+      this.validateMountOptions(bucket, mountPath, { ...options, prefix });
 
-    // Build s3fs source: bucket name with optional prefix (e.g., "mybucket:/prefix/")
-    const s3fsSource = buildS3fsSource(bucket, prefix);
+      // Build s3fs source: bucket name with optional prefix (e.g., "mybucket:/prefix/")
+      const s3fsSource = buildS3fsSource(bucket, prefix);
 
-    // Detect provider from explicit option or URL pattern
-    const provider: BucketProvider | null =
-      options.provider || detectProviderFromUrl(options.endpoint);
+      // Detect provider from explicit option or URL pattern
+      const provider: BucketProvider | null =
+        options.provider || detectProviderFromUrl(options.endpoint);
 
-    this.logger.debug(`Detected provider: ${provider || 'unknown'}`, {
-      explicitProvider: options.provider,
-      prefix
-    });
+      this.logger.debug(`Detected provider: ${provider || 'unknown'}`, {
+        explicitProvider: options.provider,
+        prefix
+      });
 
-    // Detect credentials
-    const credentials = detectCredentials(options, this.envVars);
+      // Detect credentials
+      const credentials = detectCredentials(options, this.envVars);
 
-    // Generate unique password file path
-    const passwordFilePath = this.generatePasswordFilePath();
+      // Generate unique password file path
+      const passwordFilePath = this.generatePasswordFilePath();
 
-    // Reserve mount path before async operations so concurrent mounts see it
-    this.activeMounts.set(mountPath, {
-      bucket: s3fsSource,
-      mountPath,
-      endpoint: options.endpoint,
-      provider,
-      passwordFilePath,
-      mounted: false
-    });
-
-    try {
-      // Create password file with credentials (uses bucket name only, not prefix)
-      await this.createPasswordFile(passwordFilePath, bucket, credentials);
-
-      // Create mount directory
-      await this.exec(`mkdir -p ${shellEscape(mountPath)}`);
-
-      // Execute S3FS mount with password file (uses full s3fs source with prefix)
-      await this.executeS3FSMount(
-        s3fsSource,
-        mountPath,
-        options,
-        provider,
-        passwordFilePath
-      );
-
-      // Mark as successfully mounted
+      // Reserve mount path before async operations so concurrent mounts see it
       this.activeMounts.set(mountPath, {
         bucket: s3fsSource,
         mountPath,
         endpoint: options.endpoint,
         provider,
         passwordFilePath,
-        mounted: true
+        mounted: false
       });
 
-      this.logger.info(`Successfully mounted bucket ${bucket} to ${mountPath}`);
-    } catch (error) {
-      // Clean up password file on failure
-      await this.deletePasswordFile(passwordFilePath);
+      try {
+        // Create password file with credentials (uses bucket name only, not prefix)
+        await this.createPasswordFile(passwordFilePath, bucket, credentials);
 
-      // Clean up reservation on failure
-      this.activeMounts.delete(mountPath);
-      throw error;
-    }
+        // Create mount directory
+        await this.exec(`mkdir -p ${shellEscape(mountPath)}`);
+
+        // Execute S3FS mount with password file (uses full s3fs source with prefix)
+        await this.executeS3FSMount(
+          s3fsSource,
+          mountPath,
+          options,
+          provider,
+          passwordFilePath
+        );
+
+        // Mark as successfully mounted
+        this.activeMounts.set(mountPath, {
+          bucket: s3fsSource,
+          mountPath,
+          endpoint: options.endpoint,
+          provider,
+          passwordFilePath,
+          mounted: true
+        });
+
+        this.logger.info(
+          `Successfully mounted bucket ${bucket} to ${mountPath}`
+        );
+      } catch (error) {
+        // Clean up password file on failure
+        await this.deletePasswordFile(passwordFilePath);
+
+        // Clean up reservation on failure
+        this.activeMounts.delete(mountPath);
+        throw error;
+      }
+    });
   }
 
   /**
@@ -754,31 +760,33 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * @throws InvalidMountConfigError if mount path doesn't exist or isn't mounted
    */
   async unmountBucket(mountPath: string): Promise<void> {
-    this.logger.info(`Unmounting bucket from ${mountPath}`);
+    return this.withActivityTracking(async () => {
+      this.logger.info(`Unmounting bucket from ${mountPath}`);
 
-    // Look up mount by path
-    const mountInfo = this.activeMounts.get(mountPath);
+      // Look up mount by path
+      const mountInfo = this.activeMounts.get(mountPath);
 
-    // Throw error if mount doesn't exist
-    if (!mountInfo) {
-      throw new InvalidMountConfigError(
-        `No active mount found at path: ${mountPath}`
-      );
-    }
+      // Throw error if mount doesn't exist
+      if (!mountInfo) {
+        throw new InvalidMountConfigError(
+          `No active mount found at path: ${mountPath}`
+        );
+      }
 
-    // Unmount the filesystem
-    try {
-      await this.exec(`fusermount -u ${shellEscape(mountPath)}`);
-      mountInfo.mounted = false;
+      // Unmount the filesystem
+      try {
+        await this.exec(`fusermount -u ${shellEscape(mountPath)}`);
+        mountInfo.mounted = false;
 
-      // Only remove from tracking if unmount succeeded
-      this.activeMounts.delete(mountPath);
-    } finally {
-      // Always cleanup password file, even if unmount fails
-      await this.deletePasswordFile(mountInfo.passwordFilePath);
-    }
+        // Only remove from tracking if unmount succeeded
+        this.activeMounts.delete(mountPath);
+      } finally {
+        // Always cleanup password file, even if unmount fails
+        await this.deletePasswordFile(mountInfo.passwordFilePath);
+      }
 
-    this.logger.info(`Successfully unmounted bucket from ${mountPath}`);
+      this.logger.info(`Successfully unmounted bucket from ${mountPath}`);
+    });
   }
 
   /**
@@ -2577,58 +2585,60 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     hostname: string,
     options?: { token?: string }
   ): Promise<{ url: string }> {
-    // Confirm desktop is running before generating a URL
-    const status = await this.client.desktop.status();
-    if (status.status === 'inactive') {
-      throw new Error(
-        'Desktop is not running. Call sandbox.desktop.start() first.'
-      );
-    }
-
-    let url: string;
-
-    // Try exposing port 6080; if already exposed, construct the URL from stored token
-    try {
-      const result = await this.exposePort(6080, {
-        hostname,
-        token: options?.token
-      });
-      url = result.url;
-    } catch {
-      // Port may already be exposed — look up the existing token from DO storage
-      const tokens =
-        (await this.ctx.storage.get<Record<string, string>>('portTokens')) ||
-        {};
-      const existingToken = tokens['6080'];
-      if (existingToken && this.sandboxName) {
-        url = this.constructPreviewUrl(
-          6080,
-          this.sandboxName,
-          hostname,
-          existingToken
-        );
-      } else {
+    return this.withActivityTracking(async () => {
+      // Confirm desktop is running before generating a URL
+      const status = await this.client.desktop.status();
+      if (status.status === 'inactive') {
         throw new Error(
-          'Failed to get desktop stream URL: port 6080 could not be exposed and no existing token found.'
+          'Desktop is not running. Call sandbox.desktop.start() first.'
         );
       }
-    }
 
-    // Wait for the platform to detect port 6080 using the Containers runtime's
-    // built-in port readiness mechanism (getTcpPort polling). This ensures the
-    // preview URL is routable before returning it to the caller.
-    try {
-      await this.waitForPort({
-        portToCheck: 6080,
-        retries: 30,
-        waitInterval: 500
-      });
-    } catch {
-      // Best-effort: if detection times out after ~15s, return the URL anyway.
-      // noVNC's WebSocket auto-connect will retry on the client side.
-    }
+      let url: string;
 
-    return { url };
+      // Try exposing port 6080; if already exposed, construct the URL from stored token
+      try {
+        const result = await this.exposePort(6080, {
+          hostname,
+          token: options?.token
+        });
+        url = result.url;
+      } catch {
+        // Port may already be exposed — look up the existing token from DO storage
+        const tokens =
+          (await this.ctx.storage.get<Record<string, string>>('portTokens')) ||
+          {};
+        const existingToken = tokens['6080'];
+        if (existingToken && this.sandboxName) {
+          url = this.constructPreviewUrl(
+            6080,
+            this.sandboxName,
+            hostname,
+            existingToken
+          );
+        } else {
+          throw new Error(
+            'Failed to get desktop stream URL: port 6080 could not be exposed and no existing token found.'
+          );
+        }
+      }
+
+      // Wait for the platform to detect port 6080 using the Containers runtime's
+      // built-in port readiness mechanism (getTcpPort polling). This ensures the
+      // preview URL is routable before returning it to the caller.
+      try {
+        await this.waitForPort({
+          portToCheck: 6080,
+          retries: 30,
+          waitInterval: 500
+        });
+      } catch {
+        // Best-effort: if detection times out after ~15s, return the URL anyway.
+        // noVNC's WebSocket auto-connect will retry on the client side.
+      }
+
+      return { url };
+    });
   }
 
   /**
@@ -2817,18 +2827,20 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   async isPortExposed(port: number): Promise<boolean> {
-    try {
-      const sessionId = await this.ensureDefaultSession();
-      const response = await this.client.ports.getExposedPorts(sessionId);
-      return response.ports.some((exposedPort) => exposedPort.port === port);
-    } catch (error) {
-      this.logger.error(
-        'Error checking if port is exposed',
-        error instanceof Error ? error : new Error(String(error)),
-        { port }
-      );
-      return false;
-    }
+    return this.withActivityTracking(async () => {
+      try {
+        const sessionId = await this.ensureDefaultSession();
+        const response = await this.client.ports.getExposedPorts(sessionId);
+        return response.ports.some((exposedPort) => exposedPort.port === port);
+      } catch (error) {
+        this.logger.error(
+          'Error checking if port is exposed',
+          error instanceof Error ? error : new Error(String(error)),
+          { port }
+        );
+        return false;
+      }
+    });
   }
 
   async validatePortToken(port: number, token: string): Promise<boolean> {
@@ -3562,7 +3574,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    */
   async createBackup(options: BackupOptions): Promise<DirectoryBackup> {
     this.requireBackupBucket();
-    return this.enqueueBackupOp(() => this.doCreateBackup(options));
+    return this.enqueueBackupOp(() =>
+      this.withActivityTracking(() => this.doCreateBackup(options))
+    );
   }
 
   private async doCreateBackup(
@@ -3709,7 +3723,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    */
   async restoreBackup(backup: DirectoryBackup): Promise<RestoreBackupResult> {
     this.requireBackupBucket();
-    return this.enqueueBackupOp(() => this.doRestoreBackup(backup));
+    return this.enqueueBackupOp(() =>
+      this.withActivityTracking(() => this.doRestoreBackup(backup))
+    );
   }
 
   private async doRestoreBackup(

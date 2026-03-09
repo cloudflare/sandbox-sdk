@@ -2,8 +2,13 @@ import { Container } from '@cloudflare/containers';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Sandbox } from '../src/sandbox';
 
-vi.mock('./interpreter', () => ({
-  CodeInterpreter: vi.fn().mockImplementation(() => ({}))
+vi.mock('../src/interpreter', () => ({
+  CodeInterpreter: vi.fn().mockImplementation(() => ({
+    runCode: vi.fn(),
+    listCodeContexts: vi.fn(),
+    deleteCodeContext: vi.fn(),
+    createCodeContext: vi.fn()
+  }))
 }));
 
 vi.mock('@cloudflare/containers', () => {
