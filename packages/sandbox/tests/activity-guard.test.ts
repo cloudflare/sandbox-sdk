@@ -547,4 +547,221 @@ describe('Sandbox activity guard infrastructure', () => {
       });
     });
   });
+
+  describe('session.exec() wiring uses withActivityTracking via execWithSession', () => {
+    it('increments activeOperations during session.exec() and decrements after completion', async () => {
+      const session = sandbox['getSessionWrapper']('test-session');
+      const deferred = createDeferred<{
+        success: boolean;
+        stdout: string;
+        stderr: string;
+        exitCode: number;
+        command: string;
+        timestamp: string;
+      }>();
+
+      vi.spyOn(sandbox.client.commands, 'execute').mockReturnValue(
+        deferred.promise
+      );
+
+      const pending = session.exec('echo from-session');
+
+      expect(sandbox['activeOperations']).toBe(1);
+
+      deferred.resolve({
+        success: true,
+        stdout: 'from-session',
+        stderr: '',
+        exitCode: 0,
+        command: 'echo from-session',
+        timestamp: new Date().toISOString()
+      });
+
+      await pending;
+      expect(sandbox['activeOperations']).toBe(0);
+    });
+
+    it('decrements activeOperations when session.exec() throws', async () => {
+      const session = sandbox['getSessionWrapper']('test-session');
+      vi.spyOn(sandbox.client.commands, 'execute').mockRejectedValue(
+        new Error('session exec failed')
+      );
+
+      await expect(session.exec('fail')).rejects.toThrow('session exec failed');
+      expect(sandbox['activeOperations']).toBe(0);
+      expect(sandbox['operationStartTimes'].size).toBe(0);
+    });
+  });
+
+  describe('killAllProcesses() wiring uses withActivityTracking', () => {
+    it('increments activeOperations during killAllProcesses() and decrements after completion', async () => {
+      const deferred = createDeferred<{
+        success: boolean;
+        cleanedCount: number;
+        timestamp: string;
+      }>();
+
+      vi.spyOn(sandbox.client.processes, 'killAllProcesses').mockReturnValue(
+        deferred.promise
+      );
+
+      const pending = sandbox.killAllProcesses();
+
+      expect(sandbox['activeOperations']).toBe(1);
+
+      deferred.resolve({
+        success: true,
+        cleanedCount: 3,
+        timestamp: new Date().toISOString()
+      });
+
+      const result = await pending;
+      expect(result).toBe(3);
+      expect(sandbox['activeOperations']).toBe(0);
+    });
+  });
+
+  describe('session.listFiles() routes through tracked this.listFiles()', () => {
+    it('increments activeOperations during session.listFiles() and decrements after completion', async () => {
+      sandbox['defaultSession'] = 'sandbox-default';
+      const session = sandbox['getSessionWrapper']('test-session');
+      const deferred = createDeferred<{
+        success: boolean;
+        path: string;
+        files: [];
+        count: number;
+        timestamp: string;
+      }>();
+
+      vi.spyOn(sandbox.client.files, 'listFiles').mockReturnValue(
+        deferred.promise
+      );
+
+      const pending = session.listFiles('/workspace');
+
+      expect(sandbox['activeOperations']).toBe(1);
+
+      deferred.resolve({
+        success: true,
+        path: '/workspace',
+        files: [],
+        count: 0,
+        timestamp: new Date().toISOString()
+      });
+
+      await pending;
+      expect(sandbox['activeOperations']).toBe(0);
+    });
+  });
+
+  describe('session.setEnvVars() routes through setEnvVarsWithSession', () => {
+    it('increments activeOperations during session.setEnvVars() and decrements after completion', async () => {
+      const session = sandbox['getSessionWrapper']('test-session');
+      const deferred = createDeferred<{
+        success: boolean;
+        stdout: string;
+        stderr: string;
+        exitCode: number;
+        command: string;
+        timestamp: string;
+      }>();
+
+      vi.spyOn(sandbox.client.commands, 'execute').mockReturnValue(
+        deferred.promise
+      );
+
+      const pending = session.setEnvVars({ FOO: 'bar' });
+
+      expect(sandbox['activeOperations']).toBe(1);
+
+      deferred.resolve({
+        success: true,
+        stdout: '',
+        stderr: '',
+        exitCode: 0,
+        command: 'export FOO=bar',
+        timestamp: new Date().toISOString()
+      });
+
+      await pending;
+      expect(sandbox['activeOperations']).toBe(0);
+    });
+
+    it('decrements activeOperations when session.setEnvVars() throws', async () => {
+      const session = sandbox['getSessionWrapper']('test-session');
+      vi.spyOn(sandbox.client.commands, 'execute').mockRejectedValue(
+        new Error('env set failed')
+      );
+
+      await expect(session.setEnvVars({ FOO: 'bar' })).rejects.toThrow(
+        'env set failed'
+      );
+      expect(sandbox['activeOperations']).toBe(0);
+      expect(sandbox['operationStartTimes'].size).toBe(0);
+    });
+  });
+
+  describe('session code interpreter methods route through tracked sandbox methods', () => {
+    it('session.runCode() increments and decrements activeOperations', async () => {
+      const session = sandbox['getSessionWrapper']('test-session');
+      const deferred = createDeferred<unknown>();
+
+      vi.spyOn(sandbox['codeInterpreter'], 'runCode').mockReturnValue(
+        deferred.promise as ReturnType<
+          (typeof sandbox)['codeInterpreter']['runCode']
+        >
+      );
+
+      const pending = session.runCode('print("hello")');
+
+      expect(sandbox['activeOperations']).toBe(1);
+
+      deferred.resolve({
+        toJSON: () => ({
+          code: '',
+          results: [],
+          logs: { stdout: [], stderr: [] }
+        })
+      });
+
+      await pending;
+      expect(sandbox['activeOperations']).toBe(0);
+    });
+
+    it('session.listCodeContexts() increments and decrements activeOperations', async () => {
+      const session = sandbox['getSessionWrapper']('test-session');
+      const deferred = createDeferred<[]>();
+
+      vi.spyOn(sandbox['codeInterpreter'], 'listCodeContexts').mockReturnValue(
+        deferred.promise
+      );
+
+      const pending = session.listCodeContexts();
+
+      expect(sandbox['activeOperations']).toBe(1);
+
+      deferred.resolve([]);
+
+      await pending;
+      expect(sandbox['activeOperations']).toBe(0);
+    });
+
+    it('session.deleteCodeContext() increments and decrements activeOperations', async () => {
+      const session = sandbox['getSessionWrapper']('test-session');
+      const deferred = createDeferred<void>();
+
+      vi.spyOn(sandbox['codeInterpreter'], 'deleteCodeContext').mockReturnValue(
+        deferred.promise
+      );
+
+      const pending = session.deleteCodeContext('ctx-1');
+
+      expect(sandbox['activeOperations']).toBe(1);
+
+      deferred.resolve();
+
+      await pending;
+      expect(sandbox['activeOperations']).toBe(0);
+    });
+  });
 });
