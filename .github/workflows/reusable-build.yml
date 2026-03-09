@@ -191,6 +191,7 @@ jobs:
           BUN_VERSION: ${{ steps.bun-version.outputs.version }}
         with:
           files: docker-bake.hcl
+          source: .
           targets: main
           load: true
 
