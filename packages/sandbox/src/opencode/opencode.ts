@@ -431,7 +431,7 @@ export async function proxyToOpencode(
   server: OpencodeServer
 ): Promise<Response> {
   // WebSocket requests need to use native fetch (containerFetch can't serialize WebSocket responses)
-  if (request.headers.get('Upgrade') === 'websocket') {
+  if (request.headers.get('Upgrade')?.toLowerCase() === 'websocket') {
     return sandbox.fetch(switchPort(request, server.port));
   }
 
