@@ -15,6 +15,7 @@ import type {
 } from '@repo/shared/errors';
 import { ErrorCode } from '@repo/shared/errors';
 import { Mutex } from 'async-mutex';
+import { time } from 'console';
 import { CONFIG } from '../config';
 import {
   type ServiceError,
@@ -316,11 +317,9 @@ export class SessionManager {
 
         const result = await session.exec(
           command,
-          timeoutMs !== undefined
+          cwd || env || timeoutMs !== undefined
             ? { cwd, env, timeoutMs }
-            : cwd || env
-              ? { cwd, env }
-              : undefined
+            : undefined
         );
 
         return {
