@@ -7,6 +7,9 @@
   "observability": {
     "enabled": true
   },
+  "ai": {
+    "binding": "AI"
+  },
 
   // IMPORTANT: Port exposure requires wildcard DNS routing
   // To use exposePort(), configure a custom domain:

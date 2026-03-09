@@ -13,6 +13,13 @@ export interface FileExistsContext {
   operation: OperationType;
 }
 
+export interface FileTooLargeContext {
+  path: string;
+  operation: OperationType;
+  maxSize: number;
+  actualSize: number;
+}
+
 export interface FileSystemContext {
   path: string;
   operation: OperationType;
@@ -49,6 +56,10 @@ export interface ProcessErrorContext {
 }
 
 export interface SessionAlreadyExistsContext {
+  sessionId: string;
+}
+
+export interface SessionDestroyedContext {
   sessionId: string;
 }
 
@@ -170,6 +181,36 @@ export interface InvalidMountConfigContext {
 }
 
 /**
+ * Backup error contexts
+ */
+export interface BackupCreateContext {
+  dir: string;
+  backupId?: string;
+  stderr?: string;
+  exitCode?: number;
+}
+
+export interface BackupRestoreContext {
+  dir: string;
+  backupId: string;
+  stderr?: string;
+  exitCode?: number;
+}
+
+export interface BackupNotFoundContext {
+  backupId: string;
+}
+
+export interface BackupExpiredContext {
+  backupId: string;
+  expiredAt?: string;
+}
+
+export interface InvalidBackupConfigContext {
+  reason: string;
+}
+
+/**
  * OpenCode error contexts
  */
 export interface OpencodeStartupContext {
@@ -185,4 +226,21 @@ export interface InternalErrorContext {
   originalError?: string;
   stack?: string;
   [key: string]: unknown; // Allow extension
+}
+
+/**
+ * Desktop error contexts
+ */
+export interface DesktopErrorContext {
+  process?: string;
+  stderr?: string;
+  crashedProcess?: string;
+  reason?: string;
+}
+
+export interface DesktopCoordinateErrorContext {
+  x: number;
+  y: number;
+  displayWidth: number;
+  displayHeight: number;
 }

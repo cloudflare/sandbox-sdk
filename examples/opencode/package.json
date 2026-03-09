@@ -12,13 +12,13 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@opencode-ai/sdk": "^1.0.137"
+    "@opencode-ai/sdk": "^1.1.40"
   },
   "devDependencies": {
     "@cloudflare/sandbox": "*",
     "@types/node": "^24.10.1",
     "typescript": "^5.9.3",
-    "wrangler": "^4.50.0"
+    "wrangler": "^4.70.0"
   },
   "author": "",
   "license": "MIT"

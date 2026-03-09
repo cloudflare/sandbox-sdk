@@ -10,6 +10,7 @@ import { mkdir } from 'node:fs/promises';
 
 // Ensure output directories exist
 await mkdir('dist/runtime/executors/javascript', { recursive: true });
+await mkdir('dist/workers', { recursive: true });
 
 // Build legacy JS bundle for backwards compatibility
 // Users with custom startup scripts that call `bun /container-server/dist/index.js` need this
@@ -59,11 +60,37 @@ console.log(
   `  dist/runtime/executors/javascript/node_executor.js (${(executorResult.outputs[0].size / 1024).toFixed(1)} KB)`
 );
 
-console.log('Building standalone binary...');
+// Bundle the desktop FFI worker thread (runs in a separate Bun worker)
+console.log('Building desktop worker thread...');
 
-// Compile standalone binary (bundles Bun runtime)
+const workerResult = await Bun.build({
+  entrypoints: ['src/workers/desktop-worker.ts'],
+  outdir: 'dist/workers',
+  target: 'bun',
+  minify: true,
+  sourcemap: 'external',
+  external: ['koffi']
+});
+
+if (!workerResult.success) {
+  console.error('Desktop worker build failed:');
+  for (const log of workerResult.logs) {
+    console.error(log);
+  }
+  // Non-fatal: desktop worker is only needed for desktop image variant
+  console.warn('  Skipping desktop worker (not required for default image)');
+} else {
+  console.log(
+    `  dist/workers/desktop-worker.js (${(workerResult.outputs[0].size / 1024).toFixed(1)} KB)`
+  );
+}
+
+console.log('Building standalone binaries...');
+
+// Compile both glibc and musl standalone binaries in parallel
 const bunExecutable = process.execPath;
-const proc = Bun.spawn(
+
+const glibcProc = Bun.spawn(
   [
     bunExecutable,
     'build',
@@ -79,15 +106,44 @@ const proc = Bun.spawn(
   }
 );
 
-const exitCode = await proc.exited;
-if (exitCode !== 0) {
-  console.error('Standalone binary build failed');
+const muslProc = Bun.spawn(
+  [
+    bunExecutable,
+    'build',
+    'src/main.ts',
+    '--compile',
+    '--target=bun-linux-x64-musl',
+    '--outfile=dist/sandbox-musl',
+    '--minify'
+  ],
+  {
+    cwd: process.cwd(),
+    stdio: ['inherit', 'inherit', 'inherit']
+  }
+);
+
+const [glibcExit, muslExit] = await Promise.all([
+  glibcProc.exited,
+  muslProc.exited
+]);
+
+if (glibcExit !== 0) {
+  console.error('Standalone binary build failed (glibc)');
   process.exit(1);
 }
 
-// Get file size
-const file = Bun.file('dist/sandbox');
-const size = file.size;
-console.log(`  dist/sandbox (${(size / 1024 / 1024).toFixed(1)} MB)`);
+if (muslExit !== 0) {
+  console.error('Standalone binary build failed (musl)');
+  process.exit(1);
+}
+
+// Report file sizes
+const glibcFile = Bun.file('dist/sandbox');
+console.log(`  dist/sandbox (${(glibcFile.size / 1024 / 1024).toFixed(1)} MB)`);
+
+const muslFile = Bun.file('dist/sandbox-musl');
+console.log(
+  `  dist/sandbox-musl (${(muslFile.size / 1024 / 1024).toFixed(1)} MB)`
+);
 
 console.log('Build complete!');

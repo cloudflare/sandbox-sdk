@@ -44,7 +44,7 @@ describe('getSandbox', () => {
     const sandbox = getSandbox(mockNamespace, 'test-sandbox');
 
     expect(sandbox).toBeDefined();
-    expect(sandbox.setSandboxName).toHaveBeenCalledWith(
+    expect(mockStub.setSandboxName).toHaveBeenCalledWith(
       'test-sandbox',
       undefined
     );
@@ -70,11 +70,11 @@ describe('getSandbox', () => {
 
   it('should apply baseUrl option when provided', () => {
     const mockNamespace = {} as any;
-    const sandbox = getSandbox(mockNamespace, 'test-sandbox', {
+    getSandbox(mockNamespace, 'test-sandbox', {
       baseUrl: 'https://example.com'
     });
 
-    expect(sandbox.setBaseUrl).toHaveBeenCalledWith('https://example.com');
+    expect(mockStub.setBaseUrl).toHaveBeenCalledWith('https://example.com');
   });
 
   it('should apply both sleepAfter and baseUrl options together', () => {
@@ -85,7 +85,7 @@ describe('getSandbox', () => {
     });
 
     expect(sandbox.sleepAfter).toBe('10m');
-    expect(sandbox.setBaseUrl).toHaveBeenCalledWith('https://example.com');
+    expect(mockStub.setBaseUrl).toHaveBeenCalledWith('https://example.com');
   });
 
   it('should not apply sleepAfter when not provided', () => {
@@ -114,20 +114,20 @@ describe('getSandbox', () => {
 
   it('should apply keepAlive option when provided as true', () => {
     const mockNamespace = {} as any;
-    const sandbox = getSandbox(mockNamespace, 'test-sandbox', {
+    getSandbox(mockNamespace, 'test-sandbox', {
       keepAlive: true
     });
 
-    expect(sandbox.setKeepAlive).toHaveBeenCalledWith(true);
+    expect(mockStub.setKeepAlive).toHaveBeenCalledWith(true);
   });
 
   it('should apply keepAlive option when provided as false', () => {
     const mockNamespace = {} as any;
-    const sandbox = getSandbox(mockNamespace, 'test-sandbox', {
+    getSandbox(mockNamespace, 'test-sandbox', {
       keepAlive: false
     });
 
-    expect(sandbox.setKeepAlive).toHaveBeenCalledWith(false);
+    expect(mockStub.setKeepAlive).toHaveBeenCalledWith(false);
   });
 
   it('should not call setKeepAlive when keepAlive option not provided', () => {
@@ -146,8 +146,8 @@ describe('getSandbox', () => {
     });
 
     expect(sandbox.sleepAfter).toBe('5m');
-    expect(sandbox.setBaseUrl).toHaveBeenCalledWith('https://example.com');
-    expect(sandbox.setKeepAlive).toHaveBeenCalledWith(true);
+    expect(mockStub.setBaseUrl).toHaveBeenCalledWith('https://example.com');
+    expect(mockStub.setKeepAlive).toHaveBeenCalledWith(true);
   });
 
   it('should preserve sandbox ID case by default', () => {
@@ -168,5 +168,49 @@ describe('getSandbox', () => {
       mockNamespace,
       'myproject-abc123'
     );
+  });
+
+  describe('proxy method routing', () => {
+    it('should preserve this binding for fetch()', async () => {
+      // fetch() is a native DurableObjectStub method that requires correct
+      // this binding. Without explicit handling in enhancedMethods, the
+      // Proxy's get trap returns an unbound function reference.
+      const expectedResponse = new Response('ok');
+      mockStub.fetch = function (this: any, _req: Request) {
+        if (this !== mockStub) {
+          throw new Error(
+            'this binding lost — fetch called with wrong receiver'
+          );
+        }
+        return Promise.resolve(expectedResponse);
+      };
+
+      const mockNamespace = {} as any;
+      const sandbox = getSandbox(mockNamespace, 'test-sandbox');
+
+      const response = await sandbox.fetch(new Request('http://localhost/'));
+      expect(response).toBe(expectedResponse);
+    });
+
+    it('should pass through non-enhanced methods to the stub', () => {
+      // RPC methods like exec, writeFile, etc. are accessed via target[prop]
+      // and dispatched through JSRPC which doesn't need this binding.
+      mockStub.validatePortToken = vi.fn().mockResolvedValue(true);
+
+      const mockNamespace = {} as any;
+      const sandbox = getSandbox(mockNamespace, 'test-sandbox');
+
+      sandbox.validatePortToken(8080, 'token123');
+      expect(mockStub.validatePortToken).toHaveBeenCalledWith(8080, 'token123');
+    });
+
+    it('should read properties directly from the stub', () => {
+      mockStub.sleepAfter = '30m';
+
+      const mockNamespace = {} as any;
+      const sandbox = getSandbox(mockNamespace, 'test-sandbox');
+
+      expect(sandbox.sleepAfter).toBe('30m');
+    });
   });
 });

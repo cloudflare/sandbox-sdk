@@ -1,14 +1,14 @@
 // Git Operations Service
 
 import type { Logger } from '@repo/shared';
-import { sanitizeGitData, shellEscape } from '@repo/shared';
+import { redactCredentials, sanitizeGitData, shellEscape } from '@repo/shared';
 import type {
   GitErrorContext,
   ValidationFailedContext
 } from '@repo/shared/errors';
 import { ErrorCode } from '@repo/shared/errors';
 import type { CloneOptions, ServiceError, ServiceResult } from '../core/types';
-import { GitManager } from '../managers/git-manager';
+import { GIT_CLONE_TIMEOUT_SECONDS, GitManager } from '../managers/git-manager';
 import type { SessionManager } from './session-manager';
 
 export interface SecurityService {
@@ -113,11 +113,29 @@ export class GitService {
           const result = await exec(command);
 
           if (result.exitCode !== 0) {
+            if (result.exitCode === 124) {
+              this.logger.error('Git clone timed out', undefined, {
+                repoUrl: redactCredentials(repoUrl),
+                targetDirectory,
+                exitCode: 124
+              });
+              throw {
+                message: `Git clone timed out after ${GIT_CLONE_TIMEOUT_SECONDS} seconds for '${repoUrl}'`,
+                code: ErrorCode.GIT_NETWORK_ERROR,
+                details: {
+                  repository: repoUrl,
+                  targetDir: targetDirectory,
+                  exitCode: 124,
+                  stderr: 'Operation timed out'
+                } satisfies GitErrorContext
+              };
+            }
+
             this.logger.error('Git clone failed', undefined, {
-              repoUrl,
+              repoUrl: redactCredentials(repoUrl),
               targetDirectory,
               exitCode: result.exitCode,
-              stderr: result.stderr
+              stderr: redactCredentials(result.stderr || '')
             });
 
             const errorCode = this.manager.determineErrorCode(
@@ -163,7 +181,7 @@ export class GitService {
         })
         .then((result) => {
           if (!result.success) {
-            return result as ServiceResult<{ path: string; branch: string }>;
+            return this.returnError(result.error);
           }
 
           return this.returnSuccess(result.data);
@@ -175,7 +193,10 @@ export class GitService {
       this.logger.error(
         'Failed to clone repository',
         error instanceof Error ? error : undefined,
-        { repoUrl, options }
+        {
+          repoUrl: redactCredentials(repoUrl),
+          options: sanitizeGitData(options)
+        }
       );
 
       return this.returnError({

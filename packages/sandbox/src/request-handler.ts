@@ -90,18 +90,23 @@ export async function proxyToSandbox<
       proxyUrl = `http://localhost:3000${path}${url.search}`;
     }
 
+    const headers: Record<string, string> = {
+      'X-Original-URL': request.url,
+      'X-Forwarded-Host': url.hostname,
+      'X-Forwarded-Proto': url.protocol.replace(':', ''),
+      'X-Sandbox-Name': sandboxId
+    };
+    request.headers.forEach((value, key) => {
+      headers[key] = value;
+    });
+
     const proxyRequest = new Request(proxyUrl, {
       method: request.method,
-      headers: {
-        ...Object.fromEntries(request.headers),
-        'X-Original-URL': request.url,
-        'X-Forwarded-Host': url.hostname,
-        'X-Forwarded-Proto': url.protocol.replace(':', ''),
-        'X-Sandbox-Name': sandboxId // Pass the friendly name
-      },
+      headers,
       body: request.body,
       // @ts-expect-error - duplex required for body streaming in modern runtimes
-      duplex: 'half'
+      duplex: 'half',
+      redirect: 'manual' // Do not follow redirects, return them to the client to handle
     });
 
     return await sandbox.containerFetch(proxyRequest, port);
@@ -151,7 +156,8 @@ function extractSandboxRoute(url: URL): RouteInfo | null {
   const sandboxId = rest.slice(0, lastHyphen);
   const token = rest.slice(lastHyphen + 1);
 
-  // Validate token format (no hyphens allowed)
+  // No hyphens in tokens: URL is {port}-{sandboxId}-{token}.{domain}
+  // We split at the LAST hyphen, so hyphens in tokens would be ambiguous
   if (!/^[a-z0-9_]+$/.test(token) || token.length === 0 || token.length > 63) {
     return null;
   }

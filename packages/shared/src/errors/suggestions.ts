@@ -33,6 +33,9 @@ export function getSuggestion(
     case ErrorCode.SESSION_ALREADY_EXISTS:
       return `Session "${context.sessionId}" already exists. Use a different session ID or reuse the existing session`;
 
+    case ErrorCode.SESSION_DESTROYED:
+      return `Session "${context.sessionId}" was destroyed. Create a new session to continue executing commands`;
+
     case ErrorCode.INVALID_PORT:
       return `Port must be between 1 and 65535. Port ${context.port} is ${context.reason}`;
 
@@ -76,6 +79,39 @@ export function getSuggestion(
 
     case ErrorCode.SERVICE_NOT_RESPONDING:
       return 'Service is not responding. Check if the service is running and accessible';
+
+    case ErrorCode.BACKUP_NOT_FOUND:
+      return `Backup "${context.backupId}" does not exist. Verify the backup ID is correct`;
+
+    case ErrorCode.BACKUP_EXPIRED:
+      return `Backup "${context.backupId}" has expired. Create a new backup`;
+
+    case ErrorCode.INVALID_BACKUP_CONFIG:
+      return `Invalid backup configuration: ${context.reason}`;
+
+    case ErrorCode.BACKUP_CREATE_FAILED:
+      return 'Backup creation failed. Check that the directory exists and you have sufficient disk space';
+
+    case ErrorCode.BACKUP_RESTORE_FAILED:
+      return 'Backup restoration failed. The archive may be corrupted or the target directory may be in use';
+
+    case ErrorCode.DESKTOP_NOT_STARTED:
+      return 'Desktop environment is not running. Call sandbox.desktop.start() first';
+
+    case ErrorCode.DESKTOP_START_FAILED:
+      return `Desktop failed to start: ${context.reason || 'unknown error'}. Check container logs`;
+
+    case ErrorCode.DESKTOP_UNAVAILABLE:
+      return 'Desktop processes are not healthy. Try sandbox.desktop.stop() then sandbox.desktop.start()';
+
+    case ErrorCode.DESKTOP_PROCESS_CRASHED:
+      return `Desktop process "${context.crashedProcess}" crashed. Restart with sandbox.desktop.start()`;
+
+    case ErrorCode.DESKTOP_INVALID_OPTIONS:
+      return `Invalid desktop options: ${context.reason}. Check resolution and DPI values`;
+
+    case ErrorCode.DESKTOP_INVALID_COORDINATES:
+      return `Coordinates (${context.x}, ${context.y}) are outside the display area (${context.displayWidth}x${context.displayHeight})`;
 
     // Generic fallback for other errors
     default:

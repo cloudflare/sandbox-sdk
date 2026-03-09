@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 # Startup script for testing CMD passthrough
 # This script runs as the CMD, proving the entrypoint forwards execution correctly
 
@@ -8,7 +8,7 @@ MARKER_FILE="/tmp/startup-marker.txt"
 TIMESTAMP=$(date +%s)
 
 # Write marker file with timestamp to prove execution
-echo "startup-${TIMESTAMP}" > "${MARKER_FILE}"
+echo -n "startup-${TIMESTAMP}" > "${MARKER_FILE}"
 
 # Log to stdout (can be verified in container logs)
 echo "Startup script executed at ${TIMESTAMP}"

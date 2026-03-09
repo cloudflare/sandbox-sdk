@@ -11,17 +11,33 @@ import {
   createOpencodeServer,
   proxyToOpencode
 } from '@cloudflare/sandbox/opencode';
-import type { Config, OpencodeClient } from '@opencode-ai/sdk';
+import type { Config, Part } from '@opencode-ai/sdk/v2';
+import type { OpencodeClient } from '@opencode-ai/sdk/v2/client';
 
 export { Sandbox } from '@cloudflare/sandbox';
 
 const getConfig = (env: Env): Config => ({
   provider: {
+    // Option A: Direct Anthropic provider (requires ANTHROPIC_API_KEY)
     anthropic: {
       options: {
         apiKey: env.ANTHROPIC_API_KEY
       }
     }
+
+    // Option B: Cloudflare AI Gateway with unified billing (no provider API keys needed).
+    // Models must be declared explicitly under 'models' using the provider/model format.
+    // for the OpenCode CLI automatically.
+    // 'cloudflare-ai-gateway': {
+    //   options: {
+    //     accountId: env.CLOUDFLARE_ACCOUNT_ID,
+    //     gatewayId: env.CLOUDFLARE_GATEWAY_ID,
+    //     apiToken: env.CLOUDFLARE_API_TOKEN
+    //   },
+    //   models: {
+    //     'anthropic/claude-opus-4-6': {},
+    //   }
+    // }
   }
 });
 
@@ -52,11 +68,6 @@ async function handleSdkTest(
   env: Env
 ): Promise<Response> {
   try {
-    // Clone a repo to give the agent something to work with
-    await sandbox.gitCheckout('https://github.com/cloudflare/agents.git', {
-      targetDir: '/home/user/agents'
-    });
-
     // Get typed SDK client
     const { client } = await createOpencode<OpencodeClient>(sandbox, {
       directory: '/home/user/agents',
@@ -65,8 +76,8 @@ async function handleSdkTest(
 
     // Create a session
     const session = await client.session.create({
-      body: { title: 'Test Session' },
-      query: { directory: '/home/user/agents' }
+      title: 'Test Session',
+      directory: '/home/user/agents'
     });
 
     if (!session.data) {
@@ -75,27 +86,22 @@ async function handleSdkTest(
 
     // Send a prompt using the SDK
     const promptResult = await client.session.prompt({
-      path: { id: session.data.id },
-      query: { directory: '/home/user/agents' },
-      body: {
-        model: {
-          providerID: 'anthropic',
-          modelID: 'claude-haiku-4-5'
-        },
-        parts: [
-          {
-            type: 'text',
-            text: 'Summarize the README.md file in 2-3 sentences. Be concise.'
-          }
-        ]
-      }
+      sessionID: session.data.id,
+      directory: '/home/user/agents',
+      parts: [
+        {
+          type: 'text',
+          text: 'Summarize the README.md file in 2-3 sentences. Be concise.'
+        }
+      ]
     });
 
     // Extract text response from result
     const parts = promptResult.data?.parts ?? [];
-    const textPart = parts.find((p: { type: string }) => p.type === 'text') as
-      | { text?: string }
-      | undefined;
+    const textPart = parts.find(
+      (part): part is Part & { type: 'text'; text: string } =>
+        part.type === 'text' && typeof part.text === 'string'
+    );
 
     return new Response(textPart?.text ?? 'No response', {
       headers: { 'Content-Type': 'text/plain' }

@@ -10,7 +10,7 @@ export function Features() {
   return (
     <div className="lg:grid lg:grid-cols-8 lg:border-l lg:auto-rows-fr flex flex-col lg:block">
       {/* Desktop decorative grid cells */}
-      {Array.from({ length: 18 }).map((_, index) => (
+      {Array.from({ length: 30 }).map((_, index) => (
         <div
           key={index}
           className="hidden lg:block border-r border-b aspect-square"
@@ -373,9 +373,9 @@ export function Features() {
                   <polyline points="8 6 2 12 8 18" />
                 </svg>
               </div>
-              <p className="text-xs font-mono">Worker</p>
+              <p className="text-xs font-mono bg-background px-1">Worker</p>
             </div>
-            <div className="flex flex-col gap-2 items-center">
+            <div className="flex flex-col gap-2 items-center bg-background rounded-lg px-3 py-2">
               <div className="flex gap-1">
                 <div
                   className="w-2 h-2 rounded-full bg-foreground animate-bounce"
@@ -440,7 +440,255 @@ export function Features() {
                   <line x1="12" y1="22" x2="12" y2="12" />
                 </svg>
               </div>
-              <p className="text-xs font-mono">Sandbox</p>
+              <p className="text-xs font-mono bg-background px-1">Sandbox</p>
+            </div>
+          </div>
+        </DotBox>
+      </GridBox>
+
+      {/* Feature 8: Interactive Terminals (PTY) */}
+      <div className="lg:hidden border border-t-0">
+        <FeatureSectionMobile title="Interactive terminals">
+          <p>
+            Full PTY support for interactive terminal sessions with
+            xterm-256color emulation, resize handling, and real-time I/O
+          </p>
+        </FeatureSectionMobile>
+      </div>
+
+      <FeatureSection
+        title="Interactive terminals"
+        y={8}
+        x={4}
+        className="hidden lg:flex"
+      >
+        <p>
+          Full PTY support for interactive terminal sessions with xterm-256color
+          emulation, resize handling, and real-time I/O
+        </p>
+      </FeatureSection>
+      <GridBox x={1} y={8} width={3} className="hidden lg:block">
+        <DotBox>
+          <div className="relative p-8 pb-0 h-full w-full">
+            <div className="relative bg-background w-full h-full border border-b-0 overflow-hidden">
+              <div className="h-6 border-b" />
+              <div className="font-mono p-4 overflow-hidden">
+                <span>$ </span>
+                <TerminalTyping text="opencode run 'fix the failing tests'" />
+              </div>
+            </div>
+          </div>
+        </DotBox>
+      </GridBox>
+
+      {/* Feature 9: S3/R2 Bucket Mounting */}
+      <div className="lg:hidden border border-t-0">
+        <FeatureSectionMobile title="Cloud storage mounting">
+          <p>
+            Mount S3-compatible buckets (R2, S3, GCS) as local filesystem paths
+            for seamless data access
+          </p>
+        </FeatureSectionMobile>
+      </div>
+
+      <FeatureSection
+        title="Cloud storage mounting"
+        y={9}
+        x={1}
+        className="hidden lg:flex"
+      >
+        <p>
+          Mount S3-compatible buckets (R2, S3, GCS) as local filesystem paths
+          for seamless data access
+        </p>
+      </FeatureSection>
+      <GridBox x={4} y={9} width={3} className="hidden lg:block">
+        <DotBox>
+          <div className="relative p-8 pb-0 h-full w-full flex items-center justify-center">
+            <div className="flex items-center gap-4">
+              <div className="border bg-background rounded-lg p-4 flex flex-col items-center gap-2">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  width="32"
+                >
+                  <title>Cloud Storage</title>
+                  <ellipse cx="12" cy="5" rx="9" ry="3" />
+                  <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" />
+                  <path d="M3 12c0 1.66 4 3 9 3s9-1.34 9-3" />
+                </svg>
+                <p className="text-xs font-mono">R2 / S3</p>
+              </div>
+              <div className="flex flex-col gap-1 bg-background rounded-lg px-3 py-2">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  width="24"
+                >
+                  <title>Mount</title>
+                  <path d="M5 12h14" />
+                  <path d="m12 5 7 7-7 7" />
+                </svg>
+              </div>
+              <div className="border bg-background rounded-lg p-4 flex flex-col items-center gap-2">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  width="32"
+                >
+                  <title>Filesystem</title>
+                  <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z" />
+                </svg>
+                <p className="text-xs font-mono">/workspace/data</p>
+              </div>
+            </div>
+          </div>
+        </DotBox>
+      </GridBox>
+
+      {/* Feature 10: Custom Docker Images */}
+      <div className="lg:hidden border border-t-0">
+        <FeatureSectionMobile title="Custom Docker images">
+          <p>
+            Add sandbox capabilities to any Docker image with a single COPY
+            command using the standalone binary
+          </p>
+        </FeatureSectionMobile>
+      </div>
+
+      <FeatureSection
+        title="Custom Docker images"
+        y={10}
+        x={4}
+        className="hidden lg:flex"
+      >
+        <p>
+          Add sandbox capabilities to any Docker image with a single COPY
+          command using the standalone binary
+        </p>
+      </FeatureSection>
+      <GridBox x={1} y={10} width={3} className="hidden lg:block">
+        <DotBox>
+          <div className="relative p-8 pb-0 h-full w-full">
+            <div className="relative bg-background w-full h-full border border-b-0 overflow-hidden">
+              <div className="h-6 border-b flex items-center px-4 font-mono text-sm">
+                <p>Dockerfile</p>
+              </div>
+              <div className="font-mono text-xs p-4 space-y-1">
+                <p>
+                  <span className="font-bold">FROM</span>{' '}
+                  <span style={{ color: 'var(--color-orange-800)' }}>
+                    your-image:tag
+                  </span>
+                </p>
+                <p>
+                  <span className="font-bold">COPY</span>{' '}
+                  <span style={{ color: 'var(--color-orange-800)' }}>
+                    --from=cloudflare/sandbox
+                  </span>
+                </p>
+                <p
+                  className="pl-4"
+                  style={{ color: 'var(--color-orange-800)' }}
+                >
+                  /container-server/sandbox /sandbox
+                </p>
+                <p>
+                  <span className="font-bold">ENTRYPOINT</span>{' '}
+                  <span style={{ color: 'var(--color-orange-800)' }}>
+                    ["/sandbox"]
+                  </span>
+                </p>
+              </div>
+            </div>
+          </div>
+        </DotBox>
+      </GridBox>
+
+      {/* Feature 11: AI Coding Agents */}
+      <div className="lg:hidden border border-t-0">
+        <FeatureSectionMobile title="AI coding agents">
+          <p>
+            Run AI coding assistants like OpenCode and Claude Code directly in
+            the sandbox with pre-configured environments
+          </p>
+        </FeatureSectionMobile>
+      </div>
+
+      <FeatureSection
+        title="AI coding agents"
+        y={11}
+        x={1}
+        className="hidden lg:flex"
+      >
+        <p>
+          Run AI coding assistants like OpenCode and Claude Code directly in the
+          sandbox with pre-configured environments
+        </p>
+      </FeatureSection>
+      <GridBox x={4} y={11} width={3} className="hidden lg:block">
+        <DotBox>
+          <div className="relative p-8 pb-0 h-full w-full flex items-center justify-center">
+            <div className="flex items-center gap-6">
+              <div className="border bg-background rounded-lg p-4 flex flex-col items-center gap-2">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  width="32"
+                >
+                  <title>AI Agent</title>
+                  <path d="M12 8V4H8" />
+                  <rect width="16" height="12" x="4" y="8" rx="2" />
+                  <path d="M2 14h2" />
+                  <path d="M20 14h2" />
+                  <path d="M15 13v2" />
+                  <path d="M9 13v2" />
+                </svg>
+                <p className="text-xs font-mono bg-background px-1">OpenCode</p>
+              </div>
+              <div className="border bg-background rounded-lg p-4 flex flex-col items-center gap-2">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  width="32"
+                >
+                  <title>Claude Code</title>
+                  <path d="M12 8V4H8" />
+                  <rect width="16" height="12" x="4" y="8" rx="2" />
+                  <path d="M2 14h2" />
+                  <path d="M20 14h2" />
+                  <path d="M15 13v2" />
+                  <path d="M9 13v2" />
+                </svg>
+                <p className="text-xs font-mono bg-background px-1">
+                  Claude Code
+                </p>
+              </div>
             </div>
           </div>
         </DotBox>
@@ -521,6 +769,37 @@ function StreamingText({ text }: { text: string }) {
       {currentIndex < text.length && (
         <span className="inline-block w-2 h-4 bg-foreground ml-0.5 animate-pulse" />
       )}
+    </span>
+  );
+}
+
+function TerminalTyping({ text }: { text: string }) {
+  const [displayedText, setDisplayedText] = useState('');
+  const [currentIndex, setCurrentIndex] = useState(0);
+
+  useEffect(() => {
+    if (currentIndex < text.length) {
+      const timeout = setTimeout(() => {
+        setDisplayedText(text.slice(0, currentIndex + 1));
+        setCurrentIndex(currentIndex + 1);
+      }, 80); // Slower typing speed for terminal effect
+
+      return () => clearTimeout(timeout);
+    } else {
+      // Wait 3 seconds after completion, then restart
+      const restartTimeout = setTimeout(() => {
+        setDisplayedText('');
+        setCurrentIndex(0);
+      }, 3000);
+
+      return () => clearTimeout(restartTimeout);
+    }
+  }, [currentIndex, text]);
+
+  return (
+    <span>
+      {displayedText}
+      <span className="inline-block w-2 h-4 bg-foreground ml-0.5 animate-pulse" />
     </span>
   );
 }

@@ -20,8 +20,11 @@ export class SecurityError extends Error {
 }
 
 /**
- * Validates port numbers for sandbox services
- * Only allows non-system ports to prevent conflicts and security issues
+ * Validates port numbers for sandbox services.
+ *
+ * Rules:
+ * - Range: 1024-65535 (privileged ports require root, which containers don't have)
+ * - Reserved: 3000 (sandbox control plane)
  */
 export function validatePort(port: number): boolean {
   // Must be a valid integer
@@ -34,11 +37,7 @@ export function validatePort(port: number): boolean {
     return false;
   }
 
-  // Exclude ports reserved by our system
-  const reservedPorts = [
-    3000, // Control plane port
-    8787 // Common wrangler dev port
-  ];
+  const reservedPorts = [3000];
 
   if (reservedPorts.includes(port)) {
     return false;

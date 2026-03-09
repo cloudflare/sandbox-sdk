@@ -13,6 +13,7 @@ export const ERROR_STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.GIT_REPOSITORY_NOT_FOUND]: 404,
   [ErrorCode.GIT_BRANCH_NOT_FOUND]: 404,
   [ErrorCode.CONTEXT_NOT_FOUND]: 404,
+  [ErrorCode.WATCH_NOT_FOUND]: 404,
 
   // 400 Bad Request
   [ErrorCode.IS_DIRECTORY]: 400,
@@ -44,13 +45,34 @@ export const ERROR_STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.RESOURCE_BUSY]: 409,
   [ErrorCode.SESSION_ALREADY_EXISTS]: 409,
 
+  // 410 Gone
+  [ErrorCode.SESSION_DESTROYED]: 410,
+
+  // 413 Content Too Large
+  [ErrorCode.FILE_TOO_LARGE]: 413,
+
   // 502 Bad Gateway
   [ErrorCode.SERVICE_NOT_RESPONDING]: 502,
   [ErrorCode.GIT_NETWORK_ERROR]: 502,
 
+  // Backup errors
+  [ErrorCode.BACKUP_NOT_FOUND]: 404,
+  [ErrorCode.BACKUP_EXPIRED]: 400,
+  [ErrorCode.INVALID_BACKUP_CONFIG]: 400,
+  [ErrorCode.BACKUP_CREATE_FAILED]: 500,
+  [ErrorCode.BACKUP_RESTORE_FAILED]: 500,
+
   // 501 Not Implemented (feature not available in image variant)
   [ErrorCode.PYTHON_NOT_AVAILABLE]: 501,
   [ErrorCode.JAVASCRIPT_NOT_AVAILABLE]: 501,
+
+  // Desktop errors
+  [ErrorCode.DESKTOP_NOT_STARTED]: 409,
+  [ErrorCode.DESKTOP_START_FAILED]: 500,
+  [ErrorCode.DESKTOP_UNAVAILABLE]: 503,
+  [ErrorCode.DESKTOP_PROCESS_CRASHED]: 500,
+  [ErrorCode.DESKTOP_INVALID_OPTIONS]: 400,
+  [ErrorCode.DESKTOP_INVALID_COORDINATES]: 400,
 
   // 503 Service Unavailable
   [ErrorCode.INTERPRETER_NOT_READY]: 503,
@@ -75,6 +97,8 @@ export const ERROR_STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.CODE_EXECUTION_ERROR]: 500,
   [ErrorCode.BUCKET_MOUNT_ERROR]: 500,
   [ErrorCode.S3FS_MOUNT_ERROR]: 500,
+  [ErrorCode.WATCH_START_ERROR]: 500,
+  [ErrorCode.WATCH_STOP_ERROR]: 500,
   [ErrorCode.UNKNOWN_ERROR]: 500,
   [ErrorCode.INTERNAL_ERROR]: 500
 };

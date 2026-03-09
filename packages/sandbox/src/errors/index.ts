@@ -40,10 +40,16 @@
 
 // Re-export context types for advanced usage
 export type {
+  BackupCreateContext,
+  BackupExpiredContext,
+  BackupNotFoundContext,
+  BackupRestoreContext,
   CodeExecutionContext,
   CommandErrorContext,
   CommandNotFoundContext,
   ContextNotFoundContext,
+  DesktopCoordinateErrorContext,
+  DesktopErrorContext,
   ErrorCodeType,
   ErrorResponse,
   FileExistsContext,
@@ -55,6 +61,7 @@ export type {
   GitRepositoryNotFoundContext,
   InternalErrorContext,
   InterpreterNotReadyContext,
+  InvalidBackupConfigContext,
   InvalidPortContext,
   OperationType,
   PortAlreadyExposedContext,
@@ -64,6 +71,7 @@ export type {
   ProcessExitedBeforeReadyContext,
   ProcessNotFoundContext,
   ProcessReadyTimeoutContext,
+  SessionDestroyedContext,
   ValidationFailedContext
 } from '@repo/shared/errors';
 // Re-export shared types and constants
@@ -73,16 +81,29 @@ export { ErrorCode, Operation } from '@repo/shared/errors';
 export { createErrorFromResponse } from './adapter';
 // Export all error classes
 export {
+  // Backup Errors
+  BackupCreateError,
+  BackupExpiredError,
+  BackupNotFoundError,
+  BackupRestoreError,
   CodeExecutionError,
   CommandError,
   // Command Errors
   CommandNotFoundError,
   ContextNotFoundError,
   CustomDomainRequiredError,
+  // Desktop Errors
+  DesktopInvalidCoordinatesError,
+  DesktopInvalidOptionsError,
+  DesktopNotStartedError,
+  DesktopProcessCrashedError,
+  DesktopStartFailedError,
+  DesktopUnavailableError,
   FileExistsError,
   // File System Errors
   FileNotFoundError,
   FileSystemError,
+  FileTooLargeError,
   GitAuthenticationError,
   GitBranchNotFoundError,
   GitCheckoutError,
@@ -93,6 +114,7 @@ export {
   GitRepositoryNotFoundError,
   // Code Interpreter Errors
   InterpreterNotReadyError,
+  InvalidBackupConfigError,
   InvalidGitUrlError,
   InvalidPortError,
   PermissionDeniedError,
@@ -111,6 +133,7 @@ export {
   ServiceNotRespondingError,
   // Session Errors
   SessionAlreadyExistsError,
+  SessionDestroyedError,
   // Validation Errors
   ValidationFailedError
 } from './classes';

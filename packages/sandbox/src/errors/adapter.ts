@@ -6,20 +6,28 @@
  */
 
 import type {
+  BackupCreateContext,
+  BackupExpiredContext,
+  BackupNotFoundContext,
+  BackupRestoreContext,
   CodeExecutionContext,
   CommandErrorContext,
   CommandNotFoundContext,
   ContextNotFoundContext,
+  DesktopCoordinateErrorContext,
+  DesktopErrorContext,
   ErrorResponse,
   FileExistsContext,
   FileNotFoundContext,
   FileSystemContext,
+  FileTooLargeContext,
   GitAuthFailedContext,
   GitBranchNotFoundContext,
   GitErrorContext,
   GitRepositoryNotFoundContext,
   InternalErrorContext,
   InterpreterNotReadyContext,
+  InvalidBackupConfigContext,
   InvalidPortContext,
   PortAlreadyExposedContext,
   PortErrorContext,
@@ -27,19 +35,31 @@ import type {
   ProcessErrorContext,
   ProcessNotFoundContext,
   SessionAlreadyExistsContext,
+  SessionDestroyedContext,
   ValidationFailedContext
 } from '@repo/shared/errors';
 import { ErrorCode } from '@repo/shared/errors';
 
 import {
+  BackupCreateError,
+  BackupExpiredError,
+  BackupNotFoundError,
+  BackupRestoreError,
   CodeExecutionError,
   CommandError,
   CommandNotFoundError,
   ContextNotFoundError,
   CustomDomainRequiredError,
+  DesktopInvalidCoordinatesError,
+  DesktopInvalidOptionsError,
+  DesktopNotStartedError,
+  DesktopProcessCrashedError,
+  DesktopStartFailedError,
+  DesktopUnavailableError,
   FileExistsError,
   FileNotFoundError,
   FileSystemError,
+  FileTooLargeError,
   GitAuthenticationError,
   GitBranchNotFoundError,
   GitCheckoutError,
@@ -48,6 +68,7 @@ import {
   GitNetworkError,
   GitRepositoryNotFoundError,
   InterpreterNotReadyError,
+  InvalidBackupConfigError,
   InvalidGitUrlError,
   InvalidPortError,
   PermissionDeniedError,
@@ -60,6 +81,7 @@ import {
   SandboxError,
   ServiceNotRespondingError,
   SessionAlreadyExistsError,
+  SessionDestroyedError,
   ValidationFailedError
 } from './classes';
 
@@ -79,6 +101,11 @@ export function createErrorFromResponse(errorResponse: ErrorResponse): Error {
     case ErrorCode.FILE_EXISTS:
       return new FileExistsError(
         errorResponse as unknown as ErrorResponse<FileExistsContext>
+      );
+
+    case ErrorCode.FILE_TOO_LARGE:
+      return new FileTooLargeError(
+        errorResponse as unknown as ErrorResponse<FileTooLargeContext>
       );
 
     case ErrorCode.PERMISSION_DENIED:
@@ -129,6 +156,11 @@ export function createErrorFromResponse(errorResponse: ErrorResponse): Error {
     case ErrorCode.SESSION_ALREADY_EXISTS:
       return new SessionAlreadyExistsError(
         errorResponse as unknown as ErrorResponse<SessionAlreadyExistsContext>
+      );
+
+    case ErrorCode.SESSION_DESTROYED:
+      return new SessionDestroyedError(
+        errorResponse as unknown as ErrorResponse<SessionDestroyedContext>
       );
 
     // Port Errors
@@ -209,6 +241,32 @@ export function createErrorFromResponse(errorResponse: ErrorResponse): Error {
         errorResponse as unknown as ErrorResponse<GitErrorContext>
       );
 
+    // Backup Errors
+    case ErrorCode.BACKUP_NOT_FOUND:
+      return new BackupNotFoundError(
+        errorResponse as unknown as ErrorResponse<BackupNotFoundContext>
+      );
+
+    case ErrorCode.BACKUP_EXPIRED:
+      return new BackupExpiredError(
+        errorResponse as unknown as ErrorResponse<BackupExpiredContext>
+      );
+
+    case ErrorCode.INVALID_BACKUP_CONFIG:
+      return new InvalidBackupConfigError(
+        errorResponse as unknown as ErrorResponse<InvalidBackupConfigContext>
+      );
+
+    case ErrorCode.BACKUP_CREATE_FAILED:
+      return new BackupCreateError(
+        errorResponse as unknown as ErrorResponse<BackupCreateContext>
+      );
+
+    case ErrorCode.BACKUP_RESTORE_FAILED:
+      return new BackupRestoreError(
+        errorResponse as unknown as ErrorResponse<BackupRestoreContext>
+      );
+
     // Code Interpreter Errors
     case ErrorCode.INTERPRETER_NOT_READY:
       return new InterpreterNotReadyError(
@@ -223,6 +281,32 @@ export function createErrorFromResponse(errorResponse: ErrorResponse): Error {
     case ErrorCode.CODE_EXECUTION_ERROR:
       return new CodeExecutionError(
         errorResponse as unknown as ErrorResponse<CodeExecutionContext>
+      );
+
+    // Desktop Errors
+    case ErrorCode.DESKTOP_NOT_STARTED:
+      return new DesktopNotStartedError(
+        errorResponse as unknown as ErrorResponse<DesktopErrorContext>
+      );
+    case ErrorCode.DESKTOP_START_FAILED:
+      return new DesktopStartFailedError(
+        errorResponse as unknown as ErrorResponse<DesktopErrorContext>
+      );
+    case ErrorCode.DESKTOP_UNAVAILABLE:
+      return new DesktopUnavailableError(
+        errorResponse as unknown as ErrorResponse<DesktopErrorContext>
+      );
+    case ErrorCode.DESKTOP_PROCESS_CRASHED:
+      return new DesktopProcessCrashedError(
+        errorResponse as unknown as ErrorResponse<DesktopErrorContext>
+      );
+    case ErrorCode.DESKTOP_INVALID_OPTIONS:
+      return new DesktopInvalidOptionsError(
+        errorResponse as unknown as ErrorResponse<DesktopErrorContext>
+      );
+    case ErrorCode.DESKTOP_INVALID_COORDINATES:
+      return new DesktopInvalidCoordinatesError(
+        errorResponse as unknown as ErrorResponse<DesktopCoordinateErrorContext>
       );
 
     // Validation Errors

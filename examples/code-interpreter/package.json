@@ -15,11 +15,13 @@
   "license": "MIT",
   "dependencies": {
     "@cloudflare/sandbox": "*",
-    "openai": "^6.9.1"
+    "ai": "^6.0.57",
+    "workers-ai-provider": "^3.0.3",
+    "zod": "^4.0.0"
   },
   "devDependencies": {
     "@types/node": "^24.10.1",
     "typescript": "^5.9.3",
-    "wrangler": "^4.50.0"
+    "wrangler": "^4.70.0"
   }
 }

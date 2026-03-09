@@ -37,9 +37,17 @@ export abstract class BaseHttpClient {
         wsUrl: options.wsUrl,
         logger: this.logger,
         stub: options.stub,
-        port: options.port
+        port: options.port,
+        retryTimeoutMs: options.retryTimeoutMs
       });
     }
+  }
+
+  /**
+   * Update the transport's 503 retry budget
+   */
+  setRetryTimeoutMs(ms: number): void {
+    this.transport.setRetryTimeoutMs(ms);
   }
 
   /**

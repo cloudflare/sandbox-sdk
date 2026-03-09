@@ -12,28 +12,42 @@
  */
 
 import type { FileInfo, ListFilesResult, ReadFileResult } from '@repo/shared';
-import { beforeAll, beforeEach, describe, expect, test } from 'vitest';
 import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  test
+} from 'vitest';
+import {
+  cleanupTestSandbox,
+  createTestSandbox,
   createUniqueSession,
-  getSharedSandbox,
-  uniqueTestPath
+  type TestSandbox
 } from './helpers/global-sandbox';
 import type { ErrorResponse } from './test-worker/types';
 
 describe('File Operations Error Handling', () => {
+  let sandbox: TestSandbox | null = null;
   let workerUrl: string;
   let headers: Record<string, string>;
   let testDir: string;
 
   beforeAll(async () => {
-    const sandbox = await getSharedSandbox();
+    sandbox = await createTestSandbox();
     workerUrl = sandbox.workerUrl;
-    headers = sandbox.createHeaders(createUniqueSession());
+    headers = sandbox.headers(createUniqueSession());
+  }, 120000);
+
+  afterAll(async () => {
+    await cleanupTestSandbox(sandbox);
+    sandbox = null;
   }, 120000);
 
   // Use unique directory for each test to avoid conflicts
   beforeEach(() => {
-    testDir = uniqueTestPath('file-ops');
+    testDir = sandbox!.uniquePath('file-ops');
   });
 
   test('should reject deleting directories with deleteFile', async () => {
@@ -86,7 +100,7 @@ describe('File Operations Error Handling', () => {
       })
     });
 
-    expect(deleteResponse.status).toBe(500);
+    expect(deleteResponse.status).toBe(404);
     const errorData = (await deleteResponse.json()) as ErrorResponse;
     expect(errorData.error).toBeTruthy();
     expect(errorData.error).toMatch(/not found|does not exist|no such file/i);
@@ -98,32 +112,29 @@ describe('File Operations Error Handling', () => {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        path: `${testDir}/does-not-exist`
+        path: `${testDir}/nonexistent-directory`
       })
     });
 
-    expect(notFoundResponse.status).toBe(500);
+    expect(notFoundResponse.status).toBe(404);
     const notFoundData = (await notFoundResponse.json()) as ErrorResponse;
     expect(notFoundData.error).toBeTruthy();
-    expect(notFoundData.error).toMatch(/not found|does not exist/i);
+    expect(notFoundData.error).toMatch(
+      /not found|does not exist|no such file/i
+    );
 
-    // Test listing a file instead of directory
-    const filePath = `${testDir}/file.txt`;
-    await fetch(`${workerUrl}/api/file/mkdir`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ path: testDir, recursive: true })
-    });
+    // Test file instead of directory
+    const filePath = `${testDir}/test-file.txt`;
     await fetch(`${workerUrl}/api/file/write`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
         path: filePath,
-        content: 'Not a directory'
+        content: 'test'
       })
     });
 
-    const wrongTypeResponse = await fetch(`${workerUrl}/api/list-files`, {
+    const fileAsDir = await fetch(`${workerUrl}/api/list-files`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
@@ -131,9 +142,10 @@ describe('File Operations Error Handling', () => {
       })
     });
 
-    expect(wrongTypeResponse.status).toBe(500);
-    const wrongTypeData = (await wrongTypeResponse.json()) as ErrorResponse;
-    expect(wrongTypeData.error).toMatch(/not a directory/i);
+    expect(fileAsDir.status).toBe(500);
+    const fileAsDirData = (await fileAsDir.json()) as ErrorResponse;
+    expect(fileAsDirData.error).toBeTruthy();
+    expect(fileAsDirData.error).toMatch(/not a directory|is not a directory/i);
   }, 90000);
 
   // Regression test for #196: hidden files in hidden directories
@@ -219,27 +231,66 @@ describe('File Operations Error Handling', () => {
     expect(hiddenFileWithFlag).toBeDefined();
   }, 90000);
 
-  test('should read binary files with base64 encoding', async () => {
-    // 1x1 PNG - smallest valid PNG
-    const pngBase64 =
-      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChAI9jYlkKQAAAABJRU5ErkJggg==';
+  test('should handle rename errors appropriately', async () => {
+    const sourcePath = `${testDir}/source.txt`;
+    const destPath = `${testDir}/dest.txt`;
 
-    // Create binary file via base64 decode
-    await fetch(`${workerUrl}/api/file/mkdir`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ path: testDir, recursive: true })
-    });
-
-    await fetch(`${workerUrl}/api/execute`, {
+    // Try to rename nonexistent file
+    const renameResponse = await fetch(`${workerUrl}/api/file/rename`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        command: `echo '${pngBase64}' | base64 -d > ${testDir}/test.png`
+        oldPath: sourcePath,
+        newPath: destPath
       })
     });
 
-    // Read the binary file
+    expect(renameResponse.status).toBe(404);
+    const errorData = (await renameResponse.json()) as ErrorResponse;
+    expect(errorData.error).toBeTruthy();
+    expect(errorData.error).toMatch(/not found|does not exist|no such file/i);
+  }, 90000);
+
+  test('should handle move errors appropriately', async () => {
+    const sourcePath = `${testDir}/source.txt`;
+    const destDir = `${testDir}/dest-dir`;
+
+    // Try to move nonexistent file
+    const moveResponse = await fetch(`${workerUrl}/api/file/move`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        sourcePath: sourcePath,
+        destinationPath: `${destDir}/source.txt`
+      })
+    });
+
+    expect(moveResponse.status).toBe(404);
+    const errorData = (await moveResponse.json()) as ErrorResponse;
+    expect(errorData.error).toBeTruthy();
+    expect(errorData.error).toMatch(/not found|does not exist|no such file/i);
+  }, 90000);
+
+  test('should handle binary file reading', async () => {
+    const pngPath = `${testDir}/test.png`;
+
+    // Create a minimal valid PNG file (1x1 transparent pixel)
+    const pngBase64 =
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+
+    const writeResponse = await fetch(`${workerUrl}/api/file/write`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        path: pngPath,
+        content: pngBase64,
+        encoding: 'base64'
+      })
+    });
+
+    expect(writeResponse.status).toBe(200);
+
+    // Read it back
     const readResponse = await fetch(`${workerUrl}/api/file/read`, {
       method: 'POST',
       headers,

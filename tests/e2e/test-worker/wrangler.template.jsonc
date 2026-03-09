@@ -8,7 +8,8 @@
   "vars": {
     "SANDBOX_LOG_LEVEL": "debug",
     "SANDBOX_LOG_FORMAT": "pretty",
-    "SANDBOX_TRANSPORT": "{{TRANSPORT}}"
+    "SANDBOX_TRANSPORT": "{{TRANSPORT}}",
+    "BACKUP_BUCKET_NAME": "sandbox-e2e-test"
   },
   "observability": {
     "enabled": true
@@ -18,22 +19,38 @@
     {
       "class_name": "Sandbox",
       "image": "{{IMAGE_SANDBOX}}",
-      "name": "{{CONTAINER_NAME}}"
+      "name": "{{CONTAINER_NAME}}",
+      "instance_type": "standard-4"
     },
     {
       "class_name": "SandboxPython",
       "image": "{{IMAGE_PYTHON}}",
-      "name": "{{CONTAINER_NAME}}-python"
+      "name": "{{CONTAINER_NAME}}-python",
+      "instance_type": "standard-4"
     },
     {
       "class_name": "SandboxOpencode",
       "image": "{{IMAGE_OPENCODE}}",
-      "name": "{{CONTAINER_NAME}}-opencode"
+      "name": "{{CONTAINER_NAME}}-opencode",
+      "instance_type": "standard-4"
     },
     {
       "class_name": "SandboxStandalone",
       "image": "{{IMAGE_STANDALONE}}",
-      "name": "{{CONTAINER_NAME}}-standalone"
+      "name": "{{CONTAINER_NAME}}-standalone",
+      "instance_type": "standard-4"
+    },
+    {
+      "class_name": "SandboxMusl",
+      "image": "{{IMAGE_MUSL}}",
+      "name": "{{CONTAINER_NAME}}-musl",
+      "instance_type": "standard-4"
+    },
+    {
+      "class_name": "SandboxDesktop",
+      "image": "{{IMAGE_DESKTOP}}",
+      "name": "{{CONTAINER_NAME}}-desktop",
+      "instance_type": "standard-4"
     }
   ],
 
@@ -54,6 +71,14 @@
       {
         "class_name": "SandboxStandalone",
         "name": "SandboxStandalone"
+      },
+      {
+        "class_name": "SandboxMusl",
+        "name": "SandboxMusl"
+      },
+      {
+        "class_name": "SandboxDesktop",
+        "name": "SandboxDesktop"
       }
     ]
   },
@@ -70,12 +95,25 @@
     {
       "new_sqlite_classes": ["SandboxStandalone"],
       "tag": "v4"
+    },
+    {
+      "new_sqlite_classes": ["SandboxMusl"],
+      "tag": "v5"
+    },
+    {
+      "new_sqlite_classes": ["SandboxDesktop"],
+      "tag": "v6"
     }
   ],
 
   "r2_buckets": [
     {
       "binding": "TEST_BUCKET",
+      "bucket_name": "sandbox-e2e-test",
+      "preview_bucket_name": "sandbox-e2e-test"
+    },
+    {
+      "binding": "BACKUP_BUCKET",
       "bucket_name": "sandbox-e2e-test",
       "preview_bucket_name": "sandbox-e2e-test"
     }

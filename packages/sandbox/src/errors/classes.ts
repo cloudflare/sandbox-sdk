@@ -6,20 +6,28 @@
  */
 
 import type {
+  BackupCreateContext,
+  BackupExpiredContext,
+  BackupNotFoundContext,
+  BackupRestoreContext,
   CodeExecutionContext,
   CommandErrorContext,
   CommandNotFoundContext,
   ContextNotFoundContext,
+  DesktopCoordinateErrorContext,
+  DesktopErrorContext,
   ErrorResponse,
   FileExistsContext,
   FileNotFoundContext,
   FileSystemContext,
+  FileTooLargeContext,
   GitAuthFailedContext,
   GitBranchNotFoundContext,
   GitErrorContext,
   GitRepositoryNotFoundContext,
   InternalErrorContext,
   InterpreterNotReadyContext,
+  InvalidBackupConfigContext,
   InvalidPortContext,
   PortAlreadyExposedContext,
   PortErrorContext,
@@ -29,6 +37,7 @@ import type {
   ProcessNotFoundContext,
   ProcessReadyTimeoutContext,
   SessionAlreadyExistsContext,
+  SessionDestroyedContext,
   ValidationFailedContext
 } from '@repo/shared/errors';
 
@@ -108,6 +117,21 @@ export class FileExistsError extends SandboxError<FileExistsContext> {
   constructor(errorResponse: ErrorResponse<FileExistsContext>) {
     super(errorResponse);
     this.name = 'FileExistsError';
+  }
+
+  // Type-safe accessor
+  get path() {
+    return this.context.path;
+  }
+}
+
+/**
+ * Error thrown when a file is too large
+ */
+export class FileTooLargeError extends SandboxError<FileTooLargeContext> {
+  constructor(errorResponse: ErrorResponse<FileTooLargeContext>) {
+    super(errorResponse);
+    this.name = 'FileTooLargeError';
   }
 
   // Type-safe accessor
@@ -251,6 +275,21 @@ export class SessionAlreadyExistsError extends SandboxError<SessionAlreadyExists
   }
 
   // Type-safe accessors
+  get sessionId() {
+    return this.context.sessionId;
+  }
+}
+
+/**
+ * Error thrown when a session was destroyed while a command was executing
+ */
+export class SessionDestroyedError extends SandboxError<SessionDestroyedContext> {
+  constructor(errorResponse: ErrorResponse<SessionDestroyedContext>) {
+    super(errorResponse);
+    this.name = 'SessionDestroyedError';
+  }
+
+  // Type-safe accessor
   get sessionId() {
     return this.context.sessionId;
   }
@@ -664,5 +703,134 @@ export class ProcessExitedBeforeReadyError extends SandboxError<ProcessExitedBef
   }
   get exitCode() {
     return this.context.exitCode;
+  }
+}
+
+// ============================================================================
+// Backup Errors
+// ============================================================================
+
+/**
+ * Error thrown when a backup is not found in R2
+ */
+export class BackupNotFoundError extends SandboxError<BackupNotFoundContext> {
+  constructor(errorResponse: ErrorResponse<BackupNotFoundContext>) {
+    super(errorResponse);
+    this.name = 'BackupNotFoundError';
+  }
+
+  get backupId() {
+    return this.context.backupId;
+  }
+}
+
+/**
+ * Error thrown when a backup has expired (past its TTL)
+ */
+export class BackupExpiredError extends SandboxError<BackupExpiredContext> {
+  constructor(errorResponse: ErrorResponse<BackupExpiredContext>) {
+    super(errorResponse);
+    this.name = 'BackupExpiredError';
+  }
+
+  get backupId() {
+    return this.context.backupId;
+  }
+  get expiredAt() {
+    return this.context.expiredAt;
+  }
+}
+
+/**
+ * Error thrown when backup configuration or inputs are invalid
+ */
+export class InvalidBackupConfigError extends SandboxError<InvalidBackupConfigContext> {
+  constructor(errorResponse: ErrorResponse<InvalidBackupConfigContext>) {
+    super(errorResponse);
+    this.name = 'InvalidBackupConfigError';
+  }
+
+  get reason() {
+    return this.context.reason;
+  }
+}
+
+/**
+ * Error thrown when backup creation fails
+ */
+export class BackupCreateError extends SandboxError<BackupCreateContext> {
+  constructor(errorResponse: ErrorResponse<BackupCreateContext>) {
+    super(errorResponse);
+    this.name = 'BackupCreateError';
+  }
+
+  get dir() {
+    return this.context.dir;
+  }
+  get backupId() {
+    return this.context.backupId;
+  }
+}
+
+/**
+ * Error thrown when backup restoration fails
+ */
+export class BackupRestoreError extends SandboxError<BackupRestoreContext> {
+  constructor(errorResponse: ErrorResponse<BackupRestoreContext>) {
+    super(errorResponse);
+    this.name = 'BackupRestoreError';
+  }
+
+  get dir() {
+    return this.context.dir;
+  }
+  get backupId() {
+    return this.context.backupId;
+  }
+}
+
+// ============================================================================
+// Desktop Errors
+// ============================================================================
+
+export class DesktopNotStartedError extends SandboxError<DesktopErrorContext> {
+  constructor(errorResponse: ErrorResponse<DesktopErrorContext>) {
+    super(errorResponse);
+    this.name = 'DesktopNotStartedError';
+  }
+}
+
+export class DesktopStartFailedError extends SandboxError<DesktopErrorContext> {
+  constructor(errorResponse: ErrorResponse<DesktopErrorContext>) {
+    super(errorResponse);
+    this.name = 'DesktopStartFailedError';
+  }
+}
+
+export class DesktopUnavailableError extends SandboxError<DesktopErrorContext> {
+  constructor(errorResponse: ErrorResponse<DesktopErrorContext>) {
+    super(errorResponse);
+    this.name = 'DesktopUnavailableError';
+  }
+}
+
+export class DesktopProcessCrashedError extends SandboxError<DesktopErrorContext> {
+  constructor(errorResponse: ErrorResponse<DesktopErrorContext>) {
+    super(errorResponse);
+    this.name = 'DesktopProcessCrashedError';
+  }
+}
+
+export class DesktopInvalidOptionsError extends SandboxError<DesktopErrorContext> {
+  constructor(errorResponse: ErrorResponse<DesktopErrorContext>) {
+    super(errorResponse);
+    this.name = 'DesktopInvalidOptionsError';
+  }
+}
+
+export class DesktopInvalidCoordinatesError extends SandboxError<DesktopCoordinateErrorContext> {
+  constructor(errorResponse: ErrorResponse<DesktopCoordinateErrorContext>) {
+    super(errorResponse);
+    this.name = 'DesktopInvalidCoordinatesError';
   }
 }

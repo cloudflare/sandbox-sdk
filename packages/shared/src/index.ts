@@ -3,6 +3,32 @@
  * Used by both client SDK and container runtime
  */
 
+// Export desktop environment types
+export type {
+  DesktopCursorPosition,
+  DesktopImageFormat,
+  DesktopKeyInput,
+  DesktopKeyPressRequest,
+  DesktopMouseButton,
+  DesktopMouseClickRequest,
+  DesktopMouseDownRequest,
+  DesktopMouseDragRequest,
+  DesktopMouseMoveRequest,
+  DesktopMouseScrollRequest,
+  DesktopMouseUpRequest,
+  DesktopProcessHealth,
+  DesktopScreenSize,
+  DesktopScreenshotRegion,
+  DesktopScreenshotRegionRequest,
+  DesktopScreenshotRequest,
+  DesktopScreenshotResult,
+  DesktopScrollDirection,
+  DesktopStartRequest,
+  DesktopStartResult,
+  DesktopStatusResult,
+  DesktopStopResult,
+  DesktopTypeRequest
+} from './desktop-types.js';
 // Export environment utilities
 export { filterEnvVars, getEnvString, partitionEnvVars } from './env.js';
 // Export git utilities
@@ -33,8 +59,16 @@ export {
   LogLevelEnum,
   TraceContext
 } from './logger/index.js';
+// Export PTY types
+export type {
+  PtyControlMessage,
+  PtyOptions,
+  PtyStatusMessage
+} from './pty-types.js';
 // Export all request types (enforce contract between client and container)
 export type {
+  CreateBackupRequest,
+  CreateBackupResponse,
   DeleteFileRequest,
   ExecuteRequest,
   ExposePortRequest,
@@ -45,6 +79,8 @@ export type {
   MoveFileRequest,
   ReadFileRequest,
   RenameFileRequest,
+  RestoreBackupRequest,
+  RestoreBackupResponse,
   SessionCreateRequest,
   SessionDeleteRequest,
   StartProcessRequest,
@@ -52,8 +88,13 @@ export type {
 } from './request-types.js';
 // Export shell utilities
 export { shellEscape } from './shell-escape.js';
+// Export SSE utilities
+export type { SSEEventFrame, SSEPartialEvent } from './sse.js';
+export { parseSSEFrames } from './sse.js';
 // Export all types from types.ts
 export type {
+  // Backup types
+  BackupOptions,
   BaseExecOptions,
   // Bucket mounting types
   BucketCredentials,
@@ -62,6 +103,8 @@ export type {
   ContextDeleteResult,
   ContextListResult,
   DeleteFileResult,
+  DirectoryBackup,
+  Disposable,
   EnvSetResult,
   ExecEvent,
   ExecOptions,
@@ -73,6 +116,9 @@ export type {
   FileInfo,
   FileMetadata,
   FileStreamEvent,
+  // File watch types
+  FileWatchEventType,
+  FileWatchSSEEvent,
   GitCheckoutResult,
   // Miscellaneous result types
   HealthCheckResult,
@@ -106,6 +152,7 @@ export type {
   ProcessStatus,
   ReadFileResult,
   RenameFileResult,
+  RestoreBackupResult,
   // Sandbox configuration options
   SandboxOptions,
   // Session management result types
@@ -118,6 +165,9 @@ export type {
   WaitForExitResult,
   WaitForLogResult,
   WaitForPortOptions,
+  // File watch types
+  WatchOptions,
+  WatchRequest,
   WriteFileResult
 } from './types.js';
 export {

@@ -140,15 +140,20 @@ test('should start server', async () => {
 ## Running Tests
 
 ```bash
-# All E2E tests
+# All E2E tests (runs vitest E2E tests, then browser E2E tests sequentially)
 npm run test:e2e
 
-# Single file
-npm run test:e2e -- -- tests/e2e/process-lifecycle-workflow.test.ts
+# Single vitest E2E file
+npm run test:e2e:vitest -- -- tests/e2e/process-lifecycle-workflow.test.ts
 
-# Single test by name
-npm run test:e2e -- -- tests/e2e/git-clone-workflow.test.ts -t 'should clone repo'
+# Single vitest E2E test by name
+npm run test:e2e:vitest -- -- tests/e2e/git-clone-workflow.test.ts -t 'should clone repo'
+
+# Browser E2E tests only (Playwright)
+npm run test:e2e:browser
 ```
+
+**Note on argument passthrough**: Use `test:e2e:vitest` (not `test:e2e`) when passing arguments to filter tests. The `test:e2e` script runs both vitest and browser tests sequentially but doesn't support argument passthrough due to turborepo limitations.
 
 ## Debugging
 

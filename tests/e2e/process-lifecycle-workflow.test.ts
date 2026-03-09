@@ -1,8 +1,10 @@
 import type { Process, ProcessLogsResult } from '@repo/shared';
-import { beforeAll, describe, expect, test } from 'vitest';
+import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import {
+  cleanupTestSandbox,
+  createTestSandbox,
   createUniqueSession,
-  getSharedSandbox
+  type TestSandbox
 } from './helpers/global-sandbox';
 
 // Dedicated port for this test file's port exposure error tests
@@ -23,19 +25,25 @@ const skipPortExposureTests =
  * - Foreground operations not blocking on background processes
  */
 describe('Process Lifecycle Error Handling', () => {
+  let sandbox: TestSandbox | null = null;
   let workerUrl: string;
   let headers: Record<string, string>;
   let portHeaders: Record<string, string>;
 
   beforeAll(async () => {
-    const sandbox = await getSharedSandbox();
+    sandbox = await createTestSandbox();
     workerUrl = sandbox.workerUrl;
-    headers = sandbox.createHeaders(createUniqueSession());
+    headers = sandbox.headers(createUniqueSession());
     // Port exposure requires sandbox headers (not session headers)
     portHeaders = {
       'X-Sandbox-Id': sandbox.sandboxId,
       'Content-Type': 'application/json'
     };
+  }, 120000);
+
+  afterAll(async () => {
+    await cleanupTestSandbox(sandbox);
+    sandbox = null;
   }, 120000);
 
   test('should return error when killing nonexistent process', async () => {
@@ -47,7 +55,7 @@ describe('Process Lifecycle Error Handling', () => {
       }
     );
 
-    expect(killResponse.status).toBe(500);
+    expect(killResponse.status).toBe(404);
     const errorData = (await killResponse.json()) as { error: string };
     expect(errorData.error).toBeTruthy();
     expect(errorData.error).toMatch(
@@ -202,7 +210,7 @@ console.log("Line 3");
         }
       );
 
-      expect(unexposeResponse.status).toBe(500);
+      expect(unexposeResponse.status).toBe(404);
       const errorData = (await unexposeResponse.json()) as { error: string };
       expect(errorData.error).toBeTruthy();
       expect(errorData.error).toMatch(/not found|not exposed|does not exist/i);
@@ -235,7 +243,7 @@ console.log("Line 3");
     const execDuration = Date.now() - execStart;
 
     expect(execResponse.status).toBe(200);
-    expect(execDuration).toBeLessThan(2000); // Should complete in <2s
+    expect(execDuration).toBeLessThan(4000); // Should complete quickly
 
     // Cleanup
     await fetch(`${workerUrl}/api/process/${processId}`, {

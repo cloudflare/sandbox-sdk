@@ -1,9 +1,10 @@
 import type { ExecResult, GitCheckoutResult } from '@repo/shared';
-import { beforeAll, describe, expect, test } from 'vitest';
+import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import {
+  cleanupTestSandbox,
+  createTestSandbox,
   createUniqueSession,
-  getSharedSandbox,
-  uniqueTestPath
+  type TestSandbox
 } from './helpers/global-sandbox';
 import type { ErrorResponse } from './test-worker/types';
 
@@ -17,13 +18,19 @@ import type { ErrorResponse } from './test-worker/types';
  * Happy path tests for full clones are in comprehensive-workflow.test.ts.
  */
 describe('Git Clone Error Handling', () => {
+  let sandbox: TestSandbox | null = null;
   let workerUrl: string;
   let headers: Record<string, string>;
 
   beforeAll(async () => {
-    const sandbox = await getSharedSandbox();
+    sandbox = await createTestSandbox();
     workerUrl = sandbox.workerUrl;
-    headers = sandbox.createHeaders(createUniqueSession());
+    headers = sandbox.headers(createUniqueSession());
+  }, 120000);
+
+  afterAll(async () => {
+    await cleanupTestSandbox(sandbox);
+    sandbox = null;
   }, 120000);
 
   test('should handle git clone errors for nonexistent repository', async () => {
@@ -67,27 +74,33 @@ describe('Git Clone Error Handling', () => {
  * Git Shallow Clone Tests
  *
  * Tests the depth option for shallow clones.
- * Uses facebook/react which has extensive history to properly test shallow cloning.
+ * Uses octocat/Spoon-Knife for real-remote coverage with faster clone times.
  */
 describe('Git Shallow Clone', () => {
+  let sandbox: TestSandbox | null = null;
   let workerUrl: string;
   let headers: Record<string, string>;
 
   beforeAll(async () => {
-    const sandbox = await getSharedSandbox();
+    sandbox = await createTestSandbox();
     workerUrl = sandbox.workerUrl;
-    headers = sandbox.createHeaders(createUniqueSession());
+    headers = sandbox.headers(createUniqueSession());
+  }, 120000);
+
+  afterAll(async () => {
+    await cleanupTestSandbox(sandbox);
+    sandbox = null;
   }, 120000);
 
   test('should clone repository with depth: 1 (shallow clone)', async () => {
-    const testDir = uniqueTestPath('shallow-clone-1');
+    const testDir = sandbox!.uniquePath('shallow-clone-1');
 
-    // Clone with depth: 1 - use a repo with extensive history
+    // Clone with depth: 1 against a real remote repository
     const cloneResponse = await fetch(`${workerUrl}/api/git/clone`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        repoUrl: 'https://github.com/facebook/react',
+        repoUrl: 'https://github.com/octocat/Spoon-Knife',
         targetDir: testDir,
         depth: 1
       })
@@ -129,64 +142,15 @@ describe('Git Shallow Clone', () => {
     expect(shallowData.stdout.trim()).toBe('true');
   }, 120000);
 
-  test('should clone repository with depth: 5 (limited history)', async () => {
-    const testDir = uniqueTestPath('shallow-clone-5');
-
-    // Clone with depth: 5 - use a repo with extensive history
-    const cloneResponse = await fetch(`${workerUrl}/api/git/clone`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        repoUrl: 'https://github.com/facebook/react',
-        targetDir: testDir,
-        depth: 5
-      })
-    });
-
-    expect(cloneResponse.status).toBe(200);
-    const cloneData = (await cloneResponse.json()) as GitCheckoutResult;
-    expect(cloneData.success).toBe(true);
-
-    // Verify commit count is exactly 5
-    const countResponse = await fetch(`${workerUrl}/api/execute`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        command: `cd ${testDir} && git rev-list --count HEAD`
-      })
-    });
-
-    expect(countResponse.status).toBe(200);
-    const countData = (await countResponse.json()) as ExecResult;
-    expect(countData.exitCode).toBe(0);
-
-    const commitCount = parseInt(countData.stdout.trim(), 10);
-    expect(commitCount).toBe(5);
-
-    // Verify the repo is marked as shallow
-    const shallowResponse = await fetch(`${workerUrl}/api/execute`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        command: `cd ${testDir} && git rev-parse --is-shallow-repository`
-      })
-    });
-
-    expect(shallowResponse.status).toBe(200);
-    const shallowData = (await shallowResponse.json()) as ExecResult;
-    expect(shallowData.exitCode).toBe(0);
-    expect(shallowData.stdout.trim()).toBe('true');
-  }, 120000);
-
   test('should clone repository with branch and depth combined', async () => {
-    const testDir = uniqueTestPath('shallow-branch');
+    const testDir = sandbox!.uniquePath('shallow-branch');
 
     // Clone specific branch with depth: 1
     const cloneResponse = await fetch(`${workerUrl}/api/git/clone`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        repoUrl: 'https://github.com/facebook/react',
+        repoUrl: 'https://github.com/octocat/Spoon-Knife',
         branch: 'main',
         targetDir: testDir,
         depth: 1

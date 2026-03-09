@@ -44,30 +44,46 @@ OpenCode handles everything:
 
 ## Advanced: Cloudflare AI Gateway
 
-You can optionally route all AI provider requests through [Cloudflare AI Gateway](https://developers.cloudflare.com/ai-gateway/) for monitoring, caching, and rate limiting. Add these variables to `.dev.vars`:
+You can route AI requests through [Cloudflare AI Gateway](https://developers.cloudflare.com/ai-gateway/) for monitoring, caching, and rate limiting. With **unified billing**, the gateway handles provider API keys — you only need your Cloudflare credentials.
+
+Add these variables to `.dev.vars`:
 
 ```bash
 CLOUDFLARE_ACCOUNT_ID=your-account-id
 CLOUDFLARE_GATEWAY_ID=your-gateway-id
-CLOUDFLARE_API_TOKEN=your-api-token  # Optional, for authenticated gateways
+CLOUDFLARE_API_TOKEN=your-api-token
 ```
 
-Then uncomment the `cloudflareAIGateway` section in `src/index.ts`:
+Configure the provider in `src/index.ts`. Models must be declared explicitly using the `provider/model` format:
 
 ```typescript
 const getConfig = (env: Env): Config => ({
   provider: {
-    anthropic: {
-      options: { apiKey: env.ANTHROPIC_API_KEY }
-    },
-    cloudflareAIGateway: {
+    'cloudflare-ai-gateway': {
       options: {
         accountId: env.CLOUDFLARE_ACCOUNT_ID,
         gatewayId: env.CLOUDFLARE_GATEWAY_ID,
         apiToken: env.CLOUDFLARE_API_TOKEN
+      },
+      models: {
+        'anthropic/claude-sonnet-4-5-20250929': {},
+        'openai/gpt-4o': {}
       }
     }
   }
+});
+```
+
+When using the SDK programmatically, specify the model with `providerID: 'cloudflare-ai-gateway'`:
+
+```typescript
+await client.session.prompt({
+  sessionID,
+  model: {
+    providerID: 'cloudflare-ai-gateway',
+    modelID: 'anthropic/claude-sonnet-4-5-20250929'
+  },
+  parts: [{ type: 'text', text: 'Hello!' }]
 });
 ```
 

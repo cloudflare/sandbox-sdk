@@ -1,0 +1,175 @@
+name: Quality Gates
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        type: string
+        default: 'ubuntu-24.04-4core'
+      run_sdk_tests:
+        type: boolean
+        default: true
+      run_container_tests:
+        type: boolean
+        default: true
+      run_changeset_validation:
+        type: boolean
+        default: false
+
+jobs:
+  lint-typecheck:
+    permissions:
+      contents: read
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: 'npm'
+
+      - uses: actions/cache/restore@v5
+        id: nm-cache
+        with:
+          path: |
+            node_modules
+            packages/*/node_modules
+            examples/*/node_modules
+            sites/*/node_modules
+          key: node-modules-${{ hashFiles('package-lock.json') }}
+
+      - run: npm ci --prefer-offline --no-audit --no-fund
+        if: steps.nm-cache.outputs.cache-hit != 'true'
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: build-${{ github.sha }}
+          path: packages
+
+      - name: Lint
+        run: npx biome check
+
+      - name: TypeScript type checking
+        run: npx turbo run typecheck
+
+      - name: E2E test types
+        run: npm run typecheck:e2e
+
+      - name: Perf test types
+        run: npm run typecheck:perf
+
+      - name: Monorepo structure lint
+        run: npx sherif
+
+      - name: Validate changesets
+        if: ${{ inputs.run_changeset_validation }}
+        run: node scripts/validate-changesets.js .changeset/*.md
+
+  sdk-tests:
+    permissions:
+      contents: read
+    if: ${{ inputs.run_sdk_tests }}
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: 'npm'
+
+      - uses: actions/cache/restore@v5
+        id: nm-cache
+        with:
+          path: |
+            node_modules
+            packages/*/node_modules
+            examples/*/node_modules
+            sites/*/node_modules
+          key: node-modules-${{ hashFiles('package-lock.json') }}
+
+      - run: npm ci --prefer-offline --no-audit --no-fund
+        if: steps.nm-cache.outputs.cache-hit != 'true'
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: build-${{ github.sha }}
+          path: packages
+
+      - name: SDK unit tests
+        run: |
+          set +e
+          timeout --preserve-status 30 npm run test -w @cloudflare/sandbox > sandbox_test.log 2>&1
+          EXIT_CODE=$?
+          cat sandbox_test.log
+
+          if grep -q "Test Files.*passed" sandbox_test.log && grep -q "Tests.*passed" sandbox_test.log; then
+            echo "Sandbox tests passed"
+            if [ $EXIT_CODE -eq 124 ] || [ $EXIT_CODE -eq 143 ]; then
+              echo "::warning::Killed due to workerd shutdown hang (known vitest-pool-workers issue)"
+            fi
+            exit 0
+          else
+            echo "Sandbox tests failed"
+            exit 1
+          fi
+
+      - name: Upload test logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: sandbox-test-logs-${{ github.sha }}
+          path: sandbox_test.log
+          retention-days: 7
+
+  container-tests:
+    permissions:
+      contents: read
+    if: ${{ inputs.run_container_tests }}
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: 'npm'
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+
+      - uses: actions/cache/restore@v5
+        id: nm-cache
+        with:
+          path: |
+            node_modules
+            packages/*/node_modules
+            examples/*/node_modules
+            sites/*/node_modules
+          key: node-modules-${{ hashFiles('package-lock.json') }}
+
+      - run: npm ci --prefer-offline --no-audit --no-fund
+        if: steps.nm-cache.outputs.cache-hit != 'true'
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: build-${{ github.sha }}
+          path: packages
+
+      - name: Container unit tests (Bun)
+        run: npm test -w @repo/sandbox-container
+        timeout-minutes: 5

@@ -1,9 +1,11 @@
 import { Container, getContainer, switchPort } from '@cloudflare/containers';
 import type {
+  BackupOptions,
   BucketCredentials,
   BucketProvider,
   CodeContext,
   CreateContextOptions,
+  DirectoryBackup,
   ExecEvent,
   ExecOptions,
   ExecResult,
@@ -16,13 +18,16 @@ import type {
   Process,
   ProcessOptions,
   ProcessStatus,
+  PtyOptions,
+  RestoreBackupResult,
   RunCodeOptions,
   SandboxOptions,
   SessionOptions,
   StreamOptions,
   WaitForExitResult,
   WaitForLogResult,
-  WaitForPortOptions
+  WaitForPortOptions,
+  WatchOptions
 } from '@repo/shared';
 import {
   createLogger,
@@ -34,16 +39,23 @@ import {
   shellEscape,
   TraceContext
 } from '@repo/shared';
-import { type ExecuteResponse, SandboxClient } from './clients';
+import { AwsClient } from 'aws4fetch';
+import { type Desktop, type ExecuteResponse, SandboxClient } from './clients';
 import type { ErrorResponse } from './errors';
 import {
+  BackupCreateError,
+  BackupExpiredError,
+  BackupNotFoundError,
+  BackupRestoreError,
   CustomDomainRequiredError,
   ErrorCode,
+  InvalidBackupConfigError,
   ProcessExitedBeforeReadyError,
   ProcessReadyTimeoutError,
   SessionAlreadyExistsError
 } from './errors';
 import { CodeInterpreter } from './interpreter';
+import { proxyTerminal } from './pty';
 import { isLocalhostPattern } from './request-handler';
 import { SecurityError, sanitizeSandboxId, validatePort } from './security';
 import { parseSSEStream } from './sse-parser';
@@ -102,9 +114,56 @@ export function getSandbox<T extends Sandbox<any>>(
     stub.setContainerTimeouts(options.containerTimeouts);
   }
 
-  return Object.assign(stub, {
-    wsConnect: connect(stub)
+  const defaultSessionId = `sandbox-${effectiveId}`;
+
+  // IMPORTANT: Any method that returns ExecutionSession must be listed here
+  // to ensure the returned session uses proxyTerminal instead of RPC's terminal.
+  const enhancedMethods = {
+    fetch: (request: Request) => stub.fetch(request),
+    createSession: async (opts?: SessionOptions): Promise<ExecutionSession> => {
+      const rpcSession = await stub.createSession(opts);
+      return enhanceSession(stub, rpcSession as ExecutionSession);
+    },
+    getSession: async (sessionId: string): Promise<ExecutionSession> => {
+      const rpcSession = await stub.getSession(sessionId);
+      return enhanceSession(stub, rpcSession as ExecutionSession);
+    },
+    terminal: (request: Request, opts?: PtyOptions) =>
+      proxyTerminal(stub, defaultSessionId, request, opts),
+    wsConnect: connect(stub),
+    // Client-side proxy for desktop operations. Each method call is dispatched
+    // to the DO's callDesktop() method, avoiding RPC pipelining through getters.
+    desktop: new Proxy({} as Desktop, {
+      get(_, method) {
+        if (typeof method !== 'string' || method === 'then') return undefined;
+        return (...args: unknown[]) => stub.callDesktop(method, args);
+      }
+    })
+  };
+
+  // Proxy intercepts enhanced methods, passes all others to stub directly.
+  // We must access target[prop] directly (not via Reflect.get with receiver)
+  // to preserve the RPC stub's internal Proxy handling.
+  return new Proxy(stub, {
+    get(target, prop) {
+      if (typeof prop === 'string' && prop in enhancedMethods) {
+        return enhancedMethods[prop as keyof typeof enhancedMethods];
+      }
+      // @ts-expect-error - RPC stub methods are Proxy-trapped, not visible to TypeScript
+      return target[prop];
+    }
   }) as T;
+}
+
+function enhanceSession(
+  stub: { fetch: (request: Request) => Promise<Response> },
+  rpcSession: ExecutionSession
+): ExecutionSession {
+  return {
+    ...rpcSession,
+    terminal: (request: Request, opts?: PtyOptions) =>
+      proxyTerminal(stub, rpcSession.id, request, opts)
+  };
 }
 
 export function connect(stub: {
@@ -113,12 +172,31 @@ export function connect(stub: {
   return async (request: Request, port: number) => {
     if (!validatePort(port)) {
       throw new SecurityError(
-        `Invalid or restricted port: ${port}. Ports must be in range 1024-65535 and not reserved.`
+        `Invalid port number: ${port}. Must be 1024-65535, excluding 3000 (sandbox control plane).`
       );
     }
     const portSwitchedRequest = switchPort(request, port);
     return await stub.fetch(portSwitchedRequest);
   };
+}
+
+/**
+ * Type guard for R2Bucket binding.
+ * Checks for the minimal R2Bucket interface methods we use.
+ */
+function isR2Bucket(value: unknown): value is R2Bucket {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'put' in value &&
+    typeof (value as Record<string, unknown>).put === 'function' &&
+    'get' in value &&
+    typeof (value as Record<string, unknown>).get === 'function' &&
+    'head' in value &&
+    typeof (value as Record<string, unknown>).head === 'function' &&
+    'delete' in value &&
+    typeof (value as Record<string, unknown>).delete === 'function'
+  );
 }
 
 export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
@@ -136,6 +214,26 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private keepAliveEnabled: boolean = false;
   private activeMounts: Map<string, MountInfo> = new Map();
   private transport: 'http' | 'websocket' = 'http';
+  // R2 bucket binding for backup storage (optional — only set if user configures BACKUP_BUCKET)
+  private backupBucket: R2Bucket | null = null;
+  /**
+   * Serializes backup operations to prevent concurrent create/restore on the same sandbox.
+   *
+   * This is in-memory state — it resets if the Durable Object is evicted and
+   * re-instantiated (e.g. after sleep). This is acceptable because the container
+   * filesystem is also lost on eviction, so there is no archive to race on.
+   */
+  private backupInProgress: Promise<unknown> = Promise.resolve();
+
+  /**
+   * R2 presigned URL credentials for direct container-to-R2 transfers.
+   * All four fields plus the R2 binding must be configured for backup to work.
+   */
+  private r2AccessKeyId: string | null = null;
+  private r2SecretAccessKey: string | null = null;
+  private r2AccountId: string | null = null;
+  private backupBucketName: string | null = null;
+  private r2Client: AwsClient | null = null;
 
   /**
    * Default container startup timeouts (conservative for production)
@@ -162,6 +260,78 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private containerTimeouts = { ...this.DEFAULT_CONTAINER_TIMEOUTS };
 
   /**
+   * Desktop environment operations.
+   * Within the DO, this getter provides direct access to DesktopClient.
+   * Over RPC, the getSandbox() proxy intercepts this property and routes
+   * calls through callDesktop() instead.
+   */
+  get desktop(): Desktop {
+    return this.client.desktop as unknown as Desktop;
+  }
+
+  /**
+   * Allowed desktop methods — derived from the Desktop interface.
+   * Restricts callDesktop() to a known set of operations.
+   */
+  private static readonly DESKTOP_METHODS = new Set([
+    'start',
+    'stop',
+    'status',
+    'screenshot',
+    'screenshotRegion',
+    'click',
+    'doubleClick',
+    'tripleClick',
+    'rightClick',
+    'middleClick',
+    'mouseDown',
+    'mouseUp',
+    'moveMouse',
+    'drag',
+    'scroll',
+    'getCursorPosition',
+    'type',
+    'press',
+    'keyDown',
+    'keyUp',
+    'getScreenSize',
+    'getProcessStatus'
+  ]);
+
+  /**
+   * Dispatch method for desktop operations.
+   * Called by the client-side proxy created in getSandbox() to provide
+   * the `sandbox.desktop.status()` API without relying on RPC pipelining
+   * through property getters.
+   */
+  async callDesktop(method: string, args: unknown[]): Promise<unknown> {
+    if (!Sandbox.DESKTOP_METHODS.has(method)) {
+      throw new Error(`Unknown desktop method: ${method}`);
+    }
+    const client = this.client.desktop;
+    const fn = client[method as keyof typeof client];
+    if (typeof fn !== 'function') {
+      throw new Error(`Unknown desktop method: ${method}`);
+    }
+    return (fn as (...a: unknown[]) => unknown).apply(client, args);
+  }
+
+  /**
+   * Compute the transport retry budget from current container timeouts.
+   *
+   * The budget covers the full container startup window (instance provisioning
+   * + port readiness) plus a 30s margin for the maximum single backoff delay
+   * (capped at 30s in BaseTransport). The 120s floor preserves the previous
+   * default for short timeout configurations.
+   */
+  private computeRetryTimeoutMs(): number {
+    const startupBudgetMs =
+      this.containerTimeouts.instanceGetTimeoutMS +
+      this.containerTimeouts.portReadyTimeoutMS;
+    return Math.max(120_000, startupBudgetMs + 30_000);
+  }
+
+  /**
    * Create a SandboxClient with current transport settings
    */
   private createSandboxClient(): SandboxClient {
@@ -169,6 +339,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       logger: this.logger,
       port: 3000,
       stub: this,
+      retryTimeoutMs: this.computeRetryTimeoutMs(),
       ...(this.transport === 'websocket' && {
         transportMode: 'websocket' as const,
         wsUrl: 'ws://localhost:3000/ws'
@@ -206,6 +377,26 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       );
     }
 
+    // Read R2 backup bucket binding if configured
+    const backupBucket = envObj?.BACKUP_BUCKET;
+    if (isR2Bucket(backupBucket)) {
+      this.backupBucket = backupBucket;
+    }
+
+    // Read R2 presigned URL credentials for direct container-to-R2 backup transfers
+    this.r2AccountId = getEnvString(envObj, 'CLOUDFLARE_ACCOUNT_ID') ?? null;
+    this.r2AccessKeyId = getEnvString(envObj, 'R2_ACCESS_KEY_ID') ?? null;
+    this.r2SecretAccessKey =
+      getEnvString(envObj, 'R2_SECRET_ACCESS_KEY') ?? null;
+    this.backupBucketName = getEnvString(envObj, 'BACKUP_BUCKET_NAME') ?? null;
+
+    if (this.r2AccessKeyId && this.r2SecretAccessKey) {
+      this.r2Client = new AwsClient({
+        accessKeyId: this.r2AccessKeyId,
+        secretAccessKey: this.r2SecretAccessKey
+      });
+    }
+
     // Create client with transport based on env var (may be updated from storage)
     this.client = this.createSandboxClient();
 
@@ -233,6 +424,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           ...this.containerTimeouts,
           ...storedTimeouts
         };
+        // Update the transport retry budget to reflect stored timeouts
+        this.client.setRetryTimeoutMs(this.computeRetryTimeoutMs());
       }
     });
   }
@@ -354,6 +547,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     // Persist to storage
     await this.ctx.storage.put('containerTimeouts', this.containerTimeouts);
+
+    // Update the transport retry budget to reflect new timeouts
+    this.client.setRetryTimeoutMs(this.computeRetryTimeoutMs());
 
     this.logger.debug('Container timeouts updated', this.containerTimeouts);
   }
@@ -715,6 +911,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   override async destroy(): Promise<void> {
     this.logger.info('Destroying sandbox container');
 
+    // Best-effort desktop stop — only when container is already running
+    if (this.ctx.container?.running) {
+      try {
+        await this.client.desktop.stop();
+      } catch {
+        // Desktop may not be running or available — continue cleanup
+      }
+    }
+
     // Disconnect WebSocket transport if active
     this.client.disconnect();
 
@@ -841,9 +1046,20 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     );
 
     const state = await this.getState();
+    const containerRunning = this.ctx.container?.running;
 
-    // If container not healthy, start it with production timeouts
-    if (state.status !== 'healthy') {
+    // Start container if persisted state is not healthy OR if runtime reports container is not running.
+    // The runtime check catches stale persisted state (e.g., state says 'healthy' after DO recreation
+    // but Docker container is gone).
+    const staleStateDetected =
+      state.status === 'healthy' && containerRunning === false;
+    if (state.status !== 'healthy' || containerRunning === false) {
+      if (staleStateDetected) {
+        this.logger.debug(
+          'Stale container state detected: persisted state is healthy but container is not running'
+        );
+      }
+
       try {
         this.logger.debug('Starting container with configured timeouts', {
           instanceTimeout: this.containerTimeouts.instanceGetTimeoutMS,
@@ -862,41 +1078,119 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       } catch (e) {
         // 1. Provisioning: Container VM not yet available
         if (this.isNoInstanceError(e)) {
-          return new Response(
-            'Container is currently provisioning. This can take several minutes on first deployment. Please retry in a moment.',
-            {
-              status: 503,
-              headers: { 'Retry-After': '10' }
+          const errorBody: ErrorResponse = {
+            code: ErrorCode.INTERNAL_ERROR,
+            message:
+              'Container is currently provisioning. This can take several minutes on first deployment.',
+            context: { phase: 'provisioning' },
+            httpStatus: 503,
+            timestamp: new Date().toISOString(),
+            suggestion:
+              'This is expected during first deployment. The SDK will retry automatically.'
+          };
+          return new Response(JSON.stringify(errorBody), {
+            status: 503,
+            headers: {
+              'Content-Type': 'application/json',
+              'Retry-After': '10'
             }
-          );
+          });
         }
 
-        // 2. Transient startup errors: Container starting, port not ready yet
-        if (this.isTransientStartupError(e)) {
-          this.logger.debug(
-            'Transient container startup error, returning 503',
-            {
+        // 2. Permanent errors: Resource exhaustion, misconfiguration, bad image
+        // These will never recover on retry — fail fast so the caller gets a clear signal.
+        // Checked before transient to avoid broad transient patterns (e.g., "container did not
+        // start") masking specific permanent causes in wrapped error messages.
+        if (this.isPermanentStartupError(e)) {
+          this.logger.error(
+            'Permanent container startup error, returning 500',
+            e instanceof Error ? e : new Error(String(e))
+          );
+          const errorBody: ErrorResponse = {
+            code: ErrorCode.INTERNAL_ERROR,
+            message:
+              'Container failed to start due to a permanent error. Check your container configuration.',
+            context: {
+              phase: 'startup',
               error: e instanceof Error ? e.message : String(e)
+            },
+            httpStatus: 500,
+            timestamp: new Date().toISOString(),
+            suggestion:
+              'This error will not resolve with retries. Check container logs, image name, and resource limits.'
+          };
+          return new Response(JSON.stringify(errorBody), {
+            status: 500,
+            headers: {
+              'Content-Type': 'application/json'
             }
-          );
-          return new Response(
-            'Container is starting. Please retry in a moment.',
-            {
-              status: 503,
-              headers: { 'Retry-After': '3' }
-            }
-          );
+          });
         }
 
-        // 3. Permanent errors: Configuration issues, missing images, etc.
-        this.logger.error(
-          'Container startup failed with permanent error',
-          e instanceof Error ? e : new Error(String(e))
+        // 3. Transient startup errors: Container starting, port not ready yet
+        if (this.isTransientStartupError(e)) {
+          // If startup failed after detecting stale state, the container runtime is likely stuck
+          // (e.g., workerd can't restart after an unexpected container death). Abort the DO so the
+          // next request gets a fresh instance with a clean container binding. This mirrors the
+          // recovery pattern in the base Container class for 'Network connection lost' errors.
+          if (staleStateDetected) {
+            this.logger.warn(
+              'Container startup failed after stale state detection, aborting DO for recovery',
+              { error: e instanceof Error ? e.message : String(e) }
+            );
+            this.ctx.abort();
+          } else {
+            this.logger.debug(
+              'Transient container startup error, returning 503',
+              { error: e instanceof Error ? e.message : String(e) }
+            );
+          }
+          const errorBody: ErrorResponse = {
+            code: ErrorCode.INTERNAL_ERROR,
+            message: 'Container is starting. Please retry in a moment.',
+            context: {
+              phase: 'startup',
+              error: e instanceof Error ? e.message : String(e)
+            },
+            httpStatus: 503,
+            timestamp: new Date().toISOString(),
+            suggestion:
+              'The container is booting. The SDK will retry automatically.'
+          };
+          return new Response(JSON.stringify(errorBody), {
+            status: 503,
+            headers: {
+              'Content-Type': 'application/json',
+              'Retry-After': '3'
+            }
+          });
+        }
+
+        // 4. Unrecognized errors: Treat as transient since retries are safe
+        // and new platform error messages may not yet be in our pattern list.
+        this.logger.warn(
+          'Unrecognized container startup error, returning 503 for retry',
+          { error: e instanceof Error ? e.message : String(e) }
         );
-        return new Response(
-          `Failed to start container: ${e instanceof Error ? e.message : String(e)}`,
-          { status: 500 }
-        );
+        const errorBody: ErrorResponse = {
+          code: ErrorCode.INTERNAL_ERROR,
+          message: 'Container is starting. Please retry in a moment.',
+          context: {
+            phase: 'startup',
+            error: e instanceof Error ? e.message : String(e)
+          },
+          httpStatus: 503,
+          timestamp: new Date().toISOString(),
+          suggestion:
+            'The SDK will retry automatically. If this persists, the container may need redeployment.'
+        };
+        return new Response(JSON.stringify(errorBody), {
+          status: 503,
+          headers: {
+            'Content-Type': 'application/json',
+            'Retry-After': '5'
+          }
+        });
       }
     }
 
@@ -952,6 +1246,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       // Monitor race conditions (workerd)
       'monitor failed to find container',
 
+      // Container crashed during startup or from previous run (@cloudflare/containers)
+      'container exited with unexpected exit code',
+      'container exited before we could determine',
+
       // Timeouts (various layers)
       'timed out',
       'timeout',
@@ -959,6 +1257,42 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     ];
 
     return transientPatterns.some((pattern) => msg.includes(pattern));
+  }
+
+  /**
+   * Helper: Check if error is a permanent startup failure that will never recover
+   *
+   * These errors indicate resource exhaustion, misconfiguration, or missing images.
+   * Retrying will never succeed, so the SDK should fail fast with HTTP 500.
+   *
+   * Error sources (traced from platform internals):
+   *   - Container runtime: OOM, PID limit
+   *   - Scheduling/provisioning: no matching app, no namespace configured
+   *   - workerd container-client.c++: no such image
+   *   - @cloudflare/containers: did not call start
+   */
+  private isPermanentStartupError(error: unknown): boolean {
+    if (!(error instanceof Error)) return false;
+
+    const msg = error.message.toLowerCase();
+
+    const permanentPatterns = [
+      // Resource exhaustion (container runtime)
+      'ran out of memory',
+      'too many subprocesses',
+
+      // Misconfiguration (scheduling/provisioning)
+      'no application that matches',
+      'no container application assigned',
+
+      // Missing image (workerd container-client.c++)
+      'no such image',
+
+      // User error (@cloudflare/containers)
+      'did not call start'
+    ];
+
+    return permanentPatterns.some((pattern) => msg.includes(pattern));
   }
 
   /**
@@ -1452,12 +1786,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     try {
       // Process stream
       const streamProcessor = async (): Promise<WaitForLogResult> => {
-        const DEBOUNCE_MS = 50;
-        let lastCheckTime = 0;
-        let pendingCheck = false;
-
         const checkPattern = (): WaitForLogResult | null => {
-          // Check both stdout and stderr buffers
           const stdoutResult = this.matchPattern(collectedStdout, pattern);
           if (stdoutResult) return stdoutResult;
           const stderrResult = this.matchPattern(collectedStderr, pattern);
@@ -1466,7 +1795,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         };
 
         for await (const event of parseSSEStream<LogEvent>(stream)) {
-          // Handle different event types
           if (event.type === 'stdout' || event.type === 'stderr') {
             const data = event.data || '';
 
@@ -1475,24 +1803,16 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
             } else {
               collectedStderr += data;
             }
-            pendingCheck = true;
 
-            // Debounce pattern matching - check at most every 50ms
-            const now = Date.now();
-            if (now - lastCheckTime >= DEBOUNCE_MS) {
-              lastCheckTime = now;
-              pendingCheck = false;
-              const result = checkPattern();
-              if (result) return result;
-            }
+            const result = checkPattern();
+            if (result) return result;
           }
 
           // Process exited - do final check before throwing
           if (event.type === 'exit') {
-            if (pendingCheck) {
-              const result = checkPattern();
-              if (result) return result;
-            }
+            // Final check in case pattern arrived in last chunk
+            const result = checkPattern();
+            if (result) return result;
             throw this.createExitedBeforeReadyError(
               processId,
               command,
@@ -1502,11 +1822,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           }
         }
 
-        // Stream ended - do final check before throwing
-        if (pendingCheck) {
-          const result = checkPattern();
-          if (result) return result;
-        }
+        // Stream ended without exit event — do final check
+        const finalResult = checkPattern();
+        if (finalResult) return finalResult;
         // Stream ended without finding pattern - this indicates process exited
         throw this.createExitedBeforeReadyError(
           processId,
@@ -2113,13 +2431,110 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   /**
+   * Get the noVNC preview URL for browser-based desktop viewing.
+   * Confirms desktop is active, then uses exposePort() to generate
+   * a token-authenticated preview URL for the noVNC port (6080).
+   *
+   * @param hostname - The custom domain hostname for preview URLs
+   *   (e.g., 'preview.example.com'). Required because preview URLs
+   *   use subdomain patterns that .workers.dev doesn't support.
+   * @param options - Optional settings
+   * @param options.token - Reuse an existing token instead of generating a new one
+   * @returns The authenticated noVNC preview URL
+   */
+  async getDesktopStreamUrl(
+    hostname: string,
+    options?: { token?: string }
+  ): Promise<{ url: string }> {
+    // Confirm desktop is running before generating a URL
+    const status = await this.client.desktop.status();
+    if (status.status === 'inactive') {
+      throw new Error(
+        'Desktop is not running. Call sandbox.desktop.start() first.'
+      );
+    }
+
+    let url: string;
+
+    // Try exposing port 6080; if already exposed, construct the URL from stored token
+    try {
+      const result = await this.exposePort(6080, {
+        hostname,
+        token: options?.token
+      });
+      url = result.url;
+    } catch {
+      // Port may already be exposed — look up the existing token from DO storage
+      const tokens =
+        (await this.ctx.storage.get<Record<string, string>>('portTokens')) ||
+        {};
+      const existingToken = tokens['6080'];
+      if (existingToken && this.sandboxName) {
+        url = this.constructPreviewUrl(
+          6080,
+          this.sandboxName,
+          hostname,
+          existingToken
+        );
+      } else {
+        throw new Error(
+          'Failed to get desktop stream URL: port 6080 could not be exposed and no existing token found.'
+        );
+      }
+    }
+
+    // Wait for the platform to detect port 6080 using the Containers runtime's
+    // built-in port readiness mechanism (getTcpPort polling). This ensures the
+    // preview URL is routable before returning it to the caller.
+    try {
+      await this.waitForPort({
+        portToCheck: 6080,
+        retries: 30,
+        waitInterval: 500
+      });
+    } catch {
+      // Best-effort: if detection times out after ~15s, return the URL anyway.
+      // noVNC's WebSocket auto-connect will retry on the client side.
+    }
+
+    return { url };
+  }
+
+  /**
+   * Watch a directory for file system changes using native inotify.
+   *
+   * The returned promise resolves only after the watcher is established on the
+   * filesystem, so callers can immediately perform actions that depend on the
+   * watch being active. The returned stream contains the full event sequence
+   * starting with the `watching` event.
+   *
+   * Consume the stream with `parseSSEStream<FileWatchSSEEvent>(stream)`.
+   *
+   * @param path - Path to watch (absolute or relative to /workspace)
+   * @param options - Watch options
+   */
+  async watch(
+    path: string,
+    options: WatchOptions = {}
+  ): Promise<ReadableStream<Uint8Array>> {
+    const sessionId = options.sessionId ?? (await this.ensureDefaultSession());
+    return this.client.watch.watch({
+      path,
+      recursive: options.recursive,
+      include: options.include,
+      exclude: options.exclude,
+      sessionId
+    });
+  }
+
+  /**
    * Expose a port and get a preview URL for accessing services running in the sandbox
    *
    * @param port - Port number to expose (1024-65535)
    * @param options - Configuration options
    * @param options.hostname - Your Worker's domain name (required for preview URL construction)
    * @param options.name - Optional friendly name for the port
-   * @param options.token - Optional custom token for the preview URL (1-16 characters: lowercase letters, numbers, hyphens, underscores)
+   * @param options.token - Optional custom token for the preview URL (1-16 characters: lowercase letters, numbers, underscores)
    *                       If not provided, a random 16-character token will be generated automatically
    * @returns Preview URL information including the full URL, port number, and optional name
    *
@@ -2132,14 +2547,20 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * // With custom token for stable URLs across deployments
    * const { url } = await sandbox.exposePort(8080, {
    *   hostname: 'example.com',
-   *   token: 'my-token-v1'
+   *   token: 'my_token_v1'
    * });
-   * // url: https://8080-sandbox-id-my-token-v1.example.com
+   * // url: https://8080-sandbox-id-my_token_v1.example.com
    */
   async exposePort(
     port: number,
     options: { name?: string; hostname: string; token?: string }
   ) {
+    if (!validatePort(port)) {
+      throw new SecurityError(
+        `Invalid port number: ${port}. Must be 1024-65535, excluding 3000 (sandbox control plane).`
+      );
+    }
+
     // Check if hostname is workers.dev domain (doesn't support wildcard subdomains)
     if (options.hostname.endsWith('.workers.dev')) {
       const errorResponse: ErrorResponse = {
@@ -2202,7 +2623,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   async unexposePort(port: number) {
     if (!validatePort(port)) {
       throw new SecurityError(
-        `Invalid port number: ${port}. Must be between 1024-65535 and not reserved.`
+        `Invalid port number: ${port}. Must be 1024-65535, excluding 3000 (sandbox control plane).`
       );
     }
 
@@ -2289,15 +2710,20 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       return false;
     }
 
-    if (storedToken.length !== token.length) {
-      return false;
-    }
-
     const encoder = new TextEncoder();
     const a = encoder.encode(storedToken);
     const b = encoder.encode(token);
 
-    return crypto.subtle.timingSafeEqual(a, b);
+    try {
+      // Workers runtime extends SubtleCrypto with timingSafeEqual
+      return (
+        crypto.subtle as SubtleCrypto & {
+          timingSafeEqual(a: ArrayBufferView, b: ArrayBufferView): boolean;
+        }
+      ).timingSafeEqual(a, b);
+    } catch {
+      return false;
+    }
   }
 
   private validateCustomToken(token: string): void {
@@ -2340,7 +2766,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   ): string {
     if (!validatePort(port)) {
       throw new SecurityError(
-        `Invalid port number: ${port}. Must be between 1024-65535 and not reserved.`
+        `Invalid port number: ${port}. Must be 1024-65535, excluding 3000 (sandbox control plane).`
       );
     }
 
@@ -2468,15 +2894,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     };
   }
 
-  /**
-   * Internal helper to create ExecutionSession wrapper for a given sessionId
-   * Used by both createSession and getSession
-   */
   private getSessionWrapper(sessionId: string): ExecutionSession {
+    // terminal: null here, added client-side by getSandbox() (WebSockets can't cross RPC)
     return {
       id: sessionId,
+      terminal: null as unknown as ExecutionSession['terminal'],
 
-      // Command execution - delegate to internal session-aware methods
       exec: (command, options) =>
         this.execWithSession(command, sessionId, options),
       execStream: (command, options) =>
@@ -2500,6 +2923,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       readFile: (path, options) =>
         this.readFile(path, { ...options, sessionId }),
       readFileStream: (path) => this.readFileStream(path, { sessionId }),
+      watch: (path, options) => this.watch(path, { ...options, sessionId }),
       mkdir: (path, options) => this.mkdir(path, { ...options, sessionId }),
       deleteFile: (path) => this.deleteFile(path, sessionId),
       renameFile: (oldPath, newPath) =>
@@ -2573,7 +2997,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       // Bucket mounting - sandbox-level operations
       mountBucket: (bucket, mountPath, options) =>
         this.mountBucket(bucket, mountPath, options),
-      unmountBucket: (mountPath) => this.unmountBucket(mountPath)
+      unmountBucket: (mountPath) => this.unmountBucket(mountPath),
+
+      // Backup operations - sandbox-level, uses R2 binding
+      createBackup: (options) => this.createBackup(options),
+      restoreBackup: (backup) => this.restoreBackup(backup)
     };
   }
 
@@ -2608,5 +3036,697 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   async deleteCodeContext(contextId: string): Promise<void> {
     return this.codeInterpreter.deleteCodeContext(contextId);
+  }
+
+  // ============================================================================
+  // Backup methods — squashfs archive + R2 storage
+  // ============================================================================
+
+  /** UUID v4 format validator for backup IDs */
+  private static readonly UUID_REGEX =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+  /**
+   * Validate that a directory path is safe for backup operations.
+   * Rejects empty, relative, traversal, and null-byte paths.
+   */
+  private static validateBackupDir(dir: string, label: string): void {
+    if (!dir || !dir.startsWith('/')) {
+      throw new InvalidBackupConfigError({
+        message: `${label} must be an absolute path`,
+        code: ErrorCode.INVALID_BACKUP_CONFIG,
+        httpStatus: 400,
+        context: { reason: `${label} must be an absolute path` },
+        timestamp: new Date().toISOString()
+      });
+    }
+    if (dir.includes('\0')) {
+      throw new InvalidBackupConfigError({
+        message: `${label} must not contain null bytes`,
+        code: ErrorCode.INVALID_BACKUP_CONFIG,
+        httpStatus: 400,
+        context: { reason: `${label} must not contain null bytes` },
+        timestamp: new Date().toISOString()
+      });
+    }
+    if (dir.split('/').includes('..')) {
+      throw new InvalidBackupConfigError({
+        message: `${label} must not contain ".." path segments`,
+        code: ErrorCode.INVALID_BACKUP_CONFIG,
+        httpStatus: 400,
+        context: { reason: `${label} must not contain ".." path segments` },
+        timestamp: new Date().toISOString()
+      });
+    }
+  }
+
+  /**
+   * Returns the R2 bucket or throws if backup is not configured.
+   */
+  private requireBackupBucket(): R2Bucket {
+    if (!this.backupBucket) {
+      throw new InvalidBackupConfigError({
+        message:
+          'Backup not configured. Add a BACKUP_BUCKET R2 binding to your wrangler.jsonc.',
+        code: ErrorCode.INVALID_BACKUP_CONFIG,
+        httpStatus: 400,
+        context: { reason: 'Missing BACKUP_BUCKET R2 binding' },
+        timestamp: new Date().toISOString()
+      });
+    }
+    return this.backupBucket;
+  }
+
+  private static readonly PRESIGNED_URL_EXPIRY_SECONDS = 3600;
+
+  /**
+   * Ensure a dedicated session for backup operations exists.
+   * Isolates backup shell commands (curl, stat, rm, mkdir) from user exec()
+   * calls to prevent session state interference and interleaving.
+   */
+  private async ensureBackupSession(): Promise<string> {
+    const sessionId = '__sandbox_backup__';
+    try {
+      await this.client.utils.createSession({
+        id: sessionId,
+        cwd: '/'
+      });
+    } catch (error: unknown) {
+      if (!(error instanceof SessionAlreadyExistsError)) {
+        throw error;
+      }
+    }
+    return sessionId;
+  }
+
+  /**
+   * Returns validated presigned URL configuration or throws if not configured.
+   * All credential fields plus the R2 binding are required for backup to work.
+   */
+  private requirePresignedUrlSupport(): {
+    client: AwsClient;
+    accountId: string;
+    bucketName: string;
+  } {
+    if (!this.r2Client || !this.r2AccountId || !this.backupBucketName) {
+      const missing: string[] = [];
+      if (!this.r2AccountId) missing.push('CLOUDFLARE_ACCOUNT_ID');
+      if (!this.r2AccessKeyId) missing.push('R2_ACCESS_KEY_ID');
+      if (!this.r2SecretAccessKey) missing.push('R2_SECRET_ACCESS_KEY');
+      if (!this.backupBucketName) missing.push('BACKUP_BUCKET_NAME');
+
+      throw new InvalidBackupConfigError({
+        message:
+          `Backup requires R2 presigned URL credentials. ` +
+          `Missing: ${missing.join(', ')}. ` +
+          'Set these as environment variables or secrets in your wrangler.jsonc.',
+        code: ErrorCode.INVALID_BACKUP_CONFIG,
+        httpStatus: 400,
+        context: { reason: `Missing env vars: ${missing.join(', ')}` },
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    return {
+      client: this.r2Client,
+      accountId: this.r2AccountId,
+      bucketName: this.backupBucketName
+    };
+  }
+
+  /**
+   * Generate a presigned GET URL for downloading an object from R2.
+   * The container can curl this URL directly without credentials.
+   */
+  private async generatePresignedGetUrl(r2Key: string): Promise<string> {
+    const { client, accountId, bucketName } = this.requirePresignedUrlSupport();
+
+    const encodedBucket = encodeURIComponent(bucketName);
+    const encodedKey = r2Key
+      .split('/')
+      .map((seg) => encodeURIComponent(seg))
+      .join('/');
+    const url = new URL(
+      `https://${accountId}.r2.cloudflarestorage.com/${encodedBucket}/${encodedKey}`
+    );
+    url.searchParams.set(
+      'X-Amz-Expires',
+      String(Sandbox.PRESIGNED_URL_EXPIRY_SECONDS)
+    );
+
+    const signed = await client.sign(new Request(url), {
+      aws: { signQuery: true }
+    });
+
+    return signed.url;
+  }
+
+  /**
+   * Generate a presigned PUT URL for uploading an object to R2.
+   * The container can curl PUT to this URL directly without credentials.
+   */
+  private async generatePresignedPutUrl(r2Key: string): Promise<string> {
+    const { client, accountId, bucketName } = this.requirePresignedUrlSupport();
+
+    const encodedBucket = encodeURIComponent(bucketName);
+    const encodedKey = r2Key
+      .split('/')
+      .map((seg) => encodeURIComponent(seg))
+      .join('/');
+    const url = new URL(
+      `https://${accountId}.r2.cloudflarestorage.com/${encodedBucket}/${encodedKey}`
+    );
+    url.searchParams.set(
+      'X-Amz-Expires',
+      String(Sandbox.PRESIGNED_URL_EXPIRY_SECONDS)
+    );
+
+    const signed = await client.sign(new Request(url, { method: 'PUT' }), {
+      aws: { signQuery: true }
+    });
+
+    return signed.url;
+  }
+
+  /**
+   * Upload a backup archive via presigned PUT URL.
+   * The container curls the archive directly to R2, bypassing the DO.
+   * ~24 MB/s throughput vs ~0.6 MB/s for base64 readFile.
+   */
+  private async uploadBackupPresigned(
+    archivePath: string,
+    r2Key: string,
+    archiveSize: number,
+    backupId: string,
+    dir: string,
+    backupSession: string
+  ): Promise<void> {
+    const presignedUrl = await this.generatePresignedPutUrl(r2Key);
+
+    this.logger.info('Uploading backup via presigned PUT', {
+      r2Key,
+      archiveSize,
+      backupId
+    });
+
+    const curlCmd = [
+      'curl -sSf',
+      '-X PUT',
+      "-H 'Content-Type: application/octet-stream'",
+      '--connect-timeout 10',
+      '--max-time 1800',
+      '--retry 2',
+      '--retry-max-time 60',
+      `-T ${shellEscape(archivePath)}`,
+      shellEscape(presignedUrl)
+    ].join(' ');
+
+    const result = await this.execWithSession(curlCmd, backupSession, {
+      timeout: 1810_000
+    });
+
+    if (result.exitCode !== 0) {
+      throw new BackupCreateError({
+        message: `Presigned URL upload failed (exit code ${result.exitCode}): ${result.stderr}`,
+        code: ErrorCode.BACKUP_CREATE_FAILED,
+        httpStatus: 500,
+        context: { dir, backupId },
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    // Verify the upload landed correctly in R2
+    const bucket = this.requireBackupBucket();
+    const head = await bucket.head(r2Key);
+    if (!head || head.size !== archiveSize) {
+      const actualSize = head?.size ?? 0;
+      // curl succeeded but R2 binding sees nothing — almost certainly a
+      // local-dev mismatch where presigned URLs target real R2 while the
+      // BACKUP_BUCKET binding points to local (miniflare) storage.
+      const localDevHint =
+        result.exitCode === 0 && actualSize === 0
+          ? ' This usually means the BACKUP_BUCKET R2 binding is using local storage ' +
+            'while presigned URLs upload to remote R2. Add `"remote": true` to your ' +
+            'BACKUP_BUCKET R2 binding in wrangler.jsonc to fix this.'
+          : '';
+      throw new BackupCreateError({
+        message: `Upload verification failed: expected ${archiveSize} bytes, got ${actualSize}.${localDevHint}`,
+        code: ErrorCode.BACKUP_CREATE_FAILED,
+        httpStatus: 500,
+        context: { dir, backupId },
+        timestamp: new Date().toISOString()
+      });
+    }
+  }
+
+  /**
+   * Download a backup archive via presigned GET URL.
+   * The container curls the archive directly from R2, bypassing the DO.
+   * ~93 MB/s throughput vs ~0.6 MB/s for base64 writeFile.
+   */
+  private async downloadBackupPresigned(
+    archivePath: string,
+    r2Key: string,
+    expectedSize: number,
+    backupId: string,
+    dir: string,
+    backupSession: string
+  ): Promise<void> {
+    const presignedUrl = await this.generatePresignedGetUrl(r2Key);
+
+    this.logger.info('Downloading backup via presigned GET', {
+      r2Key,
+      expectedSize,
+      backupId
+    });
+
+    await this.execWithSession('mkdir -p /var/backups', backupSession);
+
+    const tmpPath = `${archivePath}.tmp`;
+    const curlCmd = [
+      'curl -sSf',
+      '--connect-timeout 10',
+      '--max-time 1800',
+      '--retry 2',
+      '--retry-max-time 60',
+      `-o ${shellEscape(tmpPath)}`,
+      shellEscape(presignedUrl)
+    ].join(' ');
+
+    const result = await this.execWithSession(curlCmd, backupSession, {
+      timeout: 1810_000
+    });
+
+    if (result.exitCode !== 0) {
+      await this.execWithSession(
+        `rm -f ${shellEscape(tmpPath)}`,
+        backupSession
+      ).catch(() => {});
+      throw new BackupRestoreError({
+        message: `Presigned URL download failed (exit code ${result.exitCode}): ${result.stderr}`,
+        code: ErrorCode.BACKUP_RESTORE_FAILED,
+        httpStatus: 500,
+        context: { dir, backupId },
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    // Verify downloaded file size before committing
+    const sizeCheck = await this.execWithSession(
+      `stat -c %s ${shellEscape(tmpPath)}`,
+      backupSession
+    );
+    const actualSize = parseInt(sizeCheck.stdout.trim(), 10);
+    if (actualSize !== expectedSize) {
+      await this.execWithSession(
+        `rm -f ${shellEscape(tmpPath)}`,
+        backupSession
+      ).catch(() => {});
+      throw new BackupRestoreError({
+        message: `Downloaded archive size mismatch: expected ${expectedSize}, got ${actualSize}`,
+        code: ErrorCode.BACKUP_RESTORE_FAILED,
+        httpStatus: 500,
+        context: { dir, backupId },
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    // Atomic move from temp to final path
+    const mvResult = await this.execWithSession(
+      `mv ${shellEscape(tmpPath)} ${shellEscape(archivePath)}`,
+      backupSession
+    );
+    if (mvResult.exitCode !== 0) {
+      await this.execWithSession(
+        `rm -f ${shellEscape(tmpPath)}`,
+        backupSession
+      ).catch(() => {});
+      throw new BackupRestoreError({
+        message: `Failed to finalize downloaded archive: ${mvResult.stderr}`,
+        code: ErrorCode.BACKUP_RESTORE_FAILED,
+        httpStatus: 500,
+        context: { dir, backupId },
+        timestamp: new Date().toISOString()
+      });
+    }
+  }
+
+  /**
+   * Serialize backup operations on this sandbox instance.
+   * Concurrent backup/restore calls are queued so the multi-step
+   * create-archive → read → upload (or download → write → extract) flow
+   * is not interleaved with another backup operation on the same directory.
+   */
+  private enqueueBackupOp<T>(fn: () => Promise<T>): Promise<T> {
+    const next = this.backupInProgress.then(fn, () => fn());
+    this.backupInProgress = next.catch(() => {});
+    return next;
+  }
+
+  /**
+   * Create a backup of a directory and upload it to R2.
+   *
+   * Flow:
+   *   1. Container creates squashfs archive from the directory
+   *   2. Container uploads the archive directly to R2 via presigned URL
+   *   3. DO writes metadata to R2
+   *   4. Container cleans up the local archive
+   *
+   * The returned DirectoryBackup handle is serializable. Store it anywhere
+   * (KV, D1, DO storage) and pass it to restoreBackup() later.
+   *
+   * Concurrent backup/restore calls on the same sandbox are serialized.
+   *
+   * Partially-written files in the target directory may not be captured
+   * consistently. Completed writes are captured.
+   *
+   * NOTE: Expired backups are not automatically deleted from R2. Configure
+   * R2 lifecycle rules on the BACKUP_BUCKET to garbage-collect objects
+   * under the `backups/` prefix after the desired retention period.
+   */
+  async createBackup(options: BackupOptions): Promise<DirectoryBackup> {
+    this.requireBackupBucket();
+    return this.enqueueBackupOp(() => this.doCreateBackup(options));
+  }
+
+  private async doCreateBackup(
+    options: BackupOptions
+  ): Promise<DirectoryBackup> {
+    const bucket = this.requireBackupBucket();
+    this.requirePresignedUrlSupport();
+    const DEFAULT_TTL_SECONDS = 259200; // 3 days
+    const MAX_NAME_LENGTH = 256;
+    const { dir, name, ttl = DEFAULT_TTL_SECONDS } = options;
+    Sandbox.validateBackupDir(dir, 'BackupOptions.dir');
+    if (name !== undefined) {
+      if (typeof name !== 'string' || name.length > MAX_NAME_LENGTH) {
+        throw new InvalidBackupConfigError({
+          message: `BackupOptions.name must be a string of at most ${MAX_NAME_LENGTH} characters`,
+          code: ErrorCode.INVALID_BACKUP_CONFIG,
+          httpStatus: 400,
+          context: {
+            reason: `name must be a string of at most ${MAX_NAME_LENGTH} characters`
+          },
+          timestamp: new Date().toISOString()
+        });
+      }
+      // Reject control characters (could cause issues in R2 metadata or downstream systems)
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: intentionally matching control chars
+      if (/[\u0000-\u001f\u007f]/.test(name)) {
+        throw new InvalidBackupConfigError({
+          message: 'BackupOptions.name must not contain control characters',
+          code: ErrorCode.INVALID_BACKUP_CONFIG,
+          httpStatus: 400,
+          context: { reason: 'name must not contain control characters' },
+          timestamp: new Date().toISOString()
+        });
+      }
+    }
+    if (ttl <= 0) {
+      throw new InvalidBackupConfigError({
+        message: 'BackupOptions.ttl must be a positive number of seconds',
+        code: ErrorCode.INVALID_BACKUP_CONFIG,
+        httpStatus: 400,
+        context: { reason: 'ttl must be a positive number of seconds' },
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    const backupSession = await this.ensureBackupSession();
+    const backupId = crypto.randomUUID();
+    const archivePath = `/var/backups/${backupId}.sqsh`;
+
+    this.logger.info('Creating backup', { backupId, dir, name });
+
+    const createResult = await this.client.backup.createArchive(
+      dir,
+      archivePath,
+      backupSession
+    );
+
+    if (!createResult.success) {
+      throw new BackupCreateError({
+        message: 'Container failed to create backup archive',
+        code: ErrorCode.BACKUP_CREATE_FAILED,
+        httpStatus: 500,
+        context: { dir, backupId },
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    const r2Key = `backups/${backupId}/data.sqsh`;
+    const metaKey = `backups/${backupId}/meta.json`;
+
+    try {
+      // Step 2: Upload archive to R2 via presigned URL (isolated backup session)
+      await this.uploadBackupPresigned(
+        archivePath,
+        r2Key,
+        createResult.sizeBytes,
+        backupId,
+        dir,
+        backupSession
+      );
+
+      // Step 3: Write metadata alongside the archive
+      const metadata = {
+        id: backupId,
+        dir,
+        name: name || null,
+        sizeBytes: createResult.sizeBytes,
+        ttl,
+        createdAt: new Date().toISOString()
+      };
+      await bucket.put(metaKey, JSON.stringify(metadata));
+
+      this.logger.info('Backup uploaded to R2', {
+        backupId,
+        r2Key,
+        sizeBytes: createResult.sizeBytes
+      });
+
+      // Step 5: Clean up the local archive in the container
+      await this.execWithSession(
+        `rm -f ${shellEscape(archivePath)}`,
+        backupSession
+      ).catch(() => {});
+
+      return { id: backupId, dir };
+    } catch (error) {
+      // Clean up local archive and any partially-uploaded R2 objects
+      await this.execWithSession(
+        `rm -f ${shellEscape(archivePath)}`,
+        backupSession
+      ).catch(() => {});
+      await bucket.delete(r2Key).catch(() => {});
+      await bucket.delete(metaKey).catch(() => {});
+      throw error;
+    }
+  }
+
+  /**
+   * Restore a backup from R2 into a directory.
+   *
+   * Flow:
+   *   1. DO reads metadata from R2 and checks TTL
+   *   2. Container downloads the archive directly from R2 via presigned URL
+   *   3. Container mounts the squashfs archive with FUSE overlayfs
+   *
+   * The target directory becomes an overlay mount with the backup as a
+   * read-only lower layer and a writable upper layer for copy-on-write.
+   * Any processes writing to the directory should be stopped first.
+   *
+   * **Mount Lifecycle**: The FUSE overlay mount persists only while the
+   * container is running. When the sandbox sleeps or the container restarts,
+   * the mount is lost and the directory becomes empty. Re-restore from the
+   * backup handle to recover. This is an ephemeral restore, not a persistent
+   * extraction.
+   *
+   * The backup is restored into `backup.dir`. This may differ from the
+   * directory that was originally backed up, allowing cross-directory restore.
+   *
+   * Overlapping backups are independent: restoring a parent directory
+   * overwrites everything inside it, including subdirectories that were
+   * backed up separately. When restoring both, restore the parent first.
+   *
+   * Concurrent backup/restore calls on the same sandbox are serialized.
+   */
+  async restoreBackup(backup: DirectoryBackup): Promise<RestoreBackupResult> {
+    this.requireBackupBucket();
+    return this.enqueueBackupOp(() => this.doRestoreBackup(backup));
+  }
+
+  private async doRestoreBackup(
+    backup: DirectoryBackup
+  ): Promise<RestoreBackupResult> {
+    const bucket = this.requireBackupBucket();
+    this.requirePresignedUrlSupport();
+    const { id: backupId, dir } = backup;
+
+    // Validate user-provided inputs (DirectoryBackup is deserialized from external storage)
+    if (!backupId || typeof backupId !== 'string') {
+      throw new InvalidBackupConfigError({
+        message: 'Invalid backup: missing or invalid id',
+        code: ErrorCode.INVALID_BACKUP_CONFIG,
+        httpStatus: 400,
+        context: { reason: 'missing or invalid id' },
+        timestamp: new Date().toISOString()
+      });
+    }
+    if (!Sandbox.UUID_REGEX.test(backupId)) {
+      throw new InvalidBackupConfigError({
+        message:
+          'Invalid backup: id must be a valid UUID (e.g. from createBackup)',
+        code: ErrorCode.INVALID_BACKUP_CONFIG,
+        httpStatus: 400,
+        context: { reason: 'id must be a valid UUID' },
+        timestamp: new Date().toISOString()
+      });
+    }
+    Sandbox.validateBackupDir(dir, 'Invalid backup: dir');
+
+    this.logger.info('Restoring backup', { backupId, dir });
+
+    // Step 1: Read metadata to check TTL
+    const metaKey = `backups/${backupId}/meta.json`;
+    const metaObject = await bucket.get(metaKey);
+    if (!metaObject) {
+      throw new BackupNotFoundError({
+        message:
+          `Backup not found: ${backupId}. ` +
+          'Verify the backup ID is correct and the backup has not been deleted.',
+        code: ErrorCode.BACKUP_NOT_FOUND,
+        httpStatus: 404,
+        context: { backupId },
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    const metadata = await metaObject.json<{
+      ttl: number;
+      createdAt: string;
+      dir: string;
+    }>();
+
+    // Check TTL with 60-second buffer to prevent race between check and restore completion
+    const TTL_BUFFER_MS = 60 * 1000;
+    const createdAt = new Date(metadata.createdAt).getTime();
+    if (Number.isNaN(createdAt)) {
+      throw new BackupRestoreError({
+        message: `Backup metadata has invalid createdAt timestamp: ${metadata.createdAt}`,
+        code: ErrorCode.BACKUP_RESTORE_FAILED,
+        httpStatus: 500,
+        context: { dir, backupId },
+        timestamp: new Date().toISOString()
+      });
+    }
+    const expiresAt = createdAt + metadata.ttl * 1000;
+    if (Date.now() + TTL_BUFFER_MS > expiresAt) {
+      throw new BackupExpiredError({
+        message:
+          `Backup ${backupId} has expired ` +
+          `(created: ${metadata.createdAt}, TTL: ${metadata.ttl}s). ` +
+          'Create a new backup.',
+        code: ErrorCode.BACKUP_EXPIRED,
+        httpStatus: 400,
+        context: {
+          backupId,
+          expiredAt: new Date(expiresAt).toISOString()
+        },
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    // Step 2: Check archive exists and get its size via HEAD (no body stream)
+    const r2Key = `backups/${backupId}/data.sqsh`;
+    const archiveHead = await bucket.head(r2Key);
+    if (!archiveHead) {
+      throw new BackupNotFoundError({
+        message:
+          `Backup archive not found in R2: ${backupId}. ` +
+          'The archive may have been deleted by R2 lifecycle rules.',
+        code: ErrorCode.BACKUP_NOT_FOUND,
+        httpStatus: 404,
+        context: { backupId },
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    const backupSession = await this.ensureBackupSession();
+    const archivePath = `/var/backups/${backupId}.sqsh`;
+
+    try {
+      // Step 3: Tear down existing FUSE mounts before overwriting the archive.
+      // squashfuse holds the .sqsh file open; writing a new archive to the same
+      // path while the old mount is active corrupts the backing store.
+      // Unmount the overlay on dir, then iterate over all mount bases for this
+      // backup (both suffixed UUID_* and legacy unsuffixed UUID) and unmount
+      // their squashfuse lower dirs.
+      const mountGlob = `/var/backups/mounts/${backupId}`;
+      await this.execWithSession(
+        `/usr/bin/fusermount3 -uz ${shellEscape(dir)} 2>/dev/null || true`,
+        backupSession
+      ).catch(() => {});
+      await this.execWithSession(
+        `for d in ${shellEscape(mountGlob)}_*/lower ${shellEscape(mountGlob)}/lower; do [ -d "$d" ] && /usr/bin/fusermount3 -uz "$d" 2>/dev/null; done; true`,
+        backupSession
+      ).catch(() => {});
+
+      // Step 4: Write archive to the container (skip if already present and
+      // same size — avoids overwriting a file that a lazily-unmounted
+      // squashfuse may still hold open).
+      const sizeCheck = await this.execWithSession(
+        `stat -c %s ${shellEscape(archivePath)} 2>/dev/null || echo 0`,
+        backupSession
+      ).catch(() => ({ stdout: '0' }));
+      const existingSize = Number.parseInt(
+        (sizeCheck.stdout ?? '0').trim(),
+        10
+      );
+
+      if (existingSize !== archiveHead.size) {
+        // Download archive via presigned URL (container curls directly from R2)
+        await this.downloadBackupPresigned(
+          archivePath,
+          r2Key,
+          archiveHead.size,
+          backupId,
+          dir,
+          backupSession
+        );
+      }
+
+      const restoreResult = await this.client.backup.restoreArchive(
+        dir,
+        archivePath,
+        backupSession
+      );
+
+      if (!restoreResult.success) {
+        throw new BackupRestoreError({
+          message: 'Container failed to restore backup archive',
+          code: ErrorCode.BACKUP_RESTORE_FAILED,
+          httpStatus: 500,
+          context: { dir, backupId },
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      this.logger.info('Backup restored', { backupId, dir });
+
+      return {
+        success: true,
+        dir,
+        id: backupId
+      };
+    } catch (error) {
+      // Clean up archive file on failure only — squashfuse needs it as
+      // backing storage for the lifetime of the mount
+      await this.execWithSession(
+        `rm -f ${shellEscape(archivePath)}`,
+        backupSession
+      ).catch(() => {});
+      throw error;
+    }
   }
 }

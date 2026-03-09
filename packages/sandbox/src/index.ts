@@ -2,7 +2,9 @@
 
 // Export the new client architecture
 export {
+  BackupClient,
   CommandClient,
+  DesktopClient,
   FileClient,
   GitClient,
   PortClient,
@@ -16,11 +18,13 @@ export { getSandbox, Sandbox } from './sandbox';
 
 // Export core SDK types for consumers
 export type {
+  BackupOptions,
   BaseExecOptions,
   BucketCredentials,
   BucketProvider,
   CodeContext,
   CreateContextOptions,
+  DirectoryBackup,
   ExecEvent,
   ExecOptions,
   ExecResult,
@@ -29,6 +33,8 @@ export type {
   FileChunk,
   FileMetadata,
   FileStreamEvent,
+  // File watch types
+  FileWatchSSEEvent,
   GitCheckoutResult,
   ISandbox,
   ListFilesOptions,
@@ -37,27 +43,38 @@ export type {
   Process,
   ProcessOptions,
   ProcessStatus,
+  PtyOptions,
+  RestoreBackupResult,
   RunCodeOptions,
   SandboxOptions,
   SessionOptions,
   StreamOptions,
-  // Process readiness types
   WaitForLogResult,
-  WaitForPortOptions
+  WaitForPortOptions,
+  WatchOptions
 } from '@repo/shared';
 // Export type guards for runtime validation
 export { isExecResult, isProcess, isProcessStatus } from '@repo/shared';
 // Export all client types from new architecture
 export type {
   BaseApiResponse,
+
+  // Desktop client types
+  ClickOptions,
   CommandsResponse,
   ContainerStub,
 
   // Utility client types
   CreateSessionRequest,
   CreateSessionResponse,
+  CursorPositionResponse,
   DeleteSessionRequest,
   DeleteSessionResponse,
+  Desktop,
+  DesktopStartOptions,
+  DesktopStartResponse,
+  DesktopStatusResponse,
+  DesktopStopResponse,
   ErrorResponse,
 
   // Command client types
@@ -72,6 +89,7 @@ export type {
   GitCheckoutRequest,
   // Base client types
   HttpClientOptions as SandboxClientOptions,
+  KeyInput,
 
   // File client types
   MkdirRequest,
@@ -88,10 +106,17 @@ export type {
   ReadFileRequest,
   RequestConfig,
   ResponseHandler,
+  ScreenSizeResponse,
+  ScreenshotBytesResponse,
+  ScreenshotOptions,
+  ScreenshotRegion,
+  ScreenshotResponse,
+  ScrollDirection,
   SessionRequest,
 
   // Process client types
   StartProcessRequest,
+  TypeOptions,
   UnexposePortRequest,
   WriteFileRequest
 } from './clients';
@@ -99,8 +124,19 @@ export type {
   ExecutionCallbacks,
   InterpreterClient
 } from './clients/interpreter-client.js';
-// Export process readiness errors
+// Export backup and process readiness errors
 export {
+  BackupCreateError,
+  BackupExpiredError,
+  BackupNotFoundError,
+  BackupRestoreError,
+  DesktopInvalidCoordinatesError,
+  DesktopInvalidOptionsError,
+  DesktopNotStartedError,
+  DesktopProcessCrashedError,
+  DesktopStartFailedError,
+  DesktopUnavailableError,
+  InvalidBackupConfigError,
   ProcessExitedBeforeReadyError,
   ProcessReadyTimeoutError
 } from './errors';
@@ -108,6 +144,7 @@ export {
 export { collectFile, streamFile } from './file-stream';
 // Export interpreter functionality
 export { CodeInterpreter } from './interpreter.js';
+export { proxyTerminal } from './pty';
 // Re-export request handler utilities
 export {
   proxyToSandbox,

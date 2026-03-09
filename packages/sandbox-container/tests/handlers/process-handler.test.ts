@@ -24,7 +24,6 @@ const mockProcessService = {
   killProcess: vi.fn(),
   killAllProcesses: vi.fn(),
   listProcesses: vi.fn(),
-  streamProcessLogs: vi.fn(),
   executeCommand: vi.fn()
 } as unknown as ProcessService;
 
@@ -491,9 +490,6 @@ describe('ProcessHandler', () => {
         statusListeners: new Set()
       };
 
-      (mockProcessService.streamProcessLogs as any).mockResolvedValue({
-        success: true
-      });
       (mockProcessService.getProcess as any).mockResolvedValue({
         success: true,
         data: mockProcessInfo
@@ -527,41 +523,11 @@ describe('ProcessHandler', () => {
       reader.releaseLock();
     });
 
-    it('should handle stream setup failures', async () => {
-      (mockProcessService.streamProcessLogs as any).mockResolvedValue({
-        success: false,
-        error: {
-          message: 'Stream setup failed',
-          code: 'PROCESS_NOT_FOUND'
-        }
-      });
-
-      const request = new Request(
-        'http://localhost:3000/api/process/proc-123/stream',
-        {
-          method: 'GET'
-        }
-      );
-
-      const response = await processHandler.handle(request, mockContext);
-
-      // HTTP status is auto-mapped based on error code
-      expect(response.status).toBe(404);
-      const responseData = (await response.json()) as ErrorResponse;
-      expect(responseData.code).toBe('PROCESS_NOT_FOUND');
-      expect(responseData.message).toBe('Stream setup failed');
-      expect(responseData.httpStatus).toBe(404);
-      expect(responseData.timestamp).toBeDefined();
-    });
-
-    it('should handle process not found during stream setup', async () => {
-      (mockProcessService.streamProcessLogs as any).mockResolvedValue({
-        success: true
-      });
+    it('should handle process not found during stream', async () => {
       (mockProcessService.getProcess as any).mockResolvedValue({
         success: false,
         error: {
-          message: 'Process not found for streaming',
+          message: 'Process not found',
           code: 'PROCESS_NOT_FOUND'
         }
       });
@@ -575,14 +541,87 @@ describe('ProcessHandler', () => {
 
       const response = await processHandler.handle(request, mockContext);
 
-      // HTTP status is auto-mapped: PROCESS_NOT_FOUND → 404
       expect(response.status).toBe(404);
       const responseData = (await response.json()) as ErrorResponse;
       expect(responseData.code).toBe('PROCESS_NOT_FOUND');
-      expect(responseData.message).toBe('Process not found for streaming');
+      expect(responseData.message).toBe('Process not found');
       expect(responseData.httpStatus).toBe(404);
       expect(responseData.timestamp).toBeDefined();
     });
+
+    it('should handle internal error during stream setup', async () => {
+      (mockProcessService.getProcess as any).mockResolvedValue({
+        success: false,
+        error: {
+          message: 'Internal error retrieving process',
+          code: 'INTERNAL_ERROR'
+        }
+      });
+
+      const request = new Request(
+        'http://localhost:3000/api/process/proc-123/stream',
+        {
+          method: 'GET'
+        }
+      );
+
+      const response = await processHandler.handle(request, mockContext);
+
+      expect(response.status).toBe(500);
+      const responseData = (await response.json()) as ErrorResponse;
+      expect(responseData.code).toBe('INTERNAL_ERROR');
+      expect(responseData.message).toBe('Internal error retrieving process');
+      expect(responseData.httpStatus).toBe(500);
+      expect(responseData.timestamp).toBeDefined();
+    });
+  });
+
+  it('should clean up listeners when stream is cancelled', async () => {
+    const outputListeners = new Set<
+      (stream: 'stdout' | 'stderr', data: string) => void
+    >();
+    const statusListeners = new Set<(status: string) => void>();
+
+    const mockProcessInfo: ProcessInfo = {
+      id: 'proc-cancel',
+      pid: 99999,
+      command: 'long-running',
+      status: 'running',
+      startTime: new Date('2023-01-01T00:00:00Z'),
+      sessionId: 'session-456',
+      stdout: '',
+      stderr: '',
+      outputListeners,
+      statusListeners
+    };
+
+    (mockProcessService.getProcess as any).mockResolvedValue({
+      success: true,
+      data: mockProcessInfo
+    });
+
+    const request = new Request(
+      'http://localhost:3000/api/process/proc-cancel/stream',
+      { method: 'GET' }
+    );
+
+    const response = await processHandler.handle(request, mockContext);
+    expect(response.status).toBe(200);
+
+    // Read the initial chunks to ensure listeners are registered
+    const reader = response.body!.getReader();
+    await reader.read(); // process_info event
+
+    // Listeners should be registered
+    expect(outputListeners.size).toBe(1);
+    expect(statusListeners.size).toBe(1);
+
+    // Cancel the stream
+    await reader.cancel();
+
+    // Listeners should be cleaned up
+    expect(outputListeners.size).toBe(0);
+    expect(statusListeners.size).toBe(0);
   });
 
   describe('route handling', () => {

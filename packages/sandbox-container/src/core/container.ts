@@ -1,5 +1,7 @@
 import type { Logger } from '@repo/shared';
 import { createLogger, GitLogger } from '@repo/shared';
+import { BackupHandler } from '../handlers/backup-handler';
+import { DesktopHandler } from '../handlers/desktop-handler';
 import { ExecuteHandler } from '../handlers/execute-handler';
 import { FileHandler } from '../handlers/file-handler';
 import { GitHandler } from '../handlers/git-handler';
@@ -7,11 +9,15 @@ import { InterpreterHandler } from '../handlers/interpreter-handler';
 import { MiscHandler } from '../handlers/misc-handler';
 import { PortHandler } from '../handlers/port-handler';
 import { ProcessHandler } from '../handlers/process-handler';
+import { PtyWebSocketHandler } from '../handlers/pty-ws-handler';
 import { SessionHandler } from '../handlers/session-handler';
+import { WatchHandler } from '../handlers/watch-handler';
 import { CorsMiddleware } from '../middleware/cors';
 import { LoggingMiddleware } from '../middleware/logging';
 import { SecurityServiceAdapter } from '../security/security-adapter';
 import { SecurityService } from '../security/security-service';
+import { BackupService } from '../services/backup-service';
+import { DesktopService } from '../services/desktop-service';
 import { FileService } from '../services/file-service';
 import { GitService } from '../services/git-service';
 import { InterpreterService } from '../services/interpreter-service';
@@ -19,6 +25,7 @@ import { InMemoryPortStore, PortService } from '../services/port-service';
 import { ProcessService } from '../services/process-service';
 import { ProcessStore } from '../services/process-store';
 import { SessionManager } from '../services/session-manager';
+import { WatchService } from '../services/watch-service';
 
 export interface Dependencies {
   // Services
@@ -27,12 +34,16 @@ export interface Dependencies {
   portService: PortService;
   gitService: GitService;
   interpreterService: InterpreterService;
+  backupService: BackupService;
+  desktopService: DesktopService;
+  watchService: WatchService;
 
   // Infrastructure
   logger: Logger;
   security: SecurityService;
 
   // Handlers
+  backupHandler: BackupHandler;
   executeHandler: ExecuteHandler;
   fileHandler: FileHandler;
   processHandler: ProcessHandler;
@@ -41,6 +52,9 @@ export interface Dependencies {
   interpreterHandler: InterpreterHandler;
   sessionHandler: SessionHandler;
   miscHandler: MiscHandler;
+  desktopHandler: DesktopHandler;
+  ptyWsHandler: PtyWebSocketHandler;
+  watchHandler: WatchHandler;
 
   // Middleware
   corsMiddleware: CorsMiddleware;
@@ -112,8 +126,12 @@ export class Container {
       sessionManager
     );
     const interpreterService = new InterpreterService(logger);
+    const backupService = new BackupService(logger, sessionManager);
+    const desktopService = new DesktopService(logger);
+    const watchService = new WatchService(logger);
 
     // Initialize handlers
+    const backupHandler = new BackupHandler(backupService, logger);
     const sessionHandler = new SessionHandler(sessionManager, logger);
     const executeHandler = new ExecuteHandler(processService, logger);
     const fileHandler = new FileHandler(fileService, logger);
@@ -125,6 +143,9 @@ export class Container {
       logger
     );
     const miscHandler = new MiscHandler(logger);
+    const desktopHandler = new DesktopHandler(desktopService, logger);
+    const ptyWsHandler = new PtyWebSocketHandler(sessionManager, logger);
+    const watchHandler = new WatchHandler(watchService, logger);
 
     // Initialize middleware
     const corsMiddleware = new CorsMiddleware();
@@ -138,12 +159,16 @@ export class Container {
       portService,
       gitService,
       interpreterService,
+      backupService,
+      desktopService,
+      watchService,
 
       // Infrastructure
       logger,
       security,
 
       // Handlers
+      backupHandler,
       executeHandler,
       fileHandler,
       processHandler,
@@ -152,6 +177,9 @@ export class Container {
       interpreterHandler,
       sessionHandler,
       miscHandler,
+      desktopHandler,
+      ptyWsHandler,
+      watchHandler,
 
       // Middleware
       corsMiddleware,

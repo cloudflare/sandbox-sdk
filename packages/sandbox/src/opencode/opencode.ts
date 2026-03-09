@@ -1,5 +1,6 @@
 import { switchPort } from '@cloudflare/containers';
-import type { Config } from '@opencode-ai/sdk';
+import type { Config } from '@opencode-ai/sdk/v2';
+import type { OpencodeClient } from '@opencode-ai/sdk/v2/client';
 import { createLogger, type Logger, type Process } from '@repo/shared';
 import type { Sandbox } from '../sandbox';
 import type { OpencodeOptions, OpencodeResult, OpencodeServer } from './types';
@@ -11,6 +12,7 @@ function getLogger(): Logger {
 }
 
 const DEFAULT_PORT = 4096;
+const OPENCODE_STARTUP_TIMEOUT_MS = 180_000;
 const OPENCODE_SERVE = (port: number) =>
   `opencode serve --port ${port} --hostname 0.0.0.0`;
 
@@ -23,16 +25,21 @@ function buildOpencodeCommand(port: number, directory?: string): string {
   return directory ? `cd ${directory} && ${serve}` : serve;
 }
 
+type OpencodeClientFactory = (options: {
+  baseUrl: string;
+  fetch: typeof fetch;
+  directory?: string;
+}) => OpencodeClient;
+
 // Dynamic import to handle peer dependency
-// Using unknown since SDK is optional peer dep - cast at usage site
-let createOpencodeClient: unknown;
+let createOpencodeClient: OpencodeClientFactory | undefined;
 
 async function ensureSdkLoaded(): Promise<void> {
   if (createOpencodeClient) return;
 
   try {
-    const sdk = await import('@opencode-ai/sdk');
-    createOpencodeClient = sdk.createOpencodeClient;
+    const sdk = await import('@opencode-ai/sdk/v2/client');
+    createOpencodeClient = sdk.createOpencodeClient as OpencodeClientFactory;
   } catch {
     throw new Error(
       '@opencode-ai/sdk is required for OpenCode integration. ' +
@@ -89,8 +96,9 @@ async function ensureOpencodeServer(
       try {
         await existingProcess.waitForPort(port, {
           mode: 'http',
-          path: '/',
-          timeout: 60_000
+          path: '/path',
+          status: 200,
+          timeout: OPENCODE_STARTUP_TIMEOUT_MS
         });
       } catch (e) {
         const logs = await existingProcess.getLogs();
@@ -128,8 +136,9 @@ async function ensureOpencodeServer(
         try {
           await retryProcess.waitForPort(port, {
             mode: 'http',
-            path: '/',
-            timeout: 60_000
+            path: '/path',
+            status: 200,
+            timeout: OPENCODE_STARTUP_TIMEOUT_MS
           });
         } catch (e) {
           const logs = await retryProcess.getLogs();
@@ -176,7 +185,7 @@ async function startOpencodeServer(
       for (const [providerId, providerConfig] of Object.entries(
         config.provider
       )) {
-        if (providerId === 'cloudflareAIGateway') {
+        if (providerId === 'cloudflare-ai-gateway') {
           continue;
         }
 
@@ -193,7 +202,7 @@ async function startOpencodeServer(
         }
       }
 
-      const aiGatewayConfig = config.provider.cloudflareAIGateway;
+      const aiGatewayConfig = config.provider['cloudflare-ai-gateway'];
       if (aiGatewayConfig?.options) {
         const options = aiGatewayConfig.options as Record<string, unknown>;
 
@@ -217,12 +226,13 @@ async function startOpencodeServer(
     env: Object.keys(env).length > 0 ? env : undefined
   });
 
-  // Wait for server to be ready
+  // Wait for server to be ready - check the actual health endpoint
   try {
     await process.waitForPort(port, {
       mode: 'http',
-      path: '/',
-      timeout: 60_000
+      path: '/path',
+      status: 200,
+      timeout: OPENCODE_STARTUP_TIMEOUT_MS
     });
     getLogger().info('OpenCode server started successfully', {
       port,
@@ -271,14 +281,15 @@ async function startOpencodeServer(
  *       anthropic: {
  *         options: { apiKey: env.ANTHROPIC_KEY }
  *       },
- *       // Optional: Route all providers through Cloudflare AI Gateway
- *       cloudflareAIGateway: {
- *         options: {
- *           accountId: env.CF_ACCOUNT_ID,
- *           gatewayId: env.CF_GATEWAY_ID,
- *           apiToken: env.CF_API_TOKEN
- *         }
- *       }
+ *       // Or use Cloudflare AI Gateway (with unified billing, no provider keys needed).
+ *       // 'cloudflare-ai-gateway': {
+ *       //   options: {
+ *       //     accountId: env.CF_ACCOUNT_ID,
+ *       //     gatewayId: env.CF_GATEWAY_ID,
+ *       //     apiToken: env.CF_API_TOKEN
+ *       //   },
+ *       //   models: { 'anthropic/claude-sonnet-4-5-20250929': {} }
+ *       // }
  *     }
  *   }
  * })
@@ -336,14 +347,15 @@ export async function createOpencodeServer(
  *       anthropic: {
  *         options: { apiKey: env.ANTHROPIC_KEY }
  *       },
- *       // Optional: Route all providers through Cloudflare AI Gateway
- *       cloudflareAIGateway: {
- *         options: {
- *           accountId: env.CF_ACCOUNT_ID,
- *           gatewayId: env.CF_GATEWAY_ID,
- *           apiToken: env.CF_API_TOKEN
- *         }
- *       }
+ *       // Or use Cloudflare AI Gateway (with unified billing, no provider keys needed).
+ *       // 'cloudflare-ai-gateway': {
+ *       //   options: {
+ *       //     accountId: env.CF_ACCOUNT_ID,
+ *       //     gatewayId: env.CF_GATEWAY_ID,
+ *       //     apiToken: env.CF_API_TOKEN
+ *       //   },
+ *       //   models: { 'anthropic/claude-sonnet-4-5-20250929': {} }
+ *       // }
  *     }
  *   }
  * })
@@ -355,7 +367,7 @@ export async function createOpencodeServer(
  * await server.close()
  * ```
  */
-export async function createOpencode<TClient = unknown>(
+export async function createOpencode<TClient = OpencodeClient>(
   sandbox: Sandbox<unknown>,
   options?: OpencodeOptions
 ): Promise<OpencodeResult<TClient>> {
@@ -363,19 +375,33 @@ export async function createOpencode<TClient = unknown>(
 
   const server = await createOpencodeServer(sandbox, options);
 
-  // Create SDK client with Sandbox transport
-  // Cast from unknown - SDK is optional peer dependency loaded dynamically
-  const clientFactory = createOpencodeClient as (options: {
-    baseUrl: string;
-    fetch: (request: Request) => Promise<Response>;
-  }) => TClient;
+  const clientFactory = createOpencodeClient;
+  if (!clientFactory) {
+    throw new Error('OpenCode SDK client unavailable.');
+  }
 
   const client = clientFactory({
     baseUrl: server.url,
-    fetch: (request: Request) => sandbox.containerFetch(request, server.port)
+    fetch: (input, init?) =>
+      sandbox.containerFetch(new Request(input, init), server.port)
   });
 
-  return { client, server };
+  return { client: client as TClient, server };
+}
+
+/**
+ * Proxy a request directly to the OpenCode server.
+ *
+ * Unlike `proxyToOpencode()`, this helper does not apply any web UI redirects
+ * or query parameter rewrites. Use it for API/CLI traffic where raw request
+ * forwarding is preferred.
+ */
+export function proxyToOpencodeServer(
+  request: Request,
+  sandbox: Sandbox<unknown>,
+  server: OpencodeServer
+): Promise<Response> {
+  return sandbox.containerFetch(request, server.port);
 }
 
 /**
@@ -410,7 +436,7 @@ export async function createOpencode<TClient = unknown>(
  *             options: { apiKey: env.ANTHROPIC_KEY }
  *           },
  *           // Optional: Route all providers through Cloudflare AI Gateway
- *           cloudflareAIGateway: {
+ *           'cloudflare-ai-gateway': {
  *             options: {
  *               accountId: env.CF_ACCOUNT_ID,
  *               gatewayId: env.CF_GATEWAY_ID,
@@ -451,7 +477,7 @@ export async function proxyToOpencode(
     }
   }
 
-  const response = await sandbox.containerFetch(request, server.port);
+  const response = await proxyToOpencodeServer(request, sandbox, server);
 
   // Modify CSP headers to allow Ghostty WASM loading (skip for WebSocket responses)
   const csp = response.headers.get('Content-Security-Policy');

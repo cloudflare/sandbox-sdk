@@ -9,10 +9,17 @@
  * - SandboxPython: Full image with Python (for code interpreter tests)
  * - SandboxOpencode: Image with OpenCode CLI (for OpenCode integration tests)
  * - SandboxStandalone: Standalone binary on arbitrary base image (for binary pattern tests)
+ * - SandboxMusl: Musl-based Alpine image variant (for musl binary tests)
  *
- * Use X-Sandbox-Type header to select: 'python', 'opencode', 'standalone', or default
+ * Use X-Sandbox-Type header to select: 'python', 'opencode', 'standalone', 'musl', or default
  */
+
 import { getSandbox, proxyToSandbox, Sandbox } from '@cloudflare/sandbox';
+import {
+  createOpencodeServer,
+  proxyToOpencodeServer
+} from '@cloudflare/sandbox/opencode';
+
 import type {
   BucketDeleteResponse,
   BucketGetResponse,
@@ -33,18 +40,126 @@ export { Sandbox };
 export { Sandbox as SandboxPython };
 export { Sandbox as SandboxOpencode };
 export { Sandbox as SandboxStandalone };
+export { Sandbox as SandboxMusl };
+export { Sandbox as SandboxDesktop };
 
 interface Env {
   Sandbox: DurableObjectNamespace<Sandbox>;
   SandboxPython: DurableObjectNamespace<Sandbox>;
   SandboxOpencode: DurableObjectNamespace<Sandbox>;
   SandboxStandalone: DurableObjectNamespace<Sandbox>;
+  SandboxMusl: DurableObjectNamespace<Sandbox>;
+  SandboxDesktop: DurableObjectNamespace<Sandbox>;
   TEST_BUCKET: R2Bucket;
+  BACKUP_BUCKET: R2Bucket;
   // R2 credentials for bucket mounting tests
   CLOUDFLARE_ACCOUNT_ID?: string;
   AWS_ACCESS_KEY_ID?: string;
   AWS_SECRET_ACCESS_KEY?: string;
+  // R2 credentials for backup presigned URL transfers
+  R2_ACCESS_KEY_ID?: string;
+  R2_SECRET_ACCESS_KEY?: string;
+  BACKUP_BUCKET_NAME?: string;
+  DEPLOY_HASH?: string;
 }
+
+/**
+ * Interface for SandboxError shape (direct calls preserve errorResponse property).
+ * Used for type-safe error handling without importing the actual class.
+ */
+interface SandboxErrorLike extends Error {
+  errorResponse: {
+    message: string;
+    code?: string;
+    context?: Record<string, unknown>;
+    httpStatus?: number;
+    suggestion?: string;
+  };
+  code?: string;
+  context?: Record<string, unknown>;
+  httpStatus?: number;
+  suggestion?: string;
+}
+
+/**
+ * Type guard for SandboxError-like objects.
+ * Checks for the errorResponse property that direct calls preserve.
+ */
+function isSandboxErrorLike(error: unknown): error is SandboxErrorLike {
+  return (
+    error instanceof Error &&
+    'errorResponse' in error &&
+    typeof error.errorResponse === 'object' &&
+    error.errorResponse !== null
+  );
+}
+
+/**
+ * Maps SandboxError subclass names to HTTP status codes and error codes.
+ * Used as a fallback when errors cross the Cloudflare RPC boundary,
+ * which strips own properties and prototype getters, preserving only
+ * error.name and error.message.
+ */
+const ERROR_NAME_MAP: Record<string, { status: number; code: string }> = {
+  // Backup errors
+  BackupNotFoundError: { status: 404, code: 'BACKUP_NOT_FOUND' },
+  BackupExpiredError: { status: 400, code: 'BACKUP_EXPIRED' },
+  InvalidBackupConfigError: { status: 400, code: 'INVALID_BACKUP_CONFIG' },
+  BackupCreateError: { status: 500, code: 'BACKUP_CREATE_FAILED' },
+  BackupRestoreError: { status: 500, code: 'BACKUP_RESTORE_FAILED' },
+  // File errors
+  FileNotFoundError: { status: 404, code: 'FILE_NOT_FOUND' },
+  FileExistsError: { status: 409, code: 'FILE_EXISTS' },
+  FileSystemError: { status: 500, code: 'FILESYSTEM_ERROR' },
+  PermissionDeniedError: { status: 403, code: 'PERMISSION_DENIED' },
+  // Command errors
+  CommandNotFoundError: { status: 404, code: 'COMMAND_NOT_FOUND' },
+  CommandError: { status: 500, code: 'COMMAND_EXECUTION_ERROR' },
+  // Process errors
+  ProcessNotFoundError: { status: 404, code: 'PROCESS_NOT_FOUND' },
+  ProcessError: { status: 500, code: 'PROCESS_ERROR' },
+  ProcessReadyTimeoutError: { status: 408, code: 'PROCESS_READY_TIMEOUT' },
+  ProcessExitedBeforeReadyError: {
+    status: 500,
+    code: 'PROCESS_EXITED_BEFORE_READY'
+  },
+  // Port errors
+  PortAlreadyExposedError: { status: 409, code: 'PORT_ALREADY_EXPOSED' },
+  PortNotExposedError: { status: 404, code: 'PORT_NOT_EXPOSED' },
+  InvalidPortError: { status: 400, code: 'INVALID_PORT' },
+  PortInUseError: { status: 409, code: 'PORT_IN_USE' },
+  ServiceNotRespondingError: { status: 502, code: 'SERVICE_NOT_RESPONDING' },
+  CustomDomainRequiredError: { status: 400, code: 'CUSTOM_DOMAIN_REQUIRED' },
+  // Git errors
+  GitRepositoryNotFoundError: {
+    status: 404,
+    code: 'GIT_REPOSITORY_NOT_FOUND'
+  },
+  GitAuthenticationError: { status: 401, code: 'GIT_AUTH_FAILED' },
+  GitBranchNotFoundError: { status: 404, code: 'GIT_BRANCH_NOT_FOUND' },
+  GitNetworkError: { status: 502, code: 'GIT_NETWORK_ERROR' },
+  InvalidGitUrlError: { status: 400, code: 'INVALID_GIT_URL' },
+  GitCloneError: { status: 500, code: 'GIT_CLONE_FAILED' },
+  GitCheckoutError: { status: 500, code: 'GIT_CHECKOUT_FAILED' },
+  // Code interpreter errors
+  InterpreterNotReadyError: { status: 503, code: 'INTERPRETER_NOT_READY' },
+  ContextNotFoundError: { status: 404, code: 'CONTEXT_NOT_FOUND' },
+  CodeExecutionError: { status: 500, code: 'CODE_EXECUTION_ERROR' },
+  // Session errors
+  SessionAlreadyExistsError: { status: 409, code: 'SESSION_ALREADY_EXISTS' },
+  // Port errors (generic)
+  PortError: { status: 500, code: 'PORT_OPERATION_ERROR' },
+  // Git errors (generic)
+  GitError: { status: 500, code: 'GIT_OPERATION_FAILED' },
+  // Validation errors
+  ValidationFailedError: { status: 400, code: 'VALIDATION_FAILED' },
+  DesktopNotStartedError: { status: 400, code: 'DESKTOP_NOT_STARTED' },
+  DesktopAlreadyRunningError: { status: 409, code: 'DESKTOP_ALREADY_RUNNING' },
+  DesktopStartError: { status: 500, code: 'DESKTOP_START_FAILED' },
+  DesktopInputError: { status: 400, code: 'DESKTOP_INPUT_FAILED' },
+  DesktopScreenshotError: { status: 500, code: 'DESKTOP_SCREENSHOT_FAILED' },
+  DesktopProcessError: { status: 500, code: 'DESKTOP_PROCESS_ERROR' }
+};
 
 async function parseBody(request: Request): Promise<any> {
   try {
@@ -63,10 +178,12 @@ export default {
     const url = new URL(request.url);
     const body = await parseBody(request);
 
-    // Get sandbox ID from header
+    // Get sandbox ID from header or query param (WebSocket can't send headers)
     // Sandbox ID determines which container instance (Durable Object)
     const sandboxId =
-      request.headers.get('X-Sandbox-Id') || 'default-test-sandbox';
+      request.headers.get('X-Sandbox-Id') ||
+      url.searchParams.get('sandboxId') ||
+      'default-test-sandbox';
 
     // Check if keepAlive is requested
     const keepAliveHeader = request.headers.get('X-Sandbox-KeepAlive');
@@ -81,6 +198,10 @@ export default {
       sandboxNamespace = env.SandboxOpencode;
     } else if (sandboxType === 'standalone') {
       sandboxNamespace = env.SandboxStandalone;
+    } else if (sandboxType === 'musl') {
+      sandboxNamespace = env.SandboxMusl;
+    } else if (sandboxType === 'desktop') {
+      sandboxNamespace = env.SandboxDesktop;
     } else {
       sandboxNamespace = env.Sandbox;
     }
@@ -102,14 +223,19 @@ export default {
       // WebSocket init endpoint - starts all WebSocket servers
       if (url.pathname === '/api/init' && request.method === 'POST') {
         const processes = await sandbox.listProcesses();
-        const runningServers = new Set(
-          processes.filter((p) => p.status === 'running').map((p) => p.id)
-        );
+        const isServerRunning = (commandFragment: string): boolean =>
+          processes.some(
+            (p) => p.status === 'running' && p.command.includes(commandFragment)
+          );
 
-        const serversToStart = [];
+        const serversToStart: Array<{
+          name: string;
+          port: number;
+          start: Promise<Process>;
+        }> = [];
 
         // Echo server
-        if (!runningServers.has('ws-echo-8080')) {
+        if (!isServerRunning('/tmp/ws-echo.ts')) {
           const echoScript = `
 const port = 8080;
 Bun.serve({
@@ -127,15 +253,15 @@ Bun.serve({
 console.log('Echo server on port ' + port);
 `;
           await sandbox.writeFile('/tmp/ws-echo.ts', echoScript);
-          serversToStart.push(
-            sandbox.startProcess('bun run /tmp/ws-echo.ts', {
-              processId: 'ws-echo-8080'
-            })
-          );
+          serversToStart.push({
+            name: 'echo',
+            port: 8080,
+            start: sandbox.startProcess('bun run /tmp/ws-echo.ts')
+          });
         }
 
         // Python code server
-        if (!runningServers.has('ws-code-8081')) {
+        if (!isServerRunning('/tmp/ws-code.ts')) {
           const codeScript = `
 const port = 8081;
 Bun.serve({
@@ -190,15 +316,15 @@ Bun.serve({
 console.log('Code server on port ' + port);
 `;
           await sandbox.writeFile('/tmp/ws-code.ts', codeScript);
-          serversToStart.push(
-            sandbox.startProcess('bun run /tmp/ws-code.ts', {
-              processId: 'ws-code-8081'
-            })
-          );
+          serversToStart.push({
+            name: 'code',
+            port: 8081,
+            start: sandbox.startProcess('bun run /tmp/ws-code.ts')
+          });
         }
 
         // Terminal server
-        if (!runningServers.has('ws-terminal-8082')) {
+        if (!isServerRunning('/tmp/ws-terminal.ts')) {
           const terminalScript = `
 const port = 8082;
 Bun.serve({
@@ -229,15 +355,26 @@ Bun.serve({
 console.log('Terminal server on port ' + port);
 `;
           await sandbox.writeFile('/tmp/ws-terminal.ts', terminalScript);
-          serversToStart.push(
-            sandbox.startProcess('bun run /tmp/ws-terminal.ts', {
-              processId: 'ws-terminal-8082'
-            })
-          );
+          serversToStart.push({
+            name: 'terminal',
+            port: 8082,
+            start: sandbox.startProcess('bun run /tmp/ws-terminal.ts')
+          });
         }
 
-        // Start all servers and track results
-        const results = await Promise.allSettled(serversToStart);
+        // Start all servers and wait until their target ports are accepting connections.
+        const results = await Promise.allSettled(
+          serversToStart.map(async (server) => {
+            const process = await server.start;
+            await process.waitForPort(server.port, {
+              mode: 'tcp',
+              timeout: 30000,
+              interval: 250
+            });
+            return server.name;
+          })
+        );
+
         const failedCount = results.filter(
           (r) => r.status === 'rejected'
         ).length;
@@ -282,10 +419,50 @@ console.log('Terminal server on port ' + port);
 
       // Health check
       if (url.pathname === '/health') {
-        const response: HealthResponse = { status: 'ok' };
+        const response: HealthResponse = {
+          status: 'ok',
+          deploy_hash: env.DEPLOY_HASH
+        };
         return new Response(JSON.stringify(response), {
           headers: { 'Content-Type': 'application/json' }
         });
+      }
+
+      // OpenCode direct server proxy helper
+      if (
+        url.pathname === '/api/opencode/proxy-server/global-health' &&
+        request.method === 'GET'
+      ) {
+        let server:
+          | Awaited<ReturnType<typeof createOpencodeServer>>
+          | undefined;
+
+        try {
+          server = await createOpencodeServer(sandbox, {
+            port: 4096
+          });
+
+          const opencodeRequest = new Request(
+            `${url.origin}/global/health${url.search}`,
+            request
+          );
+
+          const response = await proxyToOpencodeServer(
+            opencodeRequest,
+            sandbox,
+            server
+          );
+          const body = await response.arrayBuffer();
+
+          return new Response(body, {
+            status: response.status,
+            headers: response.headers
+          });
+        } finally {
+          if (server) {
+            await server.close();
+          }
+        }
       }
 
       // Session management
@@ -571,13 +748,18 @@ console.log('Terminal server on port ' + port);
             headers: { 'Content-Type': 'application/json' }
           });
         }
-        // Build WaitForPortOptions from request body
+        // Build WaitForPortOptions from request body.
+        // Accept both flat fields and nested `options` payloads.
+        const waitOptions =
+          body.options && typeof body.options === 'object'
+            ? body.options
+            : body;
         await process.waitForPort(body.port, {
-          mode: body.mode,
-          path: body.path,
-          status: body.status,
-          timeout: body.timeout,
-          interval: body.interval
+          mode: waitOptions.mode,
+          path: waitOptions.path,
+          status: waitOptions.status,
+          timeout: waitOptions.timeout,
+          interval: waitOptions.interval
         });
         return new Response(JSON.stringify({ success: true }), {
           headers: { 'Content-Type': 'application/json' }
@@ -810,6 +992,40 @@ console.log('Terminal server on port ' + port);
         });
       }
 
+      // Backup - Create backup
+      if (url.pathname === '/api/backup/create' && request.method === 'POST') {
+        const backup = await sandbox.createBackup(body);
+        return new Response(JSON.stringify(backup), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      // Backup - Restore backup
+      if (url.pathname === '/api/backup/restore' && request.method === 'POST') {
+        const result = await sandbox.restoreBackup(body);
+        return new Response(JSON.stringify(result), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      // File Watch - Stream events via public Sandbox API.
+      if (url.pathname === '/api/watch' && request.method === 'POST') {
+        const stream = await sandbox.watch(body.path, {
+          recursive: body.recursive,
+          include: body.include,
+          exclude: body.exclude,
+          sessionId: sessionId ?? undefined
+        });
+
+        return new Response(stream, {
+          headers: {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            Connection: 'keep-alive'
+          }
+        });
+      }
+
       // Cleanup endpoint - destroys the sandbox container
       // This is used by E2E tests to explicitly clean up after each test
       if (url.pathname === '/cleanup' && request.method === 'POST') {
@@ -823,8 +1039,208 @@ console.log('Terminal server on port ' + port);
         });
       }
 
+      // PTY: Browser test page for Playwright tests
+      if (url.pathname === '/terminal-test') {
+        const sessionId =
+          url.searchParams.get('sessionId') || `browser-test-${Date.now()}`;
+        return new Response(getTerminalTestPage(sandboxId, sessionId), {
+          headers: { 'Content-Type': 'text/html' }
+        });
+      }
+
+      // PTY: WebSocket terminal proxy
+      if (
+        url.pathname === '/terminal' ||
+        url.pathname.startsWith('/terminal/')
+      ) {
+        const upgradeHeader = request.headers.get('Upgrade');
+        if (upgradeHeader?.toLowerCase() !== 'websocket') {
+          return new Response('WebSocket upgrade required', { status: 426 });
+        }
+
+        const pathParts = url.pathname.split('/').filter(Boolean);
+
+        if (pathParts.length === 1) {
+          return sandbox.terminal(request, {
+            cols: parseInt(url.searchParams.get('cols') || '80', 10),
+            rows: parseInt(url.searchParams.get('rows') || '24', 10)
+          });
+        } else {
+          const ptySessionId = pathParts[1];
+          const session = await sandbox.getSession(ptySessionId);
+          return session.terminal(request, {
+            cols: parseInt(url.searchParams.get('cols') || '80', 10),
+            rows: parseInt(url.searchParams.get('rows') || '24', 10)
+          });
+        }
+      }
+
+      if (url.pathname === '/api/desktop/start' && request.method === 'POST') {
+        const result = await sandbox.desktop.start(body);
+        return new Response(JSON.stringify(result), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (url.pathname === '/api/desktop/stop' && request.method === 'POST') {
+        const result = await sandbox.desktop.stop();
+        return new Response(JSON.stringify(result), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (url.pathname === '/api/desktop/status' && request.method === 'GET') {
+        const result = await sandbox.desktop.status();
+        return new Response(JSON.stringify(result), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (
+        url.pathname === '/api/desktop/screenshot' &&
+        request.method === 'POST'
+      ) {
+        const result = await sandbox.desktop.screenshot(body);
+        return new Response(JSON.stringify(result), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (url.pathname === '/api/desktop/click' && request.method === 'POST') {
+        await sandbox.desktop.click(body.x, body.y, body.options);
+        return new Response(JSON.stringify({ success: true }), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (
+        url.pathname === '/api/desktop/mouse/move' &&
+        request.method === 'POST'
+      ) {
+        await sandbox.desktop.moveMouse(body.x, body.y);
+        return new Response(JSON.stringify({ success: true }), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (
+        url.pathname === '/api/desktop/mouse/scroll' &&
+        request.method === 'POST'
+      ) {
+        await sandbox.desktop.scroll(
+          body.x,
+          body.y,
+          body.direction,
+          body.amount
+        );
+        return new Response(JSON.stringify({ success: true }), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (url.pathname === '/api/desktop/type' && request.method === 'POST') {
+        await sandbox.desktop.type(body.text, body.options);
+        return new Response(JSON.stringify({ success: true }), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (url.pathname === '/api/desktop/press' && request.method === 'POST') {
+        await sandbox.desktop.press(body.key);
+        return new Response(JSON.stringify({ success: true }), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (
+        url.pathname === '/api/desktop/screen/size' &&
+        request.method === 'GET'
+      ) {
+        const result = await sandbox.desktop.getScreenSize();
+        return new Response(JSON.stringify(result), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (
+        url.pathname === '/api/desktop/cursor/position' &&
+        request.method === 'GET'
+      ) {
+        const result = await sandbox.desktop.getCursorPosition();
+        return new Response(JSON.stringify(result), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (
+        url.pathname === '/api/desktop/stream-url' &&
+        request.method === 'POST'
+      ) {
+        const hostname = url.hostname + (url.port ? `:${url.port}` : '');
+        const result = await sandbox.getDesktopStreamUrl(hostname, body);
+        return new Response(JSON.stringify(result), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
       return new Response('Not found', { status: 404 });
     } catch (error) {
+      // Handle SandboxError with proper code and httpStatus.
+      //
+      // Two paths exist:
+      // 1. Direct calls (error has `errorResponse` own property)
+      // 2. RPC calls (only `error.name` and `error.message` survive the
+      //    Cloudflare RPC boundary — own properties are stripped)
+      //
+      // We try (1) first, then fall back to (2) using error.name mapping.
+      if (isSandboxErrorLike(error)) {
+        return new Response(
+          JSON.stringify({
+            error: error.message,
+            code: error.code,
+            context: error.context,
+            suggestion: error.suggestion
+          }),
+          {
+            status: error.httpStatus ?? 500,
+            headers: { 'Content-Type': 'application/json' }
+          }
+        );
+      }
+
+      // RPC fallback: derive HTTP status and error code from error.name
+      // Cloudflare RPC strips custom error classes, converting them to generic Error
+      // but preserves the class name in the message as "ClassName: actual message"
+      if (error instanceof Error) {
+        let errorName = error.name;
+        let errorMessage = error.message;
+
+        // Try to extract original error class from message format "ClassName: message"
+        if (errorName === 'Error' && error.message.includes(': ')) {
+          const colonIndex = error.message.indexOf(': ');
+          const potentialClassName = error.message.slice(0, colonIndex);
+          // Only use it if it looks like an error class name (PascalCase ending in Error)
+          if (/^[A-Z][a-zA-Z]*Error$/.test(potentialClassName)) {
+            errorName = potentialClassName;
+            errorMessage = error.message.slice(colonIndex + 2);
+          }
+        }
+
+        const mapping = ERROR_NAME_MAP[errorName];
+        if (mapping) {
+          return new Response(
+            JSON.stringify({
+              error: errorMessage,
+              code: mapping.code
+            }),
+            {
+              status: mapping.status,
+              headers: { 'Content-Type': 'application/json' }
+            }
+          );
+        }
+      }
+
       return new Response(
         JSON.stringify({
           error: error instanceof Error ? error.message : 'Unknown error'
@@ -837,3 +1253,106 @@ console.log('Terminal server on port ' + port);
     }
   }
 };
+
+function getTerminalTestPage(sandboxId: string, sessionId: string): string {
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <title>Terminal Test</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css">
+  <style>
+    body { margin: 0; padding: 20px; background: #1e1e1e; }
+    #terminal { width: 100%; height: 400px; }
+    #status { color: white; margin-bottom: 10px; font-family: monospace; }
+  </style>
+</head>
+<body>
+  <div id="status" data-testid="connection-status">disconnected</div>
+  <div id="terminal" data-testid="terminal-container"></div>
+
+  <script type="module">
+    import { Terminal } from 'https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/+esm';
+    import { FitAddon } from 'https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/+esm';
+
+    const term = new Terminal({ cursorBlink: true, fontSize: 14 });
+    const fitAddon = new FitAddon();
+    term.loadAddon(fitAddon);
+    term.open(document.getElementById('terminal'));
+    fitAddon.fit();
+
+    const statusEl = document.getElementById('status');
+    const sandboxId = '${sandboxId}';
+    const sessionId = '${sessionId}';
+
+    let ws = null;
+    let reconnectAttempts = 0;
+    const maxReconnectAttempts = 10;
+
+    function updateStatus(status) {
+      statusEl.textContent = status;
+      statusEl.dataset.testid = 'connection-status';
+    }
+
+    function connect() {
+      updateStatus('connecting');
+      const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = protocol + '//' + location.host + '/terminal/' + sessionId + '?sandboxId=' + sandboxId;
+      
+      ws = new WebSocket(wsUrl);
+      ws.binaryType = 'arraybuffer';
+
+      ws.onopen = () => {
+        term.onData(data => {
+          if (ws?.readyState === WebSocket.OPEN) {
+            ws.send(new TextEncoder().encode(data));
+          }
+        });
+
+        term.onResize(({ cols, rows }) => {
+          if (ws?.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'resize', cols, rows }));
+          }
+        });
+      };
+
+      ws.onmessage = (event) => {
+        if (event.data instanceof ArrayBuffer) {
+          term.write(new Uint8Array(event.data));
+        } else if (typeof event.data === 'string') {
+          try {
+            const msg = JSON.parse(event.data);
+            if (msg.type === 'ready') {
+              reconnectAttempts = 0;
+              updateStatus('connected');
+              ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+            } else if (msg.type === 'error') {
+              console.error('Server error:', msg.message);
+            }
+          } catch {}
+        }
+      };
+
+      ws.onclose = () => {
+        updateStatus('disconnected');
+        if (reconnectAttempts < maxReconnectAttempts) {
+          const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
+          reconnectAttempts++;
+          setTimeout(connect, delay);
+        }
+      };
+
+      ws.onerror = () => {
+        console.error('WebSocket error');
+      };
+    }
+
+    window.addEventListener('resize', () => fitAddon.fit());
+    window.terminalConnect = connect;
+    window.terminalDisconnect = () => { ws?.close(); ws = null; };
+    window.testCloseWs = () => { ws?.close(); };
+
+    connect();
+  </script>
+</body>
+</html>`;
+}

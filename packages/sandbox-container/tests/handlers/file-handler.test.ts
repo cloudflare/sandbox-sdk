@@ -69,7 +69,8 @@ describe('FileHandler', () => {
     it('should read file successfully', async () => {
       const readFileData = {
         path: '/tmp/test.txt',
-        encoding: 'utf-8'
+        encoding: 'utf-8',
+        sessionId: 'session-id'
       };
       const fileContent = 'Hello, World!';
 
@@ -94,9 +95,13 @@ describe('FileHandler', () => {
       expect(responseData.timestamp).toBeDefined();
 
       // Verify service was called correctly
-      expect(mockFileService.readFile).toHaveBeenCalledWith('/tmp/test.txt', {
-        encoding: 'utf-8'
-      });
+      expect(mockFileService.readFile).toHaveBeenCalledWith(
+        '/tmp/test.txt',
+        {
+          encoding: 'utf-8'
+        },
+        'session-id'
+      );
     });
 
     it('should pass undefined encoding when not specified', async () => {
@@ -125,9 +130,13 @@ describe('FileHandler', () => {
       expect(responseData.path).toBe('/tmp/test.txt');
       expect(responseData.timestamp).toBeDefined();
 
-      expect(mockFileService.readFile).toHaveBeenCalledWith('/tmp/test.txt', {
-        encoding: undefined
-      });
+      expect(mockFileService.readFile).toHaveBeenCalledWith(
+        '/tmp/test.txt',
+        {
+          encoding: undefined
+        },
+        undefined
+      );
     });
 
     it('should handle file read errors', async () => {
@@ -164,7 +173,8 @@ describe('FileHandler', () => {
       const writeFileData = {
         path: '/tmp/output.txt',
         content: 'Hello, File!',
-        encoding: 'utf-8'
+        encoding: 'utf-8',
+        sessionId: 'session-123'
       };
 
       (mockFileService.writeFile as any).mockResolvedValue({
@@ -191,7 +201,35 @@ describe('FileHandler', () => {
         'Hello, File!',
         {
           encoding: 'utf-8'
-        }
+        },
+        'session-123'
+      );
+    });
+
+    it('should pass undefined sessionId when not provided', async () => {
+      const writeFileData = {
+        path: '/tmp/output.txt',
+        content: 'Hello, File!'
+      };
+
+      (mockFileService.writeFile as any).mockResolvedValue({
+        success: true
+      });
+
+      const request = new Request('http://localhost:3000/api/write', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(writeFileData)
+      });
+
+      const response = await fileHandler.handle(request, mockContext);
+
+      expect(response.status).toBe(200);
+      expect(mockFileService.writeFile).toHaveBeenCalledWith(
+        '/tmp/output.txt',
+        'Hello, File!',
+        {},
+        undefined
       );
     });
 

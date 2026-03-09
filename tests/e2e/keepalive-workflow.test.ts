@@ -1,15 +1,17 @@
 import type { ExecResult, Process, ReadFileResult } from '@repo/shared';
-import { beforeAll, describe, expect, test } from 'vitest';
+import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import {
+  cleanupTestSandbox,
+  createTestSandbox,
   createUniqueSession,
-  getSharedSandbox
+  type TestSandbox
 } from './helpers/global-sandbox';
 
 /**
  * KeepAlive Feature Tests
  *
- * Tests the keepAlive header functionality. Uses SHARED sandbox since we're
- * testing the keepAlive protocol behavior, not container lifecycle isolation.
+ * Tests the keepAlive header functionality using an isolated sandbox so
+ * background activity and alarms from other files cannot affect assertions.
  *
  * What we verify:
  * 1. keepAlive header is accepted and enables the mode
@@ -20,13 +22,17 @@ import {
 describe('KeepAlive Feature', () => {
   let workerUrl: string;
   let headers: Record<string, string>;
+  let sandbox: TestSandbox | null = null;
 
   beforeAll(async () => {
-    const sandbox = await getSharedSandbox();
+    sandbox = await createTestSandbox();
     workerUrl = sandbox.workerUrl;
-    headers = sandbox.createHeaders(createUniqueSession());
+    headers = sandbox.headers(createUniqueSession());
   }, 120000);
 
+  afterAll(async () => {
+    await cleanupTestSandbox(sandbox);
+  }, 120000);
   test('should accept keepAlive header and execute commands', async () => {
     const keepAliveHeaders = { ...headers, 'X-Sandbox-KeepAlive': 'true' };
 

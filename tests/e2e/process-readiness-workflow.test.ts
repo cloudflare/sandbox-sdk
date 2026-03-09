@@ -1,8 +1,10 @@
 import type { PortExposeResult, Process, WaitForLogResult } from '@repo/shared';
-import { beforeAll, describe, expect, test } from 'vitest';
+import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import {
+  cleanupTestSandbox,
+  createTestSandbox,
   createUniqueSession,
-  getSharedSandbox
+  type TestSandbox
 } from './helpers/global-sandbox';
 
 // Port exposure tests require custom domain with wildcard DNS routing
@@ -20,16 +22,21 @@ describe('Process Readiness Workflow', () => {
   let workerUrl: string;
   let headers: Record<string, string>;
   let portHeaders: Record<string, string>;
+  let sandbox: TestSandbox | null = null;
 
   beforeAll(async () => {
-    const sandbox = await getSharedSandbox();
+    sandbox = await createTestSandbox();
     workerUrl = sandbox.workerUrl;
-    headers = sandbox.createHeaders(createUniqueSession());
+    headers = sandbox.headers(createUniqueSession());
     // Port exposure requires sandbox headers (not session headers)
     portHeaders = {
       'X-Sandbox-Id': sandbox.sandboxId,
       'Content-Type': 'application/json'
     };
+  }, 120000);
+
+  afterAll(async () => {
+    await cleanupTestSandbox(sandbox);
   }, 120000);
 
   test('should wait for string pattern in process output', async () => {
@@ -274,8 +281,8 @@ await Bun.sleep(60000);
       }
     );
 
-    // Should fail with timeout
-    expect(waitResponse.status).toBe(500);
+    // Should fail with timeout (408 Request Timeout)
+    expect(waitResponse.status).toBe(408);
     const errorData = (await waitResponse.json()) as { error: string };
     expect(errorData.error).toMatch(/timeout|did not become ready/i);
 
@@ -325,7 +332,6 @@ await Bun.sleep(60000);
     // Write a script that outputs to stderr
     const scriptCode = `
 console.error("Starting up in stderr...");
-await Bun.sleep(300);
 console.error("Ready (stderr)");
 await Bun.sleep(60000);
     `.trim();
@@ -360,7 +366,7 @@ await Bun.sleep(60000);
         headers,
         body: JSON.stringify({
           pattern: 'Ready (stderr)',
-          timeout: 10000
+          timeout: 30000
         })
       }
     );

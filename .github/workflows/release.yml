@@ -6,317 +6,122 @@ on:
       - main
 
 permissions:
-  id-token: write # Required for OIDC
-  contents: read
+  id-token: write
+  contents: write
+  pull-requests: write
+  packages: write
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 env:
-  # Account subdomain for workers.dev URLs (found in Cloudflare dashboard)
   CF_ACCOUNT_SUBDOMAIN: agents-b8a
-  E2E_WORKER_NAME: sandbox-e2e-test-worker-main
 
 jobs:
-  # Unit tests run in parallel
-  unit-tests:
+  # --- Build (always runs everything on release) ---
+  build:
     if: ${{ github.repository_owner == 'cloudflare' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    outputs:
-      version: ${{ steps.get-version.outputs.version }}
+    uses: ./.github/workflows/reusable-build.yml
+    with:
+      skip_docker: false
+      image_tag: main
+    secrets: inherit
 
-    steps:
-      - uses: actions/checkout@v4
+  # --- Quality gates (all checks on release) ---
+  quality:
+    needs: build
+    uses: ./.github/workflows/reusable-quality.yml
+    with:
+      run_sdk_tests: true
+      run_container_tests: true
+      run_changeset_validation: false
+    secrets: inherit
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: 'npm'
+  # --- E2E tests ---
+  e2e:
+    needs: build
+    uses: ./.github/workflows/reusable-e2e.yml
+    with:
+      worker_name_prefix: sandbox-e2e-test-worker-main
+      image_tag: main
+      images_changed: 'true'
+    secrets: inherit
 
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build packages
-        run: npm run build
-
-      - name: Get package version
-        id: get-version
-        run: |
-          VERSION=$(node -p "require('./packages/sandbox/package.json').version")
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-
-      - name: Run sandbox unit tests
-        run: |
-          set +e
-          timeout --preserve-status 30 npm run test -w @cloudflare/sandbox > sandbox_test.log 2>&1
-          EXIT_CODE=$?
-          cat sandbox_test.log
-
-          if grep -q "Test Files.*passed" sandbox_test.log && grep -q "Tests.*passed" sandbox_test.log; then
-            echo "Sandbox tests passed"
-            if [ $EXIT_CODE -eq 124 ] || [ $EXIT_CODE -eq 143 ]; then
-              echo "::warning::Killed due to workerd shutdown hang (known vitest-pool-workers issue)"
-            fi
-            exit 0
-          else
-            echo "Sandbox tests failed"
-            exit 1
-          fi
-
-      - name: Upload sandbox test logs
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: sandbox-test-logs-release
-          path: sandbox_test.log
-          retention-days: 7
-
-      - name: Run container unit tests
-        run: npm run test -w @repo/sandbox-container
-
-  # E2E tests - runs on every push to main
-  # Uses buildx + GHA cache (shared with publish-release) + CF registry for fast deploys
-  e2e-tests:
-    needs: [unit-tests]
-    if: ${{ github.repository_owner == 'cloudflare' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: docker/setup-buildx-action@v3
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: 'npm'
-
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Install wrangler
-        run: npm install -g wrangler
-
-      - name: Build packages
-        run: npm run build
-
-      # Build base, python, opencode in parallel (shared cache with publish-release)
-      - name: Build base, python, opencode images in parallel
-        run: |
-          set -e
-          VERSION="${{ needs.unit-tests.outputs.version }}"
-
-          echo "Starting parallel builds..."
-
-          docker buildx build \
-            --cache-from type=gha,scope=release-default \
-            --cache-to type=gha,mode=max,scope=release-default \
-            --load -t sandbox:local \
-            --build-arg SANDBOX_VERSION=$VERSION \
-            -f packages/sandbox/Dockerfile --target default . &
-          PID_BASE=$!
-
-          docker buildx build \
-            --cache-from type=gha,scope=release-python \
-            --cache-to type=gha,mode=max,scope=release-python \
-            --load -t sandbox-python:local \
-            --build-arg SANDBOX_VERSION=$VERSION \
-            -f packages/sandbox/Dockerfile --target python . &
-          PID_PYTHON=$!
-
-          docker buildx build \
-            --cache-from type=gha,scope=release-opencode \
-            --cache-to type=gha,mode=max,scope=release-opencode \
-            --load -t sandbox-opencode:local \
-            --build-arg SANDBOX_VERSION=$VERSION \
-            -f packages/sandbox/Dockerfile --target opencode . &
-          PID_OPENCODE=$!
-
-          # Wait for all builds to complete
-          echo "Waiting for builds to complete..."
-          wait $PID_BASE || { echo "Base build failed"; exit 1; }
-          wait $PID_PYTHON || { echo "Python build failed"; exit 1; }
-          wait $PID_OPENCODE || { echo "Opencode build failed"; exit 1; }
-          echo "All builds completed successfully"
-
-      # Push base first (standalone needs it in registry)
-      - name: Push base image to Cloudflare
-        run: |
-          docker tag sandbox:local sandbox:main
-          wrangler containers push sandbox:main
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-
-      # Build standalone (references base from registry)
-      - name: Build standalone image
-        run: |
-          docker buildx build \
-            --cache-from type=gha,scope=release-standalone \
-            --cache-to type=gha,mode=max,scope=release-standalone \
-            --load -t sandbox-standalone:local \
-            --build-arg BASE_IMAGE=registry.cloudflare.com/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/sandbox:main \
-            -f tests/e2e/test-worker/Dockerfile.standalone tests/e2e/test-worker
-
-      # Push remaining images in parallel
-      - name: Push python, opencode, standalone images to Cloudflare
-        run: |
-          set -e
-
-          docker tag sandbox-python:local sandbox-python:main
-          wrangler containers push sandbox-python:main &
-          PID1=$!
-
-          docker tag sandbox-opencode:local sandbox-opencode:main
-          wrangler containers push sandbox-opencode:main &
-          PID2=$!
-
-          docker tag sandbox-standalone:local sandbox-standalone:main
-          wrangler containers push sandbox-standalone:main &
-          PID3=$!
-
-          wait $PID1 $PID2 $PID3
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-
-      # Generate wrangler config with pre-pushed image references
-      - name: Generate wrangler config
-        run: |
-          cd tests/e2e/test-worker
-          ./generate-config.sh ${{ env.E2E_WORKER_NAME }} ${{ env.E2E_WORKER_NAME }} http "registry:main"
-        env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-
-      # Deploy test worker (images are pre-pushed to Cloudflare registry)
-      - name: Deploy test worker
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          workingDirectory: tests/e2e/test-worker
-          command: deploy --name ${{ env.E2E_WORKER_NAME }}
-
-      - name: Run E2E tests
-        env:
-          TEST_WORKER_URL: https://${{ env.E2E_WORKER_NAME }}.${{ env.CF_ACCOUNT_SUBDOMAIN }}.workers.dev
-        run: npm run test:e2e
-
-      - name: Cleanup test deployment
-        if: always()
-        continue-on-error: true
-        run: |
-          cd tests/e2e/test-worker
-          ../../../scripts/cleanup-test-deployment.sh ${{ env.E2E_WORKER_NAME }}
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-
-  # Release publish - only runs if changesets exist
+  # --- Publish release (after all gates pass) ---
   publish-release:
-    needs: [unit-tests, e2e-tests]
+    needs: [build, quality, e2e]
     if: ${{ github.repository_owner == 'cloudflare' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
-      id-token: write # Required for trusted publishing
+      id-token: write
       contents: write
       pull-requests: write
-
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 24
           registry-url: 'https://registry.npmjs.org'
           cache: 'npm'
 
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-
       - name: Upgrade npm for OIDC trusted publishing
         run: npm install -g npm@latest
 
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build packages
-        run: npm run build
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
+      - uses: actions/cache/restore@v5
+        id: nm-cache
         with:
-          username: ${{ secrets.DOCKER_HUB_USERNAME }}
-          password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
+          path: |
+            node_modules
+            packages/*/node_modules
+            examples/*/node_modules
+            sites/*/node_modules
+          key: node-modules-${{ hashFiles('package-lock.json') }}
 
-      - name: Build and push Docker image (default)
-        uses: docker/build-push-action@v6
+      - run: npm ci --prefer-offline --no-audit --no-fund
+        if: steps.nm-cache.outputs.cache-hit != 'true'
+
+      - uses: actions/download-artifact@v8
         with:
-          context: .
-          file: packages/sandbox/Dockerfile
-          target: default
-          platforms: linux/amd64
-          push: true
-          tags: cloudflare/sandbox:${{ needs.unit-tests.outputs.version }}
-          cache-from: type=gha,scope=release-default
-          cache-to: type=gha,mode=max,scope=release-default
-          build-args: |
-            SANDBOX_VERSION=${{ needs.unit-tests.outputs.version }}
-
-      - name: Build and push Docker image (python)
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: packages/sandbox/Dockerfile
-          target: python
-          platforms: linux/amd64
-          push: true
-          tags: cloudflare/sandbox:${{ needs.unit-tests.outputs.version }}-python
-          cache-from: type=gha,scope=release-python
-          cache-to: type=gha,mode=max,scope=release-python
-          build-args: |
-            SANDBOX_VERSION=${{ needs.unit-tests.outputs.version }}
-
-      - name: Build and push Docker image (opencode)
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: packages/sandbox/Dockerfile
-          target: opencode
-          platforms: linux/amd64
-          push: true
-          tags: cloudflare/sandbox:${{ needs.unit-tests.outputs.version }}-opencode
-          cache-from: type=gha,scope=release-opencode
-          cache-to: type=gha,mode=max,scope=release-opencode
-          build-args: |
-            SANDBOX_VERSION=${{ needs.unit-tests.outputs.version }}
-
-      - name: Extract standalone binary from Docker image
+          name: build-${{ github.sha }}
+          path: packages
+      - name: Install crane
         run: |
-          VERSION=${{ needs.unit-tests.outputs.version }}
-          CONTAINER_ID=$(docker create --platform linux/amd64 cloudflare/sandbox:$VERSION)
-          docker cp $CONTAINER_ID:/container-server/sandbox ./sandbox-linux-x64
-          docker rm $CONTAINER_ID
-          file ./sandbox-linux-x64
-          ls -la ./sandbox-linux-x64
+          VERSION=0.20.3
+          TARBALL="go-containerregistry_Linux_x86_64.tar.gz"
+          curl -sLO "https://github.com/google/go-containerregistry/releases/download/v${VERSION}/${TARBALL}"
+          curl -sLO "https://github.com/google/go-containerregistry/releases/download/v${VERSION}/checksums.txt"
+          grep "${TARBALL}" checksums.txt | sha256sum -c
+          tar xzf "${TARBALL}" crane
+          sudo mv crane /usr/local/bin/
+          rm -f "${TARBALL}" checksums.txt
+
+      - name: Login to registries
+        run: |
+          CREDS=$(curl -sf -X POST \
+            "https://api.cloudflare.com/client/v4/accounts/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/containers/registries/registry.cloudflare.com/credentials" \
+            -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '{"expiration_minutes": 15, "permissions": ["pull"]}')
+          CF_USER=$(echo "$CREDS" | jq -r '.result.username')
+          CF_PASS=$(echo "$CREDS" | jq -r '.result.password')
+          echo "$CF_PASS" | docker login registry.cloudflare.com -u "$CF_USER" --password-stdin
+          echo "$CF_PASS" | crane auth login registry.cloudflare.com --password-stdin -u "$CF_USER"
+          echo "${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}" | crane auth login index.docker.io --password-stdin -u "${{ secrets.DOCKER_HUB_USERNAME }}"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
 
       - id: changesets
         uses: changesets/action@v1
@@ -324,15 +129,44 @@ jobs:
           version: npx tsx .github/changeset-version.ts
           publish: npx tsx .github/changeset-publish.ts
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
           NPM_CONFIG_PROVENANCE: true
 
-      - name: Upload standalone binary to GitHub release
+      - name: Publish Docker images to Docker Hub
+        if: steps.changesets.outputs.published == 'true'
+        run: |
+          VERSION=${{ needs.build.outputs.version }}
+          for suffix in "" "-python" "-opencode" "-musl" "-desktop"; do
+            crane copy \
+              registry.cloudflare.com/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/sandbox${suffix}:main \
+              docker.io/cloudflare/sandbox:${VERSION}${suffix}
+          done
+
+      - name: Extract standalone binaries
+        if: steps.changesets.outputs.published == 'true'
+        run: |
+          VERSION=${{ needs.build.outputs.version }}
+          # Docker already authenticated from 'Login to registries' step
+          # Default variant
+          docker pull registry.cloudflare.com/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/sandbox:main
+          CID=$(docker create registry.cloudflare.com/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/sandbox:main)
+          docker cp $CID:/container-server/sandbox ./sandbox-linux-x64
+          docker rm $CID
+          # Musl variant
+          docker pull registry.cloudflare.com/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/sandbox-musl:main
+          CID=$(docker create registry.cloudflare.com/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/sandbox-musl:main)
+          docker cp $CID:/container-server/sandbox ./sandbox-linux-x64-musl
+          docker rm $CID
+
+      - name: Upload binaries to GitHub Release
         if: steps.changesets.outputs.published == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION=${{ needs.unit-tests.outputs.version }}
+          VERSION=${{ needs.build.outputs.version }}
           sha256sum sandbox-linux-x64 > sandbox-linux-x64.sha256
-          # Tag format matches changesets: @cloudflare/sandbox@VERSION
-          gh release upload "@cloudflare/sandbox@${VERSION}" ./sandbox-linux-x64 ./sandbox-linux-x64.sha256 --clobber
+          sha256sum sandbox-linux-x64-musl > sandbox-linux-x64-musl.sha256
+          gh release upload "@cloudflare/sandbox@${VERSION}" \
+            ./sandbox-linux-x64 ./sandbox-linux-x64.sha256 \
+            ./sandbox-linux-x64-musl ./sandbox-linux-x64-musl.sha256 \
+            --clobber

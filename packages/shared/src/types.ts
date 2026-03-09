@@ -4,6 +4,15 @@ import type {
   ExecutionResult,
   RunCodeOptions
 } from './interpreter-types';
+import type { PtyOptions } from './pty-types';
+
+/**
+ * Represents a disposable resource with a cleanup function.
+ * Common pattern used by VS Code, xterm.js, RxJS, and others.
+ */
+export interface Disposable {
+  dispose(): void;
+}
 
 // Base execution options shared across command types
 export interface BaseExecOptions {
@@ -675,6 +684,92 @@ export interface FileMetadata {
  */
 export type FileChunk = string | Uint8Array;
 
+// File Watch Types
+
+/**
+ * Options for watching a directory.
+ *
+ * `watch()` resolves only after the watcher is established on the filesystem.
+ * The returned SSE stream can be consumed with `parseSSEStream()`.
+ */
+export interface WatchOptions {
+  /**
+   * Watch subdirectories recursively
+   * @default true
+   */
+  recursive?: boolean;
+
+  /**
+   * Glob patterns to include (e.g., '*.ts', '*.js').
+   * If not specified, all files are included.
+   * Cannot be used together with `exclude`.
+   */
+  include?: string[];
+
+  /**
+   * Glob patterns to exclude (e.g., 'node_modules', '.git').
+   * Cannot be used together with `include`.
+   * @default ['.git', 'node_modules', '.DS_Store']
+   */
+  exclude?: string[];
+
+  /**
+   * Session to run the watch in.
+   * If omitted, the default session is used.
+   */
+  sessionId?: string;
+}
+
+// Internal types for SSE protocol (not user-facing)
+
+/**
+ * @internal SSE event types for container communication
+ */
+export type FileWatchEventType =
+  | 'create'
+  | 'modify'
+  | 'delete'
+  | 'move_from'
+  | 'move_to'
+  | 'attrib';
+
+/**
+ * @internal Request body for starting a file watch
+ */
+export interface WatchRequest {
+  path: string;
+  recursive?: boolean;
+  events?: FileWatchEventType[];
+  include?: string[];
+  exclude?: string[];
+  sessionId?: string;
+}
+
+/**
+ * SSE events emitted by `sandbox.watch()`.
+ */
+export type FileWatchSSEEvent =
+  | {
+      type: 'watching';
+      path: string;
+      watchId: string;
+    }
+  | {
+      type: 'event';
+      eventType: FileWatchEventType;
+      path: string;
+      isDirectory: boolean;
+      timestamp: string;
+    }
+  | {
+      type: 'error';
+      error: string;
+    }
+  | {
+      type: 'stopped';
+      reason: string;
+    };
+
 // Process management result types
 export interface ProcessStartResult {
   success: boolean;
@@ -866,6 +961,10 @@ export interface ExecutionSession {
     options?: { encoding?: string }
   ): Promise<ReadFileResult>;
   readFileStream(path: string): Promise<ReadableStream<Uint8Array>>;
+  watch(
+    path: string,
+    options?: Omit<WatchOptions, 'sessionId'>
+  ): Promise<ReadableStream<Uint8Array>>;
   mkdir(path: string, options?: { recursive?: boolean }): Promise<MkdirResult>;
   deleteFile(path: string): Promise<DeleteFileResult>;
   renameFile(oldPath: string, newPath: string): Promise<RenameFileResult>;
@@ -907,6 +1006,48 @@ export interface ExecutionSession {
     options: MountBucketOptions
   ): Promise<void>;
   unmountBucket(mountPath: string): Promise<void>;
+
+  // Backup operations
+  createBackup(options: BackupOptions): Promise<DirectoryBackup>;
+  restoreBackup(backup: DirectoryBackup): Promise<RestoreBackupResult>;
+
+  // Terminal access (browser WebSocket passthrough)
+  terminal(request: Request, options?: PtyOptions): Promise<Response>;
+}
+
+// Backup types
+/**
+ * Options for creating a directory backup
+ */
+export interface BackupOptions {
+  /** Directory to back up (absolute path). Required. */
+  dir: string;
+  /** Human-readable name for this backup. Optional. */
+  name?: string;
+  /** Seconds until automatic garbage collection. Default: 259200 (3 days). No upper limit. */
+  ttl?: number;
+}
+
+/**
+ * Handle representing a stored directory backup.
+ * Serializable (two strings). The user stores this and passes it to restoreBackup().
+ */
+export interface DirectoryBackup {
+  /** Unique backup identifier */
+  readonly id: string;
+  /** Directory that was backed up */
+  readonly dir: string;
+}
+
+/**
+ * Result returned from a successful restoreBackup() call
+ */
+export interface RestoreBackupResult {
+  success: boolean;
+  /** The directory that was restored */
+  dir: string;
+  /** Backup ID that was restored */
+  id: string;
 }
 
 // Bucket mounting types
@@ -1029,6 +1170,10 @@ export interface ISandbox {
     options?: { encoding?: string }
   ): Promise<ReadFileResult>;
   readFileStream(path: string): Promise<ReadableStream<Uint8Array>>;
+  watch(
+    path: string,
+    options?: WatchOptions
+  ): Promise<ReadableStream<Uint8Array>>;
   mkdir(path: string, options?: { recursive?: boolean }): Promise<MkdirResult>;
   deleteFile(path: string): Promise<DeleteFileResult>;
   renameFile(oldPath: string, newPath: string): Promise<RenameFileResult>;
@@ -1074,6 +1219,10 @@ export interface ISandbox {
   ): Promise<ReadableStream>;
   listCodeContexts(): Promise<CodeContext[]>;
   deleteCodeContext(contextId: string): Promise<void>;
+
+  // Backup operations
+  createBackup(options: BackupOptions): Promise<DirectoryBackup>;
+  restoreBackup(backup: DirectoryBackup): Promise<RestoreBackupResult>;
 
   // WebSocket connection
   wsConnect(request: Request, port: number): Promise<Response>;
