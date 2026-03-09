@@ -125,9 +125,9 @@ describe('BackupService', () => {
     expect(writeExcludeCommand).toContain("'... build output/日本語 file.txt'");
   });
 
-  it('does not add exclude flags when git exclusions are unavailable', async () => {
-    const dir = '/workspace/non-git-dir';
-    const archivePath = '/var/backups/test-no-exclude.sqsh';
+  it('defaults to including gitignored files when useGitignore is omitted', async () => {
+    const dir = '/workspace/repo/app';
+    const archivePath = '/var/backups/default-no-gitignore.sqsh';
 
     mocked(mockSessionManager.executeInSession).mockImplementation(
       async (_sessionId: string, command: string) => {
@@ -135,12 +135,50 @@ describe('BackupService', () => {
         if (command.startsWith('test -d ')) return execSuccess();
         if (command.includes('test -x /usr/bin/mksquashfs'))
           return execSuccess('exists\n');
-        if (command === 'command -v git >/dev/null 2>&1') return execSuccess();
-        if (command.includes('rev-parse --is-inside-work-tree')) {
-          return execResult(1, 'false\n');
-        }
         if (command.includes('/usr/bin/mksquashfs')) return execSuccess();
-        if (command.startsWith('stat -c %s ')) return execSuccess('456\n');
+        if (command.startsWith('stat -c %s ')) return execSuccess('321\n');
+
+        return {
+          success: false,
+          error: {
+            message: `Unexpected command in test: ${command}`,
+            code: 'TEST_ERROR',
+            details: {}
+          }
+        };
+      }
+    );
+
+    const result = await service.createArchive(dir, archivePath);
+    expect(result.success).toBe(true);
+
+    const callArgs = mocked(mockSessionManager.executeInSession)
+      .mock.calls.map(([, command]) => command)
+      .filter((command): command is string => typeof command === 'string');
+
+    expect(
+      callArgs.some((command) => command === 'command -v git >/dev/null 2>&1')
+    ).toBe(false);
+
+    const squashCommand = callArgs.find((command) =>
+      command.startsWith('/usr/bin/mksquashfs ')
+    );
+    expect(squashCommand).toBeDefined();
+    expect(squashCommand).not.toContain('-wildcards');
+    expect(squashCommand).not.toContain('-ef');
+  });
+
+  it('returns an error when useGitignore is true and git is unavailable', async () => {
+    const dir = '/workspace/repo/app';
+    const archivePath = '/var/backups/git-required.sqsh';
+
+    mocked(mockSessionManager.executeInSession).mockImplementation(
+      async (_sessionId: string, command: string) => {
+        if (command.startsWith('mkdir -p ')) return execSuccess();
+        if (command.startsWith('test -d ')) return execSuccess();
+        if (command.includes('test -x /usr/bin/mksquashfs'))
+          return execSuccess('exists\n');
+        if (command === 'command -v git >/dev/null 2>&1') return execResult(1);
 
         return {
           success: false,
@@ -159,6 +197,161 @@ describe('BackupService', () => {
       'default',
       true
     );
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.message).toContain(
+      'Git is required when useGitignore is enabled'
+    );
+  });
+
+  it('escapes wildcard metacharacters in gitignored file paths', async () => {
+    const dir = '/workspace/repo/app';
+    const archivePath = '/var/backups/escaped-patterns.sqsh';
+
+    mocked(mockSessionManager.executeInSession).mockImplementation(
+      async (_sessionId: string, command: string) => {
+        if (command.startsWith('mkdir -p ')) return execSuccess();
+        if (command.startsWith('test -d ')) return execSuccess();
+        if (command.includes('test -x /usr/bin/mksquashfs'))
+          return execSuccess('exists\n');
+        if (command === 'command -v git >/dev/null 2>&1') return execSuccess();
+        if (command.includes('rev-parse --is-inside-work-tree'))
+          return execSuccess('true\n');
+        if (
+          command.includes(
+            '-c core.quotePath=false ls-files --others -i --exclude-standard -- .'
+          )
+        ) {
+          return execSuccess(
+            'config[1].json\nbackup-2024*.log\nq?.txt\nfolder\\name.txt\n'
+          );
+        }
+        if (command.startsWith("printf '%s\\n' ")) return execSuccess();
+        if (command.includes('/usr/bin/mksquashfs')) return execSuccess();
+        if (command.startsWith('rm -f ')) return execSuccess();
+        if (command.startsWith('stat -c %s ')) return execSuccess('999\n');
+
+        return {
+          success: false,
+          error: {
+            message: `Unexpected command in test: ${command}`,
+            code: 'TEST_ERROR',
+            details: {}
+          }
+        };
+      }
+    );
+
+    const result = await service.createArchive(
+      dir,
+      archivePath,
+      'default',
+      true
+    );
+    expect(result.success).toBe(true);
+
+    const callArgs = mocked(mockSessionManager.executeInSession)
+      .mock.calls.map(([, command]) => command)
+      .filter((command): command is string => typeof command === 'string');
+    const writeExcludeCommand = callArgs.find((command) =>
+      command.startsWith("printf '%s\\n' ")
+    );
+
+    expect(writeExcludeCommand).toBeDefined();
+    expect(writeExcludeCommand).toContain("'config\\[1\\].json'");
+    expect(writeExcludeCommand).toContain("'backup-2024\\*.log'");
+    expect(writeExcludeCommand).toContain("'q\\?.txt'");
+    expect(writeExcludeCommand).toContain("'folder\\\\name.txt'");
+    expect(writeExcludeCommand).toContain("'... config\\[1\\].json'");
+  });
+
+  it('cleans up the exclude file when mksquashfs execution throws', async () => {
+    const dir = '/workspace/repo/app';
+    const archivePath = '/var/backups/cleanup-on-throw.sqsh';
+
+    mocked(mockSessionManager.executeInSession).mockImplementation(
+      async (_sessionId: string, command: string) => {
+        if (command.startsWith('mkdir -p ')) return execSuccess();
+        if (command.startsWith('test -d ')) return execSuccess();
+        if (command.includes('test -x /usr/bin/mksquashfs'))
+          return execSuccess('exists\n');
+        if (command === 'command -v git >/dev/null 2>&1') return execSuccess();
+        if (command.includes('rev-parse --is-inside-work-tree'))
+          return execSuccess('true\n');
+        if (
+          command.includes(
+            '-c core.quotePath=false ls-files --others -i --exclude-standard -- .'
+          )
+        ) {
+          return execSuccess('node_modules/a.txt\n');
+        }
+        if (command.startsWith("printf '%s\\n' ")) return execSuccess();
+        if (command.startsWith('/usr/bin/mksquashfs ')) {
+          throw new Error('mksquashfs threw unexpectedly');
+        }
+        if (command.startsWith('rm -f ')) return execSuccess();
+
+        return {
+          success: false,
+          error: {
+            message: `Unexpected command in test: ${command}`,
+            code: 'TEST_ERROR',
+            details: {}
+          }
+        };
+      }
+    );
+
+    const result = await service.createArchive(
+      dir,
+      archivePath,
+      'default',
+      true
+    );
+    expect(result.success).toBe(false);
+
+    const callArgs = mocked(mockSessionManager.executeInSession)
+      .mock.calls.map(([, command]) => command)
+      .filter((command): command is string => typeof command === 'string');
+
+    expect(
+      callArgs.some(
+        (command) =>
+          command === "rm -f '/var/backups/cleanup-on-throw.sqsh.exclude'"
+      )
+    ).toBe(true);
+  });
+
+  it('does not add exclude flags when useGitignore is false in non-git directories', async () => {
+    const dir = '/workspace/non-git-dir';
+    const archivePath = '/var/backups/test-no-exclude.sqsh';
+
+    mocked(mockSessionManager.executeInSession).mockImplementation(
+      async (_sessionId: string, command: string) => {
+        if (command.startsWith('mkdir -p ')) return execSuccess();
+        if (command.startsWith('test -d ')) return execSuccess();
+        if (command.includes('test -x /usr/bin/mksquashfs'))
+          return execSuccess('exists\n');
+        if (command.includes('/usr/bin/mksquashfs')) return execSuccess();
+        if (command.startsWith('stat -c %s ')) return execSuccess('456\n');
+
+        return {
+          success: false,
+          error: {
+            message: `Unexpected command in test: ${command}`,
+            code: 'TEST_ERROR',
+            details: {}
+          }
+        };
+      }
+    );
+
+    const result = await service.createArchive(
+      dir,
+      archivePath,
+      'default',
+      false
+    );
 
     expect(result.success).toBe(true);
 
@@ -172,5 +365,8 @@ describe('BackupService', () => {
     expect(squashCommand).toBeDefined();
     expect(squashCommand).not.toContain('-wildcards');
     expect(squashCommand).not.toContain('-ef');
+    expect(
+      callArgs.some((command) => command === 'command -v git >/dev/null 2>&1')
+    ).toBe(false);
   });
 });

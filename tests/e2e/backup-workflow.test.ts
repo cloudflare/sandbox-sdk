@@ -193,7 +193,7 @@ describe('Backup Workflow E2E', () => {
   });
 
   describe('Backup excludes', () => {
-    test('should respect gitignore rules by default', async () => {
+    test('should include gitignored files by default', async () => {
       if (!backupBucketAvailable) return;
 
       const REPO_DIR = `/workspace/gitignore-backup-test-${crypto.randomUUID().slice(0, 8)}`;
@@ -252,7 +252,7 @@ describe('Backup Workflow E2E', () => {
       const verifyResult = (await verifyResponse.json()) as ExecuteResponse;
       expect(verifyResult.exitCode).toBe(0);
       expect(verifyResult.stdout).toContain('keep:yes');
-      expect(verifyResult.stdout).toContain('excluded:yes');
+      expect(verifyResult.stdout).toContain('excluded:no');
 
       await cleanupDir(workerUrl, headers, REPO_DIR);
     }, 60000);

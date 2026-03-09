@@ -78,6 +78,15 @@ interface RestoreArchiveResult {
   dir: string;
 }
 
+class GitRequiredForGitignoreError extends Error {
+  constructor() {
+    super(
+      'Git is required when useGitignore is enabled, but git is unavailable in the container. Set useGitignore to false to continue without git-based exclusions.'
+    );
+    this.name = 'GitRequiredForGitignoreError';
+  }
+}
+
 /**
  * Creates and restores squashfs-based directory archives.
  *
@@ -107,9 +116,11 @@ export class BackupService {
     dir: string,
     archivePath: string,
     sessionId = 'default',
-    useGitignore = true
+    useGitignore = false
   ): Promise<ServiceResult<CreateArchiveResult>> {
     const opLogger = this.logger.child({ operation: Operation.BACKUP_CREATE });
+    const excludeFilePath = `${archivePath}.exclude`;
+    let shouldCleanupExcludeFile = false;
 
     const pathError = validateBackupPaths(dir, archivePath);
     if (pathError) {
@@ -164,7 +175,6 @@ export class BackupService {
         });
       }
 
-      const excludeFilePath = `${archivePath}.exclude`;
       const excludePatterns = useGitignore
         ? await this.resolveGitignoreExcludePatterns(dir, sessionId, opLogger)
         : [];
@@ -184,6 +194,7 @@ export class BackupService {
             details: { dir, archivePath }
           });
         }
+        shouldCleanupExcludeFile = true;
       }
 
       // Create squashfs archive with zstd compression
@@ -213,17 +224,6 @@ export class BackupService {
         sessionId,
         squashCmd
       );
-
-      if (excludePatterns.length > 0) {
-        await this.sessionManager
-          .executeInSession(sessionId, `rm -f ${shellEscape(excludeFilePath)}`)
-          .catch((err) => {
-            opLogger.warn('Failed to clean up exclude file', {
-              excludeFilePath,
-              error: err instanceof Error ? err.message : String(err)
-            });
-          });
-      }
 
       if (!createResult.success) {
         return serviceError({
@@ -265,6 +265,13 @@ export class BackupService {
         archivePath
       });
     } catch (error) {
+      if (error instanceof GitRequiredForGitignoreError) {
+        return serviceError({
+          message: error.message,
+          code: ErrorCode.BACKUP_CREATE_FAILED,
+          details: { dir, archivePath, useGitignore }
+        });
+      }
       opLogger.error(
         'Unexpected error creating archive',
         error instanceof Error ? error : new Error(String(error))
@@ -274,6 +281,17 @@ export class BackupService {
         code: ErrorCode.BACKUP_CREATE_FAILED,
         details: { dir, archivePath }
       });
+    } finally {
+      if (shouldCleanupExcludeFile) {
+        await this.sessionManager
+          .executeInSession(sessionId, `rm -f ${shellEscape(excludeFilePath)}`)
+          .catch((err) => {
+            opLogger.warn('Failed to clean up exclude file', {
+              excludeFilePath,
+              error: err instanceof Error ? err.message : String(err)
+            });
+          });
+      }
     }
   }
 
@@ -287,10 +305,7 @@ export class BackupService {
       'command -v git >/dev/null 2>&1'
     );
     if (!gitAvailableResult.success || gitAvailableResult.data.exitCode !== 0) {
-      opLogger.warn('Git is unavailable; skipping gitignore exclusions', {
-        dir
-      });
-      return [];
+      throw new GitRequiredForGitignoreError();
     }
 
     const insideWorkTreeResult = await this.sessionManager.executeInSession(
@@ -322,7 +337,8 @@ export class BackupService {
     const relativePaths = ignoredFilesResult.data.stdout
       .split('\n')
       .map((line) => line.trim().replace(/\/+$/, ''))
-      .filter((line) => line.length > 0);
+      .filter((line) => line.length > 0)
+      .map(BackupService.escapeMksquashfsWildcardLiteral);
 
     // Include both direct relative paths and sticky "... " patterns.
     // mksquashfs path matching differs depending on how the source directory
@@ -334,6 +350,10 @@ export class BackupService {
       `... ${path}`
     ]);
     return [...new Set(excludePatterns)];
+  }
+
+  private static escapeMksquashfsWildcardLiteral(path: string): string {
+    return path.replace(/\\/g, '\\\\').replace(/([*?[\]])/g, '\\$1');
   }
 
   /**

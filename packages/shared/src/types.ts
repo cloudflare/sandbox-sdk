@@ -1029,7 +1029,7 @@ export interface BackupOptions {
   /**
    * Respect git ignore rules for the backup directory when it is inside a git repository.
    *
-   * Default: true.
+   * Default: false.
    * If the directory is not inside a git repository, no git-based exclusions are applied.
    */
   useGitignore?: boolean;

@@ -12,6 +12,10 @@ import type { BackupService } from '../services/backup-service';
 import { BACKUP_WORK_DIR } from '../services/backup-service';
 import { BaseHandler } from './base-handler';
 
+type CreateBackupRequestBody = CreateBackupRequest & {
+  useGitignore?: boolean;
+};
+
 export class BackupHandler extends BaseHandler<Request, Response> {
   constructor(
     private backupService: BackupService,
@@ -90,7 +94,7 @@ export class BackupHandler extends BaseHandler<Request, Response> {
     request: Request,
     context: RequestContext
   ): Promise<Response> {
-    const body = await this.parseRequestBody<CreateBackupRequest>(request);
+    const body = await this.parseRequestBody<CreateBackupRequestBody>(request);
 
     const dirError = BackupHandler.validateDirPath(body.dir);
     if (dirError) {
@@ -135,7 +139,7 @@ export class BackupHandler extends BaseHandler<Request, Response> {
       body.dir,
       body.archivePath,
       sessionId,
-      body.useGitignore ?? true
+      body.useGitignore ?? false
     );
 
     if (result.success) {

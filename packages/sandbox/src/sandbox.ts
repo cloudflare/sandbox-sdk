@@ -74,6 +74,10 @@ import {
 import type { MountInfo } from './storage-mount/types';
 import { SDK_VERSION } from './version';
 
+type BackupOptionsWithGitignore = BackupOptions & {
+  useGitignore?: boolean;
+};
+
 export function getSandbox<T extends Sandbox<any>>(
   ns: DurableObjectNamespace<T>,
   id: string,
@@ -3404,13 +3408,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * R2 lifecycle rules on the BACKUP_BUCKET to garbage-collect objects
    * under the `backups/` prefix after the desired retention period.
    */
-  async createBackup(options: BackupOptions): Promise<DirectoryBackup> {
+  async createBackup(
+    options: BackupOptionsWithGitignore
+  ): Promise<DirectoryBackup> {
     this.requireBackupBucket();
     return this.enqueueBackupOp(() => this.doCreateBackup(options));
   }
 
   private async doCreateBackup(
-    options: BackupOptions
+    options: BackupOptionsWithGitignore
   ): Promise<DirectoryBackup> {
     const bucket = this.requireBackupBucket();
     this.requirePresignedUrlSupport();
@@ -3420,7 +3426,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       dir,
       name,
       ttl = DEFAULT_TTL_SECONDS,
-      useGitignore = true
+      useGitignore = false
     } = options;
     Sandbox.validateBackupDir(dir, 'BackupOptions.dir');
     if (name !== undefined) {
