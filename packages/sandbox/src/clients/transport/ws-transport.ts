@@ -19,6 +19,7 @@ interface PendingRequest {
   resolve: (response: WSResponse) => void;
   reject: (error: Error) => void;
   streamController?: ReadableStreamDefaultController<Uint8Array>;
+  bufferedChunks?: Uint8Array[];
   isStreaming: boolean;
   timeoutId?: ReturnType<typeof setTimeout>;
   /** Called when first stream chunk is received (for deferred stream return) */
@@ -468,6 +469,28 @@ export class WebSocketTransport extends BaseTransport {
             const pending = this.pendingRequests.get(id);
             if (pending) {
               pending.streamController = streamController;
+              // Flush any chunks that arrived before the controller was set
+              if (pending.bufferedChunks) {
+                try {
+                  for (const buffered of pending.bufferedChunks) {
+                    streamController.enqueue(buffered);
+                  }
+                } catch (error) {
+                  this.logger.debug(
+                    'Failed to flush buffered chunks, cleaning up',
+                    {
+                      id,
+                      error:
+                        error instanceof Error ? error.message : String(error)
+                    }
+                  );
+                  if (pending.timeoutId) {
+                    clearTimeout(pending.timeoutId);
+                  }
+                  this.pendingRequests.delete(id);
+                }
+                pending.bufferedChunks = undefined;
+              }
             }
             resolveStream(stream);
           }
@@ -567,11 +590,19 @@ export class WebSocketTransport extends BaseTransport {
       pending.onFirstChunk = undefined; // Only call once
     }
 
-    // streamController may not be set yet if onFirstChunk just resolved
+    // Buffer chunks if controller not set yet (race between onFirstChunk and enqueue)
     if (!pending.streamController) {
-      this.logger.warn('Stream chunk received but controller not ready', {
-        id: chunk.id
-      });
+      if (!pending.bufferedChunks) {
+        pending.bufferedChunks = [];
+      }
+      const encoder = new TextEncoder();
+      let sseData: string;
+      if (chunk.event) {
+        sseData = `event: ${chunk.event}\ndata: ${chunk.data}\n\n`;
+      } else {
+        sseData = `data: ${chunk.data}\n\n`;
+      }
+      pending.bufferedChunks.push(encoder.encode(sseData));
       return;
     }
 

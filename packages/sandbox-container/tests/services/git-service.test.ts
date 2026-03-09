@@ -153,7 +153,7 @@ describe('GitService', () => {
       expect(mockSessionManager.executeInSession).toHaveBeenNthCalledWith(
         1,
         'default',
-        "'git' 'clone' '--filter=blob:none' 'https://github.com/user/repo.git' '/workspace/repo'"
+        "'timeout' '-k' '5' '120' 'git' '-c' 'http.lowSpeedLimit=1024' '-c' 'http.lowSpeedTime=30' 'clone' '--filter=blob:none' 'https://github.com/user/repo.git' '/workspace/repo'"
       );
 
       // Verify SessionManager was called for getting current branch
@@ -205,7 +205,7 @@ describe('GitService', () => {
       expect(mockSessionManager.executeInSession).toHaveBeenNthCalledWith(
         1,
         'session-123',
-        "'git' 'clone' '--filter=blob:none' '--branch' 'develop' 'https://github.com/user/repo.git' '/tmp/custom-target'"
+        "'timeout' '-k' '5' '120' 'git' '-c' 'http.lowSpeedLimit=1024' '-c' 'http.lowSpeedTime=30' 'clone' '--filter=blob:none' '--branch' 'develop' 'https://github.com/user/repo.git' '/tmp/custom-target'"
       );
     });
 
@@ -278,6 +278,53 @@ describe('GitService', () => {
         expect(result.error.code).toBe(ErrorCode.GIT_REPOSITORY_NOT_FOUND);
         expect(result.error.details?.exitCode).toBe(128);
         expect(result.error.details?.stderr).toContain('repository not found');
+      }
+    });
+
+    it('should return timeout error when clone exits with code 124', async () => {
+      mocked(mockSessionManager.executeInSession).mockResolvedValue({
+        success: true,
+        data: {
+          exitCode: 124,
+          stdout: '',
+          stderr: ''
+        }
+      } as ServiceResult<RawExecResult>);
+
+      const result = await gitService.cloneRepository(
+        'https://github.com/user/large-repo.git'
+      );
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.code).toBe(ErrorCode.GIT_NETWORK_ERROR);
+        expect(result.error.message).toContain('timed out');
+        expect(result.error.message).toContain('120 seconds');
+        expect(result.error.details?.exitCode).toBe(124);
+      }
+    });
+
+    it('should sanitize credentials in timeout error messages', async () => {
+      mocked(mockSessionManager.executeInSession).mockResolvedValue({
+        success: true,
+        data: {
+          exitCode: 124,
+          stdout: '',
+          stderr: ''
+        }
+      } as ServiceResult<RawExecResult>);
+
+      const result = await gitService.cloneRepository(
+        'https://user:secret-token@github.com/user/repo.git'
+      );
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.code).toBe(ErrorCode.GIT_NETWORK_ERROR);
+        expect(result.error.message).not.toContain('secret-token');
+        expect(JSON.stringify(result.error.details)).not.toContain(
+          'secret-token'
+        );
       }
     });
 

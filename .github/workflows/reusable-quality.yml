@@ -5,7 +5,7 @@ on:
     inputs:
       runner:
         type: string
-        default: 'ubuntu-latest'
+        default: 'ubuntu-24.04-4core'
       run_sdk_tests:
         type: boolean
         default: true
@@ -26,6 +26,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 1
+          persist-credentials: false
 
       - uses: actions/setup-node@v6
         with:
@@ -79,6 +80,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 1
+          persist-credentials: false
 
       - uses: actions/setup-node@v6
         with:
@@ -139,6 +141,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 1
+          persist-credentials: false
 
       - uses: actions/setup-node@v6
         with:

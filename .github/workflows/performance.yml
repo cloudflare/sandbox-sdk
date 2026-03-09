@@ -34,7 +34,7 @@ env:
 
 jobs:
   setup:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-8core
     timeout-minutes: 15
     outputs:
       worker_url: ${{ steps.deploy.outputs.worker_url }}
@@ -43,6 +43,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 1
+          persist-credentials: false
 
       - uses: actions/setup-node@v6
         with:
@@ -114,12 +115,13 @@ jobs:
 
   performance-tests:
     needs: setup
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-8core
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 1
+          persist-credentials: false
 
       - uses: actions/setup-node@v6
         with:

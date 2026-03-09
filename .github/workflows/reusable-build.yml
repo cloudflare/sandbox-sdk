@@ -5,7 +5,7 @@ on:
     inputs:
       runner:
         type: string
-        default: 'ubuntu-latest'
+        default: 'ubuntu-24.04-8core'
       skip_docker:
         type: boolean
         default: false
@@ -18,6 +18,18 @@ on:
         type: string
         default: ''
         description: 'Content hash of Docker build inputs (enables content-addressed skip)'
+      checkout_ref:
+        type: string
+        default: ''
+        description: 'Git ref to checkout (for fork PRs via pull_request_target). Empty = default behavior.'
+      checkout_repo:
+        type: string
+        default: ''
+        description: 'Repository to checkout (for fork PRs). Empty = default behavior.'
+      cache_readonly:
+        type: boolean
+        default: false
+        description: 'When true, skip cache writes (security: prevents cache poisoning from fork PRs)'
     outputs:
       version:
         description: 'Package version from package.json'
@@ -38,18 +50,21 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          repository: ${{ inputs.checkout_repo || github.repository }}
+          ref: ${{ inputs.checkout_ref || '' }}
+          persist-credentials: false
           fetch-depth: 1
 
       - uses: actions/setup-node@v6
         with:
           node-version: 24
-          cache: 'npm'
+          cache: ${{ !inputs.cache_readonly && 'npm' || '' }}
 
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: .bun-version
 
-      - uses: actions/cache@v5
+      - uses: actions/cache/restore@v5
         id: nm-cache
         with:
           path: |
@@ -61,6 +76,17 @@ jobs:
 
       - run: npm ci --prefer-offline --no-audit --no-fund
         if: steps.nm-cache.outputs.cache-hit != 'true'
+
+      # Save cache only from trusted contexts (not fork PRs via pull_request_target)
+      - uses: actions/cache/save@v5
+        if: steps.nm-cache.outputs.cache-hit != 'true' && !inputs.cache_readonly
+        with:
+          path: |
+            node_modules
+            packages/*/node_modules
+            examples/*/node_modules
+            sites/*/node_modules
+          key: node-modules-${{ hashFiles('package-lock.json') }}
 
       - name: Build packages
         run: npx turbo run build
@@ -86,8 +112,13 @@ jobs:
         if: ${{ !inputs.skip_docker }}
         run: |
           VERSION=0.20.3
-          curl -sL "https://github.com/google/go-containerregistry/releases/download/v${VERSION}/go-containerregistry_Linux_x86_64.tar.gz" | tar xz crane
+          TARBALL="go-containerregistry_Linux_x86_64.tar.gz"
+          curl -sLO "https://github.com/google/go-containerregistry/releases/download/v${VERSION}/${TARBALL}"
+          curl -sLO "https://github.com/google/go-containerregistry/releases/download/v${VERSION}/checksums.txt"
+          grep "${TARBALL}" checksums.txt | sha256sum -c
+          tar xzf "${TARBALL}" crane
           sudo mv crane /usr/local/bin/
+          rm -f "${TARBALL}" checksums.txt
 
       - name: Login to CF registry (crane)
         if: ${{ !inputs.skip_docker }}
@@ -100,7 +131,7 @@ jobs:
             -d '{"expiration_minutes": 15, "permissions": ["pull", "push"]}')
           USERNAME=$(echo "$CREDS" | jq -r '.result.username')
           PASSWORD=$(echo "$CREDS" | jq -r '.result.password')
-          crane auth login registry.cloudflare.com -u "$USERNAME" -p "$PASSWORD"
+          echo "$PASSWORD" | crane auth login registry.cloudflare.com --password-stdin -u "$USERNAME"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

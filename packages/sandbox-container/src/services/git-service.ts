@@ -1,13 +1,18 @@
 // Git Operations Service
 
-import { type Logger, sanitizeGitData, shellEscape } from '@repo/shared';
+import {
+  type Logger,
+  redactCredentials,
+  sanitizeGitData,
+  shellEscape
+} from '@repo/shared';
 import type {
   GitErrorContext,
   ValidationFailedContext
 } from '@repo/shared/errors';
 import { ErrorCode } from '@repo/shared/errors';
 import type { CloneOptions, ServiceError, ServiceResult } from '../core/types';
-import { GitManager } from '../managers/git-manager';
+import { GIT_CLONE_TIMEOUT_SECONDS, GitManager } from '../managers/git-manager';
 import type { SessionManager } from './session-manager';
 
 export interface SecurityService {
@@ -114,21 +119,35 @@ export class GitService {
           const cloneResult = await exec(command);
 
           if (cloneResult.exitCode !== 0) {
+            if (cloneResult.exitCode === 124) {
+              throw {
+                message: `Git clone timed out after ${GIT_CLONE_TIMEOUT_SECONDS} seconds for '${redactCredentials(repoUrl)}'`,
+                code: ErrorCode.GIT_NETWORK_ERROR,
+                details: {
+                  repository: redactCredentials(repoUrl),
+                  targetDir: targetDirectory,
+                  exitCode: 124,
+                  stderr: 'Operation timed out'
+                } satisfies GitErrorContext
+              };
+            }
+
             const errorCode = this.manager.determineErrorCode(
               'clone',
               cloneResult.stderr || 'Unknown error',
               cloneResult.exitCode
             );
             throw {
-              message: `Failed to clone repository '${repoUrl}': ${
-                cloneResult.stderr || `exit code ${cloneResult.exitCode}`
+              message: `Failed to clone repository '${redactCredentials(repoUrl)}': ${
+                redactCredentials(cloneResult.stderr || '') ||
+                `exit code ${cloneResult.exitCode}`
               }`,
               code: errorCode,
               details: {
-                repository: repoUrl,
+                repository: redactCredentials(repoUrl),
                 targetDir: targetDirectory,
                 exitCode: cloneResult.exitCode,
-                stderr: cloneResult.stderr
+                stderr: redactCredentials(cloneResult.stderr || '')
               } satisfies GitErrorContext
             };
           }

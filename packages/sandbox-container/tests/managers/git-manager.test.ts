@@ -37,14 +37,24 @@ describe('GitManager', () => {
   });
 
   describe('buildCloneArgs', () => {
-    it('should build basic clone args', () => {
+    const timeoutPrefix = ['timeout', '-k', '5', '120'];
+    const gitConfig = [
+      'git',
+      '-c',
+      'http.lowSpeedLimit=1024',
+      '-c',
+      'http.lowSpeedTime=30'
+    ];
+
+    it('should build basic clone args with timeout and stall detection', () => {
       const args = manager.buildCloneArgs(
         'https://github.com/user/repo.git',
         '/tmp/target',
         {}
       );
       expect(args).toEqual([
-        'git',
+        ...timeoutPrefix,
+        ...gitConfig,
         'clone',
         '--filter=blob:none',
         'https://github.com/user/repo.git',
@@ -59,7 +69,8 @@ describe('GitManager', () => {
         { branch: 'develop' }
       );
       expect(args).toEqual([
-        'git',
+        ...timeoutPrefix,
+        ...gitConfig,
         'clone',
         '--filter=blob:none',
         '--branch',
@@ -76,7 +87,8 @@ describe('GitManager', () => {
         { depth: 1 }
       );
       expect(args).toEqual([
-        'git',
+        ...timeoutPrefix,
+        ...gitConfig,
         'clone',
         '--filter=blob:none',
         '--depth',
@@ -93,7 +105,8 @@ describe('GitManager', () => {
         { branch: 'main', depth: 10 }
       );
       expect(args).toEqual([
-        'git',
+        ...timeoutPrefix,
+        ...gitConfig,
         'clone',
         '--filter=blob:none',
         '--branch',
@@ -112,7 +125,8 @@ describe('GitManager', () => {
         { depth: 5 }
       );
       expect(args).toEqual([
-        'git',
+        ...timeoutPrefix,
+        ...gitConfig,
         'clone',
         '--filter=blob:none',
         '--depth',
@@ -204,6 +218,12 @@ describe('GitManager', () => {
   });
 
   describe('determineErrorCode', () => {
+    it('should return GIT_NETWORK_ERROR for exit code 124 (timeout)', () => {
+      expect(manager.determineErrorCode('clone', new Error(''), 124)).toBe(
+        ErrorCode.GIT_NETWORK_ERROR
+      );
+    });
+
     it('should return GIT_OPERATION_FAILED for exit code 128 with not a git repository message', () => {
       const error = new Error('fatal: not a git repository');
 
