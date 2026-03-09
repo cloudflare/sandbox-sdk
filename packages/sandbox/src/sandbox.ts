@@ -1429,7 +1429,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       }
     });
 
-    stream.pipeTo(transform.writable).catch(() => {
+    stream.pipeTo(transform.writable).catch((error) => {
+      this.logger.debug('Stream pipe failed', {
+        error: error instanceof Error ? error.message : String(error)
+      });
       releaseOperation();
     });
 
@@ -1553,10 +1556,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   // Enhanced exec method - always returns ExecResult with optional streaming
   // This replaces the old exec method to match ISandbox interface
   async exec(command: string, options?: ExecOptions): Promise<ExecResult> {
-    return this.withActivityTracking(async () => {
-      const session = await this.ensureDefaultSession();
-      return this.execWithSession(command, session, options);
-    });
+    const session = await this.ensureDefaultSession();
+    return this.execWithSession(command, session, options);
   }
 
   /**

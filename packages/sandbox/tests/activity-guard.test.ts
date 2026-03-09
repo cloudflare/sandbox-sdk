@@ -378,7 +378,7 @@ describe('Sandbox activity guard infrastructure', () => {
     });
   });
 
-  describe('exec() wiring uses withActivityTracking', () => {
+  describe('exec() wiring uses withActivityTracking via execWithSession', () => {
     it('increments activeOperations during exec() and decrements after completion', async () => {
       sandbox['defaultSession'] = 'sandbox-default';
       const deferred = createDeferred<{
@@ -390,12 +390,30 @@ describe('Sandbox activity guard infrastructure', () => {
         timestamp: string;
       }>();
 
+      // Spy on execWithSession to verify single tracking
+      const execWithSessionSpy = vi.spyOn(
+        sandbox as unknown as {
+          execWithSession: (
+            command: string,
+            sessionId: string,
+            options?: unknown
+          ) => Promise<unknown>;
+        },
+        'execWithSession'
+      );
+
       vi.spyOn(sandbox.client.commands, 'execute').mockReturnValue(
         deferred.promise
       );
 
       const pending = sandbox.exec('echo test');
 
+      // Wait for execWithSession to be called and tracking to start
+      await vi.waitFor(() => {
+        expect(execWithSessionSpy).toHaveBeenCalled();
+      });
+
+      // exec() delegates to execWithSession which handles tracking
       expect(sandbox['activeOperations']).toBe(1);
 
       deferred.resolve({
