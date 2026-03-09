@@ -310,7 +310,7 @@ export class BackupService {
     // relative to the directory mksquashfs will archive.
     const ignoredFilesResult = await this.sessionManager.executeInSession(
       sessionId,
-      `git -C ${shellEscape(dir)} ls-files --others -i --exclude-standard -- .`
+      `git -C ${shellEscape(dir)} -c core.quotePath=false ls-files -z --others -i --exclude-standard -- .`
     );
     if (!ignoredFilesResult.success || ignoredFilesResult.data.exitCode !== 0) {
       opLogger.warn('Failed to resolve gitignored backup paths', { dir });
@@ -318,8 +318,8 @@ export class BackupService {
     }
 
     const relativePaths = ignoredFilesResult.data.stdout
-      .split('\n')
-      .map((line) => line.trim().replace(/\/+$/, ''))
+      .split('\0')
+      .map((line) => line.replace(/\/+$/, ''))
       .filter((line) => line.length > 0);
 
     // Include both direct relative paths and sticky "... " patterns.
@@ -327,7 +327,7 @@ export class BackupService {
     // is represented in the archive, so emitting both forms ensures ignored
     // content is excluded whether entries appear at the archive root or below
     // the source directory basename.
-    const excludePatterns = ['.git', ...relativePaths].flatMap((path) => [
+    const excludePatterns = relativePaths.flatMap((path) => [
       path,
       `... ${path}`
     ]);

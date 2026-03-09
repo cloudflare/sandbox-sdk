@@ -71,8 +71,14 @@ describe('BackupService', () => {
         if (command === 'command -v git >/dev/null 2>&1') return execSuccess();
         if (command.includes('rev-parse --is-inside-work-tree'))
           return execSuccess('true\n');
-        if (command.includes('ls-files --others -i --exclude-standard -- .')) {
-          return execSuccess('node_modules/a.txt\n');
+        if (
+          command.includes(
+            '-c core.quotePath=false ls-files -z --others -i --exclude-standard -- .'
+          )
+        ) {
+          return execSuccess(
+            'node_modules/a.txt\u0000build output/日本語 file.txt\u0000'
+          );
         }
         if (command.startsWith("printf '%s\\n' ")) return execSuccess();
         if (command.includes('/usr/bin/mksquashfs')) return execSuccess();
@@ -114,9 +120,9 @@ describe('BackupService', () => {
     expect(squashCommand).toContain('-wildcards');
     expect(squashCommand).toContain("-ef '/var/backups/test.sqsh.exclude'");
     expect(writeExcludeCommand).toContain("'node_modules/a.txt'");
-    expect(writeExcludeCommand).toContain("'.git'");
+    expect(writeExcludeCommand).toContain("'build output/日本語 file.txt'");
     expect(writeExcludeCommand).toContain("'... node_modules/a.txt'");
-    expect(writeExcludeCommand).toContain("'... .git'");
+    expect(writeExcludeCommand).toContain("'... build output/日本語 file.txt'");
   });
 
   it('does not add exclude flags when git exclusions are unavailable', async () => {
