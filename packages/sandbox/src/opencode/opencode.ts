@@ -462,7 +462,8 @@ export async function proxyToOpencode(
     const newHeaders = new Headers(response.headers);
     newHeaders.set('Content-Security-Policy', newCsp);
     return new Response(response.body, {
-      ...response,
+      status: response.status,
+      statusText: response.statusText,
       headers: newHeaders
     });
   }
