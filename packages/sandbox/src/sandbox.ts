@@ -464,6 +464,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   async setKeepAlive(keepAlive: boolean): Promise<void> {
     this.keepAliveEnabled = keepAlive;
     await this.ctx.storage.put('keepAliveEnabled', keepAlive);
+
+    if (!keepAlive) {
+      this.renewActivityTimeout();
+    }
   }
 
   async setEnvVars(envVars: Record<string, string | undefined>): Promise<void> {
