@@ -73,11 +73,11 @@ describe('BackupService', () => {
           return execSuccess('true\n');
         if (
           command.includes(
-            '-c core.quotePath=false ls-files -z --others -i --exclude-standard -- .'
+            '-c core.quotePath=false ls-files --others -i --exclude-standard -- .'
           )
         ) {
           return execSuccess(
-            'node_modules/a.txt\u0000build output/日本語 file.txt\u0000'
+            'node_modules/a.txt\nbuild output/日本語 file.txt\n'
           );
         }
         if (command.startsWith("printf '%s\\n' ")) return execSuccess();

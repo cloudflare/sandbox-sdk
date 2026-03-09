@@ -308,9 +308,11 @@ export class BackupService {
 
     // Scope the query to the backup directory so Git returns ignored paths
     // relative to the directory mksquashfs will archive.
+    // Use core.quotePath=false to ensure special characters (spaces, unicode)
+    // are output literally rather than quoted, so they match archive entries.
     const ignoredFilesResult = await this.sessionManager.executeInSession(
       sessionId,
-      `git -C ${shellEscape(dir)} -c core.quotePath=false ls-files -z --others -i --exclude-standard -- .`
+      `git -C ${shellEscape(dir)} -c core.quotePath=false ls-files --others -i --exclude-standard -- .`
     );
     if (!ignoredFilesResult.success || ignoredFilesResult.data.exitCode !== 0) {
       opLogger.warn('Failed to resolve gitignored backup paths', { dir });
@@ -318,8 +320,8 @@ export class BackupService {
     }
 
     const relativePaths = ignoredFilesResult.data.stdout
-      .split('\0')
-      .map((line) => line.replace(/\/+$/, ''))
+      .split('\n')
+      .map((line) => line.trim().replace(/\/+$/, ''))
       .filter((line) => line.length > 0);
 
     // Include both direct relative paths and sticky "... " patterns.
