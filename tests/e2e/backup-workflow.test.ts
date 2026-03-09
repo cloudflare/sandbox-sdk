@@ -407,7 +407,7 @@ describe('Backup Workflow E2E', () => {
       const backupResponse = await fetch(`${workerUrl}/api/backup/create`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ dir: TEST_DIR })
+        body: JSON.stringify({ dir: TEST_DIR, useGitignore: true })
       });
       expect(backupResponse.ok).toBe(true);
       const backup = (await backupResponse.json()) as BackupResponse;
