@@ -167,7 +167,7 @@ describe('Sandbox activity guard infrastructure', () => {
       sandbox['activeOperations'] = 1;
       sandbox['operationStartTimes'].set(1, Date.now());
 
-      const renewSpy = vi.spyOn(sandbox as any, 'renewActivityTimeout');
+      const renewSpy = vi.spyOn(sandbox as unknown as { renewActivityTimeout: () => void }, 'renewActivityTimeout');
 
       await sandbox.onActivityExpired();
 
