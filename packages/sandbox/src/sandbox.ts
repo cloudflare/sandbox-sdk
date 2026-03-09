@@ -1381,6 +1381,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         this.logger.debug(
           `Activity expired but ${this.activeOperations} operations in progress - deferring shutdown`
         );
+        this.renewActivityTimeout();
         return;
       }
     }

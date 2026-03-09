@@ -167,9 +167,12 @@ describe('Sandbox activity guard infrastructure', () => {
       sandbox['activeOperations'] = 1;
       sandbox['operationStartTimes'].set(1, Date.now());
 
+      const renewSpy = vi.spyOn(sandbox as any, 'renewActivityTimeout');
+
       await sandbox.onActivityExpired();
 
       expect(superOnActivityExpiredSpy).not.toHaveBeenCalled();
+      expect(renewSpy).toHaveBeenCalledTimes(1);
     });
 
     it('calls super.onActivityExpired() when activeOperations is 0 and keepAliveEnabled is false', async () => {
