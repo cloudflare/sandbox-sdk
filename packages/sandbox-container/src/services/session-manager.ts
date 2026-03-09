@@ -15,6 +15,7 @@ import type {
 } from '@repo/shared/errors';
 import { ErrorCode } from '@repo/shared/errors';
 import { Mutex } from 'async-mutex';
+import { time } from 'console';
 import { CONFIG } from '../config';
 import {
   type ServiceError,
@@ -316,7 +317,9 @@ export class SessionManager {
 
         const result = await session.exec(
           command,
-          cwd || env ? { cwd, env } : undefined
+          cwd || env || timeoutMs !== undefined
+            ? { cwd, env, timeoutMs }
+            : undefined
         );
 
         return {
@@ -380,7 +383,11 @@ export class SessionManager {
     fn: (
       exec: (
         command: string,
-        options?: { cwd?: string; env?: Record<string, string | undefined> }
+        options?: {
+          cwd?: string;
+          env?: Record<string, string | undefined>;
+          timeoutMs?: number;
+        }
       ) => Promise<RawExecResult>
     ) => Promise<T>,
     cwd?: string
@@ -403,7 +410,11 @@ export class SessionManager {
         // Provide exec function that uses the session directly (already under lock)
         const exec = async (
           command: string,
-          options?: { cwd?: string; env?: Record<string, string | undefined> }
+          options?: {
+            cwd?: string;
+            env?: Record<string, string | undefined>;
+            timeoutMs?: number;
+          }
         ): Promise<RawExecResult> => {
           return session.exec(command, options);
         };

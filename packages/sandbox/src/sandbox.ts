@@ -464,6 +464,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   async setKeepAlive(keepAlive: boolean): Promise<void> {
     this.keepAliveEnabled = keepAlive;
     await this.ctx.storage.put('keepAliveEnabled', keepAlive);
+
+    if (!keepAlive) {
+      this.renewActivityTimeout();
+    }
   }
 
   async setEnvVars(envVars: Record<string, string | undefined>): Promise<void> {
@@ -2844,7 +2848,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     await this.client.utils.createSession({
       id: sessionId,
       ...(envPayload && { env: envPayload }),
-      ...(options?.cwd && { cwd: options.cwd })
+      ...(options?.cwd && { cwd: options.cwd }),
+      ...(options?.commandTimeoutMs !== undefined && {
+        commandTimeoutMs: options.commandTimeoutMs
+      })
     });
 
     // Return wrapper that binds sessionId to all operations

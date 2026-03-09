@@ -1,4 +1,4 @@
-FROM docker.io/cloudflare/sandbox:0.7.13
+FROM docker.io/cloudflare/sandbox:0.7.14
 
 # Set HOME to /home/user so OpenCode finds projects there (default /root is empty)
 ENV HOME=/home/user
