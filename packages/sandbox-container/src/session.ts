@@ -316,12 +316,13 @@ export class Session {
     const exitCodeFile = join(sessionDir, `${commandId}.exit`);
     const pidFile = join(sessionDir, `${commandId}.pid`);
 
-    this.logger.info('Command execution started', {
+    const event: Record<string, unknown> = {
       sessionId: this.id,
       commandId,
       operation: 'exec',
-      command: command.substring(0, 100)
-    });
+      command: command.length > 100 ? `${command.substring(0, 100)}…` : command
+    };
+    let caughtError: Error | undefined;
 
     try {
       // Track command
@@ -367,13 +368,11 @@ export class Session {
 
       const duration = Date.now() - startTime;
 
-      this.logger.info('Command execution completed', {
-        sessionId: this.id,
-        commandId,
-        operation: 'exec',
-        exitCode,
-        duration
-      });
+      event.exitCode = exitCode;
+      event.durationMs = duration;
+      event.stdoutLen = stdout.length;
+      event.stderrLen = stderr.length;
+      event.outcome = 'success';
 
       return {
         command,
@@ -384,19 +383,20 @@ export class Session {
         timestamp: new Date(startTime).toISOString()
       };
     } catch (error) {
-      this.logger.error(
-        'Command execution failed',
-        error instanceof Error ? error : new Error(String(error)),
-        {
-          sessionId: this.id,
-          commandId,
-          operation: 'exec'
-        }
-      );
+      caughtError = error instanceof Error ? error : new Error(String(error));
+      event.outcome = 'error';
+      event.errorMessage = caughtError.message;
       // Untrack and clean up on error
       this.untrackCommand(commandId);
       await this.cleanupCommandFiles(logFile, exitCodeFile);
       throw error;
+    } finally {
+      event.durationMs = event.durationMs ?? Date.now() - startTime;
+      if (event.outcome === 'error') {
+        this.logger.error('command.exec', caughtError, event);
+      } else {
+        this.logger.info('command.exec', event);
+      }
     }
   }
 
@@ -427,12 +427,13 @@ export class Session {
     const pidPipe = join(sessionDir, `${commandId}.pid.pipe`);
     const labelersDoneFile = join(sessionDir, `${commandId}.labelers.done`);
 
-    this.logger.info('Streaming command execution started', {
+    const event: Record<string, unknown> = {
       sessionId: this.id,
       commandId,
       operation: 'execStream',
-      command: command.substring(0, 100)
-    });
+      command: command.length > 100 ? `${command.substring(0, 100)}…` : command
+    };
+    let caughtError: Error | undefined;
 
     try {
       // Track command
@@ -463,14 +464,14 @@ export class Session {
       }
 
       // Wait for PID via FIFO (blocking read - guarantees synchronization)
-      const pid = await this.waitForPidViaPipe(pidPipe, pidFile);
+      const pidResult = await this.waitForPidViaPipe(pidPipe, pidFile);
+      const pid = pidResult.pid;
 
       if (pid === undefined) {
-        this.logger.warn('PID not received within timeout', {
-          sessionId: this.id,
-          commandId,
-          pidPipe
-        });
+        event.pidTimeout = true;
+      }
+      if (pidResult.pidFallback) {
+        event.pidFallback = pidResult.pidFallback;
       }
 
       yield {
@@ -555,11 +556,8 @@ export class Session {
       }
 
       if (!labelersDone) {
-        this.logger.warn('Output capture timeout - logs may be incomplete', {
-          commandId,
-          sessionId: this.id,
-          timeoutMs: maxWaitMs
-        });
+        event.labelerTimeout = true;
+        event.labelerTimeoutMs = maxWaitMs;
       }
 
       // Read final chunks from log file after labelers are done
@@ -606,13 +604,9 @@ export class Session {
 
       const duration = Date.now() - startTime;
 
-      this.logger.info('Streaming command execution completed', {
-        sessionId: this.id,
-        commandId,
-        operation: 'execStream',
-        exitCode,
-        duration
-      });
+      event.exitCode = exitCode;
+      event.durationMs = duration;
+      event.outcome = 'success';
 
       yield {
         type: 'complete',
@@ -635,15 +629,9 @@ export class Session {
       // Clean up temp files
       await this.cleanupCommandFiles(logFile, exitCodeFile);
     } catch (error) {
-      this.logger.error(
-        'Streaming command execution failed',
-        error instanceof Error ? error : new Error(String(error)),
-        {
-          sessionId: this.id,
-          commandId,
-          operation: 'execStream'
-        }
-      );
+      caughtError = error instanceof Error ? error : new Error(String(error));
+      event.outcome = 'error';
+      event.errorMessage = caughtError.message;
       // Untrack and clean up on error
       this.untrackCommand(commandId);
       await this.cleanupCommandFiles(logFile, exitCodeFile);
@@ -651,8 +639,15 @@ export class Session {
       yield {
         type: 'error',
         timestamp: new Date().toISOString(),
-        error: error instanceof Error ? error.message : String(error)
+        error: caughtError.message
       };
+    } finally {
+      event.durationMs = event.durationMs ?? Date.now() - startTime;
+      if (event.outcome === 'error') {
+        this.logger.error('command.stream', caughtError, event);
+      } else {
+        this.logger.info('command.stream', event);
+      }
     }
   }
 
@@ -1341,7 +1336,7 @@ export class Session {
     pidPipe: string,
     pidFile: string,
     timeoutMs: number = 5000
-  ): Promise<number | undefined> {
+  ): Promise<{ pid?: number; pidFallback?: string }> {
     const TIMEOUT_SENTINEL = Symbol('timeout');
 
     try {
@@ -1353,39 +1348,16 @@ export class Session {
       ]);
 
       if (typeof result === 'number') {
-        return result;
+        return { pid: result };
       }
 
       if (result === TIMEOUT_SENTINEL) {
         // The timed-out readPidFromPipe() is still blocked on open() - unblock it
         // to prevent leaking a file descriptor
         await this.unblockPidPipe(pidPipe);
-
-        this.logger.warn(
-          'PID pipe read timed out, falling back to file polling',
-          {
-            pidPipe,
-            pidFile,
-            timeoutMs
-          }
-        );
-      } else {
-        // readPidFromPipe returned undefined (empty or invalid content from shell)
-        this.logger.warn(
-          'PID pipe returned invalid content, falling back to file polling',
-          {
-            pidPipe,
-            pidFile
-          }
-        );
       }
-    } catch (error) {
+    } catch {
       // FIFO read failed, fall back to file polling
-      this.logger.warn('PID pipe read failed, falling back to file polling', {
-        pidPipe,
-        pidFile,
-        error: error instanceof Error ? error.message : String(error)
-      });
     } finally {
       // Clean up the pipe
       try {
@@ -1396,7 +1368,8 @@ export class Session {
     }
 
     // Fallback: poll the PID file (less reliable but works)
-    return this.waitForPidFile(pidFile, 1000);
+    const pid = await this.waitForPidFile(pidFile, 1000);
+    return { pid, pidFallback: 'file_polling' };
   }
 
   /**

@@ -1,7 +1,11 @@
 // Git Operations Service
 
-import type { Logger } from '@repo/shared';
-import { redactCredentials, sanitizeGitData, shellEscape } from '@repo/shared';
+import {
+  type Logger,
+  redactCredentials,
+  sanitizeGitData,
+  shellEscape
+} from '@repo/shared';
 import type {
   GitErrorContext,
   ValidationFailedContext
@@ -21,8 +25,8 @@ export class GitService {
 
   constructor(
     private security: SecurityService,
-    private logger: Logger,
-    private sessionManager: SessionManager
+    private sessionManager: SessionManager,
+    private logger: Logger
   ) {
     this.manager = new GitManager();
   }
@@ -59,6 +63,11 @@ export class GitService {
     repoUrl: string,
     options: CloneOptions = {}
   ): Promise<ServiceResult<{ path: string; branch: string }>> {
+    const startTime = Date.now();
+    let outcome: 'success' | 'error' = 'error';
+    let caughtError: Error | undefined;
+    const sessionId = options.sessionId || 'default';
+
     try {
       // Validate repository URL
       const urlValidation = this.security.validateGitUrl(repoUrl);
@@ -104,26 +113,18 @@ export class GitService {
       );
       const command = this.buildCommand(args);
 
-      // Execute clone→branch sequence atomically within session
-      const sessionId = options.sessionId || 'default';
-
-      return this.sessionManager
+      const result = await this.sessionManager
         .withSession(sessionId, async (exec) => {
           // Execute git clone
-          const result = await exec(command);
+          const cloneResult = await exec(command);
 
-          if (result.exitCode !== 0) {
-            if (result.exitCode === 124) {
-              this.logger.error('Git clone timed out', undefined, {
-                repoUrl: redactCredentials(repoUrl),
-                targetDirectory,
-                exitCode: 124
-              });
+          if (cloneResult.exitCode !== 0) {
+            if (cloneResult.exitCode === 124) {
               throw {
-                message: `Git clone timed out after ${GIT_CLONE_TIMEOUT_SECONDS} seconds for '${repoUrl}'`,
+                message: `Git clone timed out after ${GIT_CLONE_TIMEOUT_SECONDS} seconds for '${redactCredentials(repoUrl)}'`,
                 code: ErrorCode.GIT_NETWORK_ERROR,
                 details: {
-                  repository: repoUrl,
+                  repository: redactCredentials(repoUrl),
                   targetDir: targetDirectory,
                   exitCode: 124,
                   stderr: 'Operation timed out'
@@ -131,28 +132,22 @@ export class GitService {
               };
             }
 
-            this.logger.error('Git clone failed', undefined, {
-              repoUrl: redactCredentials(repoUrl),
-              targetDirectory,
-              exitCode: result.exitCode,
-              stderr: redactCredentials(result.stderr || '')
-            });
-
             const errorCode = this.manager.determineErrorCode(
               'clone',
-              result.stderr || 'Unknown error',
-              result.exitCode
+              cloneResult.stderr || 'Unknown error',
+              cloneResult.exitCode
             );
             throw {
-              message: `Failed to clone repository '${repoUrl}': ${
-                result.stderr || `exit code ${result.exitCode}`
+              message: `Failed to clone repository '${redactCredentials(repoUrl)}': ${
+                redactCredentials(cloneResult.stderr || '') ||
+                `exit code ${cloneResult.exitCode}`
               }`,
               code: errorCode,
               details: {
-                repository: repoUrl,
+                repository: redactCredentials(repoUrl),
                 targetDir: targetDirectory,
-                exitCode: result.exitCode,
-                stderr: result.stderr
+                exitCode: cloneResult.exitCode,
+                stderr: redactCredentials(cloneResult.stderr || '')
               } satisfies GitErrorContext
             };
           }
@@ -179,25 +174,19 @@ export class GitService {
             branch: actualBranch
           };
         })
-        .then((result) => {
-          if (!result.success) {
-            return this.returnError(result.error);
+        .then((r) => {
+          if (!r.success) {
+            return r as ServiceResult<{ path: string; branch: string }>;
           }
 
-          return this.returnSuccess(result.data);
+          return this.returnSuccess(r.data);
         });
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : 'Unknown error';
 
-      this.logger.error(
-        'Failed to clone repository',
-        error instanceof Error ? error : undefined,
-        {
-          repoUrl: redactCredentials(repoUrl),
-          options: sanitizeGitData(options)
-        }
-      );
+      outcome = result.success ? 'success' : 'error';
+      return result;
+    } catch (error) {
+      caughtError = error instanceof Error ? error : new Error(String(error));
+      const errorMessage = caughtError.message;
 
       return this.returnError({
         message: `Failed to clone repository '${repoUrl}': ${errorMessage}`,
@@ -208,6 +197,20 @@ export class GitService {
           stderr: errorMessage
         } satisfies GitErrorContext
       });
+    } finally {
+      const logEvent: Record<string, unknown> = {
+        repoUrl,
+        targetDir: options.targetDir,
+        branch: options.branch,
+        sessionId,
+        outcome,
+        durationMs: Date.now() - startTime
+      };
+      if (caughtError) {
+        this.logger.error('git.clone', caughtError, logEvent);
+      } else {
+        this.logger.info('git.clone', logEvent);
+      }
     }
   }
 
@@ -216,6 +219,10 @@ export class GitService {
     branch: string,
     sessionId = 'default'
   ): Promise<ServiceResult<void>> {
+    const startTime = Date.now();
+    let outcome: 'success' | 'error' = 'error';
+    let caughtError: Error | undefined;
+
     try {
       // Validate repository path
       const pathValidation = this.security.validatePath(repoPath);
@@ -265,24 +272,19 @@ export class GitService {
       );
 
       if (!execResult.success) {
+        outcome = 'error';
         return execResult as ServiceResult<void>;
       }
 
       const result = execResult.data;
 
       if (result.exitCode !== 0) {
-        this.logger.error('Git checkout failed', undefined, {
-          repoPath,
-          branch,
-          exitCode: result.exitCode,
-          stderr: result.stderr
-        });
-
         const errorCode = this.manager.determineErrorCode(
           'checkout',
           result.stderr || 'Unknown error',
           result.exitCode
         );
+        outcome = 'error';
         return this.returnError({
           message: `Failed to checkout branch '${branch}' in '${repoPath}': ${
             result.stderr || `exit code ${result.exitCode}`
@@ -297,18 +299,13 @@ export class GitService {
         });
       }
 
+      outcome = 'success';
       return {
         success: true
       };
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : 'Unknown error';
-
-      this.logger.error(
-        'Failed to checkout branch',
-        error instanceof Error ? error : undefined,
-        { repoPath, branch }
-      );
+      caughtError = error instanceof Error ? error : new Error(String(error));
+      const errorMessage = caughtError.message;
 
       return this.returnError({
         message: `Failed to checkout branch '${branch}' in '${repoPath}': ${errorMessage}`,
@@ -319,6 +316,19 @@ export class GitService {
           stderr: errorMessage
         } satisfies GitErrorContext
       });
+    } finally {
+      const logEvent: Record<string, unknown> = {
+        repoPath,
+        branch,
+        sessionId,
+        outcome,
+        durationMs: Date.now() - startTime
+      };
+      if (caughtError) {
+        this.logger.error('git.checkout', caughtError, logEvent);
+      } else {
+        this.logger.info('git.checkout', logEvent);
+      }
     }
   }
 
@@ -385,12 +395,6 @@ export class GitService {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
-
-      this.logger.error(
-        'Failed to get current branch',
-        error instanceof Error ? error : undefined,
-        { repoPath }
-      );
 
       return this.returnError({
         message: `Failed to get current branch in '${repoPath}': ${errorMessage}`,
@@ -467,12 +471,6 @@ export class GitService {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
-
-      this.logger.error(
-        'Failed to list branches',
-        error instanceof Error ? error : undefined,
-        { repoPath }
-      );
 
       return this.returnError({
         message: `Failed to list branches in '${repoPath}': ${errorMessage}`,

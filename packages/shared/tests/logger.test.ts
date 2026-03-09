@@ -318,7 +318,7 @@ describe('Logger Module', () => {
       expect(consoleErrorSpy.mock.calls[0][0] as string).toContain('\x1b[');
     });
 
-    it('should display error stack in pretty mode', () => {
+    it('should include error details inline in pretty mode', () => {
       const logger = new CloudflareLogger(
         { component: 'container', traceId: 'tr_stack' } as LogContext,
         LogLevelEnum.ERROR,
@@ -329,9 +329,10 @@ describe('Logger Module', () => {
       error.stack = 'Error: Test error\n    at test.js:1:1';
       logger.error('Error with stack', error);
 
-      // Pretty mode should output multiple lines for errors
-      expect(consoleErrorSpy).toHaveBeenCalled();
-      expect(consoleErrorSpy.mock.calls.length).toBeGreaterThan(1);
+      expect(consoleErrorSpy).toHaveBeenCalledOnce();
+      const output = consoleErrorSpy.mock.calls[0][0] as string;
+      expect(output).toContain('err.msg=Test error');
+      expect(output).toContain('err.stack=Error: Test error');
     });
   });
 

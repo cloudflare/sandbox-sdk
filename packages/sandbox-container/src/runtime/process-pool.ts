@@ -1,10 +1,28 @@
 import { type ChildProcess, spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import type { Logger } from '@repo/shared';
 import { createLogger } from '@repo/shared';
 import { ErrorCode } from '@repo/shared/errors';
 import { Mutex } from 'async-mutex';
 import { CONFIG } from '../config';
+
+const JS_EXECUTOR_CANDIDATE_PATHS = [
+  '/container-server/dist/runtime/executors/javascript/node_executor.js',
+  '/container-server/dist/runtime/executors/javascript/node_executor.mjs',
+  '/container-server/runtime/executors/javascript/node_executor.js'
+];
+
+function summarizeSpawnOutput(data: string): string {
+  return data.replace(/\s+/g, ' ').trim().slice(0, 240);
+}
+
+function isMissingJavaScriptExecutorError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    error.message.startsWith('JavaScript executor binary not found')
+  );
+}
 
 // Check if Python is available by trying to invoke the binary
 const PYTHON_AVAILABLE = (() => {
@@ -134,6 +152,8 @@ export class ProcessPoolManager {
   // Per-executor mutexes for serializing execution
   private executorLocks: Map<string, Mutex> = new Map();
 
+  private javascriptExecutorPath?: string;
+
   constructor(
     customConfigs: Partial<
       Record<InterpreterLanguage, Partial<ExecutorPoolConfig>>
@@ -192,6 +212,29 @@ export class ProcessPoolManager {
       throw new Error(`No mutex found for executor ${executorId}`);
     }
     return mutex;
+  }
+
+  private resolveJavaScriptExecutorPath(): string {
+    if (this.javascriptExecutorPath) {
+      return this.javascriptExecutorPath;
+    }
+
+    const resolved = JS_EXECUTOR_CANDIDATE_PATHS.find((path) =>
+      existsSync(path)
+    );
+
+    if (!resolved) {
+      throw new Error(
+        `JavaScript executor binary not found. Checked: ${JS_EXECUTOR_CANDIDATE_PATHS.join(', ')}`
+      );
+    }
+
+    this.logger.debug('Resolved JavaScript executor path', {
+      path: resolved
+    });
+
+    this.javascriptExecutorPath = resolved;
+    return resolved;
   }
 
   private async borrowExecutor(
@@ -400,16 +443,12 @@ export class ProcessPoolManager {
       case 'javascript':
         // Use detected JS runtime (node or bun)
         command = JS_RUNTIME!;
-        args = [
-          '/container-server/dist/runtime/executors/javascript/node_executor.js'
-        ];
+        args = [this.resolveJavaScriptExecutorPath()];
         break;
       case 'typescript':
         // TypeScript is transpiled in execute(), so use the same JS executor
         command = JS_RUNTIME!;
-        args = [
-          '/container-server/dist/runtime/executors/javascript/node_executor.js'
-        ];
+        args = [this.resolveJavaScriptExecutorPath()];
         break;
     }
 
@@ -516,10 +555,12 @@ export class ProcessPoolManager {
       };
 
       const errorHandler = (data: Buffer) => {
-        errorBuffer += data.toString();
+        const chunk = data.toString();
+        errorBuffer += chunk;
         this.logger.debug('Interpreter stderr during spawn', {
           language,
-          data: data.toString()
+          bytes: data.length,
+          preview: summarizeSpawnOutput(chunk)
         });
       };
 
@@ -528,9 +569,12 @@ export class ProcessPoolManager {
 
       childProcess.once('error', (err) => {
         clearTimeout(timeout);
+        const nodeError = err as NodeJS.ErrnoException;
         this.logger.debug('Interpreter spawn error', {
           language,
-          error: err.message
+          errorMessage: err.message,
+          errorCode: nodeError.code,
+          errorName: err.name
         });
         reject(err);
       });
@@ -540,7 +584,8 @@ export class ProcessPoolManager {
           clearTimeout(timeout);
           this.logger.debug('Interpreter exited during spawn', {
             language,
-            exitCode: code
+            exitCode: code,
+            stderrPreview: summarizeSpawnOutput(errorBuffer)
           });
           reject(new Error(`${language} executor exited with code ${code}`));
         }
@@ -759,8 +804,12 @@ export class ProcessPoolManager {
         this.logger.debug('Failed to pre-warm process', {
           executor,
           processIndex: i,
-          error: error instanceof Error ? error.message : String(error)
+          errorMessage: error instanceof Error ? error.message : String(error)
         });
+
+        if (isMissingJavaScriptExecutorError(error)) {
+          break;
+        }
       }
     }
 
