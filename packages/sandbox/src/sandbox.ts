@@ -3144,7 +3144,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         this.renameFile(oldPath, newPath, sessionId),
       moveFile: (sourcePath, destPath) =>
         this.moveFile(sourcePath, destPath, sessionId),
-      listFiles: (path, options) => this.listFiles(path, options),
+      listFiles: (path, options) =>
+        this.withActivityTracking(() =>
+          this.client.files.listFiles(path, sessionId, options)
+        ),
       exists: (path) => this.exists(path, sessionId),
 
       // Git operations

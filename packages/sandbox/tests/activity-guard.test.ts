@@ -647,7 +647,7 @@ describe('Sandbox activity guard infrastructure', () => {
     });
   });
 
-  describe('session.listFiles() routes through tracked this.listFiles()', () => {
+  describe('session.listFiles() routes through tracked client call with correct sessionId', () => {
     it('increments activeOperations during session.listFiles() and decrements after completion', async () => {
       sandbox['defaultSession'] = 'sandbox-default';
       const session = sandbox['getSessionWrapper']('test-session');
@@ -659,9 +659,9 @@ describe('Sandbox activity guard infrastructure', () => {
         timestamp: string;
       }>();
 
-      vi.spyOn(sandbox.client.files, 'listFiles').mockReturnValue(
-        deferred.promise
-      );
+      const listFilesSpy = vi
+        .spyOn(sandbox.client.files, 'listFiles')
+        .mockReturnValue(deferred.promise);
 
       const pending = session.listFiles('/workspace');
 
@@ -677,6 +677,12 @@ describe('Sandbox activity guard infrastructure', () => {
 
       await pending;
       expect(sandbox['activeOperations']).toBe(0);
+      // Verify the session's bound sessionId is passed, not the default session
+      expect(listFilesSpy).toHaveBeenCalledWith(
+        '/workspace',
+        'test-session',
+        undefined
+      );
     });
   });
 
