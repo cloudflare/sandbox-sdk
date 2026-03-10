@@ -1,5 +1,17 @@
 # @cloudflare/sandbox
 
+## 0.7.15
+
+### Patch Changes
+
+- [#400](https://github.com/cloudflare/sandbox-sdk/pull/400) [`92e1fda`](https://github.com/cloudflare/sandbox-sdk/commit/92e1fdabb5313b9c23a755cebb9f8807954ca346) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - Improve idle timeout handling for long-running streams over WebSocket transport.
+
+  Streams now remain open as long as data is flowing, timing out only after 5 minutes of inactivity.
+
+- [#450](https://github.com/cloudflare/sandbox-sdk/pull/450) [`75dc1f9`](https://github.com/cloudflare/sandbox-sdk/commit/75dc1f9ae127479de782934d307c1acdbd2591d2) Thanks [@scuffi](https://github.com/scuffi)! - Support per-command and per-session timeouts for exec
+
+  Timeouts now propagate correctly through the full stack. Per-command `timeout` on `exec()` takes priority over session-level `commandTimeoutMs` set via `createSession()`, which takes priority over the container-level `COMMAND_TIMEOUT_MS` environment variable.
+
 ## 0.7.14
 
 ### Patch Changes
@@ -146,13 +158,13 @@
   As a base image:
 
   ```dockerfile
-  FROM docker.io/cloudflare/sandbox:0.7.14-musl
+  FROM docker.io/cloudflare/sandbox:0.7.15-musl
   ```
 
   Or copy the binary into your own Alpine image:
 
   ```dockerfile
-  COPY --from=docker.io/cloudflare/sandbox:0.7.14-musl /container-server/sandbox /sandbox
+  COPY --from=docker.io/cloudflare/sandbox:0.7.15-musl /container-server/sandbox /sandbox
   ```
 
 - [#377](https://github.com/cloudflare/sandbox-sdk/pull/377) [`d83642e`](https://github.com/cloudflare/sandbox-sdk/commit/d83642e855f68e4fb8c15c2452709923e55a83fd) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Allow port 8787 in `exposePort()`. It was incorrectly blocked.
@@ -375,10 +387,10 @@
 
   ```dockerfile
   # Before
-  FROM cloudflare/sandbox:0.7.14
+  FROM cloudflare/sandbox:0.7.15
 
   # After
-  FROM cloudflare/sandbox:0.7.14-python
+  FROM cloudflare/sandbox:0.7.15-python
   ```
 
   Without this change, Python execution will fail with `PYTHON_NOT_AVAILABLE` error.
