@@ -1,5 +1,15 @@
 # @cloudflare/sandbox
 
+## 0.7.17
+
+### Patch Changes
+
+- [#474](https://github.com/cloudflare/sandbox-sdk/pull/474) [`5b0ce89`](https://github.com/cloudflare/sandbox-sdk/commit/5b0ce89eedb63d9920eaf82046a12e3837e1b660) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - Add `gitignore` and `excludes` options to `createBackup()`.
+  - `gitignore: true` excludes gitignored files when the directory is inside a git repo.
+    If git is not installed, a warning is logged and the backup proceeds without git-based exclusions.
+  - `excludes: string[]` allows explicit glob patterns to exclude from the backup.
+  - Both default to off/empty — existing behavior is unchanged.
+
 ## 0.7.16
 
 ### Patch Changes
@@ -164,13 +174,13 @@
   As a base image:
 
   ```dockerfile
-  FROM docker.io/cloudflare/sandbox:0.7.16-musl
+  FROM docker.io/cloudflare/sandbox:0.7.17-musl
   ```
 
   Or copy the binary into your own Alpine image:
 
   ```dockerfile
-  COPY --from=docker.io/cloudflare/sandbox:0.7.16-musl /container-server/sandbox /sandbox
+  COPY --from=docker.io/cloudflare/sandbox:0.7.17-musl /container-server/sandbox /sandbox
   ```
 
 - [#377](https://github.com/cloudflare/sandbox-sdk/pull/377) [`d83642e`](https://github.com/cloudflare/sandbox-sdk/commit/d83642e855f68e4fb8c15c2452709923e55a83fd) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Allow port 8787 in `exposePort()`. It was incorrectly blocked.
@@ -393,10 +403,10 @@
 
   ```dockerfile
   # Before
-  FROM cloudflare/sandbox:0.7.16
+  FROM cloudflare/sandbox:0.7.17
 
   # After
-  FROM cloudflare/sandbox:0.7.16-python
+  FROM cloudflare/sandbox:0.7.17-python
   ```
 
   Without this change, Python execution will fail with `PYTHON_NOT_AVAILABLE` error.
