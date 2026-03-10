@@ -1073,9 +1073,9 @@ export interface BucketCredentials {
 }
 
 /**
- * Options for mounting an S3-compatible bucket
+ * Options for mounting an S3-compatible bucket via s3fs-FUSE (production)
  */
-export interface MountBucketOptions {
+export interface RemoteMountBucketOptions {
   /**
    * S3-compatible endpoint URL
    *
@@ -1083,10 +1083,8 @@ export interface MountBucketOptions {
    * - R2: 'https://abc123.r2.cloudflarestorage.com'
    * - AWS S3: 'https://s3.us-west-2.amazonaws.com'
    * - GCS: 'https://storage.googleapis.com'
-   *
-   * Required when `localBucket` is false
    */
-  endpoint?: string;
+  endpoint: string;
 
   /**
    * Optional provider hint for automatic s3fs flag configuration
@@ -1134,16 +1132,42 @@ export interface MountBucketOptions {
    * Must start with '/' (e.g., '/sessions/user123' or '/data/uploads/')
    */
   prefix?: string;
+}
+
+/**
+ * Options for mounting a local R2 binding via bidirectional sync (local dev)
+ *
+ * Used during local development with `wrangler dev`. The Durable Object
+ * resolves the R2 binding from its own env using the `bucket` parameter
+ * and syncs files via polling instead of s3fs-FUSE.
+ */
+export interface LocalMountBucketOptions {
+  /**
+   * Must be true to indicate local R2 binding mode.
+   */
+  localBucket: true;
 
   /**
-   * Set to true when the bucket name refers to a local R2 binding
-   * (e.g., during local development with `wrangler dev`).
+   * Optional prefix/subdirectory within the bucket to sync.
    *
-   * When true, the Durable Object resolves the R2 binding from its own env
-   * using the `bucket` parameter and syncs files via polling instead of s3fs-FUSE.
+   * When specified, only the contents under this prefix will be visible
+   * at the mount point.
    */
-  localBucket?: boolean;
+  prefix?: string;
+
+  /**
+   * Mount filesystem as read-only
+   * Default: false
+   */
+  readOnly?: boolean;
 }
+
+/**
+ * Options for mounting a bucket — either remote (s3fs-FUSE) or local (R2 binding sync)
+ */
+export type MountBucketOptions =
+  | RemoteMountBucketOptions
+  | LocalMountBucketOptions;
 
 // Main Sandbox interface
 export interface ISandbox {

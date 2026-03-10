@@ -191,11 +191,21 @@ export class LocalMountSyncManager {
       const batch = changed.slice(i, i + SYNC_CONCURRENCY);
       await Promise.all(
         batch.map(async ({ key, action }) => {
-          const containerPath = this.r2KeyToContainerPath(key);
-          await this.ensureParentDir(containerPath);
-          this.suppressEcho(containerPath);
-          await this.transferR2ObjectToContainer(key, containerPath);
-          this.logger.debug('R2 -> Container: synced object', { key, action });
+          try {
+            const containerPath = this.r2KeyToContainerPath(key);
+            await this.ensureParentDir(containerPath);
+            this.suppressEcho(containerPath);
+            await this.transferR2ObjectToContainer(key, containerPath);
+            this.logger.debug('R2 -> Container: synced object', {
+              key,
+              action
+            });
+          } catch (error) {
+            this.logger.error(
+              `R2 -> Container: failed to sync object ${key}`,
+              error instanceof Error ? error : new Error(String(error))
+            );
+          }
         })
       );
     }
@@ -208,8 +218,11 @@ export class LocalMountSyncManager {
         try {
           await this.client.files.deleteFile(containerPath, this.sessionId);
           this.logger.debug('R2 -> Container: deleted file', { key });
-        } catch {
-          // File may already be gone
+        } catch (error) {
+          this.logger.error(
+            'R2 -> Container: failed to delete',
+            error instanceof Error ? error : new Error(String(error))
+          );
         }
       }
     }

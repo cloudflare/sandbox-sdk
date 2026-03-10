@@ -1,4 +1,4 @@
-import type { BucketCredentials, MountBucketOptions } from '@repo/shared';
+import type { BucketCredentials, RemoteMountBucketOptions } from '@repo/shared';
 import { MissingCredentialsError } from './errors';
 
 /**
@@ -14,7 +14,7 @@ import { MissingCredentialsError } from './errors';
  * @throws MissingCredentialsError if no credentials found
  */
 export function detectCredentials(
-  options: MountBucketOptions,
+  options: RemoteMountBucketOptions,
   envVars: Record<string, string | undefined>
 ): BucketCredentials {
   // Priority 1: Explicit credentials in options

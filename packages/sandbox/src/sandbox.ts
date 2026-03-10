@@ -12,6 +12,7 @@ import type {
   ExecutionResult,
   ExecutionSession,
   ISandbox,
+  LocalMountBucketOptions,
   LogEvent,
   MountBucketOptions,
   PortWatchEvent,
@@ -19,6 +20,7 @@ import type {
   ProcessOptions,
   ProcessStatus,
   PtyOptions,
+  RemoteMountBucketOptions,
   RestoreBackupResult,
   RunCodeOptions,
   SandboxOptions,
@@ -684,7 +686,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private async mountBucketLocal(
     bucket: string,
     mountPath: string,
-    options: MountBucketOptions
+    options: LocalMountBucketOptions
   ): Promise<void> {
     const envObj = this.env as Record<string, unknown>;
     const r2Binding = envObj[bucket];
@@ -747,7 +749,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private async mountBucketFuse(
     bucket: string,
     mountPath: string,
-    options: MountBucketOptions
+    options: RemoteMountBucketOptions
   ): Promise<void> {
     const prefix = options.prefix || undefined;
 
@@ -755,10 +757,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     // Build s3fs source: bucket name with optional prefix (e.g., "mybucket:/prefix/")
     const s3fsSource = buildS3fsSource(bucket, prefix);
-    // endpoint is guaranteed non-null after validateMountOptions
-    const endpoint = options.endpoint!;
     const provider: BucketProvider | null =
-      options.provider || detectProviderFromUrl(endpoint);
+      options.provider || detectProviderFromUrl(options.endpoint);
 
     this.logger.debug(`Detected provider: ${provider || 'unknown'}`, {
       explicitProvider: options.provider,
@@ -776,7 +776,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       mountType: 'fuse',
       bucket: s3fsSource,
       mountPath,
-      endpoint,
+      endpoint: options.endpoint,
       provider,
       passwordFilePath,
       mounted: false
@@ -858,15 +858,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private validateMountOptions(
     bucket: string,
     mountPath: string,
-    options: MountBucketOptions
+    options: RemoteMountBucketOptions
   ): void {
-    // Require endpoint field
-    if (!options.endpoint) {
-      throw new InvalidMountConfigError(
-        'Endpoint is required. Provide the full S3-compatible endpoint URL.'
-      );
-    }
-
     // Basic URL validation
     try {
       new URL(options.endpoint);
@@ -946,7 +939,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private async executeS3FSMount(
     bucket: string,
     mountPath: string,
-    options: MountBucketOptions,
+    options: RemoteMountBucketOptions,
     provider: BucketProvider | null,
     passwordFilePath: string
   ): Promise<void> {
@@ -968,7 +961,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
 
     // Add endpoint URL
-    s3fsArgs.push(`url=${options.endpoint!}`);
+    s3fsArgs.push(`url=${options.endpoint}`);
 
     // Build final command with escaped options
     const optionsStr = shellEscape(s3fsArgs.join(','));
