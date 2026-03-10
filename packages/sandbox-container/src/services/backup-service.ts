@@ -32,6 +32,16 @@ const ALLOWED_PREFIXES = ['/workspace', '/home', '/tmp', '/var/tmp'];
  */
 const FORBIDDEN_DIRS = new Set(['/']);
 
+function isSafeAbsolutePath(path: string): boolean {
+  return (
+    typeof path === 'string' &&
+    path.startsWith('/') &&
+    !path.includes('..') &&
+    !path.includes('\0') &&
+    !FORBIDDEN_DIRS.has(path)
+  );
+}
+
 /**
  * Validate that dir and archivePath are safe for backup operations.
  * Defense-in-depth: the DO already validates, but the container
@@ -40,8 +50,8 @@ const FORBIDDEN_DIRS = new Set(['/']);
  * Uses allowlist approach: only paths under /workspace, /home, /tmp, /var/tmp are permitted.
  */
 function validateBackupPaths(dir: string, archivePath: string): string | null {
-  if (!dir.startsWith('/') || FORBIDDEN_DIRS.has(dir)) {
-    return `Unsafe directory: ${dir}`;
+  if (!isSafeAbsolutePath(dir)) {
+    return `Backup directory must be a safe absolute path (no '..' or null bytes) under an allowed prefix (${ALLOWED_PREFIXES.join(', ')}): ${dir}`;
   }
   // Allowlist check: dir must start with one of the allowed prefixes
   const isAllowed = ALLOWED_PREFIXES.some(
@@ -96,9 +106,13 @@ export class BackupService {
   async createArchive(
     dir: string,
     archivePath: string,
-    sessionId = 'default'
+    sessionId = 'default',
+    gitignore = false,
+    excludes: string[] = []
   ): Promise<ServiceResult<CreateArchiveResult>> {
     const opLogger = this.logger.child({ operation: Operation.BACKUP_CREATE });
+    const excludeFilePath = `${archivePath}.exclude`;
+    let shouldCleanupExcludeFile = false;
 
     const pathError = validateBackupPaths(dir, archivePath);
     if (pathError) {
@@ -153,17 +167,54 @@ export class BackupService {
         });
       }
 
+      const gitignorePatterns = gitignore
+        ? await this.resolveGitignoreExcludePatterns(dir, sessionId, opLogger)
+        : [];
+
+      const userExcludePatterns = excludes.flatMap((pattern) => [
+        pattern,
+        `... ${pattern}`
+      ]);
+
+      const excludePatterns = [
+        ...new Set([...gitignorePatterns, ...userExcludePatterns])
+      ];
+
+      if (excludePatterns.length > 0) {
+        const writeExcludeResult = await this.sessionManager.executeInSession(
+          sessionId,
+          `printf '%s\\n' ${excludePatterns.map(shellEscape).join(' ')} > ${shellEscape(excludeFilePath)}`
+        );
+        if (
+          !writeExcludeResult.success ||
+          writeExcludeResult.data.exitCode !== 0
+        ) {
+          shouldCleanupExcludeFile = true;
+          return serviceError({
+            message: 'Failed to write exclude patterns file',
+            code: ErrorCode.BACKUP_CREATE_FAILED,
+            details: { dir, archivePath }
+          });
+        }
+        shouldCleanupExcludeFile = true;
+      }
+
       // Create squashfs archive with zstd compression
       // -no-progress suppresses progress output
       // -noappend creates a fresh archive (no appending to existing)
-      const squashCmd = [
+      const squashCmdParts = [
         BIN.mksquashfs,
         shellEscape(dir),
         shellEscape(archivePath),
         '-comp zstd',
         '-no-progress',
         '-noappend'
-      ].join(' ');
+      ];
+      if (excludePatterns.length > 0) {
+        squashCmdParts.push('-wildcards');
+        squashCmdParts.push(`-ef ${shellEscape(excludeFilePath)}`);
+      }
+      const squashCmd = squashCmdParts.join(' ');
 
       opLogger.info('Creating squashfs archive', {
         dir,
@@ -225,7 +276,83 @@ export class BackupService {
         code: ErrorCode.BACKUP_CREATE_FAILED,
         details: { dir, archivePath }
       });
+    } finally {
+      if (shouldCleanupExcludeFile) {
+        await this.sessionManager
+          .executeInSession(sessionId, `rm -f ${shellEscape(excludeFilePath)}`)
+          .catch((err) => {
+            opLogger.warn('Failed to clean up exclude file', {
+              excludeFilePath,
+              error: err instanceof Error ? err.message : String(err)
+            });
+          });
+      }
     }
+  }
+
+  private async resolveGitignoreExcludePatterns(
+    dir: string,
+    sessionId: string,
+    opLogger: Logger
+  ): Promise<string[]> {
+    const gitAvailableResult = await this.sessionManager.executeInSession(
+      sessionId,
+      'command -v git >/dev/null 2>&1'
+    );
+    if (!gitAvailableResult.success || gitAvailableResult.data.exitCode !== 0) {
+      opLogger.warn(
+        'gitignore option enabled but git is not installed; skipping git-based exclusions',
+        { dir }
+      );
+      return [];
+    }
+
+    const insideWorkTreeResult = await this.sessionManager.executeInSession(
+      sessionId,
+      `git -C ${shellEscape(dir)} rev-parse --is-inside-work-tree`
+    );
+    if (
+      !insideWorkTreeResult.success ||
+      insideWorkTreeResult.data.exitCode !== 0 ||
+      insideWorkTreeResult.data.stdout.trim() !== 'true'
+    ) {
+      opLogger.info('Backup directory is not inside a git repository', { dir });
+      return [];
+    }
+
+    // Scope the query to the backup directory so Git returns ignored paths
+    // relative to the directory mksquashfs will archive.
+    // Use core.quotePath=false to ensure special characters (spaces, unicode)
+    // are output literally rather than quoted, so they match archive entries.
+    const ignoredFilesResult = await this.sessionManager.executeInSession(
+      sessionId,
+      `git -C ${shellEscape(dir)} -c core.quotePath=false ls-files --others -i --exclude-standard -- .`
+    );
+    if (!ignoredFilesResult.success || ignoredFilesResult.data.exitCode !== 0) {
+      opLogger.warn('Failed to resolve gitignored backup paths', { dir });
+      return [];
+    }
+
+    const relativePaths = ignoredFilesResult.data.stdout
+      .split('\n')
+      .map((line) => line.trim().replace(/\/+$/, ''))
+      .filter((line) => line.length > 0)
+      .map(BackupService.escapeMksquashfsWildcardLiteral);
+
+    // Include both direct relative paths and sticky "... " patterns.
+    // mksquashfs path matching differs depending on how the source directory
+    // is represented in the archive, so emitting both forms ensures ignored
+    // content is excluded whether entries appear at the archive root or below
+    // the source directory basename.
+    const excludePatterns = relativePaths.flatMap((path) => [
+      path,
+      `... ${path}`
+    ]);
+    return [...new Set(excludePatterns)];
+  }
+
+  private static escapeMksquashfsWildcardLiteral(path: string): string {
+    return path.replace(/\\/g, '\\\\').replace(/([*?[\]])/g, '\\$1');
   }
 
   /**

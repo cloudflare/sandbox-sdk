@@ -1031,6 +1031,21 @@ export interface BackupOptions {
   name?: string;
   /** Seconds until automatic garbage collection. Default: 259200 (3 days). No upper limit. */
   ttl?: number;
+  /**
+   * Respect git ignore rules for the backup directory when it is inside a git repository.
+   *
+   * Default: false.
+   * If the directory is not inside a git repository, no git-based exclusions are applied.
+   * If git is not installed in the container, a warning is logged and gitignore rules are skipped.
+   */
+  gitignore?: boolean;
+  /**
+   * Glob patterns to exclude from the backup.
+   * These are passed directly to mksquashfs as wildcard exclude patterns.
+   *
+   * @example ['node_modules', '*.log', '.cache']
+   */
+  excludes?: string[];
 }
 
 /**

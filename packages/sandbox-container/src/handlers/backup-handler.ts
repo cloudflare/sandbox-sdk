@@ -12,6 +12,8 @@ import type { BackupService } from '../services/backup-service';
 import { BACKUP_WORK_DIR } from '../services/backup-service';
 import { BaseHandler } from './base-handler';
 
+type CreateBackupRequestBody = CreateBackupRequest;
+
 export class BackupHandler extends BaseHandler<Request, Response> {
   constructor(
     private backupService: BackupService,
@@ -90,7 +92,7 @@ export class BackupHandler extends BaseHandler<Request, Response> {
     request: Request,
     context: RequestContext
   ): Promise<Response> {
-    const body = await this.parseRequestBody<CreateBackupRequest>(request);
+    const body = await this.parseRequestBody<CreateBackupRequestBody>(request);
 
     const dirError = BackupHandler.validateDirPath(body.dir);
     if (dirError) {
@@ -115,12 +117,41 @@ export class BackupHandler extends BaseHandler<Request, Response> {
       );
     }
 
+    if (body.gitignore !== undefined && typeof body.gitignore !== 'boolean') {
+      return this.createErrorResponse(
+        {
+          message: 'gitignore must be a boolean',
+          code: ErrorCode.INVALID_BACKUP_CONFIG
+        },
+        context,
+        Operation.BACKUP_CREATE
+      );
+    }
+
+    if (body.excludes !== undefined) {
+      if (
+        !Array.isArray(body.excludes) ||
+        !body.excludes.every((e) => typeof e === 'string')
+      ) {
+        return this.createErrorResponse(
+          {
+            message: 'excludes must be an array of strings',
+            code: ErrorCode.INVALID_BACKUP_CONFIG
+          },
+          context,
+          Operation.BACKUP_CREATE
+        );
+      }
+    }
+
     const sessionId = body.sessionId ?? context.sessionId ?? 'default';
 
     const result = await this.backupService.createArchive(
       body.dir,
       body.archivePath,
-      sessionId
+      sessionId,
+      body.gitignore ?? false,
+      body.excludes ?? []
     );
 
     if (result.success) {

@@ -3424,7 +3424,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     this.requirePresignedUrlSupport();
     const DEFAULT_TTL_SECONDS = 259200; // 3 days
     const MAX_NAME_LENGTH = 256;
-    const { dir, name, ttl = DEFAULT_TTL_SECONDS } = options;
+    const {
+      dir,
+      name,
+      ttl = DEFAULT_TTL_SECONDS,
+      gitignore = false,
+      excludes = []
+    } = options;
     Sandbox.validateBackupDir(dir, 'BackupOptions.dir');
     if (name !== undefined) {
       if (typeof name !== 'string' || name.length > MAX_NAME_LENGTH) {
@@ -3460,16 +3466,47 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       });
     }
 
+    if (typeof gitignore !== 'boolean') {
+      throw new InvalidBackupConfigError({
+        message: 'BackupOptions.gitignore must be a boolean',
+        code: ErrorCode.INVALID_BACKUP_CONFIG,
+        httpStatus: 400,
+        context: { reason: 'gitignore must be a boolean' },
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    if (
+      !Array.isArray(excludes) ||
+      !excludes.every((e: unknown) => typeof e === 'string')
+    ) {
+      throw new InvalidBackupConfigError({
+        message: 'BackupOptions.excludes must be an array of strings',
+        code: ErrorCode.INVALID_BACKUP_CONFIG,
+        httpStatus: 400,
+        context: { reason: 'excludes must be an array of strings' },
+        timestamp: new Date().toISOString()
+      });
+    }
+
     const backupSession = await this.ensureBackupSession();
     const backupId = crypto.randomUUID();
     const archivePath = `/var/backups/${backupId}.sqsh`;
 
-    this.logger.info('Creating backup', { backupId, dir, name });
+    this.logger.info('Creating backup', {
+      backupId,
+      dir,
+      name,
+      gitignore,
+      excludes
+    });
 
     const createResult = await this.client.backup.createArchive(
       dir,
       archivePath,
-      backupSession
+      backupSession,
+      gitignore,
+      excludes
     );
 
     if (!createResult.success) {
