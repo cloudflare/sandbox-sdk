@@ -38,9 +38,7 @@ export abstract class BaseHttpClient {
         logger: this.logger,
         stub: options.stub,
         port: options.port,
-        retryTimeoutMs: options.retryTimeoutMs,
-        requestTimeoutMs: options.requestTimeoutMs,
-        streamIdleTimeoutMs: options.streamIdleTimeoutMs
+        retryTimeoutMs: options.retryTimeoutMs
       });
     }
   }

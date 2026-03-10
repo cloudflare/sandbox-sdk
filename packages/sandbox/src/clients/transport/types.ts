@@ -93,13 +93,4 @@ export interface ITransport {
    * Update the 503 retry budget without recreating the transport
    */
   setRetryTimeoutMs(ms: number): void;
-
-  /**
-   * Update transport timeout configuration without recreating the transport.
-   * New values take effect on the next request or timer reset.
-   */
-  setTransportTimeouts(timeouts: {
-    requestTimeoutMs?: number;
-    streamIdleTimeoutMs?: number;
-  }): void;
 }

@@ -403,7 +403,11 @@ export class WebSocketTransport extends BaseTransport {
             `Stream idle timeout after ${idleTimeoutMs}ms: ${method} ${path}`
           );
           if (firstMessageReceived) {
-            streamController?.error(error);
+            try {
+              streamController?.error(error);
+            } catch {
+              // Stream controller may already be closed/errored
+            }
           } else {
             rejectStream(error);
           }
@@ -462,11 +466,15 @@ export class WebSocketTransport extends BaseTransport {
           } else {
             // Stream was already returned, now closing
             if (response.status >= 400) {
-              streamController?.error(
-                new Error(
-                  `Stream error: ${response.status} - ${JSON.stringify(response.body)}`
-                )
-              );
+              try {
+                streamController?.error(
+                  new Error(
+                    `Stream error: ${response.status} - ${JSON.stringify(response.body)}`
+                  )
+                );
+              } catch {
+                // Stream controller may already be closed/errored
+              }
             } else {
               streamController?.close();
             }
