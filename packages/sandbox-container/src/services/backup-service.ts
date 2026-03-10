@@ -189,6 +189,7 @@ export class BackupService {
           !writeExcludeResult.success ||
           writeExcludeResult.data.exitCode !== 0
         ) {
+          shouldCleanupExcludeFile = true;
           return serviceError({
             message: 'Failed to write exclude patterns file',
             code: ErrorCode.BACKUP_CREATE_FAILED,
