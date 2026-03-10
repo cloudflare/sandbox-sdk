@@ -757,15 +757,21 @@ export class SessionManager {
 
       // Capture the session shell's current environment so the PTY
       // inherits env vars set via setEnvVars().
-      const envResult = await session.exec('env -0');
-      const sessionEnv: Record<string, string> = {};
-      if (envResult.exitCode === 0 && envResult.stdout) {
-        for (const entry of envResult.stdout.split('\0')) {
-          const idx = entry.indexOf('=');
-          if (idx > 0) {
-            sessionEnv[entry.slice(0, idx)] = entry.slice(idx + 1);
+      let sessionEnv: Record<string, string> = {};
+      try {
+        const envResult = await session.exec('env -0');
+        if (envResult.exitCode === 0 && envResult.stdout) {
+          for (const entry of envResult.stdout.split('\0')) {
+            const idx = entry.indexOf('=');
+            if (idx > 0) {
+              sessionEnv[entry.slice(0, idx)] = entry.slice(idx + 1);
+            }
           }
         }
+      } catch {
+        this.logger.warn('Failed to capture session environment for PTY', {
+          sessionId
+        });
       }
 
       const pty = new Pty({
