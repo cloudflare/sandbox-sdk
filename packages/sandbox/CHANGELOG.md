@@ -1,5 +1,11 @@
 # @cloudflare/sandbox
 
+## 0.7.16
+
+### Patch Changes
+
+- [#470](https://github.com/cloudflare/sandbox-sdk/pull/470) [`887b032`](https://github.com/cloudflare/sandbox-sdk/commit/887b0321990a3e23f8060229ecc06210affb3f1c) Thanks [@maschwenk](https://github.com/maschwenk)! - Pass session env vars and working directory to PTY on creation
+
 ## 0.7.15
 
 ### Patch Changes
@@ -158,13 +164,13 @@
   As a base image:
 
   ```dockerfile
-  FROM docker.io/cloudflare/sandbox:0.7.15-musl
+  FROM docker.io/cloudflare/sandbox:0.7.16-musl
   ```
 
   Or copy the binary into your own Alpine image:
 
   ```dockerfile
-  COPY --from=docker.io/cloudflare/sandbox:0.7.15-musl /container-server/sandbox /sandbox
+  COPY --from=docker.io/cloudflare/sandbox:0.7.16-musl /container-server/sandbox /sandbox
   ```
 
 - [#377](https://github.com/cloudflare/sandbox-sdk/pull/377) [`d83642e`](https://github.com/cloudflare/sandbox-sdk/commit/d83642e855f68e4fb8c15c2452709923e55a83fd) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Allow port 8787 in `exposePort()`. It was incorrectly blocked.
@@ -387,10 +393,10 @@
 
   ```dockerfile
   # Before
-  FROM cloudflare/sandbox:0.7.15
+  FROM cloudflare/sandbox:0.7.16
 
   # After
-  FROM cloudflare/sandbox:0.7.15-python
+  FROM cloudflare/sandbox:0.7.16-python
   ```
 
   Without this change, Python execution will fail with `PYTHON_NOT_AVAILABLE` error.
