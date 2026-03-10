@@ -766,8 +766,35 @@ export class SessionManager {
         return { success: true, data: session.pty };
       }
 
+      // Capture the session shell's current environment and working
+      // directory so the PTY inherits env vars set via setEnvVars()
+      // and reflects any directory changes made in the session.
+      const sessionEnv: Record<string, string> = {};
+      let sessionCwd: string = CONFIG.DEFAULT_CWD;
+      try {
+        const envResult = await session.exec('env -0');
+        if (envResult.exitCode === 0 && envResult.stdout) {
+          for (const entry of envResult.stdout.split('\0')) {
+            const idx = entry.indexOf('=');
+            if (idx > 0) {
+              sessionEnv[entry.slice(0, idx)] = entry.slice(idx + 1);
+            }
+          }
+        }
+
+        const cwdResult = await session.exec('pwd');
+        if (cwdResult.exitCode === 0 && cwdResult.stdout?.trim()) {
+          sessionCwd = cwdResult.stdout.trim();
+        }
+      } catch {
+        this.logger.warn('Failed to capture session state for PTY', {
+          sessionId
+        });
+      }
+
       const pty = new Pty({
-        cwd: CONFIG.DEFAULT_CWD,
+        cwd: sessionCwd,
+        env: sessionEnv,
         logger: this.logger
       });
 
