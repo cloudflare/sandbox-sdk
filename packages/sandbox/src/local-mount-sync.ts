@@ -46,6 +46,7 @@ export class LocalMountSyncManager {
   private snapshot: Map<string, R2ObjectSnapshot> = new Map();
   private echoSuppressSet: Set<string> = new Set();
   private pollTimer: ReturnType<typeof setTimeout> | null = null;
+  private watchReconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private watchAbortController: AbortController | null = null;
   private running = false;
   private consecutivePollFailures = 0;
@@ -99,6 +100,11 @@ export class LocalMountSyncManager {
     if (this.pollTimer) {
       clearTimeout(this.pollTimer);
       this.pollTimer = null;
+    }
+
+    if (this.watchReconnectTimer) {
+      clearTimeout(this.watchReconnectTimer);
+      this.watchReconnectTimer = null;
     }
 
     if (this.watchAbortController) {
@@ -301,7 +307,8 @@ export class LocalMountSyncManager {
       failures: this.consecutiveWatchFailures
     });
 
-    setTimeout(() => {
+    this.watchReconnectTimer = setTimeout(() => {
+      this.watchReconnectTimer = null;
       if (!this.running) return;
       this.watchAbortController = new AbortController();
       this.runWatchWithRetry();
