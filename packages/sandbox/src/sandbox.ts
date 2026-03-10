@@ -672,12 +672,16 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   ): Promise<void> {
     this.logger.info(`Mounting bucket ${bucket} to ${mountPath}`);
 
-    if (options.localBucket) {
+    if ('localBucket' in options && options.localBucket) {
       await this.mountBucketLocal(bucket, mountPath, options);
       return;
     }
 
-    await this.mountBucketFuse(bucket, mountPath, options);
+    await this.mountBucketFuse(
+      bucket,
+      mountPath,
+      options as RemoteMountBucketOptions
+    );
   }
 
   /**
