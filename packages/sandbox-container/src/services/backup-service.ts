@@ -51,7 +51,7 @@ function isSafeAbsolutePath(path: string): boolean {
  */
 function validateBackupPaths(dir: string, archivePath: string): string | null {
   if (!isSafeAbsolutePath(dir)) {
-    return `Backup directory must be an absolute path under /workspace or /tmp: ${dir}`;
+    return `Backup directory must be a safe absolute path (no '..' or null bytes) under an allowed prefix (${ALLOWED_PREFIXES.join(', ')}): ${dir}`;
   }
   // Allowlist check: dir must start with one of the allowed prefixes
   const isAllowed = ALLOWED_PREFIXES.some(
