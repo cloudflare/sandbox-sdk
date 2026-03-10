@@ -486,6 +486,38 @@ describe('LocalMountSyncManager', () => {
 
       await manager.stop();
     });
+
+    it('should handle prefix without trailing slash', async () => {
+      const r2Objects = new Map([
+        ['uploads/photo.jpg', { body: 'img', etag: 'etag1' }]
+      ]);
+      const bucket = createMockR2Bucket(r2Objects);
+      const fileClient = createMockFileClient();
+      const watchClient = createMockWatchClient();
+      const client = createMockSandboxClient(fileClient, watchClient);
+
+      const manager = new LocalMountSyncManager({
+        bucket: bucket as unknown as R2Bucket,
+        mountPath: '/mnt/data',
+        prefix: 'uploads',
+        readOnly: true,
+        client,
+        sessionId: 'test-session',
+        logger
+      });
+
+      await manager.start();
+
+      // File must land inside mount dir, not at absolute '/photo.jpg'
+      expect(fileClient.writeFile).toHaveBeenCalledWith(
+        '/mnt/data/photo.jpg',
+        expect.any(String),
+        'test-session',
+        { encoding: 'base64' }
+      );
+
+      await manager.stop();
+    });
   });
 
   describe('Container to R2 (watch direction)', () => {

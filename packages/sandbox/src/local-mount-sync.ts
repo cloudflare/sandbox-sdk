@@ -412,7 +412,7 @@ export class LocalMountSyncManager {
         ? key.slice(this.prefix.length)
         : key;
     }
-    return path.resolve(this.mountPath, relativePath);
+    return path.join(this.mountPath, relativePath);
   }
 
   private containerPathToR2Key(containerPath: string): string | null {
