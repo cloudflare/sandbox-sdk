@@ -1,3 +1,4 @@
+import path from 'node:path/posix';
 import type { FileWatchSSEEvent, Logger } from '@repo/shared';
 import type { SandboxClient } from './clients';
 import { parseSSEStream } from './sse-parser';
@@ -404,24 +405,19 @@ export class LocalMountSyncManager {
         ? key.slice(this.prefix.length)
         : key;
     }
-    // Strip leading slash from relative path
-    if (relativePath.startsWith('/')) {
-      relativePath = relativePath.slice(1);
-    }
-    return `${this.mountPath}/${relativePath}`;
+    return path.resolve(this.mountPath, relativePath);
   }
 
   private containerPathToR2Key(containerPath: string): string | null {
-    if (!containerPath.startsWith(this.mountPath)) return null;
+    const resolved = path.resolve(containerPath);
+    const mount = path.resolve(this.mountPath);
 
-    let relativePath = containerPath.slice(this.mountPath.length);
-    // Strip leading slash
-    if (relativePath.startsWith('/')) {
-      relativePath = relativePath.slice(1);
-    }
-    if (!relativePath) return null;
+    if (!resolved.startsWith(mount)) return null;
 
-    return this.prefix ? `${this.prefix}${relativePath}` : relativePath;
+    const relativePath = path.relative(mount, resolved);
+    if (!relativePath || relativePath.startsWith('..')) return null;
+
+    return this.prefix ? path.join(this.prefix, relativePath) : relativePath;
   }
 }
 
