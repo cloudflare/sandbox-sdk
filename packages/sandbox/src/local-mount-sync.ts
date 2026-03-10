@@ -48,6 +48,7 @@ export class LocalMountSyncManager {
   private watchAbortController: AbortController | null = null;
   private running = false;
   private consecutivePollFailures = 0;
+  private consecutiveWatchFailures = 0;
 
   constructor(options: LocalMountSyncOptions) {
     this.bucket = options.bucket;
@@ -260,15 +261,50 @@ export class LocalMountSyncManager {
 
   private startContainerWatch(): void {
     this.watchAbortController = new AbortController();
+    this.runWatchWithRetry();
+  }
 
-    this.runContainerWatchLoop().catch((error) => {
-      if (this.running) {
+  private runWatchWithRetry(): void {
+    if (!this.running) return;
+
+    this.runContainerWatchLoop()
+      .then(() => {
+        // Stream ended cleanly (e.g. server closed it). Reconnect unless stopped.
+        this.consecutiveWatchFailures = 0;
+        this.scheduleWatchReconnect();
+      })
+      .catch((error) => {
+        if (!this.running) return;
+        this.consecutiveWatchFailures++;
         this.logger.error(
           'Container watch loop failed',
           error instanceof Error ? error : new Error(String(error))
         );
-      }
+        this.scheduleWatchReconnect();
+      });
+  }
+
+  private scheduleWatchReconnect(): void {
+    if (!this.running) return;
+
+    const backoffMs =
+      this.consecutiveWatchFailures > 0
+        ? Math.min(
+            this.pollIntervalMs * 2 ** this.consecutiveWatchFailures,
+            MAX_BACKOFF_MS
+          )
+        : this.pollIntervalMs;
+
+    this.logger.debug('Reconnecting container watch', {
+      backoffMs,
+      failures: this.consecutiveWatchFailures
     });
+
+    setTimeout(() => {
+      if (!this.running) return;
+      this.watchAbortController = new AbortController();
+      this.runWatchWithRetry();
+    }, backoffMs);
   }
 
   private async runContainerWatchLoop(): Promise<void> {
@@ -283,6 +319,9 @@ export class LocalMountSyncManager {
       this.watchAbortController?.signal
     )) {
       if (!this.running) break;
+
+      // Successful event received — reset failure counter
+      this.consecutiveWatchFailures = 0;
 
       if (event.type !== 'event') continue;
       if (event.isDirectory) continue;

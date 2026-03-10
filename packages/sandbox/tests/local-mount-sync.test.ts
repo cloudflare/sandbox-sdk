@@ -115,6 +115,39 @@ function createMockWatchClient() {
   };
 }
 
+/**
+ * Creates a watch client whose stream can be driven from the test.
+ * Call `emit(event)` to push SSE-formatted events into the stream,
+ * and `close()` to end it.
+ */
+function createControllableWatchClient() {
+  const encoder = new TextEncoder();
+  let controller: ReadableStreamDefaultController<Uint8Array> | null = null;
+
+  const stream = new ReadableStream<Uint8Array>({
+    start(c) {
+      controller = c;
+    }
+  });
+
+  const emit = (event: Record<string, unknown>) => {
+    const frame = `data: ${JSON.stringify(event)}\n\n`;
+    controller!.enqueue(encoder.encode(frame));
+  };
+
+  const close = () => {
+    controller!.close();
+  };
+
+  return {
+    client: {
+      watch: vi.fn(async () => stream)
+    },
+    emit,
+    close
+  };
+}
+
 function createMockSandboxClient(
   fileClient: ReturnType<typeof createMockFileClient>,
   watchClient: ReturnType<typeof createMockWatchClient>
@@ -451,6 +484,338 @@ describe('LocalMountSyncManager', () => {
         { encoding: 'base64' }
       );
 
+      await manager.stop();
+    });
+  });
+
+  describe('Container to R2 (watch direction)', () => {
+    // Yield to the microtask queue so the watch loop processes emitted events
+    const flush = () => vi.advanceTimersByTimeAsync(0);
+
+    it('should upload file to R2 on create event', async () => {
+      const r2Objects = new Map<string, { body: string; etag: string }>();
+      const bucket = createMockR2Bucket(r2Objects);
+      const fileClient = createMockFileClient();
+      const {
+        client: watchClient,
+        emit,
+        close
+      } = createControllableWatchClient();
+      const client = createMockSandboxClient(fileClient, watchClient);
+
+      const manager = new LocalMountSyncManager({
+        bucket: bucket as unknown as R2Bucket,
+        mountPath: '/mnt/data',
+        prefix: undefined,
+        readOnly: false,
+        client,
+        sessionId: 'test-session',
+        logger,
+        pollIntervalMs: 60_000
+      });
+
+      await manager.start();
+
+      // Emit a create event for a new file
+      emit({
+        type: 'event',
+        eventType: 'create',
+        path: '/mnt/data/hello.txt',
+        isDirectory: false,
+        timestamp: new Date().toISOString()
+      });
+
+      await flush();
+
+      // Should read the file from container (base64)
+      expect(fileClient.readFile).toHaveBeenCalledWith(
+        '/mnt/data/hello.txt',
+        'test-session',
+        { encoding: 'base64' }
+      );
+
+      // Should upload to R2
+      expect(bucket.put).toHaveBeenCalledWith(
+        'hello.txt',
+        expect.any(Uint8Array)
+      );
+
+      // Should update snapshot via head
+      expect(bucket.head).toHaveBeenCalledWith('hello.txt');
+
+      close();
+      await manager.stop();
+    });
+
+    it('should upload file to R2 on modify event', async () => {
+      const r2Objects = new Map<string, { body: string; etag: string }>();
+      const bucket = createMockR2Bucket(r2Objects);
+      const fileClient = createMockFileClient();
+      const {
+        client: watchClient,
+        emit,
+        close
+      } = createControllableWatchClient();
+      const client = createMockSandboxClient(fileClient, watchClient);
+
+      const manager = new LocalMountSyncManager({
+        bucket: bucket as unknown as R2Bucket,
+        mountPath: '/mnt/data',
+        prefix: undefined,
+        readOnly: false,
+        client,
+        sessionId: 'test-session',
+        logger,
+        pollIntervalMs: 60_000
+      });
+
+      await manager.start();
+
+      emit({
+        type: 'event',
+        eventType: 'modify',
+        path: '/mnt/data/existing.txt',
+        isDirectory: false,
+        timestamp: new Date().toISOString()
+      });
+
+      await flush();
+
+      expect(fileClient.readFile).toHaveBeenCalledWith(
+        '/mnt/data/existing.txt',
+        'test-session',
+        { encoding: 'base64' }
+      );
+      expect(bucket.put).toHaveBeenCalledWith(
+        'existing.txt',
+        expect.any(Uint8Array)
+      );
+
+      close();
+      await manager.stop();
+    });
+
+    it('should delete object from R2 on delete event', async () => {
+      const r2Objects = new Map<string, { body: string; etag: string }>();
+      const bucket = createMockR2Bucket(r2Objects);
+      const fileClient = createMockFileClient();
+      const {
+        client: watchClient,
+        emit,
+        close
+      } = createControllableWatchClient();
+      const client = createMockSandboxClient(fileClient, watchClient);
+
+      const manager = new LocalMountSyncManager({
+        bucket: bucket as unknown as R2Bucket,
+        mountPath: '/mnt/data',
+        prefix: undefined,
+        readOnly: false,
+        client,
+        sessionId: 'test-session',
+        logger,
+        pollIntervalMs: 60_000
+      });
+
+      await manager.start();
+
+      emit({
+        type: 'event',
+        eventType: 'delete',
+        path: '/mnt/data/removed.txt',
+        isDirectory: false,
+        timestamp: new Date().toISOString()
+      });
+
+      await flush();
+
+      // Should delete from R2, NOT read/upload
+      expect(bucket.delete).toHaveBeenCalledWith('removed.txt');
+      expect(fileClient.readFile).not.toHaveBeenCalled();
+      expect(bucket.put).not.toHaveBeenCalled();
+
+      close();
+      await manager.stop();
+    });
+
+    it('should handle move_to as upload and move_from as delete', async () => {
+      const r2Objects = new Map<string, { body: string; etag: string }>();
+      const bucket = createMockR2Bucket(r2Objects);
+      const fileClient = createMockFileClient();
+      const {
+        client: watchClient,
+        emit,
+        close
+      } = createControllableWatchClient();
+      const client = createMockSandboxClient(fileClient, watchClient);
+
+      const manager = new LocalMountSyncManager({
+        bucket: bucket as unknown as R2Bucket,
+        mountPath: '/mnt/data',
+        prefix: undefined,
+        readOnly: false,
+        client,
+        sessionId: 'test-session',
+        logger,
+        pollIntervalMs: 60_000
+      });
+
+      await manager.start();
+
+      // move_from should delete old key
+      emit({
+        type: 'event',
+        eventType: 'move_from',
+        path: '/mnt/data/old-name.txt',
+        isDirectory: false,
+        timestamp: new Date().toISOString()
+      });
+
+      await flush();
+      expect(bucket.delete).toHaveBeenCalledWith('old-name.txt');
+
+      // move_to should upload new key
+      emit({
+        type: 'event',
+        eventType: 'move_to',
+        path: '/mnt/data/new-name.txt',
+        isDirectory: false,
+        timestamp: new Date().toISOString()
+      });
+
+      await flush();
+      expect(bucket.put).toHaveBeenCalledWith(
+        'new-name.txt',
+        expect.any(Uint8Array)
+      );
+
+      close();
+      await manager.stop();
+    });
+
+    it('should skip directory events', async () => {
+      const r2Objects = new Map<string, { body: string; etag: string }>();
+      const bucket = createMockR2Bucket(r2Objects);
+      const fileClient = createMockFileClient();
+      const {
+        client: watchClient,
+        emit,
+        close
+      } = createControllableWatchClient();
+      const client = createMockSandboxClient(fileClient, watchClient);
+
+      const manager = new LocalMountSyncManager({
+        bucket: bucket as unknown as R2Bucket,
+        mountPath: '/mnt/data',
+        prefix: undefined,
+        readOnly: false,
+        client,
+        sessionId: 'test-session',
+        logger,
+        pollIntervalMs: 60_000
+      });
+
+      await manager.start();
+
+      emit({
+        type: 'event',
+        eventType: 'create',
+        path: '/mnt/data/subdir',
+        isDirectory: true,
+        timestamp: new Date().toISOString()
+      });
+
+      await flush();
+
+      expect(fileClient.readFile).not.toHaveBeenCalled();
+      expect(bucket.put).not.toHaveBeenCalled();
+
+      close();
+      await manager.stop();
+    });
+
+    it('should skip events outside mount path', async () => {
+      const r2Objects = new Map<string, { body: string; etag: string }>();
+      const bucket = createMockR2Bucket(r2Objects);
+      const fileClient = createMockFileClient();
+      const {
+        client: watchClient,
+        emit,
+        close
+      } = createControllableWatchClient();
+      const client = createMockSandboxClient(fileClient, watchClient);
+
+      const manager = new LocalMountSyncManager({
+        bucket: bucket as unknown as R2Bucket,
+        mountPath: '/mnt/data',
+        prefix: undefined,
+        readOnly: false,
+        client,
+        sessionId: 'test-session',
+        logger,
+        pollIntervalMs: 60_000
+      });
+
+      await manager.start();
+
+      emit({
+        type: 'event',
+        eventType: 'create',
+        path: '/other/path/file.txt',
+        isDirectory: false,
+        timestamp: new Date().toISOString()
+      });
+
+      await flush();
+
+      expect(fileClient.readFile).not.toHaveBeenCalled();
+      expect(bucket.put).not.toHaveBeenCalled();
+
+      close();
+      await manager.stop();
+    });
+
+    it('should prepend prefix when uploading to R2', async () => {
+      const r2Objects = new Map<string, { body: string; etag: string }>();
+      const bucket = createMockR2Bucket(r2Objects);
+      const fileClient = createMockFileClient();
+      const {
+        client: watchClient,
+        emit,
+        close
+      } = createControllableWatchClient();
+      const client = createMockSandboxClient(fileClient, watchClient);
+
+      const manager = new LocalMountSyncManager({
+        bucket: bucket as unknown as R2Bucket,
+        mountPath: '/mnt/data',
+        prefix: 'uploads/',
+        readOnly: false,
+        client,
+        sessionId: 'test-session',
+        logger,
+        pollIntervalMs: 60_000
+      });
+
+      await manager.start();
+
+      emit({
+        type: 'event',
+        eventType: 'create',
+        path: '/mnt/data/photo.jpg',
+        isDirectory: false,
+        timestamp: new Date().toISOString()
+      });
+
+      await flush();
+
+      // R2 key should include prefix
+      expect(bucket.put).toHaveBeenCalledWith(
+        'uploads/photo.jpg',
+        expect.any(Uint8Array)
+      );
+
+      close();
       await manager.stop();
     });
   });
