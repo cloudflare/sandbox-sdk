@@ -309,7 +309,7 @@ describe('WebSocket Protocol Types', () => {
       try {
         const transport = new WebSocketTransport({
           wsUrl: 'ws://localhost:3000/ws',
-          requestTimeoutMs: 1000
+          streamIdleTimeoutMs: 1000
         });
 
         (transport as any).connect = vi.fn().mockResolvedValue(undefined);
@@ -333,7 +333,7 @@ describe('WebSocket Protocol Types', () => {
         vi.advanceTimersByTime(1001);
 
         await expect(streamPromise).rejects.toThrow(
-          'Stream timeout after 1000ms'
+          'Stream idle timeout after 1000ms'
         );
         expect((transport as any).pendingRequests.size).toBe(0);
 
@@ -349,7 +349,7 @@ describe('WebSocket Protocol Types', () => {
       try {
         const transport = new WebSocketTransport({
           wsUrl: 'ws://localhost:3000/ws',
-          requestTimeoutMs: 1000
+          streamIdleTimeoutMs: 1000
         });
 
         (transport as any).connect = vi.fn().mockResolvedValue(undefined);
@@ -390,7 +390,82 @@ describe('WebSocket Protocol Types', () => {
         vi.advanceTimersByTime(1001);
 
         await expect(reader.read()).rejects.toThrow(
-          'Stream timeout after 1000ms'
+          'Stream idle timeout after 1000ms'
+        );
+        expect((transport as any).pendingRequests.size).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('should reset idle timeout when chunk arrives', async () => {
+      vi.useFakeTimers();
+      try {
+        const transport = new WebSocketTransport({
+          wsUrl: 'ws://localhost:3000/ws',
+          streamIdleTimeoutMs: 100
+        });
+
+        (transport as any).connect = vi.fn().mockResolvedValue(undefined);
+        (transport as any).ws = {
+          readyState: WebSocket.OPEN,
+          send: vi.fn(),
+          addEventListener: vi.fn(),
+          removeEventListener: vi.fn(),
+          close: vi.fn()
+        };
+
+        const streamPromise = (transport as any).requestStream(
+          'POST',
+          '/api/watch',
+          { path: '/workspace' }
+        ) as Promise<ReadableStream<Uint8Array>>;
+
+        await Promise.resolve();
+
+        const pendingIds = Array.from(
+          ((transport as any).pendingRequests as Map<string, unknown>).keys()
+        );
+        expect(pendingIds).toHaveLength(1);
+        const requestId = pendingIds[0]!;
+
+        // Send first chunk to establish stream
+        (transport as any).handleStreamChunk({
+          type: 'stream',
+          id: requestId,
+          data: '{"type":"watching"}'
+        });
+
+        const stream = await streamPromise;
+        const reader = stream.getReader();
+
+        const firstRead = await reader.read();
+        expect(firstRead.done).toBe(false);
+
+        // Advance 80ms (before 100ms timeout)
+        vi.advanceTimersByTime(80);
+
+        // Send second chunk - this should reset the idle timer
+        (transport as any).handleStreamChunk({
+          type: 'stream',
+          id: requestId,
+          data: '{"type":"update"}'
+        });
+
+        // Advance 80ms more (total 160ms from start, but only 80ms from last chunk)
+        vi.advanceTimersByTime(80);
+
+        // Stream should still be alive - no timeout yet
+        const secondRead = await reader.read();
+        expect(secondRead.done).toBe(false);
+        expect((transport as any).pendingRequests.size).toBe(1);
+
+        // Now advance past the idle timeout from the last chunk (100ms+)
+        vi.advanceTimersByTime(101);
+
+        // Stream should now timeout
+        await expect(reader.read()).rejects.toThrow(
+          'Stream idle timeout after 100ms'
         );
         expect((transport as any).pendingRequests.size).toBe(0);
       } finally {
