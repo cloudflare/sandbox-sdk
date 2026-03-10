@@ -12,9 +12,7 @@ import type { BackupService } from '../services/backup-service';
 import { BACKUP_WORK_DIR } from '../services/backup-service';
 import { BaseHandler } from './base-handler';
 
-type CreateBackupRequestBody = CreateBackupRequest & {
-  useGitignore?: boolean;
-};
+type CreateBackupRequestBody = CreateBackupRequest;
 
 export class BackupHandler extends BaseHandler<Request, Response> {
   constructor(
@@ -119,18 +117,31 @@ export class BackupHandler extends BaseHandler<Request, Response> {
       );
     }
 
-    if (
-      body.useGitignore !== undefined &&
-      typeof body.useGitignore !== 'boolean'
-    ) {
+    if (body.gitignore !== undefined && typeof body.gitignore !== 'boolean') {
       return this.createErrorResponse(
         {
-          message: 'useGitignore must be a boolean',
+          message: 'gitignore must be a boolean',
           code: ErrorCode.INVALID_BACKUP_CONFIG
         },
         context,
         Operation.BACKUP_CREATE
       );
+    }
+
+    if (body.excludes !== undefined) {
+      if (
+        !Array.isArray(body.excludes) ||
+        !body.excludes.every((e) => typeof e === 'string')
+      ) {
+        return this.createErrorResponse(
+          {
+            message: 'excludes must be an array of strings',
+            code: ErrorCode.INVALID_BACKUP_CONFIG
+          },
+          context,
+          Operation.BACKUP_CREATE
+        );
+      }
     }
 
     const sessionId = body.sessionId ?? context.sessionId ?? 'default';
@@ -139,7 +150,8 @@ export class BackupHandler extends BaseHandler<Request, Response> {
       body.dir,
       body.archivePath,
       sessionId,
-      body.useGitignore ?? false
+      body.gitignore ?? false,
+      body.excludes ?? []
     );
 
     if (result.success) {

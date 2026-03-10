@@ -6,10 +6,6 @@ import type {
 } from '@repo/shared';
 import { BaseHttpClient } from './base-client';
 
-type CreateBackupArchiveRequest = CreateBackupRequest & {
-  useGitignore?: boolean;
-};
-
 /**
  * Client for backup operations.
  *
@@ -28,13 +24,15 @@ export class BackupClient extends BaseHttpClient {
     dir: string,
     archivePath: string,
     sessionId: string,
-    useGitignore = false
+    gitignore = false,
+    excludes: string[] = []
   ): Promise<CreateBackupResponse> {
     try {
-      const data: CreateBackupArchiveRequest = {
+      const data: CreateBackupRequest = {
         dir,
         archivePath,
-        useGitignore,
+        gitignore,
+        excludes,
         sessionId
       };
 

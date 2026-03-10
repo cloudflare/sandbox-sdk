@@ -78,15 +78,6 @@ interface RestoreArchiveResult {
   dir: string;
 }
 
-class GitRequiredForGitignoreError extends Error {
-  constructor() {
-    super(
-      'Git is required when useGitignore is enabled, but git is unavailable in the container. Set useGitignore to false to continue without git-based exclusions.'
-    );
-    this.name = 'GitRequiredForGitignoreError';
-  }
-}
-
 /**
  * Creates and restores squashfs-based directory archives.
  *
@@ -116,7 +107,8 @@ export class BackupService {
     dir: string,
     archivePath: string,
     sessionId = 'default',
-    useGitignore = false
+    gitignore = false,
+    excludes: string[] = []
   ): Promise<ServiceResult<CreateArchiveResult>> {
     const opLogger = this.logger.child({ operation: Operation.BACKUP_CREATE });
     const excludeFilePath = `${archivePath}.exclude`;
@@ -175,9 +167,18 @@ export class BackupService {
         });
       }
 
-      const excludePatterns = useGitignore
+      const gitignorePatterns = gitignore
         ? await this.resolveGitignoreExcludePatterns(dir, sessionId, opLogger)
         : [];
+
+      const userExcludePatterns = excludes.flatMap((pattern) => [
+        pattern,
+        `... ${pattern}`
+      ]);
+
+      const excludePatterns = [
+        ...new Set([...gitignorePatterns, ...userExcludePatterns])
+      ];
 
       if (excludePatterns.length > 0) {
         const writeExcludeResult = await this.sessionManager.executeInSession(
@@ -265,13 +266,6 @@ export class BackupService {
         archivePath
       });
     } catch (error) {
-      if (error instanceof GitRequiredForGitignoreError) {
-        return serviceError({
-          message: error.message,
-          code: ErrorCode.BACKUP_CREATE_FAILED,
-          details: { dir, archivePath, useGitignore }
-        });
-      }
       opLogger.error(
         'Unexpected error creating archive',
         error instanceof Error ? error : new Error(String(error))
@@ -305,7 +299,11 @@ export class BackupService {
       'command -v git >/dev/null 2>&1'
     );
     if (!gitAvailableResult.success || gitAvailableResult.data.exitCode !== 0) {
-      throw new GitRequiredForGitignoreError();
+      opLogger.warn(
+        'gitignore option enabled but git is not installed; skipping git-based exclusions',
+        { dir }
+      );
+      return [];
     }
 
     const insideWorkTreeResult = await this.sessionManager.executeInSession(

@@ -74,10 +74,6 @@ import {
 import type { MountInfo } from './storage-mount/types';
 import { SDK_VERSION } from './version';
 
-type BackupOptionsWithGitignore = BackupOptions & {
-  useGitignore?: boolean;
-};
-
 export function getSandbox<T extends Sandbox<any>>(
   ns: DurableObjectNamespace<T>,
   id: string,
@@ -3408,15 +3404,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * R2 lifecycle rules on the BACKUP_BUCKET to garbage-collect objects
    * under the `backups/` prefix after the desired retention period.
    */
-  async createBackup(
-    options: BackupOptionsWithGitignore
-  ): Promise<DirectoryBackup> {
+  async createBackup(options: BackupOptions): Promise<DirectoryBackup> {
     this.requireBackupBucket();
     return this.enqueueBackupOp(() => this.doCreateBackup(options));
   }
 
   private async doCreateBackup(
-    options: BackupOptionsWithGitignore
+    options: BackupOptions
   ): Promise<DirectoryBackup> {
     const bucket = this.requireBackupBucket();
     this.requirePresignedUrlSupport();
@@ -3426,7 +3420,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       dir,
       name,
       ttl = DEFAULT_TTL_SECONDS,
-      useGitignore = false
+      gitignore = false,
+      excludes = []
     } = options;
     Sandbox.validateBackupDir(dir, 'BackupOptions.dir');
     if (name !== undefined) {
@@ -3463,12 +3458,25 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       });
     }
 
-    if (typeof useGitignore !== 'boolean') {
+    if (typeof gitignore !== 'boolean') {
       throw new InvalidBackupConfigError({
-        message: 'BackupOptions.useGitignore must be a boolean',
+        message: 'BackupOptions.gitignore must be a boolean',
         code: ErrorCode.INVALID_BACKUP_CONFIG,
         httpStatus: 400,
-        context: { reason: 'useGitignore must be a boolean' },
+        context: { reason: 'gitignore must be a boolean' },
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    if (
+      !Array.isArray(excludes) ||
+      !excludes.every((e: unknown) => typeof e === 'string')
+    ) {
+      throw new InvalidBackupConfigError({
+        message: 'BackupOptions.excludes must be an array of strings',
+        code: ErrorCode.INVALID_BACKUP_CONFIG,
+        httpStatus: 400,
+        context: { reason: 'excludes must be an array of strings' },
         timestamp: new Date().toISOString()
       });
     }
@@ -3481,14 +3489,16 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       backupId,
       dir,
       name,
-      useGitignore
+      gitignore,
+      excludes
     });
 
     const createResult = await this.client.backup.createArchive(
       dir,
       archivePath,
       backupSession,
-      useGitignore
+      gitignore,
+      excludes
     );
 
     if (!createResult.success) {

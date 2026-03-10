@@ -257,7 +257,7 @@ describe('Backup Workflow E2E', () => {
       await cleanupDir(workerUrl, headers, REPO_DIR);
     }, 60000);
 
-    test('should include gitignored files when useGitignore is false', async () => {
+    test('should include gitignored files when gitignore is false', async () => {
       if (!backupBucketAvailable) return;
 
       const REPO_DIR = `/workspace/gitignore-opt-out-test-${crypto.randomUUID().slice(0, 8)}`;
@@ -283,7 +283,7 @@ describe('Backup Workflow E2E', () => {
         headers,
         body: JSON.stringify({
           dir: TEST_DIR,
-          useGitignore: false
+          gitignore: false
         })
       });
       expect(backupResponse.ok).toBe(true);
@@ -407,7 +407,7 @@ describe('Backup Workflow E2E', () => {
       const backupResponse = await fetch(`${workerUrl}/api/backup/create`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ dir: TEST_DIR, useGitignore: true })
+        body: JSON.stringify({ dir: TEST_DIR, gitignore: true })
       });
       expect(backupResponse.ok).toBe(true);
       const backup = (await backupResponse.json()) as BackupResponse;
