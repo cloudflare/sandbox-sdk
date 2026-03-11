@@ -224,9 +224,8 @@ sleep 120`;
       await readExecStdout(`rm -f '${scriptPath}'`).catch(() => {});
     }
 
-    if (childPid) {
-      expect(await isProcessAlive(childPid)).toBe(false);
-    }
+    expect(childPid).not.toBeNull();
+    expect(await isProcessAlive(childPid!)).toBe(false);
   }, 90000);
 
   test('should stream process logs in real-time', async () => {
@@ -546,9 +545,8 @@ console.log("Line 3");
       );
     }
 
-    if (pid) {
-      expect(await isProcessAlive(pid)).toBe(false);
-    }
+    expect(pid).not.toBeNull();
+    expect(await isProcessAlive(pid!)).toBe(false);
   }, 90000);
 
   test('should not block foreground operations when background processes are running', async () => {
