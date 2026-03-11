@@ -777,7 +777,8 @@ export class SessionManager {
       // the file directly with Bun preserves the \0 delimiters.
       const sessionEnv: Record<string, string> = {};
       let sessionCwd: string = CONFIG.DEFAULT_CWD;
-      const tempEnvFile = `/tmp/pty-env-${sessionId}-${Date.now()}`;
+      const safeId = sessionId.replace(/[^a-zA-Z0-9_-]/g, '_');
+      const tempEnvFile = `/tmp/pty-env-${safeId}-${Date.now()}`;
       try {
         const envResult = await session.exec(`env -0 > ${tempEnvFile}`);
         if (envResult.exitCode === 0) {
