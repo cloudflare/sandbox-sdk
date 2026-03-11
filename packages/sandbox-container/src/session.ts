@@ -704,68 +704,41 @@ export class Session {
         if (!Number.isNaN(pid)) {
           const waitForExitResult = async () => {
             try {
-              await Promise.race([
-                this.waitForExitCode(handle.exitCodeFile),
-                new Promise((_, reject) =>
-                  setTimeout(() => reject(new Error('kill timeout')), 5000)
-                )
-              ]);
+              await this.waitForExitCode(handle.exitCodeFile, 5000);
               return true;
             } catch {
               return false;
             }
           };
 
-          const terminateTree = (targetPid: number, signal: NodeJS.Signals) => {
-            const killChildrenFirst = (childPid: number): void => {
-              for (const grandchildPid of this.getProcessChildren(childPid)) {
-                killChildrenFirst(grandchildPid);
-              }
-              try {
-                process.kill(childPid, signal);
-              } catch {
-                // Process already exited, ignore
-              }
-            };
-
-            for (const childPid of this.getProcessChildren(targetPid)) {
-              killChildrenFirst(childPid);
-            }
-
-            try {
-              process.kill(targetPid, signal);
-            } catch {
-              // Process already exited
-            }
-          };
-
-          terminateTree(pid, 'SIGTERM');
-
-          let exitConfirmed = false;
           if (waitForExit) {
-            exitConfirmed = await waitForExitResult();
+            this.terminateTree(pid, 'SIGTERM');
+            let exitConfirmed = await waitForExitResult();
             if (!exitConfirmed) {
-              terminateTree(pid, 'SIGKILL');
+              this.terminateTree(pid, 'SIGKILL');
               exitConfirmed = await waitForExitResult();
             }
-          }
 
-          const pidsAlive = this.getProcessTreePids(pid);
-          if (pidsAlive.length > 0) {
-            this.logger.warn(
-              'killCommand did not fully terminate process tree',
-              {
-                commandId,
-                pid,
-                remainingPids: pidsAlive
-              }
-            );
+            const pidsAlive = this.getProcessTreePids(pid);
+            if (pidsAlive.length > 0) {
+              this.logger.warn(
+                'killCommand did not fully terminate process tree',
+                {
+                  commandId,
+                  pid,
+                  remainingPids: pidsAlive
+                }
+              );
+              this.runningCommands.delete(commandId);
+              return false;
+            }
 
-            return false;
-          }
-
-          if (waitForExit && !exitConfirmed) {
-            return false;
+            if (!exitConfirmed) {
+              this.runningCommands.delete(commandId);
+              return false;
+            }
+          } else {
+            this.terminateTree(pid, 'SIGKILL');
           }
 
           // Clean up
@@ -789,6 +762,35 @@ export class Session {
    */
   getRunningCommandIds(): string[] {
     return Array.from(this.runningCommands.keys());
+  }
+
+  /**
+   * Send a signal to a process and all its descendants, leaves first.
+   *
+   * @param targetPid - Root process ID
+   * @param signal - Signal to send
+   */
+  private terminateTree(targetPid: number, signal: NodeJS.Signals): void {
+    const killChildrenFirst = (childPid: number): void => {
+      for (const grandchildPid of this.getProcessChildren(childPid)) {
+        killChildrenFirst(grandchildPid);
+      }
+      try {
+        process.kill(childPid, signal);
+      } catch {
+        // Process already exited
+      }
+    };
+
+    for (const childPid of this.getProcessChildren(targetPid)) {
+      killChildrenFirst(childPid);
+    }
+
+    try {
+      process.kill(targetPid, signal);
+    } catch {
+      // Process already exited
+    }
   }
 
   /**
@@ -829,18 +831,20 @@ export class Session {
     }
     visited.add(pid);
 
-    const children = this.getProcessChildren(pid);
-    if (children.length === 0 && !this.processExists(pid)) {
+    if (!this.processExists(pid)) {
       return [];
     }
+
+    const children = this.getProcessChildren(pid);
 
     const descendants = children.flatMap((child) =>
       this.getProcessTreePids(child, visited)
     );
 
-    return [pid, ...descendants].filter((childPid) =>
-      this.processExists(childPid)
-    );
+    return [
+      pid,
+      ...descendants.filter((childPid) => this.processExists(childPid))
+    ];
   }
 
   /**
