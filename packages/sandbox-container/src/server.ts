@@ -1,6 +1,7 @@
 import { createLogger } from '@repo/shared';
 import type { ServerWebSocket } from 'bun';
 import { serve } from 'bun';
+import { CONFIG } from './config';
 import { Container } from './core/container';
 import { Router } from './core/router';
 import type { PtyWSData } from './handlers/pty-ws-handler';
@@ -15,7 +16,6 @@ export type WSData = (ControlWSData & { type: 'control' }) | PtyWSData;
 import { setupRoutes } from './routes/setup';
 
 const logger = createLogger({ component: 'container' });
-const SERVER_PORT = 3000;
 
 export interface ServerInstance {
   port: number;
@@ -100,7 +100,7 @@ async function createApplication(): Promise<{
 }
 
 /**
- * Start the HTTP API server on port 3000.
+ * Start the HTTP API server on the configured control port.
  * Returns server info and a cleanup function for graceful shutdown.
  */
 export async function startServer(): Promise<ServerInstance> {
@@ -110,7 +110,7 @@ export async function startServer(): Promise<ServerInstance> {
     idleTimeout: 255,
     fetch: (req, server) => app.fetch(req, server),
     hostname: '0.0.0.0',
-    port: SERVER_PORT,
+    port: CONFIG.SERVER_PORT,
     websocket: {
       open(ws) {
         try {
@@ -178,12 +178,12 @@ export async function startServer(): Promise<ServerInstance> {
   });
 
   logger.info('Container server started', {
-    port: SERVER_PORT,
+    port: CONFIG.SERVER_PORT,
     hostname: '0.0.0.0'
   });
 
   return {
-    port: SERVER_PORT,
+    port: CONFIG.SERVER_PORT,
     // Cleanup handles application-level resources (processes, ports).
     // WebSocket connections are closed automatically when the process exits -
     // Bun's serve() handles transport cleanup on shutdown.

@@ -1,3 +1,9 @@
+const DEFAULT_SERVER_PORT = 8671;
+
+const SERVER_PORT = process.env.SANDBOX_CONTROL_PORT
+  ? parseInt(process.env.SANDBOX_CONTROL_PORT, 10)
+  : DEFAULT_SERVER_PORT;
+
 /**
  * How long to wait for an interpreter process to spawn and become ready.
  * If an interpreter doesn't start within this time, something is fundamentally
@@ -53,6 +59,7 @@ const STREAM_CHUNK_DELAY_MS = 100;
 const DEFAULT_CWD = '/workspace';
 
 export const CONFIG = {
+  SERVER_PORT,
   INTERPRETER_SPAWN_TIMEOUT_MS,
   INTERPRETER_EXECUTION_TIMEOUT_MS,
   COMMAND_TIMEOUT_MS,
