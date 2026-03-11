@@ -127,6 +127,7 @@ export type {
   ISandbox,
   ListFilesOptions,
   ListFilesResult,
+  LocalMountBucketOptions,
   LogEvent,
   MkdirResult,
   MountBucketOptions,
@@ -151,6 +152,7 @@ export type {
   ProcessStartResult,
   ProcessStatus,
   ReadFileResult,
+  RemoteMountBucketOptions,
   RenameFileResult,
   RestoreBackupResult,
   // Sandbox configuration options
