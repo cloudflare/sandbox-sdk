@@ -683,7 +683,7 @@ export class Session {
    * so they cannot be killed mid-execution (use timeout instead).
    *
    * @param commandId - The unique command identifier
-   * @param waitForExit - If true, wait for process exit and verify termination before returning.
+   * @param waitForExit - If true, wait for process exit and verify termination before returning. If false, attempt to kill return immediately.
    * @returns true if command was killed, false if not found or already completed
    */
   async killCommand(commandId: string, waitForExit = true): Promise<boolean> {
@@ -702,21 +702,25 @@ export class Session {
         const pid = parseInt(pidText.trim(), 10);
 
         if (!Number.isNaN(pid)) {
-          const waitForExitResult = async () => {
-            try {
-              await this.waitForExitCode(handle.exitCodeFile, 5000);
-              return true;
-            } catch {
-              return false;
+          const waitForProcessExit = async (
+            timeoutMs: number
+          ): Promise<boolean> => {
+            const deadline = Date.now() + timeoutMs;
+            while (Date.now() < deadline) {
+              if (!this.processExists(pid)) {
+                return true;
+              }
+              await Bun.sleep(50);
             }
+            return !this.processExists(pid);
           };
 
           if (waitForExit) {
             this.terminateTree(pid, 'SIGTERM');
-            let exitConfirmed = await waitForExitResult();
-            if (!exitConfirmed) {
+            const exitedAfterTerm = await waitForProcessExit(5000);
+            if (!exitedAfterTerm) {
               this.terminateTree(pid, 'SIGKILL');
-              exitConfirmed = await waitForExitResult();
+              await waitForProcessExit(5000);
             }
 
             const pidsAlive = this.getProcessTreePids(pid);
@@ -729,11 +733,6 @@ export class Session {
                   remainingPids: pidsAlive
                 }
               );
-              this.runningCommands.delete(commandId);
-              return false;
-            }
-
-            if (!exitConfirmed) {
               this.runningCommands.delete(commandId);
               return false;
             }
@@ -766,6 +765,10 @@ export class Session {
 
   /**
    * Send a signal to a process and all its descendants, leaves first.
+   *
+   * The child list is read from /proc before signals are sent, so new children
+   * spawned between the read and signal delivery will not be signalled (TOCTOU).
+   * Callers should verify termination with getProcessTreePids() after signalling.
    *
    * @param targetPid - Root process ID
    * @param signal - Signal to send
@@ -848,18 +851,28 @@ export class Session {
   }
 
   /**
-   * Check if a process exists in the current OS process table.
+   * Check if a process is alive (not dead, not a zombie).
    *
    * @param pid - Process ID
-   * @returns true if still alive
+   * @returns true if the process is alive
    */
   private processExists(pid: number): boolean {
     try {
       process.kill(pid, 0);
-      return true;
     } catch {
       return false;
     }
+    try {
+      const status = readFileSync(`/proc/${pid}/status`, 'utf8');
+      const match = status.match(/^State:\s+(\S)/m);
+      if (match && match[1] === 'Z') {
+        return false;
+      }
+    } catch {
+      // /proc entry vanished between the kill(0) check and the status read
+      return false;
+    }
+    return true;
   }
 
   /**
