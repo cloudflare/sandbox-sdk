@@ -1,0 +1,388 @@
+name: Flaky Test Detector
+
+on:
+  workflow_run:
+    workflows: ['PR Privileged', 'Release']
+    types: [completed]
+
+permissions:
+  issues: write
+  actions: read
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: flaky-detector-${{ github.event.workflow_run.id }}
+  cancel-in-progress: false
+
+jobs:
+  detect:
+    # Only act on successful reruns (attempt > 1 means it was retried)
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.run_attempt > 1
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Wait for job data to settle
+        run: sleep 15
+
+      - name: Identify flaked E2E jobs
+        id: flaked
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+        run: |
+          set -euo pipefail
+
+          REPO="${{ github.repository }}"
+
+          # Retry wrapper for eventual consistency
+          # Fails explicitly if all retries are exhausted
+          fetch_jobs() {
+            local attempt_num="$1"
+            local retries=3
+            local delay=10
+            local result=""
+            for i in $(seq 1 $retries); do
+              if result=$(gh api --paginate "repos/$REPO/actions/runs/$RUN_ID/attempts/$attempt_num/jobs" \
+                --jq '.jobs[]' 2>&1); then
+                echo "$result" | jq -s '.'
+                return 0
+              fi
+              echo "::warning::Attempt $i/$retries to fetch jobs for attempt $attempt_num failed: $result"
+              sleep $delay
+            done
+            echo "::error::Failed to fetch jobs for attempt $attempt_num after $retries retries"
+            return 1
+          }
+
+          # Get jobs from attempt 1 (the one that failed)
+          # Filter to only E2E test jobs (name starts with "e2e / test-")
+          # This excludes ci/gate, policy, build, quality, publish-*, deploy, etc.
+          # Include both "failure" and "timed_out" conclusions
+          ATTEMPT1_JOBS=$(fetch_jobs 1)
+          FAILED_JOBS=$(echo "$ATTEMPT1_JOBS" | jq -c \
+            '[.[] | select((.conclusion == "failure" or .conclusion == "timed_out") and (.name | startswith("e2e / test-"))) | {id: .id, name: .name, html_url: .html_url}]')
+
+          # Get jobs from the successful attempt (also filtered to E2E)
+          LATEST_JOBS=$(fetch_jobs "$ATTEMPT")
+          PASSED_JOBS=$(echo "$LATEST_JOBS" | jq -c \
+            '[.[] | select(.conclusion == "success" and (.name | startswith("e2e / test-"))) | .name]')
+
+          # Find E2E jobs that failed in attempt 1 but passed in the final attempt
+          FLAKED=$(echo "$FAILED_JOBS" | jq -c --argjson passed "$PASSED_JOBS" \
+            '[.[] | select(.name as $n | $passed | index($n))]')
+
+          COUNT=$(echo "$FLAKED" | jq 'length')
+          echo "count=$COUNT" >> $GITHUB_OUTPUT
+
+          if [[ "$COUNT" -eq 0 ]]; then
+            echo "No flaked E2E jobs found"
+            exit 0
+          fi
+
+          echo "Found $COUNT flaked E2E job(s):"
+          echo "$FLAKED" | jq '.[].name'
+
+          # Save to file to avoid GITHUB_OUTPUT escaping issues with JSON
+          echo "$FLAKED" > /tmp/flaked.json
+
+      - name: Download failure logs and extract test names
+        if: steps.flaked.outputs.count > 0
+        id: logs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+        run: |
+          set -euo pipefail
+
+          REPO="${{ github.repository }}"
+          FLAKED=$(cat /tmp/flaked.json)
+          mkdir -p /tmp/logs
+
+          # Collect all failing test file names and per-job log summaries
+          > /tmp/logs/summary.md
+          > /tmp/test-files.txt
+
+          for JOB_ID in $(echo "$FLAKED" | jq -r '.[].id'); do
+            JOB_NAME=$(echo "$FLAKED" | jq -r ".[] | select(.id == $JOB_ID) | .name")
+            JOB_URL=$(echo "$FLAKED" | jq -r ".[] | select(.id == $JOB_ID) | .html_url")
+
+            # gh run view --log-failed outputs plain text (handles zip transparently)
+            # Limit to 100 lines to keep issue body size manageable
+            LOG_TEXT=$(gh run view "$RUN_ID" --repo "$REPO" --log-failed --attempt 1 --job "$JOB_ID" 2>/dev/null \
+              | tail -100 || echo "Could not retrieve logs for job $JOB_ID")
+
+            # Extract failing test file names from lines containing FAIL
+            # The || true prevents set -e from aborting when grep finds no matches
+            echo "$LOG_TEXT" | grep -i 'FAIL' | grep -oE 'tests/e2e/[^ ]+\.test\.ts' | sort -u >> /tmp/test-files.txt || true
+
+            # Append log details for this job
+            {
+              echo "<details>"
+              echo "<summary><b>${JOB_NAME}</b> — <a href=\"${JOB_URL}\">view full log</a></summary>"
+              echo ""
+              echo '```'
+              echo "$LOG_TEXT"
+              echo '```'
+              echo ""
+              echo "</details>"
+              echo ""
+            } >> /tmp/logs/summary.md
+          done
+
+          # Deduplicate test file names across all jobs
+          sort -u /tmp/test-files.txt > /tmp/test-files-deduped.txt
+          TEST_COUNT=$(wc -l < /tmp/test-files-deduped.txt | tr -d ' ')
+          echo "test_count=$TEST_COUNT" >> $GITHUB_OUTPUT
+
+          if [[ "$TEST_COUNT" -gt 0 ]]; then
+            echo "Extracted $TEST_COUNT failing test file(s):"
+            cat /tmp/test-files-deduped.txt
+          else
+            echo "Warning: Could not extract specific test file names from logs"
+          fi
+
+          # Truncate log summary if too large (GitHub body limit is 65536 chars)
+          # Leave room for the rest of the issue body (~2000 chars of metadata)
+          LOG_SIZE=$(wc -c < /tmp/logs/summary.md)
+          if [[ "$LOG_SIZE" -gt 55000 ]]; then
+            echo "::warning::Log summary is ${LOG_SIZE} bytes, truncating to fit issue body limit"
+            head -c 55000 /tmp/logs/summary.md > /tmp/logs/summary-truncated.md
+            printf '\n\n*Log output truncated. See [full run logs](%s) for complete output.*\n' "$RUN_URL" >> /tmp/logs/summary-truncated.md
+            mv /tmp/logs/summary-truncated.md /tmp/logs/summary.md
+          fi
+
+      - name: Gather PR context
+        if: steps.flaked.outputs.count > 0
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          REPO="${{ github.repository }}"
+
+          # Extract PR number from workflow_run payload (best-effort, may be empty for forks)
+          PR_NUMBER=$(echo '${{ toJSON(github.event.workflow_run.pull_requests) }}' \
+            | jq -r '.[0].number // empty')
+
+          if [[ -z "$PR_NUMBER" ]]; then
+            echo "is_pr=false" >> $GITHUB_OUTPUT
+            echo "No PR associated with this run"
+            exit 0
+          fi
+
+          echo "is_pr=true" >> $GITHUB_OUTPUT
+          echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
+          echo "pr_url=https://github.com/$REPO/pull/$PR_NUMBER" >> $GITHUB_OUTPUT
+
+          # Get changed files in the PR (for bonk context)
+          # The || true handles cases where PR is inaccessible (e.g., closed/deleted)
+          CHANGED_FILES=$(gh pr view "$PR_NUMBER" --repo "$REPO" \
+            --json files --jq '.files[].path' 2>/dev/null | head -50) || true
+          if [[ -z "$CHANGED_FILES" ]]; then
+            CHANGED_FILES="Could not fetch PR files"
+          fi
+          echo "$CHANGED_FILES" > /tmp/pr-files.txt
+
+      - name: Smart dedup and create/update issues
+        if: steps.flaked.outputs.count > 0
+        id: issues
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          WORKFLOW_NAME: ${{ github.event.workflow_run.name }}
+          ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          IS_PR: ${{ steps.pr.outputs.is_pr }}
+          PR_NUMBER: ${{ steps.pr.outputs.pr_number }}
+          PR_URL: ${{ steps.pr.outputs.pr_url }}
+        run: |
+          set -euo pipefail
+
+          REPO="${{ github.repository }}"
+          FLAKED=$(cat /tmp/flaked.json)
+          FLAKED_NAMES=$(echo "$FLAKED" | jq -r '.[].name' | paste -sd ',' | sed 's/,/, /g')
+          LOG_SUMMARY=$(cat /tmp/logs/summary.md)
+
+          # Track which issues we created vs commented on
+          CREATED_ISSUES=""
+          COMMENTED_ISSUES=""
+
+          # Build PR row for markdown tables (reused across issues)
+          PR_ROW=""
+          if [[ "$IS_PR" == "true" ]]; then
+            PR_ROW="| **PR** | [#${PR_NUMBER}](${PR_URL}) |"
+          fi
+
+          # Helper to write issue/comment bodies to temp files
+          # Using printf/echo instead of heredocs to avoid YAML indentation issues
+          write_comment_body() {
+            local file="$1"
+            {
+              echo "### New flaky occurrence detected"
+              echo ""
+              echo "| Field | Value |"
+              echo "|-------|-------|"
+              echo "| **Workflow** | ${WORKFLOW_NAME} |"
+              echo "| **Branch** | \`${HEAD_BRANCH}\` |"
+              echo "| **Commit** | \`${HEAD_SHA:0:8}\` |"
+              echo "| **Run** | [#${RUN_ID}](${RUN_URL}) |"
+              echo "| **Attempts** | Failed on attempt 1, passed on attempt ${ATTEMPT} |"
+              [[ -n "$PR_ROW" ]] && echo "$PR_ROW"
+              echo ""
+              echo "<details>"
+              echo "<summary>Failure logs</summary>"
+              echo ""
+              echo "$LOG_SUMMARY"
+              echo ""
+              echo "</details>"
+              echo ""
+              echo "*Automatically detected by the flaky test detector.*"
+            } > "$file"
+          }
+
+          write_issue_body() {
+            local file="$1"
+            local test_file="$2"
+            {
+              echo "## Flaky Test Detected"
+              echo ""
+              echo "**Test file:** \`${test_file}\`"
+              echo ""
+              echo "| Field | Value |"
+              echo "|-------|-------|"
+              echo "| **Workflow** | ${WORKFLOW_NAME} |"
+              echo "| **Branch** | \`${HEAD_BRANCH}\` |"
+              echo "| **Commit** | \`${HEAD_SHA:0:8}\` |"
+              echo "| **Run** | [#${RUN_ID}](${RUN_URL}) |"
+              echo "| **Attempts** | Failed on attempt 1, passed on attempt ${ATTEMPT} |"
+              echo "| **Flaked Jobs** | ${FLAKED_NAMES} |"
+              [[ -n "$PR_ROW" ]] && echo "$PR_ROW"
+              echo ""
+              echo "This test failed on the first attempt but passed when retried, indicating non-deterministic (flaky) behavior."
+              echo ""
+              echo "### Failure Logs (from attempt 1)"
+              echo ""
+              echo "$LOG_SUMMARY"
+              echo ""
+              echo "---"
+              echo ""
+              echo "### Investigation Guide"
+              echo ""
+              echo "Comment \`/bonk\` on this issue to start an automated investigation. The investigator should:"
+              echo ""
+              echo "1. Read the failure logs above"
+              echo "2. Examine the test source code (\`${test_file}\`) and the production code it exercises"
+              echo "3. Identify the likely root cause (timing issue, race condition, resource contention, external dependency, etc.)"
+              echo "4. Check other open [\`flaky-test\`](https://github.com/${REPO}/labels/flaky-test) issues for known patterns"
+              echo "5. Suggest a fix if the root cause is clear, or recommend next investigation steps"
+              echo ""
+              echo "---"
+              echo ""
+              echo "*This issue was automatically created by the flaky test detector.*"
+              echo ""
+              echo "\`[flaky-test-detector]\`"
+            } > "$file"
+          }
+
+          # If we extracted specific test file names, dedup per test file
+          if [[ -s /tmp/test-files-deduped.txt ]]; then
+            while IFS= read -r TEST_FILE; do
+              [[ -z "$TEST_FILE" ]] && continue
+
+              TEST_BASENAME=$(basename "$TEST_FILE")
+
+              # Search for existing open flaky-test issue matching this test file
+              # Then verify the title actually contains the test name to avoid false positives
+              EXISTING=""
+              SEARCH_RESULTS=$(gh issue list --repo "$REPO" --label "flaky-test" \
+                --search "$TEST_BASENAME" --state open --json number,title --jq '.[]' 2>/dev/null) || true
+
+              if [[ -n "$SEARCH_RESULTS" ]]; then
+                # Use --arg for safe literal matching (avoids regex metachar issues with dots in .test.ts)
+                EXISTING=$(echo "$SEARCH_RESULTS" | jq -r \
+                  --arg key "$TEST_FILE" 'select(.title | contains($key)) | .number' | head -1)
+              fi
+
+              if [[ -n "$EXISTING" ]]; then
+                echo "Found existing issue #$EXISTING for $TEST_FILE — adding comment"
+                write_comment_body /tmp/comment-body.md
+                gh issue comment "$EXISTING" --repo "$REPO" --body-file /tmp/comment-body.md
+                COMMENTED_ISSUES="${COMMENTED_ISSUES}${EXISTING},"
+              else
+                echo "No existing issue for $TEST_FILE — creating new issue"
+                write_issue_body /tmp/issue-body.md "$TEST_FILE"
+                ISSUE_URL=$(gh issue create \
+                  --repo "$REPO" \
+                  --title "Flaky: ${TEST_FILE} failed then passed on retry" \
+                  --body-file /tmp/issue-body.md \
+                  --label "flaky-test")
+                ISSUE_NUM=$(echo "$ISSUE_URL" | grep -oE '[0-9]+$')
+                CREATED_ISSUES="${CREATED_ISSUES}${ISSUE_NUM},"
+                echo "Created issue #$ISSUE_NUM: $ISSUE_URL"
+              fi
+            done < /tmp/test-files-deduped.txt
+
+          else
+            # Fallback: couldn't extract test file names, create a generic issue
+            echo "Could not extract test file names — creating generic issue"
+            {
+              echo "## Flaky Test Detected"
+              echo ""
+              echo "| Field | Value |"
+              echo "|-------|-------|"
+              echo "| **Workflow** | ${WORKFLOW_NAME} |"
+              echo "| **Branch** | \`${HEAD_BRANCH}\` |"
+              echo "| **Commit** | \`${HEAD_SHA:0:8}\` |"
+              echo "| **Run** | [#${RUN_ID}](${RUN_URL}) |"
+              echo "| **Attempts** | Failed on attempt 1, passed on attempt ${ATTEMPT} |"
+              echo "| **Flaked Jobs** | ${FLAKED_NAMES} |"
+              [[ -n "$PR_ROW" ]] && echo "$PR_ROW"
+              echo ""
+              echo "These jobs failed on the first attempt but passed when retried, indicating non-deterministic (flaky) behavior."
+              echo ""
+              echo "### Failure Logs (from attempt 1)"
+              echo ""
+              echo "$LOG_SUMMARY"
+              echo ""
+              echo "---"
+              echo ""
+              echo "### Investigation Guide"
+              echo ""
+              echo "Comment \`/bonk\` on this issue to start an automated investigation. The investigator should:"
+              echo ""
+              echo "1. Read the failure logs above"
+              echo "2. Identify which test(s) failed from the log output"
+              echo "3. Examine the test source code and the production code it exercises"
+              echo "4. Identify the likely root cause (timing issue, race condition, resource contention, external dependency, etc.)"
+              echo "5. Check other open [\`flaky-test\`](https://github.com/${REPO}/labels/flaky-test) issues for known patterns"
+              echo "6. Suggest a fix if the root cause is clear, or recommend next investigation steps"
+              echo ""
+              echo "---"
+              echo ""
+              echo "*This issue was automatically created by the flaky test detector.*"
+              echo "*Could not extract specific test file names from the logs.*"
+              echo ""
+              echo "\`[flaky-test-detector]\`"
+            } > /tmp/issue-body.md
+
+            ISSUE_URL=$(gh issue create \
+              --repo "$REPO" \
+              --title "Flaky: ${FLAKED_NAMES} failed then passed on retry (run #${RUN_ID})" \
+              --body-file /tmp/issue-body.md \
+              --label "flaky-test")
+            ISSUE_NUM=$(echo "$ISSUE_URL" | grep -oE '[0-9]+$')
+            CREATED_ISSUES="${CREATED_ISSUES}${ISSUE_NUM},"
+            echo "Created issue #$ISSUE_NUM: $ISSUE_URL"
+          fi
+
+          # Output results
+          echo "created_issues=${CREATED_ISSUES%,}" >> $GITHUB_OUTPUT
+          echo "commented_issues=${COMMENTED_ISSUES%,}" >> $GITHUB_OUTPUT
