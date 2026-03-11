@@ -488,7 +488,11 @@ export class Session {
       let position = 0;
       let exitCodeContent = '';
 
-      // Wait until exit code file exists, checking for shell death on each iteration
+      // Wait until exit code file exists, checking for shell death on each iteration.
+      // Note: if the process is killed externally via killCommand(), the bash wrapper
+      // that writes the exit code file is itself killed and this loop will never resolve
+      // normally. In that case the session's shell death (isReady() → false) or a
+      // SessionDestroyedError surfaces instead.
       while (true) {
         if (!this.isReady()) {
           if (this.shellExitedPromise) {
@@ -733,8 +737,6 @@ export class Session {
                   remainingPids: pidsAlive
                 }
               );
-              this.runningCommands.delete(commandId);
-              return false;
             }
           } else {
             this.terminateTree(pid, 'SIGKILL');
@@ -844,10 +846,7 @@ export class Session {
       this.getProcessTreePids(child, visited)
     );
 
-    return [
-      pid,
-      ...descendants.filter((childPid) => this.processExists(childPid))
-    ];
+    return [pid, ...descendants];
   }
 
   /**
