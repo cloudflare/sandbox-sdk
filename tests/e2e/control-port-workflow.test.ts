@@ -32,17 +32,22 @@ describe('Control Port Configuration', () => {
   }, 120000);
 
   test('container should bind to the default control port', async () => {
+    // Convert port to hex for /proc/net/tcp lookup (always available, no ss/netstat needed)
+    const portHex = DEFAULT_CONTROL_PORT.toString(16)
+      .toUpperCase()
+      .padStart(4, '0');
     const result = await fetch(`${workerUrl}/api/execute`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        command: `ss -tlnp | grep :${DEFAULT_CONTROL_PORT} || netstat -tlnp 2>/dev/null | grep :${DEFAULT_CONTROL_PORT}`
+        command: `grep ':${portHex}' /proc/net/tcp`
       })
     });
 
     expect(result.status).toBe(200);
     const data = (await result.json()) as { stdout: string; exitCode: number };
-    expect(data.stdout).toContain(String(DEFAULT_CONTROL_PORT));
+    expect(data.exitCode).toBe(0);
+    expect(data.stdout).toContain(portHex);
   }, 90000);
 
   test('port 3000 should not be reserved by the control plane', async () => {
