@@ -771,10 +771,9 @@ export class SessionManager {
       // directory so the PTY inherits env vars set via setEnvVars()
       // and reflects any directory changes made in the session.
       //
-      // We redirect `env -0` to a temp file instead of capturing its
-      // stdout because the exec pipeline's output labeling uses bash's
-      // `read` which silently strips null bytes from strings. Reading
-      // the file directly with Bun preserves the \0 delimiters.
+      // Captures env output to a temp file. The exec pipeline's
+      // `read`-based labeling strips \0 from stdout, so reading
+      // the file directly with Bun preserves the null-byte delimiters.
       const sessionEnv: Record<string, string> = {};
       let sessionCwd: string = CONFIG.DEFAULT_CWD;
       const safeId = sessionId.replace(/[^a-zA-Z0-9_-]/g, '_');

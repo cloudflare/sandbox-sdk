@@ -103,7 +103,7 @@ describe('SessionManager PTY env inheritance', () => {
     );
     expect(output).toContain('alpha beta');
 
-    // Null-byte stripping caused all vars to merge into one unparsable
+    // If env parsing fails, all vars merge into one unparsable
     // entry — verify system env vars also survived parsing.
     const homeOutput = await collectPtyOutput(pty, 'echo "HOME=$HOME"\n');
     expect(homeOutput).toMatch(/HOME=\//);
