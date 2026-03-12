@@ -6,8 +6,8 @@
 
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { createNoOpLogger } from '@repo/shared';
-import { SessionManager } from '../../src/services/session-manager';
 import type { Pty } from '../../src/pty';
+import { SessionManager } from '../../src/services/session-manager';
 
 const SESSION_ID = 'pty-env-test-session';
 
@@ -47,26 +47,28 @@ describe('SessionManager PTY env inheritance', () => {
     expect(setResult.success).toBe(true);
 
     const ptyResult = await sessionManager.getPty(SESSION_ID);
-    expect(ptyResult.success).toBe(true);
-    pty = ptyResult.data!;
+    if (!ptyResult.success) throw new Error(ptyResult.error.message);
+    pty = ptyResult.data;
 
-    await Bun.sleep(200); // wait for PTY shell to initialize
+    await Bun.sleep(200);
 
-    const output = await collectPtyOutput(pty, 'echo "PTY_VAR=$PTY_TEST_VAR"\n');
+    const output = await collectPtyOutput(
+      pty,
+      'echo "PTY_VAR=$PTY_TEST_VAR"\n'
+    );
     expect(output).toContain('PTY_VAR=hello_from_session');
   });
 
   it('should inherit working directory changes made in the session', async () => {
     const execResult = await sessionManager.executeInSession(
       SESSION_ID,
-      'cd /tmp',
-      '/root'
+      'cd /tmp'
     );
     expect(execResult.success).toBe(true);
 
     const ptyResult = await sessionManager.getPty(SESSION_ID);
-    expect(ptyResult.success).toBe(true);
-    pty = ptyResult.data!;
+    if (!ptyResult.success) throw new Error(ptyResult.error.message);
+    pty = ptyResult.data;
 
     await Bun.sleep(200);
 
@@ -82,8 +84,8 @@ describe('SessionManager PTY env inheritance', () => {
     expect(setResult.success).toBe(true);
 
     const ptyResult = await sessionManager.getPty(SESSION_ID);
-    expect(ptyResult.success).toBe(true);
-    pty = ptyResult.data!;
+    if (!ptyResult.success) throw new Error(ptyResult.error.message);
+    pty = ptyResult.data;
 
     await Bun.sleep(200);
 
