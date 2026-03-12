@@ -83,8 +83,8 @@ describe('SecurityService - Simplified Security Model', () => {
   });
 
   describe('validatePort - Protect control plane only', () => {
-    test('should block port 3000 (SDK control plane) - CRITICAL!', () => {
-      const result = service.validatePort(3000);
+    test('should block control plane port - CRITICAL!', () => {
+      const result = service.validatePort(8671);
       expect(result.isValid).toBe(false);
       expect(result.errors[0].message).toContain('control plane');
     });

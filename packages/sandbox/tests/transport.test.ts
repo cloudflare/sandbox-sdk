@@ -22,7 +22,7 @@ describe('Transport', () => {
     it('should create transport in HTTP mode by default', () => {
       const transport = createTransport({
         mode: 'http',
-        baseUrl: 'http://localhost:3000'
+        baseUrl: 'http://localhost:8671'
       });
 
       expect(transport.getMode()).toBe('http');
@@ -31,7 +31,7 @@ describe('Transport', () => {
     it('should make HTTP GET request', async () => {
       const transport = createTransport({
         mode: 'http',
-        baseUrl: 'http://localhost:3000'
+        baseUrl: 'http://localhost:8671'
       });
 
       mockFetch.mockResolvedValue(
@@ -44,7 +44,7 @@ describe('Transport', () => {
       const body = await response.json();
       expect(body).toEqual({ data: 'test' });
       expect(mockFetch).toHaveBeenCalledWith(
-        'http://localhost:3000/api/test',
+        'http://localhost:8671/api/test',
         expect.objectContaining({ method: 'GET' })
       );
     });
@@ -52,7 +52,7 @@ describe('Transport', () => {
     it('should make HTTP POST request with body', async () => {
       const transport = createTransport({
         mode: 'http',
-        baseUrl: 'http://localhost:3000'
+        baseUrl: 'http://localhost:8671'
       });
 
       mockFetch.mockResolvedValue(
@@ -67,7 +67,7 @@ describe('Transport', () => {
 
       expect(response.status).toBe(200);
       expect(mockFetch).toHaveBeenCalledWith(
-        'http://localhost:3000/api/execute',
+        'http://localhost:8671/api/execute',
         expect.objectContaining({
           method: 'POST',
           body: JSON.stringify({ command: 'echo hello' })
@@ -78,7 +78,7 @@ describe('Transport', () => {
     it('should handle HTTP errors', async () => {
       const transport = createTransport({
         mode: 'http',
-        baseUrl: 'http://localhost:3000'
+        baseUrl: 'http://localhost:8671'
       });
 
       mockFetch.mockResolvedValue(
@@ -93,7 +93,7 @@ describe('Transport', () => {
     it('should stream HTTP responses', async () => {
       const transport = createTransport({
         mode: 'http',
-        baseUrl: 'http://localhost:3000'
+        baseUrl: 'http://localhost:8671'
       });
 
       const mockStream = new ReadableStream({
@@ -124,17 +124,17 @@ describe('Transport', () => {
 
       const transport = createTransport({
         mode: 'http',
-        baseUrl: 'http://localhost:3000',
+        baseUrl: 'http://localhost:8671',
         stub: { containerFetch: mockContainerFetch, fetch: vi.fn() },
-        port: 3000
+        port: 8671
       });
 
       await transport.fetch('/api/test', { method: 'GET' });
 
       expect(mockContainerFetch).toHaveBeenCalledWith(
-        'http://localhost:3000/api/test',
+        'http://localhost:8671/api/test',
         expect.any(Object),
-        3000
+        8671
       );
       expect(mockFetch).not.toHaveBeenCalled();
     });
@@ -147,7 +147,7 @@ describe('Transport', () => {
     it('should create transport in WebSocket mode', () => {
       const transport = createTransport({
         mode: 'websocket',
-        wsUrl: 'ws://localhost:3000/ws'
+        wsUrl: 'ws://localhost:8671/ws'
       });
 
       expect(transport.getMode()).toBe('websocket');
@@ -156,7 +156,7 @@ describe('Transport', () => {
     it('should report WebSocket connection state', () => {
       const transport = createTransport({
         mode: 'websocket',
-        wsUrl: 'ws://localhost:3000/ws'
+        wsUrl: 'ws://localhost:8671/ws'
       });
 
       // Initially not connected
@@ -178,7 +178,7 @@ describe('Transport', () => {
     it('should create HTTP transport with minimal options', () => {
       const transport = createTransport({
         mode: 'http',
-        baseUrl: 'http://localhost:3000'
+        baseUrl: 'http://localhost:8671'
       });
 
       expect(transport).toBeInstanceOf(HttpTransport);
@@ -188,7 +188,7 @@ describe('Transport', () => {
     it('should create WebSocket transport with URL', () => {
       const transport = createTransport({
         mode: 'websocket',
-        wsUrl: 'ws://localhost:3000/ws'
+        wsUrl: 'ws://localhost:8671/ws'
       });
 
       expect(transport).toBeInstanceOf(WebSocketTransport);

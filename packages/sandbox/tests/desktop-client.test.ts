@@ -25,7 +25,7 @@ describe('DesktopClient', () => {
 
     client = new DesktopClient({
       baseUrl: 'http://test.com',
-      port: 3000,
+      port: 8671,
       onError
     });
   });
@@ -808,7 +808,7 @@ describe('DesktopClient', () => {
     it('should work without onError callback', async () => {
       const clientWithoutCallbacks = new DesktopClient({
         baseUrl: 'http://test.com',
-        port: 3000
+        port: 8671
       });
 
       mockFetch.mockRejectedValue(new Error('Connection refused'));
