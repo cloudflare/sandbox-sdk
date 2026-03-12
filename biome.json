@@ -35,7 +35,7 @@
     ]
   },
   "formatter": {
-    "enabled": false,
+    "enabled": true,
     "indentStyle": "tab"
   },
   "linter": {

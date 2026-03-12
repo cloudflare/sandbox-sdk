@@ -1,0 +1,25 @@
+{
+  "name": "@cloudflare/sandbox-vite-example",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "description": "An example of running a Vite dev server inside a Cloudflare Sandbox",
+  "scripts": {
+    "deploy": "vite build && wrangler deploy",
+    "dev": "vite",
+    "start": "vite"
+  },
+  "devDependencies": {
+    "@cloudflare/sandbox": "*",
+    "@vitejs/plugin-react": "^4.0.0",
+    "react": "^18.0.0",
+    "react-dom": "^18.0.0",
+    "vite": "^6.0.0",
+    "wrangler": "^4.63.0"
+  },
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@cloudflare/vite-plugin": "^1.27.0"
+  }
+}
