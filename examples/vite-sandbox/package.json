@@ -20,6 +20,6 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "@cloudflare/vite-plugin": "https://pkg.pr.new/@cloudflare/vite-plugin@12794"
+    "@cloudflare/vite-plugin": "^1.27.0"
   }
 }
