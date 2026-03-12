@@ -33,6 +33,7 @@ import type {
 } from '@repo/shared';
 import {
   createLogger,
+  DEFAULT_CONTROL_PORT,
   filterEnvVars,
   getEnvString,
   isTerminalStatus,
@@ -123,21 +124,42 @@ export function getSandbox<T extends Sandbox<any>>(
 
   const defaultSessionId = `sandbox-${effectiveId}`;
 
+  let cachedControlPort: number | null = null;
+  async function getControlPort(): Promise<number> {
+    if (cachedControlPort !== null) return cachedControlPort;
+    cachedControlPort = await stub.getControlPort();
+    return cachedControlPort;
+  }
+
   // IMPORTANT: Any method that returns ExecutionSession must be listed here
   // to ensure the returned session uses proxyTerminal instead of RPC's terminal.
   const enhancedMethods = {
     fetch: (request: Request) => stub.fetch(request),
     createSession: async (opts?: SessionOptions): Promise<ExecutionSession> => {
       const rpcSession = await stub.createSession(opts);
-      return enhanceSession(stub, rpcSession as ExecutionSession);
+      return enhanceSession(
+        stub,
+        rpcSession as ExecutionSession,
+        getControlPort
+      );
     },
     getSession: async (sessionId: string): Promise<ExecutionSession> => {
       const rpcSession = await stub.getSession(sessionId);
-      return enhanceSession(stub, rpcSession as ExecutionSession);
+      return enhanceSession(
+        stub,
+        rpcSession as ExecutionSession,
+        getControlPort
+      );
     },
-    terminal: (request: Request, opts?: PtyOptions) =>
-      proxyTerminal(stub, defaultSessionId, request, opts),
-    wsConnect: connect(stub),
+    terminal: async (request: Request, opts?: PtyOptions) =>
+      proxyTerminal(
+        stub,
+        defaultSessionId,
+        request,
+        opts,
+        await getControlPort()
+      ),
+    wsConnect: connect(stub, getControlPort),
     // Client-side proxy for desktop operations. Each method call is dispatched
     // to the DO's callDesktop() method, avoiding RPC pipelining through getters.
     desktop: new Proxy({} as Desktop, {
@@ -164,22 +186,25 @@ export function getSandbox<T extends Sandbox<any>>(
 
 function enhanceSession(
   stub: { fetch: (request: Request) => Promise<Response> },
-  rpcSession: ExecutionSession
+  rpcSession: ExecutionSession,
+  getControlPort: () => Promise<number>
 ): ExecutionSession {
   return {
     ...rpcSession,
-    terminal: (request: Request, opts?: PtyOptions) =>
-      proxyTerminal(stub, rpcSession.id, request, opts)
+    terminal: async (request: Request, opts?: PtyOptions) =>
+      proxyTerminal(stub, rpcSession.id, request, opts, await getControlPort())
   };
 }
 
-export function connect(stub: {
-  fetch: (request: Request) => Promise<Response>;
-}) {
+export function connect(
+  stub: { fetch: (request: Request) => Promise<Response> },
+  getControlPort: () => Promise<number>
+) {
   return async (request: Request, port: number) => {
-    if (!validatePort(port)) {
+    const controlPort = await getControlPort();
+    if (!validatePort(port, controlPort)) {
       throw new SecurityError(
-        `Invalid port number: ${port}. Must be 1024-65535, excluding 3000 (sandbox control plane).`
+        `Invalid port number: ${port}. Must be 1024-65535, excluding ${controlPort} (sandbox control plane).`
       );
     }
     const portSwitchedRequest = switchPort(request, port);
@@ -207,7 +232,7 @@ function isR2Bucket(value: unknown): value is R2Bucket {
 }
 
 export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
-  defaultPort = 3000; // Default port for the container's Bun server
+  defaultPort = DEFAULT_CONTROL_PORT; // Overridden in constructor if SANDBOX_CONTROL_PORT env var is set
   sleepAfter: string | number = '10m'; // Sleep the sandbox if no requests are made in this timeframe
 
   client: SandboxClient;
@@ -343,14 +368,16 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * Create a SandboxClient with current transport settings
    */
   private createSandboxClient(): SandboxClient {
+    const port = this.defaultPort;
     return new SandboxClient({
       logger: this.logger,
-      port: 3000,
+      port,
       stub: this,
+      baseUrl: `http://localhost:${port}`,
       retryTimeoutMs: this.computeRetryTimeoutMs(),
       ...(this.transport === 'websocket' && {
         transportMode: 'websocket' as const,
-        wsUrl: 'ws://localhost:3000/ws'
+        wsUrl: `ws://localhost:${port}/ws`
       })
     });
   }
@@ -359,6 +386,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     super(ctx, env);
 
     const envObj = env as Record<string, unknown>;
+
+    // Read control port from env (must happen before createSandboxClient)
+    const controlPortStr = getEnvString(envObj, 'SANDBOX_CONTROL_PORT');
+    if (controlPortStr) {
+      this.defaultPort = parseInt(controlPortStr, 10) || DEFAULT_CONTROL_PORT;
+    }
+    this.envVars.SANDBOX_CONTROL_PORT = String(this.defaultPort);
+
     // Set sandbox environment variables from env object
     const sandboxEnvKeys = ['SANDBOX_LOG_LEVEL', 'SANDBOX_LOG_FORMAT'] as const;
     sandboxEnvKeys.forEach((key) => {
@@ -436,6 +471,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         this.client.setRetryTimeoutMs(this.computeRetryTimeoutMs());
       }
     });
+  }
+
+  getControlPort(): number {
+    return this.defaultPort!;
   }
 
   async setSandboxName(name: string, normalizeId?: boolean): Promise<void> {
@@ -1512,15 +1551,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   private determinePort(url: URL): number {
-    // Extract port from proxy requests (e.g., /proxy/8080/*)
     const proxyMatch = url.pathname.match(/^\/proxy\/(\d+)/);
     if (proxyMatch) {
       return parseInt(proxyMatch[1], 10);
     }
 
-    // All other requests go to control plane on port 3000
+    // All other requests go to control plane on the default port
     // This includes /api/* endpoints and any other control requests
-    return 3000;
+    return this.defaultPort;
   }
 
   /**
@@ -2658,9 +2696,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     port: number,
     options: { name?: string; hostname: string; token?: string }
   ) {
-    if (!validatePort(port)) {
+    if (!validatePort(port, this.defaultPort)) {
       throw new SecurityError(
-        `Invalid port number: ${port}. Must be 1024-65535, excluding 3000 (sandbox control plane).`
+        `Invalid port number: ${port}. Must be 1024-65535, excluding ${this.defaultPort} (sandbox control plane).`
       );
     }
 
@@ -2724,9 +2762,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   async unexposePort(port: number) {
-    if (!validatePort(port)) {
+    if (!validatePort(port, this.defaultPort)) {
       throw new SecurityError(
-        `Invalid port number: ${port}. Must be 1024-65535, excluding 3000 (sandbox control plane).`
+        `Invalid port number: ${port}. Must be 1024-65535, excluding ${this.defaultPort} (sandbox control plane).`
       );
     }
 
@@ -2867,9 +2905,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     hostname: string,
     token: string
   ): string {
-    if (!validatePort(port)) {
+    if (!validatePort(port, this.defaultPort)) {
       throw new SecurityError(
-        `Invalid port number: ${port}. Must be 1024-65535, excluding 3000 (sandbox control plane).`
+        `Invalid port number: ${port}. Must be 1024-65535, excluding ${this.defaultPort} (sandbox control plane).`
       );
     }
 

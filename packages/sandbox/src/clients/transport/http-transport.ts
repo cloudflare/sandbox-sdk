@@ -12,7 +12,7 @@ export class HttpTransport extends BaseTransport {
 
   constructor(config: TransportConfig) {
     super(config);
-    this.baseUrl = config.baseUrl ?? 'http://localhost:3000';
+    this.baseUrl = config.baseUrl ?? `http://localhost:${config.port}`;
   }
 
   getMode(): TransportMode {

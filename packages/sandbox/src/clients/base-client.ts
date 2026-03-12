@@ -33,7 +33,7 @@ export abstract class BaseHttpClient {
       const mode = options.transportMode ?? 'http';
       this.transport = createTransport({
         mode,
-        baseUrl: options.baseUrl ?? 'http://localhost:3000',
+        baseUrl: options.baseUrl ?? `http://localhost:${options.port}`,
         wsUrl: options.wsUrl,
         logger: this.logger,
         stub: options.stub,

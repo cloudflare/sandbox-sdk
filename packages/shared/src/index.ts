@@ -155,7 +155,6 @@ export type {
   RemoteMountBucketOptions,
   RenameFileResult,
   RestoreBackupResult,
-  // Sandbox configuration options
   SandboxOptions,
   // Session management result types
   SessionCreateResult,
@@ -173,6 +172,7 @@ export type {
   WriteFileResult
 } from './types.js';
 export {
+  DEFAULT_CONTROL_PORT,
   isExecResult,
   isProcess,
   isProcessStatus,

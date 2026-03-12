@@ -200,7 +200,7 @@ export class WebSocketTransport extends BaseTransport {
     try {
       // Build the WebSocket URL for the container
       const wsPath = new URL(this.config.wsUrl!).pathname;
-      const httpUrl = `http://localhost:${this.config.port || 3000}${wsPath}`;
+      const httpUrl = `http://localhost:${this.config.port}${wsPath}`;
 
       // Create a Request with WebSocket upgrade headers
       const request = new Request(httpUrl, {
