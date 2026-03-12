@@ -1,7 +1,7 @@
 /**
  * Session Manager PTY Tests
  * Tests that env vars and working directory set on a session are correctly
- * inherited by a PTY opened from that session (regression for null-byte stripping).
+ * inherited by a PTY opened from that session.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
