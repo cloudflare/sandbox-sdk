@@ -3,9 +3,7 @@
   "name": "sandbox-vite",
   "main": "src/worker.js",
   "assets": {
-    "binding": "Assets",
-    "html_handling": "none",
-    "run_worker_first": ["/*"]
+    "not_found_handling": "none"
   },
   "compatibility_date": "2025-05-06",
   "compatibility_flags": ["nodejs_compat"],
