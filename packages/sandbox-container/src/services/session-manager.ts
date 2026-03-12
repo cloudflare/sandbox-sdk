@@ -772,18 +772,17 @@ export class SessionManager {
       // and reflects any directory changes made in the session.
       //
       // We redirect `env -0` to a temp file instead of capturing its
-      // stdout because the exec pipeline's FIFO labeler uses bash's
-      // `read` which silently strips null bytes from strings. Reading
+      // stdout because the exec pipeline captures output through bash
+      // command substitution which silently strips null bytes. Reading
       // the file directly with Bun preserves the \0 delimiters.
       const sessionEnv: Record<string, string> = {};
       let sessionCwd: string = CONFIG.DEFAULT_CWD;
       const safeId = sessionId.replace(/[^a-zA-Z0-9_-]/g, '_');
       const tempEnvFile = `/tmp/pty-env-${safeId}-${Date.now()}`;
       try {
-        const envResult = await session.exec(`env -0 > ${tempEnvFile}`);
+        const envResult = await session.exec(`env -0 > '${tempEnvFile}'`);
         if (envResult.exitCode === 0) {
-          const buf = await Bun.file(tempEnvFile).arrayBuffer();
-          const envText = new TextDecoder().decode(new Uint8Array(buf));
+          const envText = await Bun.file(tempEnvFile).text();
           for (const entry of envText.split('\0')) {
             const idx = entry.indexOf('=');
             if (idx > 0) {
