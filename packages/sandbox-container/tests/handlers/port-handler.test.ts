@@ -149,7 +149,7 @@ describe('PortHandler', () => {
       expect(response.status).toBe(200);
       const responseData = (await response.json()) as PortExposeResult;
       expect(responseData.port).toBe(3000);
-      expect(responseData.url).toBe('http://localhost:8671');
+      expect(responseData.url).toBe('http://localhost:3000');
       expect(responseData.timestamp).toBeDefined();
 
       expect(mockPortService.exposePort).toHaveBeenCalledWith(3000, undefined);
@@ -337,7 +337,7 @@ describe('PortHandler', () => {
       expect(responseData.ports[0].url).toBe('http://localhost:8080');
       expect(responseData.ports[0].status).toBe('active');
       expect(responseData.ports[1].port).toBe(3000);
-      expect(responseData.ports[1].url).toBe('http://localhost:8671');
+      expect(responseData.ports[1].url).toBe('http://localhost:3000');
       expect(responseData.timestamp).toBeDefined();
 
       expect(mockPortService.getExposedPorts).toHaveBeenCalled();
