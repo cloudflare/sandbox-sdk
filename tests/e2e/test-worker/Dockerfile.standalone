@@ -27,7 +27,7 @@ RUN chmod +x /startup-test.sh
 
 WORKDIR /workspace
 
-EXPOSE 3000 8080
+EXPOSE 8671 8080
 
 # Standard Docker pattern: ENTRYPOINT is the executable, CMD is passed as arguments
 ENTRYPOINT ["/sandbox"]

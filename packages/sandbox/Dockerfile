@@ -147,8 +147,10 @@ COPY --from=builder /app/packages/sandbox-container/dist/index.js ./dist/
 
 RUN mkdir -p /workspace
 
-# Expose the application port (3000 for control)
-EXPOSE 3000
+# Control plane port — only needed for local development with wrangler dev.
+# If the default is changed via SANDBOX_CONTROL_PORT, rebuild the image
+# with a matching EXPOSE or local dev will get "connection refused".
+EXPOSE 8671
 
 # ============================================================================
 # Stage 5a: Default image - lean, no Python
@@ -307,7 +309,7 @@ COPY --from=builder /app/packages/sandbox-container/dist/index.js ./dist/
 
 RUN mkdir -p /workspace
 
-EXPOSE 3000
+EXPOSE 8671
 
 ENV PYTHON_POOL_MIN_SIZE=0
 ENV JAVASCRIPT_POOL_MIN_SIZE=0
