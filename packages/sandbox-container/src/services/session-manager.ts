@@ -772,8 +772,8 @@ export class SessionManager {
       // and reflects any directory changes made in the session.
       //
       // We redirect `env -0` to a temp file instead of capturing its
-      // stdout because the exec pipeline captures output through bash
-      // command substitution which silently strips null bytes. Reading
+      // stdout because the exec pipeline's output labeling uses bash's
+      // `read` which silently strips null bytes from strings. Reading
       // the file directly with Bun preserves the \0 delimiters.
       const sessionEnv: Record<string, string> = {};
       let sessionCwd: string = CONFIG.DEFAULT_CWD;

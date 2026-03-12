@@ -57,6 +57,14 @@ describe('SessionManager PTY env inheritance', () => {
       'echo "PTY_VAR=$PTY_TEST_VAR"\n'
     );
     expect(output).toContain('PTY_VAR=hello_from_session');
+
+    // If null-byte splitting is broken, all env vars merge into one
+    // entry and only the first var is parsed correctly.
+    const pathOutput = await collectPtyOutput(
+      pty,
+      'echo "HAS_PATH=${PATH:+yes}"\n'
+    );
+    expect(pathOutput).toContain('HAS_PATH=yes');
   });
 
   it('should inherit working directory changes made in the session', async () => {
@@ -94,5 +102,10 @@ describe('SessionManager PTY env inheritance', () => {
       'echo "$PTY_MULTI_A $PTY_MULTI_B"\n'
     );
     expect(output).toContain('alpha beta');
+
+    // Null-byte stripping caused all vars to merge into one unparsable
+    // entry — verify system env vars also survived parsing.
+    const homeOutput = await collectPtyOutput(pty, 'echo "HOME=$HOME"\n');
+    expect(homeOutput).toMatch(/HOME=\//);
   });
 });
