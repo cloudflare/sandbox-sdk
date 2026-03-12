@@ -70,7 +70,7 @@ describe('SessionHandler', () => {
         data: mockSession
       });
 
-      const request = new Request('http://localhost:3000/api/session/create', {
+      const request = new Request('http://localhost:8671/api/session/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' }
       });
@@ -101,7 +101,7 @@ describe('SessionHandler', () => {
         }
       });
 
-      const request = new Request('http://localhost:3000/api/session/create', {
+      const request = new Request('http://localhost:8671/api/session/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' }
       });
@@ -127,10 +127,10 @@ describe('SessionHandler', () => {
         .mockResolvedValueOnce({ success: true, data: mockSession1 })
         .mockResolvedValueOnce({ success: true, data: mockSession2 });
 
-      const request1 = new Request('http://localhost:3000/api/session/create', {
+      const request1 = new Request('http://localhost:8671/api/session/create', {
         method: 'POST'
       });
-      const request2 = new Request('http://localhost:3000/api/session/create', {
+      const request2 = new Request('http://localhost:8671/api/session/create', {
         method: 'POST'
       });
 
@@ -160,7 +160,7 @@ describe('SessionHandler', () => {
         success: true
       });
 
-      const request = new Request('http://localhost:3000/api/session/delete', {
+      const request = new Request('http://localhost:8671/api/session/delete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sessionId: 'test-session-123' })
@@ -196,7 +196,7 @@ describe('SessionHandler', () => {
         }
       });
 
-      const request = new Request('http://localhost:3000/api/session/delete', {
+      const request = new Request('http://localhost:8671/api/session/delete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sessionId: 'nonexistent' })
@@ -217,7 +217,7 @@ describe('SessionHandler', () => {
     });
 
     it('should reject requests without sessionId', async () => {
-      const request = new Request('http://localhost:3000/api/session/delete', {
+      const request = new Request('http://localhost:8671/api/session/delete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({})
@@ -236,7 +236,7 @@ describe('SessionHandler', () => {
     });
 
     it('should reject requests with invalid JSON', async () => {
-      const request = new Request('http://localhost:3000/api/session/delete', {
+      const request = new Request('http://localhost:8671/api/session/delete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: 'invalid json'
@@ -259,7 +259,7 @@ describe('SessionHandler', () => {
         success: true
       });
 
-      const request = new Request('http://localhost:3000/api/session/delete', {
+      const request = new Request('http://localhost:8671/api/session/delete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sessionId: 'test-session' })
@@ -288,7 +288,7 @@ describe('SessionHandler', () => {
         data: mockSessionIds
       });
 
-      const request = new Request('http://localhost:3000/api/session/list', {
+      const request = new Request('http://localhost:8671/api/session/list', {
         method: 'GET'
       });
 
@@ -314,7 +314,7 @@ describe('SessionHandler', () => {
         data: []
       });
 
-      const request = new Request('http://localhost:3000/api/session/list', {
+      const request = new Request('http://localhost:8671/api/session/list', {
         method: 'GET'
       });
 
@@ -337,7 +337,7 @@ describe('SessionHandler', () => {
         data: mockSessionIds
       });
 
-      const request = new Request('http://localhost:3000/api/session/list', {
+      const request = new Request('http://localhost:8671/api/session/list', {
         method: 'GET'
       });
 
@@ -365,7 +365,7 @@ describe('SessionHandler', () => {
         }
       });
 
-      const request = new Request('http://localhost:3000/api/session/list', {
+      const request = new Request('http://localhost:8671/api/session/list', {
         method: 'GET'
       });
 
@@ -391,7 +391,7 @@ describe('SessionHandler', () => {
         data: mockSessionIds
       });
 
-      const request = new Request('http://localhost:3000/api/session/list', {
+      const request = new Request('http://localhost:8671/api/session/list', {
         method: 'GET'
       });
 
@@ -408,7 +408,7 @@ describe('SessionHandler', () => {
   describe('route handling', () => {
     it('should return 500 for invalid session endpoints', async () => {
       const request = new Request(
-        'http://localhost:3000/api/session/invalid-operation',
+        'http://localhost:8671/api/session/invalid-operation',
         {
           method: 'POST'
         }
@@ -430,7 +430,7 @@ describe('SessionHandler', () => {
     });
 
     it('should return 500 for root session path', async () => {
-      const request = new Request('http://localhost:3000/api/session/', {
+      const request = new Request('http://localhost:8671/api/session/', {
         method: 'GET'
       });
 
@@ -445,7 +445,7 @@ describe('SessionHandler', () => {
     });
 
     it('should return 500 for session endpoint without operation', async () => {
-      const request = new Request('http://localhost:3000/api/session', {
+      const request = new Request('http://localhost:8671/api/session', {
         method: 'GET'
       });
 
@@ -469,7 +469,7 @@ describe('SessionHandler', () => {
         data: mockSession
       });
 
-      const request = new Request('http://localhost:3000/api/session/create', {
+      const request = new Request('http://localhost:8671/api/session/create', {
         method: 'POST'
       });
 
@@ -491,7 +491,7 @@ describe('SessionHandler', () => {
         data: []
       });
 
-      const request = new Request('http://localhost:3000/api/session/list', {
+      const request = new Request('http://localhost:8671/api/session/list', {
         method: 'GET'
       });
 
@@ -502,7 +502,7 @@ describe('SessionHandler', () => {
     });
 
     it('should include CORS headers in error responses', async () => {
-      const request = new Request('http://localhost:3000/api/session/invalid', {
+      const request = new Request('http://localhost:8671/api/session/invalid', {
         method: 'GET'
       });
 
@@ -524,7 +524,7 @@ describe('SessionHandler', () => {
       });
 
       const createRequest = new Request(
-        'http://localhost:3000/api/session/create',
+        'http://localhost:8671/api/session/create',
         {
           method: 'POST'
         }
@@ -545,7 +545,7 @@ describe('SessionHandler', () => {
       });
 
       const listRequest = new Request(
-        'http://localhost:3000/api/session/list',
+        'http://localhost:8671/api/session/list',
         {
           method: 'GET'
         }
@@ -566,7 +566,7 @@ describe('SessionHandler', () => {
         data: mockSession
       });
 
-      const request = new Request('http://localhost:3000/api/session/create', {
+      const request = new Request('http://localhost:8671/api/session/create', {
         method: 'POST'
       });
 
@@ -591,7 +591,7 @@ describe('SessionHandler', () => {
         data: mockSessionIds
       });
 
-      const request = new Request('http://localhost:3000/api/session/list', {
+      const request = new Request('http://localhost:8671/api/session/list', {
         method: 'GET'
       });
 
@@ -615,7 +615,7 @@ describe('SessionHandler', () => {
         data: mockSessionIds
       });
 
-      const request = new Request('http://localhost:3000/api/session/list', {
+      const request = new Request('http://localhost:8671/api/session/list', {
         method: 'GET'
       });
 

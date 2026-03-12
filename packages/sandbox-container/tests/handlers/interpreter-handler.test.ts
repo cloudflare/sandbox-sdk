@@ -81,7 +81,7 @@ describe('InterpreterHandler', () => {
       );
 
       const request = new Request(
-        'http://localhost:3000/api/interpreter/health',
+        'http://localhost:8671/api/interpreter/health',
         {
           method: 'GET'
         }
@@ -116,7 +116,7 @@ describe('InterpreterHandler', () => {
       );
 
       const request = new Request(
-        'http://localhost:3000/api/interpreter/health',
+        'http://localhost:8671/api/interpreter/health',
         {
           method: 'GET'
         }
@@ -158,7 +158,7 @@ describe('InterpreterHandler', () => {
         cwd: '/workspace'
       };
 
-      const request = new Request('http://localhost:3000/api/contexts', {
+      const request = new Request('http://localhost:8671/api/contexts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(contextRequest)
@@ -201,7 +201,7 @@ describe('InterpreterHandler', () => {
         cwd: '/workspace'
       };
 
-      const request = new Request('http://localhost:3000/api/contexts', {
+      const request = new Request('http://localhost:8671/api/contexts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(contextRequest)
@@ -239,7 +239,7 @@ describe('InterpreterHandler', () => {
         cwd: '/workspace'
       };
 
-      const request = new Request('http://localhost:3000/api/contexts', {
+      const request = new Request('http://localhost:8671/api/contexts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(contextRequest)
@@ -284,7 +284,7 @@ describe('InterpreterHandler', () => {
         mockContexts
       );
 
-      const request = new Request('http://localhost:3000/api/contexts', {
+      const request = new Request('http://localhost:8671/api/contexts', {
         method: 'GET'
       });
 
@@ -319,7 +319,7 @@ describe('InterpreterHandler', () => {
         mockListError
       );
 
-      const request = new Request('http://localhost:3000/api/contexts', {
+      const request = new Request('http://localhost:8671/api/contexts', {
         method: 'GET'
       });
 
@@ -348,7 +348,7 @@ describe('InterpreterHandler', () => {
       );
 
       const request = new Request(
-        'http://localhost:3000/api/contexts/ctx-123',
+        'http://localhost:8671/api/contexts/ctx-123',
         {
           method: 'DELETE'
         }
@@ -385,7 +385,7 @@ describe('InterpreterHandler', () => {
       );
 
       const request = new Request(
-        'http://localhost:3000/api/contexts/ctx-999',
+        'http://localhost:8671/api/contexts/ctx-999',
         {
           method: 'DELETE'
         }
@@ -440,7 +440,7 @@ describe('InterpreterHandler', () => {
         language: 'python'
       };
 
-      const request = new Request('http://localhost:3000/api/execute/code', {
+      const request = new Request('http://localhost:8671/api/execute/code', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(executeRequest)
@@ -488,7 +488,7 @@ describe('InterpreterHandler', () => {
         language: 'python'
       };
 
-      const request = new Request('http://localhost:3000/api/execute/code', {
+      const request = new Request('http://localhost:8671/api/execute/code', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(executeRequest)
@@ -510,7 +510,7 @@ describe('InterpreterHandler', () => {
   describe('handle - Invalid Endpoints', () => {
     it('should return error for invalid interpreter endpoint', async () => {
       const request = new Request(
-        'http://localhost:3000/api/interpreter/invalid',
+        'http://localhost:8671/api/interpreter/invalid',
         {
           method: 'GET'
         }
@@ -528,7 +528,7 @@ describe('InterpreterHandler', () => {
     });
 
     it('should return error for invalid HTTP method', async () => {
-      const request = new Request('http://localhost:3000/api/contexts', {
+      const request = new Request('http://localhost:8671/api/contexts', {
         method: 'PUT' // Invalid method
       });
 

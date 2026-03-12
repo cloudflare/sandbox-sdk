@@ -119,7 +119,7 @@ describe('Sandbox - Automatic Session Management', () => {
     });
 
     sandbox = Object.assign(stub, {
-      wsConnect: connect(stub)
+      wsConnect: connect(stub, () => Promise.resolve(stub.defaultPort!))
     });
 
     // Now spy on the client methods that we need for testing
@@ -310,7 +310,7 @@ describe('Sandbox - Automatic Session Management', () => {
 
       expect(sandbox.client.utils.createSession).toHaveBeenCalledWith({
         id: 'custom-session-123',
-        env: { NODE_ENV: 'test' },
+        env: expect.objectContaining({ NODE_ENV: 'test' }),
         cwd: '/test'
       });
 
@@ -530,7 +530,10 @@ describe('Sandbox - Automatic Session Management', () => {
 
       expect(sandbox.client.utils.createSession).toHaveBeenCalledWith({
         id: expect.any(String),
-        env: { NODE_ENV: 'production', DEBUG: 'true' },
+        env: expect.objectContaining({
+          NODE_ENV: 'production',
+          DEBUG: 'true'
+        }),
         cwd: '/workspace'
       });
     });

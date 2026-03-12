@@ -24,7 +24,7 @@ describe('CommandClient', () => {
 
     client = new CommandClient({
       baseUrl: 'http://test.com',
-      port: 3000,
+      port: 8671,
       onCommandComplete,
       onError
     });
@@ -340,7 +340,7 @@ describe('CommandClient', () => {
     it('should work without any callbacks', async () => {
       const clientWithoutCallbacks = new CommandClient({
         baseUrl: 'http://test.com',
-        port: 3000
+        port: 8671
       });
 
       const mockResponse: ExecuteResponse = {
@@ -368,7 +368,7 @@ describe('CommandClient', () => {
     it('should handle errors gracefully without callbacks', async () => {
       const clientWithoutCallbacks = new CommandClient({
         baseUrl: 'http://test.com',
-        port: 3000
+        port: 8671
       });
 
       mockFetch.mockRejectedValue(new Error('Network failed'));

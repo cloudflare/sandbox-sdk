@@ -78,7 +78,7 @@ describe('ExecuteHandler', () => {
         mockCommandResult
       );
 
-      const request = new Request('http://localhost:3000/api/execute', {
+      const request = new Request('http://localhost:8671/api/execute', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -131,7 +131,7 @@ describe('ExecuteHandler', () => {
         mockCommandResult
       );
 
-      const request = new Request('http://localhost:3000/api/execute', {
+      const request = new Request('http://localhost:8671/api/execute', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ command: 'nonexistent-command' })
@@ -163,7 +163,7 @@ describe('ExecuteHandler', () => {
         mockServiceError
       );
 
-      const request = new Request('http://localhost:3000/api/execute', {
+      const request = new Request('http://localhost:8671/api/execute', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ command: 'ls' })
@@ -208,7 +208,7 @@ describe('ExecuteHandler', () => {
         mockProcessResult
       );
 
-      const request = new Request('http://localhost:3000/api/execute', {
+      const request = new Request('http://localhost:8671/api/execute', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -278,7 +278,7 @@ describe('ExecuteHandler', () => {
         mockStreamProcessResult
       );
 
-      const request = new Request('http://localhost:3000/api/execute/stream', {
+      const request = new Request('http://localhost:8671/api/execute/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ command: 'echo "streaming test"' })

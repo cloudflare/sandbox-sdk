@@ -51,7 +51,7 @@ describe('UtilityClient', () => {
 
     client = new UtilityClient({
       baseUrl: 'http://test.com',
-      port: 3000
+      port: 8671
     });
   });
 

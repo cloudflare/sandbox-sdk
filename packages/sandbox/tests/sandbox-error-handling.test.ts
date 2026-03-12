@@ -167,7 +167,7 @@ describe('Sandbox.containerFetch() error classification', () => {
     return sandbox.containerFetch(
       new Request('http://localhost/test'),
       {},
-      3000
+      8671
     );
   }
 
@@ -193,7 +193,7 @@ describe('Sandbox.containerFetch() error classification', () => {
 
     it('returns 503 for "the container is not listening" (@cloudflare/containers)', async () => {
       const response = await triggerContainerFetchWithError(
-        'the container is not listening on port 3000'
+        'the container is not listening on port 8671'
       );
 
       expect(response.status).toBe(503);
@@ -211,7 +211,7 @@ describe('Sandbox.containerFetch() error classification', () => {
 
     it('returns 503 for "failed to verify port" (@cloudflare/containers)', async () => {
       const response = await triggerContainerFetchWithError(
-        'Failed to verify port 3000 is available after 20000ms'
+        'Failed to verify port 8671 is available after 20000ms'
       );
 
       expect(response.status).toBe(503);
@@ -464,7 +464,7 @@ describe('Sandbox.containerFetch() error classification', () => {
       const response = await sandbox.containerFetch(
         new Request('http://localhost/test'),
         {},
-        3000
+        8671
       );
 
       // startAndWaitForPorts should NOT be called when healthy
@@ -493,7 +493,7 @@ describe('Sandbox.containerFetch() error classification', () => {
       const response = await sandbox.containerFetch(
         new Request('http://localhost/test'),
         {},
-        3000
+        8671
       );
 
       expect(startAndWaitSpy).toHaveBeenCalledWith(
@@ -522,7 +522,7 @@ describe('Sandbox.containerFetch() error classification', () => {
       const response = await sandbox.containerFetch(
         new Request('http://localhost/test'),
         {},
-        3000
+        8671
       );
 
       expect(abortSpy).toHaveBeenCalled();
@@ -543,7 +543,7 @@ describe('Sandbox.containerFetch() error classification', () => {
       const response = await sandbox.containerFetch(
         new Request('http://localhost/test'),
         {},
-        3000
+        8671
       );
 
       expect(abortSpy).not.toHaveBeenCalled();
