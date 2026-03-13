@@ -1,4 +1,4 @@
-import type { Process, ProcessLogsResult } from '@repo/shared';
+import type { ExecResult, Process, ProcessLogsResult } from '@repo/shared';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import {
   cleanupTestSandbox,
@@ -40,6 +40,64 @@ describe('Process Lifecycle Error Handling', () => {
       'Content-Type': 'application/json'
     };
   }, 120000);
+
+  async function readExecStdout(command: string): Promise<string> {
+    const response = await fetch(`${workerUrl}/api/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        command
+      })
+    });
+
+    expect(response.status).toBe(200);
+
+    const result = (await response.json()) as ExecResult;
+    return result.stdout.trim();
+  }
+
+  async function waitForChildPid(
+    pidFilePath: string,
+    timeoutMs = 10000
+  ): Promise<number> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const output = await readExecStdout(`cat '${pidFilePath}'`);
+      const pid = Number.parseInt(output, 10);
+      if (Number.isInteger(pid) && pid > 0) {
+        return pid;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    throw new Error(`Timed out waiting for child pid file: ${pidFilePath}`);
+  }
+
+  async function waitForProcessExit(
+    processId: string,
+    timeoutMs = 5000
+  ): Promise<void> {
+    const response = await fetch(
+      `${workerUrl}/api/process/${processId}/waitForExit`,
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ timeout: timeoutMs })
+      }
+    );
+
+    expect(response.status).toBe(200);
+  }
+
+  async function isProcessAlive(pid: number): Promise<boolean> {
+    const response = await fetch(`${workerUrl}/api/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ command: `kill -0 ${pid} 2>/dev/null; echo $?` })
+    });
+    expect(response.status).toBe(200);
+    const result = (await response.json()) as ExecResult;
+    return result.stdout.trim() === '0';
+  }
 
   afterAll(async () => {
     await cleanupTestSandbox(sandbox);
@@ -92,6 +150,82 @@ describe('Process Lifecycle Error Handling', () => {
     expect(logsResponse.status).toBe(200);
     const logsData = (await logsResponse.json()) as ProcessLogsResult;
     expect(logsData.stdout).toContain('Hello from process');
+  }, 90000);
+
+  test('should terminate the full background process tree when killed', async () => {
+    const token = `kill-tree-${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2, 8)}`;
+    const scriptPath = `/workspace/${token}.sh`;
+    const pidFilePath = `/workspace/${token}.pid`;
+    const scriptCode = `#!/usr/bin/env bash
+echo "$$" > '${pidFilePath}'
+sleep 120`;
+    let processId: string | null = null;
+    let childPid: number | null = null;
+
+    try {
+      await fetch(`${workerUrl}/api/file/write`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          path: scriptPath,
+          content: scriptCode
+        })
+      });
+
+      const startResponse = await fetch(`${workerUrl}/api/process/start`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          command: `bash '${scriptPath}'`
+        })
+      });
+
+      expect(startResponse.status).toBe(200);
+      const processData = (await startResponse.json()) as Process;
+      processId = processData.id;
+
+      childPid = await waitForChildPid(pidFilePath);
+
+      const killResponse = await fetch(
+        `${workerUrl}/api/process/${processId}`,
+        {
+          method: 'DELETE',
+          headers
+        }
+      );
+      expect(killResponse.status).toBe(200);
+
+      await waitForProcessExit(processId);
+
+      for (let i = 0; i < 20; i++) {
+        if (childPid && !(await isProcessAlive(childPid))) {
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+    } finally {
+      if (processId) {
+        await fetch(`${workerUrl}/api/process/${processId}`, {
+          method: 'DELETE',
+          headers
+        }).catch(() => {});
+      }
+
+      if (childPid) {
+        await readExecStdout(
+          `kill -9 ${childPid} 2>/dev/null || true; rm -f '${pidFilePath}'`
+        ).catch(() => {});
+      } else {
+        await readExecStdout(`rm -f '${pidFilePath}'`).catch(() => {});
+      }
+
+      await readExecStdout(`rm -f '${scriptPath}'`).catch(() => {});
+    }
+
+    expect(childPid).not.toBeNull();
+    expect(await isProcessAlive(childPid!)).toBe(false);
   }, 90000);
 
   test('should stream process logs in real-time', async () => {
@@ -217,6 +351,203 @@ console.log("Line 3");
     },
     90000
   );
+
+  test('should kill all levels of a deep process tree', async () => {
+    const token = `deep-tree-${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2, 8)}`;
+    const pid1File = `/workspace/${token}-l1.pid`;
+    const pid2File = `/workspace/${token}-l2.pid`;
+    const pid3File = `/workspace/${token}-l3.pid`;
+    const scriptPath = `/workspace/${token}.sh`;
+    const innerPath = `/workspace/${token}-inner.sh`;
+
+    const innerCode = [
+      '#!/usr/bin/env bash',
+      `echo "$$" > '${pid2File}'`,
+      `bash -c 'echo "$$" > '"'"'${pid3File}'"'"'; sleep 120'`
+    ].join('\n');
+
+    const scriptCode = [
+      '#!/usr/bin/env bash',
+      `echo "$$" > '${pid1File}'`,
+      `bash '${innerPath}'`
+    ].join('\n');
+
+    let processId: string | null = null;
+    let pids: number[] = [];
+
+    try {
+      await Promise.all([
+        fetch(`${workerUrl}/api/file/write`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ path: scriptPath, content: scriptCode })
+        }),
+        fetch(`${workerUrl}/api/file/write`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ path: innerPath, content: innerCode })
+        })
+      ]);
+
+      const startResponse = await fetch(`${workerUrl}/api/process/start`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ command: `bash '${scriptPath}'` })
+      });
+      expect(startResponse.status).toBe(200);
+      const processData = (await startResponse.json()) as Process;
+      processId = processData.id;
+
+      const [pid1, pid2, pid3] = await Promise.all([
+        waitForChildPid(pid1File),
+        waitForChildPid(pid2File),
+        waitForChildPid(pid3File)
+      ]);
+      pids = [pid1, pid2, pid3];
+
+      const killResponse = await fetch(
+        `${workerUrl}/api/process/${processId}`,
+        { method: 'DELETE', headers }
+      );
+      expect(killResponse.status).toBe(200);
+
+      await waitForProcessExit(processId);
+
+      for (let i = 0; i < 20; i++) {
+        const aliveResults = await Promise.all(
+          pids.map((p) => isProcessAlive(p))
+        );
+        if (aliveResults.every((alive) => !alive)) break;
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+    } finally {
+      if (processId) {
+        await fetch(`${workerUrl}/api/process/${processId}`, {
+          method: 'DELETE',
+          headers
+        }).catch(() => {});
+      }
+      for (const f of [pid1File, pid2File, pid3File, scriptPath, innerPath]) {
+        await readExecStdout(`rm -f '${f}'`).catch(() => {});
+      }
+    }
+
+    for (const pid of pids) {
+      expect(await isProcessAlive(pid)).toBe(false);
+    }
+  }, 90000);
+
+  test('should kill all background processes concurrently and verify pids are dead', async () => {
+    const token = `kill-all-${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2, 8)}`;
+    const pidFiles = [0, 1, 2].map((i) => `/workspace/${token}-${i}.pid`);
+    const scriptPaths = [0, 1, 2].map((i) => `/workspace/${token}-${i}.sh`);
+    const processIds: string[] = [];
+    const pids: number[] = [];
+
+    try {
+      for (let i = 0; i < 3; i++) {
+        const scriptCode = `#!/usr/bin/env bash\necho "$$" > '${pidFiles[i]}'\nsleep 120`;
+        await fetch(`${workerUrl}/api/file/write`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ path: scriptPaths[i], content: scriptCode })
+        });
+
+        const startResponse = await fetch(`${workerUrl}/api/process/start`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ command: `bash '${scriptPaths[i]}'` })
+        });
+        expect(startResponse.status).toBe(200);
+        const processData = (await startResponse.json()) as Process;
+        processIds.push(processData.id);
+      }
+
+      for (const pidFile of pidFiles) {
+        pids.push(await waitForChildPid(pidFile));
+      }
+
+      const killAllResponse = await fetch(`${workerUrl}/api/process/kill-all`, {
+        method: 'DELETE',
+        headers
+      });
+      expect(killAllResponse.status).toBe(200);
+
+      for (let i = 0; i < 20; i++) {
+        const aliveResults = await Promise.all(
+          pids.map((p) => isProcessAlive(p))
+        );
+        if (aliveResults.every((alive) => !alive)) break;
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+    } finally {
+      for (let i = 0; i < 3; i++) {
+        await fetch(`${workerUrl}/api/process/${processIds[i]}`, {
+          method: 'DELETE',
+          headers
+        }).catch(() => {});
+        await readExecStdout(
+          `rm -f '${pidFiles[i]}' '${scriptPaths[i]}'`
+        ).catch(() => {});
+      }
+    }
+
+    for (const pid of pids) {
+      expect(await isProcessAlive(pid)).toBe(false);
+    }
+  }, 90000);
+
+  test('should kill background processes when their session is destroyed', async () => {
+    const sessionId = createUniqueSession();
+    const sessionHeaders = sandbox!.headers(sessionId);
+    const token = `session-destroy-${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2, 8)}`;
+    const pidFile = `/workspace/${token}.pid`;
+    const scriptPath = `/workspace/${token}.sh`;
+    const scriptCode = `#!/usr/bin/env bash\necho "$$" > '${pidFile}'\nsleep 120`;
+    let pid: number | null = null;
+
+    try {
+      await fetch(`${workerUrl}/api/file/write`, {
+        method: 'POST',
+        headers: sessionHeaders,
+        body: JSON.stringify({ path: scriptPath, content: scriptCode })
+      });
+
+      const startResponse = await fetch(`${workerUrl}/api/process/start`, {
+        method: 'POST',
+        headers: sessionHeaders,
+        body: JSON.stringify({ command: `bash '${scriptPath}'` })
+      });
+      expect(startResponse.status).toBe(200);
+
+      pid = await waitForChildPid(pidFile, 10000);
+
+      const deleteResponse = await fetch(`${workerUrl}/api/session/delete`, {
+        method: 'POST',
+        headers: sessionHeaders,
+        body: JSON.stringify({ sessionId })
+      });
+      expect(deleteResponse.status).toBe(200);
+
+      for (let i = 0; i < 20; i++) {
+        if (pid && !(await isProcessAlive(pid))) break;
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+    } finally {
+      await readExecStdout(`rm -f '${pidFile}' '${scriptPath}'`).catch(
+        () => {}
+      );
+    }
+
+    expect(pid).not.toBeNull();
+    expect(await isProcessAlive(pid!)).toBe(false);
+  }, 90000);
 
   test('should not block foreground operations when background processes are running', async () => {
     // Start a long-running background process

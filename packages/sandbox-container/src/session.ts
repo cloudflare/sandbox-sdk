@@ -91,7 +91,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { watch } from 'node:fs';
+import { readFileSync, watch } from 'node:fs';
 import { mkdir, open, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
@@ -488,7 +488,11 @@ export class Session {
       let position = 0;
       let exitCodeContent = '';
 
-      // Wait until exit code file exists, checking for shell death on each iteration
+      // Wait until exit code file exists, checking for shell death on each iteration.
+      // Note: if the process is killed externally via killCommand(), the bash wrapper
+      // that writes the exit code file is itself killed and this loop will never resolve
+      // normally. In that case the session's shell death (isReady() → false) or a
+      // SessionDestroyedError surfaces instead.
       while (true) {
         if (!this.isReady()) {
           if (this.shellExitedPromise) {
@@ -683,9 +687,10 @@ export class Session {
    * so they cannot be killed mid-execution (use timeout instead).
    *
    * @param commandId - The unique command identifier
+   * @param waitForExit - If true, wait for process exit and verify termination before returning. If false, attempt to kill return immediately.
    * @returns true if command was killed, false if not found or already completed
    */
-  async killCommand(commandId: string): Promise<boolean> {
+  async killCommand(commandId: string, waitForExit = true): Promise<boolean> {
     const handle = this.runningCommands.get(commandId);
     if (!handle) {
       return false; // Command not found or already completed
@@ -701,8 +706,41 @@ export class Session {
         const pid = parseInt(pidText.trim(), 10);
 
         if (!Number.isNaN(pid)) {
-          // Send SIGTERM for graceful termination
-          process.kill(pid, 'SIGTERM');
+          const waitForProcessExit = async (
+            timeoutMs: number
+          ): Promise<boolean> => {
+            const deadline = Date.now() + timeoutMs;
+            while (Date.now() < deadline) {
+              if (!this.processExists(pid)) {
+                return true;
+              }
+              await Bun.sleep(50);
+            }
+            return !this.processExists(pid);
+          };
+
+          if (waitForExit) {
+            this.terminateTree(pid, 'SIGTERM');
+            const exitedAfterTerm = await waitForProcessExit(5000);
+            if (!exitedAfterTerm) {
+              this.terminateTree(pid, 'SIGKILL');
+              await waitForProcessExit(5000);
+            }
+
+            const pidsAlive = this.getProcessTreePids(pid);
+            if (pidsAlive.length > 0) {
+              this.logger.warn(
+                'killCommand did not fully terminate process tree',
+                {
+                  commandId,
+                  pid,
+                  remainingPids: pidsAlive
+                }
+              );
+            }
+          } else {
+            this.terminateTree(pid, 'SIGKILL');
+          }
 
           // Clean up
           this.runningCommands.delete(commandId);
@@ -728,6 +766,115 @@ export class Session {
   }
 
   /**
+   * Send a signal to a process and all its descendants, leaves first.
+   *
+   * The child list is read from /proc before signals are sent, so new children
+   * spawned between the read and signal delivery will not be signalled (TOCTOU).
+   * Callers should verify termination with getProcessTreePids() after signalling.
+   *
+   * @param targetPid - Root process ID
+   * @param signal - Signal to send
+   */
+  private terminateTree(targetPid: number, signal: NodeJS.Signals): void {
+    const killChildrenFirst = (childPid: number): void => {
+      for (const grandchildPid of this.getProcessChildren(childPid)) {
+        killChildrenFirst(grandchildPid);
+      }
+      try {
+        process.kill(childPid, signal);
+      } catch {
+        // Process already exited
+      }
+    };
+
+    for (const childPid of this.getProcessChildren(targetPid)) {
+      killChildrenFirst(childPid);
+    }
+
+    try {
+      process.kill(targetPid, signal);
+    } catch {
+      // Process already exited
+    }
+  }
+
+  /**
+   * Get direct child PIDs of a process from /proc.
+   *
+   * @param pid - Process ID
+   * @returns Array of child PIDs
+   */
+  private getProcessChildren(pid: number): number[] {
+    try {
+      const childrenFile = `/proc/${pid}/task/${pid}/children`;
+      const children = readFileSync(childrenFile, 'utf8')
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean);
+
+      return children
+        .map((child) => parseInt(child, 10))
+        .filter((value) => !Number.isNaN(value));
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Return the full process-tree PIDs rooted at the target.
+   *
+   * @param pid - Process ID of root node
+   * @param visited - Internal recursion guard
+   * @returns Array of pids still known to exist
+   */
+  private getProcessTreePids(
+    pid: number,
+    visited: Set<number> = new Set()
+  ): number[] {
+    if (visited.has(pid)) {
+      return [];
+    }
+    visited.add(pid);
+
+    if (!this.processExists(pid)) {
+      return [];
+    }
+
+    const children = this.getProcessChildren(pid);
+
+    const descendants = children.flatMap((child) =>
+      this.getProcessTreePids(child, visited)
+    );
+
+    return [pid, ...descendants];
+  }
+
+  /**
+   * Check if a process is alive (not dead, not a zombie).
+   *
+   * @param pid - Process ID
+   * @returns true if the process is alive
+   */
+  private processExists(pid: number): boolean {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return false;
+    }
+    try {
+      const status = readFileSync(`/proc/${pid}/status`, 'utf8');
+      const match = status.match(/^State:\s+(\S)/m);
+      if (match && match[1] === 'Z') {
+        return false;
+      }
+    } catch {
+      // /proc entry vanished between the kill(0) check and the status read
+      return false;
+    }
+    return true;
+  }
+
+  /**
    * Destroy the session and clean up resources
    */
   async destroy(): Promise<void> {
@@ -748,7 +895,7 @@ export class Session {
     // Kill all running commands first
     const runningCommandIds = Array.from(this.runningCommands.keys());
     await Promise.all(
-      runningCommandIds.map((commandId) => this.killCommand(commandId))
+      runningCommandIds.map((commandId) => this.killCommand(commandId, false))
     );
 
     if (this.shell && !this.shell.killed) {
