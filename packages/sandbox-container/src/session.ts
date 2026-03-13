@@ -181,6 +181,13 @@ interface CommandHandle {
   exitCodeFile: string;
 }
 
+interface ProcessSnapshot {
+  pid: number;
+  ppid: number;
+  state: string;
+  depth: number;
+}
+
 // ============================================================================
 // Session Class
 // ============================================================================
@@ -699,8 +706,15 @@ export class Session {
       return false;
     }
 
+    const trackedProcesses = this.captureProcessTree(pid);
+    const trackedPids = trackedProcesses.map((process) => process.pid);
+
     const termResult = this.signalProcessGroup(pid, 'SIGTERM');
-    if (termResult === 'not_found') {
+    this.signalTrackedProcesses(trackedProcesses, 'SIGTERM');
+    if (
+      termResult === 'not_found' &&
+      !this.hasLiveTrackedProcesses(trackedPids)
+    ) {
       this.runningCommands.delete(commandId);
       return false;
     }
@@ -709,21 +723,29 @@ export class Session {
     let exited = true;
 
     if (waitForExit) {
-      exited = await this.waitForProcessGroupExit(pid, 5000);
+      exited = await this.waitForTrackedProcessesExit(trackedPids, 5000);
       if (!exited) {
         syntheticExitCode = 137;
         this.signalProcessGroup(pid, 'SIGKILL');
-        exited = await this.waitForProcessGroupExit(pid, 1000);
+        this.signalTrackedProcesses(trackedProcesses, 'SIGKILL');
+        exited = await this.waitForTrackedProcessesExit(trackedPids, 1000);
       }
     } else {
       // destroy() path: skip waiting and force-kill immediately for fast teardown
       syntheticExitCode = 137;
       this.signalProcessGroup(pid, 'SIGKILL');
+      this.signalTrackedProcesses(trackedProcesses, 'SIGKILL');
     }
 
     if (!exited) {
-      throw new Error(
-        `Command '${commandId}' did not exit after SIGKILL for process group ${pid}`
+      this.logger.warn(
+        `Command '${commandId}' still appears in the process table after SIGKILL`,
+        {
+          sessionId: this.id,
+          commandId,
+          pid,
+          trackedPids
+        }
       );
     }
 
@@ -1358,6 +1380,139 @@ export class Session {
 
       throw error;
     }
+  }
+
+  private captureProcessTree(rootPid: number): ProcessSnapshot[] {
+    const processTable = this.readProcessTable();
+    const root = processTable.get(rootPid);
+    if (!root) {
+      return [{ pid: rootPid, ppid: -1, state: '', depth: 0 }];
+    }
+
+    const childrenByParent = new Map<number, ProcessSnapshot[]>();
+    for (const snapshot of processTable.values()) {
+      const siblings = childrenByParent.get(snapshot.ppid);
+      if (siblings) {
+        siblings.push(snapshot);
+      } else {
+        childrenByParent.set(snapshot.ppid, [snapshot]);
+      }
+    }
+
+    const tree: ProcessSnapshot[] = [];
+    const visit = (snapshot: ProcessSnapshot, depth: number) => {
+      const current = {
+        ...snapshot,
+        depth
+      };
+      tree.push(current);
+
+      for (const child of childrenByParent.get(snapshot.pid) ?? []) {
+        visit(child, depth + 1);
+      }
+    };
+
+    visit(root, 0);
+    return tree;
+  }
+
+  private readProcessTable(): Map<number, ProcessSnapshot> {
+    const result = Bun.spawnSync({
+      cmd: ['ps', '-A', '-o', 'pid=', '-o', 'ppid=', '-o', 'stat='],
+      stdout: 'pipe',
+      stderr: 'ignore'
+    });
+
+    if (result.exitCode !== 0) {
+      return new Map();
+    }
+
+    const table = new Map<number, ProcessSnapshot>();
+    const output = result.stdout.toString();
+
+    for (const line of output.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed) {
+        continue;
+      }
+
+      const [pidText, ppidText, state = ''] = trimmed.split(/\s+/, 3);
+      const pid = Number.parseInt(pidText, 10);
+      const ppid = Number.parseInt(ppidText, 10);
+
+      if (Number.isNaN(pid) || Number.isNaN(ppid)) {
+        continue;
+      }
+
+      table.set(pid, {
+        pid,
+        ppid,
+        state,
+        depth: 0
+      });
+    }
+
+    return table;
+  }
+
+  private signalTrackedProcesses(
+    trackedProcesses: ProcessSnapshot[],
+    signal: NodeJS.Signals
+  ): void {
+    const ordered = [...trackedProcesses].sort((left, right) => {
+      if (left.depth !== right.depth) {
+        return right.depth - left.depth;
+      }
+
+      return right.pid - left.pid;
+    });
+
+    for (const process of ordered) {
+      try {
+        globalThis.process.kill(process.pid, signal);
+      } catch (error) {
+        if (
+          !(error instanceof Error && 'code' in error && error.code === 'ESRCH')
+        ) {
+          throw error;
+        }
+      }
+    }
+  }
+
+  private isZombieState(state: string): boolean {
+    return state.startsWith('Z');
+  }
+
+  private hasLiveTrackedProcesses(trackedPids: number[]): boolean {
+    if (trackedPids.length === 0) {
+      return false;
+    }
+
+    const processTable = this.readProcessTable();
+    return trackedPids.some((pid) => {
+      const process = processTable.get(pid);
+      return process !== undefined && !this.isZombieState(process.state);
+    });
+  }
+
+  private async waitForTrackedProcessesExit(
+    trackedPids: number[],
+    timeoutMs: number
+  ): Promise<boolean> {
+    if (trackedPids.length === 0) {
+      return true;
+    }
+
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (!this.hasLiveTrackedProcesses(trackedPids)) {
+        return true;
+      }
+      await Bun.sleep(50);
+    }
+
+    return !this.hasLiveTrackedProcesses(trackedPids);
   }
 
   private isProcessGroupAlive(processGroupId: number): boolean {
