@@ -2646,6 +2646,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       recursive: options.recursive,
       include: options.include,
       exclude: options.exclude,
+      ownerId: options.ownerId,
       sessionId
     });
   }

@@ -143,6 +143,23 @@ describe('Sandbox - Automatic Session Management', () => {
       path: '/test.txt',
       timestamp: new Date().toISOString()
     } as any);
+
+    vi.spyOn(sandbox.client.watch, 'ensureWatch').mockResolvedValue({
+      success: true,
+      watch: {
+        watchId: 'watch-1',
+        path: '/workspace/test',
+        recursive: true,
+        cursor: 0,
+        dirty: false,
+        overflowed: false,
+        lastEventAt: null,
+        expiresAt: null,
+        subscriberCount: 0,
+        startedAt: new Date().toISOString()
+      },
+      timestamp: new Date().toISOString()
+    } as any);
   });
 
   afterEach(() => {
@@ -193,6 +210,22 @@ describe('Sandbox - Automatic Session Management', () => {
           cwd: '/workspace/project'
         }
       );
+    });
+
+    it('should forward ownerId when ensuring a watch', async () => {
+      await sandbox.ensureWatch('/workspace/test', {
+        ownerId: 'owner-1',
+        recursive: false
+      });
+
+      expect(sandbox.client.watch.ensureWatch).toHaveBeenCalledWith({
+        path: '/workspace/test',
+        recursive: false,
+        include: undefined,
+        exclude: undefined,
+        ownerId: 'owner-1',
+        sessionId: expect.stringMatching(/^sandbox-/)
+      });
     });
 
     it('should reuse default session across multiple operations', async () => {
