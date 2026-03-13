@@ -168,8 +168,15 @@ export type {
   WaitForLogResult,
   WaitForPortOptions,
   // File watch types
+  WatchAckRequest,
+  WatchAckResult,
+  WatchEnsureResult,
   WatchOptions,
   WatchRequest,
+  WatchState,
+  WatchStateResult,
+  WatchStopOptions,
+  WatchStopResult,
   WriteFileResult
 } from './types.js';
 export {

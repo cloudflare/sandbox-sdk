@@ -1,5 +1,13 @@
 import { posix as pathPosix } from 'node:path';
-import type { Logger, WatchRequest } from '@repo/shared';
+import type {
+  Logger,
+  WatchAckRequest,
+  WatchAckResult,
+  WatchEnsureResult,
+  WatchRequest,
+  WatchStateResult,
+  WatchStopResult
+} from '@repo/shared';
 import { ErrorCode } from '@repo/shared/errors';
 import { CONFIG } from '../config';
 import type { RequestContext } from '../core/types';
@@ -9,7 +17,7 @@ import { BaseHandler } from './base-handler';
 const WORKSPACE_ROOT = CONFIG.DEFAULT_CWD;
 
 /**
- * Handler for file watch operations
+ * Handler for file watch operations.
  */
 export class WatchHandler extends BaseHandler<Request, Response> {
   constructor(
@@ -22,28 +30,214 @@ export class WatchHandler extends BaseHandler<Request, Response> {
   async handle(request: Request, context: RequestContext): Promise<Response> {
     const pathname = new URL(request.url).pathname;
 
-    if (pathname === '/api/watch') {
+    if (pathname === '/api/watch' && request.method === 'POST') {
       return this.handleWatch(request, context);
+    }
+
+    if (pathname === '/api/watch/ensure' && request.method === 'POST') {
+      return this.handleEnsureWatch(request, context);
+    }
+
+    if (pathname.startsWith('/api/watch/')) {
+      const segments = pathname.split('/');
+      const watchId = segments[3];
+      const action = segments[4];
+
+      if (!watchId) {
+        return this.createErrorResponse(
+          {
+            message: 'Watch ID is required',
+            code: ErrorCode.VALIDATION_FAILED
+          },
+          context
+        );
+      }
+
+      if (!action && request.method === 'GET') {
+        return this.handleGetWatchState(context, watchId);
+      }
+
+      if (!action && request.method === 'DELETE') {
+        return this.handleStopWatch(request, context, watchId);
+      }
+
+      if (action === 'ack' && request.method === 'POST') {
+        return this.handleAckWatchState(request, context, watchId);
+      }
     }
 
     return this.createErrorResponse(
       {
         message: 'Invalid watch endpoint',
         code: ErrorCode.VALIDATION_FAILED,
-        details: { pathname }
+        details: { pathname, method: request.method }
       },
       context
     );
   }
 
-  /**
-   * Start watching a directory.
-   * Returns an SSE stream of file change events.
-   */
   private async handleWatch(
     request: Request,
     context: RequestContext
   ): Promise<Response> {
+    const normalizedRequest = await this.parseAndNormalizeWatchRequest(
+      request,
+      context
+    );
+    if (normalizedRequest instanceof Response) {
+      return normalizedRequest;
+    }
+
+    const result = await this.watchService.watchDirectory(
+      normalizedRequest.path,
+      normalizedRequest
+    );
+
+    if (!result.success) {
+      return this.createErrorResponse(result.error, context);
+    }
+
+    return new Response(result.data, {
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        ...context.corsHeaders
+      }
+    });
+  }
+
+  private async handleEnsureWatch(
+    request: Request,
+    context: RequestContext
+  ): Promise<Response> {
+    const normalizedRequest = await this.parseAndNormalizeWatchRequest(
+      request,
+      context
+    );
+    if (normalizedRequest instanceof Response) {
+      return normalizedRequest;
+    }
+
+    const result = await this.watchService.ensureWatch(
+      normalizedRequest.path,
+      normalizedRequest
+    );
+
+    if (!result.success) {
+      return this.createErrorResponse(result.error, context);
+    }
+
+    const response: WatchEnsureResult = {
+      success: true,
+      watch: result.data,
+      timestamp: new Date().toISOString()
+    };
+
+    return this.createTypedResponse(response, context);
+  }
+
+  private async handleGetWatchState(
+    context: RequestContext,
+    watchId: string
+  ): Promise<Response> {
+    const result = await this.watchService.getWatchState(watchId);
+    if (!result.success) {
+      return this.createErrorResponse(result.error, context);
+    }
+
+    const response: WatchStateResult = {
+      success: true,
+      watch: result.data,
+      timestamp: new Date().toISOString()
+    };
+
+    return this.createTypedResponse(response, context);
+  }
+
+  private async handleAckWatchState(
+    request: Request,
+    context: RequestContext,
+    watchId: string
+  ): Promise<Response> {
+    let body: WatchAckRequest;
+    try {
+      body = await this.parseRequestBody<WatchAckRequest>(request);
+    } catch (error) {
+      return this.createErrorResponse(
+        {
+          message:
+            error instanceof Error ? error.message : 'Invalid request body',
+          code: ErrorCode.VALIDATION_FAILED
+        },
+        context
+      );
+    }
+
+    if (!Number.isInteger(body.cursor) || body.cursor < 0) {
+      return this.createErrorResponse(
+        {
+          message: 'cursor must be a non-negative integer',
+          code: ErrorCode.VALIDATION_FAILED,
+          details: { cursor: body.cursor }
+        },
+        context
+      );
+    }
+
+    const ownerIdError = this.validateOwnerId(body.ownerId);
+    if (ownerIdError) {
+      return this.createErrorResponse(ownerIdError, context);
+    }
+
+    const result = await this.watchService.ackWatchState(
+      watchId,
+      body.cursor,
+      body.ownerId
+    );
+    if (!result.success) {
+      return this.createErrorResponse(result.error, context);
+    }
+
+    const response: WatchAckResult = {
+      success: true,
+      acknowledged: result.data.acknowledged,
+      watch: result.data.watch,
+      timestamp: new Date().toISOString()
+    };
+
+    return this.createTypedResponse(response, context);
+  }
+
+  private async handleStopWatch(
+    request: Request,
+    context: RequestContext,
+    watchId: string
+  ): Promise<Response> {
+    const ownerId = this.extractQueryParam(request, 'ownerId') ?? undefined;
+    const ownerIdError = this.validateOwnerId(ownerId);
+    if (ownerIdError) {
+      return this.createErrorResponse(ownerIdError, context);
+    }
+
+    const result = await this.watchService.stopWatch(watchId, ownerId);
+    if (!result.success) {
+      return this.createErrorResponse(result.error, context);
+    }
+
+    const response: WatchStopResult = {
+      success: true,
+      watchId,
+      timestamp: new Date().toISOString()
+    };
+
+    return this.createTypedResponse(response, context);
+  }
+
+  private async parseAndNormalizeWatchRequest(
+    request: Request,
+    context: RequestContext
+  ): Promise<WatchRequest | Response> {
     let body: WatchRequest;
     try {
       body = await this.parseRequestBody<WatchRequest>(request);
@@ -68,23 +262,10 @@ export class WatchHandler extends BaseHandler<Request, Response> {
       return this.createErrorResponse(pathResult.error, context);
     }
 
-    const result = await this.watchService.watchDirectory(pathResult.path, {
+    return {
       ...body,
       path: pathResult.path
-    });
-
-    if (result.success) {
-      return new Response(result.data, {
-        headers: {
-          'Content-Type': 'text/event-stream',
-          'Cache-Control': 'no-cache',
-          Connection: 'keep-alive',
-          ...context.corsHeaders
-        }
-      });
-    }
-
-    return this.createErrorResponse(result.error, context);
+    };
   }
 
   private validateWatchBody(body: WatchRequest): {
@@ -160,6 +341,39 @@ export class WatchHandler extends BaseHandler<Request, Response> {
       };
     }
 
+    const ownerIdError = this.validateOwnerId(body.ownerId);
+    if (ownerIdError) {
+      return ownerIdError;
+    }
+
+    return null;
+  }
+
+  private validateOwnerId(ownerId: unknown): {
+    message: string;
+    code: string;
+    details?: Record<string, unknown>;
+  } | null {
+    if (ownerId === undefined) {
+      return null;
+    }
+
+    if (typeof ownerId !== 'string' || ownerId.trim() === '') {
+      return {
+        message: 'ownerId must be a non-empty string when provided',
+        code: ErrorCode.VALIDATION_FAILED,
+        details: { ownerId }
+      };
+    }
+
+    if (ownerId.includes('\0')) {
+      return {
+        message: 'ownerId contains invalid null bytes',
+        code: ErrorCode.VALIDATION_FAILED,
+        details: { ownerId }
+      };
+    }
+
     return null;
   }
 
@@ -177,8 +391,6 @@ export class WatchHandler extends BaseHandler<Request, Response> {
       return null;
     }
 
-    // Supported syntax is intentionally narrow: *, **, ? and path separators.
-    // Character classes and brace expansion are rejected so behavior is explicit.
     const unsupportedTokens = /[[\]{}]/;
 
     for (const pattern of patterns) {

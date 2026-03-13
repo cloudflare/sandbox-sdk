@@ -29,7 +29,11 @@ import type {
   WaitForExitResult,
   WaitForLogResult,
   WaitForPortOptions,
-  WatchOptions
+  WatchAckRequest,
+  WatchAckResult,
+  WatchEnsureResult,
+  WatchOptions,
+  WatchStopOptions
 } from '@repo/shared';
 import {
   createLogger,
@@ -39,7 +43,9 @@ import {
   partitionEnvVars,
   type SessionDeleteResult,
   shellEscape,
-  TraceContext
+  TraceContext,
+  type WatchStateResult,
+  type WatchStopResult
 } from '@repo/shared';
 import { AwsClient } from 'aws4fetch';
 import { type Desktop, type ExecuteResponse, SandboxClient } from './clients';
@@ -2618,7 +2624,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    */
   async watch(
     path: string,
-    options: WatchOptions = {}
+    options: Omit<WatchOptions, 'ownerId'> = {}
   ): Promise<ReadableStream<Uint8Array>> {
     const sessionId = options.sessionId ?? (await this.ensureDefaultSession());
     return this.client.watch.watch({
@@ -2628,6 +2634,38 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       exclude: options.exclude,
       sessionId
     });
+  }
+
+  async ensureWatch(
+    path: string,
+    options: WatchOptions = {}
+  ): Promise<WatchEnsureResult> {
+    const sessionId = options.sessionId ?? (await this.ensureDefaultSession());
+    return this.client.watch.ensureWatch({
+      path,
+      recursive: options.recursive,
+      include: options.include,
+      exclude: options.exclude,
+      sessionId
+    });
+  }
+
+  async getWatchState(watchId: string): Promise<WatchStateResult> {
+    return this.client.watch.getWatchState(watchId);
+  }
+
+  async ackWatchState(
+    watchId: string,
+    request: WatchAckRequest
+  ): Promise<WatchAckResult> {
+    return this.client.watch.ackWatchState(watchId, request);
+  }
+
+  async stopWatch(
+    watchId: string,
+    options: WatchStopOptions = {}
+  ): Promise<WatchStopResult> {
+    return this.client.watch.stopWatch(watchId, options);
   }
 
   /**
@@ -3029,7 +3067,17 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       readFile: (path, options) =>
         this.readFile(path, { ...options, sessionId }),
       readFileStream: (path) => this.readFileStream(path, { sessionId }),
-      watch: (path, options) => this.watch(path, { ...options, sessionId }),
+      watch: (
+        path,
+        options: Omit<WatchOptions, 'sessionId' | 'ownerId'> = {}
+      ) => this.watch(path, { ...options, sessionId }),
+      ensureWatch: (path: string, options?: Omit<WatchOptions, 'sessionId'>) =>
+        this.ensureWatch(path, { ...options, sessionId }),
+      getWatchState: (watchId: string) => this.getWatchState(watchId),
+      ackWatchState: (watchId: string, request: WatchAckRequest) =>
+        this.ackWatchState(watchId, request),
+      stopWatch: (watchId: string, options?: WatchStopOptions) =>
+        this.stopWatch(watchId, options),
       mkdir: (path, options) => this.mkdir(path, { ...options, sessionId }),
       deleteFile: (path) => this.deleteFile(path, sessionId),
       renameFile: (oldPath, newPath) =>

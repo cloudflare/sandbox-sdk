@@ -723,6 +723,15 @@ export interface WatchOptions {
    * If omitted, the default session is used.
    */
   sessionId?: string;
+
+  /**
+   * Stable consumer identity for persistent watches created with `ensureWatch()`.
+   *
+   * Provide this for background agents or Durable Objects so `ackWatchState()`
+   * and `stopWatch()` can reject conflicting consumers instead of sharing one
+   * global dirty bit.
+   */
+  ownerId?: string;
 }
 
 // Internal types for SSE protocol (not user-facing)
@@ -748,6 +757,7 @@ export interface WatchRequest {
   include?: string[];
   exclude?: string[];
   sessionId?: string;
+  ownerId?: string;
 }
 
 /**
@@ -761,6 +771,7 @@ export type FileWatchSSEEvent =
     }
   | {
       type: 'event';
+      eventId: string;
       eventType: FileWatchEventType;
       path: string;
       isDirectory: boolean;
@@ -774,6 +785,77 @@ export type FileWatchSSEEvent =
       type: 'stopped';
       reason: string;
     };
+
+/**
+ * Persistent watch state retained while the container stays alive.
+ */
+export interface WatchState {
+  watchId: string;
+  path: string;
+  recursive: boolean;
+  include?: string[];
+  exclude?: string[];
+  ownerId?: string;
+  cursor: number;
+  dirty: boolean;
+  overflowed: boolean;
+  lastEventAt: string | null;
+  expiresAt: string | null;
+  subscriberCount: number;
+  startedAt: string;
+}
+
+/**
+ * Request body for acknowledging processed watch state.
+ */
+export interface WatchAckRequest {
+  cursor: number;
+  ownerId?: string;
+}
+
+/**
+ * Options for stopping a persistent watch.
+ */
+export interface WatchStopOptions {
+  ownerId?: string;
+}
+
+/**
+ * Result returned when ensuring a persistent watch exists.
+ */
+export interface WatchEnsureResult {
+  success: boolean;
+  watch: WatchState;
+  timestamp: string;
+}
+
+/**
+ * Result returned when retrieving persistent watch state.
+ */
+export interface WatchStateResult {
+  success: boolean;
+  watch: WatchState;
+  timestamp: string;
+}
+
+/**
+ * Result returned when acknowledging a watch cursor.
+ */
+export interface WatchAckResult {
+  success: boolean;
+  acknowledged: boolean;
+  watch: WatchState;
+  timestamp: string;
+}
+
+/**
+ * Result returned when stopping a persistent watch.
+ */
+export interface WatchStopResult {
+  success: boolean;
+  watchId: string;
+  timestamp: string;
+}
 
 // Process management result types
 export interface ProcessStartResult {
@@ -968,8 +1050,21 @@ export interface ExecutionSession {
   readFileStream(path: string): Promise<ReadableStream<Uint8Array>>;
   watch(
     path: string,
-    options?: Omit<WatchOptions, 'sessionId'>
+    options?: Omit<WatchOptions, 'sessionId' | 'ownerId'>
   ): Promise<ReadableStream<Uint8Array>>;
+  ensureWatch(
+    path: string,
+    options?: Omit<WatchOptions, 'sessionId'>
+  ): Promise<WatchEnsureResult>;
+  getWatchState(watchId: string): Promise<WatchStateResult>;
+  ackWatchState(
+    watchId: string,
+    request: WatchAckRequest
+  ): Promise<WatchAckResult>;
+  stopWatch(
+    watchId: string,
+    options?: WatchStopOptions
+  ): Promise<WatchStopResult>;
   mkdir(path: string, options?: { recursive?: boolean }): Promise<MkdirResult>;
   deleteFile(path: string): Promise<DeleteFileResult>;
   renameFile(oldPath: string, newPath: string): Promise<RenameFileResult>;
@@ -1225,8 +1320,18 @@ export interface ISandbox {
   readFileStream(path: string): Promise<ReadableStream<Uint8Array>>;
   watch(
     path: string,
-    options?: WatchOptions
+    options?: Omit<WatchOptions, 'ownerId'>
   ): Promise<ReadableStream<Uint8Array>>;
+  ensureWatch(path: string, options?: WatchOptions): Promise<WatchEnsureResult>;
+  getWatchState(watchId: string): Promise<WatchStateResult>;
+  ackWatchState(
+    watchId: string,
+    request: WatchAckRequest
+  ): Promise<WatchAckResult>;
+  stopWatch(
+    watchId: string,
+    options?: WatchStopOptions
+  ): Promise<WatchStopResult>;
   mkdir(path: string, options?: { recursive?: boolean }): Promise<MkdirResult>;
   deleteFile(path: string): Promise<DeleteFileResult>;
   renameFile(oldPath: string, newPath: string): Promise<RenameFileResult>;

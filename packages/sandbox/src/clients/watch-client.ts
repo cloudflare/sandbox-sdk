@@ -2,7 +2,13 @@ import {
   type FileWatchSSEEvent,
   parseSSEFrames,
   type SSEPartialEvent,
-  type WatchRequest
+  type WatchAckRequest,
+  type WatchAckResult,
+  type WatchEnsureResult,
+  type WatchRequest,
+  type WatchStateResult,
+  type WatchStopOptions,
+  type WatchStopResult
 } from '@repo/shared';
 import { BaseHttpClient } from './base-client';
 
@@ -14,6 +20,75 @@ import { BaseHttpClient } from './base-client';
  * Users should use `sandbox.watch()` instead.
  */
 export class WatchClient extends BaseHttpClient {
+  async ensureWatch(request: WatchRequest): Promise<WatchEnsureResult> {
+    try {
+      const response = await this.post<WatchEnsureResult>(
+        '/api/watch/ensure',
+        request
+      );
+
+      this.logSuccess('Persistent watch ensured', request.path);
+      return response;
+    } catch (error) {
+      this.logError('ensureWatch', error);
+      throw error;
+    }
+  }
+
+  async getWatchState(watchId: string): Promise<WatchStateResult> {
+    try {
+      const response = await this.get<WatchStateResult>(
+        `/api/watch/${watchId}`
+      );
+
+      this.logSuccess('Watch state retrieved', watchId);
+      return response;
+    } catch (error) {
+      this.logError('getWatchState', error);
+      throw error;
+    }
+  }
+
+  async ackWatchState(
+    watchId: string,
+    request: WatchAckRequest
+  ): Promise<WatchAckResult> {
+    try {
+      const response = await this.post<WatchAckResult>(
+        `/api/watch/${watchId}/ack`,
+        request
+      );
+
+      this.logSuccess('Watch state acknowledged', watchId);
+      return response;
+    } catch (error) {
+      this.logError('ackWatchState', error);
+      throw error;
+    }
+  }
+
+  async stopWatch(
+    watchId: string,
+    options: WatchStopOptions = {}
+  ): Promise<WatchStopResult> {
+    try {
+      const searchParams = new URLSearchParams();
+      if (options.ownerId) {
+        searchParams.set('ownerId', options.ownerId);
+      }
+      const suffix = searchParams.size > 0 ? `?${searchParams.toString()}` : '';
+      const response = await this.delete<WatchStopResult>(
+        `/api/watch/${watchId}${suffix}`
+      );
+
+      this.logSuccess('Watch stopped', watchId);
+      return response;
+    } catch (error) {
+      this.logError('stopWatch', error);
+      throw error;
+    }
+  }
+
   /**
    * Start watching a directory for changes.
    * The returned promise resolves only after the watcher is established

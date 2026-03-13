@@ -26,6 +26,26 @@ import {
   type TestSandbox
 } from './helpers/global-sandbox';
 
+interface PersistentWatchState {
+  watchId: string;
+  path: string;
+  ownerId?: string;
+  cursor: number;
+  dirty: boolean;
+  overflowed: boolean;
+  lastEventAt: string | null;
+  expiresAt: string | null;
+}
+
+interface WatchStateResponse {
+  success: boolean;
+  watch: PersistentWatchState;
+}
+
+interface WatchAckResponse extends WatchStateResponse {
+  acknowledged: boolean;
+}
+
 describe('File Watch Workflow', () => {
   let sandbox: TestSandbox | null = null;
   let workerUrl: string;
@@ -146,6 +166,76 @@ describe('File Watch Workflow', () => {
 
     const body = await response.text();
     throw new Error(`${context} failed with ${response.status}: ${body}`);
+  }
+
+  async function ensureWatch(
+    path: string,
+    options: {
+      recursive?: boolean;
+      include?: string[];
+      exclude?: string[];
+      ownerId?: string;
+    } = {}
+  ): Promise<PersistentWatchState> {
+    const response = await fetch(`${workerUrl}/api/watch/ensure`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ path, ...options })
+    });
+    await expectOk(response, `ensureWatch(${path})`);
+    const body = (await response.json()) as WatchStateResponse;
+    return body.watch;
+  }
+
+  async function getWatchState(watchId: string): Promise<PersistentWatchState> {
+    const response = await fetch(`${workerUrl}/api/watch/${watchId}`, {
+      method: 'GET',
+      headers
+    });
+    await expectOk(response, `getWatchState(${watchId})`);
+    const body = (await response.json()) as WatchStateResponse;
+    return body.watch;
+  }
+
+  async function ackWatchState(
+    watchId: string,
+    cursor: number,
+    ownerId?: string
+  ): Promise<WatchAckResponse> {
+    const response = await fetch(`${workerUrl}/api/watch/${watchId}/ack`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ cursor, ownerId })
+    });
+    await expectOk(response, `ackWatchState(${watchId})`);
+    return (await response.json()) as WatchAckResponse;
+  }
+
+  async function stopWatch(watchId: string, ownerId?: string): Promise<void> {
+    const suffix = ownerId ? `?ownerId=${encodeURIComponent(ownerId)}` : '';
+    const response = await fetch(`${workerUrl}/api/watch/${watchId}${suffix}`, {
+      method: 'DELETE',
+      headers
+    });
+    await expectOk(response, `stopWatch(${watchId})`);
+  }
+
+  async function waitForWatchState(
+    watchId: string,
+    predicate: (state: PersistentWatchState) => boolean,
+    timeoutMs = 8000
+  ): Promise<PersistentWatchState> {
+    const startedAt = Date.now();
+
+    while (Date.now() - startedAt < timeoutMs) {
+      const state = await getWatchState(watchId);
+      if (predicate(state)) {
+        return state;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+
+    throw new Error(`Timed out waiting for watch state ${watchId}`);
   }
 
   /**
@@ -333,6 +423,45 @@ describe('File Watch Workflow', () => {
     });
     expect(secondResponse.ok).toBe(true);
     await secondResponse.body?.cancel();
+  }, 30000);
+
+  test('should retain dirty state across reconnect gaps', async () => {
+    testDir = sandbox!.uniquePath('watch-persistent-state');
+    await createDir(testDir);
+
+    const ownerId = `owner-${Date.now()}`;
+    const ensuredWatch = await ensureWatch(testDir, { ownerId });
+    expect(ensuredWatch.dirty).toBe(false);
+    expect(ensuredWatch.cursor).toBe(0);
+    expect(ensuredWatch.ownerId).toBe(ownerId);
+    expect(ensuredWatch.expiresAt).toBeTruthy();
+
+    await createFile(`${testDir}/background.txt`, 'hello');
+
+    const dirtyState = await waitForWatchState(
+      ensuredWatch.watchId,
+      (state) => state.dirty && state.cursor > 0
+    );
+
+    expect(dirtyState.lastEventAt).toBeTruthy();
+
+    const ackResult = await ackWatchState(
+      ensuredWatch.watchId,
+      dirtyState.cursor,
+      ownerId
+    );
+    expect(ackResult.acknowledged).toBe(true);
+    expect(ackResult.watch.dirty).toBe(false);
+
+    await createFile(`${testDir}/second.txt`, 'hello again');
+
+    const secondDirtyState = await waitForWatchState(
+      ensuredWatch.watchId,
+      (state) => state.dirty && state.cursor > dirtyState.cursor
+    );
+    expect(secondDirtyState.cursor).toBeGreaterThan(dirtyState.cursor);
+
+    await stopWatch(ensuredWatch.watchId, ownerId);
   }, 30000);
 
   test('should return error for non-existent path', async () => {

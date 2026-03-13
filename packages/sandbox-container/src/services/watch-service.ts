@@ -2,62 +2,269 @@ import type {
   FileWatchEventType,
   FileWatchSSEEvent,
   Logger,
-  WatchRequest
+  WatchRequest,
+  WatchState
 } from '@repo/shared';
 import { ErrorCode } from '@repo/shared/errors';
 import type { Subprocess } from 'bun';
 import type { ServiceResult } from '../core/types';
 import { serviceError, serviceSuccess } from '../core/types';
 
+interface Deferred<T> {
+  promise: Promise<T>;
+  resolve(value: T | PromiseLike<T>): void;
+  reject(reason?: unknown): void;
+}
+
+interface WatchSubscriber {
+  id: string;
+  controller: ReadableStreamDefaultController<Uint8Array>;
+  encoder: TextEncoder;
+  pendingEvents: Map<string, FileWatchSSEEvent>;
+  droppedEvents: number;
+  flushInterval: ReturnType<typeof setInterval>;
+  watchingSent: boolean;
+  closed: boolean;
+}
+
 interface ActiveWatch {
   id: string;
+  key: string;
   path: string;
+  recursive: boolean;
+  include?: string[];
+  exclude?: string[];
   process: Subprocess;
   startedAt: Date;
+  state: WatchState;
+  persistent: boolean;
+  subscribers: Map<string, WatchSubscriber>;
+  ready: Deferred<void>;
+  readyState: 'pending' | 'resolved' | 'rejected';
+  expiryTimer: ReturnType<typeof setTimeout> | null;
   stopPromise?: Promise<void>;
 }
+
+type TerminalWatchEvent = Extract<
+  FileWatchSSEEvent,
+  { type: 'error' | 'stopped' }
+>;
 
 const WATCH_SETUP_TIMEOUT_MS = 10000;
 const EVENT_COALESCE_WINDOW_MS = 75;
 const MAX_PENDING_EVENTS = 1000;
+const PERSISTENT_WATCH_IDLE_TTL_MS = 10 * 60 * 1000;
 const STOP_TIMEOUT_MS = 5000;
 
 /**
- * Service for watching filesystem changes using inotifywait
+ * Service for watching filesystem changes using inotifywait.
  */
 export class WatchService {
   private activeWatches: Map<string, ActiveWatch> = new Map();
+  private watchIdsByKey: Map<string, string> = new Map();
   private watchCounter = 0;
+  private subscriberCounter = 0;
 
   constructor(private logger: Logger) {}
 
   /**
-   * Start watching a directory for changes
-   * Returns a ReadableStream of SSE events
-   *
-   * @param path - Absolute path to watch
-   * @param options - Watch options
+   * Start watching a directory and subscribe to live events.
    */
   async watchDirectory(
     path: string,
     options: WatchRequest = { path }
   ): Promise<ServiceResult<ReadableStream<Uint8Array>>> {
-    const watchId = `watch-${++this.watchCounter}-${Date.now()}`;
-    const watchLogger = this.logger.child({ watchId, path });
-
-    // Clean up any existing watches on this path before starting a new one.
-    // Snapshot matching IDs first to avoid mutating the map during iteration.
-    const staleWatchIds = Array.from(this.activeWatches.entries())
-      .filter(([, w]) => w.path === path)
-      .map(([id]) => id);
-    if (staleWatchIds.length > 0) {
-      watchLogger.debug('Cleaning up existing watches on path', {
-        staleWatchIds
-      });
-      await Promise.all(staleWatchIds.map((id) => this.stopWatch(id)));
+    const watchResult = this.getOrCreateWatch(path, {
+      ...options,
+      ownerId: undefined
+    });
+    if (!watchResult.success) {
+      return watchResult;
     }
 
-    // Verify path exists
+    const stream = this.createSubscriberStream(watchResult.data);
+    return serviceSuccess(stream);
+  }
+
+  /**
+   * Ensure a persistent watch exists and wait until it is ready.
+   */
+  async ensureWatch(
+    path: string,
+    options: WatchRequest = { path }
+  ): Promise<ServiceResult<WatchState>> {
+    const watchResult = this.getOrCreateWatch(path, options);
+    if (!watchResult.success) {
+      return watchResult;
+    }
+
+    const watch = watchResult.data;
+    const ownershipError = this.claimPersistentWatch(watch, options.ownerId);
+    if (ownershipError) {
+      return serviceError(ownershipError);
+    }
+
+    watch.persistent = true;
+    this.refreshPersistentWatchLease(watch);
+
+    try {
+      await watch.ready.promise;
+      return serviceSuccess(this.snapshotWatchState(watch));
+    } catch (error) {
+      return serviceError({
+        message:
+          error instanceof Error
+            ? error.message
+            : 'Failed to establish persistent watch',
+        code: ErrorCode.WATCH_START_ERROR,
+        details: { path }
+      });
+    }
+  }
+
+  /**
+   * Return the current state for a persistent or active watch.
+   */
+  async getWatchState(watchId: string): Promise<ServiceResult<WatchState>> {
+    const watch = this.activeWatches.get(watchId);
+    if (!watch) {
+      return serviceError({
+        message: `Watch not found: ${watchId}`,
+        code: ErrorCode.WATCH_NOT_FOUND,
+        details: { watchId }
+      });
+    }
+
+    try {
+      await watch.ready.promise;
+      this.refreshPersistentWatchLease(watch);
+      return serviceSuccess(this.snapshotWatchState(watch));
+    } catch (error) {
+      return serviceError({
+        message:
+          error instanceof Error ? error.message : 'Watch failed to establish',
+        code: ErrorCode.WATCH_START_ERROR,
+        details: { watchId }
+      });
+    }
+  }
+
+  /**
+   * Acknowledge the current watch cursor.
+   */
+  async ackWatchState(
+    watchId: string,
+    cursor: number,
+    ownerId?: string
+  ): Promise<ServiceResult<{ acknowledged: boolean; watch: WatchState }>> {
+    const watch = this.activeWatches.get(watchId);
+    if (!watch) {
+      return serviceError({
+        message: `Watch not found: ${watchId}`,
+        code: ErrorCode.WATCH_NOT_FOUND,
+        details: { watchId }
+      });
+    }
+
+    try {
+      await watch.ready.promise;
+    } catch (error) {
+      return serviceError({
+        message:
+          error instanceof Error ? error.message : 'Watch failed to establish',
+        code: ErrorCode.WATCH_START_ERROR,
+        details: { watchId }
+      });
+    }
+
+    const ownershipError = this.verifyPersistentWatchOwner(
+      watch,
+      ownerId,
+      'acknowledge'
+    );
+    if (ownershipError) {
+      return serviceError(ownershipError);
+    }
+
+    const acknowledged = cursor === watch.state.cursor;
+    if (acknowledged) {
+      watch.state.dirty = false;
+      watch.state.overflowed = false;
+    }
+
+    this.refreshPersistentWatchLease(watch);
+
+    return serviceSuccess({
+      acknowledged,
+      watch: this.snapshotWatchState(watch)
+    });
+  }
+
+  /**
+   * Stop a specific watch.
+   */
+  async stopWatch(
+    watchId: string,
+    ownerId?: string
+  ): Promise<ServiceResult<void>> {
+    const watch = this.activeWatches.get(watchId);
+    if (!watch) {
+      return serviceError({
+        message: `Watch not found: ${watchId}`,
+        code: ErrorCode.WATCH_NOT_FOUND,
+        details: { watchId }
+      });
+    }
+
+    const ownershipError = this.verifyPersistentWatchOwner(
+      watch,
+      ownerId,
+      'stop'
+    );
+    if (ownershipError) {
+      return serviceError(ownershipError);
+    }
+
+    await this.stopWatchInternal(watchId, {
+      type: 'stopped',
+      reason: 'Watch stopped'
+    });
+
+    return serviceSuccess(undefined);
+  }
+
+  /**
+   * Stop all active watches.
+   */
+  async stopAllWatches(): Promise<number> {
+    const watchIds = Array.from(this.activeWatches.keys());
+    await Promise.all(watchIds.map((id) => this.stopWatchInternal(id)));
+    return watchIds.length;
+  }
+
+  /**
+   * Get list of active watches.
+   */
+  getActiveWatches(): WatchState[] {
+    return Array.from(this.activeWatches.values()).map((watch) =>
+      this.snapshotWatchState(watch)
+    );
+  }
+
+  private getOrCreateWatch(
+    path: string,
+    options: WatchRequest
+  ): ServiceResult<ActiveWatch> {
+    const key = this.createWatchKey(path, options);
+    const existingWatchId = this.watchIdsByKey.get(key);
+    if (existingWatchId) {
+      const existing = this.activeWatches.get(existingWatchId);
+      if (existing) {
+        return serviceSuccess(existing);
+      }
+      this.watchIdsByKey.delete(key);
+    }
+
     const pathCheck = Bun.spawnSync(['test', '-e', path]);
     if (pathCheck.exitCode !== 0) {
       return serviceError({
@@ -67,8 +274,9 @@ export class WatchService {
       });
     }
 
-    // Build inotifywait command
+    const watchId = `watch-${++this.watchCounter}-${Date.now()}`;
     const args = this.buildInotifyArgs(path, options);
+    const watchLogger = this.logger.child({ watchId, path });
     watchLogger.debug('Starting inotifywait', { args });
 
     try {
@@ -77,105 +285,598 @@ export class WatchService {
         stderr: 'pipe'
       });
 
-      // Store active watch
-      this.activeWatches.set(watchId, {
+      const watch: ActiveWatch = {
         id: watchId,
+        key,
         path,
+        recursive: options.recursive !== false,
+        include: options.include,
+        exclude: options.include ? undefined : options.exclude,
         process: proc,
-        startedAt: new Date()
-      });
+        startedAt: new Date(),
+        state: {
+          watchId,
+          path,
+          recursive: options.recursive !== false,
+          include: options.include,
+          exclude: options.include ? undefined : options.exclude,
+          ownerId: options.ownerId,
+          cursor: 0,
+          dirty: false,
+          overflowed: false,
+          lastEventAt: null,
+          expiresAt: null,
+          subscriberCount: 0,
+          startedAt: new Date().toISOString()
+        },
+        persistent: false,
+        subscribers: new Map(),
+        ready: createDeferred<void>(),
+        readyState: 'pending',
+        expiryTimer: null
+      };
 
-      // Create SSE stream from inotifywait output
-      const stream = this.createWatchStream(watchId, path, proc, watchLogger);
+      this.activeWatches.set(watchId, watch);
+      this.watchIdsByKey.set(key, watchId);
+      this.runWatchLoop(watch, watchLogger);
 
-      return serviceSuccess(stream);
+      return serviceSuccess(watch);
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
       watchLogger.error('Failed to start inotifywait', err);
       return serviceError({
-        message: `Failed to start file watcher: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        message: `Failed to start file watcher: ${err.message}`,
         code: ErrorCode.WATCH_START_ERROR,
         details: { path }
       });
     }
   }
 
-  /**
-   * Stop all active watches
-   */
-  async stopAllWatches(): Promise<number> {
-    const watchIds = Array.from(this.activeWatches.keys());
-    await Promise.all(watchIds.map((id) => this.stopWatch(id)));
-    return watchIds.length;
+  private createWatchKey(path: string, options: WatchRequest): string {
+    return JSON.stringify({
+      path,
+      recursive: options.recursive !== false,
+      include: options.include ?? null,
+      exclude: options.include ? null : (options.exclude ?? null)
+    });
   }
 
-  /**
-   * Get list of active watches
-   */
-  getActiveWatches(): Array<{ id: string; path: string; startedAt: Date }> {
-    return Array.from(this.activeWatches.values()).map((w) => ({
-      id: w.id,
-      path: w.path,
-      startedAt: w.startedAt
-    }));
+  private snapshotWatchState(watch: ActiveWatch): WatchState {
+    return {
+      ...watch.state,
+      include: watch.include,
+      exclude: watch.exclude,
+      subscriberCount: watch.subscribers.size,
+      startedAt: watch.startedAt.toISOString()
+    };
   }
 
-  /**
-   * Stop a specific watch by ID. Idempotent via stored stopPromise.
-   * Sends SIGTERM, waits for exit with timeout, escalates to SIGKILL if needed.
-   */
-  private stopWatch(watchId: string): Promise<void> {
+  private claimPersistentWatch(
+    watch: ActiveWatch,
+    ownerId?: string
+  ): {
+    message: string;
+    code: string;
+    details?: Record<string, unknown>;
+  } | null {
+    if (!watch.state.ownerId) {
+      if (ownerId) {
+        watch.state.ownerId = ownerId;
+      }
+      return null;
+    }
+
+    if (!ownerId) {
+      return {
+        message:
+          'Persistent watch is already owned by another consumer. Provide the same ownerId to reuse it.',
+        code: ErrorCode.RESOURCE_BUSY,
+        details: {
+          watchId: watch.id,
+          ownerId: watch.state.ownerId
+        }
+      };
+    }
+
+    if (watch.state.ownerId !== ownerId) {
+      return {
+        message: `Persistent watch is owned by '${watch.state.ownerId}' and cannot be claimed by '${ownerId}'.`,
+        code: ErrorCode.RESOURCE_BUSY,
+        details: {
+          watchId: watch.id,
+          ownerId: watch.state.ownerId,
+          requestedOwnerId: ownerId
+        }
+      };
+    }
+
+    return null;
+  }
+
+  private verifyPersistentWatchOwner(
+    watch: ActiveWatch,
+    ownerId: string | undefined,
+    action: 'acknowledge' | 'stop'
+  ): {
+    message: string;
+    code: string;
+    details?: Record<string, unknown>;
+  } | null {
+    if (!watch.state.ownerId) {
+      return null;
+    }
+
+    if (!ownerId) {
+      return {
+        message: `Persistent watch requires ownerId to ${action}.`,
+        code: ErrorCode.RESOURCE_BUSY,
+        details: {
+          watchId: watch.id,
+          ownerId: watch.state.ownerId,
+          action
+        }
+      };
+    }
+
+    if (watch.state.ownerId !== ownerId) {
+      return {
+        message: `Persistent watch is owned by '${watch.state.ownerId}' and cannot be ${action}d by '${ownerId}'.`,
+        code: ErrorCode.RESOURCE_BUSY,
+        details: {
+          watchId: watch.id,
+          ownerId: watch.state.ownerId,
+          requestedOwnerId: ownerId,
+          action
+        }
+      };
+    }
+
+    return null;
+  }
+
+  private refreshPersistentWatchLease(watch: ActiveWatch): void {
+    if (!watch.persistent) {
+      watch.state.expiresAt = null;
+      this.clearPersistentWatchExpiry(watch);
+      return;
+    }
+
+    this.clearPersistentWatchExpiry(watch);
+
+    if (watch.subscribers.size > 0) {
+      watch.state.expiresAt = null;
+      return;
+    }
+
+    const expiresAt = new Date(Date.now() + PERSISTENT_WATCH_IDLE_TTL_MS);
+    watch.state.expiresAt = expiresAt.toISOString();
+    watch.expiryTimer = setTimeout(() => {
+      void this.stopWatchInternal(watch.id, {
+        type: 'stopped',
+        reason: 'Persistent watch expired after idle period'
+      });
+    }, PERSISTENT_WATCH_IDLE_TTL_MS);
+  }
+
+  private clearPersistentWatchExpiry(watch: ActiveWatch): void {
+    if (watch.expiryTimer) {
+      clearTimeout(watch.expiryTimer);
+      watch.expiryTimer = null;
+    }
+  }
+
+  private createSubscriberStream(
+    watch: ActiveWatch
+  ): ReadableStream<Uint8Array> {
+    const self = this;
+    const encoder = new TextEncoder();
+    let subscriberId: string | undefined;
+
+    return new ReadableStream<Uint8Array>({
+      async start(controller) {
+        subscriberId = self.addSubscriber(watch, controller, encoder);
+
+        try {
+          await watch.ready.promise;
+        } catch (error) {
+          self.closeSubscriber(
+            watch,
+            subscriberId,
+            errorEvent(
+              error instanceof Error
+                ? error.message
+                : 'Watch failed to establish'
+            )
+          );
+          return;
+        }
+
+        const subscriber = subscriberId
+          ? watch.subscribers.get(subscriberId)
+          : undefined;
+        if (!subscriber || subscriber.closed) {
+          return;
+        }
+
+        subscriber.watchingSent = true;
+        try {
+          controller.enqueue(
+            encoder.encode(
+              `data: ${JSON.stringify({
+                type: 'watching',
+                path: watch.path,
+                watchId: watch.id
+              } satisfies FileWatchSSEEvent)}\n\n`
+            )
+          );
+        } catch {
+          await self.removeSubscriber(watch, subscriber.id);
+          return;
+        }
+
+        self.flushSubscriberEvents(watch, subscriber);
+      },
+
+      cancel() {
+        if (subscriberId) {
+          return self.removeSubscriber(watch, subscriberId);
+        }
+        return Promise.resolve();
+      }
+    });
+  }
+
+  private addSubscriber(
+    watch: ActiveWatch,
+    controller: ReadableStreamDefaultController<Uint8Array>,
+    encoder: TextEncoder
+  ): string {
+    const subscriberId = `subscriber-${++this.subscriberCounter}`;
+    const subscriber: WatchSubscriber = {
+      id: subscriberId,
+      controller,
+      encoder,
+      pendingEvents: new Map(),
+      droppedEvents: 0,
+      flushInterval: setInterval(() => {
+        this.flushSubscriberEvents(watch, subscriber);
+      }, EVENT_COALESCE_WINDOW_MS),
+      watchingSent: false,
+      closed: false
+    };
+
+    watch.subscribers.set(subscriberId, subscriber);
+    watch.state.subscriberCount = watch.subscribers.size;
+    this.refreshPersistentWatchLease(watch);
+    return subscriberId;
+  }
+
+  private async removeSubscriber(
+    watch: ActiveWatch,
+    subscriberId: string
+  ): Promise<void> {
+    this.closeSubscriber(watch, subscriberId);
+    await this.maybeStopWatchWhenUnused(watch);
+  }
+
+  private async maybeStopWatchWhenUnused(watch: ActiveWatch): Promise<void> {
+    if (!watch.persistent && watch.subscribers.size === 0) {
+      await this.stopWatchInternal(watch.id, {
+        type: 'stopped',
+        reason: 'Watch stopped after last subscriber disconnected'
+      });
+      return;
+    }
+
+    this.refreshPersistentWatchLease(watch);
+  }
+
+  private closeSubscriber(
+    watch: ActiveWatch,
+    subscriberId: string,
+    terminalEvent?: TerminalWatchEvent
+  ): void {
+    const subscriber = watch.subscribers.get(subscriberId);
+    if (!subscriber || subscriber.closed) {
+      return;
+    }
+
+    subscriber.closed = true;
+    clearInterval(subscriber.flushInterval);
+    watch.subscribers.delete(subscriberId);
+    watch.state.subscriberCount = watch.subscribers.size;
+
+    try {
+      const shouldSendTerminalEvent =
+        terminalEvent !== undefined &&
+        (subscriber.watchingSent || terminalEvent.type === 'error');
+      if (shouldSendTerminalEvent) {
+        subscriber.controller.enqueue(
+          subscriber.encoder.encode(
+            `data: ${JSON.stringify(terminalEvent)}\n\n`
+          )
+        );
+      }
+    } catch {
+      // Stream already closed.
+    }
+
+    try {
+      subscriber.controller.close();
+    } catch {
+      // Stream already closed.
+    }
+  }
+
+  private enqueueSubscriberEvent(
+    watch: ActiveWatch,
+    subscriber: WatchSubscriber,
+    event: FileWatchSSEEvent
+  ): void {
+    if (subscriber.closed) {
+      return;
+    }
+
+    const key =
+      event.type === 'event'
+        ? `${event.eventType}|${event.path}|${event.isDirectory}`
+        : `${event.type}|${Date.now()}`;
+
+    if (
+      !subscriber.pendingEvents.has(key) &&
+      subscriber.pendingEvents.size >= MAX_PENDING_EVENTS
+    ) {
+      subscriber.droppedEvents++;
+      watch.state.overflowed = true;
+
+      if (
+        subscriber.droppedEvents === 1 ||
+        subscriber.droppedEvents % 100 === 0
+      ) {
+        this.logger.warn('Dropping watch events due to backpressure', {
+          watchId: watch.id,
+          subscriberId: subscriber.id,
+          droppedEvents: subscriber.droppedEvents,
+          pendingCount: subscriber.pendingEvents.size
+        });
+      }
+      return;
+    }
+
+    subscriber.pendingEvents.set(key, event);
+  }
+
+  private flushSubscriberEvents(
+    watch: ActiveWatch,
+    subscriber: WatchSubscriber
+  ): void {
+    if (subscriber.closed || !subscriber.watchingSent) {
+      return;
+    }
+
+    try {
+      for (const event of subscriber.pendingEvents.values()) {
+        subscriber.controller.enqueue(
+          subscriber.encoder.encode(`data: ${JSON.stringify(event)}\n\n`)
+        );
+      }
+      subscriber.pendingEvents.clear();
+    } catch {
+      subscriber.closed = true;
+      clearInterval(subscriber.flushInterval);
+      watch.subscribers.delete(subscriber.id);
+      watch.state.subscriberCount = watch.subscribers.size;
+      void this.maybeStopWatchWhenUnused(watch);
+    }
+  }
+
+  private broadcastEvent(watch: ActiveWatch, event: FileWatchSSEEvent): void {
+    for (const subscriber of watch.subscribers.values()) {
+      this.enqueueSubscriberEvent(watch, subscriber, event);
+    }
+  }
+
+  private broadcastTerminalEvent(
+    watch: ActiveWatch,
+    terminalEvent: TerminalWatchEvent
+  ): void {
+    for (const subscriberId of Array.from(watch.subscribers.keys())) {
+      this.closeSubscriber(watch, subscriberId, terminalEvent);
+    }
+  }
+
+  private async stopWatchInternal(
+    watchId: string,
+    terminalEvent?: TerminalWatchEvent
+  ): Promise<void> {
     const watch = this.activeWatches.get(watchId);
-    if (!watch) return Promise.resolve();
+    if (!watch) {
+      return;
+    }
 
-    // Return existing stop promise if already stopping
-    if (watch.stopPromise) return watch.stopPromise;
+    if (watch.stopPromise) {
+      return watch.stopPromise;
+    }
 
     const cleanup = async () => {
+      const resolvedTerminalEvent: TerminalWatchEvent = terminalEvent ?? {
+        type: 'stopped',
+        reason: 'Watch process ended'
+      };
+
+      if (watch.readyState === 'pending') {
+        const terminalMessage =
+          resolvedTerminalEvent.type === 'error'
+            ? resolvedTerminalEvent.error
+            : resolvedTerminalEvent.reason;
+        this.rejectWatchReady(watch, new Error(terminalMessage));
+      }
+
+      this.broadcastTerminalEvent(watch, resolvedTerminalEvent);
+
       try {
         watch.process.kill();
       } catch {
-        // Process may have already exited
+        // Process may have already exited.
       }
 
-      // Wait for graceful exit with timeout, escalate to SIGKILL if needed
-      let timeoutHandle: ReturnType<typeof setTimeout>;
+      let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
       const exitedCleanly = await Promise.race([
         watch.process.exited.then(() => true as const),
         new Promise<false>((resolve) => {
           timeoutHandle = setTimeout(() => resolve(false), STOP_TIMEOUT_MS);
         })
       ]);
-      clearTimeout(timeoutHandle!);
+
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+      }
 
       if (!exitedCleanly) {
         try {
-          watch.process.kill(9); // SIGKILL
+          watch.process.kill(9);
         } catch {
-          // Already dead
+          // Process may have already exited.
         }
       }
 
+      this.clearPersistentWatchExpiry(watch);
+
       this.activeWatches.delete(watchId);
+      this.watchIdsByKey.delete(watch.key);
     };
 
     watch.stopPromise = cleanup();
     return watch.stopPromise;
   }
 
-  private buildInotifyArgs(path: string, options: WatchRequest): string[] {
-    const args: string[] = [
-      '-m', // Monitor mode (continuous)
-      '--format',
-      '%e|%w%f' // event|path (ISDIR is part of event flags)
-    ];
+  private runWatchLoop(watch: ActiveWatch, logger: Logger): void {
+    const stdout = watch.process.stdout;
+    const stderr = watch.process.stderr;
 
-    // Recursive watching
+    if (!stdout || typeof stdout === 'number') {
+      const error = new Error('Failed to capture process output');
+      this.rejectWatchReady(watch, error);
+      void this.stopWatchInternal(watch.id, errorEvent(error.message));
+      return;
+    }
+
+    void (async () => {
+      try {
+        if (stderr && typeof stderr !== 'number') {
+          const monitor = await this.waitForWatchesEstablished(stderr, logger);
+          this.continueStderrMonitoring(
+            monitor.reader,
+            monitor.decoder,
+            monitor.buffer,
+            watch,
+            logger
+          );
+        }
+
+        this.resolveWatchReady(watch);
+
+        const reader = stdout.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) {
+            break;
+          }
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            if (!line.trim()) {
+              continue;
+            }
+
+            const parsed = this.parseInotifyEvent(line);
+            if (!parsed) {
+              continue;
+            }
+
+            const timestamp = new Date().toISOString();
+            const nextCursor = watch.state.cursor + 1;
+            const event: Extract<FileWatchSSEEvent, { type: 'event' }> = {
+              type: 'event',
+              eventId: `${watch.id}:${nextCursor}`,
+              eventType: parsed.eventType,
+              path: parsed.path,
+              isDirectory: parsed.isDirectory,
+              timestamp
+            };
+
+            watch.state.cursor = nextCursor;
+            watch.state.dirty = true;
+            watch.state.lastEventAt = timestamp;
+            this.broadcastEvent(watch, event);
+          }
+        }
+
+        if (buffer.trim()) {
+          const parsed = this.parseInotifyEvent(buffer);
+          if (parsed) {
+            const timestamp = new Date().toISOString();
+            const nextCursor = watch.state.cursor + 1;
+            const event: Extract<FileWatchSSEEvent, { type: 'event' }> = {
+              type: 'event',
+              eventId: `${watch.id}:${nextCursor}`,
+              eventType: parsed.eventType,
+              path: parsed.path,
+              isDirectory: parsed.isDirectory,
+              timestamp
+            };
+
+            watch.state.cursor = nextCursor;
+            watch.state.dirty = true;
+            watch.state.lastEventAt = timestamp;
+            this.broadcastEvent(watch, event);
+          }
+        }
+
+        await this.stopWatchInternal(watch.id, {
+          type: 'stopped',
+          reason: 'Watch process ended'
+        });
+      } catch (error) {
+        const err = error instanceof Error ? error : new Error(String(error));
+        logger.error('Error reading watch output', err);
+        this.rejectWatchReady(watch, err);
+        await this.stopWatchInternal(watch.id, errorEvent(err.message));
+      }
+    })();
+  }
+
+  private resolveWatchReady(watch: ActiveWatch): void {
+    if (watch.readyState !== 'pending') {
+      return;
+    }
+
+    watch.readyState = 'resolved';
+    watch.ready.resolve();
+  }
+
+  private rejectWatchReady(watch: ActiveWatch, error: Error): void {
+    if (watch.readyState !== 'pending') {
+      return;
+    }
+
+    watch.readyState = 'rejected';
+    watch.ready.reject(error);
+  }
+
+  private buildInotifyArgs(path: string, options: WatchRequest): string[] {
+    const args: string[] = ['-m', '--format', '%e|%w%f'];
+
     if (options.recursive !== false) {
       args.push('-r');
     }
 
-    // Event types
     const events: FileWatchEventType[] = options.events || [
       'create',
       'modify',
@@ -190,9 +891,6 @@ export class WatchService {
       args.push('-e', inotifyEvents.join(','));
     }
 
-    // inotifywait does not allow --include and --exclude together.
-    // Include filters take precedence; when include is set, exclusion is handled
-    // implicitly by only matching included paths.
     const includeRegex = this.buildCombinedPathRegex(options.include);
     if (includeRegex) {
       args.push('--include', includeRegex);
@@ -204,7 +902,6 @@ export class WatchService {
       }
     }
 
-    // Add path last
     args.push(path);
 
     return args;
@@ -233,8 +930,6 @@ export class WatchService {
   }
 
   private globToPathRegex(pattern: string): string {
-    // Supported glob syntax is intentionally limited to *, ** and ?.
-    // Handler validation rejects unsupported tokens such as [] and {}.
     return pattern
       .replace(/[.+^${}()|[\]\\]/g, '\\$&')
       .replace(/\*\*/g, '::double_star::')
@@ -248,25 +943,24 @@ export class WatchService {
     path: string;
     isDirectory: boolean;
   } | null {
-    // Format: EVENT|/path/to/file|EVENT_FLAGS
-    // The third part (%:e) contains colon-separated flags like CREATE:ISDIR
     const parts = line.trim().split('|');
-    if (parts.length < 2) return null;
+    if (parts.length < 2) {
+      return null;
+    }
 
     const [rawEvent, filePath, flagsPart] = parts;
-    // Check if ISDIR appears in either the event or the flags
     const isDirectory =
       rawEvent.includes('ISDIR') || (flagsPart?.includes('ISDIR') ?? false);
 
-    // Map inotify event back to our type
     const eventType = this.parseEventType(rawEvent);
-    if (!eventType) return null;
+    if (!eventType) {
+      return null;
+    }
 
     return { eventType, path: filePath, isDirectory };
   }
 
   private parseEventType(rawEvent: string): FileWatchEventType | null {
-    // inotify can emit multiple events like "CREATE,ISDIR"
     const events = rawEvent.split(',');
     const primary = events[0].toLowerCase();
 
@@ -277,234 +971,23 @@ export class WatchService {
       moved_from: 'move_from',
       moved_to: 'move_to',
       attrib: 'attrib',
-      // Handle close_write as modify (common for editors)
       close_write: 'modify'
     };
 
     return mapping[primary] || null;
   }
 
-  private createWatchStream(
-    watchId: string,
-    path: string,
-    proc: Subprocess,
-    logger: Logger
-  ): ReadableStream<Uint8Array> {
-    const encoder = new TextEncoder();
-    const self = this;
-    const stdout = proc.stdout;
-    const stderr = proc.stderr;
-
-    if (!stdout || typeof stdout === 'number') {
-      // Return a stream that immediately errors
-      return new ReadableStream({
-        start(controller) {
-          const errorEvent: FileWatchSSEEvent = {
-            type: 'error',
-            error: 'Failed to capture process output'
-          };
-          controller.enqueue(
-            encoder.encode(`data: ${JSON.stringify(errorEvent)}\n\n`)
-          );
-          controller.close();
-        }
-      });
-    }
-
-    return new ReadableStream({
-      async start(controller) {
-        // Wait for inotifywait to establish watches before sending watching event.
-        // If setup emits an error or times out, fail fast and stop this watch.
-        if (stderr && typeof stderr !== 'number') {
-          try {
-            await self.waitForWatchesEstablished(
-              stderr,
-              controller,
-              encoder,
-              logger
-            );
-          } catch {
-            await self.stopWatch(watchId);
-            controller.close();
-            return;
-          }
-        }
-
-        // Send watching event only after watches are established
-        const watchingEvent: FileWatchSSEEvent = {
-          type: 'watching',
-          path,
-          watchId
-        };
-        controller.enqueue(
-          encoder.encode(`data: ${JSON.stringify(watchingEvent)}\n\n`)
-        );
-
-        // Read stdout line by line
-        const reader = stdout.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-
-        const pendingEvents = new Map<string, FileWatchSSEEvent>();
-        let droppedEvents = 0;
-        const enqueueEvent = (event: FileWatchSSEEvent) => {
-          const key =
-            event.type === 'event'
-              ? `${event.eventType}|${event.path}|${event.isDirectory}`
-              : `${event.type}|${Date.now()}`;
-
-          if (
-            !pendingEvents.has(key) &&
-            pendingEvents.size >= MAX_PENDING_EVENTS
-          ) {
-            droppedEvents++;
-            if (droppedEvents === 1 || droppedEvents % 100 === 0) {
-              logger.warn('Dropping watch events due to backpressure', {
-                watchId,
-                droppedEvents,
-                pendingCount: pendingEvents.size
-              });
-            }
-            return;
-          }
-
-          pendingEvents.set(key, event);
-        };
-
-        const flushPendingEvents = () => {
-          for (const event of pendingEvents.values()) {
-            controller.enqueue(
-              encoder.encode(`data: ${JSON.stringify(event)}\n\n`)
-            );
-          }
-          pendingEvents.clear();
-        };
-
-        const flushInterval = setInterval(
-          flushPendingEvents,
-          EVENT_COALESCE_WINDOW_MS
-        );
-
-        const processLine = (line: string) => {
-          const parsed = self.parseInotifyEvent(line);
-          if (!parsed) return;
-
-          const event: FileWatchSSEEvent = {
-            type: 'event',
-            eventType: parsed.eventType,
-            path: parsed.path,
-            isDirectory: parsed.isDirectory,
-            timestamp: new Date().toISOString()
-          };
-          enqueueEvent(event);
-        };
-
-        try {
-          logger.debug('Starting to read inotifywait stdout');
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) {
-              logger.debug('inotifywait stdout stream ended');
-              break;
-            }
-
-            const chunk = decoder.decode(value, { stream: true });
-            logger.debug('Received chunk from inotifywait', {
-              chunkLength: chunk.length,
-              chunk: chunk.substring(0, 200)
-            });
-            buffer += chunk;
-            const lines = buffer.split('\n');
-            buffer = lines.pop() || '';
-
-            for (const line of lines) {
-              if (line.trim()) {
-                logger.debug('Processing inotifywait line', { line });
-                processLine(line);
-              }
-            }
-          }
-
-          // Process any remaining buffer
-          if (buffer.trim()) {
-            processLine(buffer);
-          }
-
-          clearInterval(flushInterval);
-          flushPendingEvents();
-
-          // Send stopped event
-          const reason =
-            droppedEvents > 0
-              ? `Watch process ended. Dropped ${droppedEvents} events due to backpressure.`
-              : 'Watch process ended';
-
-          const stoppedEvent: FileWatchSSEEvent = {
-            type: 'stopped',
-            reason
-          };
-          controller.enqueue(
-            encoder.encode(`data: ${JSON.stringify(stoppedEvent)}\n\n`)
-          );
-          controller.close();
-        } catch (error) {
-          clearInterval(flushInterval);
-          const err = error instanceof Error ? error : new Error(String(error));
-          logger.error('Error reading watch output', err);
-          const errorEvent: FileWatchSSEEvent = {
-            type: 'error',
-            error: error instanceof Error ? error.message : 'Unknown error'
-          };
-          controller.enqueue(
-            encoder.encode(`data: ${JSON.stringify(errorEvent)}\n\n`)
-          );
-          controller.close();
-        } finally {
-          await self.stopWatch(watchId);
-        }
-      },
-
-      cancel() {
-        // Fire-and-forget: stopWatch handles kill + await exit + map cleanup.
-        // Returning the promise lets the stream machinery await it if needed.
-        return self.stopWatch(watchId);
-      }
-    });
-  }
-
-  /**
-   * Wait for inotifywait to output "Watches established" on stderr.
-   * This ensures the watch is ready to detect file changes before we signal readiness to clients.
-   * After watches are established, continues monitoring stderr for errors in background.
-   */
   private async waitForWatchesEstablished(
     stderr: ReadableStream<Uint8Array>,
-    controller: ReadableStreamDefaultController<Uint8Array>,
-    encoder: TextEncoder,
     logger: Logger
-  ): Promise<void> {
+  ): Promise<{
+    reader: { read(): Promise<{ done: boolean; value?: Uint8Array }> };
+    decoder: TextDecoder;
+    buffer: string;
+  }> {
     const reader = stderr.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
-
-    const emitSetupError = (message: string) => {
-      const errorEvent: FileWatchSSEEvent = {
-        type: 'error',
-        error: message
-      };
-      try {
-        controller.enqueue(
-          encoder.encode(`data: ${JSON.stringify(errorEvent)}\n\n`)
-        );
-      } catch (enqueueError) {
-        logger.debug('Could not enqueue setup error event', {
-          error:
-            enqueueError instanceof Error
-              ? enqueueError.message
-              : String(enqueueError)
-        });
-      }
-    };
 
     const readLoop = async (): Promise<'established'> => {
       while (true) {
@@ -562,18 +1045,8 @@ export class WatchService {
         throw new Error(timeoutMessage);
       }
 
-      this.continueStderrMonitoring(
-        reader,
-        decoder,
-        buffer,
-        controller,
-        encoder,
-        logger
-      );
+      return { reader, decoder, buffer };
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : 'Failed to establish watch';
-      emitSetupError(message);
       await reader.cancel().catch(() => {});
       throw error;
     } finally {
@@ -583,24 +1056,21 @@ export class WatchService {
     }
   }
 
-  /**
-   * Continue monitoring stderr for errors after watches are established.
-   * Runs in background without blocking.
-   */
   private continueStderrMonitoring(
     reader: { read(): Promise<{ done: boolean; value?: Uint8Array }> },
     decoder: TextDecoder,
     initialBuffer: string,
-    controller: ReadableStreamDefaultController<Uint8Array>,
-    encoder: TextEncoder,
+    watch: ActiveWatch,
     logger: Logger
   ): void {
-    (async () => {
+    void (async () => {
       let buffer = initialBuffer;
       try {
         while (true) {
           const { done, value } = await reader.read();
-          if (done) break;
+          if (done) {
+            break;
+          }
 
           buffer += decoder.decode(value, { stream: true });
           const lines = buffer.split('\n');
@@ -608,46 +1078,45 @@ export class WatchService {
 
           for (const line of lines) {
             const trimmed = line.trim();
-            if (trimmed) {
-              // Skip info messages
-              if (
-                trimmed.includes('Watches established') ||
-                trimmed.includes('Setting up watches')
-              ) {
-                logger.debug('inotifywait info', { message: trimmed });
-                continue;
-              }
-
-              logger.warn('inotifywait stderr', { message: trimmed });
-              const errorEvent: FileWatchSSEEvent = {
-                type: 'error',
-                error: trimmed
-              };
-              try {
-                controller.enqueue(
-                  encoder.encode(`data: ${JSON.stringify(errorEvent)}\n\n`)
-                );
-              } catch (enqueueError) {
-                logger.debug(
-                  'Could not enqueue stderr error event, stream likely closed',
-                  {
-                    error:
-                      enqueueError instanceof Error
-                        ? enqueueError.message
-                        : String(enqueueError)
-                  }
-                );
-                break;
-              }
+            if (!trimmed) {
+              continue;
             }
+
+            if (
+              trimmed.includes('Watches established') ||
+              trimmed.includes('Setting up watches')
+            ) {
+              logger.debug('inotifywait info', { message: trimmed });
+              continue;
+            }
+
+            logger.warn('inotifywait stderr', { message: trimmed });
+            this.broadcastEvent(watch, errorEvent(trimmed));
           }
         }
       } catch (error) {
-        // Stream closed or other error - expected when process terminates
         logger.debug('stderr monitoring ended', {
           error: error instanceof Error ? error.message : 'Unknown'
         });
       }
     })();
   }
+}
+
+function createDeferred<T>(): Deferred<T> {
+  let resolve: Deferred<T>['resolve'] = () => {};
+  let reject: Deferred<T>['reject'] = () => {};
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+
+  return { promise, resolve, reject };
+}
+
+function errorEvent(message: string): TerminalWatchEvent {
+  return {
+    type: 'error',
+    error: message
+  };
 }

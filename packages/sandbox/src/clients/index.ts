@@ -41,7 +41,16 @@ export {
 // Client types and interfaces
 // =============================================================================
 
-export type { WatchRequest } from '@repo/shared';
+export type {
+  WatchAckRequest,
+  WatchAckResult,
+  WatchEnsureResult,
+  WatchRequest,
+  WatchState,
+  WatchStateResult,
+  WatchStopOptions,
+  WatchStopResult
+} from '@repo/shared';
 // Command client types
 export type { ExecuteRequest, ExecuteResponse } from './command-client';
 // Desktop client types

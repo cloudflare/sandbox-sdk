@@ -1026,6 +1026,59 @@ console.log('Terminal server on port ' + port);
         });
       }
 
+      if (url.pathname === '/api/watch/ensure' && request.method === 'POST') {
+        const result = await sandbox.ensureWatch(body.path, {
+          recursive: body.recursive,
+          include: body.include,
+          exclude: body.exclude,
+          ownerId: body.ownerId,
+          sessionId: sessionId ?? undefined
+        });
+
+        return new Response(JSON.stringify(result), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (
+        url.pathname.startsWith('/api/watch/') &&
+        request.method === 'GET' &&
+        !url.pathname.endsWith('/ack')
+      ) {
+        const watchId = url.pathname.split('/')[3];
+        const result = await sandbox.getWatchState(watchId);
+
+        return new Response(JSON.stringify(result), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (url.pathname.endsWith('/ack') && request.method === 'POST') {
+        const watchId = url.pathname.split('/')[3];
+        const result = await sandbox.ackWatchState(watchId, {
+          cursor: body.cursor,
+          ownerId: body.ownerId
+        });
+
+        return new Response(JSON.stringify(result), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (
+        url.pathname.startsWith('/api/watch/') &&
+        request.method === 'DELETE'
+      ) {
+        const watchId = url.pathname.split('/')[3];
+        const result = await sandbox.stopWatch(watchId, {
+          ownerId: url.searchParams.get('ownerId') ?? undefined
+        });
+
+        return new Response(JSON.stringify(result), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
       // Cleanup endpoint - destroys the sandbox container
       // This is used by E2E tests to explicitly clean up after each test
       if (url.pathname === '/cleanup' && request.method === 'POST') {

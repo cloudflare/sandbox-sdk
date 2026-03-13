@@ -1,16 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from 'bun:test';
-import type { WatchRequest } from '@repo/shared';
+import type { WatchRequest, WatchState } from '@repo/shared';
 import { createNoOpLogger } from '@repo/shared';
 import { ErrorCode } from '@repo/shared/errors';
 import { WatchService } from '@sandbox-container/services/watch-service';
 
 const mockLogger = createNoOpLogger();
 
-/**
- * Type-safe accessor for testing private WatchService methods.
- * Uses module augmentation to expose private methods for testing only.
- */
+interface FakeWatchProcess {
+  exited: Promise<number>;
+  kill: ReturnType<typeof vi.fn>;
+}
+
 interface WatchServiceTestAccessor {
+  activeWatches: Map<string, unknown>;
+  watchIdsByKey: Map<string, string>;
   parseInotifyEvent(line: string): {
     eventType: string;
     path: string;
@@ -19,12 +22,70 @@ interface WatchServiceTestAccessor {
   buildInotifyArgs(path: string, options: WatchRequest): string[];
 }
 
+function makeWatchState(overrides: Partial<WatchState> = {}): WatchState {
+  return {
+    watchId: 'watch-1',
+    path: '/workspace/test',
+    recursive: true,
+    include: undefined,
+    exclude: ['.git'],
+    ownerId: undefined,
+    cursor: 0,
+    dirty: false,
+    overflowed: false,
+    lastEventAt: null,
+    expiresAt: null,
+    subscriberCount: 0,
+    startedAt: new Date().toISOString(),
+    ...overrides
+  };
+}
+
+function makeFakeProcess(): FakeWatchProcess {
+  return {
+    exited: Promise.resolve(0),
+    kill: vi.fn()
+  };
+}
+
+function makeActiveWatch(overrides: Partial<Record<string, unknown>> = {}) {
+  const state = makeWatchState(
+    (overrides.state as Partial<WatchState> | undefined) ?? {}
+  );
+  const process =
+    (overrides.process as FakeWatchProcess | undefined) ?? makeFakeProcess();
+
+  return {
+    id: state.watchId,
+    key: 'watch-key',
+    path: state.path,
+    recursive: state.recursive,
+    include: state.include,
+    exclude: state.exclude,
+    process,
+    startedAt: new Date(state.startedAt),
+    state,
+    persistent: true,
+    subscribers: new Map(),
+    ready: {
+      promise: Promise.resolve(),
+      resolve: () => {},
+      reject: () => {}
+    },
+    readyState: 'resolved',
+    expiryTimer: null,
+    ...overrides
+  };
+}
+
 describe('WatchService', () => {
   let watchService: WatchService;
+  let accessor: WatchServiceTestAccessor;
 
   beforeEach(() => {
     vi.clearAllMocks();
     watchService = new WatchService(mockLogger);
+    accessor = watchService as unknown as WatchServiceTestAccessor;
   });
 
   describe('getActiveWatches', () => {
@@ -38,6 +99,113 @@ describe('WatchService', () => {
     it('should return 0 when no watches active', async () => {
       const count = await watchService.stopAllWatches();
       expect(count).toBe(0);
+    });
+  });
+
+  describe('watch state management', () => {
+    it('should return not found for unknown watch state', async () => {
+      const result = await watchService.getWatchState('missing-watch');
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.code).toBe(ErrorCode.WATCH_NOT_FOUND);
+      }
+    });
+
+    it('should clear dirty state only when ack cursor matches', async () => {
+      const watch = makeActiveWatch({
+        state: { cursor: 7, dirty: true, overflowed: true, ownerId: 'owner-1' }
+      });
+      accessor.activeWatches.set('watch-1', watch);
+      accessor.watchIdsByKey.set('watch-key', 'watch-1');
+
+      const result = await watchService.ackWatchState('watch-1', 7, 'owner-1');
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.acknowledged).toBe(true);
+        expect(result.data.watch.dirty).toBe(false);
+        expect(result.data.watch.overflowed).toBe(false);
+      }
+    });
+
+    it('should keep dirty state when ack cursor is stale', async () => {
+      const watch = makeActiveWatch({
+        state: { cursor: 8, dirty: true, overflowed: true }
+      });
+      accessor.activeWatches.set('watch-1', watch);
+      accessor.watchIdsByKey.set('watch-key', 'watch-1');
+
+      const result = await watchService.ackWatchState('watch-1', 7);
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.acknowledged).toBe(false);
+        expect(result.data.watch.dirty).toBe(true);
+        expect(result.data.watch.overflowed).toBe(true);
+      }
+    });
+
+    it('should reject ack from a different owner', async () => {
+      const watch = makeActiveWatch({
+        state: { cursor: 8, dirty: true, ownerId: 'owner-1' }
+      });
+      accessor.activeWatches.set('watch-1', watch);
+      accessor.watchIdsByKey.set('watch-key', 'watch-1');
+
+      const result = await watchService.ackWatchState('watch-1', 8, 'other');
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.code).toBe(ErrorCode.RESOURCE_BUSY);
+      }
+    });
+
+    it('should require ownerId when stopping an owned watch', async () => {
+      const process = makeFakeProcess();
+      const watch = makeActiveWatch({
+        process,
+        state: { ownerId: 'owner-1' }
+      });
+      accessor.activeWatches.set('watch-1', watch);
+      accessor.watchIdsByKey.set('watch-key', 'watch-1');
+
+      const result = await watchService.stopWatch('watch-1');
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.code).toBe(ErrorCode.RESOURCE_BUSY);
+      }
+      expect(process.kill).not.toHaveBeenCalled();
+    });
+
+    it('should refresh persistent watch expiry on read', async () => {
+      const watch = makeActiveWatch({
+        state: { expiresAt: null, ownerId: 'owner-1' }
+      });
+      accessor.activeWatches.set('watch-1', watch);
+      accessor.watchIdsByKey.set('watch-key', 'watch-1');
+
+      const result = await watchService.getWatchState('watch-1');
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(typeof result.data.expiresAt).toBe('string');
+      }
+    });
+
+    it('should stop an active watch and clean up indexes', async () => {
+      const process = makeFakeProcess();
+      const watch = makeActiveWatch({ process, state: { ownerId: 'owner-1' } });
+      accessor.activeWatches.set('watch-1', watch);
+      accessor.watchIdsByKey.set('watch-key', 'watch-1');
+
+      const result = await watchService.stopWatch('watch-1', 'owner-1');
+
+      expect(result.success).toBe(true);
+      expect(process.kill).toHaveBeenCalled();
+      expect(accessor.activeWatches.has('watch-1')).toBe(false);
+      expect(accessor.watchIdsByKey.has('watch-key')).toBe(false);
     });
   });
 
@@ -55,7 +223,6 @@ describe('WatchService', () => {
   });
 
   describe('parseInotifyEvent', () => {
-    // Access private method for testing via type assertion
     const testParseEvent = (service: WatchService, line: string) => {
       return (service as unknown as WatchServiceTestAccessor).parseInotifyEvent(
         line
@@ -84,7 +251,6 @@ describe('WatchService', () => {
     });
 
     it('should parse CREATE,ISDIR with colon-separated flags from %:e format', () => {
-      // This is the actual output format from inotifywait with --format '%e|%w%f|%:e'
       const result = testParseEvent(
         watchService,
         'CREATE,ISDIR|/app/newdir|CREATE:ISDIR'
@@ -157,7 +323,6 @@ describe('WatchService', () => {
   });
 
   describe('buildInotifyArgs', () => {
-    // Access private method for testing via type assertion
     const testBuildArgs = (
       service: WatchService,
       path: string,
@@ -192,15 +357,12 @@ describe('WatchService', () => {
     it('should include default excludes as combined regex pattern', () => {
       const args = testBuildArgs(watchService, '/app', { path: '/app' });
       expect(args).toContain('--exclude');
-      // inotifywait only supports a single --exclude, so patterns are combined with OR
       const excludeIndex = args.indexOf('--exclude');
       expect(excludeIndex).toBeGreaterThan(-1);
       const excludePattern = args[excludeIndex + 1];
-      // Verify combined regex format: (^|/)pattern(/|$)|(^|/)pattern(/|$)|...
       expect(excludePattern).toContain('(^|/)\\.git(/|$)');
       expect(excludePattern).toContain('(^|/)node_modules(/|$)');
       expect(excludePattern).toContain('(^|/)\\.DS_Store(/|$)');
-      // Patterns are joined with |
       expect(excludePattern.split('|').length).toBeGreaterThanOrEqual(3);
     });
 
