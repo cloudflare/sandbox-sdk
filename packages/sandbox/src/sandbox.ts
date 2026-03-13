@@ -15,6 +15,7 @@ import type {
   LocalMountBucketOptions,
   LogEvent,
   MountBucketOptions,
+  PersistentWatchOptions,
   PortWatchEvent,
   Process,
   ProcessOptions,
@@ -29,8 +30,8 @@ import type {
   WaitForExitResult,
   WaitForLogResult,
   WaitForPortOptions,
-  WatchAckRequest,
-  WatchAckResult,
+  WatchCheckpointRequest,
+  WatchCheckpointResult,
   WatchEnsureResult,
   WatchOptions,
   WatchStopOptions
@@ -2624,7 +2625,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    */
   async watch(
     path: string,
-    options: Omit<WatchOptions, 'ownerId'> = {}
+    options: WatchOptions = {}
   ): Promise<ReadableStream<Uint8Array>> {
     const sessionId = options.sessionId ?? (await this.ensureDefaultSession());
     return this.client.watch.watch({
@@ -2638,7 +2639,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   async ensureWatch(
     path: string,
-    options: WatchOptions = {}
+    options: PersistentWatchOptions = {}
   ): Promise<WatchEnsureResult> {
     const sessionId = options.sessionId ?? (await this.ensureDefaultSession());
     return this.client.watch.ensureWatch({
@@ -2646,7 +2647,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       recursive: options.recursive,
       include: options.include,
       exclude: options.exclude,
-      ownerId: options.ownerId,
+      resumeToken: options.resumeToken,
       sessionId
     });
   }
@@ -2655,11 +2656,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     return this.client.watch.getWatchState(watchId);
   }
 
-  async ackWatchState(
+  async checkpointWatch(
     watchId: string,
-    request: WatchAckRequest
-  ): Promise<WatchAckResult> {
-    return this.client.watch.ackWatchState(watchId, request);
+    request: WatchCheckpointRequest
+  ): Promise<WatchCheckpointResult> {
+    return this.client.watch.checkpointWatch(watchId, request);
   }
 
   async stopWatch(
@@ -3068,15 +3069,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       readFile: (path, options) =>
         this.readFile(path, { ...options, sessionId }),
       readFileStream: (path) => this.readFileStream(path, { sessionId }),
-      watch: (
-        path,
-        options: Omit<WatchOptions, 'sessionId' | 'ownerId'> = {}
-      ) => this.watch(path, { ...options, sessionId }),
-      ensureWatch: (path: string, options?: Omit<WatchOptions, 'sessionId'>) =>
-        this.ensureWatch(path, { ...options, sessionId }),
+      watch: (path, options: Omit<WatchOptions, 'sessionId'> = {}) =>
+        this.watch(path, { ...options, sessionId }),
+      ensureWatch: (
+        path: string,
+        options?: Omit<PersistentWatchOptions, 'sessionId'>
+      ) => this.ensureWatch(path, { ...options, sessionId }),
       getWatchState: (watchId: string) => this.getWatchState(watchId),
-      ackWatchState: (watchId: string, request: WatchAckRequest) =>
-        this.ackWatchState(watchId, request),
+      checkpointWatch: (watchId: string, request: WatchCheckpointRequest) =>
+        this.checkpointWatch(watchId, request),
       stopWatch: (watchId: string, options?: WatchStopOptions) =>
         this.stopWatch(watchId, options),
       mkdir: (path, options) => this.mkdir(path, { ...options, sessionId }),

@@ -41,6 +41,8 @@ export type {
   LocalMountBucketOptions,
   LogEvent,
   MountBucketOptions,
+  // File watch types
+  PersistentWatchOptions,
   Process,
   ProcessOptions,
   ProcessStatus,
@@ -53,9 +55,8 @@ export type {
   StreamOptions,
   WaitForLogResult,
   WaitForPortOptions,
-  // File watch types
-  WatchAckRequest,
-  WatchAckResult,
+  WatchCheckpointRequest,
+  WatchCheckpointResult,
   WatchEnsureResult,
   WatchOptions,
   WatchState,

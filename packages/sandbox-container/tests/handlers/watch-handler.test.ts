@@ -11,9 +11,8 @@ function sampleWatchState(overrides: Partial<WatchState> = {}): WatchState {
     recursive: true,
     include: undefined,
     exclude: ['.git'],
-    ownerId: undefined,
     cursor: 0,
-    dirty: false,
+    changed: false,
     overflowed: false,
     lastEventAt: null,
     expiresAt: null,
@@ -28,7 +27,7 @@ function createMockWatchService(): WatchService {
     watchDirectory: vi.fn(),
     ensureWatch: vi.fn(),
     getWatchState: vi.fn(),
-    ackWatchState: vi.fn(),
+    checkpointWatch: vi.fn(),
     stopWatch: vi.fn()
   } as unknown as WatchService;
 }
@@ -103,25 +102,34 @@ describe('WatchHandler', () => {
   describe('persistent watch routes', () => {
     it('should ensure a persistent watch', async () => {
       const watchService = createMockWatchService();
-      const watch = sampleWatchState({ ownerId: 'owner-1' });
+      const watch = sampleWatchState();
       (watchService.ensureWatch as ReturnType<typeof vi.fn>).mockResolvedValue({
         success: true,
-        data: watch
+        data: {
+          watch,
+          leaseToken: 'lease-1'
+        }
       });
 
       const handler = new WatchHandler(watchService, createNoOpLogger());
       const response = await handler.handle(
-        makeRequest('/api/watch/ensure', 'POST', { path: '/workspace/test' }),
+        makeRequest('/api/watch/ensure', 'POST', {
+          path: '/workspace/test',
+          resumeToken: 'resume-1'
+        }),
         defaultContext
       );
 
       expect(response.status).toBe(200);
-      const body = (await response.json()) as { watch: WatchState };
+      const body = (await response.json()) as {
+        watch: WatchState;
+        leaseToken: string;
+      };
       expect(body.watch.watchId).toBe(watch.watchId);
-      expect(body.watch.ownerId).toBe('owner-1');
+      expect(body.leaseToken).toBe('lease-1');
     });
 
-    it('should reject invalid ownerId on ensure', async () => {
+    it('should reject invalid resumeToken on ensure', async () => {
       const handler = new WatchHandler(
         createMockWatchService(),
         createNoOpLogger()
@@ -130,7 +138,7 @@ describe('WatchHandler', () => {
       const response = await handler.handle(
         makeRequest('/api/watch/ensure', 'POST', {
           path: '/workspace/test',
-          ownerId: ''
+          resumeToken: ''
         }),
         defaultContext
       );
@@ -138,14 +146,17 @@ describe('WatchHandler', () => {
       expect(response.status).toBe(400);
     });
 
-    it('should reject invalid ack cursor', async () => {
+    it('should reject invalid checkpoint cursor', async () => {
       const handler = new WatchHandler(
         createMockWatchService(),
         createNoOpLogger()
       );
 
       const response = await handler.handle(
-        makeRequest('/api/watch/watch-1/ack', 'POST', { cursor: -1 }),
+        makeRequest('/api/watch/watch-1/checkpoint', 'POST', {
+          cursor: -1,
+          leaseToken: 'lease-1'
+        }),
         defaultContext
       );
 
@@ -154,44 +165,57 @@ describe('WatchHandler', () => {
       expect(body.message).toContain('cursor must be a non-negative integer');
     });
 
-    it('should acknowledge a watch cursor', async () => {
+    it('should require leaseToken for checkpoint requests', async () => {
+      const handler = new WatchHandler(
+        createMockWatchService(),
+        createNoOpLogger()
+      );
+
+      const response = await handler.handle(
+        makeRequest('/api/watch/watch-1/checkpoint', 'POST', { cursor: 3 }),
+        defaultContext
+      );
+
+      expect(response.status).toBe(400);
+    });
+
+    it('should checkpoint a watch cursor', async () => {
       const watchService = createMockWatchService();
       const watch = sampleWatchState({
         cursor: 3,
-        dirty: false,
-        ownerId: 'owner-1'
+        changed: false
       });
       (
-        watchService.ackWatchState as ReturnType<typeof vi.fn>
+        watchService.checkpointWatch as ReturnType<typeof vi.fn>
       ).mockResolvedValue({
         success: true,
         data: {
-          acknowledged: true,
+          checkpointed: true,
           watch
         }
       });
 
       const handler = new WatchHandler(watchService, createNoOpLogger());
       const response = await handler.handle(
-        makeRequest('/api/watch/watch-1/ack', 'POST', {
+        makeRequest('/api/watch/watch-1/checkpoint', 'POST', {
           cursor: 3,
-          ownerId: 'owner-1'
+          leaseToken: 'lease-1'
         }),
         defaultContext
       );
 
       expect(response.status).toBe(200);
       const body = (await response.json()) as {
-        acknowledged: boolean;
+        checkpointed: boolean;
         watch: WatchState;
       };
-      expect(body.acknowledged).toBe(true);
+      expect(body.checkpointed).toBe(true);
       expect(body.watch.cursor).toBe(3);
     });
 
     it('should fetch watch state', async () => {
       const watchService = createMockWatchService();
-      const watch = sampleWatchState({ cursor: 5, dirty: true });
+      const watch = sampleWatchState({ cursor: 5, changed: true });
       (
         watchService.getWatchState as ReturnType<typeof vi.fn>
       ).mockResolvedValue({
@@ -208,7 +232,7 @@ describe('WatchHandler', () => {
       expect(response.status).toBe(200);
       const body = (await response.json()) as { watch: WatchState };
       expect(body.watch.cursor).toBe(5);
-      expect(body.watch.dirty).toBe(true);
+      expect(body.watch.changed).toBe(true);
     });
 
     it('should stop a watch', async () => {
@@ -219,7 +243,7 @@ describe('WatchHandler', () => {
 
       const handler = new WatchHandler(watchService, createNoOpLogger());
       const response = await handler.handle(
-        makeRequest('/api/watch/watch-1?ownerId=owner-1', 'DELETE'),
+        makeRequest('/api/watch/watch-1?leaseToken=lease-1', 'DELETE'),
         defaultContext
       );
 

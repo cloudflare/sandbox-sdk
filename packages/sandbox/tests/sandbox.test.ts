@@ -151,13 +151,14 @@ describe('Sandbox - Automatic Session Management', () => {
         path: '/workspace/test',
         recursive: true,
         cursor: 0,
-        dirty: false,
+        changed: false,
         overflowed: false,
         lastEventAt: null,
         expiresAt: null,
         subscriberCount: 0,
         startedAt: new Date().toISOString()
       },
+      leaseToken: 'lease-1',
       timestamp: new Date().toISOString()
     } as any);
   });
@@ -212,9 +213,9 @@ describe('Sandbox - Automatic Session Management', () => {
       );
     });
 
-    it('should forward ownerId when ensuring a watch', async () => {
+    it('should forward ensureWatch options to the watch client', async () => {
       await sandbox.ensureWatch('/workspace/test', {
-        ownerId: 'owner-1',
+        resumeToken: 'resume-1',
         recursive: false
       });
 
@@ -223,7 +224,7 @@ describe('Sandbox - Automatic Session Management', () => {
         recursive: false,
         include: undefined,
         exclude: undefined,
-        ownerId: 'owner-1',
+        resumeToken: 'resume-1',
         sessionId: expect.stringMatching(/^sandbox-/)
       });
     });

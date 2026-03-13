@@ -29,9 +29,8 @@ import {
 interface PersistentWatchState {
   watchId: string;
   path: string;
-  ownerId?: string;
   cursor: number;
-  dirty: boolean;
+  changed: boolean;
   overflowed: boolean;
   lastEventAt: string | null;
   expiresAt: string | null;
@@ -42,8 +41,12 @@ interface WatchStateResponse {
   watch: PersistentWatchState;
 }
 
-interface WatchAckResponse extends WatchStateResponse {
-  acknowledged: boolean;
+interface WatchEnsureResponse extends WatchStateResponse {
+  leaseToken: string;
+}
+
+interface WatchCheckpointResponse extends WatchStateResponse {
+  checkpointed: boolean;
 }
 
 describe('File Watch Workflow', () => {
@@ -174,17 +177,16 @@ describe('File Watch Workflow', () => {
       recursive?: boolean;
       include?: string[];
       exclude?: string[];
-      ownerId?: string;
+      resumeToken?: string;
     } = {}
-  ): Promise<PersistentWatchState> {
+  ): Promise<WatchEnsureResponse> {
     const response = await fetch(`${workerUrl}/api/watch/ensure`, {
       method: 'POST',
       headers,
       body: JSON.stringify({ path, ...options })
     });
     await expectOk(response, `ensureWatch(${path})`);
-    const body = (await response.json()) as WatchStateResponse;
-    return body.watch;
+    return (await response.json()) as WatchEnsureResponse;
   }
 
   async function getWatchState(watchId: string): Promise<PersistentWatchState> {
@@ -197,22 +199,25 @@ describe('File Watch Workflow', () => {
     return body.watch;
   }
 
-  async function ackWatchState(
+  async function checkpointWatch(
     watchId: string,
     cursor: number,
-    ownerId?: string
-  ): Promise<WatchAckResponse> {
-    const response = await fetch(`${workerUrl}/api/watch/${watchId}/ack`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ cursor, ownerId })
-    });
-    await expectOk(response, `ackWatchState(${watchId})`);
-    return (await response.json()) as WatchAckResponse;
+    leaseToken: string
+  ): Promise<WatchCheckpointResponse> {
+    const response = await fetch(
+      `${workerUrl}/api/watch/${watchId}/checkpoint`,
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ cursor, leaseToken })
+      }
+    );
+    await expectOk(response, `checkpointWatch(${watchId})`);
+    return (await response.json()) as WatchCheckpointResponse;
   }
 
-  async function stopWatch(watchId: string, ownerId?: string): Promise<void> {
-    const suffix = ownerId ? `?ownerId=${encodeURIComponent(ownerId)}` : '';
+  async function stopWatch(watchId: string, leaseToken: string): Promise<void> {
+    const suffix = `?leaseToken=${encodeURIComponent(leaseToken)}`;
     const response = await fetch(`${workerUrl}/api/watch/${watchId}${suffix}`, {
       method: 'DELETE',
       headers
@@ -425,43 +430,43 @@ describe('File Watch Workflow', () => {
     await secondResponse.body?.cancel();
   }, 30000);
 
-  test('should retain dirty state across reconnect gaps', async () => {
+  test('should retain changed state across reconnect gaps', async () => {
     testDir = sandbox!.uniquePath('watch-persistent-state');
     await createDir(testDir);
 
-    const ownerId = `owner-${Date.now()}`;
-    const ensuredWatch = await ensureWatch(testDir, { ownerId });
-    expect(ensuredWatch.dirty).toBe(false);
-    expect(ensuredWatch.cursor).toBe(0);
-    expect(ensuredWatch.ownerId).toBe(ownerId);
-    expect(ensuredWatch.expiresAt).toBeTruthy();
+    const resumeToken = `resume-${Date.now()}`;
+    const ensuredWatch = await ensureWatch(testDir, { resumeToken });
+    expect(ensuredWatch.watch.changed).toBe(false);
+    expect(ensuredWatch.watch.cursor).toBe(0);
+    expect(ensuredWatch.leaseToken).toBeTruthy();
+    expect(ensuredWatch.watch.expiresAt).toBeTruthy();
 
     await createFile(`${testDir}/background.txt`, 'hello');
 
-    const dirtyState = await waitForWatchState(
-      ensuredWatch.watchId,
-      (state) => state.dirty && state.cursor > 0
+    const changedState = await waitForWatchState(
+      ensuredWatch.watch.watchId,
+      (state) => state.changed && state.cursor > 0
     );
 
-    expect(dirtyState.lastEventAt).toBeTruthy();
+    expect(changedState.lastEventAt).toBeTruthy();
 
-    const ackResult = await ackWatchState(
-      ensuredWatch.watchId,
-      dirtyState.cursor,
-      ownerId
+    const checkpointResult = await checkpointWatch(
+      ensuredWatch.watch.watchId,
+      changedState.cursor,
+      ensuredWatch.leaseToken
     );
-    expect(ackResult.acknowledged).toBe(true);
-    expect(ackResult.watch.dirty).toBe(false);
+    expect(checkpointResult.checkpointed).toBe(true);
+    expect(checkpointResult.watch.changed).toBe(false);
 
     await createFile(`${testDir}/second.txt`, 'hello again');
 
-    const secondDirtyState = await waitForWatchState(
-      ensuredWatch.watchId,
-      (state) => state.dirty && state.cursor > dirtyState.cursor
+    const secondChangedState = await waitForWatchState(
+      ensuredWatch.watch.watchId,
+      (state) => state.changed && state.cursor > changedState.cursor
     );
-    expect(secondDirtyState.cursor).toBeGreaterThan(dirtyState.cursor);
+    expect(secondChangedState.cursor).toBeGreaterThan(changedState.cursor);
 
-    await stopWatch(ensuredWatch.watchId, ownerId);
+    await stopWatch(ensuredWatch.watch.watchId, ensuredWatch.leaseToken);
   }, 30000);
 
   test('should return error for non-existent path', async () => {

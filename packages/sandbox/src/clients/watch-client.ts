@@ -2,8 +2,8 @@ import {
   type FileWatchSSEEvent,
   parseSSEFrames,
   type SSEPartialEvent,
-  type WatchAckRequest,
-  type WatchAckResult,
+  type WatchCheckpointRequest,
+  type WatchCheckpointResult,
   type WatchEnsureResult,
   type WatchRequest,
   type WatchStateResult,
@@ -49,20 +49,20 @@ export class WatchClient extends BaseHttpClient {
     }
   }
 
-  async ackWatchState(
+  async checkpointWatch(
     watchId: string,
-    request: WatchAckRequest
-  ): Promise<WatchAckResult> {
+    request: WatchCheckpointRequest
+  ): Promise<WatchCheckpointResult> {
     try {
-      const response = await this.post<WatchAckResult>(
-        `/api/watch/${watchId}/ack`,
+      const response = await this.post<WatchCheckpointResult>(
+        `/api/watch/${watchId}/checkpoint`,
         request
       );
 
-      this.logSuccess('Watch state acknowledged', watchId);
+      this.logSuccess('Watch checkpoint recorded', watchId);
       return response;
     } catch (error) {
-      this.logError('ackWatchState', error);
+      this.logError('checkpointWatch', error);
       throw error;
     }
   }
@@ -73,8 +73,8 @@ export class WatchClient extends BaseHttpClient {
   ): Promise<WatchStopResult> {
     try {
       const searchParams = new URLSearchParams();
-      if (options.ownerId) {
-        searchParams.set('ownerId', options.ownerId);
+      if (options.leaseToken) {
+        searchParams.set('leaseToken', options.leaseToken);
       }
       const suffix = searchParams.size > 0 ? `?${searchParams.toString()}` : '';
       const response = await this.delete<WatchStopResult>(

@@ -36,6 +36,8 @@ interface ActiveWatch {
   exclude?: string[];
   process: Subprocess;
   startedAt: Date;
+  leaseToken: string | null;
+  resumeToken: string | null;
   state: WatchState;
   persistent: boolean;
   subscribers: Map<string, WatchSubscriber>;
@@ -74,10 +76,7 @@ export class WatchService {
     path: string,
     options: WatchRequest = { path }
   ): Promise<ServiceResult<ReadableStream<Uint8Array>>> {
-    const watchResult = this.getOrCreateWatch(path, {
-      ...options,
-      ownerId: undefined
-    });
+    const watchResult = this.getOrCreateWatch(path, options);
     if (!watchResult.success) {
       return watchResult;
     }
@@ -92,16 +91,16 @@ export class WatchService {
   async ensureWatch(
     path: string,
     options: WatchRequest = { path }
-  ): Promise<ServiceResult<WatchState>> {
+  ): Promise<ServiceResult<{ watch: WatchState; leaseToken: string }>> {
     const watchResult = this.getOrCreateWatch(path, options);
     if (!watchResult.success) {
       return watchResult;
     }
 
     const watch = watchResult.data;
-    const ownershipError = this.claimPersistentWatch(watch, options.ownerId);
-    if (ownershipError) {
-      return serviceError(ownershipError);
+    const leaseResult = this.claimPersistentWatch(watch, options.resumeToken);
+    if (!leaseResult.success) {
+      return serviceError(leaseResult.error);
     }
 
     watch.persistent = true;
@@ -109,7 +108,10 @@ export class WatchService {
 
     try {
       await watch.ready.promise;
-      return serviceSuccess(this.snapshotWatchState(watch));
+      return serviceSuccess({
+        watch: this.snapshotWatchState(watch),
+        leaseToken: leaseResult.leaseToken
+      });
     } catch (error) {
       return serviceError({
         message:
@@ -152,11 +154,11 @@ export class WatchService {
   /**
    * Acknowledge the current watch cursor.
    */
-  async ackWatchState(
+  async checkpointWatch(
     watchId: string,
     cursor: number,
-    ownerId?: string
-  ): Promise<ServiceResult<{ acknowledged: boolean; watch: WatchState }>> {
+    leaseToken: string
+  ): Promise<ServiceResult<{ checkpointed: boolean; watch: WatchState }>> {
     const watch = this.activeWatches.get(watchId);
     if (!watch) {
       return serviceError({
@@ -177,25 +179,25 @@ export class WatchService {
       });
     }
 
-    const ownershipError = this.verifyPersistentWatchOwner(
+    const leaseError = this.verifyPersistentWatchLease(
       watch,
-      ownerId,
-      'acknowledge'
+      leaseToken,
+      'checkpoint'
     );
-    if (ownershipError) {
-      return serviceError(ownershipError);
+    if (leaseError) {
+      return serviceError(leaseError);
     }
 
-    const acknowledged = cursor === watch.state.cursor;
-    if (acknowledged) {
-      watch.state.dirty = false;
+    const checkpointed = cursor === watch.state.cursor;
+    if (checkpointed) {
+      watch.state.changed = false;
       watch.state.overflowed = false;
     }
 
     this.refreshPersistentWatchLease(watch);
 
     return serviceSuccess({
-      acknowledged,
+      checkpointed,
       watch: this.snapshotWatchState(watch)
     });
   }
@@ -205,7 +207,7 @@ export class WatchService {
    */
   async stopWatch(
     watchId: string,
-    ownerId?: string
+    leaseToken?: string
   ): Promise<ServiceResult<void>> {
     const watch = this.activeWatches.get(watchId);
     if (!watch) {
@@ -216,13 +218,13 @@ export class WatchService {
       });
     }
 
-    const ownershipError = this.verifyPersistentWatchOwner(
+    const leaseError = this.verifyPersistentWatchLease(
       watch,
-      ownerId,
+      leaseToken,
       'stop'
     );
-    if (ownershipError) {
-      return serviceError(ownershipError);
+    if (leaseError) {
+      return serviceError(leaseError);
     }
 
     await this.stopWatchInternal(watchId, {
@@ -255,6 +257,10 @@ export class WatchService {
     path: string,
     options: WatchRequest
   ): ServiceResult<ActiveWatch> {
+    const include = this.normalizePatterns(options.include);
+    const exclude = include
+      ? undefined
+      : this.normalizePatterns(options.exclude);
     const key = this.createWatchKey(path, options);
     const existingWatchId = this.watchIdsByKey.get(key);
     if (existingWatchId) {
@@ -290,19 +296,20 @@ export class WatchService {
         key,
         path,
         recursive: options.recursive !== false,
-        include: options.include,
-        exclude: options.include ? undefined : options.exclude,
+        include,
+        exclude,
         process: proc,
         startedAt: new Date(),
+        leaseToken: null,
+        resumeToken: null,
         state: {
           watchId,
           path,
           recursive: options.recursive !== false,
-          include: options.include,
-          exclude: options.include ? undefined : options.exclude,
-          ownerId: options.ownerId,
+          include,
+          exclude,
           cursor: 0,
-          dirty: false,
+          changed: false,
           overflowed: false,
           lastEventAt: null,
           expiresAt: null,
@@ -333,11 +340,16 @@ export class WatchService {
   }
 
   private createWatchKey(path: string, options: WatchRequest): string {
+    const include = this.normalizePatterns(options.include);
+    const exclude = include
+      ? null
+      : (this.normalizePatterns(options.exclude) ?? null);
     return JSON.stringify({
       path,
       recursive: options.recursive !== false,
-      include: options.include ?? null,
-      exclude: options.include ? null : (options.exclude ?? null)
+      include: include ?? null,
+      exclude,
+      events: this.normalizeEvents(options.events)
     });
   }
 
@@ -353,79 +365,82 @@ export class WatchService {
 
   private claimPersistentWatch(
     watch: ActiveWatch,
-    ownerId?: string
-  ): {
-    message: string;
-    code: string;
-    details?: Record<string, unknown>;
-  } | null {
-    if (!watch.state.ownerId) {
-      if (ownerId) {
-        watch.state.ownerId = ownerId;
-      }
-      return null;
+    resumeToken?: string
+  ):
+    | { success: true; leaseToken: string }
+    | {
+        success: false;
+        error: {
+          message: string;
+          code: string;
+          details?: Record<string, unknown>;
+        };
+      } {
+    if (!watch.leaseToken) {
+      const nextLeaseToken = crypto.randomUUID();
+      watch.leaseToken = nextLeaseToken;
+      watch.resumeToken = resumeToken ?? null;
+      return { success: true, leaseToken: nextLeaseToken };
     }
 
-    if (!ownerId) {
+    if (
+      !watch.resumeToken ||
+      !resumeToken ||
+      watch.resumeToken !== resumeToken
+    ) {
       return {
-        message:
-          'Persistent watch is already owned by another consumer. Provide the same ownerId to reuse it.',
-        code: ErrorCode.RESOURCE_BUSY,
-        details: {
-          watchId: watch.id,
-          ownerId: watch.state.ownerId
+        success: false,
+        error: {
+          message:
+            'A persistent watch already exists for this path. Reuse it with the same resumeToken or wait for it to expire.',
+          code: ErrorCode.RESOURCE_BUSY,
+          details: {
+            watchId: watch.id
+          }
         }
       };
     }
 
-    if (watch.state.ownerId !== ownerId) {
-      return {
-        message: `Persistent watch is owned by '${watch.state.ownerId}' and cannot be claimed by '${ownerId}'.`,
-        code: ErrorCode.RESOURCE_BUSY,
-        details: {
-          watchId: watch.id,
-          ownerId: watch.state.ownerId,
-          requestedOwnerId: ownerId
-        }
-      };
-    }
-
-    return null;
+    return { success: true, leaseToken: watch.leaseToken };
   }
 
-  private verifyPersistentWatchOwner(
+  private verifyPersistentWatchLease(
     watch: ActiveWatch,
-    ownerId: string | undefined,
-    action: 'acknowledge' | 'stop'
+    leaseToken: string | undefined,
+    action: 'checkpoint' | 'stop'
   ): {
     message: string;
     code: string;
     details?: Record<string, unknown>;
   } | null {
-    if (!watch.state.ownerId) {
-      return null;
-    }
-
-    if (!ownerId) {
+    if (!watch.persistent || !watch.leaseToken) {
       return {
-        message: `Persistent watch requires ownerId to ${action}.`,
+        message: `Only persistent watches can ${action}.`,
         code: ErrorCode.RESOURCE_BUSY,
         details: {
           watchId: watch.id,
-          ownerId: watch.state.ownerId,
           action
         }
       };
     }
 
-    if (watch.state.ownerId !== ownerId) {
+    if (!leaseToken) {
       return {
-        message: `Persistent watch is owned by '${watch.state.ownerId}' and cannot be ${action}d by '${ownerId}'.`,
+        message: `Persistent watch requires a lease token to ${action}.`,
         code: ErrorCode.RESOURCE_BUSY,
         details: {
           watchId: watch.id,
-          ownerId: watch.state.ownerId,
-          requestedOwnerId: ownerId,
+          action
+        }
+      };
+    }
+
+    if (watch.leaseToken !== leaseToken) {
+      return {
+        message: `Persistent watch lease token does not allow this ${action}.`,
+        code: ErrorCode.RESOURCE_BUSY,
+        details: {
+          watchId: watch.id,
           action
         }
       };
@@ -812,7 +827,7 @@ export class WatchService {
             };
 
             watch.state.cursor = nextCursor;
-            watch.state.dirty = true;
+            watch.state.changed = true;
             watch.state.lastEventAt = timestamp;
             this.broadcastEvent(watch, event);
           }
@@ -833,7 +848,7 @@ export class WatchService {
             };
 
             watch.state.cursor = nextCursor;
-            watch.state.dirty = true;
+            watch.state.changed = true;
             watch.state.lastEventAt = timestamp;
             this.broadcastEvent(watch, event);
           }
@@ -877,13 +892,7 @@ export class WatchService {
       args.push('-r');
     }
 
-    const events: FileWatchEventType[] = options.events || [
-      'create',
-      'modify',
-      'delete',
-      'move_from',
-      'move_to'
-    ];
+    const events = this.normalizeEvents(options.events);
     const inotifyEvents = events
       .map((e) => this.mapEventType(e))
       .filter((e): e is string => e !== undefined);
@@ -891,11 +900,17 @@ export class WatchService {
       args.push('-e', inotifyEvents.join(','));
     }
 
-    const includeRegex = this.buildCombinedPathRegex(options.include);
+    const includeRegex = this.buildCombinedPathRegex(
+      this.normalizePatterns(options.include)
+    );
     if (includeRegex) {
       args.push('--include', includeRegex);
     } else {
-      const excludes = options.exclude || ['.git', 'node_modules', '.DS_Store'];
+      const excludes = this.normalizePatterns(options.exclude) ?? [
+        '.git',
+        'node_modules',
+        '.DS_Store'
+      ];
       const excludeRegex = this.buildCombinedPathRegex(excludes);
       if (excludeRegex) {
         args.push('--exclude', excludeRegex);
@@ -917,6 +932,37 @@ export class WatchService {
       attrib: 'attrib'
     };
     return mapping[type];
+  }
+
+  private normalizePatterns(patterns?: string[]): string[] | undefined {
+    if (!patterns || patterns.length === 0) {
+      return undefined;
+    }
+
+    return Array.from(new Set(patterns)).sort();
+  }
+
+  private normalizeEvents(events?: FileWatchEventType[]): FileWatchEventType[] {
+    const defaultEvents: FileWatchEventType[] = [
+      'create',
+      'modify',
+      'delete',
+      'move_from',
+      'move_to'
+    ];
+
+    if (!events || events.length === 0) {
+      return defaultEvents;
+    }
+
+    const orderedEvents = defaultEvents.filter((eventType) =>
+      events.includes(eventType)
+    );
+    const additionalEvents = events.filter(
+      (eventType) => !orderedEvents.includes(eventType)
+    );
+
+    return [...orderedEvents, ...additionalEvents];
   }
 
   private buildCombinedPathRegex(patterns?: string[]): string | undefined {

@@ -42,8 +42,9 @@ export {
 // =============================================================================
 
 export type {
-  WatchAckRequest,
-  WatchAckResult,
+  PersistentWatchOptions,
+  WatchCheckpointRequest,
+  WatchCheckpointResult,
   WatchEnsureResult,
   WatchRequest,
   WatchState,

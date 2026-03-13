@@ -1,8 +1,8 @@
 import { posix as pathPosix } from 'node:path';
 import type {
   Logger,
-  WatchAckRequest,
-  WatchAckResult,
+  WatchCheckpointRequest,
+  WatchCheckpointResult,
   WatchEnsureResult,
   WatchRequest,
   WatchStateResult,
@@ -61,8 +61,8 @@ export class WatchHandler extends BaseHandler<Request, Response> {
         return this.handleStopWatch(request, context, watchId);
       }
 
-      if (action === 'ack' && request.method === 'POST') {
-        return this.handleAckWatchState(request, context, watchId);
+      if (action === 'checkpoint' && request.method === 'POST') {
+        return this.handleCheckpointWatch(request, context, watchId);
       }
     }
 
@@ -130,7 +130,8 @@ export class WatchHandler extends BaseHandler<Request, Response> {
 
     const response: WatchEnsureResult = {
       success: true,
-      watch: result.data,
+      watch: result.data.watch,
+      leaseToken: result.data.leaseToken,
       timestamp: new Date().toISOString()
     };
 
@@ -155,14 +156,14 @@ export class WatchHandler extends BaseHandler<Request, Response> {
     return this.createTypedResponse(response, context);
   }
 
-  private async handleAckWatchState(
+  private async handleCheckpointWatch(
     request: Request,
     context: RequestContext,
     watchId: string
   ): Promise<Response> {
-    let body: WatchAckRequest;
+    let body: WatchCheckpointRequest;
     try {
-      body = await this.parseRequestBody<WatchAckRequest>(request);
+      body = await this.parseRequestBody<WatchCheckpointRequest>(request);
     } catch (error) {
       return this.createErrorResponse(
         {
@@ -185,23 +186,33 @@ export class WatchHandler extends BaseHandler<Request, Response> {
       );
     }
 
-    const ownerIdError = this.validateOwnerId(body.ownerId);
-    if (ownerIdError) {
-      return this.createErrorResponse(ownerIdError, context);
+    if (body.leaseToken === undefined) {
+      return this.createErrorResponse(
+        {
+          message: 'leaseToken is required',
+          code: ErrorCode.VALIDATION_FAILED
+        },
+        context
+      );
     }
 
-    const result = await this.watchService.ackWatchState(
+    const leaseTokenError = this.validateToken('leaseToken', body.leaseToken);
+    if (leaseTokenError) {
+      return this.createErrorResponse(leaseTokenError, context);
+    }
+
+    const result = await this.watchService.checkpointWatch(
       watchId,
       body.cursor,
-      body.ownerId
+      body.leaseToken
     );
     if (!result.success) {
       return this.createErrorResponse(result.error, context);
     }
 
-    const response: WatchAckResult = {
+    const response: WatchCheckpointResult = {
       success: true,
-      acknowledged: result.data.acknowledged,
+      checkpointed: result.data.checkpointed,
       watch: result.data.watch,
       timestamp: new Date().toISOString()
     };
@@ -214,13 +225,14 @@ export class WatchHandler extends BaseHandler<Request, Response> {
     context: RequestContext,
     watchId: string
   ): Promise<Response> {
-    const ownerId = this.extractQueryParam(request, 'ownerId') ?? undefined;
-    const ownerIdError = this.validateOwnerId(ownerId);
-    if (ownerIdError) {
-      return this.createErrorResponse(ownerIdError, context);
+    const leaseToken =
+      this.extractQueryParam(request, 'leaseToken') ?? undefined;
+    const leaseTokenError = this.validateToken('leaseToken', leaseToken);
+    if (leaseTokenError) {
+      return this.createErrorResponse(leaseTokenError, context);
     }
 
-    const result = await this.watchService.stopWatch(watchId, ownerId);
+    const result = await this.watchService.stopWatch(watchId, leaseToken);
     if (!result.success) {
       return this.createErrorResponse(result.error, context);
     }
@@ -341,36 +353,42 @@ export class WatchHandler extends BaseHandler<Request, Response> {
       };
     }
 
-    const ownerIdError = this.validateOwnerId(body.ownerId);
-    if (ownerIdError) {
-      return ownerIdError;
+    const resumeTokenError = this.validateToken(
+      'resumeToken',
+      body.resumeToken
+    );
+    if (resumeTokenError) {
+      return resumeTokenError;
     }
 
     return null;
   }
 
-  private validateOwnerId(ownerId: unknown): {
+  private validateToken(
+    tokenName: 'leaseToken' | 'resumeToken',
+    token: unknown
+  ): {
     message: string;
     code: string;
     details?: Record<string, unknown>;
   } | null {
-    if (ownerId === undefined) {
+    if (token === undefined) {
       return null;
     }
 
-    if (typeof ownerId !== 'string' || ownerId.trim() === '') {
+    if (typeof token !== 'string' || token.trim() === '') {
       return {
-        message: 'ownerId must be a non-empty string when provided',
+        message: `${tokenName} must be a non-empty string when provided`,
         code: ErrorCode.VALIDATION_FAILED,
-        details: { ownerId }
+        details: { [tokenName]: token }
       };
     }
 
-    if (ownerId.includes('\0')) {
+    if (token.includes('\0')) {
       return {
-        message: 'ownerId contains invalid null bytes',
+        message: `${tokenName} contains invalid null bytes`,
         code: ErrorCode.VALIDATION_FAILED,
-        details: { ownerId }
+        details: { [tokenName]: token }
       };
     }
 

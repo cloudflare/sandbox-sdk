@@ -1031,7 +1031,7 @@ console.log('Terminal server on port ' + port);
           recursive: body.recursive,
           include: body.include,
           exclude: body.exclude,
-          ownerId: body.ownerId,
+          resumeToken: body.resumeToken,
           sessionId: sessionId ?? undefined
         });
 
@@ -1043,7 +1043,7 @@ console.log('Terminal server on port ' + port);
       if (
         url.pathname.startsWith('/api/watch/') &&
         request.method === 'GET' &&
-        !url.pathname.endsWith('/ack')
+        !url.pathname.endsWith('/checkpoint')
       ) {
         const watchId = url.pathname.split('/')[3];
         const result = await sandbox.getWatchState(watchId);
@@ -1053,11 +1053,11 @@ console.log('Terminal server on port ' + port);
         });
       }
 
-      if (url.pathname.endsWith('/ack') && request.method === 'POST') {
+      if (url.pathname.endsWith('/checkpoint') && request.method === 'POST') {
         const watchId = url.pathname.split('/')[3];
-        const result = await sandbox.ackWatchState(watchId, {
+        const result = await sandbox.checkpointWatch(watchId, {
           cursor: body.cursor,
-          ownerId: body.ownerId
+          leaseToken: body.leaseToken
         });
 
         return new Response(JSON.stringify(result), {
@@ -1071,7 +1071,7 @@ console.log('Terminal server on port ' + port);
       ) {
         const watchId = url.pathname.split('/')[3];
         const result = await sandbox.stopWatch(watchId, {
-          ownerId: url.searchParams.get('ownerId') ?? undefined
+          leaseToken: url.searchParams.get('leaseToken') ?? undefined
         });
 
         return new Response(JSON.stringify(result), {

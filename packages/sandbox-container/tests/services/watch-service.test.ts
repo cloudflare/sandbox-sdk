@@ -14,6 +14,7 @@ interface FakeWatchProcess {
 interface WatchServiceTestAccessor {
   activeWatches: Map<string, unknown>;
   watchIdsByKey: Map<string, string>;
+  createWatchKey(path: string, options: WatchRequest): string;
   parseInotifyEvent(line: string): {
     eventType: string;
     path: string;
@@ -29,9 +30,8 @@ function makeWatchState(overrides: Partial<WatchState> = {}): WatchState {
     recursive: true,
     include: undefined,
     exclude: ['.git'],
-    ownerId: undefined,
     cursor: 0,
-    dirty: false,
+    changed: false,
     overflowed: false,
     lastEventAt: null,
     expiresAt: null,
@@ -64,6 +64,8 @@ function makeActiveWatch(overrides: Partial<Record<string, unknown>> = {}) {
     exclude: state.exclude,
     process,
     startedAt: new Date(state.startedAt),
+    leaseToken:
+      (overrides.leaseToken as string | null | undefined) ?? 'lease-1',
     state,
     persistent: true,
     subscribers: new Map(),
@@ -112,48 +114,61 @@ describe('WatchService', () => {
       }
     });
 
-    it('should clear dirty state only when ack cursor matches', async () => {
+    it('should clear changed state only when checkpoint cursor matches', async () => {
       const watch = makeActiveWatch({
-        state: { cursor: 7, dirty: true, overflowed: true, ownerId: 'owner-1' }
+        state: { cursor: 7, changed: true, overflowed: true }
       });
       accessor.activeWatches.set('watch-1', watch);
       accessor.watchIdsByKey.set('watch-key', 'watch-1');
 
-      const result = await watchService.ackWatchState('watch-1', 7, 'owner-1');
+      const result = await watchService.checkpointWatch(
+        'watch-1',
+        7,
+        'lease-1'
+      );
 
       expect(result.success).toBe(true);
       if (result.success) {
-        expect(result.data.acknowledged).toBe(true);
-        expect(result.data.watch.dirty).toBe(false);
+        expect(result.data.checkpointed).toBe(true);
+        expect(result.data.watch.changed).toBe(false);
         expect(result.data.watch.overflowed).toBe(false);
       }
     });
 
-    it('should keep dirty state when ack cursor is stale', async () => {
+    it('should keep changed state when checkpoint cursor is stale', async () => {
       const watch = makeActiveWatch({
-        state: { cursor: 8, dirty: true, overflowed: true }
+        state: { cursor: 8, changed: true, overflowed: true }
       });
       accessor.activeWatches.set('watch-1', watch);
       accessor.watchIdsByKey.set('watch-key', 'watch-1');
 
-      const result = await watchService.ackWatchState('watch-1', 7);
+      const result = await watchService.checkpointWatch(
+        'watch-1',
+        7,
+        'lease-1'
+      );
 
       expect(result.success).toBe(true);
       if (result.success) {
-        expect(result.data.acknowledged).toBe(false);
-        expect(result.data.watch.dirty).toBe(true);
+        expect(result.data.checkpointed).toBe(false);
+        expect(result.data.watch.changed).toBe(true);
         expect(result.data.watch.overflowed).toBe(true);
       }
     });
 
-    it('should reject ack from a different owner', async () => {
+    it('should reject checkpoint from a different lease token', async () => {
       const watch = makeActiveWatch({
-        state: { cursor: 8, dirty: true, ownerId: 'owner-1' }
+        state: { cursor: 8, changed: true },
+        leaseToken: 'lease-1'
       });
       accessor.activeWatches.set('watch-1', watch);
       accessor.watchIdsByKey.set('watch-key', 'watch-1');
 
-      const result = await watchService.ackWatchState('watch-1', 8, 'other');
+      const result = await watchService.checkpointWatch(
+        'watch-1',
+        8,
+        'lease-2'
+      );
 
       expect(result.success).toBe(false);
       if (!result.success) {
@@ -161,11 +176,30 @@ describe('WatchService', () => {
       }
     });
 
-    it('should require ownerId when stopping an owned watch', async () => {
+    it('should reject checkpoint for non-persistent watches', async () => {
+      const watch = makeActiveWatch({
+        persistent: false,
+        leaseToken: null
+      });
+      accessor.activeWatches.set('watch-1', watch);
+      accessor.watchIdsByKey.set('watch-key', 'watch-1');
+
+      const result = await watchService.checkpointWatch(
+        'watch-1',
+        8,
+        'lease-1'
+      );
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.code).toBe(ErrorCode.RESOURCE_BUSY);
+      }
+    });
+
+    it('should require leaseToken when stopping a leased watch', async () => {
       const process = makeFakeProcess();
       const watch = makeActiveWatch({
-        process,
-        state: { ownerId: 'owner-1' }
+        process
       });
       accessor.activeWatches.set('watch-1', watch);
       accessor.watchIdsByKey.set('watch-key', 'watch-1');
@@ -180,9 +214,7 @@ describe('WatchService', () => {
     });
 
     it('should refresh persistent watch expiry on read', async () => {
-      const watch = makeActiveWatch({
-        state: { expiresAt: null, ownerId: 'owner-1' }
-      });
+      const watch = makeActiveWatch({ state: { expiresAt: null } });
       accessor.activeWatches.set('watch-1', watch);
       accessor.watchIdsByKey.set('watch-key', 'watch-1');
 
@@ -194,13 +226,56 @@ describe('WatchService', () => {
       }
     });
 
+    it('should return the same lease token when reusing a persistent watch', async () => {
+      const watch = makeActiveWatch({
+        leaseToken: 'lease-1',
+        resumeToken: 'resume-1'
+      });
+      accessor.activeWatches.set('watch-1', watch);
+      accessor.watchIdsByKey.set(
+        accessor.createWatchKey('/workspace/test', { path: '/workspace/test' }),
+        'watch-1'
+      );
+
+      const result = await watchService.ensureWatch('/workspace/test', {
+        path: '/workspace/test',
+        resumeToken: 'resume-1'
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.leaseToken).toBe('lease-1');
+      }
+    });
+
+    it('should reject reusing a persistent watch without the same resume token', async () => {
+      const watch = makeActiveWatch({
+        leaseToken: 'lease-1',
+        resumeToken: 'resume-1'
+      });
+      accessor.activeWatches.set('watch-1', watch);
+      accessor.watchIdsByKey.set(
+        accessor.createWatchKey('/workspace/test', { path: '/workspace/test' }),
+        'watch-1'
+      );
+
+      const result = await watchService.ensureWatch('/workspace/test', {
+        path: '/workspace/test'
+      });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.code).toBe(ErrorCode.RESOURCE_BUSY);
+      }
+    });
+
     it('should stop an active watch and clean up indexes', async () => {
       const process = makeFakeProcess();
-      const watch = makeActiveWatch({ process, state: { ownerId: 'owner-1' } });
+      const watch = makeActiveWatch({ process });
       accessor.activeWatches.set('watch-1', watch);
       accessor.watchIdsByKey.set('watch-key', 'watch-1');
 
-      const result = await watchService.stopWatch('watch-1', 'owner-1');
+      const result = await watchService.stopWatch('watch-1', 'lease-1');
 
       expect(result.success).toBe(true);
       expect(process.kill).toHaveBeenCalled();
@@ -323,6 +398,17 @@ describe('WatchService', () => {
   });
 
   describe('buildInotifyArgs', () => {
+    const testCreateWatchKey = (
+      service: WatchService,
+      path: string,
+      options: WatchRequest
+    ) => {
+      return (service as unknown as WatchServiceTestAccessor).createWatchKey(
+        path,
+        options
+      );
+    };
+
     const testBuildArgs = (
       service: WatchService,
       path: string,
@@ -389,6 +475,57 @@ describe('WatchService', () => {
       const includePattern = args[includeIndex + 1];
       expect(includePattern).toContain('(^|/)[^/]*\\.ts(/|$)');
       expect(includePattern).toContain('(^|/)src/.*(/|$)');
+    });
+
+    it('should treat empty include arrays like no include filter', () => {
+      const args = testBuildArgs(watchService, '/app', {
+        path: '/app',
+        include: [],
+        exclude: ['tmp']
+      });
+      expect(args).not.toContain('--include');
+      expect(args).toContain('--exclude');
+      const excludeIndex = args.indexOf('--exclude');
+      expect(args[excludeIndex + 1]).toContain('(^|/)tmp(/|$)');
+    });
+
+    it('should include event filters in the watch key', () => {
+      const createOnlyKey = testCreateWatchKey(watchService, '/app', {
+        path: '/app',
+        events: ['create']
+      });
+      const modifyOnlyKey = testCreateWatchKey(watchService, '/app', {
+        path: '/app',
+        events: ['modify']
+      });
+
+      expect(createOnlyKey).not.toBe(modifyOnlyKey);
+    });
+
+    it('should normalize event order in the watch key', () => {
+      const firstKey = testCreateWatchKey(watchService, '/app', {
+        path: '/app',
+        events: ['create', 'modify']
+      });
+      const secondKey = testCreateWatchKey(watchService, '/app', {
+        path: '/app',
+        events: ['modify', 'create']
+      });
+
+      expect(firstKey).toBe(secondKey);
+    });
+
+    it('should normalize include pattern order in the watch key', () => {
+      const firstKey = testCreateWatchKey(watchService, '/app', {
+        path: '/app',
+        include: ['*.ts', 'src/**']
+      });
+      const secondKey = testCreateWatchKey(watchService, '/app', {
+        path: '/app',
+        include: ['src/**', '*.ts']
+      });
+
+      expect(firstKey).toBe(secondKey);
     });
 
     it('should add path as last argument', () => {
