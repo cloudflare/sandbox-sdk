@@ -833,6 +833,13 @@ export interface ProcessCleanupResult {
   timestamp: string;
 }
 
+export interface ProcessWaitForExitResult {
+  success: boolean;
+  processId: string;
+  exitCode: number;
+  timestamp: string;
+}
+
 // Session management result types
 export interface SessionCreateResult {
   success: boolean;

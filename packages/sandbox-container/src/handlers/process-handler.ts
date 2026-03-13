@@ -7,7 +7,9 @@ import type {
   ProcessLogsResult,
   ProcessStartResult,
   ProcessStatus,
-  StartProcessRequest
+  ProcessWaitForExitResult,
+  StartProcessRequest,
+  WaitForExitRequest
 } from '@repo/shared';
 import { ErrorCode } from '@repo/shared/errors';
 
@@ -48,6 +50,8 @@ export class ProcessHandler extends BaseHandler<Request, Response> {
           return await this.handleLogs(request, context, processId);
         } else if (action === 'stream' && request.method === 'GET') {
           return await this.handleStream(request, context, processId);
+        } else if (action === 'waitForExit' && request.method === 'POST') {
+          return await this.handleWaitForExit(request, context, processId);
         }
       }
     }
@@ -215,6 +219,32 @@ export class ProcessHandler extends BaseHandler<Request, Response> {
     } else {
       return this.createErrorResponse(result.error, context);
     }
+  }
+
+  private async handleWaitForExit(
+    request: Request,
+    context: RequestContext,
+    processId: string
+  ): Promise<Response> {
+    const body = await this.parseRequestBody<WaitForExitRequest>(request);
+
+    const result = await this.processService.waitForProcessExit(
+      processId,
+      body.timeout
+    );
+
+    if (result.success) {
+      const response: ProcessWaitForExitResult = {
+        success: true,
+        processId,
+        exitCode: result.data.exitCode,
+        timestamp: new Date().toISOString()
+      };
+
+      return this.createTypedResponse(response, context);
+    }
+
+    return this.createErrorResponse(result.error, context);
   }
 
   private async handleStream(

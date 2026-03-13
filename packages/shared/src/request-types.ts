@@ -31,6 +31,13 @@ export interface StartProcessRequest {
 }
 
 /**
+ * Request to wait for a background process to exit
+ */
+export interface WaitForExitRequest {
+  timeout?: number;
+}
+
+/**
  * Request to read a file
  */
 export interface ReadFileRequest {

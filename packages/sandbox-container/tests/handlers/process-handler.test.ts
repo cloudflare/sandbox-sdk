@@ -7,6 +7,7 @@ import type {
   ProcessListResult,
   ProcessLogsResult,
   ProcessStartResult,
+  ProcessWaitForExitResult,
   StartProcessRequest
 } from '@repo/shared';
 import type { ErrorResponse } from '@repo/shared/errors';
@@ -24,6 +25,7 @@ const mockProcessService = {
   killProcess: vi.fn(),
   killAllProcesses: vi.fn(),
   listProcesses: vi.fn(),
+  waitForProcessExit: vi.fn(),
   executeCommand: vi.fn()
 } as unknown as ProcessService;
 
@@ -406,6 +408,67 @@ describe('ProcessHandler', () => {
       expect(responseData.message).toBe('Failed to kill processes');
       expect(responseData.httpStatus).toBe(500);
       expect(responseData.timestamp).toBeDefined();
+    });
+  });
+
+  describe('handleWaitForExit - POST /api/process/{id}/waitForExit', () => {
+    it('should wait for process exit successfully', async () => {
+      (mockProcessService.waitForProcessExit as any).mockResolvedValue({
+        success: true,
+        data: {
+          exitCode: 143
+        }
+      });
+
+      const request = new Request(
+        'http://localhost:3000/api/process/proc-123/waitForExit',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ timeout: 5000 })
+        }
+      );
+
+      const response = await processHandler.handle(request, mockContext);
+
+      expect(response.status).toBe(200);
+      const responseData = (await response.json()) as ProcessWaitForExitResult;
+      expect(responseData.success).toBe(true);
+      expect(responseData.processId).toBe('proc-123');
+      expect(responseData.exitCode).toBe(143);
+      expect(responseData.timestamp).toBeDefined();
+
+      expect(mockProcessService.waitForProcessExit).toHaveBeenCalledWith(
+        'proc-123',
+        5000
+      );
+    });
+
+    it('should handle wait for exit timeouts', async () => {
+      (mockProcessService.waitForProcessExit as any).mockResolvedValue({
+        success: false,
+        error: {
+          message: 'Timed out waiting for process',
+          code: 'PROCESS_READY_TIMEOUT'
+        }
+      });
+
+      const request = new Request(
+        'http://localhost:3000/api/process/proc-123/waitForExit',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ timeout: 100 })
+        }
+      );
+
+      const response = await processHandler.handle(request, mockContext);
+
+      expect(response.status).toBe(408);
+      const responseData = (await response.json()) as ErrorResponse;
+      expect(responseData.code).toBe('PROCESS_READY_TIMEOUT');
+      expect(responseData.message).toBe('Timed out waiting for process');
+      expect(responseData.httpStatus).toBe(408);
     });
   });
 

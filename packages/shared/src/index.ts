@@ -84,6 +84,7 @@ export type {
   SessionCreateRequest,
   SessionDeleteRequest,
   StartProcessRequest,
+  WaitForExitRequest,
   WriteFileRequest
 } from './request-types.js';
 // Export shell utilities
@@ -151,6 +152,7 @@ export type {
   // Process management result types
   ProcessStartResult,
   ProcessStatus,
+  ProcessWaitForExitResult,
   ReadFileResult,
   RemoteMountBucketOptions,
   RenameFileResult,

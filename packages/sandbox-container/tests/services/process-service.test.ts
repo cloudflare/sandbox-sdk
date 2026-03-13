@@ -341,6 +341,54 @@ describe('ProcessService', () => {
     });
   });
 
+  describe('waitForProcessExit', () => {
+    it('should return immediately for completed processes', async () => {
+      const mockProcess = createMockProcess({
+        status: 'completed',
+        exitCode: 0,
+        streamingComplete: Promise.resolve()
+      });
+
+      mocked(mockProcessStore.get).mockResolvedValue(mockProcess);
+
+      const result = await processService.waitForProcessExit('proc-123');
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.exitCode).toBe(0);
+      }
+    });
+
+    it('should wait for running processes to emit a terminal status', async () => {
+      let resolveStreamingComplete: (() => void) | undefined;
+      const streamingComplete = new Promise<void>((resolve) => {
+        resolveStreamingComplete = resolve;
+      });
+      const mockProcess = createMockProcess({
+        status: 'running',
+        streamingComplete
+      });
+
+      mocked(mockProcessStore.get).mockResolvedValue(mockProcess);
+
+      const waitPromise = processService.waitForProcessExit('proc-123');
+
+      mockProcess.exitCode = 143;
+      mockProcess.status = 'killed';
+      mockProcess.statusListeners.forEach((listener) => {
+        listener('killed');
+      });
+      resolveStreamingComplete?.();
+
+      const result = await waitPromise;
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.exitCode).toBe(143);
+      }
+    });
+  });
+
   describe('killAllProcesses', () => {
     it('should kill all running processes', async () => {
       const mockProcesses = [

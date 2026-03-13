@@ -1,4 +1,4 @@
-import type { Logger } from '@repo/shared';
+import type { Logger, WaitForExitResult } from '@repo/shared';
 import type {
   CommandErrorContext,
   ProcessErrorContext,
@@ -335,6 +335,89 @@ export class ProcessService {
     }
   }
 
+  async waitForProcessExit(
+    id: string,
+    timeoutMs?: number
+  ): Promise<ServiceResult<WaitForExitResult>> {
+    try {
+      const processRecord = await this.store.get(id);
+
+      if (!processRecord) {
+        return {
+          success: false,
+          error: {
+            message: `Process ${id} not found`,
+            code: ErrorCode.PROCESS_NOT_FOUND,
+            details: {
+              processId: id
+            } satisfies ProcessNotFoundContext
+          }
+        };
+      }
+
+      const waitForExit = this.waitForTerminalProcess(processRecord);
+      const result =
+        timeoutMs === undefined
+          ? await waitForExit
+          : await Promise.race([
+              waitForExit,
+              new Promise<never>((_, reject) => {
+                setTimeout(() => {
+                  reject(
+                    new Error(
+                      `Timed out waiting for process '${id}' to exit after ${timeoutMs}ms`
+                    )
+                  );
+                }, timeoutMs);
+              })
+            ]);
+
+      return {
+        success: true,
+        data: result
+      };
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : 'Unknown error';
+
+      if (
+        timeoutMs !== undefined &&
+        errorMessage.includes(`Timed out waiting for process '${id}' to exit`)
+      ) {
+        return {
+          success: false,
+          error: {
+            message: errorMessage,
+            code: ErrorCode.PROCESS_READY_TIMEOUT,
+            details: {
+              processId: id,
+              timeoutMs
+            }
+          }
+        };
+      }
+
+      this.logger.error(
+        'Failed to wait for process exit',
+        error instanceof Error ? error : undefined,
+        { processId: id, timeoutMs }
+      );
+
+      return {
+        success: false,
+        error: {
+          message: `Failed to wait for process '${id}' to exit: ${errorMessage}`,
+          code: ErrorCode.PROCESS_ERROR,
+          details: {
+            processId: id,
+            stderr: errorMessage,
+            ...(timeoutMs !== undefined ? { timeoutMs } : {})
+          } satisfies ProcessErrorContext
+        }
+      };
+    }
+  }
+
   async killProcess(id: string): Promise<ServiceResult<void>> {
     try {
       const process = await this.store.get(id);
@@ -471,5 +554,45 @@ export class ProcessService {
   async destroy(): Promise<void> {
     // Kill all running processes
     await this.killAllProcesses();
+  }
+
+  private isTerminalProcessStatus(status: ProcessStatus): boolean {
+    return ['completed', 'failed', 'killed', 'error'].includes(status);
+  }
+
+  private async waitForTerminalProcess(
+    processRecord: ProcessRecord
+  ): Promise<WaitForExitResult> {
+    const finalize = async (): Promise<WaitForExitResult> => {
+      await processRecord.streamingComplete;
+      return {
+        exitCode: processRecord.exitCode ?? 1
+      };
+    };
+
+    if (this.isTerminalProcessStatus(processRecord.status)) {
+      return finalize();
+    }
+
+    return new Promise<WaitForExitResult>((resolve) => {
+      let settled = false;
+
+      const listener = (status: ProcessStatus) => {
+        if (settled || !this.isTerminalProcessStatus(status)) {
+          return;
+        }
+
+        settled = true;
+        processRecord.statusListeners.delete(listener);
+
+        void finalize().then(resolve);
+      };
+
+      processRecord.statusListeners.add(listener);
+
+      if (this.isTerminalProcessStatus(processRecord.status)) {
+        listener(processRecord.status);
+      }
+    });
   }
 }
