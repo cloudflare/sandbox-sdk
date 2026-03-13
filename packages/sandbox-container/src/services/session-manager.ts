@@ -1,5 +1,6 @@
 // SessionManager Service - Manages persistent execution sessions
 
+import { rm } from 'node:fs/promises';
 import {
   type ExecEvent,
   type Logger,
@@ -769,12 +770,19 @@ export class SessionManager {
       // Capture the session shell's current environment and working
       // directory so the PTY inherits env vars set via setEnvVars()
       // and reflects any directory changes made in the session.
+      //
+      // Captures env output to a temp file. The exec pipeline's
+      // `read`-based labeling strips \0 from stdout, so reading
+      // the file directly with Bun preserves the null-byte delimiters.
       const sessionEnv: Record<string, string> = {};
       let sessionCwd: string = CONFIG.DEFAULT_CWD;
+      const safeId = sessionId.replace(/[^a-zA-Z0-9_-]/g, '_');
+      const tempEnvFile = `/tmp/pty-env-${safeId}-${Date.now()}`;
       try {
-        const envResult = await session.exec('env -0');
-        if (envResult.exitCode === 0 && envResult.stdout) {
-          for (const entry of envResult.stdout.split('\0')) {
+        const envResult = await session.exec(`env -0 > '${tempEnvFile}'`);
+        if (envResult.exitCode === 0) {
+          const envText = await Bun.file(tempEnvFile).text();
+          for (const entry of envText.split('\0')) {
             const idx = entry.indexOf('=');
             if (idx > 0) {
               sessionEnv[entry.slice(0, idx)] = entry.slice(idx + 1);
@@ -790,6 +798,8 @@ export class SessionManager {
         this.logger.warn('Failed to capture session state for PTY', {
           sessionId
         });
+      } finally {
+        await rm(tempEnvFile, { force: true }).catch(() => {});
       }
 
       const pty = new Pty({
