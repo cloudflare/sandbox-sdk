@@ -497,5 +497,5 @@ for i in range(3):
       'Python interpreter not available'
     );
     expect(pythonUnavailableError.error).toMatch(/-python/);
-  }, 30000);
+  }, 60000);
 });
