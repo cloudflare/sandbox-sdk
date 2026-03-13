@@ -165,7 +165,10 @@ export class ProcessService {
             });
           } else if (event.type === 'complete') {
             const exitCode = event.exitCode ?? 0;
-            const status = this.manager.interpretExitCode(exitCode);
+            const status =
+              processRecord.status === 'killed'
+                ? 'killed'
+                : this.manager.interpretExitCode(exitCode);
             const endTime = new Date();
 
             processRecord.status = status;

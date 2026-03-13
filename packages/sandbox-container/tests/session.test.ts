@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { ExecEvent } from '@repo/shared';
 import { Session } from '../src/session';
 
 describe('Session', () => {
@@ -386,7 +387,9 @@ describe('Session', () => {
 
     it('should handle heredoc with variable expansion', async () => {
       await session.exec('MY_VAR="expanded"');
-      const result = await session.exec('cat << EOF\n${MY_VAR}\nEOF');
+      const result = await session.exec(`cat << EOF
+\${MY_VAR}
+EOF`);
 
       expect(result.exitCode).toBe(0);
       expect(result.stdout.trim()).toBe('expanded');
@@ -412,7 +415,7 @@ describe('Session', () => {
     });
 
     it('should stream command output', async () => {
-      const events: any[] = [];
+      const events: ExecEvent[] = [];
 
       for await (const event of session.execStream(
         'echo "Hello"; echo "World"'
@@ -438,7 +441,7 @@ describe('Session', () => {
     });
 
     it('should stream stderr separately', async () => {
-      const events: any[] = [];
+      const events: ExecEvent[] = [];
 
       for await (const event of session.execStream(
         'echo "out"; echo "err" >&2'
@@ -453,8 +456,16 @@ describe('Session', () => {
       expect(stderrEvents.length).toBeGreaterThan(0);
 
       // Verify data
-      expect(stdoutEvents.some((e) => e.data.includes('out'))).toBe(true);
-      expect(stderrEvents.some((e) => e.data.includes('err'))).toBe(true);
+      expect(
+        stdoutEvents.some(
+          (e) => typeof e.data === 'string' && e.data.includes('out')
+        )
+      ).toBe(true);
+      expect(
+        stderrEvents.some(
+          (e) => typeof e.data === 'string' && e.data.includes('err')
+        )
+      ).toBe(true);
     });
 
     it('should maintain session state during streaming', async () => {
@@ -462,7 +473,7 @@ describe('Session', () => {
       await session.exec('STREAM_VAR="stream-test"');
 
       // Stream command that uses the variable
-      const events: any[] = [];
+      const events: ExecEvent[] = [];
       for await (const event of session.execStream('echo $STREAM_VAR')) {
         events.push(event);
       }
@@ -470,6 +481,9 @@ describe('Session', () => {
       // Should complete successfully
       const completeEvent = events.find((e) => e.type === 'complete');
       expect(completeEvent).toBeDefined();
+      if (!completeEvent) {
+        throw new Error('Missing complete event');
+      }
       expect(completeEvent.exitCode).toBe(0);
 
       // Should have correct output
@@ -479,7 +493,7 @@ describe('Session', () => {
     });
 
     it('should handle errors during streaming', async () => {
-      const events: any[] = [];
+      const events: ExecEvent[] = [];
 
       for await (const event of session.execStream('nonexistentcommand456')) {
         events.push(event);
@@ -494,6 +508,63 @@ describe('Session', () => {
       if (completeEvent) {
         expect(completeEvent.exitCode).not.toBe(0);
       }
+    });
+
+    it('should kill descendant processes without leaking monitor mode', async () => {
+      const commandId = 'test-kill-process-group';
+      let resolveChildPid: ((pid: number) => void) | undefined;
+      const childPidPromise = new Promise<number>((resolve) => {
+        resolveChildPid = resolve;
+      });
+      const events: ExecEvent[] = [];
+
+      const streamTask = (async () => {
+        for await (const event of session.execStream(
+          'sleep 30 &\necho "$!"\nwait',
+          {
+            commandId
+          }
+        )) {
+          events.push(event);
+
+          if (event.type !== 'stdout' || !resolveChildPid || !event.data) {
+            continue;
+          }
+
+          const childPid = Number.parseInt(event.data.trim(), 10);
+          if (Number.isInteger(childPid) && childPid > 0) {
+            resolveChildPid(childPid);
+            resolveChildPid = undefined;
+          }
+        }
+      })();
+
+      const childPid = await Promise.race([
+        childPidPromise,
+        Bun.sleep(5000).then(() => {
+          throw new Error('Timed out waiting for child pid');
+        })
+      ]);
+
+      expect(await session.killCommand(commandId)).toBe(true);
+      await streamTask;
+
+      const liveness = await session.exec(
+        `kill -0 ${childPid} 2>/dev/null && echo alive || echo dead`
+      );
+      expect(liveness.stdout.trim()).toBe('dead');
+
+      const followUp = await session.exec('sleep 0.1 & sleep 0.3; echo ok');
+      expect(followUp.exitCode).toBe(0);
+      expect(followUp.stdout.trim()).toBe('ok');
+      expect(followUp.stderr).toBe('');
+
+      const completeEvent = events.find((event) => event.type === 'complete');
+      expect(completeEvent).toBeDefined();
+      if (!completeEvent) {
+        throw new Error('Missing complete event after kill');
+      }
+      expect(completeEvent.exitCode).toBeGreaterThan(0);
     });
   });
 

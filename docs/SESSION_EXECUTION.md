@@ -99,9 +99,9 @@ The TypeScript `parseLogFile()` method strips these prefixes to reconstruct sepa
 
 ## Process Termination
 
-Background processes can be killed using `killProcess()`. The implementation sends `SIGTERM` to the process for graceful termination.
-
-**Limitation**: Child processes spawned by the command may not be killed automatically. This is a known limitation - only the direct process receives the signal.
+Background processes can be killed using `killProcess()`. Background commands run in
+their own process group, so termination targets the whole command subtree with a
+graceful `SIGTERM` followed by `SIGKILL` if the group does not exit in time.
 
 ## TypeScript Patterns
 

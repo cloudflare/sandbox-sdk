@@ -1,4 +1,4 @@
-import type { Process, ProcessLogsResult } from '@repo/shared';
+import type { ExecResult, Process, ProcessLogsResult } from '@repo/shared';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import {
   cleanupTestSandbox,
@@ -40,6 +40,70 @@ describe('Process Lifecycle Error Handling', () => {
       'Content-Type': 'application/json'
     };
   }, 120000);
+
+  async function readExecStdout(command: string): Promise<string> {
+    const response = await fetch(`${workerUrl}/api/execute`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ command })
+    });
+
+    expect(response.status).toBe(200);
+    const result = (await response.json()) as ExecResult;
+    return result.stdout.trim();
+  }
+
+  async function waitForChildPid(
+    pidFilePath: string,
+    timeoutMs = 10000
+  ): Promise<number> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const output = await readExecStdout(
+        `cat '${pidFilePath}' 2>/dev/null || true`
+      );
+      const pid = Number.parseInt(output, 10);
+      if (Number.isInteger(pid) && pid > 0) {
+        return pid;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+
+    throw new Error(`Timed out waiting for child pid file: ${pidFilePath}`);
+  }
+
+  async function waitForProcessExit(
+    processId: string,
+    timeoutMs = 5000
+  ): Promise<void> {
+    const response = await fetch(
+      `${workerUrl}/api/process/${processId}/waitForExit`,
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ timeout: timeoutMs })
+      }
+    );
+
+    expect(response.status).toBe(200);
+  }
+
+  async function isProcessAlive(pid: number): Promise<boolean> {
+    const output = await readExecStdout(
+      `kill -0 ${pid} 2>/dev/null && echo alive || echo dead`
+    );
+    return output === 'alive';
+  }
+
+  async function getProcess(processId: string): Promise<Process> {
+    const response = await fetch(`${workerUrl}/api/process/${processId}`, {
+      method: 'GET',
+      headers
+    });
+
+    expect(response.status).toBe(200);
+    return (await response.json()) as Process;
+  }
 
   afterAll(async () => {
     await cleanupTestSandbox(sandbox);
@@ -92,6 +156,90 @@ describe('Process Lifecycle Error Handling', () => {
     expect(logsResponse.status).toBe(200);
     const logsData = (await logsResponse.json()) as ProcessLogsResult;
     expect(logsData.stdout).toContain('Hello from process');
+  }, 90000);
+
+  test('should terminate descendant processes when killed', async () => {
+    const token = `kill-tree-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const scriptPath = `/workspace/${token}.sh`;
+    const pidFilePath = `/workspace/${token}.pid`;
+    const scriptCode = `#!/usr/bin/env bash
+sleep 120 &
+echo "$!" > '${pidFilePath}'
+wait`;
+    let processId: string | null = null;
+    let childPid: number | null = null;
+
+    try {
+      const writeResponse = await fetch(`${workerUrl}/api/file/write`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          path: scriptPath,
+          content: scriptCode
+        })
+      });
+      expect(writeResponse.status).toBe(200);
+
+      const startResponse = await fetch(`${workerUrl}/api/process/start`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          command: `bash '${scriptPath}'`
+        })
+      });
+
+      expect(startResponse.status).toBe(200);
+      const processData = (await startResponse.json()) as Process;
+      processId = processData.id;
+
+      childPid = await waitForChildPid(pidFilePath);
+      expect(await isProcessAlive(childPid)).toBe(true);
+
+      const killResponse = await fetch(
+        `${workerUrl}/api/process/${processId}`,
+        {
+          method: 'DELETE',
+          headers
+        }
+      );
+      expect(killResponse.status).toBe(200);
+
+      await waitForProcessExit(processId);
+
+      for (let attempt = 0; attempt < 20; attempt++) {
+        if (!(await isProcessAlive(childPid))) {
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+
+      const processInfo = await getProcess(processId);
+      expect(processInfo.status).toBe('killed');
+      expect(processInfo.exitCode).toBeDefined();
+    } finally {
+      if (processId) {
+        await fetch(`${workerUrl}/api/process/${processId}`, {
+          method: 'DELETE',
+          headers
+        }).catch(() => {});
+      }
+
+      if (childPid !== null) {
+        await readExecStdout(
+          `kill -9 ${childPid} 2>/dev/null || true; rm -f '${pidFilePath}'`
+        ).catch(() => {});
+      } else {
+        await readExecStdout(`rm -f '${pidFilePath}'`).catch(() => {});
+      }
+
+      await readExecStdout(`rm -f '${scriptPath}'`).catch(() => {});
+    }
+
+    expect(childPid).not.toBeNull();
+    if (childPid === null) {
+      throw new Error('Child PID was not captured');
+    }
+    expect(await isProcessAlive(childPid)).toBe(false);
   }, 90000);
 
   test('should stream process logs in real-time', async () => {

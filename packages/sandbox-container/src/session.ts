@@ -92,7 +92,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { watch } from 'node:fs';
-import { mkdir, open, rm, stat } from 'node:fs/promises';
+import { mkdir, open, rename, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import type { ExecEvent, Logger } from '@repo/shared';
@@ -683,41 +683,53 @@ export class Session {
    * so they cannot be killed mid-execution (use timeout instead).
    *
    * @param commandId - The unique command identifier
+   * @param waitForExit - If true, wait for the process group to exit before returning.
    * @returns true if command was killed, false if not found or already completed
    */
-  async killCommand(commandId: string): Promise<boolean> {
+  async killCommand(commandId: string, waitForExit = true): Promise<boolean> {
     const handle = this.runningCommands.get(commandId);
     if (!handle) {
       return false; // Command not found or already completed
     }
 
-    try {
-      // Try reading PID from file (might still exist if command running)
-      const pidFile = Bun.file(handle.pidFile);
-      const pidFileExists = await pidFile.exists();
-
-      if (pidFileExists) {
-        const pidText = await pidFile.text();
-        const pid = parseInt(pidText.trim(), 10);
-
-        if (!Number.isNaN(pid)) {
-          // Send SIGTERM for graceful termination
-          process.kill(pid, 'SIGTERM');
-
-          // Clean up
-          this.runningCommands.delete(commandId);
-          return true;
-        }
-      }
-
+    const pid = await this.readTrackedPid(handle.pidFile);
+    if (pid === undefined) {
       // PID file gone = command already completed
       this.runningCommands.delete(commandId);
       return false;
-    } catch (error) {
-      // Process already dead or PID invalid
+    }
+
+    const termResult = this.signalProcessGroup(pid, 'SIGTERM');
+    if (termResult === 'not_found') {
       this.runningCommands.delete(commandId);
       return false;
     }
+
+    let syntheticExitCode = 143;
+    let exited = true;
+
+    if (waitForExit) {
+      exited = await this.waitForProcessGroupExit(pid, 5000);
+      if (!exited) {
+        syntheticExitCode = 137;
+        this.signalProcessGroup(pid, 'SIGKILL');
+        exited = await this.waitForProcessGroupExit(pid, 1000);
+      }
+    } else {
+      // destroy() path: skip waiting and force-kill immediately for fast teardown
+      syntheticExitCode = 137;
+      this.signalProcessGroup(pid, 'SIGKILL');
+    }
+
+    if (!exited) {
+      throw new Error(
+        `Command '${commandId}' did not exit after SIGKILL for process group ${pid}`
+      );
+    }
+
+    await this.writeSyntheticExitCode(handle.exitCodeFile, syntheticExitCode);
+    this.runningCommands.delete(commandId);
+    return true;
   }
 
   /**
@@ -748,7 +760,7 @@ export class Session {
     // Kill all running commands first
     const runningCommandIds = Array.from(this.runningCommands.keys());
     await Promise.all(
-      runningCommandIds.map((commandId) => this.killCommand(commandId))
+      runningCommandIds.map((commandId) => this.killCommand(commandId, false))
     );
 
     if (this.shell && !this.shell.killed) {
@@ -927,6 +939,12 @@ export class Session {
     if (isBackground) {
       // BACKGROUND PATTERN (for execStream/startProcess)
       // Command runs in subshell, shell continues immediately
+      script += `  RESTORE_MONITOR=0\n`;
+      script += `  if [[ $- != *m* ]]; then\n`;
+      script += `    set -m\n`;
+      script += `    RESTORE_MONITOR=1\n`;
+      script += `  fi\n`;
+      script += `  \n`;
 
       // Create FIFOs and start labelers (background mode)
       // Labeler pattern explanation:
@@ -1000,6 +1018,10 @@ export class Session {
         script += `    touch ${safeLabelersDoneFile}\n`;
         script += `  ) &\n`;
       }
+
+      script += `  if [[ "$RESTORE_MONITOR" -eq 1 ]]; then\n`;
+      script += `    set +m\n`;
+      script += `  fi\n`;
     } else {
       // FOREGROUND PATTERN (for exec)
       // Command runs in main shell, state persists!
@@ -1304,6 +1326,82 @@ export class Session {
     }
 
     return undefined;
+  }
+
+  private async readTrackedPid(
+    pidFilePath: string
+  ): Promise<number | undefined> {
+    try {
+      const pidFile = Bun.file(pidFilePath);
+      if (!(await pidFile.exists())) {
+        return undefined;
+      }
+
+      const pid = parseInt((await pidFile.text()).trim(), 10);
+      return Number.isNaN(pid) ? undefined : pid;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private signalProcessGroup(
+    processGroupId: number,
+    signal: NodeJS.Signals
+  ): 'sent' | 'not_found' {
+    try {
+      process.kill(-processGroupId, signal);
+      return 'sent';
+    } catch (error) {
+      if (error instanceof Error && 'code' in error && error.code === 'ESRCH') {
+        return 'not_found';
+      }
+
+      throw error;
+    }
+  }
+
+  private isProcessGroupAlive(processGroupId: number): boolean {
+    try {
+      process.kill(-processGroupId, 0);
+      return true;
+    } catch (error) {
+      return !(
+        error instanceof Error &&
+        'code' in error &&
+        error.code === 'ESRCH'
+      );
+    }
+  }
+
+  private async waitForProcessGroupExit(
+    processGroupId: number,
+    timeoutMs: number
+  ): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (!this.isProcessGroupAlive(processGroupId)) {
+        return true;
+      }
+      await Bun.sleep(50);
+    }
+
+    return !this.isProcessGroupAlive(processGroupId);
+  }
+
+  private async writeSyntheticExitCode(
+    exitCodeFile: string,
+    exitCode: number
+  ): Promise<void> {
+    const file = Bun.file(exitCodeFile);
+    if (await file.exists()) {
+      return;
+    }
+
+    const tempFile = `${exitCodeFile}.tmp`;
+    await Bun.write(tempFile, `${exitCode}\n`);
+    await rename(tempFile, exitCodeFile).catch(async () => {
+      await rm(tempFile, { force: true }).catch(() => {});
+    });
   }
 
   /**
