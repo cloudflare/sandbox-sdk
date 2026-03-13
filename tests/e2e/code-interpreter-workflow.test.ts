@@ -436,8 +436,6 @@ for i in range(3):
   // ============================================================================
 
   test('error handling: invalid language, non-existent context, Python unavailable', async () => {
-    const t0 = Date.now();
-
     // Invalid language
     const invalidLangResponse = await fetch(
       `${workerUrl}/api/code/context/create`,
@@ -447,7 +445,6 @@ for i in range(3):
         body: JSON.stringify({ language: 'invalid-lang' })
       }
     );
-    console.log(`[timing] op1-invalid-lang: ${Date.now() - t0}ms`);
     expect(invalidLangResponse.status).toBeGreaterThanOrEqual(400);
     const invalidLangError =
       (await invalidLangResponse.json()) as ErrorResponse;
@@ -464,7 +461,6 @@ for i in range(3):
         }
       })
     });
-    console.log(`[timing] op2-fake-context: ${Date.now() - t0}ms`);
     expect(fakeContextExec.status).toBeGreaterThanOrEqual(400);
     const fakeContextError = (await fakeContextExec.json()) as ErrorResponse;
     expect(fakeContextError.error).toBeTruthy();
@@ -475,12 +471,10 @@ for i in range(3):
       headers,
       body: JSON.stringify({ command: 'echo "init"' })
     });
-    console.log(`[timing] op3-echo-init: ${Date.now() - t0}ms`);
     const deleteFakeResponse = await fetch(
       `${workerUrl}/api/code/context/fake-id-99999`,
       { method: 'DELETE', headers }
     );
-    console.log(`[timing] op4-delete-fake: ${Date.now() - t0}ms`);
     expect(deleteFakeResponse.status).toBeGreaterThanOrEqual(400);
     const deleteFakeError = (await deleteFakeResponse.json()) as ErrorResponse;
     expect(deleteFakeError.error).toBeTruthy();
@@ -496,7 +490,6 @@ for i in range(3):
         body: JSON.stringify({ language: 'python' })
       }
     );
-    console.log(`[timing] op5-python-unavail: ${Date.now() - t0}ms`);
     expect(pythonUnavailableResponse.status).toBe(500);
     const pythonUnavailableError =
       (await pythonUnavailableResponse.json()) as ErrorResponse;
