@@ -80,7 +80,7 @@ export class SecurityService {
 
   /**
    * Validate port number
-   * - Protects port 3000 (SDK control plane) - CRITICAL!
+   * - Protects the SDK control plane port - CRITICAL!
    * - Range validation (1-65535)
    * - No arbitrary port restrictions (users control their sandbox!)
    */

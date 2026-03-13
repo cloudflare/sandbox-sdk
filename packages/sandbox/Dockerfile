@@ -216,7 +216,7 @@ ENV PYTHON_POOL_MIN_SIZE=0
 ENV JAVASCRIPT_POOL_MIN_SIZE=3
 ENV TYPESCRIPT_POOL_MIN_SIZE=3
 
-# Expose OpenCode server port (in addition to 3000 from runtime-base)
+# Expose OpenCode server port (in addition to control port from runtime-base)
 EXPOSE 4096
 
 ENTRYPOINT ["/container-server/sandbox"]

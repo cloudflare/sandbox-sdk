@@ -2,7 +2,7 @@
  * SecurityService Tests - Phase 0 Simplified Security Model
  *
  * Philosophy: Trust container isolation, only protect SDK control plane
- * - Port 3000 is protected (SDK control plane)
+ * - Control plane port is protected
  * - Format validation only (null bytes, length limits)
  * - No content restrictions (no path blocking, no command blocking, no URL allowlists)
  */

@@ -8,9 +8,8 @@ import { DEFAULT_CONTROL_PORT } from '@repo/shared';
  * Default: 8671
  * Environment variable: SANDBOX_CONTROL_PORT
  */
-const SERVER_PORT = process.env.SANDBOX_CONTROL_PORT
-  ? parseInt(process.env.SANDBOX_CONTROL_PORT, 10)
-  : DEFAULT_CONTROL_PORT;
+const SERVER_PORT =
+  Number(process.env.SANDBOX_CONTROL_PORT) || DEFAULT_CONTROL_PORT;
 
 /**
  * How long to wait for an interpreter process to spawn and become ready.
