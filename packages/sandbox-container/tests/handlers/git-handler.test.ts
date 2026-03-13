@@ -63,7 +63,7 @@ describe('GitHandler', () => {
         data: mockGitResult
       });
 
-      const request = new Request('http://localhost:3000/api/git/checkout', {
+      const request = new Request('http://localhost:8671/api/git/checkout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(gitCheckoutData)
@@ -108,7 +108,7 @@ describe('GitHandler', () => {
         data: mockGitResult
       });
 
-      const request = new Request('http://localhost:3000/api/git/checkout', {
+      const request = new Request('http://localhost:8671/api/git/checkout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(gitCheckoutData)
@@ -157,7 +157,7 @@ describe('GitHandler', () => {
         }
       });
 
-      const request = new Request('http://localhost:3000/api/git/checkout', {
+      const request = new Request('http://localhost:8671/api/git/checkout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(gitCheckoutData)
@@ -191,7 +191,7 @@ describe('GitHandler', () => {
         }
       });
 
-      const request = new Request('http://localhost:3000/api/git/checkout', {
+      const request = new Request('http://localhost:8671/api/git/checkout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(gitCheckoutData)
@@ -227,7 +227,7 @@ describe('GitHandler', () => {
         }
       });
 
-      const request = new Request('http://localhost:3000/api/git/checkout', {
+      const request = new Request('http://localhost:8671/api/git/checkout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(gitCheckoutData)
@@ -265,7 +265,7 @@ describe('GitHandler', () => {
         }
       });
 
-      const request = new Request('http://localhost:3000/api/git/checkout', {
+      const request = new Request('http://localhost:8671/api/git/checkout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(gitCheckoutData)
@@ -300,7 +300,7 @@ describe('GitHandler', () => {
         }
       });
 
-      const request = new Request('http://localhost:3000/api/git/checkout', {
+      const request = new Request('http://localhost:8671/api/git/checkout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(gitCheckoutData)
@@ -320,7 +320,7 @@ describe('GitHandler', () => {
   describe('route handling', () => {
     it('should return 404 for invalid git endpoints', async () => {
       const request = new Request(
-        'http://localhost:3000/api/git/invalid-operation',
+        'http://localhost:8671/api/git/invalid-operation',
         {
           method: 'POST'
         }
@@ -340,7 +340,7 @@ describe('GitHandler', () => {
     });
 
     it('should return 500 for root git path', async () => {
-      const request = new Request('http://localhost:3000/api/git/', {
+      const request = new Request('http://localhost:8671/api/git/', {
         method: 'POST'
       });
 
@@ -355,7 +355,7 @@ describe('GitHandler', () => {
     });
 
     it('should return 500 for git endpoint without operation', async () => {
-      const request = new Request('http://localhost:3000/api/git', {
+      const request = new Request('http://localhost:8671/api/git', {
         method: 'POST'
       });
 
@@ -381,7 +381,7 @@ describe('GitHandler', () => {
         data: { path: '/tmp/repo', branch: 'main' }
       });
 
-      const request = new Request('http://localhost:3000/api/git/checkout', {
+      const request = new Request('http://localhost:8671/api/git/checkout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(gitCheckoutData)
@@ -400,7 +400,7 @@ describe('GitHandler', () => {
     });
 
     it('should include CORS headers in error responses', async () => {
-      const request = new Request('http://localhost:3000/api/git/invalid', {
+      const request = new Request('http://localhost:8671/api/git/invalid', {
         method: 'POST'
       });
 
@@ -424,7 +424,7 @@ describe('GitHandler', () => {
         data: { path: '/tmp/feature-work', branch: 'feature-branch' }
       });
 
-      const request = new Request('http://localhost:3000/api/git/checkout', {
+      const request = new Request('http://localhost:8671/api/git/checkout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(gitCheckoutData)
@@ -464,7 +464,7 @@ describe('GitHandler', () => {
         data: { path: '/tmp/repo', branch: 'main' }
       });
 
-      const request = new Request('http://localhost:3000/api/git/checkout', {
+      const request = new Request('http://localhost:8671/api/git/checkout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(gitCheckoutData)
@@ -488,7 +488,7 @@ describe('GitHandler', () => {
         data: { path: '/workspace/repo', branch: 'main' }
       });
 
-      const request = new Request('http://localhost:3000/api/git/checkout', {
+      const request = new Request('http://localhost:8671/api/git/checkout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(gitCheckoutData)

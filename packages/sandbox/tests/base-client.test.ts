@@ -30,7 +30,7 @@ class TestHttpClient extends BaseHttpClient {
   constructor(options: HttpClientOptions = {}) {
     super({
       baseUrl: 'http://test.com',
-      port: 3000,
+      port: 8671,
       ...options
     });
   }
@@ -72,7 +72,7 @@ describe('BaseHttpClient', () => {
 
     client = new TestHttpClient({
       baseUrl: 'http://test.com',
-      port: 3000,
+      port: 8671,
       onError
     });
   });
@@ -295,7 +295,7 @@ describe('BaseHttpClient', () => {
       const stub = { containerFetch: stubFetch, fetch: vi.fn() };
       const stubClient = new TestHttpClient({
         baseUrl: 'http://test.com',
-        port: 3000,
+        port: 8671,
         stub
       });
 
@@ -305,9 +305,9 @@ describe('BaseHttpClient', () => {
       expect(result.success).toBe(true);
       expect(result.source).toBe('stub');
       expect(stubFetch).toHaveBeenCalledWith(
-        'http://localhost:3000/api/stub-test',
+        'http://localhost:8671/api/stub-test',
         { method: 'GET' },
-        3000
+        8671
       );
       expect(mockFetch).not.toHaveBeenCalled();
     });
@@ -319,7 +319,7 @@ describe('BaseHttpClient', () => {
       const stub = { containerFetch: stubFetch, fetch: vi.fn() };
       const stubClient = new TestHttpClient({
         baseUrl: 'http://test.com',
-        port: 3000,
+        port: 8671,
         stub
       });
 

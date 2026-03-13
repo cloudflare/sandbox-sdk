@@ -83,7 +83,7 @@ describe('ProcessHandler', () => {
         data: mockProcessInfo
       });
 
-      const request = new Request('http://localhost:3000/api/process/start', {
+      const request = new Request('http://localhost:8671/api/process/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(startProcessData)
@@ -118,7 +118,7 @@ describe('ProcessHandler', () => {
         }
       });
 
-      const request = new Request('http://localhost:3000/api/process/start', {
+      const request = new Request('http://localhost:8671/api/process/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(startProcessData)
@@ -172,7 +172,7 @@ describe('ProcessHandler', () => {
         data: mockProcesses
       });
 
-      const request = new Request('http://localhost:3000/api/process/list', {
+      const request = new Request('http://localhost:8671/api/process/list', {
         method: 'GET'
       });
 
@@ -198,7 +198,7 @@ describe('ProcessHandler', () => {
       });
 
       const request = new Request(
-        'http://localhost:3000/api/process/list?sessionId=session-123&status=running',
+        'http://localhost:8671/api/process/list?sessionId=session-123&status=running',
         {
           method: 'GET'
         }
@@ -224,7 +224,7 @@ describe('ProcessHandler', () => {
         }
       });
 
-      const request = new Request('http://localhost:3000/api/process/list', {
+      const request = new Request('http://localhost:8671/api/process/list', {
         method: 'GET'
       });
 
@@ -261,7 +261,7 @@ describe('ProcessHandler', () => {
       });
 
       const request = new Request(
-        'http://localhost:3000/api/process/proc-123',
+        'http://localhost:8671/api/process/proc-123',
         {
           method: 'GET'
         }
@@ -288,7 +288,7 @@ describe('ProcessHandler', () => {
       });
 
       const request = new Request(
-        'http://localhost:3000/api/process/nonexistent',
+        'http://localhost:8671/api/process/nonexistent',
         {
           method: 'GET'
         }
@@ -313,7 +313,7 @@ describe('ProcessHandler', () => {
       });
 
       const request = new Request(
-        'http://localhost:3000/api/process/proc-123',
+        'http://localhost:8671/api/process/proc-123',
         {
           method: 'DELETE'
         }
@@ -340,7 +340,7 @@ describe('ProcessHandler', () => {
       });
 
       const request = new Request(
-        'http://localhost:3000/api/process/proc-123',
+        'http://localhost:8671/api/process/proc-123',
         {
           method: 'DELETE'
         }
@@ -366,7 +366,7 @@ describe('ProcessHandler', () => {
       });
 
       const request = new Request(
-        'http://localhost:3000/api/process/kill-all',
+        'http://localhost:8671/api/process/kill-all',
         {
           method: 'POST'
         }
@@ -391,7 +391,7 @@ describe('ProcessHandler', () => {
       });
 
       const request = new Request(
-        'http://localhost:3000/api/process/kill-all',
+        'http://localhost:8671/api/process/kill-all',
         {
           method: 'POST'
         }
@@ -430,7 +430,7 @@ describe('ProcessHandler', () => {
       });
 
       const request = new Request(
-        'http://localhost:3000/api/process/proc-123/logs',
+        'http://localhost:8671/api/process/proc-123/logs',
         {
           method: 'GET'
         }
@@ -457,7 +457,7 @@ describe('ProcessHandler', () => {
       });
 
       const request = new Request(
-        'http://localhost:3000/api/process/nonexistent/logs',
+        'http://localhost:8671/api/process/nonexistent/logs',
         {
           method: 'GET'
         }
@@ -496,7 +496,7 @@ describe('ProcessHandler', () => {
       });
 
       const request = new Request(
-        'http://localhost:3000/api/process/proc-123/stream',
+        'http://localhost:8671/api/process/proc-123/stream',
         {
           method: 'GET'
         }
@@ -533,7 +533,7 @@ describe('ProcessHandler', () => {
       });
 
       const request = new Request(
-        'http://localhost:3000/api/process/proc-123/stream',
+        'http://localhost:8671/api/process/proc-123/stream',
         {
           method: 'GET'
         }
@@ -559,7 +559,7 @@ describe('ProcessHandler', () => {
       });
 
       const request = new Request(
-        'http://localhost:3000/api/process/proc-123/stream',
+        'http://localhost:8671/api/process/proc-123/stream',
         {
           method: 'GET'
         }
@@ -601,7 +601,7 @@ describe('ProcessHandler', () => {
     });
 
     const request = new Request(
-      'http://localhost:3000/api/process/proc-cancel/stream',
+      'http://localhost:8671/api/process/proc-cancel/stream',
       { method: 'GET' }
     );
 
@@ -636,7 +636,7 @@ describe('ProcessHandler', () => {
       });
 
       const request = new Request(
-        'http://localhost:3000/api/process/invalid-endpoint',
+        'http://localhost:8671/api/process/invalid-endpoint',
         {
           method: 'GET'
         }
@@ -662,7 +662,7 @@ describe('ProcessHandler', () => {
         }
       });
 
-      const request = new Request('http://localhost:3000/api/process/', {
+      const request = new Request('http://localhost:8671/api/process/', {
         method: 'GET'
       });
 
@@ -678,7 +678,7 @@ describe('ProcessHandler', () => {
 
     it('should handle unsupported HTTP methods for process endpoints', async () => {
       const request = new Request(
-        'http://localhost:3000/api/process/proc-123',
+        'http://localhost:8671/api/process/proc-123',
         {
           method: 'PUT' // Unsupported method
         }
@@ -696,7 +696,7 @@ describe('ProcessHandler', () => {
 
     it('should handle unsupported actions on process endpoints', async () => {
       const request = new Request(
-        'http://localhost:3000/api/process/proc-123/unsupported-action',
+        'http://localhost:8671/api/process/proc-123/unsupported-action',
         {
           method: 'GET'
         }
@@ -720,7 +720,7 @@ describe('ProcessHandler', () => {
         data: []
       });
 
-      const request = new Request('http://localhost:3000/api/process/list', {
+      const request = new Request('http://localhost:8671/api/process/list', {
         method: 'GET'
       });
 
@@ -745,7 +745,7 @@ describe('ProcessHandler', () => {
         }
       });
 
-      const request = new Request('http://localhost:3000/api/process/invalid', {
+      const request = new Request('http://localhost:8671/api/process/invalid', {
         method: 'GET'
       });
 

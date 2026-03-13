@@ -1,3 +1,16 @@
+import { DEFAULT_CONTROL_PORT } from '@repo/shared';
+
+/**
+ * Port the container HTTP server binds to (SDK control plane).
+ * The SDK always sets SANDBOX_CONTROL_PORT in envVars before starting
+ * the container, so the fallback only guards against standalone/test usage.
+ *
+ * Default: 8671
+ * Environment variable: SANDBOX_CONTROL_PORT
+ */
+const SERVER_PORT =
+  Number(process.env.SANDBOX_CONTROL_PORT) || DEFAULT_CONTROL_PORT;
+
 /**
  * How long to wait for an interpreter process to spawn and become ready.
  * If an interpreter doesn't start within this time, something is fundamentally
@@ -53,6 +66,7 @@ const STREAM_CHUNK_DELAY_MS = 100;
 const DEFAULT_CWD = '/workspace';
 
 export const CONFIG = {
+  SERVER_PORT,
   INTERPRETER_SPAWN_TIMEOUT_MS,
   INTERPRETER_EXECUTION_TIMEOUT_MS,
   COMMAND_TIMEOUT_MS,

@@ -24,9 +24,9 @@ export class SecurityError extends Error {
  *
  * Rules:
  * - Range: 1024-65535 (privileged ports require root, which containers don't have)
- * - Reserved: 3000 (sandbox control plane)
+ * - Reserved: Control plane port (default 8671) is reserved and cannot be used for user services
  */
-export function validatePort(port: number): boolean {
+export function validatePort(port: number, controlPort: number): boolean {
   // Must be a valid integer
   if (!Number.isInteger(port)) {
     return false;
@@ -37,9 +37,7 @@ export function validatePort(port: number): boolean {
     return false;
   }
 
-  const reservedPorts = [3000];
-
-  if (reservedPorts.includes(port)) {
+  if (port === controlPort) {
     return false;
   }
 

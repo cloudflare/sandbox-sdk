@@ -5,7 +5,8 @@ export async function proxyTerminal(
   stub: { fetch: (request: Request) => Promise<Response> },
   sessionId: string,
   request: Request,
-  options?: PtyOptions
+  options: PtyOptions | undefined,
+  controlPort: number
 ): Promise<Response> {
   if (!sessionId || typeof sessionId !== 'string') {
     throw new Error('sessionId is required for terminal access');
@@ -24,5 +25,5 @@ export async function proxyTerminal(
   const ptyUrl = `http://localhost/ws/pty?${params}`;
   const ptyRequest = new Request(ptyUrl, request);
 
-  return stub.fetch(switchPort(ptyRequest, 3000));
+  return stub.fetch(switchPort(ptyRequest, controlPort));
 }

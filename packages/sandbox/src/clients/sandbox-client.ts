@@ -53,9 +53,7 @@ export class SandboxClient {
       });
     }
 
-    // Ensure baseUrl is provided for all clients
     const clientOptions: HttpClientOptions = {
-      baseUrl: 'http://localhost:3000',
       ...options,
       // Share transport across all clients
       transport: this.transport ?? options.transport
