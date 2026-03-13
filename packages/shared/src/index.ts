@@ -132,6 +132,8 @@ export type {
   MkdirResult,
   MountBucketOptions,
   MoveFileResult,
+  // File watch types
+  PersistentWatchOptions,
   PortCheckRequest,
   PortCheckResponse,
   PortCloseResult,
@@ -167,9 +169,15 @@ export type {
   WaitForExitResult,
   WaitForLogResult,
   WaitForPortOptions,
-  // File watch types
+  WatchCheckpointRequest,
+  WatchCheckpointResult,
+  WatchEnsureResult,
   WatchOptions,
   WatchRequest,
+  WatchState,
+  WatchStateResult,
+  WatchStopOptions,
+  WatchStopResult,
   WriteFileResult
 } from './types.js';
 export {

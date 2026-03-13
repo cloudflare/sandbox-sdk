@@ -15,6 +15,7 @@ import type {
   LocalMountBucketOptions,
   LogEvent,
   MountBucketOptions,
+  PersistentWatchOptions,
   PortWatchEvent,
   Process,
   ProcessOptions,
@@ -29,7 +30,11 @@ import type {
   WaitForExitResult,
   WaitForLogResult,
   WaitForPortOptions,
-  WatchOptions
+  WatchCheckpointRequest,
+  WatchCheckpointResult,
+  WatchEnsureResult,
+  WatchOptions,
+  WatchStopOptions
 } from '@repo/shared';
 import {
   createLogger,
@@ -39,7 +44,9 @@ import {
   partitionEnvVars,
   type SessionDeleteResult,
   shellEscape,
-  TraceContext
+  TraceContext,
+  type WatchStateResult,
+  type WatchStopResult
 } from '@repo/shared';
 import { AwsClient } from 'aws4fetch';
 import { type Desktop, type ExecuteResponse, SandboxClient } from './clients';
@@ -2630,6 +2637,39 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     });
   }
 
+  async ensureWatch(
+    path: string,
+    options: PersistentWatchOptions = {}
+  ): Promise<WatchEnsureResult> {
+    const sessionId = options.sessionId ?? (await this.ensureDefaultSession());
+    return this.client.watch.ensureWatch({
+      path,
+      recursive: options.recursive,
+      include: options.include,
+      exclude: options.exclude,
+      resumeToken: options.resumeToken,
+      sessionId
+    });
+  }
+
+  async getWatchState(watchId: string): Promise<WatchStateResult> {
+    return this.client.watch.getWatchState(watchId);
+  }
+
+  async checkpointWatch(
+    watchId: string,
+    request: WatchCheckpointRequest
+  ): Promise<WatchCheckpointResult> {
+    return this.client.watch.checkpointWatch(watchId, request);
+  }
+
+  async stopWatch(
+    watchId: string,
+    options: WatchStopOptions = {}
+  ): Promise<WatchStopResult> {
+    return this.client.watch.stopWatch(watchId, options);
+  }
+
   /**
    * Expose a port and get a preview URL for accessing services running in the sandbox
    *
@@ -3029,7 +3069,17 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       readFile: (path, options) =>
         this.readFile(path, { ...options, sessionId }),
       readFileStream: (path) => this.readFileStream(path, { sessionId }),
-      watch: (path, options) => this.watch(path, { ...options, sessionId }),
+      watch: (path, options: Omit<WatchOptions, 'sessionId'> = {}) =>
+        this.watch(path, { ...options, sessionId }),
+      ensureWatch: (
+        path: string,
+        options?: Omit<PersistentWatchOptions, 'sessionId'>
+      ) => this.ensureWatch(path, { ...options, sessionId }),
+      getWatchState: (watchId: string) => this.getWatchState(watchId),
+      checkpointWatch: (watchId: string, request: WatchCheckpointRequest) =>
+        this.checkpointWatch(watchId, request),
+      stopWatch: (watchId: string, options?: WatchStopOptions) =>
+        this.stopWatch(watchId, options),
       mkdir: (path, options) => this.mkdir(path, { ...options, sessionId }),
       deleteFile: (path) => this.deleteFile(path, sessionId),
       renameFile: (oldPath, newPath) =>
