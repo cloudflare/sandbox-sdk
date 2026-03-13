@@ -37,6 +37,7 @@ const mockSessionManager = {
   executeInSession: vi.fn(),
   executeStreamInSession: vi.fn(),
   killCommand: vi.fn(),
+  killProcessByPid: vi.fn(),
   setEnvVars: vi.fn(),
   getSession: vi.fn(),
   createSession: vi.fn(),
@@ -289,6 +290,38 @@ describe('ProcessService', () => {
         status: 'killed',
         endTime: expect.any(Date)
       });
+    });
+
+    it('should fall back to killing by pid when command tracking is missing', async () => {
+      const mockProcess = createMockProcess({
+        command: 'sleep 10',
+        pid: 4242,
+        status: 'running'
+      });
+
+      mocked(mockProcessStore.get).mockResolvedValue(mockProcess);
+      mocked(mockSessionManager.killCommand).mockResolvedValue({
+        success: false,
+        error: {
+          message: 'Command not found',
+          code: 'COMMAND_NOT_FOUND'
+        }
+      } as ServiceResult<void>);
+      mocked(mockSessionManager.killProcessByPid).mockResolvedValue({
+        success: true
+      } as ServiceResult<void>);
+
+      const result = await processService.killProcess('proc-123');
+
+      expect(result.success).toBe(true);
+      expect(mockSessionManager.killCommand).toHaveBeenCalledWith(
+        'default',
+        'proc-123'
+      );
+      expect(mockSessionManager.killProcessByPid).toHaveBeenCalledWith(
+        'default',
+        4242
+      );
     });
 
     it('should return error when process not found', async () => {

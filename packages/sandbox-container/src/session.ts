@@ -706,6 +706,27 @@ export class Session {
       return false;
     }
 
+    const killed = await this.terminateProcessTree(pid, waitForExit, commandId);
+    if (!killed) {
+      this.runningCommands.delete(commandId);
+      return false;
+    }
+
+    const syntheticExitCode = waitForExit ? 143 : 137;
+    await this.writeSyntheticExitCode(handle.exitCodeFile, syntheticExitCode);
+    this.runningCommands.delete(commandId);
+    return true;
+  }
+
+  async killPid(pid: number, waitForExit = true): Promise<boolean> {
+    return this.terminateProcessTree(pid, waitForExit);
+  }
+
+  private async terminateProcessTree(
+    pid: number,
+    waitForExit: boolean,
+    commandId?: string
+  ): Promise<boolean> {
     const trackedProcesses = this.captureProcessTree(pid);
     const trackedPids = trackedProcesses.map((process) => process.pid);
 
@@ -715,31 +736,30 @@ export class Session {
       termResult === 'not_found' &&
       !this.hasLiveTrackedProcesses(trackedPids)
     ) {
-      this.runningCommands.delete(commandId);
       return false;
     }
 
-    let syntheticExitCode = 143;
     let exited = true;
 
     if (waitForExit) {
       exited = await this.waitForTrackedProcessesExit(trackedPids, 5000);
       if (!exited) {
-        syntheticExitCode = 137;
         this.signalProcessGroup(pid, 'SIGKILL');
         this.signalTrackedProcesses(trackedProcesses, 'SIGKILL');
         exited = await this.waitForTrackedProcessesExit(trackedPids, 1000);
       }
     } else {
       // destroy() path: skip waiting and force-kill immediately for fast teardown
-      syntheticExitCode = 137;
       this.signalProcessGroup(pid, 'SIGKILL');
       this.signalTrackedProcesses(trackedProcesses, 'SIGKILL');
     }
 
     if (!exited) {
+      const processLabel = commandId
+        ? `Command '${commandId}'`
+        : `Process ${pid}`;
       this.logger.warn(
-        `Command '${commandId}' still appears in the process table after SIGKILL`,
+        `${processLabel} still appears in the process table after SIGKILL`,
         {
           sessionId: this.id,
           commandId,
@@ -749,8 +769,6 @@ export class Session {
       );
     }
 
-    await this.writeSyntheticExitCode(handle.exitCodeFile, syntheticExitCode);
-    this.runningCommands.delete(commandId);
     return true;
   }
 

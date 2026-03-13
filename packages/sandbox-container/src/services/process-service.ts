@@ -443,10 +443,22 @@ export class ProcessService {
         };
       }
 
-      const result = await this.sessionManager.killCommand(
+      let result = await this.sessionManager.killCommand(
         process.commandHandle.sessionId,
         process.commandHandle.commandId
       );
+
+      if (
+        !result.success &&
+        result.error.code === ErrorCode.COMMAND_NOT_FOUND &&
+        process.pid !== undefined &&
+        !this.isTerminalProcessStatus(process.status)
+      ) {
+        result = await this.sessionManager.killProcessByPid(
+          process.commandHandle.sessionId,
+          process.pid
+        );
+      }
 
       if (result.success) {
         await this.store.update(id, {

@@ -898,6 +898,62 @@ export class SessionManager {
     }
   }
 
+  async killProcessByPid(
+    sessionId: string,
+    pid: number
+  ): Promise<ServiceResult<void>> {
+    try {
+      const sessionResult = await this.getSession(sessionId);
+
+      if (!sessionResult.success) {
+        return sessionResult as ServiceResult<void>;
+      }
+
+      const session = sessionResult.data;
+      const killed = await session.killPid(pid);
+
+      if (!killed) {
+        return {
+          success: false,
+          error: {
+            message: `Process '${pid}' not found or already completed in session '${sessionId}'`,
+            code: ErrorCode.PROCESS_NOT_FOUND,
+            details: {
+              processId: String(pid)
+            }
+          }
+        };
+      }
+
+      return {
+        success: true
+      };
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error(
+        'Failed to kill process by pid',
+        error instanceof Error ? error : undefined,
+        {
+          sessionId,
+          pid
+        }
+      );
+
+      return {
+        success: false,
+        error: {
+          message: `Failed to kill process '${pid}' in session '${sessionId}': ${errorMessage}`,
+          code: ErrorCode.PROCESS_ERROR,
+          details: {
+            processId: String(pid),
+            stderr: errorMessage
+          }
+        }
+      };
+    }
+  }
+
   /**
    * Set environment variables on a session atomically.
    * All exports/unsets are executed under a single lock acquisition.
