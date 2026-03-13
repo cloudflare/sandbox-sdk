@@ -51,7 +51,7 @@ The Cloudflare Sandbox SDK enables secure, isolated code execution in containers
 
 ### Key Flow
 
-Worker → Sandbox DO → Container HTTP API (port 3000) → Bun runtime → Shell commands/File system
+Worker → Sandbox DO → Container HTTP API (port 8671) → Bun runtime → Shell commands/File system
 
 ## Development Commands
 
@@ -190,7 +190,7 @@ The container runtime (`packages/sandbox-container/src/`) uses:
 - **Services**: Business logic in `services/` (CommandService, FileService, ProcessService, etc.)
 - **Managers**: Stateful managers in `managers/` (ProcessManager, PortManager)
 
-Entry point: `packages/sandbox-container/src/index.ts` starts Bun HTTP server on port 3000.
+Entry point: `packages/sandbox-container/src/index.ts` starts Bun HTTP server on the configured control port (default: 8671, override via `SANDBOX_CONTROL_PORT` env var).
 
 ## Monorepo Structure
 
