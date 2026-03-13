@@ -55,6 +55,8 @@ export default {
     const server = await createOpencodeServer(sandbox, {
       directory: '/home/user/agents',
       config: getConfig(env)
+      // Optional: Pass custom environment variables (e.g., for tracing/telemetry)
+      // env: { TRACEPARENT: '00-abc123-def456-01' },
     });
     return proxyToOpencode(request, sandbox, server);
   }
