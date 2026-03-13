@@ -14,7 +14,15 @@ interface FakeWatchProcess {
 interface WatchServiceTestAccessor {
   activeWatches: Map<string, unknown>;
   watchIdsByKey: Map<string, string>;
-  createWatchKey(path: string, options: WatchRequest): string;
+  createWatchKey(
+    path: string,
+    options: {
+      recursive: boolean;
+      include?: string[];
+      exclude?: string[];
+      events: string[];
+    }
+  ): string;
   parseInotifyEvent(line: string): {
     eventType: string;
     path: string;
@@ -233,7 +241,12 @@ describe('WatchService', () => {
       });
       accessor.activeWatches.set('watch-1', watch);
       accessor.watchIdsByKey.set(
-        accessor.createWatchKey('/workspace/test', { path: '/workspace/test' }),
+        accessor.createWatchKey('/workspace/test', {
+          recursive: true,
+          include: undefined,
+          exclude: undefined,
+          events: ['create', 'modify', 'delete', 'move_from', 'move_to']
+        }),
         'watch-1'
       );
 
@@ -255,7 +268,12 @@ describe('WatchService', () => {
       });
       accessor.activeWatches.set('watch-1', watch);
       accessor.watchIdsByKey.set(
-        accessor.createWatchKey('/workspace/test', { path: '/workspace/test' }),
+        accessor.createWatchKey('/workspace/test', {
+          recursive: true,
+          include: undefined,
+          exclude: undefined,
+          events: ['create', 'modify', 'delete', 'move_from', 'move_to']
+        }),
         'watch-1'
       );
 
@@ -405,7 +423,18 @@ describe('WatchService', () => {
     ) => {
       return (service as unknown as WatchServiceTestAccessor).createWatchKey(
         path,
-        options
+        {
+          recursive: options.recursive !== false,
+          include: options.include,
+          exclude: options.exclude,
+          events: options.events ?? [
+            'create',
+            'modify',
+            'delete',
+            'move_from',
+            'move_to'
+          ]
+        }
       );
     };
 

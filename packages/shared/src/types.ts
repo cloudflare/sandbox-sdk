@@ -821,6 +821,9 @@ export interface WatchCheckpointRequest {
  * Options for stopping a persistent watch.
  */
 export interface WatchStopOptions {
+  /**
+   * Required when stopping a persistent watch obtained from `ensureWatch()`.
+   */
   leaseToken?: string;
 }
 

@@ -227,9 +227,11 @@ export class WatchHandler extends BaseHandler<Request, Response> {
   ): Promise<Response> {
     const leaseToken =
       this.extractQueryParam(request, 'leaseToken') ?? undefined;
-    const leaseTokenError = this.validateToken('leaseToken', leaseToken);
-    if (leaseTokenError) {
-      return this.createErrorResponse(leaseTokenError, context);
+    if (leaseToken !== undefined) {
+      const leaseTokenError = this.validateToken('leaseToken', leaseToken);
+      if (leaseTokenError) {
+        return this.createErrorResponse(leaseTokenError, context);
+      }
     }
 
     const result = await this.watchService.stopWatch(watchId, leaseToken);

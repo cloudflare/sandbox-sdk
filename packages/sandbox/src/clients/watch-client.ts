@@ -6,6 +6,7 @@ import {
   type WatchCheckpointResult,
   type WatchEnsureResult,
   type WatchRequest,
+  type WatchState,
   type WatchStateResult,
   type WatchStopOptions,
   type WatchStopResult
@@ -28,7 +29,10 @@ export class WatchClient extends BaseHttpClient {
       );
 
       this.logSuccess('Persistent watch ensured', request.path);
-      return response;
+      return {
+        ...response,
+        watch: normalizeWatchState(response.watch)
+      };
     } catch (error) {
       this.logError('ensureWatch', error);
       throw error;
@@ -42,7 +46,10 @@ export class WatchClient extends BaseHttpClient {
       );
 
       this.logSuccess('Watch state retrieved', watchId);
-      return response;
+      return {
+        ...response,
+        watch: normalizeWatchState(response.watch)
+      };
     } catch (error) {
       this.logError('getWatchState', error);
       throw error;
@@ -60,7 +67,10 @@ export class WatchClient extends BaseHttpClient {
       );
 
       this.logSuccess('Watch checkpoint recorded', watchId);
-      return response;
+      return {
+        ...response,
+        watch: normalizeWatchState(response.watch)
+      };
     } catch (error) {
       this.logError('checkpointWatch', error);
       throw error;
@@ -201,4 +211,17 @@ export class WatchClient extends BaseHttpClient {
       }
     });
   }
+}
+
+function normalizeWatchState(watch: WatchState): WatchState {
+  const legacyWatch = watch as WatchState & { dirty?: boolean };
+
+  if (legacyWatch.changed !== undefined) {
+    return watch;
+  }
+
+  return {
+    ...watch,
+    changed: legacyWatch.dirty ?? false
+  };
 }

@@ -261,7 +261,13 @@ export class WatchService {
     const exclude = include
       ? undefined
       : this.normalizePatterns(options.exclude);
-    const key = this.createWatchKey(path, options);
+    const events = this.normalizeEvents(options.events);
+    const key = this.createWatchKey(path, {
+      recursive: options.recursive !== false,
+      include,
+      exclude,
+      events
+    });
     const existingWatchId = this.watchIdsByKey.get(key);
     if (existingWatchId) {
       const existing = this.activeWatches.get(existingWatchId);
@@ -339,15 +345,25 @@ export class WatchService {
     }
   }
 
-  private createWatchKey(path: string, options: WatchRequest): string {
-    const include = this.normalizePatterns(options.include);
-    const exclude = include
-      ? null
-      : (this.normalizePatterns(options.exclude) ?? null);
+  private createWatchKey(
+    path: string,
+    options: {
+      recursive: boolean;
+      include?: string[];
+      exclude?: string[];
+      events: FileWatchEventType[];
+    }
+  ): string {
+    const include = options.include
+      ? Array.from(new Set(options.include)).sort()
+      : null;
+    const exclude = options.exclude
+      ? Array.from(new Set(options.exclude)).sort()
+      : null;
     return JSON.stringify({
       path,
-      recursive: options.recursive !== false,
-      include: include ?? null,
+      recursive: options.recursive,
+      include,
       exclude,
       events: this.normalizeEvents(options.events)
     });
