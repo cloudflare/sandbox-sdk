@@ -35,6 +35,7 @@ import {
   createLogger,
   filterEnvVars,
   getEnvString,
+  isHighEntropy,
   isTerminalStatus,
   partitionEnvVars,
   type SessionDeleteResult,
@@ -507,7 +508,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
         const result = await this.client.commands.execute(
           exportCommand,
-          this.defaultSession
+          this.defaultSession,
+          { sensitive: isHighEntropy(value) }
         );
 
         if (result.exitCode !== 0) {
@@ -3068,7 +3070,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
             const result = await this.client.commands.execute(
               exportCommand,
-              sessionId
+              sessionId,
+              { sensitive: isHighEntropy(value) }
             );
 
             if (result.exitCode !== 0) {

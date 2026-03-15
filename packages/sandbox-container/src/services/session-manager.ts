@@ -3,6 +3,7 @@
 import { rm } from 'node:fs/promises';
 import {
   type ExecEvent,
+  isHighEntropy,
   type Logger,
   type PtyOptions,
   partitionEnvVars,
@@ -298,7 +299,8 @@ export class SessionManager {
     command: string,
     cwd?: string,
     timeoutMs?: number,
-    env?: Record<string, string | undefined>
+    env?: Record<string, string | undefined>,
+    sensitive?: boolean
   ): Promise<ServiceResult<RawExecResult>> {
     const lock = this.getSessionLock(sessionId);
 
@@ -318,8 +320,8 @@ export class SessionManager {
 
         const result = await session.exec(
           command,
-          cwd || env || timeoutMs !== undefined
-            ? { cwd, env, timeoutMs }
+          cwd || env || timeoutMs !== undefined || sensitive
+            ? { cwd, env, timeoutMs, sensitive }
             : undefined
         );
 
@@ -334,10 +336,12 @@ export class SessionManager {
           sessionId
         );
 
+        const logCommand = sensitive ? '[REDACTED]' : command;
+
         if (sessionDestroyed) {
           this.logger.warn('Session destroyed during command execution', {
             sessionId,
-            command
+            command: logCommand
           });
           return {
             success: false,
@@ -348,16 +352,16 @@ export class SessionManager {
         this.logger.error(
           'Failed to execute command',
           error instanceof Error ? error : undefined,
-          { sessionId, command }
+          { sessionId, command: logCommand }
         );
 
         return {
           success: false,
           error: {
-            message: `Failed to execute command '${command}' in session '${sessionId}': ${errorMessage}`,
+            message: `Failed to execute command '${logCommand}' in session '${sessionId}': ${errorMessage}`,
             code: ErrorCode.COMMAND_EXECUTION_ERROR,
             details: {
-              command,
+              command: logCommand,
               stderr: errorMessage
             } satisfies CommandErrorContext
           }
@@ -388,6 +392,7 @@ export class SessionManager {
           cwd?: string;
           env?: Record<string, string | undefined>;
           timeoutMs?: number;
+          sensitive?: boolean;
         }
       ) => Promise<RawExecResult>
     ) => Promise<T>,
@@ -415,6 +420,7 @@ export class SessionManager {
             cwd?: string;
             env?: Record<string, string | undefined>;
             timeoutMs?: number;
+            sensitive?: boolean;
           }
         ): Promise<RawExecResult> => {
           return session.exec(command, options);
@@ -942,14 +948,15 @@ export class SessionManager {
 
       for (const [key, value] of Object.entries(toSet)) {
         const exportCommand = `export ${key}=${shellEscape(value)}`;
-        const result = await exec(exportCommand);
+        const sensitive = isHighEntropy(value);
+        const result = await exec(exportCommand, { sensitive });
 
         if (result.exitCode !== 0) {
           throw {
             code: ErrorCode.COMMAND_EXECUTION_ERROR,
             message: `Failed to set environment variable '${key}': ${result.stderr}`,
             details: {
-              command: exportCommand,
+              command: sensitive ? `export ${key}=[REDACTED]` : exportCommand,
               exitCode: result.exitCode,
               stderr: result.stderr
             } satisfies CommandErrorContext

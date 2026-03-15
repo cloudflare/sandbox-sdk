@@ -36,6 +36,7 @@ export class CommandClient extends BaseHttpClient {
       timeoutMs?: number;
       env?: Record<string, string | undefined>;
       cwd?: string;
+      sensitive?: boolean;
     }
   ): Promise<ExecuteResponse> {
     try {
@@ -46,14 +47,17 @@ export class CommandClient extends BaseHttpClient {
           timeoutMs: options.timeoutMs
         }),
         ...(options?.env !== undefined && { env: options.env }),
-        ...(options?.cwd !== undefined && { cwd: options.cwd })
+        ...(options?.cwd !== undefined && { cwd: options.cwd }),
+        ...(options?.sensitive && { sensitive: true })
       };
 
       const response = await this.post<ExecuteResponse>('/api/execute', data);
 
+      const logCommand = options?.sensitive ? '[REDACTED]' : command;
+
       this.logSuccess(
         'Command executed',
-        `${command}, Success: ${response.success}`
+        `${logCommand}, Success: ${response.success}`
       );
 
       // Call the callback if provided
@@ -62,7 +66,7 @@ export class CommandClient extends BaseHttpClient {
         response.exitCode,
         response.stdout,
         response.stderr,
-        response.command
+        options?.sensitive ? '[REDACTED]' : response.command
       );
 
       return response;
@@ -72,7 +76,7 @@ export class CommandClient extends BaseHttpClient {
       // Call error callback if provided
       this.options.onError?.(
         error instanceof Error ? error.message : String(error),
-        command
+        options?.sensitive ? '[REDACTED]' : command
       );
 
       throw error;

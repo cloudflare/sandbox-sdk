@@ -278,6 +278,7 @@ export interface ProcessOptions {
   cwd?: string;
   encoding?: string;
   autoCleanup?: boolean;
+  sensitive?: boolean;
 }
 
 export interface CommandResult {
