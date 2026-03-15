@@ -299,8 +299,7 @@ export class SessionManager {
     command: string,
     cwd?: string,
     timeoutMs?: number,
-    env?: Record<string, string | undefined>,
-    sensitive?: boolean
+    env?: Record<string, string | undefined>
   ): Promise<ServiceResult<RawExecResult>> {
     const lock = this.getSessionLock(sessionId);
 
@@ -320,8 +319,8 @@ export class SessionManager {
 
         const result = await session.exec(
           command,
-          cwd || env || timeoutMs !== undefined || sensitive
-            ? { cwd, env, timeoutMs, sensitive }
+          cwd || env || timeoutMs !== undefined
+            ? { cwd, env, timeoutMs }
             : undefined
         );
 
@@ -336,12 +335,10 @@ export class SessionManager {
           sessionId
         );
 
-        const logCommand = sensitive ? '[REDACTED]' : command;
-
         if (sessionDestroyed) {
           this.logger.warn('Session destroyed during command execution', {
             sessionId,
-            command: logCommand
+            command
           });
           return {
             success: false,
@@ -352,16 +349,16 @@ export class SessionManager {
         this.logger.error(
           'Failed to execute command',
           error instanceof Error ? error : undefined,
-          { sessionId, command: logCommand }
+          { sessionId, command }
         );
 
         return {
           success: false,
           error: {
-            message: `Failed to execute command '${logCommand}' in session '${sessionId}': ${errorMessage}`,
+            message: `Failed to execute command '${command}' in session '${sessionId}': ${errorMessage}`,
             code: ErrorCode.COMMAND_EXECUTION_ERROR,
             details: {
-              command: logCommand,
+              command,
               stderr: errorMessage
             } satisfies CommandErrorContext
           }
@@ -956,7 +953,9 @@ export class SessionManager {
             code: ErrorCode.COMMAND_EXECUTION_ERROR,
             message: `Failed to set environment variable '${key}': ${result.stderr}`,
             details: {
-              command: sensitive ? `export ${key}=[REDACTED]` : exportCommand,
+              command: sensitive
+                ? `export ${key}=[AUTO-REDACTED]`
+                : exportCommand,
               exitCode: result.exitCode,
               stderr: result.stderr
             } satisfies CommandErrorContext

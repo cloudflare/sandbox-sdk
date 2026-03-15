@@ -47,13 +47,12 @@ export class CommandClient extends BaseHttpClient {
           timeoutMs: options.timeoutMs
         }),
         ...(options?.env !== undefined && { env: options.env }),
-        ...(options?.cwd !== undefined && { cwd: options.cwd }),
-        ...(options?.sensitive && { sensitive: true })
+        ...(options?.cwd !== undefined && { cwd: options.cwd })
       };
 
       const response = await this.post<ExecuteResponse>('/api/execute', data);
 
-      const logCommand = options?.sensitive ? '[REDACTED]' : command;
+      const logCommand = options?.sensitive ? '[AUTO-REDACTED]' : command;
 
       this.logSuccess(
         'Command executed',
@@ -66,7 +65,7 @@ export class CommandClient extends BaseHttpClient {
         response.exitCode,
         response.stdout,
         response.stderr,
-        options?.sensitive ? '[REDACTED]' : response.command
+        options?.sensitive ? '[AUTO-REDACTED]' : response.command
       );
 
       return response;
@@ -76,7 +75,7 @@ export class CommandClient extends BaseHttpClient {
       // Call error callback if provided
       this.options.onError?.(
         error instanceof Error ? error.message : String(error),
-        options?.sensitive ? '[REDACTED]' : command
+        options?.sensitive ? '[AUTO-REDACTED]' : command
       );
 
       throw error;

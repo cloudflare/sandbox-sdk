@@ -180,53 +180,6 @@ describe('ExecuteHandler', () => {
       expect(responseData.context).toBeDefined();
     });
 
-    it('should redact command in response when sensitive is true', async () => {
-      const mockCommandResult = {
-        success: true,
-        data: {
-          success: true,
-          exitCode: 0,
-          stdout: '',
-          stderr: '',
-          duration: 10
-        }
-      } as ServiceResult<{
-        success: boolean;
-        exitCode: number;
-        stdout: string;
-        stderr: string;
-        duration: number;
-      }>;
-
-      mocked(mockProcessService.executeCommand).mockResolvedValue(
-        mockCommandResult
-      );
-
-      const request = new Request('http://localhost:3000/api/execute', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          command: 'export API_KEY=sk-secret-value',
-          sessionId: 'session-456',
-          sensitive: true
-        })
-      });
-
-      const response = await executeHandler.handle(request, mockContext);
-
-      expect(response.status).toBe(200);
-      const responseData = (await response.json()) as ExecResult;
-      expect(responseData.command).toBe('[REDACTED]');
-
-      expect(mockProcessService.executeCommand).toHaveBeenCalledWith(
-        'export API_KEY=sk-secret-value',
-        expect.objectContaining({
-          sessionId: 'session-456',
-          sensitive: true
-        })
-      );
-    });
-
     // Test removed: ValidationMiddleware was deleted in Phase 0 of error consolidation
     // Handlers now parse request bodies directly using parseRequestBody()
     // Invalid JSON will be caught during parsing, not by missing validatedData

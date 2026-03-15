@@ -109,8 +109,7 @@ describe('ProcessService', () => {
         'echo "hello world"',
         '/tmp', // cwd
         undefined, // timeoutMs (not provided in options)
-        undefined, // env (not provided in options)
-        undefined // sensitive (not provided in options)
+        undefined // env (not provided in options)
       );
     });
 

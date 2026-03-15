@@ -324,7 +324,9 @@ export class Session {
       sessionId: this.id,
       commandId,
       operation: 'exec',
-      command: options?.sensitive ? '[REDACTED]' : command.substring(0, 100),
+      command: options?.sensitive
+        ? '[AUTO-REDACTED]'
+        : command.substring(0, 100),
       ...(options?.timeoutMs && { timeout: options.timeoutMs })
     });
 
@@ -381,7 +383,7 @@ export class Session {
       });
 
       return {
-        command: options?.sensitive ? '[REDACTED]' : command,
+        command: options?.sensitive ? '[AUTO-REDACTED]' : command,
         stdout,
         stderr,
         exitCode,
@@ -436,7 +438,9 @@ export class Session {
       sessionId: this.id,
       commandId,
       operation: 'execStream',
-      command: options?.sensitive ? '[REDACTED]' : command.substring(0, 100)
+      command: options?.sensitive
+        ? '[AUTO-REDACTED]'
+        : command.substring(0, 100)
     });
 
     try {
