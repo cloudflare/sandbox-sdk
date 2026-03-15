@@ -29,6 +29,8 @@ export type {
   DesktopStopResult,
   DesktopTypeRequest
 } from './desktop-types.js';
+// Export entropy utilities
+export { calculateEntropy, isHighEntropy } from './entropy.js';
 // Export environment utilities
 export { filterEnvVars, getEnvString, partitionEnvVars } from './env.js';
 // Export git utilities

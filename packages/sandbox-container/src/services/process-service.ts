@@ -59,7 +59,8 @@ export class ProcessService {
         command,
         options.cwd,
         options.timeoutMs,
-        options.env
+        options.env,
+        options.sensitive
       );
 
       if (!result.success) {
@@ -81,19 +82,20 @@ export class ProcessService {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
+      const logCommand = options.sensitive ? '[REDACTED]' : command;
       this.logger.error(
         'Failed to execute command',
         error instanceof Error ? error : undefined,
-        { command, options }
+        { command: logCommand, options }
       );
 
       return {
         success: false,
         error: {
-          message: `Failed to execute command '${command}': ${errorMessage}`,
+          message: `Failed to execute command '${logCommand}': ${errorMessage}`,
           code: ErrorCode.COMMAND_EXECUTION_ERROR,
           details: {
-            command,
+            command: logCommand,
             stderr: errorMessage
           } satisfies CommandErrorContext
         }

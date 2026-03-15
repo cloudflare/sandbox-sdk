@@ -13,6 +13,8 @@ export interface ExecuteRequest {
   timeoutMs?: number;
   env?: Record<string, string | undefined>;
   cwd?: string;
+  /** When true, the command string is redacted from logs and error details */
+  sensitive?: boolean;
 }
 
 /**

@@ -165,6 +165,8 @@ interface ExecOptions {
   env?: Record<string, string | undefined>;
   /** Maximum execution time in milliseconds */
   timeoutMs?: number;
+  /** When true, the command string is redacted from logs and error details */
+  sensitive?: boolean;
 }
 
 /** Command handle for tracking and killing running commands */
@@ -322,7 +324,7 @@ export class Session {
       sessionId: this.id,
       commandId,
       operation: 'exec',
-      command: command.substring(0, 100),
+      command: options?.sensitive ? '[REDACTED]' : command.substring(0, 100),
       ...(options?.timeoutMs && { timeout: options.timeoutMs })
     });
 
@@ -379,7 +381,7 @@ export class Session {
       });
 
       return {
-        command,
+        command: options?.sensitive ? '[REDACTED]' : command,
         stdout,
         stderr,
         exitCode,
@@ -434,7 +436,7 @@ export class Session {
       sessionId: this.id,
       commandId,
       operation: 'execStream',
-      command: command.substring(0, 100)
+      command: options?.sensitive ? '[REDACTED]' : command.substring(0, 100)
     });
 
     try {

@@ -81,7 +81,8 @@ export class ExecuteHandler extends BaseHandler<Request, Response> {
       sessionId,
       timeoutMs: body.timeoutMs,
       env: body.env,
-      cwd: body.cwd
+      cwd: body.cwd,
+      sensitive: body.sensitive
     });
 
     if (!result.success) {
@@ -95,7 +96,7 @@ export class ExecuteHandler extends BaseHandler<Request, Response> {
       exitCode: commandResult.exitCode,
       stdout: commandResult.stdout,
       stderr: commandResult.stderr,
-      command: body.command,
+      command: body.sensitive ? '[REDACTED]' : body.command,
       duration: 0, // Duration not tracked at service level yet
       timestamp: new Date().toISOString(),
       sessionId: sessionId
