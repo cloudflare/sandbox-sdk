@@ -165,6 +165,10 @@ interface ExecOptions {
   env?: Record<string, string | undefined>;
   /** Maximum execution time in milliseconds */
   timeoutMs?: number;
+  /** When set, the command string is redacted from logs and error details.
+   *  'auto' = entropy-detected (logged as [AUTO-REDACTED])
+   *  'explicit' = caller-requested (logged as [REDACTED]) */
+  sensitive?: 'auto' | 'explicit';
 }
 
 /** Command handle for tracking and killing running commands */
@@ -322,7 +326,11 @@ export class Session {
       sessionId: this.id,
       commandId,
       operation: 'exec',
-      command: command.substring(0, 100),
+      command: options?.sensitive
+        ? options.sensitive === 'explicit'
+          ? '[REDACTED]'
+          : '[AUTO-REDACTED]'
+        : command.substring(0, 100),
       ...(options?.timeoutMs && { timeout: options.timeoutMs })
     });
 
@@ -379,7 +387,11 @@ export class Session {
       });
 
       return {
-        command,
+        command: options?.sensitive
+          ? options.sensitive === 'explicit'
+            ? '[REDACTED]'
+            : '[AUTO-REDACTED]'
+          : command,
         stdout,
         stderr,
         exitCode,
@@ -434,7 +446,11 @@ export class Session {
       sessionId: this.id,
       commandId,
       operation: 'execStream',
-      command: command.substring(0, 100)
+      command: options?.sensitive
+        ? options.sensitive === 'explicit'
+          ? '[REDACTED]'
+          : '[AUTO-REDACTED]'
+        : command.substring(0, 100)
     });
 
     try {

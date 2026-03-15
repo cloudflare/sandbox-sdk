@@ -36,6 +36,7 @@ export class CommandClient extends BaseHttpClient {
       timeoutMs?: number;
       env?: Record<string, string | undefined>;
       cwd?: string;
+      sensitive?: 'auto' | 'explicit';
     }
   ): Promise<ExecuteResponse> {
     try {
@@ -51,9 +52,16 @@ export class CommandClient extends BaseHttpClient {
 
       const response = await this.post<ExecuteResponse>('/api/execute', data);
 
+      const redactLabel =
+        options?.sensitive === 'explicit'
+          ? '[REDACTED]'
+          : options?.sensitive === 'auto'
+            ? '[AUTO-REDACTED]'
+            : null;
+
       this.logSuccess(
         'Command executed',
-        `${command}, Success: ${response.success}`
+        `${redactLabel ?? command}, Success: ${response.success}`
       );
 
       // Call the callback if provided
@@ -62,17 +70,24 @@ export class CommandClient extends BaseHttpClient {
         response.exitCode,
         response.stdout,
         response.stderr,
-        response.command
+        redactLabel ?? response.command
       );
 
       return response;
     } catch (error) {
       this.logError('execute', error);
 
+      const redactLabel =
+        options?.sensitive === 'explicit'
+          ? '[REDACTED]'
+          : options?.sensitive === 'auto'
+            ? '[AUTO-REDACTED]'
+            : null;
+
       // Call error callback if provided
       this.options.onError?.(
         error instanceof Error ? error.message : String(error),
-        command
+        redactLabel ?? command
       );
 
       throw error;
