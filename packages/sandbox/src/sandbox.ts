@@ -710,8 +710,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
   }
 
-  async setEnvVars(envVars: Record<string, string | undefined>): Promise<void> {
+  async setEnvVars(
+    envVars: Record<string, string | undefined>,
+    options?: { sensitiveKeys?: string[] }
+  ): Promise<void> {
     const { toSet, toUnset } = partitionEnvVars(envVars);
+    const explicitSet = new Set(options?.sensitiveKeys);
 
     for (const key of toUnset) {
       delete this.envVars[key];
@@ -736,11 +740,16 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
       for (const [key, value] of Object.entries(toSet)) {
         const exportCommand = `export ${key}=${shellEscape(value)}`;
+        const sensitive: 'auto' | 'explicit' | false = explicitSet.has(key)
+          ? 'explicit'
+          : isHighEntropy(value)
+            ? 'auto'
+            : false;
 
         const result = await this.client.commands.execute(
           exportCommand,
           this.defaultSession,
-          { sensitive: isHighEntropy(value) }
+          { sensitive: sensitive || undefined }
         );
 
         if (result.exitCode !== 0) {
@@ -3289,8 +3298,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       gitCheckout: (repoUrl, options) =>
         this.gitCheckout(repoUrl, { ...options, sessionId }),
 
-      setEnvVars: async (envVars: Record<string, string | undefined>) => {
+      setEnvVars: async (
+        envVars: Record<string, string | undefined>,
+        options?: { sensitiveKeys?: string[] }
+      ) => {
         const { toSet, toUnset } = partitionEnvVars(envVars);
+        const explicitSet = new Set(options?.sensitiveKeys);
 
         try {
           for (const key of toUnset) {
@@ -3310,11 +3323,16 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
           for (const [key, value] of Object.entries(toSet)) {
             const exportCommand = `export ${key}=${shellEscape(value)}`;
+            const sensitive: 'auto' | 'explicit' | false = explicitSet.has(key)
+              ? 'explicit'
+              : isHighEntropy(value)
+                ? 'auto'
+                : false;
 
             const result = await this.client.commands.execute(
               exportCommand,
               sessionId,
-              { sensitive: isHighEntropy(value) }
+              { sensitive: sensitive || undefined }
             );
 
             if (result.exitCode !== 0) {

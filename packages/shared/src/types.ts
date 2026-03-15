@@ -992,7 +992,10 @@ export interface ExecutionSession {
   ): Promise<GitCheckoutResult>;
 
   // Environment management
-  setEnvVars(envVars: Record<string, string | undefined>): Promise<void>;
+  setEnvVars(
+    envVars: Record<string, string | undefined>,
+    options?: { sensitiveKeys?: string[] }
+  ): Promise<void>;
 
   // Code interpreter methods
   createCodeContext(options?: CreateContextOptions): Promise<CodeContext>;
@@ -1249,7 +1252,10 @@ export interface ISandbox {
   ): Promise<GitCheckoutResult>;
 
   // Environment management
-  setEnvVars(envVars: Record<string, string | undefined>): Promise<void>;
+  setEnvVars(
+    envVars: Record<string, string | undefined>,
+    options?: { sensitiveKeys?: string[] }
+  ): Promise<void>;
 
   // Bucket mounting operations
   mountBucket(

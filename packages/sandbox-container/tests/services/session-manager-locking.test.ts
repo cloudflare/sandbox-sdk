@@ -209,6 +209,21 @@ describe('SessionManager Locking', () => {
     });
   });
 
+  describe('setEnvVars sensitiveKeys', () => {
+    it('should accept sensitiveKeys parameter', async () => {
+      const sessionId = 'env-sensitive-session';
+      await sessionManager.createSession({ id: sessionId, cwd: testDir });
+
+      const result = await sessionManager.setEnvVars(
+        sessionId,
+        { MY_SECRET: 'low-entropy-value', PUBLIC: 'hello' },
+        ['MY_SECRET']
+      );
+
+      expect(result.success).toBe(true);
+    });
+  });
+
   describe('streaming execution locking', () => {
     it('should hold lock during foreground streaming until complete', async () => {
       const sessionId = 'stream-fg-session';
