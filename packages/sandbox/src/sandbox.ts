@@ -712,10 +712,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   async setEnvVars(
     envVars: Record<string, string | undefined>,
-    options?: { sensitiveKeys?: string[] }
+    options?: { sensitive?: boolean }
   ): Promise<void> {
     const { toSet, toUnset } = partitionEnvVars(envVars);
-    const explicitSet = new Set(options?.sensitiveKeys);
 
     for (const key of toUnset) {
       delete this.envVars[key];
@@ -740,16 +739,16 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
       for (const [key, value] of Object.entries(toSet)) {
         const exportCommand = `export ${key}=${shellEscape(value)}`;
-        const sensitive: 'auto' | 'explicit' | false = explicitSet.has(key)
-          ? 'explicit'
+        const redactMode: 'redacted' | 'auto' | undefined = options?.sensitive
+          ? 'redacted'
           : isHighEntropy(value)
             ? 'auto'
-            : false;
+            : undefined;
 
         const result = await this.client.commands.execute(
           exportCommand,
           this.defaultSession,
-          { sensitive: sensitive || undefined }
+          { sensitive: redactMode }
         );
 
         if (result.exitCode !== 0) {
@@ -3300,10 +3299,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
       setEnvVars: async (
         envVars: Record<string, string | undefined>,
-        options?: { sensitiveKeys?: string[] }
+        options?: { sensitive?: boolean }
       ) => {
         const { toSet, toUnset } = partitionEnvVars(envVars);
-        const explicitSet = new Set(options?.sensitiveKeys);
 
         try {
           for (const key of toUnset) {
@@ -3323,16 +3321,17 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
           for (const [key, value] of Object.entries(toSet)) {
             const exportCommand = `export ${key}=${shellEscape(value)}`;
-            const sensitive: 'auto' | 'explicit' | false = explicitSet.has(key)
-              ? 'explicit'
-              : isHighEntropy(value)
-                ? 'auto'
-                : false;
+            const redactMode: 'redacted' | 'auto' | undefined =
+              options?.sensitive
+                ? 'redacted'
+                : isHighEntropy(value)
+                  ? 'auto'
+                  : undefined;
 
             const result = await this.client.commands.execute(
               exportCommand,
               sessionId,
-              { sensitive: sensitive || undefined }
+              { sensitive: redactMode }
             );
 
             if (result.exitCode !== 0) {

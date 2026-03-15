@@ -36,7 +36,7 @@ export class CommandClient extends BaseHttpClient {
       timeoutMs?: number;
       env?: Record<string, string | undefined>;
       cwd?: string;
-      sensitive?: 'auto' | 'explicit';
+      sensitive?: 'auto' | 'redacted';
     }
   ): Promise<ExecuteResponse> {
     try {
@@ -53,7 +53,7 @@ export class CommandClient extends BaseHttpClient {
       const response = await this.post<ExecuteResponse>('/api/execute', data);
 
       const redactLabel =
-        options?.sensitive === 'explicit'
+        options?.sensitive === 'redacted'
           ? '[REDACTED]'
           : options?.sensitive === 'auto'
             ? '[AUTO-REDACTED]'
@@ -78,7 +78,7 @@ export class CommandClient extends BaseHttpClient {
       this.logError('execute', error);
 
       const redactLabel =
-        options?.sensitive === 'explicit'
+        options?.sensitive === 'redacted'
           ? '[REDACTED]'
           : options?.sensitive === 'auto'
             ? '[AUTO-REDACTED]'

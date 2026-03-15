@@ -389,7 +389,7 @@ export class SessionManager {
           cwd?: string;
           env?: Record<string, string | undefined>;
           timeoutMs?: number;
-          sensitive?: 'auto' | 'explicit';
+          sensitive?: 'auto' | 'redacted';
         }
       ) => Promise<RawExecResult>
     ) => Promise<T>,
@@ -417,7 +417,7 @@ export class SessionManager {
             cwd?: string;
             env?: Record<string, string | undefined>;
             timeoutMs?: number;
-            sensitive?: 'auto' | 'explicit';
+            sensitive?: 'auto' | 'redacted';
           }
         ): Promise<RawExecResult> => {
           return session.exec(command, options);
@@ -910,10 +910,9 @@ export class SessionManager {
   async setEnvVars(
     sessionId: string,
     envVars: Record<string, string | undefined>,
-    sensitiveKeys?: string[]
+    sensitive?: boolean
   ): Promise<ServiceResult<void>> {
     const { toSet, toUnset } = partitionEnvVars(envVars);
-    const explicitSet = new Set(sensitiveKeys);
 
     return this.withSession(sessionId, async (exec) => {
       // Validate all keys first (POSIX portable character set)
@@ -947,16 +946,16 @@ export class SessionManager {
 
       for (const [key, value] of Object.entries(toSet)) {
         const exportCommand = `export ${key}=${shellEscape(value)}`;
-        const sensitive: 'auto' | 'explicit' | undefined = explicitSet.has(key)
-          ? 'explicit'
+        const redactMode: 'redacted' | 'auto' | undefined = sensitive
+          ? 'redacted'
           : isHighEntropy(value)
             ? 'auto'
             : undefined;
-        const result = await exec(exportCommand, { sensitive });
+        const result = await exec(exportCommand, { sensitive: redactMode });
 
         if (result.exitCode !== 0) {
-          const redactedCommand = sensitive
-            ? `export ${key}=${sensitive === 'explicit' ? '[REDACTED]' : '[AUTO-REDACTED]'}`
+          const redactedCommand = redactMode
+            ? `export ${key}=${redactMode === 'redacted' ? '[REDACTED]' : '[AUTO-REDACTED]'}`
             : exportCommand;
           throw {
             code: ErrorCode.COMMAND_EXECUTION_ERROR,

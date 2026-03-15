@@ -167,8 +167,8 @@ interface ExecOptions {
   timeoutMs?: number;
   /** When set, the command string is redacted from logs and error details.
    *  'auto' = entropy-detected (logged as [AUTO-REDACTED])
-   *  'explicit' = caller-requested (logged as [REDACTED]) */
-  sensitive?: 'auto' | 'explicit';
+   *  'redacted' = caller-requested (logged as [REDACTED]) */
+  sensitive?: 'auto' | 'redacted';
 }
 
 /** Command handle for tracking and killing running commands */
@@ -327,7 +327,7 @@ export class Session {
       commandId,
       operation: 'exec',
       command: options?.sensitive
-        ? options.sensitive === 'explicit'
+        ? options.sensitive === 'redacted'
           ? '[REDACTED]'
           : '[AUTO-REDACTED]'
         : command.substring(0, 100),
@@ -388,7 +388,7 @@ export class Session {
 
       return {
         command: options?.sensitive
-          ? options.sensitive === 'explicit'
+          ? options.sensitive === 'redacted'
             ? '[REDACTED]'
             : '[AUTO-REDACTED]'
           : command,
@@ -447,7 +447,7 @@ export class Session {
       commandId,
       operation: 'execStream',
       command: options?.sensitive
-        ? options.sensitive === 'explicit'
+        ? options.sensitive === 'redacted'
           ? '[REDACTED]'
           : '[AUTO-REDACTED]'
         : command.substring(0, 100)
