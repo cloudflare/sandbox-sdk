@@ -389,7 +389,7 @@ export class SessionManager {
           cwd?: string;
           env?: Record<string, string | undefined>;
           timeoutMs?: number;
-          sensitive?: boolean;
+          sensitive?: 'auto' | 'explicit';
         }
       ) => Promise<RawExecResult>
     ) => Promise<T>,
@@ -417,7 +417,7 @@ export class SessionManager {
             cwd?: string;
             env?: Record<string, string | undefined>;
             timeoutMs?: number;
-            sensitive?: boolean;
+            sensitive?: 'auto' | 'explicit';
           }
         ): Promise<RawExecResult> => {
           return session.exec(command, options);
@@ -909,9 +909,11 @@ export class SessionManager {
    */
   async setEnvVars(
     sessionId: string,
-    envVars: Record<string, string | undefined>
+    envVars: Record<string, string | undefined>,
+    sensitiveKeys?: string[]
   ): Promise<ServiceResult<void>> {
     const { toSet, toUnset } = partitionEnvVars(envVars);
+    const explicitSet = new Set(sensitiveKeys);
 
     return this.withSession(sessionId, async (exec) => {
       // Validate all keys first (POSIX portable character set)
@@ -945,17 +947,22 @@ export class SessionManager {
 
       for (const [key, value] of Object.entries(toSet)) {
         const exportCommand = `export ${key}=${shellEscape(value)}`;
-        const sensitive = isHighEntropy(value);
+        const sensitive: 'auto' | 'explicit' | undefined = explicitSet.has(key)
+          ? 'explicit'
+          : isHighEntropy(value)
+            ? 'auto'
+            : undefined;
         const result = await exec(exportCommand, { sensitive });
 
         if (result.exitCode !== 0) {
+          const redactedCommand = sensitive
+            ? `export ${key}=${sensitive === 'explicit' ? '[REDACTED]' : '[AUTO-REDACTED]'}`
+            : exportCommand;
           throw {
             code: ErrorCode.COMMAND_EXECUTION_ERROR,
             message: `Failed to set environment variable '${key}': ${result.stderr}`,
             details: {
-              command: sensitive
-                ? `export ${key}=[AUTO-REDACTED]`
-                : exportCommand,
+              command: redactedCommand,
               exitCode: result.exitCode,
               stderr: result.stderr
             } satisfies CommandErrorContext
