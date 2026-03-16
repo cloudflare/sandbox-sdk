@@ -38,7 +38,7 @@ export async function proxyToSandbox<
     const envObj = env as Record<string, unknown>;
     const controlPortStr = getEnvString(envObj, 'SANDBOX_CONTROL_PORT');
     const controlPort = controlPortStr
-      ? parseInt(controlPortStr, 10)
+      ? parseInt(controlPortStr, 10) || DEFAULT_CONTROL_PORT
       : DEFAULT_CONTROL_PORT;
 
     const routeInfo = extractSandboxRoute(url, controlPort);
