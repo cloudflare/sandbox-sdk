@@ -1,5 +1,16 @@
 # @cloudflare/sandbox
 
+## 0.7.18
+
+### Patch Changes
+
+- [#363](https://github.com/cloudflare/sandbox-sdk/pull/363) [`60967cd`](https://github.com/cloudflare/sandbox-sdk/commit/60967cd15e82929efbbacee00cdfb80d457b3b10) Thanks [@Destreyf](https://github.com/Destreyf)! - Add custom environment variable support to OpenCode integration.
+  Enable with `env` in `OpencodeOptions` to pass variables like OTEL endpoints or trace context.
+
+- [#489](https://github.com/cloudflare/sandbox-sdk/pull/489) [`80da532`](https://github.com/cloudflare/sandbox-sdk/commit/80da5321e9154d58ed24db0bb1aa822ed0b70c84) Thanks [@maschwenk](https://github.com/maschwenk)! - Fix environment variables not being inherited by PTY sessions opened via `sandbox.terminal`. Variables set with `setEnvVars()` were not being passed to the terminal environment.
+
+- [#468](https://github.com/cloudflare/sandbox-sdk/pull/468) [`378a85c`](https://github.com/cloudflare/sandbox-sdk/commit/378a85c2815755d22ea398a12cf787d0d3c2f72d) Thanks [@scuffi](https://github.com/scuffi)! - Add local R2 bucket mounting for development via bidirectional sync
+
 ## 0.7.17
 
 ### Patch Changes
@@ -174,13 +185,13 @@
   As a base image:
 
   ```dockerfile
-  FROM docker.io/cloudflare/sandbox:0.7.17-musl
+  FROM docker.io/cloudflare/sandbox:0.7.18-musl
   ```
 
   Or copy the binary into your own Alpine image:
 
   ```dockerfile
-  COPY --from=docker.io/cloudflare/sandbox:0.7.17-musl /container-server/sandbox /sandbox
+  COPY --from=docker.io/cloudflare/sandbox:0.7.18-musl /container-server/sandbox /sandbox
   ```
 
 - [#377](https://github.com/cloudflare/sandbox-sdk/pull/377) [`d83642e`](https://github.com/cloudflare/sandbox-sdk/commit/d83642e855f68e4fb8c15c2452709923e55a83fd) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Allow port 8787 in `exposePort()`. It was incorrectly blocked.
@@ -403,10 +414,10 @@
 
   ```dockerfile
   # Before
-  FROM cloudflare/sandbox:0.7.17
+  FROM cloudflare/sandbox:0.7.18
 
   # After
-  FROM cloudflare/sandbox:0.7.17-python
+  FROM cloudflare/sandbox:0.7.18-python
   ```
 
   Without this change, Python execution will fail with `PYTHON_NOT_AVAILABLE` error.
