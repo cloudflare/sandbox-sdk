@@ -114,6 +114,8 @@ type ConfigurableSandboxStub = {
   ) => Promise<void>;
 };
 
+const LEGACY_CONTROL_PORT = 3000;
+
 const sandboxConfigurationCache = new WeakMap<
   object,
   Map<string, CachedSandboxConfiguration>
@@ -1487,7 +1489,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     portOrInit?: number | RequestInit,
     portParam?: number
   ): Promise<Response> {
-    // Parse arguments to extract request and port
     const { request, port } = this.parseContainerFetchArgs(
       requestOrUrl,
       portOrInit,
@@ -1504,15 +1505,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       state.status === 'healthy' && containerRunning === false;
     if (state.status !== 'healthy' || containerRunning === false) {
       try {
-        await this.startAndWaitForPorts({
-          ports: port,
-          cancellationOptions: {
-            instanceGetTimeoutMS: this.containerTimeouts.instanceGetTimeoutMS,
-            portReadyTimeoutMS: this.containerTimeouts.portReadyTimeoutMS,
-            waitInterval: this.containerTimeouts.waitIntervalMS,
-            abort: request.signal
-          }
+        this.logger.debug('Starting container with configured timeouts', {
+          instanceTimeout: this.containerTimeouts.instanceGetTimeoutMS,
+          portTimeout: this.containerTimeouts.portReadyTimeoutMS
         });
+
+        await this.startWithLegacyFallback(port, request.signal);
       } catch (e) {
         // 1. Provisioning: Container VM not yet available
         if (this.isNoInstanceError(e)) {
@@ -1635,8 +1633,69 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       }
     }
 
-    // Delegate to parent for the actual fetch (handles TCP port access internally)
-    return await super.containerFetch(requestOrUrl, portOrInit, portParam);
+    // After a legacy fallback, the current request's port may still reference the
+    // original default (e.g., 8671). Remap it to the actual control port.
+    const effectivePort =
+      port === DEFAULT_CONTROL_PORT && this.defaultPort === LEGACY_CONTROL_PORT
+        ? LEGACY_CONTROL_PORT
+        : port;
+
+    return await super.containerFetch(request, effectivePort);
+  }
+
+  /**
+   * Start the container and wait for the requested port, with backwards-compatible
+   * fallback to port 3000 for older container images that predate SANDBOX_CONTROL_PORT.
+   * Succeeds silently (with or without fallback) or throws the original error.
+   */
+  private async startWithLegacyFallback(
+    port: number,
+    signal?: AbortSignal
+  ): Promise<void> {
+    try {
+      await this.startAndWaitForPorts({
+        ports: port,
+        cancellationOptions: {
+          instanceGetTimeoutMS: this.containerTimeouts.instanceGetTimeoutMS,
+          portReadyTimeoutMS: this.containerTimeouts.portReadyTimeoutMS,
+          waitInterval: this.containerTimeouts.waitIntervalMS,
+          abort: signal
+        }
+      });
+    } catch (e) {
+      // Fallback only applies to the control port when the container is running
+      // but not listening on the expected port (version mismatch).
+      // Throw original error
+      if (
+        port !== this.defaultPort ||
+        port === LEGACY_CONTROL_PORT ||
+        !this.ctx.container?.running
+      ) {
+        throw e;
+      }
+
+      try {
+        await this.startAndWaitForPorts({
+          ports: LEGACY_CONTROL_PORT,
+          cancellationOptions: {
+            portReadyTimeoutMS: 10_000,
+            waitInterval: this.containerTimeouts.waitIntervalMS,
+            abort: signal
+          }
+        });
+      } catch {
+        throw e;
+      }
+
+      this.logger.warn(
+        `Container responded on legacy port ${LEGACY_CONTROL_PORT} instead of ${port}. ` +
+          'Your Docker image does not support the SANDBOX_CONTROL_PORT environment variable. ' +
+          'Update your Dockerfile base image to match the SDK version. ' +
+          'This fallback will be removed in a future release.'
+      );
+      this.defaultPort = LEGACY_CONTROL_PORT;
+      this.client = this.createSandboxClient();
+    }
   }
 
   /**

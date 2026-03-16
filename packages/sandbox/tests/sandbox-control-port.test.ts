@@ -1,5 +1,5 @@
 import { DEFAULT_CONTROL_PORT } from '@repo/shared';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@cloudflare/containers', () => {
   const MockContainer = class Container {
@@ -21,6 +21,7 @@ vi.mock('@cloudflare/containers', () => {
     async getState() {
       return { status: 'healthy' };
     }
+    async startAndWaitForPorts() {}
     renewActivityTimeout() {}
   };
 
@@ -141,5 +142,189 @@ describe('connect() with async getControlPort', () => {
     await wsConnect(request, 3000);
 
     expect(mockStub.fetch).toHaveBeenCalled();
+  });
+});
+
+describe('Legacy port fallback (startWithLegacyFallback)', () => {
+  let sandbox: Sandbox;
+  let mockCtx: any;
+  let startAndWaitSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+
+    mockCtx = createMockCtx();
+    sandbox = new Sandbox(mockCtx, {});
+
+    await vi.waitFor(() => {
+      expect(mockCtx.blockConcurrencyWhile).toHaveBeenCalled();
+    });
+
+    startAndWaitSpy = vi.spyOn(sandbox as any, 'startAndWaitForPorts');
+
+    vi.spyOn(sandbox as any, 'getState').mockResolvedValue({
+      status: 'unhealthy'
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('succeeds on configured port without fallback', async () => {
+    startAndWaitSpy.mockResolvedValueOnce(undefined);
+
+    const parentFetch = vi
+      .spyOn(
+        Object.getPrototypeOf(Object.getPrototypeOf(sandbox)),
+        'containerFetch'
+      )
+      .mockResolvedValueOnce(new Response('ok'));
+
+    const response = await sandbox.containerFetch(
+      new Request('http://localhost/test'),
+      {},
+      DEFAULT_CONTROL_PORT
+    );
+
+    expect(startAndWaitSpy).toHaveBeenCalledTimes(1);
+    expect(startAndWaitSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ ports: DEFAULT_CONTROL_PORT })
+    );
+    expect(response.status).toBe(200);
+    parentFetch.mockRestore();
+  });
+
+  it('falls back to port 3000 when control port fails and container is running', async () => {
+    startAndWaitSpy
+      .mockRejectedValueOnce(new Error('failed to verify port'))
+      .mockResolvedValueOnce(undefined);
+
+    (sandbox as any).ctx.container = { running: true };
+
+    const parentFetch = vi
+      .spyOn(
+        Object.getPrototypeOf(Object.getPrototypeOf(sandbox)),
+        'containerFetch'
+      )
+      .mockResolvedValueOnce(new Response('ok'));
+
+    const response = await sandbox.containerFetch(
+      new Request('http://localhost/test'),
+      {},
+      DEFAULT_CONTROL_PORT
+    );
+
+    expect(startAndWaitSpy).toHaveBeenCalledTimes(2);
+    expect(startAndWaitSpy).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ ports: 3000 })
+    );
+    expect(sandbox.defaultPort).toBe(3000);
+    expect(response.status).toBe(200);
+    parentFetch.mockRestore();
+  });
+
+  it('throws original error when both ports fail', async () => {
+    startAndWaitSpy
+      .mockRejectedValueOnce(new Error('failed to verify port'))
+      .mockRejectedValueOnce(new Error('legacy also failed'));
+
+    (sandbox as any).ctx.container = { running: true };
+
+    const response = await sandbox.containerFetch(
+      new Request('http://localhost/test'),
+      {},
+      DEFAULT_CONTROL_PORT
+    );
+
+    expect(startAndWaitSpy).toHaveBeenCalledTimes(2);
+    expect(response.status).toBe(503);
+    const body = (await response.json()) as { context: { error: string } };
+    expect(body.context.error).toContain('failed to verify port');
+  });
+
+  it('skips fallback when container is not running', async () => {
+    startAndWaitSpy.mockRejectedValueOnce(new Error('container did not start'));
+
+    (sandbox as any).ctx.container = { running: false };
+
+    const response = await sandbox.containerFetch(
+      new Request('http://localhost/test'),
+      {},
+      DEFAULT_CONTROL_PORT
+    );
+
+    expect(startAndWaitSpy).toHaveBeenCalledTimes(1);
+    expect(response.status).toBe(503);
+  });
+
+  it('skips fallback for non-control ports (preview URLs)', async () => {
+    startAndWaitSpy.mockRejectedValueOnce(new Error('failed to verify port'));
+
+    (sandbox as any).ctx.container = { running: true };
+
+    const response = await sandbox.containerFetch(
+      new Request('http://localhost/test'),
+      8080
+    );
+
+    expect(startAndWaitSpy).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ ports: 8080 })
+    );
+    expect(response.status).toBe(503);
+    expect(sandbox.defaultPort).toBe(DEFAULT_CONTROL_PORT);
+  });
+
+  it('skips fallback when configured port is already 3000', async () => {
+    const sandbox3000 = new Sandbox(createMockCtx(), {
+      SANDBOX_CONTROL_PORT: '3000'
+    });
+    await vi.waitFor(() => {
+      expect(mockCtx.blockConcurrencyWhile).toHaveBeenCalled();
+    });
+
+    const spy = vi
+      .spyOn(sandbox3000 as any, 'startAndWaitForPorts')
+      .mockRejectedValueOnce(new Error('failed to verify port'));
+
+    vi.spyOn(sandbox3000 as any, 'getState').mockResolvedValue({
+      status: 'unhealthy'
+    });
+    (sandbox3000 as any).ctx.container = { running: true };
+
+    const response = await sandbox3000.containerFetch(
+      new Request('http://localhost/test'),
+      {},
+      3000
+    );
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(response.status).toBe(503);
+  });
+
+  it('remaps port for current request after fallback', async () => {
+    startAndWaitSpy
+      .mockRejectedValueOnce(new Error('failed to verify port'))
+      .mockResolvedValueOnce(undefined);
+
+    (sandbox as any).ctx.container = { running: true };
+
+    const parentFetch = vi
+      .spyOn(
+        Object.getPrototypeOf(Object.getPrototypeOf(sandbox)),
+        'containerFetch'
+      )
+      .mockResolvedValueOnce(new Response('ok'));
+
+    await sandbox.containerFetch(
+      new Request('http://localhost/test'),
+      {},
+      DEFAULT_CONTROL_PORT
+    );
+
+    expect(parentFetch).toHaveBeenCalledWith(expect.any(Request), 3000);
+    parentFetch.mockRestore();
   });
 });

@@ -192,6 +192,8 @@ The container runtime (`packages/sandbox-container/src/`) uses:
 
 Entry point: `packages/sandbox-container/src/index.ts` starts Bun HTTP server on the configured control port (default: 8671, override via `SANDBOX_CONTROL_PORT` env var).
 
+**Legacy port fallback**: When the SDK connects to a container that doesn't support `SANDBOX_CONTROL_PORT` (older images still on port 3000), `startWithLegacyFallback()` in `sandbox.ts` catches the port failure and retries on port 3000. If successful, it switches `defaultPort` and recreates the client. This fallback only applies to control port requests, not user service ports (preview URLs). It will be removed in a future release.
+
 ## Monorepo Structure
 
 Uses npm workspaces + Turbo:
