@@ -13,6 +13,8 @@ import {
 import { createTestHeaders } from './helpers/test-fixtures';
 import type { ErrorResponse } from './test-worker/types';
 
+// Diagnostic instrumentation for #482 flake investigation.
+// Remove once root cause is confirmed.
 async function timedFetch(
   label: string,
   ...args: Parameters<typeof fetch>
@@ -73,6 +75,7 @@ describe('Command Timeout', () => {
 
   test('session.exec should respect per-command timeout', async () => {
     // Create a session without a session-level timeout
+    const createStart = Date.now();
     const createResponse = await timedFetch(
       'test2 session/create',
       `${workerUrl}/api/session/create`,
@@ -82,6 +85,7 @@ describe('Command Timeout', () => {
         body: JSON.stringify({})
       }
     );
+    expect(Date.now() - createStart).toBeLessThan(15000);
 
     expect(createResponse.status).toBe(200);
     const createData = (await createResponse.json()) as SessionCreateResult;
@@ -114,6 +118,7 @@ describe('Command Timeout', () => {
 
   test('session.exec should respect session-level commandTimeoutMs', async () => {
     // Create a session WITH a session-level timeout
+    const createStart = Date.now();
     const createResponse = await timedFetch(
       'test3 session/create',
       `${workerUrl}/api/session/create`,
@@ -125,6 +130,7 @@ describe('Command Timeout', () => {
         })
       }
     );
+    expect(Date.now() - createStart).toBeLessThan(15000);
 
     expect(createResponse.status).toBe(200);
     const createData = (await createResponse.json()) as SessionCreateResult;
@@ -157,6 +163,7 @@ describe('Command Timeout', () => {
 
   test('per-command timeout should take precedence over session-level commandTimeoutMs', async () => {
     // Create a session with a LONG session-level timeout (30s)
+    const createStart = Date.now();
     const createResponse = await timedFetch(
       'test4 session/create',
       `${workerUrl}/api/session/create`,
@@ -168,6 +175,7 @@ describe('Command Timeout', () => {
         })
       }
     );
+    expect(Date.now() - createStart).toBeLessThan(15000);
 
     expect(createResponse.status).toBe(200);
     const createData = (await createResponse.json()) as SessionCreateResult;
@@ -202,6 +210,7 @@ describe('Command Timeout', () => {
 
   test('timed-out command continues running; session can be deleted while command runs', async () => {
     // Create a session
+    const createStart = Date.now();
     const createResponse = await timedFetch(
       'test5 session/create',
       `${workerUrl}/api/session/create`,
@@ -211,6 +220,7 @@ describe('Command Timeout', () => {
         body: JSON.stringify({})
       }
     );
+    expect(Date.now() - createStart).toBeLessThan(15000);
 
     expect(createResponse.status).toBe(200);
     const createData = (await createResponse.json()) as SessionCreateResult;
