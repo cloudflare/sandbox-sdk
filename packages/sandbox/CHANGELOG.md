@@ -9,8 +9,6 @@
 
 - [#489](https://github.com/cloudflare/sandbox-sdk/pull/489) [`80da532`](https://github.com/cloudflare/sandbox-sdk/commit/80da5321e9154d58ed24db0bb1aa822ed0b70c84) Thanks [@maschwenk](https://github.com/maschwenk)! - Fix environment variables not being inherited by PTY sessions opened via `sandbox.terminal`. Variables set with `setEnvVars()` were not being passed to the terminal environment.
 
-- [#498](https://github.com/cloudflare/sandbox-sdk/pull/498) [`32254ea`](https://github.com/cloudflare/sandbox-sdk/commit/32254ea13dcac72c753593e89a8b6c4d83d3ca98) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - Fix WebSocket sandboxes getting stuck after a dropped control connection. Repeated operations now reconnect automatically, and repeated `getSandbox()` calls in the same Worker isolate avoid re-sending unchanged setup RPCs.
-
 - [#468](https://github.com/cloudflare/sandbox-sdk/pull/468) [`378a85c`](https://github.com/cloudflare/sandbox-sdk/commit/378a85c2815755d22ea398a12cf787d0d3c2f72d) Thanks [@scuffi](https://github.com/scuffi)! - Add local R2 bucket mounting for development via bidirectional sync
 
 ## 0.7.17
