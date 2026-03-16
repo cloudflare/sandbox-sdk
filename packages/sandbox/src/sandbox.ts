@@ -81,6 +81,193 @@ import type {
 } from './storage-mount/types';
 import { SDK_VERSION } from './version';
 
+type SandboxConfiguration = {
+  sandboxName?: {
+    name: string;
+    normalizeId?: boolean;
+  };
+  baseUrl?: string;
+  sleepAfter?: string | number;
+  keepAlive?: boolean;
+  containerTimeouts?: NonNullable<SandboxOptions['containerTimeouts']>;
+};
+
+type CachedSandboxConfiguration = {
+  sandboxName?: string;
+  normalizeId?: boolean;
+  baseUrl?: string;
+  sleepAfter?: string | number;
+  keepAlive?: boolean;
+  containerTimeouts?: NonNullable<SandboxOptions['containerTimeouts']>;
+};
+
+type ConfigurableSandboxStub = {
+  configure?: (configuration: SandboxConfiguration) => Promise<void>;
+  setSandboxName?: (name: string, normalizeId?: boolean) => Promise<void>;
+  setBaseUrl?: (baseUrl: string) => Promise<void>;
+  setSleepAfter?: (sleepAfter: string | number) => Promise<void>;
+  setKeepAlive?: (keepAlive: boolean) => Promise<void>;
+  setContainerTimeouts?: (
+    timeouts: NonNullable<SandboxOptions['containerTimeouts']>
+  ) => Promise<void>;
+};
+
+const sandboxConfigurationCache = new WeakMap<
+  object,
+  Map<string, CachedSandboxConfiguration>
+>();
+
+function getNamespaceConfigurationCache(
+  namespace: object
+): Map<string, CachedSandboxConfiguration> {
+  const existing = sandboxConfigurationCache.get(namespace);
+  if (existing) {
+    return existing;
+  }
+
+  const created = new Map<string, CachedSandboxConfiguration>();
+  sandboxConfigurationCache.set(namespace, created);
+  return created;
+}
+
+function sameContainerTimeouts(
+  left?: NonNullable<SandboxOptions['containerTimeouts']>,
+  right?: NonNullable<SandboxOptions['containerTimeouts']>
+): boolean {
+  return (
+    left?.instanceGetTimeoutMS === right?.instanceGetTimeoutMS &&
+    left?.portReadyTimeoutMS === right?.portReadyTimeoutMS &&
+    left?.waitIntervalMS === right?.waitIntervalMS
+  );
+}
+
+function buildSandboxConfiguration(
+  effectiveId: string,
+  options: SandboxOptions | undefined,
+  cached: CachedSandboxConfiguration | undefined
+): SandboxConfiguration {
+  const configuration: SandboxConfiguration = {};
+
+  if (
+    cached?.sandboxName !== effectiveId ||
+    cached.normalizeId !== options?.normalizeId
+  ) {
+    configuration.sandboxName = {
+      name: effectiveId,
+      normalizeId: options?.normalizeId
+    };
+  }
+
+  if (options?.baseUrl !== undefined && cached?.baseUrl !== options.baseUrl) {
+    configuration.baseUrl = options.baseUrl;
+  }
+
+  if (
+    options?.sleepAfter !== undefined &&
+    cached?.sleepAfter !== options.sleepAfter
+  ) {
+    configuration.sleepAfter = options.sleepAfter;
+  }
+
+  if (
+    options?.keepAlive !== undefined &&
+    cached?.keepAlive !== options.keepAlive
+  ) {
+    configuration.keepAlive = options.keepAlive;
+  }
+
+  if (
+    options?.containerTimeouts &&
+    !sameContainerTimeouts(cached?.containerTimeouts, options.containerTimeouts)
+  ) {
+    configuration.containerTimeouts = options.containerTimeouts;
+  }
+
+  return configuration;
+}
+
+function hasSandboxConfiguration(configuration: SandboxConfiguration): boolean {
+  return (
+    configuration.sandboxName !== undefined ||
+    configuration.baseUrl !== undefined ||
+    configuration.sleepAfter !== undefined ||
+    configuration.keepAlive !== undefined ||
+    configuration.containerTimeouts !== undefined
+  );
+}
+
+function mergeSandboxConfiguration(
+  cached: CachedSandboxConfiguration | undefined,
+  configuration: SandboxConfiguration
+): CachedSandboxConfiguration {
+  return {
+    ...cached,
+    ...(configuration.sandboxName && {
+      sandboxName: configuration.sandboxName.name,
+      normalizeId: configuration.sandboxName.normalizeId
+    }),
+    ...(configuration.baseUrl !== undefined && {
+      baseUrl: configuration.baseUrl
+    }),
+    ...(configuration.sleepAfter !== undefined && {
+      sleepAfter: configuration.sleepAfter
+    }),
+    ...(configuration.keepAlive !== undefined && {
+      keepAlive: configuration.keepAlive
+    }),
+    ...(configuration.containerTimeouts !== undefined && {
+      containerTimeouts: configuration.containerTimeouts
+    })
+  };
+}
+
+function applySandboxConfiguration(
+  stub: ConfigurableSandboxStub,
+  configuration: SandboxConfiguration
+): Promise<void> {
+  if (stub.configure) {
+    return stub.configure(configuration);
+  }
+
+  const operations: Promise<void>[] = [];
+
+  if (configuration.sandboxName) {
+    operations.push(
+      stub.setSandboxName?.(
+        configuration.sandboxName.name,
+        configuration.sandboxName.normalizeId
+      ) ?? Promise.resolve()
+    );
+  }
+
+  if (configuration.baseUrl !== undefined) {
+    operations.push(
+      stub.setBaseUrl?.(configuration.baseUrl) ?? Promise.resolve()
+    );
+  }
+
+  if (configuration.sleepAfter !== undefined) {
+    operations.push(
+      stub.setSleepAfter?.(configuration.sleepAfter) ?? Promise.resolve()
+    );
+  }
+
+  if (configuration.keepAlive !== undefined) {
+    operations.push(
+      stub.setKeepAlive?.(configuration.keepAlive) ?? Promise.resolve()
+    );
+  }
+
+  if (configuration.containerTimeouts !== undefined) {
+    operations.push(
+      stub.setContainerTimeouts?.(configuration.containerTimeouts) ??
+        Promise.resolve()
+    );
+  }
+
+  return Promise.all(operations).then(() => undefined);
+}
+
 export function getSandbox<T extends Sandbox<any>>(
   ns: DurableObjectNamespace<T>,
   id: string,
@@ -101,24 +288,34 @@ export function getSandbox<T extends Sandbox<any>>(
     );
   }
 
-  const stub = getContainer(ns, effectiveId);
+  const stub = getContainer(
+    ns as unknown as DurableObjectNamespace<Container<Cloudflare.Env>>,
+    effectiveId
+  ) as unknown as T & ConfigurableSandboxStub;
 
-  stub.setSandboxName?.(effectiveId, options?.normalizeId);
+  const namespaceCache = getNamespaceConfigurationCache(ns);
+  const cachedConfiguration = namespaceCache.get(effectiveId);
+  const configuration = buildSandboxConfiguration(
+    effectiveId,
+    options,
+    cachedConfiguration
+  );
 
-  if (options?.baseUrl) {
-    stub.setBaseUrl(options.baseUrl);
-  }
+  if (hasSandboxConfiguration(configuration)) {
+    const nextConfiguration = mergeSandboxConfiguration(
+      cachedConfiguration,
+      configuration
+    );
+    namespaceCache.set(effectiveId, nextConfiguration);
 
-  if (options?.sleepAfter !== undefined) {
-    stub.setSleepAfter(options.sleepAfter);
-  }
+    void applySandboxConfiguration(stub, configuration).catch(() => {
+      if (cachedConfiguration) {
+        namespaceCache.set(effectiveId, cachedConfiguration);
+        return;
+      }
 
-  if (options?.keepAlive !== undefined) {
-    stub.setKeepAlive(options.keepAlive);
-  }
-
-  if (options?.containerTimeouts) {
-    stub.setContainerTimeouts(options.containerTimeouts);
+      namespaceCache.delete(effectiveId);
+    });
   }
 
   const defaultSessionId = `sandbox-${effectiveId}`;
@@ -444,6 +641,31 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       this.normalizeId = normalizeId || false;
       await this.ctx.storage.put('sandboxName', name);
       await this.ctx.storage.put('normalizeId', this.normalizeId);
+    }
+  }
+
+  async configure(configuration: SandboxConfiguration): Promise<void> {
+    if (configuration.sandboxName) {
+      await this.setSandboxName(
+        configuration.sandboxName.name,
+        configuration.sandboxName.normalizeId
+      );
+    }
+
+    if (configuration.baseUrl !== undefined) {
+      await this.setBaseUrl(configuration.baseUrl);
+    }
+
+    if (configuration.sleepAfter !== undefined) {
+      await this.setSleepAfter(configuration.sleepAfter);
+    }
+
+    if (configuration.keepAlive !== undefined) {
+      await this.setKeepAlive(configuration.keepAlive);
+    }
+
+    if (configuration.containerTimeouts !== undefined) {
+      await this.setContainerTimeouts(configuration.containerTimeouts);
     }
   }
 

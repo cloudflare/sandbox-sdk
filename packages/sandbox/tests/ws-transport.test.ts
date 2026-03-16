@@ -519,6 +519,51 @@ describe('WebSocketTransport', () => {
       transport.disconnect();
       expect(transport.isConnected()).toBe(false);
     });
+
+    it('should reconnect after a socket close', async () => {
+      const transport = new WebSocketTransport({
+        wsUrl: 'ws://localhost:3000/ws'
+      });
+      const transportInternals = transport as unknown as {
+        ws: {
+          readyState: number;
+          send: ReturnType<typeof vi.fn>;
+          addEventListener: ReturnType<typeof vi.fn>;
+          removeEventListener: ReturnType<typeof vi.fn>;
+          close: ReturnType<typeof vi.fn>;
+        } | null;
+        state: 'disconnected' | 'connecting' | 'connected' | 'error';
+        handleClose: (event: CloseEvent) => void;
+        doConnect: () => Promise<void>;
+      };
+
+      const createSocket = () => ({
+        readyState: WebSocket.OPEN,
+        send: vi.fn(),
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        close: vi.fn()
+      });
+
+      const doConnect = vi
+        .spyOn(transportInternals, 'doConnect')
+        .mockImplementation(async () => {
+          transportInternals.ws = createSocket();
+          transportInternals.state = 'connected';
+        });
+
+      await transport.connect();
+      expect(doConnect).toHaveBeenCalledTimes(1);
+
+      transportInternals.handleClose({
+        code: 1006,
+        reason: '',
+        wasClean: false
+      } as CloseEvent);
+
+      await transport.connect();
+      expect(doConnect).toHaveBeenCalledTimes(2);
+    });
   });
 
   describe('fetch without connection', () => {

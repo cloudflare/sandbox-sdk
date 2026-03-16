@@ -99,10 +99,10 @@ export class WebSocketTransport extends BaseTransport {
 
     try {
       await this.connectPromise;
-    } catch (error) {
-      // Clear promise AFTER await so concurrent callers see the same rejection
+    } finally {
+      // Clear promise AFTER await so concurrent callers share the same
+      // connection attempt, but future reconnects can start a new one.
       this.connectPromise = null;
-      throw error;
     }
   }
 
@@ -732,6 +732,7 @@ export class WebSocketTransport extends BaseTransport {
   private handleClose(event: CloseEvent): void {
     this.state = 'disconnected';
     this.ws = null;
+    this.connectPromise = null;
 
     const closeError = new Error(
       `WebSocket closed: ${event.code} ${event.reason || 'No reason'}`

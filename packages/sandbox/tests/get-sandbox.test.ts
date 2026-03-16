@@ -25,6 +25,17 @@ describe('getSandbox', () => {
     // Create a fresh mock stub for each test
     mockStub = {
       sleepAfter: '10m',
+      configure: vi.fn(
+        (configuration: {
+          sandboxName?: { name: string; normalizeId?: boolean };
+          sleepAfter?: string | number;
+        }) => {
+          if (configuration.sleepAfter !== undefined) {
+            mockStub.sleepAfter = configuration.sleepAfter;
+          }
+          return Promise.resolve();
+        }
+      ),
       setSandboxName: vi.fn(),
       setBaseUrl: vi.fn(),
       setSleepAfter: vi.fn((value: string | number) => {
@@ -44,10 +55,12 @@ describe('getSandbox', () => {
     const sandbox = getSandbox(mockNamespace, 'test-sandbox');
 
     expect(sandbox).toBeDefined();
-    expect(mockStub.setSandboxName).toHaveBeenCalledWith(
-      'test-sandbox',
-      undefined
-    );
+    expect(mockStub.configure).toHaveBeenCalledWith({
+      sandboxName: {
+        name: 'test-sandbox',
+        normalizeId: undefined
+      }
+    });
   });
 
   it('should apply sleepAfter option when provided as string', () => {
@@ -74,7 +87,13 @@ describe('getSandbox', () => {
       baseUrl: 'https://example.com'
     });
 
-    expect(mockStub.setBaseUrl).toHaveBeenCalledWith('https://example.com');
+    expect(mockStub.configure).toHaveBeenCalledWith({
+      sandboxName: {
+        name: 'test-sandbox',
+        normalizeId: undefined
+      },
+      baseUrl: 'https://example.com'
+    });
   });
 
   it('should apply both sleepAfter and baseUrl options together', () => {
@@ -85,7 +104,14 @@ describe('getSandbox', () => {
     });
 
     expect(sandbox.sleepAfter).toBe('10m');
-    expect(mockStub.setBaseUrl).toHaveBeenCalledWith('https://example.com');
+    expect(mockStub.configure).toHaveBeenCalledWith({
+      sandboxName: {
+        name: 'test-sandbox',
+        normalizeId: undefined
+      },
+      sleepAfter: '10m',
+      baseUrl: 'https://example.com'
+    });
   });
 
   it('should not apply sleepAfter when not provided', () => {
@@ -118,7 +144,13 @@ describe('getSandbox', () => {
       keepAlive: true
     });
 
-    expect(mockStub.setKeepAlive).toHaveBeenCalledWith(true);
+    expect(mockStub.configure).toHaveBeenCalledWith({
+      sandboxName: {
+        name: 'test-sandbox',
+        normalizeId: undefined
+      },
+      keepAlive: true
+    });
   });
 
   it('should apply keepAlive option when provided as false', () => {
@@ -127,14 +159,25 @@ describe('getSandbox', () => {
       keepAlive: false
     });
 
-    expect(mockStub.setKeepAlive).toHaveBeenCalledWith(false);
+    expect(mockStub.configure).toHaveBeenCalledWith({
+      sandboxName: {
+        name: 'test-sandbox',
+        normalizeId: undefined
+      },
+      keepAlive: false
+    });
   });
 
-  it('should not call setKeepAlive when keepAlive option not provided', () => {
+  it('should not include keepAlive when option is not provided', () => {
     const mockNamespace = {} as any;
     getSandbox(mockNamespace, 'test-sandbox');
 
-    expect(mockStub.setKeepAlive).not.toHaveBeenCalled();
+    expect(mockStub.configure).toHaveBeenCalledWith({
+      sandboxName: {
+        name: 'test-sandbox',
+        normalizeId: undefined
+      }
+    });
   });
 
   it('should apply keepAlive alongside other options', () => {
@@ -146,8 +189,15 @@ describe('getSandbox', () => {
     });
 
     expect(sandbox.sleepAfter).toBe('5m');
-    expect(mockStub.setBaseUrl).toHaveBeenCalledWith('https://example.com');
-    expect(mockStub.setKeepAlive).toHaveBeenCalledWith(true);
+    expect(mockStub.configure).toHaveBeenCalledWith({
+      sandboxName: {
+        name: 'test-sandbox',
+        normalizeId: undefined
+      },
+      sleepAfter: '5m',
+      baseUrl: 'https://example.com',
+      keepAlive: true
+    });
   });
 
   it('should preserve sandbox ID case by default', () => {
@@ -168,6 +218,36 @@ describe('getSandbox', () => {
       mockNamespace,
       'myproject-abc123'
     );
+  });
+
+  it('should skip repeated configuration for the same sandbox in one isolate', async () => {
+    const mockNamespace = {} as any;
+
+    getSandbox(mockNamespace, 'test-sandbox', { sleepAfter: '5m' });
+    await Promise.resolve();
+
+    getSandbox(mockNamespace, 'test-sandbox', { sleepAfter: '5m' });
+
+    expect(mockStub.configure).toHaveBeenCalledTimes(1);
+  });
+
+  it('should only configure fields that changed on later calls', async () => {
+    const mockNamespace = {} as any;
+
+    getSandbox(mockNamespace, 'test-sandbox');
+    await Promise.resolve();
+
+    getSandbox(mockNamespace, 'test-sandbox', { sleepAfter: '5m' });
+
+    expect(mockStub.configure).toHaveBeenNthCalledWith(1, {
+      sandboxName: {
+        name: 'test-sandbox',
+        normalizeId: undefined
+      }
+    });
+    expect(mockStub.configure).toHaveBeenNthCalledWith(2, {
+      sleepAfter: '5m'
+    });
   });
 
   describe('proxy method routing', () => {
