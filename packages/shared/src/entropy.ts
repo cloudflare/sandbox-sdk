@@ -43,14 +43,16 @@ export type RedactionMode = 'forced' | 'auto';
 
 /**
  * Determine the effective redaction mode for a value.
- *  - 'forced' → always redact, regardless of content
- *  - 'auto' (default) → redact only when Shannon entropy suggests a secret
+ *  - true  → always redact, regardless of content
+ *  - undefined (default) → redact only when Shannon entropy suggests a secret
+ *  - false → skip redaction entirely, even auto-detection
  */
-export function resolveRedaction(
-  callerMode: RedactionMode = 'auto',
+export function shouldRedact(
+  redact: boolean | undefined,
   value: string
 ): RedactionMode | undefined {
-  if (callerMode === 'forced') return 'forced';
+  if (redact === false) return undefined;
+  if (redact === true) return 'forced';
   return isHighEntropy(value) ? 'auto' : undefined;
 }
 
@@ -58,7 +60,7 @@ export function resolveRedaction(
  * Map a RedactionMode to its human-readable log label.
  * Returns undefined when no redaction is active.
  */
-export function redactLabel(
+export function getRedactionLabel(
   mode: RedactionMode | undefined
 ): string | undefined {
   if (mode === 'forced') return '[REDACTED]';

@@ -3,13 +3,13 @@
 import { rm } from 'node:fs/promises';
 import {
   type ExecEvent,
+  getRedactionLabel,
   type Logger,
   type PtyOptions,
   partitionEnvVars,
   type RedactionMode,
-  redactLabel,
-  resolveRedaction,
-  shellEscape
+  shellEscape,
+  shouldRedact
 } from '@repo/shared';
 import type {
   CommandErrorContext,
@@ -912,7 +912,7 @@ export class SessionManager {
   async setEnvVars(
     sessionId: string,
     envVars: Record<string, string | undefined>,
-    options?: { redact?: RedactionMode }
+    options?: { redact?: boolean }
   ): Promise<ServiceResult<void>> {
     const { toSet, toUnset } = partitionEnvVars(envVars);
 
@@ -948,7 +948,7 @@ export class SessionManager {
 
       for (const [key, value] of Object.entries(toSet)) {
         const exportCommand = `export ${key}=${shellEscape(value)}`;
-        const mode = resolveRedaction(options?.redact, value);
+        const mode = shouldRedact(options?.redact, value);
         const result = await exec(exportCommand, { redact: mode });
 
         if (result.exitCode !== 0) {
@@ -956,8 +956,8 @@ export class SessionManager {
             code: ErrorCode.COMMAND_EXECUTION_ERROR,
             message: `Failed to set environment variable '${key}': ${result.stderr}`,
             details: {
-              command: redactLabel(mode)
-                ? `export ${key}=${redactLabel(mode)}`
+              command: getRedactionLabel(mode)
+                ? `export ${key}=${getRedactionLabel(mode)}`
                 : exportCommand,
               exitCode: result.exitCode,
               stderr: result.stderr

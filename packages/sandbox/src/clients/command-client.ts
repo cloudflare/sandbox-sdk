@@ -1,5 +1,5 @@
 import type { ExecuteRequest, RedactionMode } from '@repo/shared';
-import { redactLabel } from '@repo/shared';
+import { getRedactionLabel } from '@repo/shared';
 import { BaseHttpClient } from './base-client';
 import type { BaseApiResponse } from './types';
 
@@ -53,7 +53,7 @@ export class CommandClient extends BaseHttpClient {
 
       const response = await this.post<ExecuteResponse>('/api/execute', data);
 
-      const label = redactLabel(options?.redact);
+      const label = getRedactionLabel(options?.redact);
 
       this.logSuccess(
         'Command executed',
@@ -73,7 +73,7 @@ export class CommandClient extends BaseHttpClient {
     } catch (error) {
       this.logError('execute', error);
 
-      const label = redactLabel(options?.redact);
+      const label = getRedactionLabel(options?.redact);
 
       // Call error callback if provided
       this.options.onError?.(

@@ -96,7 +96,7 @@ import { mkdir, open, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import type { ExecEvent, Logger, RedactionMode } from '@repo/shared';
-import { createNoOpLogger, redactLabel } from '@repo/shared';
+import { createNoOpLogger, getRedactionLabel } from '@repo/shared';
 import type { Subprocess } from 'bun';
 import { CONFIG } from './config';
 import { SessionDestroyedError, ShellTerminatedError } from './errors';
@@ -326,7 +326,7 @@ export class Session {
       sessionId: this.id,
       commandId,
       operation: 'exec',
-      command: redactLabel(options?.redact) ?? command.substring(0, 100),
+      command: getRedactionLabel(options?.redact) ?? command.substring(0, 100),
       ...(options?.timeoutMs && { timeout: options.timeoutMs })
     });
 
@@ -383,7 +383,7 @@ export class Session {
       });
 
       return {
-        command: redactLabel(options?.redact) ?? command,
+        command: getRedactionLabel(options?.redact) ?? command,
         stdout,
         stderr,
         exitCode,
@@ -438,7 +438,7 @@ export class Session {
       sessionId: this.id,
       commandId,
       operation: 'execStream',
-      command: redactLabel(options?.redact) ?? command.substring(0, 100)
+      command: getRedactionLabel(options?.redact) ?? command.substring(0, 100)
     });
 
     try {

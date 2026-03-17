@@ -33,9 +33,9 @@ export type { RedactionMode } from './entropy.js';
 // Export entropy utilities
 export {
   calculateEntropy,
+  getRedactionLabel,
   isHighEntropy,
-  redactLabel,
-  resolveRedaction
+  shouldRedact
 } from './entropy.js';
 // Export environment utilities
 export { filterEnvVars, getEnvString, partitionEnvVars } from './env.js';

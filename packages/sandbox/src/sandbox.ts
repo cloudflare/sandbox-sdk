@@ -37,10 +37,9 @@ import {
   getEnvString,
   isTerminalStatus,
   partitionEnvVars,
-  type RedactionMode,
-  resolveRedaction,
   type SessionDeleteResult,
   shellEscape,
+  shouldRedact,
   TraceContext
 } from '@repo/shared';
 import { AwsClient } from 'aws4fetch';
@@ -713,7 +712,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   async setEnvVars(
     envVars: Record<string, string | undefined>,
-    options?: { redact?: RedactionMode }
+    options?: { redact?: boolean }
   ): Promise<void> {
     const { toSet, toUnset } = partitionEnvVars(envVars);
 
@@ -744,7 +743,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         const result = await this.client.commands.execute(
           exportCommand,
           this.defaultSession,
-          { redact: resolveRedaction(options?.redact, value) }
+          { redact: shouldRedact(options?.redact, value) }
         );
 
         if (result.exitCode !== 0) {
@@ -3295,7 +3294,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
       setEnvVars: async (
         envVars: Record<string, string | undefined>,
-        options?: { redact?: RedactionMode }
+        options?: { redact?: boolean }
       ) => {
         const { toSet, toUnset } = partitionEnvVars(envVars);
 
@@ -3321,7 +3320,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
             const result = await this.client.commands.execute(
               exportCommand,
               sessionId,
-              { redact: resolveRedaction(options?.redact, value) }
+              { redact: shouldRedact(options?.redact, value) }
             );
 
             if (result.exitCode !== 0) {

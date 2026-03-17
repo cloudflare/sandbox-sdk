@@ -1,4 +1,3 @@
-import type { RedactionMode } from './entropy';
 import type {
   CodeContext,
   CreateContextOptions,
@@ -995,7 +994,7 @@ export interface ExecutionSession {
   // Environment management
   setEnvVars(
     envVars: Record<string, string | undefined>,
-    options?: { /** @defaultValue 'auto' */ redact?: RedactionMode }
+    options?: { /** @defaultValue 'auto' */ redact?: boolean }
   ): Promise<void>;
 
   // Code interpreter methods
@@ -1255,7 +1254,7 @@ export interface ISandbox {
   // Environment management
   setEnvVars(
     envVars: Record<string, string | undefined>,
-    options?: { /** @defaultValue 'auto' */ redact?: RedactionMode }
+    options?: { /** @defaultValue 'auto' */ redact?: boolean }
   ): Promise<void>;
 
   // Bucket mounting operations
