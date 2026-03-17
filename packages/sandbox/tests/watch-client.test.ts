@@ -21,92 +21,35 @@ describe('WatchClient', () => {
     vi.restoreAllMocks();
   });
 
-  it('should normalize legacy dirty state from ensureWatch', async () => {
+  it('should post to the retained change check endpoint', async () => {
     mockFetch.mockResolvedValue(
       new Response(
         JSON.stringify({
           success: true,
-          watch: {
-            watchId: 'watch-1',
-            path: '/workspace/test',
-            recursive: true,
-            cursor: 0,
-            dirty: false,
-            overflowed: false,
-            lastEventAt: null,
-            expiresAt: null,
-            subscriberCount: 0,
-            startedAt: '2023-01-01T00:00:00Z'
-          },
-          leaseToken: 'lease-1',
-          timestamp: '2023-01-01T00:00:00Z'
+          status: 'changed',
+          version: 'watch-1:2',
+          timestamp: '2026-03-17T00:00:00.000Z'
         }),
         { status: 200 }
       )
     );
 
-    const result = await client.ensureWatch({ path: '/workspace/test' });
-
-    expect(result.watch.changed).toBe(false);
-  });
-
-  it('should normalize legacy dirty state from getWatchState', async () => {
-    mockFetch.mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          success: true,
-          watch: {
-            watchId: 'watch-1',
-            path: '/workspace/test',
-            recursive: true,
-            cursor: 2,
-            dirty: true,
-            overflowed: false,
-            lastEventAt: null,
-            expiresAt: null,
-            subscriberCount: 0,
-            startedAt: '2023-01-01T00:00:00Z'
-          },
-          timestamp: '2023-01-01T00:00:00Z'
-        }),
-        { status: 200 }
-      )
-    );
-
-    const result = await client.getWatchState('watch-1');
-
-    expect(result.watch.changed).toBe(true);
-  });
-
-  it('should normalize legacy dirty state from checkpointWatch', async () => {
-    mockFetch.mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          success: true,
-          checkpointed: true,
-          watch: {
-            watchId: 'watch-1',
-            path: '/workspace/test',
-            recursive: true,
-            cursor: 2,
-            dirty: false,
-            overflowed: false,
-            lastEventAt: null,
-            expiresAt: null,
-            subscriberCount: 0,
-            startedAt: '2023-01-01T00:00:00Z'
-          },
-          timestamp: '2023-01-01T00:00:00Z'
-        }),
-        { status: 200 }
-      )
-    );
-
-    const result = await client.checkpointWatch('watch-1', {
-      cursor: 2,
-      leaseToken: 'lease-1'
+    const result = await client.checkChanges({
+      path: '/workspace/test',
+      since: 'watch-1:1'
     });
 
-    expect(result.watch.changed).toBe(false);
+    expect(result).toEqual({
+      success: true,
+      status: 'changed',
+      version: 'watch-1:2',
+      timestamp: '2026-03-17T00:00:00.000Z'
+    });
+    expect(mockFetch).toHaveBeenCalledWith(
+      'http://test.com/api/watch/check',
+      expect.objectContaining({
+        method: 'POST'
+      })
+    );
   });
 });

@@ -9,7 +9,7 @@
  * - Recursive vs non-recursive watching
  */
 
-import type { FileWatchSSEEvent } from '@repo/shared';
+import type { CheckChangesResult, FileWatchSSEEvent } from '@repo/shared';
 import {
   afterAll,
   beforeAll,
@@ -25,29 +25,6 @@ import {
   createUniqueSession,
   type TestSandbox
 } from './helpers/global-sandbox';
-
-interface PersistentWatchState {
-  watchId: string;
-  path: string;
-  cursor: number;
-  changed: boolean;
-  overflowed: boolean;
-  lastEventAt: string | null;
-  expiresAt: string | null;
-}
-
-interface WatchStateResponse {
-  success: boolean;
-  watch: PersistentWatchState;
-}
-
-interface WatchEnsureResponse extends WatchStateResponse {
-  leaseToken: string;
-}
-
-interface WatchCheckpointResponse extends WatchStateResponse {
-  checkpointed: boolean;
-}
 
 describe('File Watch Workflow', () => {
   let sandbox: TestSandbox | null = null;
@@ -171,78 +148,6 @@ describe('File Watch Workflow', () => {
     throw new Error(`${context} failed with ${response.status}: ${body}`);
   }
 
-  async function ensureWatch(
-    path: string,
-    options: {
-      recursive?: boolean;
-      include?: string[];
-      exclude?: string[];
-      resumeToken?: string;
-    } = {}
-  ): Promise<WatchEnsureResponse> {
-    const response = await fetch(`${workerUrl}/api/watch/ensure`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ path, ...options })
-    });
-    await expectOk(response, `ensureWatch(${path})`);
-    return (await response.json()) as WatchEnsureResponse;
-  }
-
-  async function getWatchState(watchId: string): Promise<PersistentWatchState> {
-    const response = await fetch(`${workerUrl}/api/watch/${watchId}`, {
-      method: 'GET',
-      headers
-    });
-    await expectOk(response, `getWatchState(${watchId})`);
-    const body = (await response.json()) as WatchStateResponse;
-    return body.watch;
-  }
-
-  async function checkpointWatch(
-    watchId: string,
-    cursor: number,
-    leaseToken: string
-  ): Promise<WatchCheckpointResponse> {
-    const response = await fetch(
-      `${workerUrl}/api/watch/${watchId}/checkpoint`,
-      {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ cursor, leaseToken })
-      }
-    );
-    await expectOk(response, `checkpointWatch(${watchId})`);
-    return (await response.json()) as WatchCheckpointResponse;
-  }
-
-  async function stopWatch(watchId: string, leaseToken: string): Promise<void> {
-    const suffix = `?leaseToken=${encodeURIComponent(leaseToken)}`;
-    const response = await fetch(`${workerUrl}/api/watch/${watchId}${suffix}`, {
-      method: 'DELETE',
-      headers
-    });
-    await expectOk(response, `stopWatch(${watchId})`);
-  }
-
-  async function waitForWatchState(
-    watchId: string,
-    predicate: (state: PersistentWatchState) => boolean,
-    timeoutMs = 8000
-  ): Promise<PersistentWatchState> {
-    const startedAt = Date.now();
-
-    while (Date.now() - startedAt < timeoutMs) {
-      const state = await getWatchState(watchId);
-      if (predicate(state)) {
-        return state;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-
-    throw new Error(`Timed out waiting for watch state ${watchId}`);
-  }
-
   /**
    * Helper to create a file via the API.
    */
@@ -279,6 +184,31 @@ describe('File Watch Workflow', () => {
     await expectOk(response, `deleteFile(${path})`);
   }
 
+  async function checkChanges(
+    path: string,
+    options: {
+      recursive?: boolean;
+      include?: string[];
+      exclude?: string[];
+      since?: string;
+    } = {}
+  ): Promise<CheckChangesResult> {
+    const response = await fetch(`${workerUrl}/api/watch/check`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        path,
+        recursive: options.recursive,
+        include: options.include,
+        exclude: options.exclude,
+        since: options.since
+      })
+    });
+
+    await expectOk(response, `checkChanges(${path})`);
+    return (await response.json()) as CheckChangesResult;
+  }
+
   test('should establish watch and receive watching event', async () => {
     testDir = sandbox!.uniquePath('watch-establish');
     await createDir(testDir);
@@ -295,6 +225,46 @@ describe('File Watch Workflow', () => {
     if (events[0].type === 'watching') {
       expect(events[0].path).toBe(testDir);
     }
+  }, 30000);
+
+  test('should report unchanged when starting retained change tracking', async () => {
+    testDir = sandbox!.uniquePath('watch-check-baseline');
+    await createDir(testDir);
+
+    const result = await checkChanges(testDir);
+
+    expect(result.status).toBe('unchanged');
+    expect(result.version).toMatch(/^watch-\d+-\d+:0$/);
+  }, 30000);
+
+  test('should retain changed state across reconnect gaps', async () => {
+    testDir = sandbox!.uniquePath('watch-check-retain');
+    await createDir(testDir);
+
+    const first = await checkChanges(testDir);
+    expect(first.status).toBe('unchanged');
+
+    await createFile(`${testDir}/changed.txt`, 'hello');
+
+    const second = await checkChanges(testDir, {
+      since: first.version
+    });
+
+    expect(second.status).toBe('changed');
+    expect(second.version).not.toBe(first.version);
+  }, 30000);
+
+  test('should report unchanged when no files changed since the version', async () => {
+    testDir = sandbox!.uniquePath('watch-check-unchanged');
+    await createDir(testDir);
+
+    const first = await checkChanges(testDir);
+    const second = await checkChanges(testDir, {
+      since: first.version
+    });
+
+    expect(second.status).toBe('unchanged');
+    expect(second.version).toBe(first.version);
   }, 30000);
 
   test('should detect file creation', async () => {
@@ -428,45 +398,6 @@ describe('File Watch Workflow', () => {
     });
     expect(secondResponse.ok).toBe(true);
     await secondResponse.body?.cancel();
-  }, 30000);
-
-  test('should retain changed state across reconnect gaps', async () => {
-    testDir = sandbox!.uniquePath('watch-persistent-state');
-    await createDir(testDir);
-
-    const resumeToken = `resume-${Date.now()}`;
-    const ensuredWatch = await ensureWatch(testDir, { resumeToken });
-    expect(ensuredWatch.watch.changed).toBe(false);
-    expect(ensuredWatch.watch.cursor).toBe(0);
-    expect(ensuredWatch.leaseToken).toBeTruthy();
-    expect(ensuredWatch.watch.expiresAt).toBeTruthy();
-
-    await createFile(`${testDir}/background.txt`, 'hello');
-
-    const changedState = await waitForWatchState(
-      ensuredWatch.watch.watchId,
-      (state) => state.changed && state.cursor > 0
-    );
-
-    expect(changedState.lastEventAt).toBeTruthy();
-
-    const checkpointResult = await checkpointWatch(
-      ensuredWatch.watch.watchId,
-      changedState.cursor,
-      ensuredWatch.leaseToken
-    );
-    expect(checkpointResult.checkpointed).toBe(true);
-    expect(checkpointResult.watch.changed).toBe(false);
-
-    await createFile(`${testDir}/second.txt`, 'hello again');
-
-    const secondChangedState = await waitForWatchState(
-      ensuredWatch.watch.watchId,
-      (state) => state.changed && state.cursor > changedState.cursor
-    );
-    expect(secondChangedState.cursor).toBeGreaterThan(changedState.cursor);
-
-    await stopWatch(ensuredWatch.watch.watchId, ensuredWatch.leaseToken);
   }, 30000);
 
   test('should return error for non-existent path', async () => {

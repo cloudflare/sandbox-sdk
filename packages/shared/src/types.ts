@@ -726,17 +726,18 @@ export interface WatchOptions {
 }
 
 /**
- * Options for creating a persistent watch.
+ * Options for checking whether a path changed while disconnected.
+ *
+ * Pass the `version` returned from a previous `checkChanges()` call to learn
+ * whether the path is unchanged, changed, or needs a full resync because the
+ * retained change state was reset. Change state lives only for the current
+ * container lifetime and may expire while idle.
  */
-export interface PersistentWatchOptions extends WatchOptions {
+export interface CheckChangesOptions extends WatchOptions {
   /**
-   * Stable token used to safely reconnect to the same persistent watch.
-   *
-   * If provided, repeated `ensureWatch()` calls with the same path and
-   * `resumeToken` will return the existing lease instead of creating a
-   * conflicting watch.
+   * Version returned by a previous `checkChanges()` call.
    */
-  resumeToken?: string;
+  since?: string;
 }
 
 // Internal types for SSE protocol (not user-facing)
@@ -762,7 +763,13 @@ export interface WatchRequest {
   include?: string[];
   exclude?: string[];
   sessionId?: string;
-  resumeToken?: string;
+}
+
+/**
+ * @internal Request body for checking retained change state.
+ */
+export interface CheckChangesRequest extends WatchRequest {
+  since?: string;
 }
 
 /**
@@ -776,7 +783,6 @@ export type FileWatchSSEEvent =
     }
   | {
       type: 'event';
-      eventId: string;
       eventType: FileWatchEventType;
       path: string;
       isDirectory: boolean;
@@ -792,78 +798,22 @@ export type FileWatchSSEEvent =
     };
 
 /**
- * Persistent watch state retained while the container stays alive.
+ * Result returned by `checkChanges()`.
  */
-export interface WatchState {
-  watchId: string;
-  path: string;
-  recursive: boolean;
-  include?: string[];
-  exclude?: string[];
-  cursor: number;
-  changed: boolean;
-  overflowed: boolean;
-  lastEventAt: string | null;
-  expiresAt: string | null;
-  subscriberCount: number;
-  startedAt: string;
-}
-
-/**
- * Request body for acknowledging processed watch state.
- */
-export interface WatchCheckpointRequest {
-  cursor: number;
-  leaseToken: string;
-}
-
-/**
- * Options for stopping a persistent watch.
- */
-export interface WatchStopOptions {
-  /**
-   * Required when stopping a persistent watch obtained from `ensureWatch()`.
-   */
-  leaseToken?: string;
-}
-
-/**
- * Result returned when ensuring a persistent watch exists.
- */
-export interface WatchEnsureResult {
-  success: boolean;
-  watch: WatchState;
-  leaseToken: string;
-  timestamp: string;
-}
-
-/**
- * Result returned when retrieving persistent watch state.
- */
-export interface WatchStateResult {
-  success: boolean;
-  watch: WatchState;
-  timestamp: string;
-}
-
-/**
- * Result returned when acknowledging a watch cursor.
- */
-export interface WatchCheckpointResult {
-  success: boolean;
-  checkpointed: boolean;
-  watch: WatchState;
-  timestamp: string;
-}
-
-/**
- * Result returned when stopping a persistent watch.
- */
-export interface WatchStopResult {
-  success: boolean;
-  watchId: string;
-  timestamp: string;
-}
+export type CheckChangesResult =
+  | {
+      success: true;
+      status: 'unchanged' | 'changed';
+      version: string;
+      timestamp: string;
+    }
+  | {
+      success: true;
+      status: 'resync';
+      reason: 'expired' | 'restarted';
+      version: string;
+      timestamp: string;
+    };
 
 // Process management result types
 export interface ProcessStartResult {
@@ -1060,19 +1010,10 @@ export interface ExecutionSession {
     path: string,
     options?: Omit<WatchOptions, 'sessionId'>
   ): Promise<ReadableStream<Uint8Array>>;
-  ensureWatch(
+  checkChanges(
     path: string,
-    options?: Omit<PersistentWatchOptions, 'sessionId'>
-  ): Promise<WatchEnsureResult>;
-  getWatchState(watchId: string): Promise<WatchStateResult>;
-  checkpointWatch(
-    watchId: string,
-    request: WatchCheckpointRequest
-  ): Promise<WatchCheckpointResult>;
-  stopWatch(
-    watchId: string,
-    options?: WatchStopOptions
-  ): Promise<WatchStopResult>;
+    options?: Omit<CheckChangesOptions, 'sessionId'>
+  ): Promise<CheckChangesResult>;
   mkdir(path: string, options?: { recursive?: boolean }): Promise<MkdirResult>;
   deleteFile(path: string): Promise<DeleteFileResult>;
   renameFile(oldPath: string, newPath: string): Promise<RenameFileResult>;
@@ -1330,19 +1271,10 @@ export interface ISandbox {
     path: string,
     options?: WatchOptions
   ): Promise<ReadableStream<Uint8Array>>;
-  ensureWatch(
+  checkChanges(
     path: string,
-    options?: PersistentWatchOptions
-  ): Promise<WatchEnsureResult>;
-  getWatchState(watchId: string): Promise<WatchStateResult>;
-  checkpointWatch(
-    watchId: string,
-    request: WatchCheckpointRequest
-  ): Promise<WatchCheckpointResult>;
-  stopWatch(
-    watchId: string,
-    options?: WatchStopOptions
-  ): Promise<WatchStopResult>;
+    options?: CheckChangesOptions
+  ): Promise<CheckChangesResult>;
   mkdir(path: string, options?: { recursive?: boolean }): Promise<MkdirResult>;
   deleteFile(path: string): Promise<DeleteFileResult>;
   renameFile(oldPath: string, newPath: string): Promise<RenameFileResult>;

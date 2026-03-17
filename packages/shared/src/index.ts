@@ -99,6 +99,9 @@ export type {
   // Bucket mounting types
   BucketCredentials,
   BucketProvider,
+  CheckChangesOptions,
+  CheckChangesRequest,
+  CheckChangesResult,
   ContextCreateResult,
   ContextDeleteResult,
   ContextListResult,
@@ -132,8 +135,6 @@ export type {
   MkdirResult,
   MountBucketOptions,
   MoveFileResult,
-  // File watch types
-  PersistentWatchOptions,
   PortCheckRequest,
   PortCheckResponse,
   PortCloseResult,
@@ -169,15 +170,9 @@ export type {
   WaitForExitResult,
   WaitForLogResult,
   WaitForPortOptions,
-  WatchCheckpointRequest,
-  WatchCheckpointResult,
-  WatchEnsureResult,
+  // File watch types
   WatchOptions,
   WatchRequest,
-  WatchState,
-  WatchStateResult,
-  WatchStopOptions,
-  WatchStopResult,
   WriteFileResult
 } from './types.js';
 export {

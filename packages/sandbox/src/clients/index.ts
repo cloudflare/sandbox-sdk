@@ -42,15 +42,10 @@ export {
 // =============================================================================
 
 export type {
-  PersistentWatchOptions,
-  WatchCheckpointRequest,
-  WatchCheckpointResult,
-  WatchEnsureResult,
-  WatchRequest,
-  WatchState,
-  WatchStateResult,
-  WatchStopOptions,
-  WatchStopResult
+  CheckChangesOptions,
+  CheckChangesRequest,
+  CheckChangesResult,
+  WatchRequest
 } from '@repo/shared';
 // Command client types
 export type { ExecuteRequest, ExecuteResponse } from './command-client';

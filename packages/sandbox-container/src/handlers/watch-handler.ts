@@ -1,13 +1,5 @@
 import { posix as pathPosix } from 'node:path';
-import type {
-  Logger,
-  WatchCheckpointRequest,
-  WatchCheckpointResult,
-  WatchEnsureResult,
-  WatchRequest,
-  WatchStateResult,
-  WatchStopResult
-} from '@repo/shared';
+import type { CheckChangesRequest, Logger, WatchRequest } from '@repo/shared';
 import { ErrorCode } from '@repo/shared/errors';
 import { CONFIG } from '../config';
 import type { RequestContext } from '../core/types';
@@ -34,36 +26,8 @@ export class WatchHandler extends BaseHandler<Request, Response> {
       return this.handleWatch(request, context);
     }
 
-    if (pathname === '/api/watch/ensure' && request.method === 'POST') {
-      return this.handleEnsureWatch(request, context);
-    }
-
-    if (pathname.startsWith('/api/watch/')) {
-      const segments = pathname.split('/');
-      const watchId = segments[3];
-      const action = segments[4];
-
-      if (!watchId) {
-        return this.createErrorResponse(
-          {
-            message: 'Watch ID is required',
-            code: ErrorCode.VALIDATION_FAILED
-          },
-          context
-        );
-      }
-
-      if (!action && request.method === 'GET') {
-        return this.handleGetWatchState(context, watchId);
-      }
-
-      if (!action && request.method === 'DELETE') {
-        return this.handleStopWatch(request, context, watchId);
-      }
-
-      if (action === 'checkpoint' && request.method === 'POST') {
-        return this.handleCheckpointWatch(request, context, watchId);
-      }
+    if (pathname === '/api/watch/check' && request.method === 'POST') {
+      return this.handleCheckChanges(request, context);
     }
 
     return this.createErrorResponse(
@@ -76,6 +40,10 @@ export class WatchHandler extends BaseHandler<Request, Response> {
     );
   }
 
+  /**
+   * Start watching a directory.
+   * Returns an SSE stream of file change events.
+   */
   private async handleWatch(
     request: Request,
     context: RequestContext
@@ -107,11 +75,14 @@ export class WatchHandler extends BaseHandler<Request, Response> {
     });
   }
 
-  private async handleEnsureWatch(
+  /**
+   * Check whether a path changed since a previously returned version.
+   */
+  private async handleCheckChanges(
     request: Request,
     context: RequestContext
   ): Promise<Response> {
-    const normalizedRequest = await this.parseAndNormalizeWatchRequest(
+    const normalizedRequest = await this.parseAndNormalizeCheckRequest(
       request,
       context
     );
@@ -119,133 +90,15 @@ export class WatchHandler extends BaseHandler<Request, Response> {
       return normalizedRequest;
     }
 
-    const result = await this.watchService.ensureWatch(
+    const result = await this.watchService.checkChanges(
       normalizedRequest.path,
       normalizedRequest
     );
-
     if (!result.success) {
       return this.createErrorResponse(result.error, context);
     }
 
-    const response: WatchEnsureResult = {
-      success: true,
-      watch: result.data.watch,
-      leaseToken: result.data.leaseToken,
-      timestamp: new Date().toISOString()
-    };
-
-    return this.createTypedResponse(response, context);
-  }
-
-  private async handleGetWatchState(
-    context: RequestContext,
-    watchId: string
-  ): Promise<Response> {
-    const result = await this.watchService.getWatchState(watchId);
-    if (!result.success) {
-      return this.createErrorResponse(result.error, context);
-    }
-
-    const response: WatchStateResult = {
-      success: true,
-      watch: result.data,
-      timestamp: new Date().toISOString()
-    };
-
-    return this.createTypedResponse(response, context);
-  }
-
-  private async handleCheckpointWatch(
-    request: Request,
-    context: RequestContext,
-    watchId: string
-  ): Promise<Response> {
-    let body: WatchCheckpointRequest;
-    try {
-      body = await this.parseRequestBody<WatchCheckpointRequest>(request);
-    } catch (error) {
-      return this.createErrorResponse(
-        {
-          message:
-            error instanceof Error ? error.message : 'Invalid request body',
-          code: ErrorCode.VALIDATION_FAILED
-        },
-        context
-      );
-    }
-
-    if (!Number.isInteger(body.cursor) || body.cursor < 0) {
-      return this.createErrorResponse(
-        {
-          message: 'cursor must be a non-negative integer',
-          code: ErrorCode.VALIDATION_FAILED,
-          details: { cursor: body.cursor }
-        },
-        context
-      );
-    }
-
-    if (body.leaseToken === undefined) {
-      return this.createErrorResponse(
-        {
-          message: 'leaseToken is required',
-          code: ErrorCode.VALIDATION_FAILED
-        },
-        context
-      );
-    }
-
-    const leaseTokenError = this.validateToken('leaseToken', body.leaseToken);
-    if (leaseTokenError) {
-      return this.createErrorResponse(leaseTokenError, context);
-    }
-
-    const result = await this.watchService.checkpointWatch(
-      watchId,
-      body.cursor,
-      body.leaseToken
-    );
-    if (!result.success) {
-      return this.createErrorResponse(result.error, context);
-    }
-
-    const response: WatchCheckpointResult = {
-      success: true,
-      checkpointed: result.data.checkpointed,
-      watch: result.data.watch,
-      timestamp: new Date().toISOString()
-    };
-
-    return this.createTypedResponse(response, context);
-  }
-
-  private async handleStopWatch(
-    request: Request,
-    context: RequestContext,
-    watchId: string
-  ): Promise<Response> {
-    const leaseToken =
-      this.extractQueryParam(request, 'leaseToken') ?? undefined;
-    if (leaseToken !== undefined) {
-      const leaseTokenError = this.validateToken('leaseToken', leaseToken);
-      if (leaseTokenError) {
-        return this.createErrorResponse(leaseTokenError, context);
-      }
-    }
-
-    const result = await this.watchService.stopWatch(watchId, leaseToken);
-    if (!result.success) {
-      return this.createErrorResponse(result.error, context);
-    }
-
-    const response: WatchStopResult = {
-      success: true,
-      watchId,
-      timestamp: new Date().toISOString()
-    };
-
-    return this.createTypedResponse(response, context);
+    return this.createTypedResponse(result.data, context);
   }
 
   private async parseAndNormalizeWatchRequest(
@@ -267,6 +120,40 @@ export class WatchHandler extends BaseHandler<Request, Response> {
     }
 
     const validationError = this.validateWatchBody(body);
+    if (validationError) {
+      return this.createErrorResponse(validationError, context);
+    }
+
+    const pathResult = this.normalizeWatchPath(body.path);
+    if (!pathResult.success) {
+      return this.createErrorResponse(pathResult.error, context);
+    }
+
+    return {
+      ...body,
+      path: pathResult.path
+    };
+  }
+
+  private async parseAndNormalizeCheckRequest(
+    request: Request,
+    context: RequestContext
+  ): Promise<CheckChangesRequest | Response> {
+    let body: CheckChangesRequest;
+    try {
+      body = await this.parseRequestBody<CheckChangesRequest>(request);
+    } catch (error) {
+      return this.createErrorResponse(
+        {
+          message:
+            error instanceof Error ? error.message : 'Invalid request body',
+          code: ErrorCode.VALIDATION_FAILED
+        },
+        context
+      );
+    }
+
+    const validationError = this.validateCheckChangesBody(body);
     if (validationError) {
       return this.createErrorResponse(validationError, context);
     }
@@ -355,42 +242,36 @@ export class WatchHandler extends BaseHandler<Request, Response> {
       };
     }
 
-    const resumeTokenError = this.validateToken(
-      'resumeToken',
-      body.resumeToken
-    );
-    if (resumeTokenError) {
-      return resumeTokenError;
-    }
-
     return null;
   }
 
-  private validateToken(
-    tokenName: 'leaseToken' | 'resumeToken',
-    token: unknown
-  ): {
+  private validateCheckChangesBody(body: CheckChangesRequest): {
     message: string;
     code: string;
     details?: Record<string, unknown>;
   } | null {
-    if (token === undefined) {
+    const watchValidationError = this.validateWatchBody(body);
+    if (watchValidationError) {
+      return watchValidationError;
+    }
+
+    if (body.since === undefined) {
       return null;
     }
 
-    if (typeof token !== 'string' || token.trim() === '') {
+    if (typeof body.since !== 'string' || body.since.trim() === '') {
       return {
-        message: `${tokenName} must be a non-empty string when provided`,
+        message: 'since must be a non-empty string when provided',
         code: ErrorCode.VALIDATION_FAILED,
-        details: { [tokenName]: token }
+        details: { since: body.since }
       };
     }
 
-    if (token.includes('\0')) {
+    if (body.since.includes('\0')) {
       return {
-        message: `${tokenName} contains invalid null bytes`,
+        message: 'since contains invalid null bytes',
         code: ErrorCode.VALIDATION_FAILED,
-        details: { [tokenName]: token }
+        details: { since: body.since }
       };
     }
 

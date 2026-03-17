@@ -144,21 +144,10 @@ describe('Sandbox - Automatic Session Management', () => {
       timestamp: new Date().toISOString()
     } as any);
 
-    vi.spyOn(sandbox.client.watch, 'ensureWatch').mockResolvedValue({
+    vi.spyOn(sandbox.client.watch, 'checkChanges').mockResolvedValue({
       success: true,
-      watch: {
-        watchId: 'watch-1',
-        path: '/workspace/test',
-        recursive: true,
-        cursor: 0,
-        changed: false,
-        overflowed: false,
-        lastEventAt: null,
-        expiresAt: null,
-        subscriberCount: 0,
-        startedAt: new Date().toISOString()
-      },
-      leaseToken: 'lease-1',
+      status: 'unchanged',
+      version: 'watch-1:0',
       timestamp: new Date().toISOString()
     } as any);
   });
@@ -213,18 +202,18 @@ describe('Sandbox - Automatic Session Management', () => {
       );
     });
 
-    it('should forward ensureWatch options to the watch client', async () => {
-      await sandbox.ensureWatch('/workspace/test', {
-        resumeToken: 'resume-1',
+    it('should forward checkChanges options to the watch client', async () => {
+      await sandbox.checkChanges('/workspace/test', {
+        since: 'watch-1:0',
         recursive: false
       });
 
-      expect(sandbox.client.watch.ensureWatch).toHaveBeenCalledWith({
+      expect(sandbox.client.watch.checkChanges).toHaveBeenCalledWith({
         path: '/workspace/test',
         recursive: false,
         include: undefined,
         exclude: undefined,
-        resumeToken: 'resume-1',
+        since: 'watch-1:0',
         sessionId: expect.stringMatching(/^sandbox-/)
       });
     });

@@ -1,9 +1,10 @@
 import type {
+  CheckChangesRequest,
+  CheckChangesResult,
   FileWatchEventType,
   FileWatchSSEEvent,
   Logger,
-  WatchRequest,
-  WatchState
+  WatchRequest
 } from '@repo/shared';
 import { ErrorCode } from '@repo/shared/errors';
 import type { Subprocess } from 'bun';
@@ -16,11 +17,17 @@ interface Deferred<T> {
   reject(reason?: unknown): void;
 }
 
+type LiveWatchEvent = Extract<FileWatchSSEEvent, { type: 'event' }>;
+type TerminalWatchEvent = Extract<
+  FileWatchSSEEvent,
+  { type: 'error' | 'stopped' }
+>;
+
 interface WatchSubscriber {
   id: string;
   controller: ReadableStreamDefaultController<Uint8Array>;
   encoder: TextEncoder;
-  pendingEvents: Map<string, FileWatchSSEEvent>;
+  pendingEvents: Map<string, LiveWatchEvent>;
   droppedEvents: number;
   flushInterval: ReturnType<typeof setInterval>;
   watchingSent: boolean;
@@ -36,10 +43,10 @@ interface ActiveWatch {
   exclude?: string[];
   process: Subprocess;
   startedAt: Date;
-  leaseToken: string | null;
-  resumeToken: string | null;
-  state: WatchState;
-  persistent: boolean;
+  retained: boolean;
+  cursor: number;
+  lastEventAt: string | null;
+  expiresAt: string | null;
   subscribers: Map<string, WatchSubscriber>;
   ready: Deferred<void>;
   readyState: 'pending' | 'resolved' | 'rejected';
@@ -47,16 +54,19 @@ interface ActiveWatch {
   stopPromise?: Promise<void>;
 }
 
-type TerminalWatchEvent = Extract<
-  FileWatchSSEEvent,
-  { type: 'error' | 'stopped' }
->;
-
 const WATCH_SETUP_TIMEOUT_MS = 10000;
 const EVENT_COALESCE_WINDOW_MS = 75;
 const MAX_PENDING_EVENTS = 1000;
-const PERSISTENT_WATCH_IDLE_TTL_MS = 10 * 60 * 1000;
+const CHANGE_STATE_IDLE_TTL_MS = 10 * 60 * 1000;
 const STOP_TIMEOUT_MS = 5000;
+const DEFAULT_EXCLUDE_PATTERNS = ['.git', 'node_modules', '.DS_Store'];
+const DEFAULT_WATCH_EVENTS: FileWatchEventType[] = [
+  'create',
+  'modify',
+  'delete',
+  'move_from',
+  'move_to'
+];
 
 /**
  * Service for watching filesystem changes using inotifywait.
@@ -78,161 +88,41 @@ export class WatchService {
   ): Promise<ServiceResult<ReadableStream<Uint8Array>>> {
     const watchResult = this.getOrCreateWatch(path, options);
     if (!watchResult.success) {
-      return watchResult;
+      return serviceError(watchResult.error);
     }
 
-    const stream = this.createSubscriberStream(watchResult.data);
-    return serviceSuccess(stream);
+    return serviceSuccess(this.createSubscriberStream(watchResult.data.watch));
   }
 
   /**
-   * Ensure a persistent watch exists and wait until it is ready.
+   * Check whether a path changed since a previously returned version.
    */
-  async ensureWatch(
+  async checkChanges(
     path: string,
-    options: WatchRequest = { path }
-  ): Promise<ServiceResult<{ watch: WatchState; leaseToken: string }>> {
+    options: CheckChangesRequest = { path }
+  ): Promise<ServiceResult<CheckChangesResult>> {
     const watchResult = this.getOrCreateWatch(path, options);
     if (!watchResult.success) {
-      return watchResult;
+      return serviceError(watchResult.error);
     }
 
-    const watch = watchResult.data;
-    const leaseResult = this.claimPersistentWatch(watch, options.resumeToken);
-    if (!leaseResult.success) {
-      return serviceError(leaseResult.error);
-    }
-
-    watch.persistent = true;
-    this.refreshPersistentWatchLease(watch);
+    const { watch, created } = watchResult.data;
+    watch.retained = true;
 
     try {
       await watch.ready.promise;
-      return serviceSuccess({
-        watch: this.snapshotWatchState(watch),
-        leaseToken: leaseResult.leaseToken
-      });
+      this.refreshRetainedWatchExpiry(watch);
+      return this.buildCheckChangesResult(watch, options.since, created);
     } catch (error) {
       return serviceError({
         message:
           error instanceof Error
             ? error.message
-            : 'Failed to establish persistent watch',
+            : 'Failed to establish retained change state',
         code: ErrorCode.WATCH_START_ERROR,
         details: { path }
       });
     }
-  }
-
-  /**
-   * Return the current state for a persistent or active watch.
-   */
-  async getWatchState(watchId: string): Promise<ServiceResult<WatchState>> {
-    const watch = this.activeWatches.get(watchId);
-    if (!watch) {
-      return serviceError({
-        message: `Watch not found: ${watchId}`,
-        code: ErrorCode.WATCH_NOT_FOUND,
-        details: { watchId }
-      });
-    }
-
-    try {
-      await watch.ready.promise;
-      this.refreshPersistentWatchLease(watch);
-      return serviceSuccess(this.snapshotWatchState(watch));
-    } catch (error) {
-      return serviceError({
-        message:
-          error instanceof Error ? error.message : 'Watch failed to establish',
-        code: ErrorCode.WATCH_START_ERROR,
-        details: { watchId }
-      });
-    }
-  }
-
-  /**
-   * Acknowledge the current watch cursor.
-   */
-  async checkpointWatch(
-    watchId: string,
-    cursor: number,
-    leaseToken: string
-  ): Promise<ServiceResult<{ checkpointed: boolean; watch: WatchState }>> {
-    const watch = this.activeWatches.get(watchId);
-    if (!watch) {
-      return serviceError({
-        message: `Watch not found: ${watchId}`,
-        code: ErrorCode.WATCH_NOT_FOUND,
-        details: { watchId }
-      });
-    }
-
-    try {
-      await watch.ready.promise;
-    } catch (error) {
-      return serviceError({
-        message:
-          error instanceof Error ? error.message : 'Watch failed to establish',
-        code: ErrorCode.WATCH_START_ERROR,
-        details: { watchId }
-      });
-    }
-
-    const leaseError = this.verifyPersistentWatchLease(
-      watch,
-      leaseToken,
-      'checkpoint'
-    );
-    if (leaseError) {
-      return serviceError(leaseError);
-    }
-
-    const checkpointed = cursor === watch.state.cursor;
-    if (checkpointed) {
-      watch.state.changed = false;
-      watch.state.overflowed = false;
-    }
-
-    this.refreshPersistentWatchLease(watch);
-
-    return serviceSuccess({
-      checkpointed,
-      watch: this.snapshotWatchState(watch)
-    });
-  }
-
-  /**
-   * Stop a specific watch.
-   */
-  async stopWatch(
-    watchId: string,
-    leaseToken?: string
-  ): Promise<ServiceResult<void>> {
-    const watch = this.activeWatches.get(watchId);
-    if (!watch) {
-      return serviceError({
-        message: `Watch not found: ${watchId}`,
-        code: ErrorCode.WATCH_NOT_FOUND,
-        details: { watchId }
-      });
-    }
-
-    const leaseError = this.verifyPersistentWatchLease(
-      watch,
-      leaseToken,
-      'stop'
-    );
-    if (leaseError) {
-      return serviceError(leaseError);
-    }
-
-    await this.stopWatchInternal(watchId, {
-      type: 'stopped',
-      reason: 'Watch stopped'
-    });
-
-    return serviceSuccess(undefined);
   }
 
   /**
@@ -247,33 +137,32 @@ export class WatchService {
   /**
    * Get list of active watches.
    */
-  getActiveWatches(): WatchState[] {
-    return Array.from(this.activeWatches.values()).map((watch) =>
-      this.snapshotWatchState(watch)
-    );
+  getActiveWatches(): Array<{ id: string; path: string; startedAt: Date }> {
+    return Array.from(this.activeWatches.values()).map((watch) => ({
+      id: watch.id,
+      path: watch.path,
+      startedAt: watch.startedAt
+    }));
   }
 
   private getOrCreateWatch(
     path: string,
     options: WatchRequest
-  ): ServiceResult<ActiveWatch> {
-    const include = this.normalizePatterns(options.include);
-    const exclude = include
-      ? undefined
-      : this.normalizePatterns(options.exclude);
-    const events = this.normalizeEvents(options.events);
-    const key = this.createWatchKey(path, {
-      recursive: options.recursive !== false,
-      include,
-      exclude,
-      events
-    });
+  ): ServiceResult<{ watch: ActiveWatch; created: boolean }> {
+    const normalized = this.normalizeWatchOptions(options);
+    const key = this.createWatchKey(path, normalized);
     const existingWatchId = this.watchIdsByKey.get(key);
+
     if (existingWatchId) {
       const existing = this.activeWatches.get(existingWatchId);
-      if (existing) {
-        return serviceSuccess(existing);
+      if (
+        existing &&
+        !existing.stopPromise &&
+        existing.readyState !== 'rejected'
+      ) {
+        return serviceSuccess({ watch: existing, created: false });
       }
+      this.activeWatches.delete(existingWatchId);
       this.watchIdsByKey.delete(key);
     }
 
@@ -301,28 +190,15 @@ export class WatchService {
         id: watchId,
         key,
         path,
-        recursive: options.recursive !== false,
-        include,
-        exclude,
+        recursive: normalized.recursive,
+        include: normalized.include,
+        exclude: normalized.exclude,
         process: proc,
         startedAt: new Date(),
-        leaseToken: null,
-        resumeToken: null,
-        state: {
-          watchId,
-          path,
-          recursive: options.recursive !== false,
-          include,
-          exclude,
-          cursor: 0,
-          changed: false,
-          overflowed: false,
-          lastEventAt: null,
-          expiresAt: null,
-          subscriberCount: 0,
-          startedAt: new Date().toISOString()
-        },
-        persistent: false,
+        retained: false,
+        cursor: 0,
+        lastEventAt: null,
+        expiresAt: null,
         subscribers: new Map(),
         ready: createDeferred<void>(),
         readyState: 'pending',
@@ -333,7 +209,7 @@ export class WatchService {
       this.watchIdsByKey.set(key, watchId);
       this.runWatchLoop(watch, watchLogger);
 
-      return serviceSuccess(watch);
+      return serviceSuccess({ watch, created: true });
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
       watchLogger.error('Failed to start inotifywait', err);
@@ -345,6 +221,25 @@ export class WatchService {
     }
   }
 
+  private normalizeWatchOptions(options: WatchRequest): {
+    recursive: boolean;
+    include?: string[];
+    exclude?: string[];
+    events: FileWatchEventType[];
+  } {
+    const include = this.normalizePatterns(options.include);
+    const exclude = include
+      ? undefined
+      : (this.normalizePatterns(options.exclude) ?? DEFAULT_EXCLUDE_PATTERNS);
+
+    return {
+      recursive: options.recursive !== false,
+      include,
+      exclude,
+      events: this.normalizeEvents(options.events)
+    };
+  }
+
   private createWatchKey(
     path: string,
     options: {
@@ -354,142 +249,121 @@ export class WatchService {
       events: FileWatchEventType[];
     }
   ): string {
-    const include = options.include
-      ? Array.from(new Set(options.include)).sort()
-      : null;
-    const exclude = options.exclude
-      ? Array.from(new Set(options.exclude)).sort()
-      : null;
     return JSON.stringify({
       path,
       recursive: options.recursive,
-      include,
-      exclude,
-      events: this.normalizeEvents(options.events)
+      include: options.include ?? null,
+      exclude: options.exclude ?? null,
+      events: options.events
     });
   }
 
-  private snapshotWatchState(watch: ActiveWatch): WatchState {
-    return {
-      ...watch.state,
-      include: watch.include,
-      exclude: watch.exclude,
-      subscriberCount: watch.subscribers.size,
-      startedAt: watch.startedAt.toISOString()
-    };
-  }
-
-  private claimPersistentWatch(
+  private buildCheckChangesResult(
     watch: ActiveWatch,
-    resumeToken?: string
-  ):
-    | { success: true; leaseToken: string }
-    | {
-        success: false;
-        error: {
-          message: string;
-          code: string;
-          details?: Record<string, unknown>;
-        };
-      } {
-    if (!watch.leaseToken) {
-      const nextLeaseToken = crypto.randomUUID();
-      watch.leaseToken = nextLeaseToken;
-      watch.resumeToken = resumeToken ?? null;
-      return { success: true, leaseToken: nextLeaseToken };
+    since: string | undefined,
+    created: boolean
+  ): ServiceResult<CheckChangesResult> {
+    const version = this.buildVersionToken(watch);
+    const timestamp = new Date().toISOString();
+
+    if (since === undefined) {
+      return serviceSuccess({
+        success: true,
+        status: 'unchanged',
+        version,
+        timestamp
+      });
     }
 
-    if (
-      !watch.resumeToken ||
-      !resumeToken ||
-      watch.resumeToken !== resumeToken
-    ) {
-      return {
-        success: false,
-        error: {
-          message:
-            'A persistent watch already exists for this path. Reuse it with the same resumeToken or wait for it to expire.',
-          code: ErrorCode.RESOURCE_BUSY,
-          details: {
-            watchId: watch.id
-          }
+    const parsedVersion = this.parseVersionToken(since);
+    if (!parsedVersion) {
+      return serviceError({
+        message: 'since must be a version returned by checkChanges()',
+        code: ErrorCode.VALIDATION_FAILED,
+        details: { since }
+      });
+    }
+
+    if (parsedVersion.watchId !== watch.id) {
+      return serviceSuccess({
+        success: true,
+        status: 'resync',
+        reason: created ? 'expired' : 'restarted',
+        version,
+        timestamp
+      });
+    }
+
+    if (parsedVersion.cursor > watch.cursor) {
+      return serviceError({
+        message: 'since refers to a newer version than the current watch state',
+        code: ErrorCode.VALIDATION_FAILED,
+        details: {
+          since,
+          currentVersion: version
         }
-      };
+      });
     }
 
-    return { success: true, leaseToken: watch.leaseToken };
+    return serviceSuccess({
+      success: true,
+      status: parsedVersion.cursor === watch.cursor ? 'unchanged' : 'changed',
+      version,
+      timestamp
+    });
   }
 
-  private verifyPersistentWatchLease(
-    watch: ActiveWatch,
-    leaseToken: string | undefined,
-    action: 'checkpoint' | 'stop'
-  ): {
-    message: string;
-    code: string;
-    details?: Record<string, unknown>;
-  } | null {
-    if (!watch.persistent || !watch.leaseToken) {
-      return {
-        message: `Only persistent watches can ${action}.`,
-        code: ErrorCode.RESOURCE_BUSY,
-        details: {
-          watchId: watch.id,
-          action
-        }
-      };
-    }
-
-    if (!leaseToken) {
-      return {
-        message: `Persistent watch requires a lease token to ${action}.`,
-        code: ErrorCode.RESOURCE_BUSY,
-        details: {
-          watchId: watch.id,
-          action
-        }
-      };
-    }
-
-    if (watch.leaseToken !== leaseToken) {
-      return {
-        message: `Persistent watch lease token does not allow this ${action}.`,
-        code: ErrorCode.RESOURCE_BUSY,
-        details: {
-          watchId: watch.id,
-          action
-        }
-      };
-    }
-
-    return null;
+  private buildVersionToken(watch: ActiveWatch): string {
+    return `${watch.id}:${watch.cursor}`;
   }
 
-  private refreshPersistentWatchLease(watch: ActiveWatch): void {
-    if (!watch.persistent) {
-      watch.state.expiresAt = null;
-      this.clearPersistentWatchExpiry(watch);
+  private parseVersionToken(
+    version: string
+  ): { watchId: string; cursor: number } | null {
+    const separatorIndex = version.lastIndexOf(':');
+    if (separatorIndex <= 0 || separatorIndex === version.length - 1) {
+      return null;
+    }
+
+    const watchId = version.slice(0, separatorIndex);
+    const cursorText = version.slice(separatorIndex + 1);
+    if (!/^\d+$/.test(cursorText)) {
+      return null;
+    }
+
+    const cursor = Number(cursorText);
+    if (!Number.isSafeInteger(cursor) || cursor < 0) {
+      return null;
+    }
+
+    return { watchId, cursor };
+  }
+
+  private refreshRetainedWatchExpiry(watch: ActiveWatch): void {
+    if (!watch.retained) {
+      watch.expiresAt = null;
+      this.clearRetainedWatchExpiry(watch);
       return;
     }
 
-    this.clearPersistentWatchExpiry(watch);
+    this.clearRetainedWatchExpiry(watch);
 
     if (watch.subscribers.size > 0) {
-      watch.state.expiresAt = null;
+      watch.expiresAt = null;
       return;
     }
 
-    const expiresAt = new Date(Date.now() + PERSISTENT_WATCH_IDLE_TTL_MS);
-    watch.state.expiresAt = expiresAt.toISOString();
+    const expiresAt = new Date(Date.now() + CHANGE_STATE_IDLE_TTL_MS);
+    watch.expiresAt = expiresAt.toISOString();
     watch.expiryTimer = setTimeout(() => {
       void this.stopWatchInternal(watch.id, {
         type: 'stopped',
-        reason: 'Persistent watch expired after idle period'
+        reason: 'Retained change state expired after idle period'
       });
-    }, PERSISTENT_WATCH_IDLE_TTL_MS);
+    }, CHANGE_STATE_IDLE_TTL_MS);
   }
 
-  private clearPersistentWatchExpiry(watch: ActiveWatch): void {
+  private clearRetainedWatchExpiry(watch: ActiveWatch): void {
     if (watch.expiryTimer) {
       clearTimeout(watch.expiryTimer);
       watch.expiryTimer = null;
@@ -577,8 +451,7 @@ export class WatchService {
     };
 
     watch.subscribers.set(subscriberId, subscriber);
-    watch.state.subscriberCount = watch.subscribers.size;
-    this.refreshPersistentWatchLease(watch);
+    this.refreshRetainedWatchExpiry(watch);
     return subscriberId;
   }
 
@@ -591,7 +464,7 @@ export class WatchService {
   }
 
   private async maybeStopWatchWhenUnused(watch: ActiveWatch): Promise<void> {
-    if (!watch.persistent && watch.subscribers.size === 0) {
+    if (!watch.retained && watch.subscribers.size === 0) {
       await this.stopWatchInternal(watch.id, {
         type: 'stopped',
         reason: 'Watch stopped after last subscriber disconnected'
@@ -599,7 +472,7 @@ export class WatchService {
       return;
     }
 
-    this.refreshPersistentWatchLease(watch);
+    this.refreshRetainedWatchExpiry(watch);
   }
 
   private closeSubscriber(
@@ -615,7 +488,6 @@ export class WatchService {
     subscriber.closed = true;
     clearInterval(subscriber.flushInterval);
     watch.subscribers.delete(subscriberId);
-    watch.state.subscriberCount = watch.subscribers.size;
 
     try {
       const shouldSendTerminalEvent =
@@ -642,23 +514,19 @@ export class WatchService {
   private enqueueSubscriberEvent(
     watch: ActiveWatch,
     subscriber: WatchSubscriber,
-    event: FileWatchSSEEvent
+    event: LiveWatchEvent
   ): void {
     if (subscriber.closed) {
       return;
     }
 
-    const key =
-      event.type === 'event'
-        ? `${event.eventType}|${event.path}|${event.isDirectory}`
-        : `${event.type}|${Date.now()}`;
+    const key = `${event.eventType}|${event.path}|${event.isDirectory}`;
 
     if (
       !subscriber.pendingEvents.has(key) &&
       subscriber.pendingEvents.size >= MAX_PENDING_EVENTS
     ) {
       subscriber.droppedEvents++;
-      watch.state.overflowed = true;
 
       if (
         subscriber.droppedEvents === 1 ||
@@ -696,12 +564,11 @@ export class WatchService {
       subscriber.closed = true;
       clearInterval(subscriber.flushInterval);
       watch.subscribers.delete(subscriber.id);
-      watch.state.subscriberCount = watch.subscribers.size;
       void this.maybeStopWatchWhenUnused(watch);
     }
   }
 
-  private broadcastEvent(watch: ActiveWatch, event: FileWatchSSEEvent): void {
+  private broadcastEvent(watch: ActiveWatch, event: LiveWatchEvent): void {
     for (const subscriber of watch.subscribers.values()) {
       this.enqueueSubscriberEvent(watch, subscriber, event);
     }
@@ -734,6 +601,10 @@ export class WatchService {
         type: 'stopped',
         reason: 'Watch process ended'
       };
+
+      this.activeWatches.delete(watchId);
+      this.watchIdsByKey.delete(watch.key);
+      this.clearRetainedWatchExpiry(watch);
 
       if (watch.readyState === 'pending') {
         const terminalMessage =
@@ -770,11 +641,6 @@ export class WatchService {
           // Process may have already exited.
         }
       }
-
-      this.clearPersistentWatchExpiry(watch);
-
-      this.activeWatches.delete(watchId);
-      this.watchIdsByKey.delete(watch.key);
     };
 
     watch.stopPromise = cleanup();
@@ -822,52 +688,12 @@ export class WatchService {
           buffer = lines.pop() || '';
 
           for (const line of lines) {
-            if (!line.trim()) {
-              continue;
-            }
-
-            const parsed = this.parseInotifyEvent(line);
-            if (!parsed) {
-              continue;
-            }
-
-            const timestamp = new Date().toISOString();
-            const nextCursor = watch.state.cursor + 1;
-            const event: Extract<FileWatchSSEEvent, { type: 'event' }> = {
-              type: 'event',
-              eventId: `${watch.id}:${nextCursor}`,
-              eventType: parsed.eventType,
-              path: parsed.path,
-              isDirectory: parsed.isDirectory,
-              timestamp
-            };
-
-            watch.state.cursor = nextCursor;
-            watch.state.changed = true;
-            watch.state.lastEventAt = timestamp;
-            this.broadcastEvent(watch, event);
+            this.handleWatchLine(watch, line);
           }
         }
 
         if (buffer.trim()) {
-          const parsed = this.parseInotifyEvent(buffer);
-          if (parsed) {
-            const timestamp = new Date().toISOString();
-            const nextCursor = watch.state.cursor + 1;
-            const event: Extract<FileWatchSSEEvent, { type: 'event' }> = {
-              type: 'event',
-              eventId: `${watch.id}:${nextCursor}`,
-              eventType: parsed.eventType,
-              path: parsed.path,
-              isDirectory: parsed.isDirectory,
-              timestamp
-            };
-
-            watch.state.cursor = nextCursor;
-            watch.state.changed = true;
-            watch.state.lastEventAt = timestamp;
-            this.broadcastEvent(watch, event);
-          }
+          this.handleWatchLine(watch, buffer);
         }
 
         await this.stopWatchInternal(watch.id, {
@@ -881,6 +707,29 @@ export class WatchService {
         await this.stopWatchInternal(watch.id, errorEvent(err.message));
       }
     })();
+  }
+
+  private handleWatchLine(watch: ActiveWatch, line: string): void {
+    if (!line.trim()) {
+      return;
+    }
+
+    const parsed = this.parseInotifyEvent(line);
+    if (!parsed) {
+      return;
+    }
+
+    const timestamp = new Date().toISOString();
+    watch.cursor += 1;
+    watch.lastEventAt = timestamp;
+
+    this.broadcastEvent(watch, {
+      type: 'event',
+      eventType: parsed.eventType,
+      path: parsed.path,
+      isDirectory: parsed.isDirectory,
+      timestamp
+    });
   }
 
   private resolveWatchReady(watch: ActiveWatch): void {
@@ -910,8 +759,8 @@ export class WatchService {
 
     const events = this.normalizeEvents(options.events);
     const inotifyEvents = events
-      .map((e) => this.mapEventType(e))
-      .filter((e): e is string => e !== undefined);
+      .map((eventType) => this.mapEventType(eventType))
+      .filter((eventType): eventType is string => eventType !== undefined);
     if (inotifyEvents.length > 0) {
       args.push('-e', inotifyEvents.join(','));
     }
@@ -922,11 +771,8 @@ export class WatchService {
     if (includeRegex) {
       args.push('--include', includeRegex);
     } else {
-      const excludes = this.normalizePatterns(options.exclude) ?? [
-        '.git',
-        'node_modules',
-        '.DS_Store'
-      ];
+      const excludes =
+        this.normalizePatterns(options.exclude) ?? DEFAULT_EXCLUDE_PATTERNS;
       const excludeRegex = this.buildCombinedPathRegex(excludes);
       if (excludeRegex) {
         args.push('--exclude', excludeRegex);
@@ -959,19 +805,11 @@ export class WatchService {
   }
 
   private normalizeEvents(events?: FileWatchEventType[]): FileWatchEventType[] {
-    const defaultEvents: FileWatchEventType[] = [
-      'create',
-      'modify',
-      'delete',
-      'move_from',
-      'move_to'
-    ];
-
     if (!events || events.length === 0) {
-      return defaultEvents;
+      return DEFAULT_WATCH_EVENTS;
     }
 
-    const orderedEvents = defaultEvents.filter((eventType) =>
+    const orderedEvents = DEFAULT_WATCH_EVENTS.filter((eventType) =>
       events.includes(eventType)
     );
     const additionalEvents = events.filter(
@@ -1153,7 +991,8 @@ export class WatchService {
             }
 
             logger.warn('inotifywait stderr', { message: trimmed });
-            this.broadcastEvent(watch, errorEvent(trimmed));
+            await this.stopWatchInternal(watch.id, errorEvent(trimmed));
+            return;
           }
         }
       } catch (error) {

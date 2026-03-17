@@ -10,8 +10,7 @@ export {
   PortClient,
   ProcessClient,
   SandboxClient,
-  UtilityClient,
-  WatchClient
+  UtilityClient
 } from './clients';
 export { getSandbox, Sandbox } from './sandbox';
 
@@ -23,6 +22,8 @@ export type {
   BaseExecOptions,
   BucketCredentials,
   BucketProvider,
+  CheckChangesOptions,
+  CheckChangesResult,
   CodeContext,
   CreateContextOptions,
   DirectoryBackup,
@@ -34,6 +35,7 @@ export type {
   FileChunk,
   FileMetadata,
   FileStreamEvent,
+  // File watch types
   FileWatchSSEEvent,
   GitCheckoutResult,
   ISandbox,
@@ -41,8 +43,6 @@ export type {
   LocalMountBucketOptions,
   LogEvent,
   MountBucketOptions,
-  // File watch types
-  PersistentWatchOptions,
   Process,
   ProcessOptions,
   ProcessStatus,
@@ -55,14 +55,7 @@ export type {
   StreamOptions,
   WaitForLogResult,
   WaitForPortOptions,
-  WatchCheckpointRequest,
-  WatchCheckpointResult,
-  WatchEnsureResult,
-  WatchOptions,
-  WatchState,
-  WatchStateResult,
-  WatchStopOptions,
-  WatchStopResult
+  WatchOptions
 } from '@repo/shared';
 // Export type guards for runtime validation
 export { isExecResult, isProcess, isProcessStatus } from '@repo/shared';
