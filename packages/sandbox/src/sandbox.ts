@@ -992,9 +992,16 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       prefix
     });
 
+    // Attempt to load credentials from the DO env
+    const envObj = this.env as Record<string, unknown>;
+    const envCredentials = {
+      AWS_ACCESS_KEY_ID: getEnvString(envObj, 'AWS_ACCESS_KEY_ID'),
+      AWS_SECRET_ACCESS_KEY: getEnvString(envObj, 'AWS_SECRET_ACCESS_KEY')
+    };
+
     // Detect credentials
     const credentials = detectCredentials(options, {
-      ...this.env,
+      ...envCredentials,
       ...this.envVars
     });
 
