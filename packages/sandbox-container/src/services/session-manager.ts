@@ -3,10 +3,12 @@
 import { rm } from 'node:fs/promises';
 import {
   type ExecEvent,
-  isHighEntropy,
   type Logger,
   type PtyOptions,
   partitionEnvVars,
+  type RedactionMode,
+  redactLabel,
+  resolveRedaction,
   shellEscape
 } from '@repo/shared';
 import type {
@@ -389,7 +391,7 @@ export class SessionManager {
           cwd?: string;
           env?: Record<string, string | undefined>;
           timeoutMs?: number;
-          sensitive?: 'auto' | 'redacted';
+          redact?: RedactionMode;
         }
       ) => Promise<RawExecResult>
     ) => Promise<T>,
@@ -417,7 +419,7 @@ export class SessionManager {
             cwd?: string;
             env?: Record<string, string | undefined>;
             timeoutMs?: number;
-            sensitive?: 'auto' | 'redacted';
+            redact?: RedactionMode;
           }
         ): Promise<RawExecResult> => {
           return session.exec(command, options);
@@ -910,7 +912,7 @@ export class SessionManager {
   async setEnvVars(
     sessionId: string,
     envVars: Record<string, string | undefined>,
-    sensitive?: boolean
+    redact?: RedactionMode
   ): Promise<ServiceResult<void>> {
     const { toSet, toUnset } = partitionEnvVars(envVars);
 
@@ -946,22 +948,17 @@ export class SessionManager {
 
       for (const [key, value] of Object.entries(toSet)) {
         const exportCommand = `export ${key}=${shellEscape(value)}`;
-        const redactMode: 'redacted' | 'auto' | undefined = sensitive
-          ? 'redacted'
-          : isHighEntropy(value)
-            ? 'auto'
-            : undefined;
-        const result = await exec(exportCommand, { sensitive: redactMode });
+        const mode = resolveRedaction(redact, value);
+        const result = await exec(exportCommand, { redact: mode });
 
         if (result.exitCode !== 0) {
-          const redactedCommand = redactMode
-            ? `export ${key}=${redactMode === 'redacted' ? '[REDACTED]' : '[AUTO-REDACTED]'}`
-            : exportCommand;
           throw {
             code: ErrorCode.COMMAND_EXECUTION_ERROR,
             message: `Failed to set environment variable '${key}': ${result.stderr}`,
             details: {
-              command: redactedCommand,
+              command: redactLabel(mode)
+                ? `export ${key}=${redactLabel(mode)}`
+                : exportCommand,
               exitCode: result.exitCode,
               stderr: result.stderr
             } satisfies CommandErrorContext

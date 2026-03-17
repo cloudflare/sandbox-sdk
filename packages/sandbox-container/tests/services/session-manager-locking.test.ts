@@ -209,15 +209,15 @@ describe('SessionManager Locking', () => {
     });
   });
 
-  describe('setEnvVars sensitive option', () => {
-    it('should accept sensitive parameter', async () => {
+  describe('setEnvVars redaction option', () => {
+    it('should accept redaction parameter', async () => {
       const sessionId = 'env-sensitive-session';
       await sessionManager.createSession({ id: sessionId, cwd: testDir });
 
       const result = await sessionManager.setEnvVars(
         sessionId,
         { MY_SECRET: 'low-entropy-value', PUBLIC: 'hello' },
-        true
+        'forced'
       );
 
       expect(result.success).toBe(true);

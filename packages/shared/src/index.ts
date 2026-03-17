@@ -29,8 +29,14 @@ export type {
   DesktopStopResult,
   DesktopTypeRequest
 } from './desktop-types.js';
+export type { RedactionMode } from './entropy.js';
 // Export entropy utilities
-export { calculateEntropy, isHighEntropy } from './entropy.js';
+export {
+  calculateEntropy,
+  isHighEntropy,
+  redactLabel,
+  resolveRedaction
+} from './entropy.js';
 // Export environment utilities
 export { filterEnvVars, getEnvString, partitionEnvVars } from './env.js';
 // Export git utilities

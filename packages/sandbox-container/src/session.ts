@@ -95,8 +95,8 @@ import { watch } from 'node:fs';
 import { mkdir, open, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
-import type { ExecEvent, Logger } from '@repo/shared';
-import { createNoOpLogger } from '@repo/shared';
+import type { ExecEvent, Logger, RedactionMode } from '@repo/shared';
+import { createNoOpLogger, redactLabel } from '@repo/shared';
 import type { Subprocess } from 'bun';
 import { CONFIG } from './config';
 import { SessionDestroyedError, ShellTerminatedError } from './errors';
@@ -166,9 +166,9 @@ interface ExecOptions {
   /** Maximum execution time in milliseconds */
   timeoutMs?: number;
   /** When set, the command string is redacted from logs and error details.
-   *  'auto' = entropy-detected (logged as [AUTO-REDACTED])
-   *  'redacted' = caller-requested (logged as [REDACTED]) */
-  sensitive?: 'auto' | 'redacted';
+   *  'forced' = caller-requested (logged as [REDACTED])
+   *  'auto'   = entropy-detected (logged as [AUTO-REDACTED]) */
+  redact?: RedactionMode;
 }
 
 /** Command handle for tracking and killing running commands */
@@ -326,11 +326,7 @@ export class Session {
       sessionId: this.id,
       commandId,
       operation: 'exec',
-      command: options?.sensitive
-        ? options.sensitive === 'redacted'
-          ? '[REDACTED]'
-          : '[AUTO-REDACTED]'
-        : command.substring(0, 100),
+      command: redactLabel(options?.redact) ?? command.substring(0, 100),
       ...(options?.timeoutMs && { timeout: options.timeoutMs })
     });
 
@@ -387,11 +383,7 @@ export class Session {
       });
 
       return {
-        command: options?.sensitive
-          ? options.sensitive === 'redacted'
-            ? '[REDACTED]'
-            : '[AUTO-REDACTED]'
-          : command,
+        command: redactLabel(options?.redact) ?? command,
         stdout,
         stderr,
         exitCode,
@@ -446,11 +438,7 @@ export class Session {
       sessionId: this.id,
       commandId,
       operation: 'execStream',
-      command: options?.sensitive
-        ? options.sensitive === 'redacted'
-          ? '[REDACTED]'
-          : '[AUTO-REDACTED]'
-        : command.substring(0, 100)
+      command: redactLabel(options?.redact) ?? command.substring(0, 100)
     });
 
     try {

@@ -1,4 +1,5 @@
-import type { ExecuteRequest } from '@repo/shared';
+import type { ExecuteRequest, RedactionMode } from '@repo/shared';
+import { redactLabel } from '@repo/shared';
 import { BaseHttpClient } from './base-client';
 import type { BaseApiResponse } from './types';
 
@@ -36,7 +37,7 @@ export class CommandClient extends BaseHttpClient {
       timeoutMs?: number;
       env?: Record<string, string | undefined>;
       cwd?: string;
-      sensitive?: 'auto' | 'redacted';
+      redact?: RedactionMode;
     }
   ): Promise<ExecuteResponse> {
     try {
@@ -52,16 +53,11 @@ export class CommandClient extends BaseHttpClient {
 
       const response = await this.post<ExecuteResponse>('/api/execute', data);
 
-      const redactLabel =
-        options?.sensitive === 'redacted'
-          ? '[REDACTED]'
-          : options?.sensitive === 'auto'
-            ? '[AUTO-REDACTED]'
-            : null;
+      const label = redactLabel(options?.redact);
 
       this.logSuccess(
         'Command executed',
-        `${redactLabel ?? command}, Success: ${response.success}`
+        `${label ?? command}, Success: ${response.success}`
       );
 
       // Call the callback if provided
@@ -70,24 +66,19 @@ export class CommandClient extends BaseHttpClient {
         response.exitCode,
         response.stdout,
         response.stderr,
-        redactLabel ?? response.command
+        label ?? response.command
       );
 
       return response;
     } catch (error) {
       this.logError('execute', error);
 
-      const redactLabel =
-        options?.sensitive === 'redacted'
-          ? '[REDACTED]'
-          : options?.sensitive === 'auto'
-            ? '[AUTO-REDACTED]'
-            : null;
+      const label = redactLabel(options?.redact);
 
       // Call error callback if provided
       this.options.onError?.(
         error instanceof Error ? error.message : String(error),
-        redactLabel ?? command
+        label ?? command
       );
 
       throw error;

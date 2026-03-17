@@ -35,9 +35,10 @@ import {
   createLogger,
   filterEnvVars,
   getEnvString,
-  isHighEntropy,
   isTerminalStatus,
   partitionEnvVars,
+  type RedactionMode,
+  resolveRedaction,
   type SessionDeleteResult,
   shellEscape,
   TraceContext
@@ -712,7 +713,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   async setEnvVars(
     envVars: Record<string, string | undefined>,
-    options?: { sensitive?: boolean }
+    options?: { redact?: RedactionMode }
   ): Promise<void> {
     const { toSet, toUnset } = partitionEnvVars(envVars);
 
@@ -739,16 +740,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
       for (const [key, value] of Object.entries(toSet)) {
         const exportCommand = `export ${key}=${shellEscape(value)}`;
-        const redactMode: 'redacted' | 'auto' | undefined = options?.sensitive
-          ? 'redacted'
-          : isHighEntropy(value)
-            ? 'auto'
-            : undefined;
 
         const result = await this.client.commands.execute(
           exportCommand,
           this.defaultSession,
-          { sensitive: redactMode }
+          { redact: resolveRedaction(options?.redact, value) }
         );
 
         if (result.exitCode !== 0) {
@@ -3299,7 +3295,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
       setEnvVars: async (
         envVars: Record<string, string | undefined>,
-        options?: { sensitive?: boolean }
+        options?: { redact?: RedactionMode }
       ) => {
         const { toSet, toUnset } = partitionEnvVars(envVars);
 
@@ -3321,17 +3317,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
           for (const [key, value] of Object.entries(toSet)) {
             const exportCommand = `export ${key}=${shellEscape(value)}`;
-            const redactMode: 'redacted' | 'auto' | undefined =
-              options?.sensitive
-                ? 'redacted'
-                : isHighEntropy(value)
-                  ? 'auto'
-                  : undefined;
 
             const result = await this.client.commands.execute(
               exportCommand,
               sessionId,
-              { sensitive: redactMode }
+              { redact: resolveRedaction(options?.redact, value) }
             );
 
             if (result.exitCode !== 0) {

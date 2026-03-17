@@ -34,3 +34,34 @@ export function isHighEntropy(value: string, threshold: number = 4.0): boolean {
   if (value.length < 8) return false;
   return calculateEntropy(value) > threshold;
 }
+
+/**
+ *  'forced' = caller explicitly requested redaction (logged as [REDACTED])
+ *  'auto'   = entropy-detected secret (logged as [AUTO-REDACTED])
+ */
+export type RedactionMode = 'forced' | 'auto';
+
+/**
+ * Determine the effective redaction mode for a value.
+ * If the caller explicitly requested 'forced', that wins.
+ * Otherwise, auto-detect based on Shannon entropy.
+ */
+export function resolveRedaction(
+  callerMode: RedactionMode | undefined,
+  value: string
+): RedactionMode | undefined {
+  if (callerMode === 'forced') return 'forced';
+  return isHighEntropy(value) ? 'auto' : undefined;
+}
+
+/**
+ * Map a RedactionMode to its human-readable log label.
+ * Returns undefined when no redaction is active.
+ */
+export function redactLabel(
+  mode: RedactionMode | undefined
+): string | undefined {
+  if (mode === 'forced') return '[REDACTED]';
+  if (mode === 'auto') return '[AUTO-REDACTED]';
+  return undefined;
+}
