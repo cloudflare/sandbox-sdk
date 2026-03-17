@@ -993,7 +993,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     });
 
     // Detect credentials
-    const credentials = detectCredentials(options, this.envVars);
+    const credentials = detectCredentials(options, {
+      ...this.env,
+      ...this.envVars
+    });
 
     // Generate unique password file path
     const passwordFilePath = this.generatePasswordFilePath();

@@ -23,10 +23,8 @@ export function detectCredentials(
   }
 
   // Priority 2: Standard AWS env vars
-  const awsAccessKeyId =
-    envVars.AWS_ACCESS_KEY_ID || process.env.AWS_ACCESS_KEY_ID;
-  const awsSecretAccessKey =
-    envVars.AWS_SECRET_ACCESS_KEY || process.env.AWS_SECRET_ACCESS_KEY;
+  const awsAccessKeyId = envVars.AWS_ACCESS_KEY_ID;
+  const awsSecretAccessKey = envVars.AWS_SECRET_ACCESS_KEY;
 
   if (awsAccessKeyId && awsSecretAccessKey) {
     return {
