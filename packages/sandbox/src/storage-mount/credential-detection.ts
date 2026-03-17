@@ -6,7 +6,8 @@ import { MissingCredentialsError } from './errors';
  * Priority order:
  * 1. Explicit options.credentials
  * 2. Standard AWS env vars: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
- * 3. Error: no credentials found
+ * 3. Standard R2 env vars: R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY
+ * 4. Error: no credentials found
  *
  * @param options - Mount options
  * @param envVars - Environment variables
@@ -36,9 +37,7 @@ export function detectCredentials(
   /**
    * Priority 3: Standard R2 env vars
    *
-   * This is only Priority 3 as it was introduced after backup & restore implementation.
-   * This avoids breaking changes for users who have both these credentials set currently, so we
-   * don't attempt to detect R2 credentials for other purposes.
+   * AWS vars still take precedence over R2 vars in case both are set
    */
   const r2AccessKeyId = envVars.R2_ACCESS_KEY_ID;
   const r2SecretAccessKey = envVars.R2_SECRET_ACCESS_KEY;
@@ -52,7 +51,8 @@ export function detectCredentials(
 
   // No credentials found - throw error with helpful message
   throw new MissingCredentialsError(
-    `No credentials found. Set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY ` +
+    `No credentials found. Set R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY ` +
+      `or AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY ` +
       `environment variables, or pass explicit credentials in options.`
   );
 }
