@@ -996,7 +996,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     const envObj = this.env as Record<string, unknown>;
     const envCredentials = {
       AWS_ACCESS_KEY_ID: getEnvString(envObj, 'AWS_ACCESS_KEY_ID'),
-      AWS_SECRET_ACCESS_KEY: getEnvString(envObj, 'AWS_SECRET_ACCESS_KEY')
+      AWS_SECRET_ACCESS_KEY: getEnvString(envObj, 'AWS_SECRET_ACCESS_KEY'),
+      R2_ACCESS_KEY_ID: this.r2AccessKeyId || undefined,
+      R2_SECRET_ACCESS_KEY: this.r2SecretAccessKey || undefined
     };
 
     // Detect credentials
