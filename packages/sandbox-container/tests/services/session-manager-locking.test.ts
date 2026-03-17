@@ -217,7 +217,7 @@ describe('SessionManager Locking', () => {
       const result = await sessionManager.setEnvVars(
         sessionId,
         { MY_SECRET: 'low-entropy-value', PUBLIC: 'hello' },
-        'forced'
+        { redact: 'forced' }
       );
 
       expect(result.success).toBe(true);

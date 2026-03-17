@@ -995,7 +995,7 @@ export interface ExecutionSession {
   // Environment management
   setEnvVars(
     envVars: Record<string, string | undefined>,
-    options?: { redact?: RedactionMode }
+    options?: { /** @defaultValue 'auto' */ redact?: RedactionMode }
   ): Promise<void>;
 
   // Code interpreter methods
@@ -1255,7 +1255,7 @@ export interface ISandbox {
   // Environment management
   setEnvVars(
     envVars: Record<string, string | undefined>,
-    options?: { redact?: RedactionMode }
+    options?: { /** @defaultValue 'auto' */ redact?: RedactionMode }
   ): Promise<void>;
 
   // Bucket mounting operations

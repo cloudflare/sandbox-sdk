@@ -43,11 +43,11 @@ export type RedactionMode = 'forced' | 'auto';
 
 /**
  * Determine the effective redaction mode for a value.
- * If the caller explicitly requested 'forced', that wins.
- * Otherwise, auto-detect based on Shannon entropy.
+ *  - 'forced' → always redact, regardless of content
+ *  - 'auto' (default) → redact only when Shannon entropy suggests a secret
  */
 export function resolveRedaction(
-  callerMode: RedactionMode | undefined,
+  callerMode: RedactionMode = 'auto',
   value: string
 ): RedactionMode | undefined {
   if (callerMode === 'forced') return 'forced';
