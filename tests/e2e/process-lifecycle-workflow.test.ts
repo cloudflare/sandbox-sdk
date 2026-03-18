@@ -92,11 +92,13 @@ describe('Process Lifecycle Error Handling', () => {
     const response = await fetch(`${workerUrl}/api/execute`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ command: `kill -0 ${pid} 2>/dev/null; echo $?` })
+      body: JSON.stringify({
+        command: `if ! kill -0 ${pid} 2>/dev/null; then echo dead; elif [ -r /proc/${pid}/status ] && grep -q '^State:[[:space:]]*Z' /proc/${pid}/status; then echo dead; else echo alive; fi`
+      })
     });
     expect(response.status).toBe(200);
     const result = (await response.json()) as ExecResult;
-    return result.stdout.trim() === '0';
+    return result.stdout.trim() === 'alive';
   }
 
   afterAll(async () => {
