@@ -72,7 +72,7 @@ export class ProcessManager {
       return 'completed';
     }
 
-    if (exitCode >= 128) {
+    if (exitCode === 137 || exitCode === 143) {
       return 'killed';
     }
 

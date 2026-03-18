@@ -489,10 +489,10 @@ export class Session {
       let exitCodeContent = '';
 
       // Wait until exit code file exists, checking for shell death on each iteration.
-      // Note: if the process is killed externally via killCommand(), the bash wrapper
-      // that writes the exit code file is itself killed and this loop will never resolve
-      // normally. In that case the session's shell death (isReady() → false) or a
-      // SessionDestroyedError surfaces instead.
+      // External kills via killCommand() can terminate the bash wrapper before it writes
+      // the exit code file, so killCommand() synthesizes one to unblock this loop.
+      // If neither the wrapper nor killCommand() writes the file and the shell dies,
+      // SessionDestroyedError still surfaces through the readiness check below.
       while (true) {
         const exitFile = Bun.file(exitCodeFile);
         if (await exitFile.exists()) {
@@ -755,6 +755,8 @@ export class Session {
           }
 
           // Clean up
+          // execStream() also calls untrackCommand() after reading the exit file, so this
+          // eager delete keeps external kills idempotent across both cleanup paths.
           this.runningCommands.delete(commandId);
           return true;
         }
