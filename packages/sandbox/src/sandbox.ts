@@ -632,6 +632,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         // Update the transport retry budget to reflect stored timeouts
         this.client.setRetryTimeoutMs(this.computeRetryTimeoutMs());
       }
+
+      // Restore sleep timeout if previously set via RPC
+      const storedSleepAfter = await this.ctx.storage.get<string | number>(
+        'sleepAfter'
+      );
+      if (storedSleepAfter !== undefined) {
+        this.sleepAfter = storedSleepAfter;
+        this.renewActivityTimeout();
+      }
     });
   }
 
@@ -686,6 +695,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   // RPC method to set the sleep timeout
   async setSleepAfter(sleepAfter: string | number): Promise<void> {
     this.sleepAfter = sleepAfter;
+    await this.ctx.storage.put('sleepAfter', sleepAfter);
     // Reschedule activity timeout to apply the new sleepAfter value immediately
     this.renewActivityTimeout();
   }
