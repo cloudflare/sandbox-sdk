@@ -112,5 +112,10 @@ describe('ProcessManager', () => {
 
       expect(result).toBe('failed');
     });
+
+    it('should return killed for signal-style exit codes', () => {
+      expect(manager.interpretExitCode(137)).toBe('killed');
+      expect(manager.interpretExitCode(143)).toBe('killed');
+    });
   });
 });

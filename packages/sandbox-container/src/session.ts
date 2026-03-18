@@ -494,6 +494,12 @@ export class Session {
       // normally. In that case the session's shell death (isReady() → false) or a
       // SessionDestroyedError surfaces instead.
       while (true) {
+        const exitFile = Bun.file(exitCodeFile);
+        if (await exitFile.exists()) {
+          exitCodeContent = (await exitFile.text()).trim();
+          break;
+        }
+
         if (!this.isReady()) {
           if (this.shellExitedPromise) {
             await this.shellExitedPromise.catch((error) => {
@@ -501,12 +507,6 @@ export class Session {
             });
           }
           throw new SessionDestroyedError(this.id);
-        }
-
-        const exitFile = Bun.file(exitCodeFile);
-        if (await exitFile.exists()) {
-          exitCodeContent = (await exitFile.text()).trim();
-          break;
         }
 
         // Stream any new log content while waiting
@@ -706,6 +706,7 @@ export class Session {
         const pid = parseInt(pidText.trim(), 10);
 
         if (!Number.isNaN(pid)) {
+          let syntheticExitCode: number | null = null;
           const waitForProcessExit = async (
             timeoutMs: number
           ): Promise<boolean> => {
@@ -725,6 +726,9 @@ export class Session {
             if (!exitedAfterTerm) {
               this.terminateTree(pid, 'SIGKILL');
               await waitForProcessExit(5000);
+              syntheticExitCode = 137;
+            } else {
+              syntheticExitCode = 143;
             }
 
             const pidsAlive = this.getProcessTreePids(pid);
@@ -738,8 +742,16 @@ export class Session {
                 }
               );
             }
+
+            if (syntheticExitCode !== null) {
+              await this.writeExitCodeIfMissing(
+                handle.exitCodeFile,
+                syntheticExitCode
+              );
+            }
           } else {
             this.terminateTree(pid, 'SIGKILL');
+            await this.writeExitCodeIfMissing(handle.exitCodeFile, 137);
           }
 
           // Clean up
@@ -1353,6 +1365,27 @@ export class Session {
           }
         });
     });
+  }
+
+  private async writeExitCodeIfMissing(
+    exitCodeFile: string,
+    exitCode: number
+  ): Promise<void> {
+    const exitFile = Bun.file(exitCodeFile);
+    if (await exitFile.exists()) {
+      return;
+    }
+
+    try {
+      const file = await open(exitCodeFile, 'wx');
+      try {
+        await file.writeFile(`${exitCode}\n`);
+      } finally {
+        await file.close();
+      }
+    } catch {
+      // The wrapper may have written the real exit code concurrently.
+    }
   }
 
   /**
