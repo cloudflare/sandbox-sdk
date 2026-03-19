@@ -706,7 +706,7 @@ export class Session {
         const pid = parseInt(pidText.trim(), 10);
 
         if (!Number.isNaN(pid)) {
-          let syntheticExitCode: number | null = null;
+          let syntheticExitCode: number;
           const waitForProcessExit = async (
             timeoutMs: number
           ): Promise<boolean> => {
