@@ -528,6 +528,8 @@ console.log("Line 3");
       });
       expect(startResponse.status).toBe(200);
 
+      // The PID file is written in the shared workspace, so the helper can read it
+      // without using the session-specific headers from the process start request.
       pid = await waitForChildPid(pidFile, 10000);
 
       const deleteResponse = await fetch(`${workerUrl}/api/session/delete`, {

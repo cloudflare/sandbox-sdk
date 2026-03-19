@@ -491,8 +491,8 @@ export class Session {
       // Wait until exit code file exists, checking for shell death on each iteration.
       // External kills via killCommand() can terminate the bash wrapper before it writes
       // the exit code file, so killCommand() synthesizes one to unblock this loop.
-      // If neither the wrapper nor killCommand() writes the file and the shell dies,
-      // SessionDestroyedError still surfaces through the readiness check below.
+      // During destroy(), whichever happens first wins: reading the exit code yields
+      // complete, while shell teardown still surfaces SessionDestroyedError.
       while (true) {
         const exitFile = Bun.file(exitCodeFile);
         if (await exitFile.exists()) {
@@ -743,12 +743,10 @@ export class Session {
               );
             }
 
-            if (syntheticExitCode !== null) {
-              await this.writeExitCodeIfMissing(
-                handle.exitCodeFile,
-                syntheticExitCode
-              );
-            }
+            await this.writeExitCodeIfMissing(
+              handle.exitCodeFile,
+              syntheticExitCode
+            );
           } else {
             // Fire-and-forget: SIGKILL is sent but process death is not awaited.
             // destroy() uses this path because the session shell is torn down next.
@@ -792,26 +790,18 @@ export class Session {
    * @param signal - Signal to send
    */
   private terminateTree(targetPid: number, signal: NodeJS.Signals): void {
-    const killChildrenFirst = (childPid: number): void => {
-      for (const grandchildPid of this.getProcessChildren(childPid)) {
-        killChildrenFirst(grandchildPid);
+    const killChildrenFirst = (pid: number): void => {
+      for (const childPid of this.getProcessChildren(pid)) {
+        killChildrenFirst(childPid);
       }
       try {
-        process.kill(childPid, signal);
+        process.kill(pid, signal);
       } catch {
         // Process already exited
       }
     };
 
-    for (const childPid of this.getProcessChildren(targetPid)) {
-      killChildrenFirst(childPid);
-    }
-
-    try {
-      process.kill(targetPid, signal);
-    } catch {
-      // Process already exited
-    }
+    killChildrenFirst(targetPid);
   }
 
   /**
@@ -1377,11 +1367,6 @@ export class Session {
     exitCodeFile: string,
     exitCode: number
   ): Promise<void> {
-    const exitFile = Bun.file(exitCodeFile);
-    if (await exitFile.exists()) {
-      return;
-    }
-
     try {
       const file = await open(exitCodeFile, 'wx');
       try {
