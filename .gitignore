@@ -162,3 +162,5 @@ sites/**/.astro/
 perf-results/
 
 sandbox-linux-*
+
+test-results/
