@@ -1,12 +1,10 @@
-import { switchPort } from '@cloudflare/containers';
 import type { PtyOptions } from '@repo/shared';
 
 export async function proxyTerminal(
   stub: { fetch: (request: Request) => Promise<Response> },
   sessionId: string,
   request: Request,
-  options: PtyOptions | undefined,
-  controlPort: number
+  options?: PtyOptions
 ): Promise<Response> {
   if (!sessionId || typeof sessionId !== 'string') {
     throw new Error('sessionId is required for terminal access');
@@ -25,5 +23,5 @@ export async function proxyTerminal(
   const ptyUrl = `http://localhost/ws/pty?${params}`;
   const ptyRequest = new Request(ptyUrl, request);
 
-  return stub.fetch(switchPort(ptyRequest, controlPort));
+  return stub.fetch(ptyRequest);
 }

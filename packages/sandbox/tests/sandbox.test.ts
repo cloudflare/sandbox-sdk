@@ -119,7 +119,7 @@ describe('Sandbox - Automatic Session Management', () => {
     });
 
     sandbox = Object.assign(stub, {
-      wsConnect: connect(stub, () => Promise.resolve(stub.defaultPort!))
+      wsConnect: connect(stub)
     });
 
     // Now spy on the client methods that we need for testing

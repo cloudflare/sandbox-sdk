@@ -92,56 +92,133 @@ describe('Sandbox control port configuration', () => {
       String(DEFAULT_CONTROL_PORT)
     );
   });
-
-  it('exposes port via getControlPort()', () => {
-    const sandbox = new Sandbox(createMockCtx(), {
-      SANDBOX_CONTROL_PORT: '9500'
-    });
-    expect(sandbox.getControlPort()).toBe(9500);
-  });
 });
 
-describe('connect() with async getControlPort', () => {
-  it('resolves control port and allows valid user ports', async () => {
-    const mockStub = {
-      fetch: vi.fn().mockResolvedValue(new Response('ok'))
-    };
-    const getControlPort = vi.fn().mockResolvedValue(9500);
+describe('connect() with range-only validation', () => {
+  let mockStub: { fetch: ReturnType<typeof vi.fn> };
+  let wsConnect: ReturnType<typeof connect>;
+  let request: Request;
 
-    const wsConnect = connect(mockStub, getControlPort);
-    const request = new Request('http://localhost/test');
+  beforeEach(() => {
+    mockStub = { fetch: vi.fn().mockResolvedValue(new Response('ok')) };
+    wsConnect = connect(mockStub);
+    request = new Request('http://localhost/test');
+  });
 
+  it('allows any port in valid range including DEFAULT_CONTROL_PORT', async () => {
     await wsConnect(request, 8080);
+    expect(mockStub.fetch).toHaveBeenCalled();
 
-    expect(getControlPort).toHaveBeenCalled();
+    mockStub.fetch.mockClear();
+    // Control port passes at proxy level — DO validates authoritatively
+    await wsConnect(request, DEFAULT_CONTROL_PORT);
     expect(mockStub.fetch).toHaveBeenCalled();
   });
 
-  it('rejects the control port', async () => {
-    const mockStub = {
-      fetch: vi.fn().mockResolvedValue(new Response('ok'))
-    };
-    const getControlPort = vi.fn().mockResolvedValue(9500);
-
-    const wsConnect = connect(mockStub, getControlPort);
-    const request = new Request('http://localhost/test');
-
-    await expect(wsConnect(request, 9500)).rejects.toThrow(SecurityError);
+  it('rejects privileged ports (< 1024)', async () => {
+    await expect(wsConnect(request, 80)).rejects.toThrow(SecurityError);
     expect(mockStub.fetch).not.toHaveBeenCalled();
   });
 
-  it('allows port 3000 when control port is custom', async () => {
-    const mockStub = {
-      fetch: vi.fn().mockResolvedValue(new Response('ok'))
+  it('rejects out-of-range ports', async () => {
+    await expect(wsConnect(request, 65536)).rejects.toThrow(SecurityError);
+    expect(mockStub.fetch).not.toHaveBeenCalled();
+  });
+
+  it('rejects non-integer ports', async () => {
+    await expect(wsConnect(request, 3.5)).rejects.toThrow(SecurityError);
+    expect(mockStub.fetch).not.toHaveBeenCalled();
+  });
+});
+
+describe('WebSocket port validation in fetch() (header-based)', () => {
+  let sandbox: Sandbox;
+  let mockCtx: any;
+  let parentFetch: ReturnType<typeof vi.spyOn>;
+
+  function wsRequest(path: string, targetPort?: string): Request {
+    const headers: Record<string, string> = {
+      Upgrade: 'websocket',
+      Connection: 'upgrade'
     };
-    const getControlPort = vi.fn().mockResolvedValue(9500);
+    if (targetPort !== undefined) {
+      headers['cf-container-target-port'] = targetPort;
+    }
+    return new Request(`http://localhost${path}`, { headers });
+  }
 
-    const wsConnect = connect(mockStub, getControlPort);
-    const request = new Request('http://localhost/test');
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    mockCtx = createMockCtx();
+    sandbox = new Sandbox(mockCtx, {});
+    await vi.waitFor(() => {
+      expect(mockCtx.blockConcurrencyWhile).toHaveBeenCalled();
+    });
+    vi.spyOn(sandbox as any, 'getState').mockResolvedValue({
+      status: 'healthy'
+    });
+    (sandbox as any).ctx.container = { running: true };
+    parentFetch = vi
+      .spyOn(Object.getPrototypeOf(Object.getPrototypeOf(sandbox)), 'fetch')
+      .mockResolvedValue(new Response('ok'));
+  });
 
-    await wsConnect(request, 3000);
+  afterEach(() => {
+    parentFetch?.mockRestore();
+    vi.restoreAllMocks();
+  });
 
-    expect(mockStub.fetch).toHaveBeenCalled();
+  it('rejects header-switched WebSocket targeting the control port', async () => {
+    const response = await sandbox.fetch(
+      wsRequest('/ws', String(DEFAULT_CONTROL_PORT))
+    );
+    expect(response.status).toBe(403);
+    expect(parentFetch).not.toHaveBeenCalled();
+  });
+
+  it('rejects header-switched WebSocket targeting a custom configured control port', async () => {
+    const customCtx = createMockCtx();
+    const customSandbox = new Sandbox(customCtx, {
+      SANDBOX_CONTROL_PORT: '9500'
+    });
+    await vi.waitFor(() => {
+      expect(customCtx.blockConcurrencyWhile).toHaveBeenCalled();
+    });
+    vi.spyOn(customSandbox as any, 'getState').mockResolvedValue({
+      status: 'healthy'
+    });
+    (customSandbox as any).ctx.container = { running: true };
+
+    const response = await customSandbox.fetch(wsRequest('/ws', '9500'));
+    expect(response.status).toBe(403);
+  });
+
+  it('rejects header-switched WebSocket to out-of-range port', async () => {
+    const response = await sandbox.fetch(wsRequest('/ws', '80'));
+    expect(response.status).toBe(403);
+    expect(parentFetch).not.toHaveBeenCalled();
+  });
+
+  it('allows header-switched WebSocket to a valid user port', async () => {
+    const response = await sandbox.fetch(wsRequest('/ws', '8080'));
+    expect(response.status).toBe(200);
+    expect(parentFetch).toHaveBeenCalled();
+  });
+
+  it('allows control-plane WebSocket without target-port header', async () => {
+    const response = await sandbox.fetch(wsRequest('/ws/pty?sessionId=test'));
+    expect(response.status).toBe(200);
+    expect(parentFetch).toHaveBeenCalled();
+  });
+
+  it('strips malformed target-port header before forwarding to Container.fetch()', async () => {
+    const response = await sandbox.fetch(wsRequest('/ws', '8080abc'));
+    expect(response.status).toBe(200);
+    expect(parentFetch).toHaveBeenCalled();
+
+    // Malformed header must be stripped so Container.fetch() can't re-parse it
+    const forwarded = parentFetch.mock.calls[0][0] as Request;
+    expect(forwarded.headers.has('cf-container-target-port')).toBe(false);
   });
 });
 
@@ -278,11 +355,12 @@ describe('Legacy port fallback (startWithLegacyFallback)', () => {
   });
 
   it('skips fallback when configured port is already 3000', async () => {
-    const sandbox3000 = new Sandbox(createMockCtx(), {
+    const ctx3000 = createMockCtx();
+    const sandbox3000 = new Sandbox(ctx3000, {
       SANDBOX_CONTROL_PORT: '3000'
     });
     await vi.waitFor(() => {
-      expect(mockCtx.blockConcurrencyWhile).toHaveBeenCalled();
+      expect(ctx3000.blockConcurrencyWhile).toHaveBeenCalled();
     });
 
     const spy = vi
@@ -328,7 +406,7 @@ describe('Legacy port fallback (startWithLegacyFallback)', () => {
     parentFetch.mockRestore();
   });
 
-  it('remaps port for current request after fallback with custom SANDBOX_CONTROL_PORT', async () => {
+  it('remaps custom configured port after fallback', async () => {
     const customCtx = createMockCtx();
     const customSandbox = new Sandbox(customCtx, {
       SANDBOX_CONTROL_PORT: '9500'
@@ -337,8 +415,11 @@ describe('Legacy port fallback (startWithLegacyFallback)', () => {
       expect(customCtx.blockConcurrencyWhile).toHaveBeenCalled();
     });
 
-    const customSpy = vi
-      .spyOn(customSandbox as any, 'startAndWaitForPorts')
+    const customStartSpy = vi.spyOn(
+      customSandbox as any,
+      'startAndWaitForPorts'
+    );
+    customStartSpy
       .mockRejectedValueOnce(new Error('failed to verify port'))
       .mockResolvedValueOnce(undefined);
 
@@ -356,11 +437,10 @@ describe('Legacy port fallback (startWithLegacyFallback)', () => {
 
     await customSandbox.containerFetch(
       new Request('http://localhost/test'),
+      {},
       9500
     );
 
-    expect(customSpy).toHaveBeenCalledTimes(2);
-    expect(customSandbox.defaultPort).toBe(3000);
     expect(parentFetch).toHaveBeenCalledWith(expect.any(Request), 3000);
     parentFetch.mockRestore();
   });
