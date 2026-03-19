@@ -750,6 +750,8 @@ export class Session {
               );
             }
           } else {
+            // Fire-and-forget: SIGKILL is sent but process death is not awaited.
+            // destroy() uses this path because the session shell is torn down next.
             this.terminateTree(pid, 'SIGKILL');
             await this.writeExitCodeIfMissing(handle.exitCodeFile, 137);
           }
@@ -821,6 +823,8 @@ export class Session {
   private getProcessChildren(pid: number): number[] {
     try {
       const childrenFile = `/proc/${pid}/task/${pid}/children`;
+      // Uses readFileSync intentionally so the tree walk does not yield between
+      // sibling reads while the process hierarchy is being traversed.
       const children = readFileSync(childrenFile, 'utf8')
         .trim()
         .split(/\s+/)
