@@ -149,11 +149,9 @@ describe('ProcessStore', () => {
       });
       await processStore.create(process);
 
-      // Mock Bun.write to throw an error when trying to persist
-      const originalWrite = Bun.write;
-      const writeSpy = vi
-        .spyOn(Bun, 'write')
-        .mockRejectedValue(new Error('EACCES: permission denied'));
+      // Remove write permissions on directory to cause write failure
+      const { chmod } = await import('node:fs/promises');
+      await chmod(testProcessDir, 0o444); // Read-only
 
       try {
         await processStore.update('proc-1', {
@@ -172,8 +170,8 @@ describe('ProcessStore', () => {
         const result = await processStore.get('proc-1');
         expect(result).toBeNull();
       } finally {
-        // Restore Bun.write
-        writeSpy.mockRestore();
+        // Restore write permissions
+        await chmod(testProcessDir, 0o755);
       }
     });
 
