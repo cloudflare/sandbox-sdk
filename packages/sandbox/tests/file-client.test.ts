@@ -452,7 +452,7 @@ database:
           method: 'POST'
         })
       );
-      const calledUrl = mockFetch.mock.calls[0][0] as string;
+      const calledUrl = mockFetch.mock.calls[1][0] as string;
       expect(calledUrl).toContain('path=%2Fapp%2Fdata.bin');
       expect(calledUrl).toContain('sessionId=session-upload');
     });
@@ -493,6 +493,47 @@ database:
       await expect(
         client.writeFile('/app/data.bin', stream, 'session-upload')
       ).rejects.toThrow('Network timeout');
+    });
+
+    it('should wait for container before streaming', async () => {
+      const mockResponse: WriteFileResult = {
+        success: true,
+        exitCode: 0,
+        path: '/app/data.bin',
+        timestamp: '2023-01-01T00:00:00Z'
+      };
+
+      // First call is the ping (503 - container starting), second is a ping
+      // retry (200 - container ready), third is the write (200 - success).
+      // Use the client's retry budget so the 503 is retried rather than thrown.
+      mockFetch
+        .mockResolvedValueOnce(new Response('starting', { status: 503 }))
+        .mockResolvedValueOnce(new Response('ok', { status: 200 }))
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify(mockResponse), { status: 200 })
+        );
+
+      // Make sleep a no-op so the test doesn't actually wait
+      vi.spyOn((client as any).transport, 'sleep').mockResolvedValue(undefined);
+
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array([1, 2, 3]));
+          controller.close();
+        }
+      });
+
+      const result = await client.writeFile(
+        '/app/data.bin',
+        stream,
+        'session-upload'
+      );
+
+      expect(result.success).toBe(true);
+      expect(mockFetch).toHaveBeenCalledTimes(3);
+      expect(mockFetch.mock.calls[0][0]).toContain('/api/ping');
+      expect(mockFetch.mock.calls[1][0]).toContain('/api/ping');
+      expect(mockFetch.mock.calls[2][0]).toContain('/api/write');
     });
   });
 

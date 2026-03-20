@@ -93,4 +93,12 @@ export interface ITransport {
    * Update the 503 retry budget without recreating the transport
    */
   setRetryTimeoutMs(ms: number): void;
+
+  /**
+   * Poll /api/ping until the container is ready (non-503 response) or the
+   * retry budget is exhausted.  Used before sending non-replayable request
+   * bodies (e.g. ReadableStream) so the body is only consumed once the
+   * container is confirmed ready.
+   */
+  waitForContainer(): Promise<void>;
 }

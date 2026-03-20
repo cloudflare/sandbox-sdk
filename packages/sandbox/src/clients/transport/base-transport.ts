@@ -45,7 +45,28 @@ export abstract class BaseTransport implements ITransport {
     let attempt = 0;
 
     while (true) {
-      const response = await this.doFetch(path, options);
+      let response: Response;
+      try {
+        response = await this.doFetch(path, options);
+      } catch (error) {
+        // A TypeError here means the request body stream was already consumed by a
+        // prior attempt and cannot be replayed. Return a synthetic 503 so the caller
+        // receives a clean error rather than a raw TypeError.
+        if (error instanceof TypeError) {
+          this.logger.warn(
+            'Request body stream already consumed, cannot retry',
+            {
+              path,
+              mode: this.getMode()
+            }
+          );
+          return new Response(null, {
+            status: 503,
+            statusText: 'Stream body already consumed'
+          });
+        }
+        throw error;
+      }
 
       // Check for retryable 503 (container starting)
       if (response.status === 503) {
@@ -77,6 +98,51 @@ export abstract class BaseTransport implements ITransport {
       }
 
       return response;
+    }
+  }
+
+  /**
+   * Poll /api/ping until the container responds with a non-503 status or the
+   * retry budget is exhausted.
+   *
+   * Call this before sending a non-replayable request body (e.g. a
+   * ReadableStream) so the body is only consumed once the container is
+   * confirmed ready.  Uses doFetch() directly to avoid the recursive retry
+   * loop in fetch().
+   */
+  async waitForContainer(): Promise<void> {
+    const startTime = Date.now();
+    let attempt = 0;
+
+    while (true) {
+      const response = await this.doFetch('/api/ping', { method: 'GET' });
+
+      if (response.status !== 503) {
+        return;
+      }
+
+      const elapsed = Date.now() - startTime;
+      const remaining = this.retryTimeoutMs - elapsed;
+
+      if (remaining > MIN_TIME_FOR_RETRY_MS) {
+        const delay = Math.min(3000 * 2 ** attempt, 30000);
+
+        this.logger.info('Container not ready, retrying', {
+          status: response.status,
+          attempt: attempt + 1,
+          delayMs: delay,
+          remainingSec: Math.floor(remaining / 1000),
+          mode: this.getMode()
+        });
+
+        await this.sleep(delay);
+        attempt++;
+        continue;
+      }
+
+      throw new Error(
+        `Container failed to become ready after ${attempt + 1} attempts (${Math.floor(elapsed / 1000)}s)`
+      );
     }
   }
 

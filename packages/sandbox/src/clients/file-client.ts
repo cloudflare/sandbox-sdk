@@ -131,6 +131,8 @@ export class FileClient extends BaseHttpClient {
       url.searchParams.set('path', path);
       url.searchParams.set('sessionId', sessionId);
 
+      await this.transport.waitForContainer();
+
       const response = await this.transport.fetch(
         `/api/write?${url.searchParams.toString()}`,
         {

@@ -124,7 +124,7 @@ export class WebSocketTransport extends BaseTransport {
     await this.connect();
 
     const method = (options?.method || 'GET') as WSMethod;
-    const body = this.parseBody(options?.body);
+    const body = await this.parseBody(options?.body);
 
     const result = await this.request(method, path, body);
 
@@ -148,7 +148,7 @@ export class WebSocketTransport extends BaseTransport {
   /**
    * Parse request body from RequestInit
    */
-  private parseBody(body: RequestInit['body']): unknown {
+  private async parseBody(body: RequestInit['body']): Promise<unknown> {
     if (!body) {
       return undefined;
     }
@@ -161,6 +161,33 @@ export class WebSocketTransport extends BaseTransport {
           `Request body must be valid JSON: ${error instanceof Error ? error.message : String(error)}`
         );
       }
+    }
+
+    // TODO: Investigate removing the WebSocket transport entirely.
+    // Sending stream bodies over WebSocket requires buffering the full payload
+    // in memory (defeating the point of streaming) and adds protocol complexity.
+    // HTTP transport handles ReadableStream bodies natively without buffering.
+    if (body instanceof ReadableStream) {
+      const reader = body.getReader();
+      const chunks: Uint8Array[] = [];
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+      const totalLength = chunks.reduce((sum, c) => sum + c.length, 0);
+      const merged = new Uint8Array(totalLength);
+      let offset = 0;
+      for (const chunk of chunks) {
+        merged.set(chunk, offset);
+        offset += chunk.length;
+      }
+      let binary = '';
+      for (let i = 0; i < merged.length; i++) {
+        binary += String.fromCharCode(merged[i]);
+      }
+      const base64 = btoa(binary);
+      return { __streamBase64: base64 };
     }
 
     throw new Error(

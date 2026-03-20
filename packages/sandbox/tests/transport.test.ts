@@ -138,6 +138,103 @@ describe('Transport', () => {
       );
       expect(mockFetch).not.toHaveBeenCalled();
     });
+
+    it('should return a synthetic 503 when body stream is already consumed on retry', async () => {
+      const transport = createTransport({
+        mode: 'http',
+        baseUrl: 'http://localhost:3000'
+      });
+
+      // First call returns 503 (container starting), second call throws TypeError
+      // simulating the Workers runtime rejecting a re-read of a consumed stream
+      mockFetch
+        .mockResolvedValueOnce(new Response(null, { status: 503 }))
+        .mockRejectedValueOnce(
+          new TypeError('This ReadableStream is currently locked to a reader')
+        );
+
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array([1, 2, 3]));
+          controller.close();
+        }
+      });
+
+      // Use fake timers so the retry sleep doesn't actually wait
+      vi.useFakeTimers();
+      try {
+        const fetchPromise = transport.fetch('/api/write?path=test', {
+          method: 'POST',
+          body: stream
+        });
+        // Advance timers past the retry delay (first backoff is 3000ms)
+        await vi.runAllTimersAsync();
+        const response = await fetchPromise;
+
+        expect(response.status).toBe(503);
+        expect(response.statusText).toBe('Stream body already consumed');
+        expect(mockFetch).toHaveBeenCalledTimes(2);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    describe('waitForContainer', () => {
+      it('should return immediately when /api/ping responds 200', async () => {
+        const transport = createTransport({
+          mode: 'http',
+          baseUrl: 'http://localhost:3000'
+        });
+
+        mockFetch.mockResolvedValue(new Response('ok', { status: 200 }));
+
+        await expect(transport.waitForContainer()).resolves.toBeUndefined();
+        expect(mockFetch).toHaveBeenCalledTimes(1);
+        expect(mockFetch).toHaveBeenCalledWith(
+          'http://localhost:3000/api/ping',
+          expect.objectContaining({ method: 'GET' })
+        );
+      });
+
+      it('should retry when ping returns 503 twice then succeeds', async () => {
+        const transport = createTransport({
+          mode: 'http',
+          baseUrl: 'http://localhost:3000'
+        });
+
+        mockFetch
+          .mockResolvedValueOnce(new Response('starting', { status: 503 }))
+          .mockResolvedValueOnce(new Response('starting', { status: 503 }))
+          .mockResolvedValueOnce(new Response('ok', { status: 200 }));
+
+        // Override sleep to avoid real delays in tests
+        const sleepSpy = vi
+          .spyOn(
+            transport as unknown as { sleep: (ms: number) => Promise<void> },
+            'sleep'
+          )
+          .mockResolvedValue(undefined);
+
+        await expect(transport.waitForContainer()).resolves.toBeUndefined();
+        expect(mockFetch).toHaveBeenCalledTimes(3);
+        expect(sleepSpy).toHaveBeenCalledTimes(2);
+      });
+
+      it('should throw when all ping attempts return 503 and budget is exhausted', async () => {
+        const transport = createTransport({
+          mode: 'http',
+          baseUrl: 'http://localhost:3000'
+        });
+
+        transport.setRetryTimeoutMs(0);
+        mockFetch.mockResolvedValue(new Response('starting', { status: 503 }));
+
+        await expect(transport.waitForContainer()).rejects.toThrow(
+          'Container failed to become ready'
+        );
+        expect(mockFetch).toHaveBeenCalledTimes(1);
+      });
+    });
   });
 
   describe('WebSocket mode', () => {

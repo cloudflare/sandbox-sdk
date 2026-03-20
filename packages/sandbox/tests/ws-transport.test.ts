@@ -11,7 +11,7 @@ import {
   isWSResponse,
   isWSStreamChunk
 } from '@repo/shared';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { WebSocketTransport } from '../src/clients/transport';
 
 /**
@@ -184,6 +184,74 @@ describe('WebSocket Protocol Types', () => {
       expect(isWSStreamChunk(null)).toBe(false);
       expect(isWSStreamChunk({ type: 'response' })).toBe(false);
       expect(isWSStreamChunk({ type: 'error' })).toBe(false);
+    });
+  });
+
+  describe('parseBody', () => {
+    let transport: WebSocketTransport;
+
+    beforeEach(() => {
+      transport = new WebSocketTransport({ wsUrl: 'ws://localhost:3000/ws' });
+    });
+
+    it('should return undefined for falsy body', async () => {
+      const result = await (transport as any).parseBody(undefined);
+      expect(result).toBeUndefined();
+    });
+
+    it('should parse valid JSON string', async () => {
+      const result = await (transport as any).parseBody(
+        JSON.stringify({ foo: 'bar' })
+      );
+      expect(result).toEqual({ foo: 'bar' });
+    });
+
+    it('should throw for invalid JSON string', async () => {
+      await expect((transport as any).parseBody('not json')).rejects.toThrow();
+    });
+
+    it('should drain ReadableStream and return base64 object', async () => {
+      const bytes = new Uint8Array([1, 2, 3, 4, 5]);
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(bytes);
+          controller.close();
+        }
+      });
+      const result = (await (transport as any).parseBody(stream)) as {
+        __streamBase64: string;
+      };
+      expect(result).toHaveProperty('__streamBase64');
+      const decoded = Uint8Array.from(atob(result.__streamBase64), (c) =>
+        c.charCodeAt(0)
+      );
+      expect(decoded).toEqual(bytes);
+    });
+
+    it('should drain multi-chunk ReadableStream', async () => {
+      const chunk1 = new Uint8Array([1, 2, 3]);
+      const chunk2 = new Uint8Array([4, 5, 6]);
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(chunk1);
+          controller.enqueue(chunk2);
+          controller.close();
+        }
+      });
+      const result = (await (transport as any).parseBody(stream)) as {
+        __streamBase64: string;
+      };
+      expect(result).toHaveProperty('__streamBase64');
+      const decoded = Uint8Array.from(atob(result.__streamBase64), (c) =>
+        c.charCodeAt(0)
+      );
+      expect(decoded).toEqual(new Uint8Array([1, 2, 3, 4, 5, 6]));
+    });
+
+    it('should throw for unsupported body types', async () => {
+      await expect((transport as any).parseBody(12345)).rejects.toThrow(
+        'WebSocket transport only supports string bodies'
+      );
     });
   });
 
