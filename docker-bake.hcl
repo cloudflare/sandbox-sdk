@@ -13,12 +13,12 @@ variable "CACHE_REPO" { default = "" }
 
 // main: all variants needed for E2E testing (CF registry)
 group "main" {
-  targets = ["default", "python", "opencode", "musl", "desktop"]
+  targets = ["default", "python", "opencode", "chromium", "musl", "desktop"]
 }
 
 // publish: variants published to Docker Hub (standalone excluded — CF registry only)
 group "publish" {
-  targets = ["default", "python", "opencode", "musl", "desktop"]
+  targets = ["default", "python", "opencode", "chromium", "musl", "desktop"]
 }
 
 target "_common" {
@@ -50,6 +50,14 @@ target "opencode" {
   tags       = ["sandbox-opencode:${TAG}"]
   cache-from = CACHE_REPO != "" ? ["type=registry,ref=${CACHE_REPO}:opencode"] : []
   cache-to   = CACHE_REPO != "" ? ["type=registry,ref=${CACHE_REPO}:opencode,mode=max"] : []
+}
+
+target "chromium" {
+  inherits   = ["_common"]
+  target     = "chromium"
+  tags       = ["sandbox-chromium:${TAG}"]
+  cache-from = CACHE_REPO != "" ? ["type=registry,ref=${CACHE_REPO}:chromium"] : []
+  cache-to   = CACHE_REPO != "" ? ["type=registry,ref=${CACHE_REPO}:chromium,mode=max"] : []
 }
 
 target "musl" {

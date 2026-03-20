@@ -27,7 +27,7 @@ jobs:
         continue-on-error: true
         run: |
           PR=${{ github.event.pull_request.number }}
-          for image in sandbox sandbox-python sandbox-opencode sandbox-standalone sandbox-musl sandbox-desktop; do
+          for image in sandbox sandbox-python sandbox-opencode sandbox-chromium sandbox-standalone sandbox-musl sandbox-desktop; do
             wrangler containers images delete "$image:pr-$PR" || true
           done
         env:
@@ -111,7 +111,7 @@ jobs:
                   wrangler containers delete "$id" 2>/dev/null || true
                 done
               done
-              for image in sandbox sandbox-python sandbox-opencode sandbox-standalone sandbox-musl sandbox-desktop; do
+              for image in sandbox sandbox-python sandbox-opencode sandbox-chromium sandbox-standalone sandbox-musl sandbox-desktop; do
                 wrangler containers images delete "$image:pr-$PR" || true
               done
             fi

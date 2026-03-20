@@ -220,6 +220,34 @@ EXPOSE 4096
 ENTRYPOINT ["/container-server/sandbox"]
 
 # ============================================================================
+# Stage 5d: Chromium image - with Chromium browser for web automation
+# ============================================================================
+FROM runtime-base AS chromium
+
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    rm -f /etc/apt/apt.conf.d/docker-clean && \
+    echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' >/etc/apt/apt.conf.d/keep-cache && \
+    apt-get update && apt-get install -y --no-install-recommends \
+    fonts-liberation fonts-noto-color-emoji gnupg xdg-utils && \
+    install -d -m 0755 /etc/apt/keyrings && \
+    wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /etc/apt/keyrings/google-linux.gpg && \
+    echo 'deb [arch=amd64 signed-by=/etc/apt/keyrings/google-linux.gpg] https://dl.google.com/linux/chrome/deb/ stable main' > /etc/apt/sources.list.d/google-chrome.list && \
+    apt-get update && apt-get install -y --no-install-recommends google-chrome-stable && \
+    ln -sf /usr/bin/google-chrome-stable /usr/local/bin/chromium && \
+    ln -sf /usr/bin/google-chrome-stable /usr/local/bin/chromium-browser && \
+    rm -rf /var/lib/apt/lists/*
+
+ENV CHROME_BIN=/usr/bin/google-chrome-stable
+ENV CHROMIUM_BIN=/usr/local/bin/chromium
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable
+ENV PYTHON_POOL_MIN_SIZE=0
+ENV JAVASCRIPT_POOL_MIN_SIZE=3
+ENV TYPESCRIPT_POOL_MIN_SIZE=3
+
+ENTRYPOINT ["/container-server/sandbox"]
+
+# ============================================================================
 # Desktop variant — full Linux desktop with robotgo native control
 # ============================================================================
 FROM golang:1.24-bookworm AS go-builder

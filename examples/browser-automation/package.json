@@ -1,0 +1,23 @@
+{
+  "name": "@cloudflare/sandbox-browser-automation-example",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "description": "Example of browser automation with the Chromium sandbox image",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "start": "wrangler dev",
+    "cf-typegen": "wrangler types",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@cloudflare/sandbox": "*",
+    "@cloudflare/workers-types": "^4.20251126.0",
+    "@types/node": "^24.10.1",
+    "typescript": "^5.9.3",
+    "wrangler": "^4.70.0"
+  },
+  "author": "",
+  "license": "MIT"
+}

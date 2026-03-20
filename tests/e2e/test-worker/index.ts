@@ -39,6 +39,7 @@ import type {
 export { Sandbox };
 export { Sandbox as SandboxPython };
 export { Sandbox as SandboxOpencode };
+export { Sandbox as SandboxChromium };
 export { Sandbox as SandboxStandalone };
 export { Sandbox as SandboxMusl };
 export { Sandbox as SandboxDesktop };
@@ -47,6 +48,7 @@ interface Env {
   Sandbox: DurableObjectNamespace<Sandbox>;
   SandboxPython: DurableObjectNamespace<Sandbox>;
   SandboxOpencode: DurableObjectNamespace<Sandbox>;
+  SandboxChromium: DurableObjectNamespace<Sandbox>;
   SandboxStandalone: DurableObjectNamespace<Sandbox>;
   SandboxMusl: DurableObjectNamespace<Sandbox>;
   SandboxDesktop: DurableObjectNamespace<Sandbox>;
@@ -196,6 +198,8 @@ export default {
       sandboxNamespace = env.SandboxPython;
     } else if (sandboxType === 'opencode') {
       sandboxNamespace = env.SandboxOpencode;
+    } else if (sandboxType === 'chromium') {
+      sandboxNamespace = env.SandboxChromium;
     } else if (sandboxType === 'standalone') {
       sandboxNamespace = env.SandboxStandalone;
     } else if (sandboxType === 'musl') {

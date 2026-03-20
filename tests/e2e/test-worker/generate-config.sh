@@ -35,6 +35,7 @@ if [[ "$IMAGE_MODE" == "local" ]]; then
   IMAGE_SANDBOX="./Dockerfile"
   IMAGE_PYTHON="./Dockerfile.python"
   IMAGE_OPENCODE="./Dockerfile.opencode"
+  IMAGE_CHROMIUM="./Dockerfile.chromium"
   IMAGE_STANDALONE="./Dockerfile.standalone"
   IMAGE_MUSL="./Dockerfile.musl"
   IMAGE_DESKTOP="./Dockerfile.desktop"
@@ -47,6 +48,7 @@ elif [[ "$IMAGE_MODE" == registry:* ]]; then
   IMAGE_SANDBOX="registry.cloudflare.com/$CLOUDFLARE_ACCOUNT_ID/sandbox:$TAG"
   IMAGE_PYTHON="registry.cloudflare.com/$CLOUDFLARE_ACCOUNT_ID/sandbox-python:$TAG"
   IMAGE_OPENCODE="registry.cloudflare.com/$CLOUDFLARE_ACCOUNT_ID/sandbox-opencode:$TAG"
+  IMAGE_CHROMIUM="registry.cloudflare.com/$CLOUDFLARE_ACCOUNT_ID/sandbox-chromium:$TAG"
   IMAGE_STANDALONE="registry.cloudflare.com/$CLOUDFLARE_ACCOUNT_ID/sandbox-standalone:$TAG"
   IMAGE_MUSL="registry.cloudflare.com/$CLOUDFLARE_ACCOUNT_ID/sandbox-musl:$TAG"
   IMAGE_DESKTOP="registry.cloudflare.com/$CLOUDFLARE_ACCOUNT_ID/sandbox-desktop:$TAG"
@@ -60,6 +62,7 @@ echo "  Images:"
 echo "    Sandbox: $IMAGE_SANDBOX"
 echo "    Python: $IMAGE_PYTHON"
 echo "    Opencode: $IMAGE_OPENCODE"
+echo "    Chromium: $IMAGE_CHROMIUM"
 echo "    Standalone: $IMAGE_STANDALONE"
 echo "    Musl: $IMAGE_MUSL"
 echo "    Desktop: $IMAGE_DESKTOP"
@@ -72,6 +75,7 @@ sed -e "s|{{WORKER_NAME}}|$WORKER_NAME|g" \
     -e "s|{{IMAGE_SANDBOX}}|$IMAGE_SANDBOX|g" \
     -e "s|{{IMAGE_PYTHON}}|$IMAGE_PYTHON|g" \
     -e "s|{{IMAGE_OPENCODE}}|$IMAGE_OPENCODE|g" \
+    -e "s|{{IMAGE_CHROMIUM}}|$IMAGE_CHROMIUM|g" \
     -e "s|{{IMAGE_STANDALONE}}|$IMAGE_STANDALONE|g" \
     -e "s|{{IMAGE_MUSL}}|$IMAGE_MUSL|g" \
     -e "s|{{IMAGE_DESKTOP}}|$IMAGE_DESKTOP|g" \

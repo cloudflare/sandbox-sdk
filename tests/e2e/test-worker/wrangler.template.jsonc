@@ -35,6 +35,12 @@
       "instance_type": "standard-4"
     },
     {
+      "class_name": "SandboxChromium",
+      "image": "{{IMAGE_CHROMIUM}}",
+      "name": "{{CONTAINER_NAME}}-chromium",
+      "instance_type": "standard-4"
+    },
+    {
       "class_name": "SandboxStandalone",
       "image": "{{IMAGE_STANDALONE}}",
       "name": "{{CONTAINER_NAME}}-standalone",
@@ -69,6 +75,10 @@
         "name": "SandboxOpencode"
       },
       {
+        "class_name": "SandboxChromium",
+        "name": "SandboxChromium"
+      },
+      {
         "class_name": "SandboxStandalone",
         "name": "SandboxStandalone"
       },
@@ -93,16 +103,20 @@
       "tag": "v3"
     },
     {
-      "new_sqlite_classes": ["SandboxStandalone"],
+      "new_sqlite_classes": ["SandboxChromium"],
       "tag": "v4"
     },
     {
-      "new_sqlite_classes": ["SandboxMusl"],
+      "new_sqlite_classes": ["SandboxStandalone"],
       "tag": "v5"
     },
     {
-      "new_sqlite_classes": ["SandboxDesktop"],
+      "new_sqlite_classes": ["SandboxMusl"],
       "tag": "v6"
+    },
+    {
+      "new_sqlite_classes": ["SandboxDesktop"],
+      "tag": "v7"
     }
   ],
 

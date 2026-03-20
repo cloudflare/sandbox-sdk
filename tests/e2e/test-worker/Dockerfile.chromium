@@ -1,0 +1,5 @@
+FROM docker.io/cloudflare/sandbox-test:0.7.18-chromium
+
+RUN apt-get update && apt-get install -y squashfs-tools squashfuse fuse-overlayfs && rm -rf /var/lib/apt/lists/*
+
+EXPOSE 8080 9090 9091 9092 9093 9850 9998 9999

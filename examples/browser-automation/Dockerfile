@@ -1,0 +1,3 @@
+FROM docker.io/cloudflare/sandbox:0.7.18-chromium
+
+EXPOSE 8080

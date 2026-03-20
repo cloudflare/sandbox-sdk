@@ -34,6 +34,17 @@ docker build \
 
 docker build \
   -f packages/sandbox/Dockerfile \
+  --target chromium \
+  --platform linux/amd64 \
+  --build-arg SANDBOX_VERSION="$VERSION" \
+  -t "$IMAGE:$VERSION-chromium" \
+  --secret id=wrangler_ca,src="${NODE_EXTRA_CA_CERTS:-/dev/null}" \
+  .
+
+docker tag "$IMAGE:$VERSION-chromium" "docker.io/cloudflare/sandbox:$VERSION-chromium"
+
+docker build \
+  -f packages/sandbox/Dockerfile \
   --target desktop \
   --platform linux/amd64 \
   --build-arg SANDBOX_VERSION="$VERSION" \

@@ -136,7 +136,7 @@ jobs:
         if: steps.changesets.outputs.published == 'true'
         run: |
           VERSION=${{ needs.build.outputs.version }}
-          for suffix in "" "-python" "-opencode" "-musl" "-desktop"; do
+          for suffix in "" "-python" "-opencode" "-chromium" "-musl" "-desktop"; do
             crane copy \
               registry.cloudflare.com/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/sandbox${suffix}:main \
               docker.io/cloudflare/sandbox:${VERSION}${suffix}
