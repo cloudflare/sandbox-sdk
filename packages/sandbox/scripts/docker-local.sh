@@ -41,8 +41,6 @@ docker build \
   --secret id=wrangler_ca,src="${NODE_EXTRA_CA_CERTS:-/dev/null}" \
   .
 
-docker tag "$IMAGE:$VERSION-chromium" "docker.io/cloudflare/sandbox:$VERSION-chromium"
-
 docker build \
   -f packages/sandbox/Dockerfile \
   --target desktop \

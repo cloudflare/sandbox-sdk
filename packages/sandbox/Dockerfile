@@ -302,7 +302,7 @@ ENV TYPESCRIPT_POOL_MIN_SIZE=0
 ENTRYPOINT ["/container-server/sandbox"]
 
 # ============================================================================
-# Stage 5d: Musl image - Alpine-based with musl-linked binary
+# Stage 5e: Musl image - Alpine-based with musl-linked binary
 # ============================================================================
 FROM alpine:3.21 AS musl
 
