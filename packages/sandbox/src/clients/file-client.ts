@@ -13,6 +13,20 @@ import { BaseHttpClient } from './base-client';
 import type { HttpClientOptions, SessionRequest } from './types';
 
 /**
+ * Decode a base64 string to bytes with a helpful error message on failure.
+ */
+export function decodeBase64(content: string): Uint8Array {
+  try {
+    return Uint8Array.from(atob(content), (c) => c.charCodeAt(0));
+  } catch {
+    throw new Error(
+      'writeFile: content is not valid base64. ' +
+        'Decode the base64 string before calling writeFile, or pass a ReadableStream instead.'
+    );
+  }
+}
+
+/**
  * Request interface for creating directories
  */
 export interface MkdirRequest extends SessionRequest {
@@ -25,7 +39,7 @@ export interface MkdirRequest extends SessionRequest {
  */
 export interface WriteFileRequest extends SessionRequest {
   path: string;
-  content: string;
+  content: string | ReadableStream<Uint8Array>;
   encoding?: string;
 }
 
@@ -83,28 +97,57 @@ export class FileClient extends BaseHttpClient {
   /**
    * Write content to a file
    * @param path - File path to write to
-   * @param content - Content to write
+   * @param content - Content to write (string or binary stream)
    * @param sessionId - The session ID for this operation
    * @param options - Optional settings (encoding)
    */
   async writeFile(
     path: string,
-    content: string,
+    content: string | ReadableStream<Uint8Array>,
     sessionId: string,
     options?: { encoding?: string }
   ): Promise<WriteFileResult> {
     try {
-      const data = {
-        path,
-        content,
-        sessionId,
-        encoding: options?.encoding
-      };
+      let stream: ReadableStream<Uint8Array>;
 
-      const response = await this.post<WriteFileResult>('/api/write', data);
+      if (content instanceof ReadableStream) {
+        stream = content;
+      } else {
+        let bytes: Uint8Array;
+        if (options?.encoding === 'base64') {
+          bytes = decodeBase64(content);
+        } else {
+          bytes = new TextEncoder().encode(content);
+        }
+        stream = new ReadableStream({
+          start(controller) {
+            controller.enqueue(bytes);
+            controller.close();
+          }
+        });
+      }
 
-      this.logSuccess('File written', `${path} (${content.length} chars)`);
-      return response;
+      const url = new URL('/api/write', 'http://placeholder');
+      url.searchParams.set('path', path);
+      url.searchParams.set('sessionId', sessionId);
+
+      const response = await this.transport.fetch(
+        `/api/write?${url.searchParams.toString()}`,
+        {
+          method: 'POST',
+          body: stream,
+          duplex: 'half'
+        } as RequestInit
+      );
+
+      if (!response.ok) {
+        await this.handleErrorResponse(response);
+      }
+
+      const result = (await response.json()) as WriteFileResult;
+
+      this.logSuccess('File written', path);
+      return result;
     } catch (error) {
       this.logError('writeFile', error);
       throw error;
@@ -112,8 +155,8 @@ export class FileClient extends BaseHttpClient {
   }
 
   /**
-   * Read content from a file
-   * @param path - File path to read from
+   * Read a file from the filesystem
+   * @param path - File path to read
    * @param sessionId - The session ID for this operation
    * @param options - Optional settings (encoding)
    */

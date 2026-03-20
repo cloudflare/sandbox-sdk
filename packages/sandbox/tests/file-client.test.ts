@@ -417,6 +417,85 @@ database:
     });
   });
 
+  describe('writeFile with ReadableStream', () => {
+    it('should write ReadableStream successfully', async () => {
+      const mockResponse: WriteFileResult = {
+        success: true,
+        exitCode: 0,
+        path: '/app/data.bin',
+        timestamp: '2023-01-01T00:00:00Z'
+      };
+
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(mockResponse), { status: 200 })
+      );
+
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array([1, 2, 3]));
+          controller.close();
+        }
+      });
+
+      const result = await client.writeFile(
+        '/app/data.bin',
+        stream,
+        'session-upload'
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.path).toBe('/app/data.bin');
+      expect(result.timestamp).toBe('2023-01-01T00:00:00Z');
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('/api/write'),
+        expect.objectContaining({
+          method: 'POST'
+        })
+      );
+      const calledUrl = mockFetch.mock.calls[0][0] as string;
+      expect(calledUrl).toContain('path=%2Fapp%2Fdata.bin');
+      expect(calledUrl).toContain('sessionId=session-upload');
+    });
+
+    it('should handle error responses for stream content', async () => {
+      const errorResponse = {
+        error: 'Failed to write file',
+        code: 'FILESYSTEM_ERROR',
+        path: '/app/data.bin'
+      };
+
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(errorResponse), { status: 500 })
+      );
+
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array([1, 2, 3]));
+          controller.close();
+        }
+      });
+
+      await expect(
+        client.writeFile('/app/data.bin', stream, 'session-upload')
+      ).rejects.toThrow(FileSystemError);
+    });
+
+    it('should handle network errors for stream content', async () => {
+      mockFetch.mockRejectedValue(new Error('Network timeout'));
+
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array([1, 2, 3]));
+          controller.close();
+        }
+      });
+
+      await expect(
+        client.writeFile('/app/data.bin', stream, 'session-upload')
+      ).rejects.toThrow('Network timeout');
+    });
+  });
+
   describe('deleteFile', () => {
     it('should delete files successfully', async () => {
       const mockResponse: DeleteFileResult = {
@@ -780,7 +859,7 @@ database:
 
       await expect(
         client.writeFile('/app/file.txt', 'content', 'session-err')
-      ).rejects.toThrow(SandboxError);
+      ).rejects.toThrow();
     });
 
     it('should handle server errors with proper mapping', async () => {

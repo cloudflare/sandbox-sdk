@@ -496,41 +496,61 @@ describe('FileService', () => {
   });
 
   describe('write', () => {
-    it('should write file successfully with utf-8 encoding', async () => {
+    function stringToStream(content: string): ReadableStream<Uint8Array> {
+      return new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(content));
+          controller.close();
+        }
+      });
+    }
+
+    function bytesToStream(data: Uint8Array): ReadableStream<Uint8Array> {
+      return new ReadableStream({
+        start(controller) {
+          controller.enqueue(data);
+          controller.close();
+        }
+      });
+    }
+
+    it('should write file successfully', async () => {
       const testPath = '/tmp/test.txt';
-      const testContent = 'Test content';
-      const writeSpy = vi.spyOn(Bun, 'write').mockResolvedValue(0);
+      const mockWriter = {
+        write: vi.fn(),
+        end: vi.fn().mockResolvedValue(undefined)
+      };
+
+      bunFileSpy = spyOn(Bun, 'file').mockImplementation((_path) => {
+        return {
+          writer: () => mockWriter
+        } as any;
+      });
 
       const result = await fileService.write(
         testPath,
-        testContent,
-        {},
+        stringToStream('Test content'),
         'session-123'
       );
 
       expect(result.success).toBe(true);
-      expect(writeSpy).toHaveBeenCalledWith(testPath, testContent);
-      expect(mockSessionManager.executeInSession).not.toHaveBeenCalled();
-    });
-
-    it('should support utf8 as alias for utf-8 encoding in write', async () => {
-      const testPath = '/tmp/test.txt';
-      const testContent = 'Test content';
-      const writeSpy = vi.spyOn(Bun, 'write').mockResolvedValue(0);
-
-      const result = await fileService.write(
-        testPath,
-        testContent,
-        { encoding: 'utf8' },
-        'session-123'
-      );
-
-      expect(result.success).toBe(true);
-      expect(writeSpy).toHaveBeenCalledWith(testPath, testContent);
+      expect(Bun.file).toHaveBeenCalledWith(testPath);
+      expect(mockWriter.write).toHaveBeenCalled();
+      expect(mockWriter.end).toHaveBeenCalled();
     });
 
     it('should resolve relative paths using session working directory', async () => {
-      const writeSpy = vi.spyOn(Bun, 'write').mockResolvedValue(0);
+      const mockWriter = {
+        write: vi.fn(),
+        end: vi.fn().mockResolvedValue(undefined)
+      };
+
+      bunFileSpy = spyOn(Bun, 'file').mockImplementation((_path) => {
+        return {
+          writer: () => mockWriter
+        } as any;
+      });
+
       mocked(mockSessionManager.executeInSession).mockResolvedValueOnce({
         success: true,
         data: { exitCode: 0, stdout: '/workspace/project\n', stderr: '' }
@@ -538,24 +558,28 @@ describe('FileService', () => {
 
       const result = await fileService.write(
         'notes/todo.txt',
-        'content',
-        {},
+        stringToStream('content'),
         'session-123'
       );
 
       expect(result.success).toBe(true);
-      expect(mockSessionManager.executeInSession).toHaveBeenCalledWith(
-        'session-123',
-        'pwd'
-      );
-      expect(writeSpy).toHaveBeenCalledWith(
-        '/workspace/project/notes/todo.txt',
-        'content'
+      expect(Bun.file).toHaveBeenCalledWith(
+        '/workspace/project/notes/todo.txt'
       );
     });
 
     it('should normalize relative paths before writing', async () => {
-      const writeSpy = vi.spyOn(Bun, 'write').mockResolvedValue(0);
+      const mockWriter = {
+        write: vi.fn(),
+        end: vi.fn().mockResolvedValue(undefined)
+      };
+
+      bunFileSpy = spyOn(Bun, 'file').mockImplementation((_path) => {
+        return {
+          writer: () => mockWriter
+        } as any;
+      });
+
       mocked(mockSessionManager.executeInSession).mockResolvedValueOnce({
         success: true,
         data: { exitCode: 0, stdout: '/workspace/project\n', stderr: '' }
@@ -563,94 +587,146 @@ describe('FileService', () => {
 
       const result = await fileService.write(
         './notes/../todo.txt',
-        'content',
-        {},
+        stringToStream('content'),
         'session-123'
       );
 
       expect(result.success).toBe(true);
-      expect(writeSpy).toHaveBeenCalledWith(
-        '/workspace/project/todo.txt',
-        'content'
-      );
+      expect(Bun.file).toHaveBeenCalledWith('/workspace/project/todo.txt');
     });
 
-    it('should write binary file with base64 encoding option', async () => {
+    it('should write binary data from stream', async () => {
       const testPath = '/tmp/image.png';
-      const binaryData = Buffer.from([0x89, 0x50, 0x4e, 0x47]); // PNG header
-      const base64Content = binaryData.toString('base64');
-      const writeSpy = vi.spyOn(Bun, 'write').mockResolvedValue(0);
+      const binaryData = new Uint8Array([0x89, 0x50, 0x4e, 0x47]); // PNG header
+      const writtenChunks: Uint8Array[] = [];
+      const mockWriter = {
+        write: vi.fn((chunk: Uint8Array) => {
+          writtenChunks.push(chunk);
+        }),
+        end: vi.fn().mockResolvedValue(undefined)
+      };
+
+      bunFileSpy = spyOn(Bun, 'file').mockImplementation((_path) => {
+        return {
+          writer: () => mockWriter
+        } as any;
+      });
 
       const result = await fileService.write(
         testPath,
-        base64Content,
-        { encoding: 'base64' },
+        bytesToStream(binaryData),
         'session-123'
       );
 
       expect(result.success).toBe(true);
-      expect(writeSpy).toHaveBeenCalledWith(testPath, binaryData);
-    });
-
-    it('should reject base64 content with invalid characters', async () => {
-      const testPath = '/tmp/test.txt';
-      const writeSpy = vi.spyOn(Bun, 'write').mockResolvedValue(0);
-
-      const maliciousInputs = [
-        "abc'; rm -rf / #",
-        'valid$(whoami)base64',
-        'test\nmalicious',
-        'test`whoami`test',
-        'test|whoami',
-        'test&whoami&'
-      ];
-
-      for (const maliciousContent of maliciousInputs) {
-        vi.clearAllMocks();
-
-        const result = await fileService.write(
-          testPath,
-          maliciousContent,
-          { encoding: 'base64' },
-          'session-123'
-        );
-
-        expect(result.success).toBe(false);
-        if (result.success) throw new Error('Expected failure');
-        expect(result.error.code).toBe('VALIDATION_FAILED');
-        expect(writeSpy).not.toHaveBeenCalled();
-        expect(mockSessionManager.executeInSession).not.toHaveBeenCalled();
-      }
-    });
-
-    it('should accept valid base64 content with padding', async () => {
-      const testPath = '/tmp/test.txt';
-      const validBase64 = 'SGVsbG8gV29ybGQ=';
-      const writeSpy = vi.spyOn(Bun, 'write').mockResolvedValue(0);
-
-      const result = await fileService.write(
-        testPath,
-        validBase64,
-        { encoding: 'base64' },
-        'session-123'
-      );
-
-      expect(result.success).toBe(true);
-      expect(writeSpy).toHaveBeenCalledWith(
-        testPath,
-        Buffer.from(validBase64, 'base64')
-      );
+      expect(Bun.file).toHaveBeenCalledWith(testPath);
+      expect(mockWriter.write).toHaveBeenCalledWith(binaryData);
+      expect(mockWriter.end).toHaveBeenCalled();
     });
 
     it('should handle write errors', async () => {
-      vi.spyOn(Bun, 'write').mockRejectedValue(new Error('Disk full'));
+      bunFileSpy = spyOn(Bun, 'file').mockImplementation((_path) => {
+        return {
+          writer: () => {
+            throw new Error('Disk full');
+          }
+        } as any;
+      });
 
-      const result = await fileService.write('/tmp/test.txt', 'content');
+      const result = await fileService.write(
+        '/tmp/test.txt',
+        stringToStream('content')
+      );
 
       expect(result.success).toBe(false);
       if (!result.success) {
         expect(result.error.code).toBe('FILESYSTEM_ERROR');
       }
+    });
+
+    it('should reject invalid paths', async () => {
+      mocked(mockSecurityService.validatePath).mockReturnValue({
+        isValid: false,
+        errors: ['Path contains invalid characters']
+      });
+
+      const result = await fileService.write(
+        '../escape',
+        stringToStream('content')
+      );
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.code).toBe('VALIDATION_FAILED');
+      }
+    });
+
+    it('should create an empty file from an empty stream', async () => {
+      const emptyStream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.close();
+        }
+      });
+
+      // Mock Bun.file writer
+      const mockWriter = {
+        write: vi.fn(),
+        end: vi.fn().mockResolvedValue(undefined)
+      };
+      const mockBunFile = {
+        writer: vi.fn().mockReturnValue(mockWriter)
+      };
+      bunFileSpy = spyOn(Bun, 'file').mockReturnValue(
+        mockBunFile as unknown as ReturnType<typeof Bun.file>
+      );
+
+      const result = await fileService.write(
+        '/workspace/empty.bin',
+        emptyStream
+      );
+
+      expect(result.success).toBe(true);
+      expect(mockWriter.write).not.toHaveBeenCalled(); // No chunks to write
+      expect(mockWriter.end).toHaveBeenCalled();
+    });
+
+    it('should handle multi-chunk streams', async () => {
+      const chunks = [
+        new Uint8Array([1, 2, 3]),
+        new Uint8Array([4, 5, 6]),
+        new Uint8Array([7, 8, 9])
+      ];
+      let chunkIndex = 0;
+      const multiChunkStream = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          if (chunkIndex < chunks.length) {
+            controller.enqueue(chunks[chunkIndex++]);
+          } else {
+            controller.close();
+          }
+        }
+      });
+
+      const writtenChunks: Uint8Array[] = [];
+      const mockWriter = {
+        write: vi.fn((chunk) => writtenChunks.push(chunk)),
+        end: vi.fn().mockResolvedValue(undefined)
+      };
+      const mockBunFile = {
+        writer: vi.fn().mockReturnValue(mockWriter)
+      };
+      bunFileSpy = spyOn(Bun, 'file').mockReturnValue(
+        mockBunFile as unknown as ReturnType<typeof Bun.file>
+      );
+
+      const result = await fileService.write(
+        '/workspace/multi.bin',
+        multiChunkStream
+      );
+
+      expect(result.success).toBe(true);
+      expect(mockWriter.write).toHaveBeenCalledTimes(3);
+      expect(writtenChunks).toEqual(chunks);
     });
   });
 

@@ -17,7 +17,7 @@ import type { FileService } from '@sandbox-container/services/file-service';
 // Mock the dependencies - use partial mock to avoid missing properties
 const mockFileService = {
   readFile: vi.fn(),
-  writeFile: vi.fn(),
+
   deleteFile: vi.fn(),
   renameFile: vi.fn(),
   moveFile: vi.fn(),
@@ -170,76 +170,59 @@ describe('FileHandler', () => {
 
   describe('handleWrite - POST /api/write', () => {
     it('should write file successfully', async () => {
-      const writeFileData = {
-        path: '/tmp/output.txt',
-        content: 'Hello, File!',
-        encoding: 'utf-8',
-        sessionId: 'session-123'
-      };
-
-      (mockFileService.writeFile as any).mockResolvedValue({
+      (mockFileService.write as any).mockResolvedValue({
         success: true
       });
 
-      const request = new Request('http://localhost:3000/api/write', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(writeFileData)
-      });
+      const request = new Request(
+        'http://localhost:3000/api/write?path=/tmp/output.txt&sessionId=session-123',
+        {
+          method: 'POST',
+          body: new TextEncoder().encode('Hello, File!')
+        }
+      );
 
       const response = await fileHandler.handle(request, mockContext);
 
       expect(response.status).toBe(200);
       const responseData = (await response.json()) as WriteFileResult;
       expect(responseData.success).toBe(true);
-      expect(responseData.path).toBe('/tmp/output.txt'); // ✅ Check path field
+      expect(responseData.path).toBe('/tmp/output.txt');
       expect(responseData.timestamp).toBeDefined();
 
       // Verify service was called correctly
-      expect(mockFileService.writeFile).toHaveBeenCalledWith(
+      expect(mockFileService.write).toHaveBeenCalledWith(
         '/tmp/output.txt',
-        'Hello, File!',
-        {
-          encoding: 'utf-8'
-        },
+        expect.anything(),
         'session-123'
       );
     });
 
-    it('should pass undefined sessionId when not provided', async () => {
-      const writeFileData = {
-        path: '/tmp/output.txt',
-        content: 'Hello, File!'
-      };
-
-      (mockFileService.writeFile as any).mockResolvedValue({
+    it('should use default sessionId when not provided', async () => {
+      (mockFileService.write as any).mockResolvedValue({
         success: true
       });
 
-      const request = new Request('http://localhost:3000/api/write', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(writeFileData)
-      });
+      const request = new Request(
+        'http://localhost:3000/api/write?path=/tmp/output.txt',
+        {
+          method: 'POST',
+          body: new TextEncoder().encode('Hello, File!')
+        }
+      );
 
       const response = await fileHandler.handle(request, mockContext);
 
       expect(response.status).toBe(200);
-      expect(mockFileService.writeFile).toHaveBeenCalledWith(
+      expect(mockFileService.write).toHaveBeenCalledWith(
         '/tmp/output.txt',
-        'Hello, File!',
-        {},
-        undefined
+        expect.anything(),
+        'default'
       );
     });
 
     it('should handle file write errors', async () => {
-      const writeFileData = {
-        path: '/readonly/file.txt',
-        content: 'content'
-      };
-
-      (mockFileService.writeFile as any).mockResolvedValue({
+      (mockFileService.write as any).mockResolvedValue({
         success: false,
         error: {
           message: 'Permission denied',
@@ -248,11 +231,13 @@ describe('FileHandler', () => {
         }
       });
 
-      const request = new Request('http://localhost:3000/api/write', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(writeFileData)
-      });
+      const request = new Request(
+        'http://localhost:3000/api/write?path=/readonly/file.txt',
+        {
+          method: 'POST',
+          body: new TextEncoder().encode('content')
+        }
+      );
 
       const response = await fileHandler.handle(request, mockContext);
 
@@ -261,6 +246,39 @@ describe('FileHandler', () => {
       expect(responseData.code).toBe('PERMISSION_DENIED');
       expect(responseData.message).toBe('Permission denied');
       expect(responseData.httpStatus).toBe(403);
+      expect(responseData.timestamp).toBeDefined();
+    });
+
+    it('should return error when path is missing', async () => {
+      const request = new Request('http://localhost:3000/api/write', {
+        method: 'POST',
+        body: new Uint8Array([1, 2, 3])
+      });
+
+      const response = await fileHandler.handle(request, mockContext);
+
+      expect(response.status).toBe(400);
+      const responseData = (await response.json()) as ErrorResponse;
+      expect(responseData.code).toBe('VALIDATION_FAILED');
+      expect(responseData.message).toContain('path');
+      expect(responseData.timestamp).toBeDefined();
+    });
+
+    it('should return error when request body is missing', async () => {
+      const request = new Request(
+        'http://localhost:3000/api/write?path=/app/test.bin',
+        {
+          method: 'POST',
+          body: null
+        }
+      );
+
+      const response = await fileHandler.handle(request, mockContext);
+
+      expect(response.status).toBe(400);
+      const responseData = (await response.json()) as ErrorResponse;
+      expect(responseData.code).toBe('VALIDATION_FAILED');
+      expect(responseData.message).toContain('body');
       expect(responseData.timestamp).toBeDefined();
     });
   });
@@ -718,7 +736,8 @@ describe('FileHandler', () => {
         },
         {
           endpoint: '/api/write',
-          data: { path: '/tmp/test.txt', content: 'data' },
+          data: null,
+          queryParams: '?path=/tmp/test.txt',
           mockResponse: { success: true },
           expectedFields: ['success', 'path', 'timestamp']
         },
@@ -740,7 +759,7 @@ describe('FileHandler', () => {
             operation.mockResponse
           );
         } else if (operation.endpoint === '/api/write') {
-          (mockFileService.writeFile as any).mockResolvedValue(
+          (mockFileService.write as any).mockResolvedValue(
             operation.mockResponse
           );
         } else if (operation.endpoint === '/api/delete') {
@@ -749,12 +768,18 @@ describe('FileHandler', () => {
           );
         }
 
+        const queryParams = (operation as any).queryParams || '';
+        const isWrite = operation.endpoint === '/api/write';
         const request = new Request(
-          `http://localhost:3000${operation.endpoint}`,
+          `http://localhost:3000${operation.endpoint}${queryParams}`,
           {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(operation.data)
+            headers: isWrite
+              ? undefined
+              : { 'Content-Type': 'application/json' },
+            body: isWrite
+              ? new TextEncoder().encode('data')
+              : JSON.stringify(operation.data)
           }
         );
 

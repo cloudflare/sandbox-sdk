@@ -40,16 +40,6 @@ export interface ReadFileRequest {
 }
 
 /**
- * Request to write a file
- */
-export interface WriteFileRequest {
-  path: string;
-  content: string;
-  encoding?: string;
-  sessionId?: string;
-}
-
-/**
  * Request to delete a file
  */
 export interface DeleteFileRequest {

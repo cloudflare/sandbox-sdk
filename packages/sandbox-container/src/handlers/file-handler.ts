@@ -15,7 +15,6 @@ import type {
   ReadFileResult,
   RenameFileRequest,
   RenameFileResult,
-  WriteFileRequest,
   WriteFileResult
 } from '@repo/shared';
 import { ErrorCode } from '@repo/shared/errors';
@@ -159,25 +158,38 @@ export class FileHandler extends BaseHandler<Request, Response> {
     request: Request,
     context: RequestContext
   ): Promise<Response> {
-    const body = await this.parseRequestBody<WriteFileRequest>(request);
+    const url = new URL(request.url);
+    const path = url.searchParams.get('path');
+    const sessionId = url.searchParams.get('sessionId') ?? 'default';
 
-    const options =
-      body.encoding !== undefined ? { encoding: body.encoding } : {};
+    if (!path) {
+      return this.createErrorResponse(
+        {
+          message: 'Missing required query parameter: path',
+          code: ErrorCode.VALIDATION_FAILED
+        },
+        context
+      );
+    }
 
-    const result = await this.fileService.writeFile(
-      body.path,
-      body.content,
-      options,
-      body.sessionId
-    );
+    if (!request.body) {
+      return this.createErrorResponse(
+        {
+          message: 'Request body is required for write',
+          code: ErrorCode.VALIDATION_FAILED
+        },
+        context
+      );
+    }
+
+    const result = await this.fileService.write(path, request.body, sessionId);
 
     if (result.success) {
       const response: WriteFileResult = {
         success: true,
-        path: body.path,
+        path,
         timestamp: new Date().toISOString()
       };
-
       return this.createTypedResponse(response, context);
     } else {
       return this.createErrorResponse(result.error, context);

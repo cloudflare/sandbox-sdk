@@ -43,6 +43,7 @@ import {
 } from '@repo/shared';
 import { AwsClient } from 'aws4fetch';
 import { type Desktop, type ExecuteResponse, SandboxClient } from './clients';
+import { decodeBase64 } from './clients/file-client';
 import type { ErrorResponse } from './errors';
 import {
   BackupCreateError,
@@ -335,6 +336,14 @@ export function getSandbox<T extends Sandbox<any>>(
     terminal: (request: Request, opts?: PtyOptions) =>
       proxyTerminal(stub, defaultSessionId, request, opts),
     wsConnect: connect(stub),
+    writeFile: (
+      path: string,
+      content: string | ReadableStream<Uint8Array>,
+      options?: { encoding?: string; sessionId?: string }
+    ) =>
+      stub.writeFile(path, contentToByteStream(content, options?.encoding), {
+        sessionId: options?.sessionId ?? defaultSessionId
+      }),
     // Client-side proxy for desktop operations. Each method call is dispatched
     // to the DO's callDesktop() method, avoiding RPC pipelining through getters.
     desktop: new Proxy({} as Desktop, {
@@ -366,7 +375,17 @@ function enhanceSession(
   return {
     ...rpcSession,
     terminal: (request: Request, opts?: PtyOptions) =>
-      proxyTerminal(stub, rpcSession.id, request, opts)
+      proxyTerminal(stub, rpcSession.id, request, opts),
+    writeFile: (
+      path: string,
+      content: string | ReadableStream<Uint8Array>,
+      options?: { encoding?: string }
+    ) =>
+      rpcSession.writeFile(
+        path,
+        contentToByteStream(content, options?.encoding),
+        options
+      )
   };
 }
 
@@ -382,6 +401,61 @@ export function connect(stub: {
     const portSwitchedRequest = switchPort(request, port);
     return await stub.fetch(portSwitchedRequest);
   };
+}
+
+/**
+ * Ensure a ReadableStream is byte-oriented (type: "bytes") for RPC transfer.
+ * Cloudflare's RPC streams byte-oriented ReadableStreams without buffering,
+ * bypassing the 32 MiB serialization limit. Regular streams are fully buffered
+ * before transfer which causes large uploads to fail.
+ */
+function toByteStream(
+  stream: ReadableStream<Uint8Array>
+): ReadableStream<Uint8Array> {
+  const reader = stream.getReader();
+  return new ReadableStream({
+    type: 'bytes',
+    async pull(controller) {
+      const { done, value } = await reader.read();
+      if (done) {
+        controller.close();
+        return;
+      }
+      controller.enqueue(value);
+    },
+    cancel(reason) {
+      reader.cancel(reason);
+    }
+  });
+}
+
+/**
+ * Convert writeFile content to a byte-oriented ReadableStream.
+ * Strings are encoded to UTF-8 (or decoded from base64 first), and
+ * ReadableStreams are wrapped to ensure they are byte-oriented for RPC.
+ */
+function contentToByteStream(
+  content: string | ReadableStream<Uint8Array>,
+  encoding?: string
+): ReadableStream<Uint8Array> {
+  if (content instanceof ReadableStream) {
+    return toByteStream(content);
+  }
+
+  let bytes: Uint8Array;
+  if (encoding === 'base64') {
+    bytes = decodeBase64(content);
+  } else {
+    bytes = new TextEncoder().encode(content);
+  }
+
+  return new ReadableStream({
+    type: 'bytes',
+    start(controller) {
+      controller.enqueue(bytes);
+      controller.close();
+    }
+  });
 }
 
 /**
@@ -2688,9 +2762,24 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     });
   }
 
+  /**
+   * Write a file to the sandbox.
+   *
+   * Accepts string content (UTF-8 or base64) or a ReadableStream for binary
+   * data of any size. ReadableStream inputs are converted to a byte-oriented
+   * stream for efficient transfer across the Worker-to-Durable Object boundary
+   * without buffering. The original stream is consumed and cannot be reused.
+   *
+   * @param path - Destination file path in the sandbox
+   * @param content - File content as a UTF-8 string or a ReadableStream of bytes
+   * @param options.encoding - (Deprecated) String encoding, only applies when content
+   *   is a string. Use 'base64' to decode a base64-encoded string before writing.
+   *   Prefer passing a ReadableStream for binary data instead.
+   * @param options.sessionId - Session ID for the operation
+   */
   async writeFile(
     path: string,
-    content: string,
+    content: string | ReadableStream<Uint8Array>,
     options: { encoding?: string; sessionId?: string } = {}
   ) {
     const session = options.sessionId ?? (await this.ensureDefaultSession());

@@ -13,8 +13,7 @@ import type {
   FileStats,
   MkdirOptions,
   ReadOptions,
-  ServiceResult,
-  WriteOptions
+  ServiceResult
 } from '../core/types';
 import { FileManager } from '../managers/file-manager';
 import type { SessionManager } from './session-manager';
@@ -35,8 +34,7 @@ export interface FileSystemOperations {
   ): Promise<ServiceResult<string, FileMetadata>>;
   write(
     path: string,
-    content: string,
-    options?: WriteOptions,
+    stream: ReadableStream<Uint8Array>,
     sessionId?: string
   ): Promise<ServiceResult<void>>;
   delete(path: string, sessionId?: string): Promise<ServiceResult<void>>;
@@ -220,8 +218,7 @@ export class FileService implements FileSystemOperations {
 
   async write(
     path: string,
-    content: string,
-    options: WriteOptions = {},
+    stream: ReadableStream<Uint8Array>,
     sessionId = 'default'
   ): Promise<ServiceResult<void>> {
     try {
@@ -244,32 +241,6 @@ export class FileService implements FileSystemOperations {
             } satisfies ValidationFailedContext
           }
         };
-      }
-
-      // 2. Write file using Bun native file operations
-      const normalizedEncoding =
-        options.encoding === 'utf8' ? 'utf-8' : options.encoding || 'utf-8';
-
-      if (normalizedEncoding === 'base64') {
-        // Validate that content only contains valid base64 characters
-        if (!/^[A-Za-z0-9+/=]*$/.test(content)) {
-          return {
-            success: false,
-            error: {
-              message: `Invalid base64 content for '${path}': must contain only A-Z, a-z, 0-9, +, /, =`,
-              code: ErrorCode.VALIDATION_FAILED,
-              details: {
-                validationErrors: [
-                  {
-                    field: 'content',
-                    message: 'Invalid base64 characters',
-                    code: 'INVALID_BASE64'
-                  }
-                ]
-              } satisfies ValidationFailedContext
-            }
-          };
-        }
       }
 
       const writeResult = await this.sessionManager.withSession(
@@ -297,11 +268,11 @@ export class FileService implements FileSystemOperations {
           }
 
           try {
-            const data =
-              normalizedEncoding === 'base64'
-                ? Buffer.from(content, 'base64')
-                : content;
-            await Bun.write(targetPath, data);
+            const writer = Bun.file(targetPath).writer();
+            for await (const chunk of stream) {
+              writer.write(chunk);
+            }
+            await writer.end();
           } catch (error) {
             const errorMessage =
               error instanceof Error ? error.message : 'Unknown error';
@@ -1041,15 +1012,6 @@ export class FileService implements FileSystemOperations {
     sessionId?: string
   ): Promise<ServiceResult<string, FileMetadata>> {
     return await this.read(path, options, sessionId);
-  }
-
-  async writeFile(
-    path: string,
-    content: string,
-    options?: WriteOptions,
-    sessionId?: string
-  ): Promise<ServiceResult<void>> {
-    return await this.write(path, content, options, sessionId);
   }
 
   async deleteFile(

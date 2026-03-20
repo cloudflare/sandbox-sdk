@@ -83,8 +83,7 @@ export type {
   RestoreBackupResponse,
   SessionCreateRequest,
   SessionDeleteRequest,
-  StartProcessRequest,
-  WriteFileRequest
+  StartProcessRequest
 } from './request-types.js';
 // Export shell utilities
 export { shellEscape } from './shell-escape.js';

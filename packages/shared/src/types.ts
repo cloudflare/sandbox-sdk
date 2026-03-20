@@ -956,10 +956,24 @@ export interface ExecutionSession {
   ): Promise<ReadableStream<Uint8Array>>;
 
   // File operations
+  /**
+   * Write a file to the sandbox.
+   *
+   * @param content - File content as a UTF-8 string or a ReadableStream of bytes.
+   *   When a ReadableStream is provided, it is consumed and converted to a
+   *   byte-oriented stream internally. The original stream cannot be reused.
+   * @param options.encoding - (Deprecated) String encoding for string content.
+   */
   writeFile(
     path: string,
-    content: string,
-    options?: { encoding?: string }
+    content: string | ReadableStream<Uint8Array>,
+    options?: {
+      /**
+       * @deprecated Prefer passing a ReadableStream for binary data instead of
+       * base64-encoded strings. Decode the base64 string before calling writeFile.
+       */
+      encoding?: string;
+    }
   ): Promise<WriteFileResult>;
   readFile(
     path: string,
@@ -1213,10 +1227,28 @@ export interface ISandbox {
   ): Promise<{ stdout: string; stderr: string; processId: string }>;
 
   // File operations
+  /**
+   * Write a file to the sandbox.
+   *
+   * @param path - Destination file path in the sandbox
+   * @param content - File content as a UTF-8 string or a ReadableStream of bytes.
+   *   When a ReadableStream is provided, it is consumed and converted to a
+   *   byte-oriented stream internally for transfer. The original stream will be
+   *   fully read and cannot be reused after this call.
+   * @param options.encoding - (Deprecated) String encoding, only applies when
+   *   content is a string. Use 'base64' to decode a base64-encoded string to
+   *   bytes before writing. Prefer passing a ReadableStream for binary data.
+   */
   writeFile(
     path: string,
-    content: string,
-    options?: { encoding?: string }
+    content: string | ReadableStream<Uint8Array>,
+    options?: {
+      /**
+       * @deprecated Prefer passing a ReadableStream for binary data instead of
+       * base64-encoded strings. Decode the base64 string before calling writeFile.
+       */
+      encoding?: string;
+    }
   ): Promise<WriteFileResult>;
   readFile(
     path: string,

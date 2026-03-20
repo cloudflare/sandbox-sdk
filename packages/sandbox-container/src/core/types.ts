@@ -307,11 +307,6 @@ export interface ReadOptions {
   encoding?: string;
 }
 
-export interface WriteOptions {
-  encoding?: string;
-  mode?: string;
-}
-
 export interface MkdirOptions {
   recursive?: boolean;
   mode?: string;
