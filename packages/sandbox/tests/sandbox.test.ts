@@ -906,7 +906,7 @@ describe('Sandbox - Automatic Session Management', () => {
         sandbox.setContainerTimeouts({
           instanceGetTimeoutMS: 30_000,
           portReadyTimeoutMS: 90_000,
-          waitIntervalMS: 1000
+          waitIntervalMS: 300
         })
       ).resolves.toBeUndefined();
     });

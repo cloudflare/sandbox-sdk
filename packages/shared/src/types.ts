@@ -525,7 +525,7 @@ export interface SandboxOptions {
 
     /**
      * How often to poll for container readiness
-     * @default 1000 (1s) - or SANDBOX_POLL_INTERVAL_MS env var
+     * @default 300 (300ms) - or SANDBOX_POLL_INTERVAL_MS env var
      */
     waitIntervalMS?: number;
   };

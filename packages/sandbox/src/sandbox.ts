@@ -454,8 +454,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     portReadyTimeoutMS: 90_000, // 90 seconds (allows for heavy containers)
 
     // Polling interval for checking container readiness
-    // @cloudflare/containers default: 300ms (too aggressive)
-    waitIntervalMS: 1000 // 1 second (reduces load)
+    waitIntervalMS: 300
   };
 
   /**
