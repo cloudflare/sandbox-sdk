@@ -71,7 +71,6 @@ The response includes:
 ```bash
 npm install
 npm run build
-npm run docker:rebuild
 ```
 
 2. Run locally:
@@ -81,12 +80,8 @@ cd examples/browser-automation
 npm run dev
 ```
 
-> **Note:** The first run can take a few minutes because the Chromium container image must be built locally.
-
 ## Deploy
 
 ```bash
 npm run deploy
 ```
-
-> **Wait for provisioning:** After first deployment, wait a few minutes for container provisioning before making requests.

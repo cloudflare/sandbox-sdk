@@ -10,8 +10,9 @@
  * - SandboxOpencode: Image with OpenCode CLI (for OpenCode integration tests)
  * - SandboxStandalone: Standalone binary on arbitrary base image (for binary pattern tests)
  * - SandboxMusl: Musl-based Alpine image variant (for musl binary tests)
+ * - SandboxChromium: Chromium-supported image variant (for browser automation tests)
  *
- * Use X-Sandbox-Type header to select: 'python', 'opencode', 'standalone', 'musl', or default
+ * Use X-Sandbox-Type header to select: 'python', 'opencode', 'standalone', 'musl', 'chromium', or default
  */
 
 import { getSandbox, proxyToSandbox, Sandbox } from '@cloudflare/sandbox';
