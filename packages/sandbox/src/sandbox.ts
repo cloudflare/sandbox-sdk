@@ -675,7 +675,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       );
       if (!hasCreatedEvent) {
         await this.ctx.storage.put('lifecycleEventsInitialized', true);
-        await this.recordLifecycleEvent({ type: 'sandbox.created' });
+        await this.enqueueLifecycleEvent({ type: 'sandbox.created' });
       }
     });
   }
@@ -957,7 +957,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
   }
 
-  private enqueueLifecycleEvent(event: LifecycleEventInput): void {
+  private enqueueLifecycleEvent(event: LifecycleEventInput): Promise<void> {
     const write = this.lifecycleEventWriteQueue.then(() =>
       this.recordLifecycleEvent(event).then(() => undefined)
     );
@@ -967,6 +967,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         error: error instanceof Error ? error.message : String(error)
       });
     });
+
+    return write;
   }
 
   private async recordLifecycleEvent(
@@ -1558,7 +1560,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    */
   override async destroy(): Promise<void> {
     this.logger.info('Destroying sandbox container');
-    await this.recordLifecycleEvent({ type: 'sandbox.destroyed' });
+    await this.enqueueLifecycleEvent({ type: 'sandbox.destroyed' });
 
     // Best-effort desktop stop — only when container is already running
     if (this.ctx.container?.running) {
@@ -1613,7 +1615,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   override onStart() {
     this.logger.debug('Sandbox started');
 
-    this.enqueueLifecycleEvent({ type: 'sandbox.started' });
+    this.enqueueLifecycleEvent({ type: 'sandbox.started' }).catch((error) => {
+      this.logger.warn('Failed to record sandbox.started event', {
+        error: error instanceof Error ? error.message : String(error)
+      });
+    });
 
     // Check version compatibility asynchronously (don't block startup)
     this.checkVersionCompatibility().catch((error) => {
@@ -2801,12 +2807,16 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         session
       );
 
-      await this.recordLifecycleEvent({
+      this.enqueueLifecycleEvent({
         type: 'process.started',
         sessionId: session,
         processId: response.processId,
         pid: response.pid,
         command: response.command
+      }).catch((error) => {
+        this.logger.warn('Failed to record process.started event', {
+          error: error instanceof Error ? error.message : String(error)
+        });
       });
 
       // Call onStart callback if provided
@@ -2864,11 +2874,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
             break;
           case 'exit':
           case 'complete':
-            await this.recordLifecycleEvent({
+            await this.enqueueLifecycleEvent({
               type: 'process.exited',
               sessionId,
               processId,
               exitCode: event.exitCode ?? null
+            }).catch((error) => {
+              this.logger.warn('Failed to record process.exited event', {
+                error: error instanceof Error ? error.message : String(error)
+              });
             });
             if (options?.onExit) {
               options.onExit(event.exitCode ?? null);
@@ -3295,11 +3309,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       token
     );
 
-    await this.recordLifecycleEvent({
+    await this.enqueueLifecycleEvent({
       type: 'port.exposed',
       port,
       url,
       name: options?.name
+    }).catch((error) => {
+      this.logger.warn('Failed to record port.exposed event', {
+        error: error instanceof Error ? error.message : String(error)
+      });
     });
 
     return {
@@ -3327,9 +3345,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       await this.ctx.storage.put('portTokens', tokens);
     }
 
-    await this.recordLifecycleEvent({
+    await this.enqueueLifecycleEvent({
       type: 'port.unexposed',
       port
+    }).catch((error) => {
+      this.logger.warn('Failed to record port.unexposed event', {
+        error: error instanceof Error ? error.message : String(error)
+      });
     });
   }
 
@@ -3544,9 +3566,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       })
     });
 
-    await this.recordLifecycleEvent({
+    await this.enqueueLifecycleEvent({
       type: 'session.created',
       sessionId
+    }).catch((error) => {
+      this.logger.warn('Failed to record session.created event', {
+        error: error instanceof Error ? error.message : String(error)
+      });
     });
 
     // Return wrapper that binds sessionId to all operations
@@ -3588,9 +3614,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     const response = await this.client.utils.deleteSession(sessionId);
 
-    await this.recordLifecycleEvent({
+    await this.enqueueLifecycleEvent({
       type: 'session.deleted',
       sessionId
+    }).catch((error) => {
+      this.logger.warn('Failed to record session.deleted event', {
+        error: error instanceof Error ? error.message : String(error)
+      });
     });
 
     // Map HTTP response to result type
