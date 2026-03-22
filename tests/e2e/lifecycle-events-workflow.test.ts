@@ -141,6 +141,48 @@ describe('Lifecycle Events Workflow', () => {
     expect((started?.seq ?? 0) < (exited?.seq ?? 0)).toBe(true);
   }, 90000);
 
+  test('should record session lifecycle events', async () => {
+    const before = await listEvents(workerUrl, headers);
+    const afterSeq = before.at(-1)?.seq ?? 0;
+
+    const createResponse = await fetch(`${workerUrl}/api/session/create`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        id: 'lifecycle-session',
+        cwd: '/workspace'
+      })
+    });
+
+    expect(createResponse.status).toBe(200);
+
+    const deleteResponse = await fetch(`${workerUrl}/api/session/delete`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ sessionId: 'lifecycle-session' })
+    });
+
+    expect(deleteResponse.status).toBe(200);
+
+    const events = await listEvents(workerUrl, headers, {
+      afterSeq,
+      types: ['session.created', 'session.deleted']
+    });
+
+    expect(events.map((event) => event.type)).toEqual([
+      'session.created',
+      'session.deleted'
+    ]);
+    expect(events[0]).toMatchObject({
+      type: 'session.created',
+      sessionId: 'lifecycle-session'
+    });
+    expect(events[1]).toMatchObject({
+      type: 'session.deleted',
+      sessionId: 'lifecycle-session'
+    });
+  }, 90000);
+
   test.skipIf(skipPortExposureTests)(
     'should record port exposure events with filtered replay',
     async () => {

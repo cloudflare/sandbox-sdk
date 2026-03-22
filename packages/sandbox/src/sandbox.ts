@@ -3317,6 +3317,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       })
     });
 
+    await this.recordLifecycleEvent({
+      type: 'session.created',
+      sessionId
+    });
+
     // Return wrapper that binds sessionId to all operations
     return this.getSessionWrapper(sessionId);
   }
@@ -3355,6 +3360,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
 
     const response = await this.client.utils.deleteSession(sessionId);
+
+    await this.recordLifecycleEvent({
+      type: 'session.deleted',
+      sessionId
+    });
 
     // Map HTTP response to result type
     return {

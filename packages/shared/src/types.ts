@@ -436,6 +436,8 @@ export type SandboxLifecycleEventType =
   | 'sandbox.created'
   | 'sandbox.started'
   | 'sandbox.destroyed'
+  | 'session.created'
+  | 'session.deleted'
   | 'process.started'
   | 'process.exited'
   | 'port.exposed'
@@ -461,6 +463,14 @@ export type SandboxLifecycleEvent =
     })
   | (SandboxLifecycleEventBase & {
       type: 'sandbox.destroyed';
+    })
+  | (SandboxLifecycleEventBase & {
+      type: 'session.created';
+      sessionId: string;
+    })
+  | (SandboxLifecycleEventBase & {
+      type: 'session.deleted';
+      sessionId: string;
     })
   | (SandboxLifecycleEventBase & {
       type: 'process.started';

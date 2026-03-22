@@ -1090,6 +1090,39 @@ describe('Sandbox - Automatic Session Management', () => {
       ]);
     });
 
+    it('should record session lifecycle events', async () => {
+      vi.spyOn(sandbox.client.utils, 'createSession').mockResolvedValue({
+        success: true,
+        id: 'session-lifecycle',
+        message: 'Created'
+      } as any);
+      vi.spyOn(sandbox.client.utils, 'deleteSession').mockResolvedValue({
+        success: true,
+        sessionId: 'session-lifecycle',
+        timestamp: new Date().toISOString()
+      } as any);
+
+      await sandbox.createSession({ id: 'session-lifecycle' });
+      await sandbox.deleteSession('session-lifecycle');
+
+      const events = await sandbox.listEvents({
+        types: ['session.created', 'session.deleted']
+      });
+
+      expect(events.map((event) => event.type)).toEqual([
+        'session.created',
+        'session.deleted'
+      ]);
+      expect(events[0]).toMatchObject({
+        type: 'session.created',
+        sessionId: 'session-lifecycle'
+      });
+      expect(events[1]).toMatchObject({
+        type: 'session.deleted',
+        sessionId: 'session-lifecycle'
+      });
+    });
+
     it('should filter lifecycle events by type', async () => {
       await sandbox.setSandboxName('test-sandbox', false);
 
