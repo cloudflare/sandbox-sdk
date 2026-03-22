@@ -651,8 +651,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         'lifecycleEventsInitialized'
       );
       if (!hasCreatedEvent) {
+        await this.enqueueLifecycleEvent({ type: 'sandbox.created' }).catch(
+          (error) => {
+            this.logger.warn('Failed to record sandbox.created event', {
+              error: error instanceof Error ? error.message : String(error)
+            });
+          }
+        );
         await this.ctx.storage.put('lifecycleEventsInitialized', true);
-        await this.enqueueLifecycleEvent({ type: 'sandbox.created' });
       }
     });
   }
