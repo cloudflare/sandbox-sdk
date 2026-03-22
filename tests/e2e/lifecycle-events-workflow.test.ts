@@ -1,3 +1,4 @@
+import { createHmac, randomUUID } from 'node:crypto';
 import type { Process, SandboxLifecycleEvent } from '@repo/shared';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import {
@@ -5,7 +6,7 @@ import {
   createTestSandbox,
   type TestSandbox
 } from './helpers/global-sandbox';
-import type { PortUnexposeResponse } from './test-worker/types';
+import type { PortUnexposeResponse, WebhookReceipt } from './test-worker/types';
 
 const skipPortExposureTests =
   process.env.TEST_WORKER_URL?.endsWith('.workers.dev') ?? false;
@@ -44,6 +45,47 @@ async function listEvents(
 
   expect(response.status).toBe(200);
   return (await response.json()) as SandboxLifecycleEvent[];
+}
+
+async function configureWebhooks(
+  workerUrl: string,
+  headers: Record<string, string>,
+  webhooks: Array<{ url: string; secret: string; types?: string[] }>
+) {
+  const response = await fetch(`${workerUrl}/api/events/webhooks`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ webhooks })
+  });
+
+  expect(response.status).toBe(200);
+  return response.json();
+}
+
+async function resetWebhookReceipts(workerUrl: string, stream: string) {
+  const response = await fetch(`${workerUrl}/test/webhook-events/reset`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ stream })
+  });
+
+  expect(response.status).toBe(200);
+}
+
+async function listWebhookReceipts(
+  workerUrl: string,
+  stream: string
+): Promise<WebhookReceipt[]> {
+  const response = await fetch(
+    `${workerUrl}/test/webhook-events?stream=${encodeURIComponent(stream)}`
+  );
+
+  expect(response.status).toBe(200);
+  return (await response.json()) as WebhookReceipt[];
+}
+
+function computeSignature(secret: string, payload: string): string {
+  return `sha256=${createHmac('sha256', secret).update(payload).digest('hex')}`;
 }
 
 describe('Lifecycle Events Workflow', () => {
@@ -181,6 +223,87 @@ describe('Lifecycle Events Workflow', () => {
       type: 'session.deleted',
       sessionId: 'lifecycle-session'
     });
+  }, 90000);
+
+  test('should deliver signed lifecycle webhooks', async () => {
+    const stream = `signed-${randomUUID()}`;
+    const secret = 'webhook-secret';
+    await resetWebhookReceipts(workerUrl, stream);
+
+    await configureWebhooks(workerUrl, headers, [
+      {
+        url: `${workerUrl}/test/webhook-events?stream=${encodeURIComponent(stream)}`,
+        secret,
+        types: ['session.created']
+      }
+    ]);
+
+    const createResponse = await fetch(`${workerUrl}/api/session/create`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ id: `webhook-session-${randomUUID()}` })
+    });
+    expect(createResponse.status).toBe(200);
+
+    let receipts: WebhookReceipt[] = [];
+    await expect(
+      (async () => {
+        for (let attempt = 0; attempt < 20; attempt++) {
+          receipts = await listWebhookReceipts(workerUrl, stream);
+          if (receipts.length > 0) return;
+          await new Promise((resolve) => setTimeout(resolve, 250));
+        }
+        throw new Error('Timed out waiting for webhook receipt');
+      })()
+    ).resolves.toBeUndefined();
+
+    expect(receipts).toHaveLength(1);
+    const payload = receipts[0]!.body;
+    const parsed = JSON.parse(payload) as { event: SandboxLifecycleEvent };
+    expect(parsed.event.type).toBe('session.created');
+    expect(receipts[0]!.headers['x-sandbox-signature']).toBe(
+      computeSignature(secret, payload)
+    );
+    expect(receipts[0]!.headers['x-sandbox-event-id']).toBe(parsed.event.id);
+  }, 90000);
+
+  test('should retry failed webhook deliveries', async () => {
+    const stream = `retry-${randomUUID()}`;
+    await resetWebhookReceipts(workerUrl, stream);
+
+    await configureWebhooks(workerUrl, headers, [
+      {
+        url: `${workerUrl}/test/webhook-events?stream=${encodeURIComponent(stream)}&failFirst=true`,
+        secret: 'retry-secret',
+        types: ['session.created']
+      }
+    ]);
+
+    const createResponse = await fetch(`${workerUrl}/api/session/create`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ id: `retry-session-${randomUUID()}` })
+    });
+    expect(createResponse.status).toBe(200);
+
+    let receipts: WebhookReceipt[] = [];
+    await expect(
+      (async () => {
+        for (let attempt = 0; attempt < 30; attempt++) {
+          receipts = await listWebhookReceipts(workerUrl, stream);
+          if (receipts.length >= 2) return;
+          await new Promise((resolve) => setTimeout(resolve, 500));
+        }
+        throw new Error('Timed out waiting for webhook retry');
+      })()
+    ).resolves.toBeUndefined();
+
+    expect(receipts.length).toBeGreaterThanOrEqual(2);
+    const eventIds = receipts.map(
+      (receipt) =>
+        (JSON.parse(receipt.body) as { event: SandboxLifecycleEvent }).event.id
+    );
+    expect(new Set(eventIds).size).toBe(1);
   }, 90000);
 
   test.skipIf(skipPortExposureTests)(

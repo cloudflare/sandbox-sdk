@@ -106,6 +106,8 @@ export type {
   DirectoryBackup,
   Disposable,
   EnvSetResult,
+  EventWebhookConfig,
+  EventWebhookSubscription,
   ExecEvent,
   ExecOptions,
   ExecResult,

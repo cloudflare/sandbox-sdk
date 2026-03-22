@@ -31,6 +31,7 @@ import type {
   SessionCreateResponse,
   SuccessResponse,
   SuccessWithMessageResponse,
+  WebhookReceipt,
   WebSocketInitResponse
 } from './types';
 
@@ -177,6 +178,67 @@ export default {
 
     const url = new URL(request.url);
     const body = await parseBody(request);
+
+    // Test-only webhook receiver storage endpoints.
+    if (url.pathname === '/test/webhook-events' && request.method === 'POST') {
+      const stream = url.searchParams.get('stream') ?? 'default';
+      const failFirst = url.searchParams.get('failFirst') === 'true';
+      const prefix = `webhook-events/${stream}/`;
+      const existing = await env.TEST_BUCKET.list({ prefix });
+      const key = `${prefix}${Date.now()}-${crypto.randomUUID()}.json`;
+      const headers = Object.fromEntries(request.headers.entries());
+      const receipt: WebhookReceipt = {
+        headers,
+        body: JSON.stringify(body),
+        receivedAt: new Date().toISOString()
+      };
+
+      await env.TEST_BUCKET.put(key, JSON.stringify(receipt), {
+        httpMetadata: { contentType: 'application/json' }
+      });
+
+      return new Response(JSON.stringify({ success: true, key }), {
+        status: failFirst && existing.objects.length === 0 ? 500 : 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+
+    if (url.pathname === '/test/webhook-events' && request.method === 'GET') {
+      const stream = url.searchParams.get('stream') ?? 'default';
+      const prefix = `webhook-events/${stream}/`;
+      const listed = await env.TEST_BUCKET.list({ prefix });
+      const receipts = await Promise.all(
+        listed.objects
+          .sort((left, right) => left.key.localeCompare(right.key))
+          .map(async (object) => {
+            const stored = await env.TEST_BUCKET.get(object.key);
+            return stored?.json<WebhookReceipt>();
+          })
+      );
+
+      return new Response(
+        JSON.stringify(receipts.filter((receipt) => receipt !== null)),
+        {
+          headers: { 'Content-Type': 'application/json' }
+        }
+      );
+    }
+
+    if (
+      url.pathname === '/test/webhook-events/reset' &&
+      request.method === 'POST'
+    ) {
+      const stream = body.stream ?? 'default';
+      const prefix = `webhook-events/${stream}/`;
+      const listed = await env.TEST_BUCKET.list({ prefix });
+      await Promise.all(
+        listed.objects.map((object) => env.TEST_BUCKET.delete(object.key))
+      );
+
+      return new Response(JSON.stringify({ success: true }), {
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
 
     // Get sandbox ID from header or query param (WebSocket can't send headers)
     // Sandbox ID determines which container instance (Durable Object)
@@ -949,6 +1011,53 @@ console.log('Terminal server on port ' + port);
         });
 
         return new Response(JSON.stringify(events), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      // Lifecycle events (sandbox-scoped)
+      if (url.pathname === '/api/events' && request.method === 'GET') {
+        const typeParams = url.searchParams.getAll('type');
+        const types =
+          typeParams.length > 0
+            ? typeParams.flatMap((value) =>
+                value
+                  .split(',')
+                  .map((type) => type.trim())
+                  .filter(Boolean)
+              )
+            : undefined;
+
+        const afterSeqParam = url.searchParams.get('afterSeq');
+        const limitParam = url.searchParams.get('limit');
+        const events = await sandbox.listEvents({
+          afterSeq:
+            afterSeqParam !== null
+              ? Number.parseInt(afterSeqParam, 10)
+              : undefined,
+          limit:
+            limitParam !== null ? Number.parseInt(limitParam, 10) : undefined,
+          ...(types && { types })
+        });
+
+        return new Response(JSON.stringify(events), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (
+        url.pathname === '/api/events/webhooks' &&
+        request.method === 'POST'
+      ) {
+        const webhooks = await sandbox.setEventWebhooks(body.webhooks ?? []);
+        return new Response(JSON.stringify(webhooks), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (url.pathname === '/api/events/webhooks' && request.method === 'GET') {
+        const webhooks = await sandbox.listEventWebhooks();
+        return new Response(JSON.stringify(webhooks), {
           headers: { 'Content-Type': 'application/json' }
         });
       }

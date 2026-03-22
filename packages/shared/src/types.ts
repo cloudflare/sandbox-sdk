@@ -515,6 +515,24 @@ export interface ListSandboxEventsOptions {
   types?: SandboxLifecycleEventType[];
 }
 
+export interface EventWebhookConfig {
+  /** Destination URL that will receive POST requests. */
+  url: string;
+  /** Shared secret used to sign the request body. */
+  secret: string;
+  /** Optional event type filter. Omit to receive all lifecycle events. */
+  types?: SandboxLifecycleEventType[];
+}
+
+export interface EventWebhookSubscription {
+  /** Stable identifier for the configured webhook. */
+  id: string;
+  /** Destination URL that will receive POST requests. */
+  url: string;
+  /** Optional event type filter. Omit to receive all lifecycle events. */
+  types?: SandboxLifecycleEventType[];
+}
+
 export interface SandboxOptions {
   /**
    * Duration after which the sandbox instance will sleep if no requests are received
@@ -1276,6 +1294,10 @@ export interface ISandbox {
   listEvents(
     options?: ListSandboxEventsOptions
   ): Promise<SandboxLifecycleEvent[]>;
+  setEventWebhooks(
+    webhooks: EventWebhookConfig[]
+  ): Promise<EventWebhookSubscription[]>;
+  listEventWebhooks(): Promise<EventWebhookSubscription[]>;
 
   // Background process management
   startProcess(command: string, options?: ProcessOptions): Promise<Process>;

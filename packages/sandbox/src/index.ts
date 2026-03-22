@@ -25,6 +25,8 @@ export type {
   CodeContext,
   CreateContextOptions,
   DirectoryBackup,
+  EventWebhookConfig,
+  EventWebhookSubscription,
   ExecEvent,
   ExecOptions,
   ExecResult,

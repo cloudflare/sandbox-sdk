@@ -6,6 +6,8 @@ import type {
   CodeContext,
   CreateContextOptions,
   DirectoryBackup,
+  EventWebhookConfig,
+  EventWebhookSubscription,
   ExecEvent,
   ExecOptions,
   ExecResult,
@@ -121,6 +123,22 @@ type LifecycleEventInput = {
     'id' | 'seq' | 'sandboxId' | 'timestamp'
   >;
 }[SandboxLifecycleEventType];
+
+type StoredEventWebhookSubscription = EventWebhookSubscription & {
+  secret: string;
+};
+
+type PendingWebhookDelivery = {
+  id: string;
+  webhookId: string;
+  url: string;
+  secret: string;
+  event: SandboxLifecycleEvent;
+  attempts: number;
+  nextAttemptAt: number;
+  createdAt: string;
+  lastError?: string;
+};
 
 const sandboxConfigurationCache = new WeakMap<
   object,
@@ -432,6 +450,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private readonly LIFECYCLE_EVENT_KEY_PREFIX = 'lifecycleEvent:';
   private readonly LIFECYCLE_EVENT_SEQ_KEY = 'lifecycleEventSeq';
   private readonly LIFECYCLE_EVENT_RETENTION = 1000;
+  private readonly EVENT_WEBHOOK_CONFIG_KEY = 'eventWebhookConfig';
+  private readonly EVENT_WEBHOOK_DELIVERY_KEY_PREFIX = 'eventWebhookDelivery:';
+  private readonly EVENT_WEBHOOK_RETRY_DELAYS_MS = [5_000, 30_000, 300_000];
+  private readonly EVENT_WEBHOOK_MAX_ATTEMPTS =
+    this.EVENT_WEBHOOK_RETRY_DELAYS_MS.length + 1;
 
   // R2 bucket binding for backup storage (optional — only set if user configures BACKUP_BUCKET)
   private backupBucket: R2Bucket | null = null;
@@ -716,6 +739,51 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       .slice(0, limit);
   }
 
+  async setEventWebhooks(
+    webhooks: EventWebhookConfig[]
+  ): Promise<EventWebhookSubscription[]> {
+    const subscriptions = webhooks.map((webhook, index) => {
+      if (!webhook.url || typeof webhook.url !== 'string') {
+        throw new Error(`Webhook ${index + 1} is missing a valid url`);
+      }
+      if (!webhook.secret || typeof webhook.secret !== 'string') {
+        throw new Error(`Webhook ${index + 1} is missing a valid secret`);
+      }
+
+      const url = new URL(webhook.url);
+      if (!['http:', 'https:'].includes(url.protocol)) {
+        throw new Error(
+          `Webhook ${index + 1} must use http or https. Received: ${url.protocol}`
+        );
+      }
+
+      const types = webhook.types?.length
+        ? Array.from(new Set(webhook.types))
+        : undefined;
+
+      return {
+        id: crypto.randomUUID(),
+        url: url.toString(),
+        secret: webhook.secret,
+        ...(types && { types })
+      } satisfies StoredEventWebhookSubscription;
+    });
+
+    await this.ctx.storage.put(this.EVENT_WEBHOOK_CONFIG_KEY, subscriptions);
+    return subscriptions.map(
+      ({ secret: _secret, ...subscription }) => subscription
+    );
+  }
+
+  async listEventWebhooks(): Promise<EventWebhookSubscription[]> {
+    const storedValue = await this.ctx.storage.get<
+      StoredEventWebhookSubscription[] | unknown
+    >(this.EVENT_WEBHOOK_CONFIG_KEY);
+    const stored = Array.isArray(storedValue) ? storedValue : [];
+
+    return stored.map(({ secret: _secret, ...subscription }) => subscription);
+  }
+
   private getLifecycleEventKey(seq: number): string {
     return `${this.LIFECYCLE_EVENT_KEY_PREFIX}${seq.toString().padStart(12, '0')}`;
   }
@@ -730,6 +798,164 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       toString(): string;
     };
     return durableObjectId.name ?? durableObjectId.toString();
+  }
+
+  private getWebhookDeliveryKey(id: string): string {
+    return `${this.EVENT_WEBHOOK_DELIVERY_KEY_PREFIX}${id}`;
+  }
+
+  private async signWebhookPayload(
+    secret: string,
+    payload: string
+  ): Promise<string> {
+    const encoder = new TextEncoder();
+    const key = await crypto.subtle.importKey(
+      'raw',
+      encoder.encode(secret),
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['sign']
+    );
+    const signature = await crypto.subtle.sign(
+      'HMAC',
+      key,
+      encoder.encode(payload)
+    );
+
+    const bytes = new Uint8Array(signature);
+    const hex = Array.from(bytes, (byte) =>
+      byte.toString(16).padStart(2, '0')
+    ).join('');
+    return `sha256=${hex}`;
+  }
+
+  private async enqueueWebhookDeliveries(
+    event: SandboxLifecycleEvent
+  ): Promise<void> {
+    const storedWebhooks = await this.ctx.storage.get<
+      StoredEventWebhookSubscription[] | unknown
+    >(this.EVENT_WEBHOOK_CONFIG_KEY);
+    const webhooks = Array.isArray(storedWebhooks) ? storedWebhooks : [];
+
+    const matchingWebhooks = webhooks.filter(
+      (webhook) =>
+        !webhook.types ||
+        webhook.types.length === 0 ||
+        webhook.types.includes(event.type)
+    );
+
+    if (matchingWebhooks.length === 0) {
+      return;
+    }
+
+    const now = Date.now();
+    for (const webhook of matchingWebhooks) {
+      const delivery: PendingWebhookDelivery = {
+        id: crypto.randomUUID(),
+        webhookId: webhook.id,
+        url: webhook.url,
+        secret: webhook.secret,
+        event,
+        attempts: 0,
+        nextAttemptAt: now,
+        createdAt: new Date(now).toISOString()
+      };
+
+      await this.ctx.storage.put(
+        this.getWebhookDeliveryKey(delivery.id),
+        delivery
+      );
+    }
+
+    this.ctx.waitUntil(this.processPendingWebhookDeliveries());
+  }
+
+  private async processPendingWebhookDeliveries(): Promise<void> {
+    const pending = await this.ctx.storage.list<PendingWebhookDelivery>({
+      prefix: this.EVENT_WEBHOOK_DELIVERY_KEY_PREFIX
+    });
+    const now = Date.now();
+    let nextAttemptAt: number | null = null;
+
+    for (const delivery of pending.values()) {
+      if (delivery.nextAttemptAt > now) {
+        nextAttemptAt =
+          nextAttemptAt === null
+            ? delivery.nextAttemptAt
+            : Math.min(nextAttemptAt, delivery.nextAttemptAt);
+        continue;
+      }
+
+      const payload = JSON.stringify({ event: delivery.event });
+      try {
+        const response = await fetch(delivery.url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Sandbox-Event-Id': delivery.event.id,
+            'X-Sandbox-Event-Seq': String(delivery.event.seq),
+            'X-Sandbox-Webhook-Id': delivery.webhookId,
+            'X-Sandbox-Signature': await this.signWebhookPayload(
+              delivery.secret,
+              payload
+            )
+          },
+          body: payload
+        });
+
+        if (response.ok) {
+          await this.ctx.storage.delete(
+            this.getWebhookDeliveryKey(delivery.id)
+          );
+          continue;
+        }
+
+        throw new Error(`Webhook returned ${response.status}`);
+      } catch (error) {
+        const attempts = delivery.attempts + 1;
+        if (attempts >= this.EVENT_WEBHOOK_MAX_ATTEMPTS) {
+          await this.ctx.storage.delete(
+            this.getWebhookDeliveryKey(delivery.id)
+          );
+          this.logger.warn('Dropping webhook delivery after final retry', {
+            webhookId: delivery.webhookId,
+            eventType: delivery.event.type,
+            attempts,
+            error: error instanceof Error ? error.message : String(error)
+          });
+          continue;
+        }
+
+        const retryDelay =
+          this.EVENT_WEBHOOK_RETRY_DELAYS_MS[Math.max(0, attempts - 1)] ??
+          this.EVENT_WEBHOOK_RETRY_DELAYS_MS[
+            this.EVENT_WEBHOOK_RETRY_DELAYS_MS.length - 1
+          ];
+        const scheduledAt = now + retryDelay;
+        const updated: PendingWebhookDelivery = {
+          ...delivery,
+          attempts,
+          nextAttemptAt: scheduledAt,
+          lastError: error instanceof Error ? error.message : String(error)
+        };
+        await this.ctx.storage.put(
+          this.getWebhookDeliveryKey(delivery.id),
+          updated
+        );
+        nextAttemptAt =
+          nextAttemptAt === null
+            ? scheduledAt
+            : Math.min(nextAttemptAt, scheduledAt);
+      }
+    }
+
+    if (nextAttemptAt !== null) {
+      await this.ctx.storage.setAlarm(nextAttemptAt);
+    }
+  }
+
+  async alarm(): Promise<void> {
+    await this.processPendingWebhookDeliveries();
   }
 
   private enqueueLifecycleEvent(event: LifecycleEventInput): void {
@@ -766,6 +992,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     if (pruneSeq > 0) {
       await this.ctx.storage.delete(this.getLifecycleEventKey(pruneSeq));
     }
+
+    await this.enqueueWebhookDeliveries(lifecycleEvent);
 
     return lifecycleEvent;
   }

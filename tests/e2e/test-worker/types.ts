@@ -70,6 +70,12 @@ export interface WebSocketInitResponse {
   errors?: string[];
 }
 
+export interface WebhookReceipt {
+  headers: Record<string, string>;
+  body: string;
+  receivedAt: string;
+}
+
 // Error responses
 export interface ErrorResponse {
   error: string;

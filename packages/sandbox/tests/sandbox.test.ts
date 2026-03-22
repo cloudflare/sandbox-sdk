@@ -63,6 +63,7 @@ interface MockStorage {
   put: ReturnType<typeof vi.fn>;
   delete: ReturnType<typeof vi.fn>;
   list: ReturnType<typeof vi.fn>;
+  setAlarm: ReturnType<typeof vi.fn>;
 }
 
 interface MockCtx {
@@ -103,7 +104,8 @@ describe('Sandbox - Automatic Session Management', () => {
             options?.prefix ? key.startsWith(options.prefix) : true
           );
           return new Map(entries);
-        })
+        }),
+        setAlarm: vi.fn().mockResolvedValue(undefined)
       } as any,
       blockConcurrencyWhile: vi
         .fn()
@@ -162,10 +164,12 @@ describe('Sandbox - Automatic Session Management', () => {
     mockCtx.storage.put.mockClear();
     mockCtx.storage.delete.mockClear();
     mockCtx.storage.list.mockClear();
+    mockCtx.storage.setAlarm.mockClear();
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   describe('default session management', () => {
@@ -1157,6 +1161,91 @@ describe('Sandbox - Automatic Session Management', () => {
       expect(events[1]).toMatchObject({
         type: 'port.unexposed',
         port: 8080
+      });
+    });
+
+    it('should configure webhooks without exposing secrets', async () => {
+      const webhooks = await sandbox.setEventWebhooks([
+        {
+          url: 'https://example.com/hooks/lifecycle',
+          secret: 'super-secret',
+          types: ['process.exited']
+        }
+      ]);
+
+      expect(webhooks).toHaveLength(1);
+      expect(webhooks[0]).toMatchObject({
+        url: 'https://example.com/hooks/lifecycle',
+        types: ['process.exited']
+      });
+      expect(webhooks[0]).not.toHaveProperty('secret');
+
+      const listed = await sandbox.listEventWebhooks();
+      expect(listed).toEqual(webhooks);
+    });
+
+    it('should deliver webhook events with signatures', async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValue(new Response('ok', { status: 200 }));
+      vi.stubGlobal('fetch', fetchMock);
+
+      vi.spyOn(sandbox.client.utils, 'createSession').mockResolvedValue({
+        success: true,
+        id: 'session-webhook',
+        message: 'Created'
+      } as any);
+
+      await sandbox.setEventWebhooks([
+        {
+          url: 'https://example.com/hooks/lifecycle',
+          secret: 'super-secret',
+          types: ['session.created']
+        }
+      ]);
+
+      await sandbox.createSession({ id: 'session-webhook' });
+
+      await vi.waitFor(() => {
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+      });
+
+      const [url, init] = fetchMock.mock.calls[0];
+      expect(url).toBe('https://example.com/hooks/lifecycle');
+      expect(init.method).toBe('POST');
+      expect(init.body).toContain('session.created');
+      expect(init.headers).toMatchObject({
+        'Content-Type': 'application/json',
+        'X-Sandbox-Webhook-Id': expect.any(String),
+        'X-Sandbox-Event-Id': expect.any(String),
+        'X-Sandbox-Event-Seq': '2',
+        'X-Sandbox-Signature': expect.stringMatching(/^sha256=/)
+      });
+    });
+
+    it('should retry webhook deliveries after failures', async () => {
+      const fetchMock = vi.fn().mockRejectedValue(new Error('network error'));
+      vi.stubGlobal('fetch', fetchMock);
+
+      vi.spyOn(sandbox.client.utils, 'createSession').mockResolvedValue({
+        success: true,
+        id: 'session-retry',
+        message: 'Created'
+      } as any);
+
+      await sandbox.setEventWebhooks([
+        {
+          url: 'https://example.com/hooks/lifecycle',
+          secret: 'retry-secret',
+          types: ['session.created']
+        }
+      ]);
+
+      await sandbox.createSession({ id: 'session-retry' });
+
+      await vi.waitFor(() => {
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        expect(mockCtx.storage.setAlarm).toHaveBeenCalledTimes(1);
       });
     });
   });
