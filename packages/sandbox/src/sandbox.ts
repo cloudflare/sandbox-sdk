@@ -725,7 +725,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   ): Promise<SandboxLifecycleEvent[]> {
     await this.lifecycleEventWriteQueue;
 
-    const afterSeq = Math.max(0, options.afterSeq ?? 0);
+    const rawAfterSeq = options.afterSeq ?? 0;
+    const afterSeq = Number.isFinite(rawAfterSeq)
+      ? Math.max(0, rawAfterSeq)
+      : 0;
     const limit = Math.min(Math.max(1, options.limit ?? 100), 1000);
     const types =
       options.types && options.types.length > 0
@@ -2915,6 +2918,36 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         error instanceof Error ? error : new Error(String(error)),
         { processId }
       );
+
+      // Best-effort: if the process already exited, record the lifecycle event
+      // so the log doesn't show process.started without a matching process.exited.
+      try {
+        const response = await this.client.processes.getProcess(processId);
+        const proc = response.process;
+        if (proc && isTerminalStatus(proc.status)) {
+          await this.enqueueLifecycleEvent({
+            type: 'process.exited',
+            sessionId,
+            processId,
+            exitCode: proc.exitCode ?? null
+          }).catch((lifecycleError) => {
+            this.logger.warn(
+              'Failed to record process.exited event after stream failure',
+              {
+                error:
+                  lifecycleError instanceof Error
+                    ? lifecycleError.message
+                    : String(lifecycleError)
+              }
+            );
+          });
+          if (options?.onExit) {
+            options.onExit(proc.exitCode ?? null);
+          }
+        }
+      } catch {
+        // getProcess itself failed — nothing more we can do
+      }
     }
   }
 
