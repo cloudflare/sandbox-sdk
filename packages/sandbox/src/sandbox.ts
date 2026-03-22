@@ -2659,6 +2659,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
               sessionId,
               processId,
               exitCode: event.exitCode ?? null
+            }).catch((error) => {
+              this.logger.warn('Failed to record process.exited event', {
+                error: error instanceof Error ? error.message : String(error)
+              });
             });
             if (options?.onExit) {
               options.onExit(event.exitCode ?? null);
