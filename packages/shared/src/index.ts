@@ -127,6 +127,7 @@ export type {
   ISandbox,
   ListFilesOptions,
   ListFilesResult,
+  ListSandboxEventsOptions,
   LocalMountBucketOptions,
   LogEvent,
   MkdirResult,
@@ -155,6 +156,9 @@ export type {
   RemoteMountBucketOptions,
   RenameFileResult,
   RestoreBackupResult,
+  SandboxLifecycleEvent,
+  SandboxLifecycleEventBase,
+  SandboxLifecycleEventType,
   // Sandbox configuration options
   SandboxOptions,
   // Session management result types

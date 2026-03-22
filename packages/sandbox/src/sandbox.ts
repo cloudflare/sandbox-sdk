@@ -12,6 +12,7 @@ import type {
   ExecutionResult,
   ExecutionSession,
   ISandbox,
+  ListSandboxEventsOptions,
   LocalMountBucketOptions,
   LogEvent,
   MountBucketOptions,
@@ -23,6 +24,8 @@ import type {
   RemoteMountBucketOptions,
   RestoreBackupResult,
   RunCodeOptions,
+  SandboxLifecycleEvent,
+  SandboxLifecycleEventType,
   SandboxOptions,
   SessionOptions,
   StreamOptions,
@@ -111,6 +114,13 @@ type ConfigurableSandboxStub = {
     timeouts: NonNullable<SandboxOptions['containerTimeouts']>
   ) => Promise<void>;
 };
+
+type LifecycleEventInput = {
+  [Type in SandboxLifecycleEventType]: Omit<
+    Extract<SandboxLifecycleEvent, { type: Type }>,
+    'id' | 'seq' | 'sandboxId' | 'timestamp'
+  >;
+}[SandboxLifecycleEventType];
 
 const sandboxConfigurationCache = new WeakMap<
   object,
@@ -418,6 +428,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private keepAliveEnabled: boolean = false;
   private activeMounts: Map<string, MountInfo> = new Map();
   private transport: 'http' | 'websocket' = 'http';
+  private lifecycleEventWriteQueue: Promise<void> = Promise.resolve();
+  private readonly LIFECYCLE_EVENT_KEY_PREFIX = 'lifecycleEvent:';
+  private readonly LIFECYCLE_EVENT_SEQ_KEY = 'lifecycleEventSeq';
+  private readonly LIFECYCLE_EVENT_RETENTION = 1000;
 
   // R2 bucket binding for backup storage (optional — only set if user configures BACKUP_BUCKET)
   private backupBucket: R2Bucket | null = null;
@@ -632,6 +646,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         // Update the transport retry budget to reflect stored timeouts
         this.client.setRetryTimeoutMs(this.computeRetryTimeoutMs());
       }
+
+      const hasCreatedEvent = await this.ctx.storage.get<boolean>(
+        'lifecycleEventsInitialized'
+      );
+      if (!hasCreatedEvent) {
+        await this.ctx.storage.put('lifecycleEventsInitialized', true);
+        await this.recordLifecycleEvent({ type: 'sandbox.created' });
+      }
     });
   }
 
@@ -667,6 +689,85 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     if (configuration.containerTimeouts !== undefined) {
       await this.setContainerTimeouts(configuration.containerTimeouts);
     }
+  }
+
+  async listEvents(
+    options: ListSandboxEventsOptions = {}
+  ): Promise<SandboxLifecycleEvent[]> {
+    await this.lifecycleEventWriteQueue;
+
+    const afterSeq = Math.max(0, options.afterSeq ?? 0);
+    const limit = Math.min(Math.max(1, options.limit ?? 100), 1000);
+    const types =
+      options.types && options.types.length > 0
+        ? new Set<SandboxLifecycleEventType>(options.types)
+        : null;
+
+    const storedEvents = await this.ctx.storage.list<SandboxLifecycleEvent>({
+      prefix: this.LIFECYCLE_EVENT_KEY_PREFIX
+    });
+
+    return Array.from(storedEvents.values())
+      .filter(
+        (event) =>
+          event.seq > afterSeq && (types === null || types.has(event.type))
+      )
+      .sort((left, right) => left.seq - right.seq)
+      .slice(0, limit);
+  }
+
+  private getLifecycleEventKey(seq: number): string {
+    return `${this.LIFECYCLE_EVENT_KEY_PREFIX}${seq.toString().padStart(12, '0')}`;
+  }
+
+  private getLifecycleSandboxId(): string {
+    if (this.sandboxName) {
+      return this.sandboxName;
+    }
+
+    const durableObjectId = this.ctx.id as {
+      name?: string;
+      toString(): string;
+    };
+    return durableObjectId.name ?? durableObjectId.toString();
+  }
+
+  private enqueueLifecycleEvent(event: LifecycleEventInput): void {
+    const write = this.lifecycleEventWriteQueue.then(() =>
+      this.recordLifecycleEvent(event).then(() => undefined)
+    );
+
+    this.lifecycleEventWriteQueue = write.catch((error) => {
+      this.logger.warn(`Failed to record ${event.type} event`, {
+        error: error instanceof Error ? error.message : String(error)
+      });
+    });
+  }
+
+  private async recordLifecycleEvent(
+    event: LifecycleEventInput
+  ): Promise<SandboxLifecycleEvent> {
+    const seq =
+      ((await this.ctx.storage.get<number>(this.LIFECYCLE_EVENT_SEQ_KEY)) ??
+        0) + 1;
+    const timestamp = new Date().toISOString();
+    const lifecycleEvent: SandboxLifecycleEvent = {
+      ...event,
+      id: `${this.getLifecycleSandboxId()}:${seq}:${timestamp}`,
+      seq,
+      sandboxId: this.getLifecycleSandboxId(),
+      timestamp
+    } as SandboxLifecycleEvent;
+
+    await this.ctx.storage.put(this.LIFECYCLE_EVENT_SEQ_KEY, seq);
+    await this.ctx.storage.put(this.getLifecycleEventKey(seq), lifecycleEvent);
+
+    const pruneSeq = seq - this.LIFECYCLE_EVENT_RETENTION;
+    if (pruneSeq > 0) {
+      await this.ctx.storage.delete(this.getLifecycleEventKey(pruneSeq));
+    }
+
+    return lifecycleEvent;
   }
 
   // RPC method to set the base URL
@@ -1230,6 +1331,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    */
   override async destroy(): Promise<void> {
     this.logger.info('Destroying sandbox container');
+    await this.recordLifecycleEvent({ type: 'sandbox.destroyed' });
 
     // Best-effort desktop stop — only when container is already running
     if (this.ctx.container?.running) {
@@ -1283,6 +1385,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   override onStart() {
     this.logger.debug('Sandbox started');
+
+    this.enqueueLifecycleEvent({ type: 'sandbox.started' });
 
     // Check version compatibility asynchronously (don't block startup)
     this.checkVersionCompatibility().catch((error) => {
@@ -2470,20 +2574,27 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         session
       );
 
+      await this.recordLifecycleEvent({
+        type: 'process.started',
+        sessionId: session,
+        processId: response.processId,
+        pid: response.pid,
+        command: response.command
+      });
+
       // Call onStart callback if provided
       if (options?.onStart) {
         options.onStart(processObj);
       }
 
-      // Start background streaming if output/exit callbacks are provided
-      if (options?.onOutput || options?.onExit) {
-        // Fire and forget - don't await, let it run in background
-        this.startProcessCallbackStream(response.processId, options).catch(
-          () => {
-            // Error already handled in startProcessCallbackStream
-          }
-        );
-      }
+      // Track process lifecycle in the background without blocking the caller.
+      this.startProcessCallbackStream(
+        response.processId,
+        session,
+        options
+      ).catch(() => {
+        // Error already handled in startProcessCallbackStream
+      });
 
       return processObj;
     } catch (error) {
@@ -2501,7 +2612,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    */
   private async startProcessCallbackStream(
     processId: string,
-    options: ProcessOptions
+    sessionId: string,
+    options?: ProcessOptions
   ): Promise<void> {
     try {
       const stream = await this.client.processes.streamProcessLogs(processId);
@@ -2514,18 +2626,24 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       }>(stream)) {
         switch (event.type) {
           case 'stdout':
-            if (event.data && options.onOutput) {
+            if (event.data && options?.onOutput) {
               options.onOutput('stdout', event.data);
             }
             break;
           case 'stderr':
-            if (event.data && options.onOutput) {
+            if (event.data && options?.onOutput) {
               options.onOutput('stderr', event.data);
             }
             break;
           case 'exit':
           case 'complete':
-            if (options.onExit) {
+            await this.recordLifecycleEvent({
+              type: 'process.exited',
+              sessionId,
+              processId,
+              exitCode: event.exitCode ?? null
+            });
+            if (options?.onExit) {
               options.onExit(event.exitCode ?? null);
             }
             return; // Stream complete
@@ -2533,7 +2651,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       }
     } catch (error) {
       // Call onError if streaming fails
-      if (options.onError && error instanceof Error) {
+      if (options?.onError && error instanceof Error) {
         options.onError(error);
       }
       // Don't rethrow - background streaming failure shouldn't crash the caller
@@ -2950,6 +3068,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       token
     );
 
+    await this.recordLifecycleEvent({
+      type: 'port.exposed',
+      port,
+      url,
+      name: options?.name
+    });
+
     return {
       url,
       port,
@@ -2974,6 +3099,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       delete tokens[port.toString()];
       await this.ctx.storage.put('portTokens', tokens);
     }
+
+    await this.recordLifecycleEvent({
+      type: 'port.unexposed',
+      port
+    });
   }
 
   async getExposedPorts(hostname: string) {

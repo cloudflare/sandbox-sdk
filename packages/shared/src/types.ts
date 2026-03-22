@@ -432,6 +432,79 @@ export interface SessionOptions {
 }
 
 // Sandbox configuration options
+export type SandboxLifecycleEventType =
+  | 'sandbox.created'
+  | 'sandbox.started'
+  | 'sandbox.destroyed'
+  | 'process.started'
+  | 'process.exited'
+  | 'port.exposed'
+  | 'port.unexposed';
+
+export interface SandboxLifecycleEventBase {
+  /** Unique event identifier */
+  id: string;
+  /** Monotonic per-sandbox sequence number */
+  seq: number;
+  /** Sandbox identifier */
+  sandboxId: string;
+  /** ISO timestamp when the event was recorded */
+  timestamp: string;
+}
+
+export type SandboxLifecycleEvent =
+  | (SandboxLifecycleEventBase & {
+      type: 'sandbox.created';
+    })
+  | (SandboxLifecycleEventBase & {
+      type: 'sandbox.started';
+    })
+  | (SandboxLifecycleEventBase & {
+      type: 'sandbox.destroyed';
+    })
+  | (SandboxLifecycleEventBase & {
+      type: 'process.started';
+      sessionId?: string;
+      processId: string;
+      pid?: number;
+      command: string;
+    })
+  | (SandboxLifecycleEventBase & {
+      type: 'process.exited';
+      sessionId?: string;
+      processId: string;
+      exitCode: number | null;
+    })
+  | (SandboxLifecycleEventBase & {
+      type: 'port.exposed';
+      port: number;
+      url: string;
+      name?: string;
+    })
+  | (SandboxLifecycleEventBase & {
+      type: 'port.unexposed';
+      port: number;
+    });
+
+export interface ListSandboxEventsOptions {
+  /**
+   * Return events strictly after this sequence number.
+   * Useful for incremental polling and replay.
+   */
+  afterSeq?: number;
+
+  /**
+   * Maximum number of events to return.
+   * @default 100
+   */
+  limit?: number;
+
+  /**
+   * Restrict results to the specified event types.
+   */
+  types?: SandboxLifecycleEventType[];
+}
+
 export interface SandboxOptions {
   /**
    * Duration after which the sandbox instance will sleep if no requests are received
@@ -1188,6 +1261,11 @@ export type MountBucketOptions =
 export interface ISandbox {
   // Command execution
   exec(command: string, options?: ExecOptions): Promise<ExecResult>;
+
+  // Lifecycle events
+  listEvents(
+    options?: ListSandboxEventsOptions
+  ): Promise<SandboxLifecycleEvent[]>;
 
   // Background process management
   startProcess(command: string, options?: ProcessOptions): Promise<Process>;

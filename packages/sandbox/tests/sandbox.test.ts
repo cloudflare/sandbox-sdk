@@ -84,13 +84,26 @@ describe('Sandbox - Automatic Session Management', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
 
+    const storageData = new Map<string, unknown>();
+
     // Mock DurableObjectState
     mockCtx = {
       storage: {
-        get: vi.fn().mockResolvedValue(null),
-        put: vi.fn().mockResolvedValue(undefined),
-        delete: vi.fn().mockResolvedValue(undefined),
-        list: vi.fn().mockResolvedValue(new Map())
+        get: vi.fn(async (key: string) =>
+          storageData.has(key) ? storageData.get(key) : null
+        ),
+        put: vi.fn(async (key: string, value: unknown) => {
+          storageData.set(key, value);
+        }),
+        delete: vi.fn(async (key: string) => {
+          storageData.delete(key);
+        }),
+        list: vi.fn(async (options?: { prefix?: string }) => {
+          const entries = Array.from(storageData.entries()).filter(([key]) =>
+            options?.prefix ? key.startsWith(options.prefix) : true
+          );
+          return new Map(entries);
+        })
       } as any,
       blockConcurrencyWhile: vi
         .fn()
@@ -113,10 +126,11 @@ describe('Sandbox - Automatic Session Management', () => {
       mockEnv
     );
 
-    // Wait for blockConcurrencyWhile to complete
+    // Wait for constructor initialization to finish.
     await vi.waitFor(() => {
       expect(mockCtx.blockConcurrencyWhile).toHaveBeenCalled();
     });
+    await mockCtx.blockConcurrencyWhile.mock.results[0]?.value;
 
     sandbox = Object.assign(stub, {
       wsConnect: connect(stub)
@@ -143,6 +157,11 @@ describe('Sandbox - Automatic Session Management', () => {
       path: '/test.txt',
       timestamp: new Date().toISOString()
     } as any);
+
+    mockCtx.storage.get.mockClear();
+    mockCtx.storage.put.mockClear();
+    mockCtx.storage.delete.mockClear();
+    mockCtx.storage.list.mockClear();
   });
 
   afterEach(() => {
@@ -1011,6 +1030,104 @@ describe('Sandbox - Automatic Session Management', () => {
     });
   });
 
+  describe('lifecycle events', () => {
+    const createSSEStream = (events: Array<Record<string, unknown>>) => {
+      const encoder = new TextEncoder();
+      const payload = events
+        .map((event) => `data: ${JSON.stringify(event)}\n\n`)
+        .join('');
+
+      return new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(encoder.encode(payload));
+          controller.close();
+        }
+      });
+    };
+
+    it('should record sandbox lifecycle events', async () => {
+      sandbox.onStart();
+
+      await vi.waitFor(async () => {
+        const events = await sandbox.listEvents();
+        expect(events.map((event) => event.type)).toEqual([
+          'sandbox.created',
+          'sandbox.started'
+        ]);
+        expect(events[0]?.seq).toBe(1);
+        expect(events[1]?.seq).toBe(2);
+      });
+    });
+
+    it('should record process lifecycle events and allow replay after a sequence', async () => {
+      vi.spyOn(sandbox.client.processes, 'startProcess').mockResolvedValue({
+        success: true,
+        processId: 'proc-1',
+        pid: 4321,
+        command: 'sleep 1',
+        timestamp: new Date().toISOString()
+      } as any);
+
+      vi.spyOn(sandbox.client.processes, 'streamProcessLogs').mockResolvedValue(
+        createSSEStream([{ type: 'exit', exitCode: 0 }])
+      );
+
+      await sandbox.startProcess('sleep 1');
+
+      await vi.waitFor(async () => {
+        const events = await sandbox.listEvents();
+        expect(events.map((event) => event.type)).toEqual([
+          'sandbox.created',
+          'process.started',
+          'process.exited'
+        ]);
+      });
+
+      const newEvents = await sandbox.listEvents({ afterSeq: 1 });
+      expect(newEvents.map((event) => event.type)).toEqual([
+        'process.started',
+        'process.exited'
+      ]);
+    });
+
+    it('should filter lifecycle events by type', async () => {
+      await sandbox.setSandboxName('test-sandbox', false);
+
+      vi.spyOn(sandbox.client.ports, 'exposePort').mockResolvedValue({
+        success: true,
+        port: 8080,
+        url: 'http://localhost:8080',
+        timestamp: new Date().toISOString()
+      });
+      vi.spyOn(sandbox.client.ports, 'unexposePort').mockResolvedValue({
+        success: true,
+        port: 8080,
+        timestamp: new Date().toISOString()
+      } as any);
+
+      await sandbox.exposePort(8080, { hostname: 'example.com', name: 'web' });
+      await sandbox.unexposePort(8080);
+
+      const events = await sandbox.listEvents({
+        types: ['port.exposed', 'port.unexposed']
+      });
+
+      expect(events.map((event) => event.type)).toEqual([
+        'port.exposed',
+        'port.unexposed'
+      ]);
+      expect(events[0]).toMatchObject({
+        type: 'port.exposed',
+        port: 8080,
+        name: 'web'
+      });
+      expect(events[1]).toMatchObject({
+        type: 'port.unexposed',
+        port: 8080
+      });
+    });
+  });
+
   describe('keepAlive configuration', () => {
     it('should reschedule activity timeout when keepAlive is disabled', async () => {
       const renewSpy = vi.spyOn(sandbox as any, 'renewActivityTimeout');
@@ -1020,8 +1137,7 @@ describe('Sandbox - Automatic Session Management', () => {
 
       await sandbox.setKeepAlive(false);
 
-      expect(mockCtx.storage.put).toHaveBeenNthCalledWith(
-        2,
+      expect(mockCtx.storage.put).toHaveBeenLastCalledWith(
         'keepAliveEnabled',
         false
       );
