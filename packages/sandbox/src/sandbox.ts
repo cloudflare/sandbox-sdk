@@ -3120,6 +3120,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     await this.enqueueLifecycleEvent({
       type: 'port.unexposed',
       port
+    }).catch((error) => {
+      this.logger.warn('Failed to record port.unexposed event', {
+        error: error instanceof Error ? error.message : String(error)
+      });
     });
   }
 
