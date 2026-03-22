@@ -2580,12 +2580,16 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         session
       );
 
-      await this.recordLifecycleEvent({
+      this.recordLifecycleEvent({
         type: 'process.started',
         sessionId: session,
         processId: response.processId,
         pid: response.pid,
         command: response.command
+      }).catch((error) => {
+        this.logger.warn('Failed to record process.started event', {
+          error: error instanceof Error ? error.message : String(error)
+        });
       });
 
       // Call onStart callback if provided
