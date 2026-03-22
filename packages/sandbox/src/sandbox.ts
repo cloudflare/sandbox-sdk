@@ -992,8 +992,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       timestamp
     } as SandboxLifecycleEvent;
 
-    await this.ctx.storage.put(this.LIFECYCLE_EVENT_SEQ_KEY, seq);
-    await this.ctx.storage.put(this.getLifecycleEventKey(seq), lifecycleEvent);
+    await this.ctx.storage.put({
+      [this.LIFECYCLE_EVENT_SEQ_KEY]: seq,
+      [this.getLifecycleEventKey(seq)]: lifecycleEvent
+    });
 
     const pruneSeq = seq - this.LIFECYCLE_EVENT_RETENTION;
     if (pruneSeq > 0) {

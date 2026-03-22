@@ -49,6 +49,9 @@ vi.mock('@cloudflare/containers', () => {
     renewActivityTimeout() {
       // Mock implementation - reschedules activity timeout
     }
+    async schedule(when: Date | number, callback: string, payload?: unknown) {
+      // Mock implementation - records scheduled tasks
+    }
   };
 
   return {
@@ -93,9 +96,20 @@ describe('Sandbox - Automatic Session Management', () => {
         get: vi.fn(async (key: string) =>
           storageData.has(key) ? storageData.get(key) : null
         ),
-        put: vi.fn(async (key: string, value: unknown) => {
-          storageData.set(key, value);
-        }),
+        put: vi.fn(
+          async (
+            keyOrEntries: string | Record<string, unknown>,
+            value?: unknown
+          ) => {
+            if (typeof keyOrEntries === 'string') {
+              storageData.set(keyOrEntries, value);
+            } else {
+              for (const [k, v] of Object.entries(keyOrEntries)) {
+                storageData.set(k, v);
+              }
+            }
+          }
+        ),
         delete: vi.fn(async (key: string) => {
           storageData.delete(key);
         }),
@@ -1243,9 +1257,14 @@ describe('Sandbox - Automatic Session Management', () => {
 
       await sandbox.createSession({ id: 'session-retry' });
 
+      const scheduleSpy = vi.spyOn(sandbox as any, 'schedule');
+
       await vi.waitFor(() => {
         expect(fetchMock).toHaveBeenCalledTimes(1);
-        expect(mockCtx.storage.setAlarm).toHaveBeenCalledTimes(1);
+        expect(scheduleSpy).toHaveBeenCalledWith(
+          expect.any(Date),
+          'processPendingWebhookDeliveries'
+        );
       });
     });
   });
