@@ -950,16 +950,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
 
     if (nextAttemptAt !== null) {
-      await this.ctx.storage.setAlarm(nextAttemptAt);
+      await this.schedule(
+        new Date(nextAttemptAt),
+        'processPendingWebhookDeliveries'
+      );
     }
-  }
-
-  async alarm(alarmProps: {
-    isRetry: boolean;
-    retryCount: number;
-  }): Promise<void> {
-    await super.alarm(alarmProps);
-    await this.processPendingWebhookDeliveries();
   }
 
   private enqueueLifecycleEvent(event: LifecycleEventInput): void {
