@@ -1560,7 +1560,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    */
   override async destroy(): Promise<void> {
     this.logger.info('Destroying sandbox container');
-    await this.enqueueLifecycleEvent({ type: 'sandbox.destroyed' });
+    await this.enqueueLifecycleEvent({ type: 'sandbox.destroyed' }).catch(
+      (error) => {
+        this.logger.warn('Failed to record sandbox.destroyed event', {
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+    );
 
     // Best-effort desktop stop — only when container is already running
     if (this.ctx.container?.running) {
