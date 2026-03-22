@@ -1405,7 +1405,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   override onStart() {
     this.logger.debug('Sandbox started');
 
-    this.enqueueLifecycleEvent({ type: 'sandbox.started' });
+    this.enqueueLifecycleEvent({ type: 'sandbox.started' }).catch((error) => {
+      this.logger.warn('Failed to record sandbox.started event', {
+        error: error instanceof Error ? error.message : String(error)
+      });
+    });
 
     // Check version compatibility asynchronously (don't block startup)
     this.checkVersionCompatibility().catch((error) => {
