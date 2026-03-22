@@ -1015,36 +1015,6 @@ console.log('Terminal server on port ' + port);
         });
       }
 
-      // Lifecycle events (sandbox-scoped)
-      if (url.pathname === '/api/events' && request.method === 'GET') {
-        const typeParams = url.searchParams.getAll('type');
-        const types =
-          typeParams.length > 0
-            ? typeParams.flatMap((value) =>
-                value
-                  .split(',')
-                  .map((type) => type.trim())
-                  .filter(Boolean)
-              )
-            : undefined;
-
-        const afterSeqParam = url.searchParams.get('afterSeq');
-        const limitParam = url.searchParams.get('limit');
-        const events = await sandbox.listEvents({
-          afterSeq:
-            afterSeqParam !== null
-              ? Number.parseInt(afterSeqParam, 10)
-              : undefined,
-          limit:
-            limitParam !== null ? Number.parseInt(limitParam, 10) : undefined,
-          ...(types && { types })
-        });
-
-        return new Response(JSON.stringify(events), {
-          headers: { 'Content-Type': 'application/json' }
-        });
-      }
-
       if (
         url.pathname === '/api/events/webhooks' &&
         request.method === 'POST'

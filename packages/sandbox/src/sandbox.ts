@@ -954,7 +954,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
   }
 
-  async alarm(): Promise<void> {
+  async alarm(alarmProps: {
+    isRetry: boolean;
+    retryCount: number;
+  }): Promise<void> {
+    await super.alarm(alarmProps);
     await this.processPendingWebhookDeliveries();
   }
 
