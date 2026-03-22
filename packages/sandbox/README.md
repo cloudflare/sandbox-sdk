@@ -106,6 +106,7 @@ export default {
 - [API Reference](https://developers.cloudflare.com/sandbox/api/) - Complete API docs
 - [Guides](https://developers.cloudflare.com/sandbox/guides/) - Execute commands, manage files, expose services
 - [Examples](https://developers.cloudflare.com/sandbox/tutorials/) - AI agents, data analysis, CI/CD pipelines
+- [Lifecycle events guide](./docs/LIFECYCLE_EVENTS.md) - Replay state changes, configure webhooks, and build orchestration flows
 
 ## Key Features
 
@@ -151,7 +152,7 @@ npm run check
 
 See the [examples directory](./examples) for complete working examples:
 
-- [Minimal](./examples/minimal) - Start here: exec commands, read/write files
+- [Minimal](./examples/minimal) - Start here: exec commands, read/write files, inspect lifecycle events, and configure a webhook receiver
 - [Code Interpreter](./examples/code-interpreter) - Give [gpt-oss](https://developers.cloudflare.com/workers-ai/models/gpt-oss-120b/) on Workers AI a Python REPL
 - [Claude Code](./examples/claude-code) - Run [Claude Code](https://claude.ai/code) headless on any repo
 - [OpenAI Agents](./examples/openai-agents) - `Shell` and `Editor` tools for [OpenAI Agents SDK](https://openai.github.io/openai-agents-js/)
