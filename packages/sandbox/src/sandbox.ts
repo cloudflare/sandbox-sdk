@@ -3090,6 +3090,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       port,
       url,
       name: options?.name
+    }).catch((error) => {
+      this.logger.warn('Failed to record port.exposed event', {
+        error: error instanceof Error ? error.message : String(error)
+      });
     });
 
     return {
