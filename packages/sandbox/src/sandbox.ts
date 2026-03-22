@@ -652,7 +652,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       );
       if (!hasCreatedEvent) {
         await this.ctx.storage.put('lifecycleEventsInitialized', true);
-        await this.recordLifecycleEvent({ type: 'sandbox.created' });
+        await this.enqueueLifecycleEvent({ type: 'sandbox.created' });
       }
     });
   }
@@ -732,16 +732,23 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     return durableObjectId.name ?? durableObjectId.toString();
   }
 
-  private enqueueLifecycleEvent(event: LifecycleEventInput): void {
+  private enqueueLifecycleEvent(
+    event: LifecycleEventInput
+  ): Promise<SandboxLifecycleEvent> {
     const write = this.lifecycleEventWriteQueue.then(() =>
-      this.recordLifecycleEvent(event).then(() => undefined)
+      this.recordLifecycleEvent(event)
     );
 
-    this.lifecycleEventWriteQueue = write.catch((error) => {
-      this.logger.warn(`Failed to record ${event.type} event`, {
-        error: error instanceof Error ? error.message : String(error)
-      });
-    });
+    this.lifecycleEventWriteQueue = write.then(
+      () => undefined,
+      (error) => {
+        this.logger.warn(`Failed to record ${event.type} event`, {
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+    );
+
+    return write;
   }
 
   private async recordLifecycleEvent(
@@ -1331,13 +1338,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    */
   override async destroy(): Promise<void> {
     this.logger.info('Destroying sandbox container');
-    try {
-      await this.recordLifecycleEvent({ type: 'sandbox.destroyed' });
-    } catch (error) {
-      this.logger.warn('Failed to record sandbox.destroyed event', {
-        error: error instanceof Error ? error.message : String(error)
-      });
-    }
+    await this.enqueueLifecycleEvent({ type: 'sandbox.destroyed' }).catch(
+      (error) => {
+        this.logger.warn('Failed to record sandbox.destroyed event', {
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+    );
 
     // Best-effort desktop stop — only when container is already running
     if (this.ctx.container?.running) {
@@ -2580,7 +2587,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         session
       );
 
-      this.recordLifecycleEvent({
+      this.enqueueLifecycleEvent({
         type: 'process.started',
         sessionId: session,
         processId: response.processId,
@@ -2647,7 +2654,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
             break;
           case 'exit':
           case 'complete':
-            await this.recordLifecycleEvent({
+            await this.enqueueLifecycleEvent({
               type: 'process.exited',
               sessionId,
               processId,
@@ -3078,7 +3085,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       token
     );
 
-    await this.recordLifecycleEvent({
+    await this.enqueueLifecycleEvent({
       type: 'port.exposed',
       port,
       url,
@@ -3110,7 +3117,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       await this.ctx.storage.put('portTokens', tokens);
     }
 
-    await this.recordLifecycleEvent({
+    await this.enqueueLifecycleEvent({
       type: 'port.unexposed',
       port
     });
