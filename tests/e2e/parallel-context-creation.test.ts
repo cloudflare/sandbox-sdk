@@ -22,7 +22,7 @@ describe('Parallel Context Creation (issue #276)', () => {
   let headers: Record<string, string>;
 
   beforeAll(async () => {
-    sandbox = await createTestSandbox({ type: 'default' });
+    sandbox = await createTestSandbox({ type: 'python' });
     workerUrl = sandbox.workerUrl;
     headers = sandbox.headers(createUniqueSession());
   }, 120000);
