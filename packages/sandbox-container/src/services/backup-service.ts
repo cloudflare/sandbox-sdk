@@ -291,10 +291,10 @@ export class BackupService {
       }
 
       event.durationMs = Date.now() - startTime;
-      if (event.outcome === 'error') {
-        this.logger.error('backup.create', caughtError, event);
-      } else {
+      if (event.outcome === 'success') {
         this.logger.info('backup.create', event);
+      } else {
+        this.logger.error('backup.create', caughtError, event);
       }
     }
   }
@@ -557,10 +557,10 @@ export class BackupService {
       });
     } finally {
       event.durationMs = Date.now() - startTime;
-      if (event.outcome === 'error') {
-        this.logger.error('backup.restore', caughtError, event);
-      } else {
+      if (event.outcome === 'success') {
         this.logger.info('backup.restore', event);
+      } else {
+        this.logger.error('backup.restore', caughtError, event);
       }
     }
   }
@@ -663,10 +663,10 @@ export class BackupService {
       });
     } finally {
       event.durationMs = Date.now() - startTime;
-      if (event.outcome === 'error') {
-        this.logger.error('backup.unmount', caughtError, event);
-      } else {
+      if (event.outcome === 'success') {
         this.logger.info('backup.unmount', event);
+      } else {
+        this.logger.error('backup.unmount', caughtError, event);
       }
     }
   }
