@@ -92,7 +92,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { readFileSync, watch } from 'node:fs';
-import { mkdir, open, rm, stat } from 'node:fs/promises';
+import { link, mkdir, open, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import type { ExecEvent, Logger } from '@repo/shared';
@@ -721,6 +721,7 @@ export class Session {
           };
 
           if (waitForExit) {
+            const treePids = this.getProcessTreePids(pid);
             this.terminateTree(pid, 'SIGTERM');
             const exitedAfterTerm = await waitForProcessExit(5000);
             if (!exitedAfterTerm) {
@@ -731,7 +732,9 @@ export class Session {
               syntheticExitCode = 143;
             }
 
-            const pidsAlive = this.getProcessTreePids(pid);
+            const pidsAlive = treePids.filter((treePid) =>
+              this.processExists(treePid)
+            );
             if (pidsAlive.length > 0) {
               this.logger.warn(
                 'killCommand did not fully terminate process tree',
@@ -1367,15 +1370,24 @@ export class Session {
     exitCodeFile: string,
     exitCode: number
   ): Promise<void> {
+    const tmpFile = `${exitCodeFile}.synth.${process.pid}.${randomUUID()}`;
+
     try {
-      const file = await open(exitCodeFile, 'wx');
-      try {
-        await file.writeFile(`${exitCode}\n`);
-      } finally {
-        await file.close();
+      await Bun.write(tmpFile, `${exitCode}\n`);
+      await link(tmpFile, exitCodeFile);
+    } catch (error) {
+      if (
+        !(
+          typeof error === 'object' &&
+          error !== null &&
+          'code' in error &&
+          error.code === 'EEXIST'
+        )
+      ) {
+        throw error;
       }
-    } catch {
-      // The wrapper may have written the real exit code concurrently.
+    } finally {
+      await rm(tmpFile, { force: true });
     }
   }
 
