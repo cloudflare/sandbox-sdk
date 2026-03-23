@@ -268,11 +268,7 @@ export class FileService implements FileSystemOperations {
           }
 
           try {
-            const writer = Bun.file(targetPath).writer();
-            for await (const chunk of stream) {
-              writer.write(chunk);
-            }
-            await writer.end();
+            await Bun.write(targetPath, new Response(stream));
           } catch (error) {
             const errorMessage =
               error instanceof Error ? error.message : 'Unknown error';
