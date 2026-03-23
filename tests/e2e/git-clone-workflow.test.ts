@@ -75,8 +75,11 @@ describe('Git Clone Error Handling', () => {
  *
  * Tests the depth option for shallow clones.
  * Uses octocat/Spoon-Knife for real-remote coverage with faster clone times.
+ *
+ * These tests depend on GitHub availability and are retried to handle
+ * transient network degradation (see #484).
  */
-describe('Git Shallow Clone', () => {
+describe('Git Shallow Clone', { retry: 2 }, () => {
   let sandbox: TestSandbox | null = null;
   let workerUrl: string;
   let headers: Record<string, string>;
@@ -140,7 +143,7 @@ describe('Git Shallow Clone', () => {
     const shallowData = (await shallowResponse.json()) as ExecResult;
     expect(shallowData.exitCode).toBe(0);
     expect(shallowData.stdout.trim()).toBe('true');
-  }, 120000);
+  }, 150000);
 
   test('should clone repository with branch and depth combined', async () => {
     const testDir = sandbox!.uniquePath('shallow-branch');
@@ -199,5 +202,5 @@ describe('Git Shallow Clone', () => {
     expect(countResponse.status).toBe(200);
     const countData = (await countResponse.json()) as ExecResult;
     expect(parseInt(countData.stdout.trim(), 10)).toBe(1);
-  }, 120000);
+  }, 150000);
 });
