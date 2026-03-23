@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { calculateEntropy, isHighEntropy } from '../src/entropy';
+import {
+  calculateEntropy,
+  getRedactionLabel,
+  isHighEntropy,
+  shouldRedact
+} from '../src/entropy';
 
 describe('calculateEntropy', () => {
   it('returns 0 for empty string', () => {
@@ -47,5 +52,41 @@ describe('isHighEntropy', () => {
     const entropy = calculateEntropy(value);
     expect(isHighEntropy(value, entropy - 0.1)).toBe(true);
     expect(isHighEntropy(value, entropy + 0.1)).toBe(false);
+  });
+});
+
+describe('shouldRedact', () => {
+  it('returns forced when the caller explicitly enables redaction', () => {
+    expect(shouldRedact(true, 'plain-text-value')).toBe('forced');
+  });
+
+  it('returns undefined when the caller explicitly disables redaction', () => {
+    expect(shouldRedact(false, 'sk-ant-api03-xK9m2nP7qR4sT6uV8wX0yZ')).toBe(
+      undefined
+    );
+  });
+
+  it('returns auto for high-entropy values when unset', () => {
+    expect(shouldRedact(undefined, 'sk-ant-api03-xK9m2nP7qR4sT6uV8wX0yZ')).toBe(
+      'auto'
+    );
+  });
+
+  it('returns undefined for low-entropy values when unset', () => {
+    expect(shouldRedact(undefined, 'production')).toBe(undefined);
+  });
+});
+
+describe('getRedactionLabel', () => {
+  it('maps forced mode to the redacted label', () => {
+    expect(getRedactionLabel('forced')).toBe('[REDACTED]');
+  });
+
+  it('maps auto mode to the auto-redacted label', () => {
+    expect(getRedactionLabel('auto')).toBe('[AUTO-REDACTED]');
+  });
+
+  it('returns undefined when redaction is inactive', () => {
+    expect(getRedactionLabel(undefined)).toBe(undefined);
   });
 });

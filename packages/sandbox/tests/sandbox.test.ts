@@ -534,6 +534,21 @@ describe('Sandbox - Automatic Session Management', () => {
         cwd: '/workspace'
       });
     });
+
+    it('should forward automatic redaction when setting high-entropy env vars', async () => {
+      await sandbox.exec('pwd');
+      vi.mocked(sandbox.client.commands.execute).mockClear();
+
+      await sandbox.setEnvVars({
+        API_TOKEN: 'sk-ant-api03-xK9m2nP7qR4sT6uV8wX0yZ'
+      });
+
+      expect(sandbox.client.commands.execute).toHaveBeenCalledWith(
+        expect.stringContaining('export API_TOKEN='),
+        expect.stringMatching(/^sandbox-/),
+        { redact: 'auto' }
+      );
+    });
   });
 
   describe('port exposure - workers.dev detection', () => {

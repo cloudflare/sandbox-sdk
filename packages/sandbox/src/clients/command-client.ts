@@ -37,6 +37,7 @@ export class CommandClient extends BaseHttpClient {
       timeoutMs?: number;
       env?: Record<string, string | undefined>;
       cwd?: string;
+      /** Redacts the command in client-side logs and callbacks only. */
       redact?: RedactionMode;
     }
   ): Promise<ExecuteResponse> {

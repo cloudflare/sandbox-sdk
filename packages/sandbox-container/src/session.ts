@@ -425,6 +425,7 @@ export class Session {
     // iteration, allowing the polling loop to observe null when destroyed.
     const sessionDir = this.sessionDir!;
     const shell = this.shell!;
+    const redactedCommand = getRedactionLabel(options?.redact) ?? command;
 
     const startTime = Date.now();
     const commandId = options?.commandId || randomUUID();
@@ -483,7 +484,7 @@ export class Session {
       yield {
         type: 'start',
         timestamp: new Date().toISOString(),
-        command,
+        command: redactedCommand,
         pid
       };
 
@@ -630,7 +631,7 @@ export class Session {
           stderr: '', // Already streamed
           exitCode,
           success: exitCode === 0,
-          command,
+          command: redactedCommand,
           duration,
           timestamp: new Date(startTime).toISOString()
         }

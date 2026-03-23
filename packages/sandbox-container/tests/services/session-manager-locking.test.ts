@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createNoOpLogger } from '@repo/shared';
+import { createNoOpLogger, type Logger } from '@repo/shared';
 import { SessionManager } from '../../src/services/session-manager';
 
 describe('SessionManager Locking', () => {
@@ -210,17 +210,48 @@ describe('SessionManager Locking', () => {
   });
 
   describe('setEnvVars redaction option', () => {
-    it('should accept redaction parameter', async () => {
+    it('should redact exported values in session command logs when requested', async () => {
+      const infoCalls: Array<{ message: string; command?: unknown }> = [];
+      const logger: Logger = {
+        debug() {},
+        info(message, context) {
+          infoCalls.push({ message, command: context?.command });
+        },
+        warn() {},
+        error() {},
+        child() {
+          return logger;
+        }
+      };
+      const redactingSessionManager = new SessionManager(logger);
       const sessionId = 'env-sensitive-session';
-      await sessionManager.createSession({ id: sessionId, cwd: testDir });
+      await redactingSessionManager.createSession({
+        id: sessionId,
+        cwd: testDir
+      });
+      const secretValue = 'low-entropy-value';
 
-      const result = await sessionManager.setEnvVars(
+      const result = await redactingSessionManager.setEnvVars(
         sessionId,
-        { MY_SECRET: 'low-entropy-value', PUBLIC: 'hello' },
+        { MY_SECRET: secretValue, PUBLIC: 'hello' },
         { redact: true }
       );
 
       expect(result.success).toBe(true);
+      expect(
+        infoCalls.some(
+          ({ message, command }) =>
+            message === 'Command execution started' && command === '[REDACTED]'
+        )
+      ).toBe(true);
+      expect(
+        infoCalls.some(
+          ({ command }) =>
+            typeof command === 'string' && command.includes(secretValue)
+        )
+      ).toBe(false);
+
+      await redactingSessionManager.destroy();
     });
   });
 

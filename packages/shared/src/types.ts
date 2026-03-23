@@ -994,7 +994,10 @@ export interface ExecutionSession {
   // Environment management
   setEnvVars(
     envVars: Record<string, string | undefined>,
-    options?: { /** @defaultValue 'auto' */ redact?: boolean }
+    options?: {
+      /** Defaults to undefined. When unset, high-entropy values are redacted automatically. */
+      redact?: boolean;
+    }
   ): Promise<void>;
 
   // Code interpreter methods
@@ -1254,7 +1257,10 @@ export interface ISandbox {
   // Environment management
   setEnvVars(
     envVars: Record<string, string | undefined>,
-    options?: { /** @defaultValue 'auto' */ redact?: boolean }
+    options?: {
+      /** Defaults to undefined. When unset, high-entropy values are redacted automatically. */
+      redact?: boolean;
+    }
   ): Promise<void>;
 
   // Bucket mounting operations

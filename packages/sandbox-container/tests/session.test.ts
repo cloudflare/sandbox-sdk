@@ -495,6 +495,23 @@ describe('Session', () => {
         expect(completeEvent.exitCode).not.toBe(0);
       }
     });
+
+    it('should redact command values in start and complete stream events', async () => {
+      const events: any[] = [];
+
+      for await (const event of session.execStream('echo "secret"', {
+        redact: 'forced'
+      })) {
+        events.push(event);
+      }
+
+      expect(events[0].type).toBe('start');
+      expect(events[0].command).toBe('[REDACTED]');
+
+      const completeEvent = events.find((event) => event.type === 'complete');
+      expect(completeEvent).toBeDefined();
+      expect(completeEvent.result.command).toBe('[REDACTED]');
+    });
   });
 
   describe('destroy', () => {
