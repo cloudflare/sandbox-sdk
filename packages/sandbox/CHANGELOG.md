@@ -1,5 +1,15 @@
 # @cloudflare/sandbox
 
+## 0.7.19
+
+### Patch Changes
+
+- [#503](https://github.com/cloudflare/sandbox-sdk/pull/503) [`05caafc`](https://github.com/cloudflare/sandbox-sdk/commit/05caafc1a746bc98e293776836bb9ae1fdd2f332) Thanks [@scuffi](https://github.com/scuffi)! - Add automatic detection of S3 credentials when mounting buckets. Now we do not need to explicitly declare credentials when mounting buckets if they are set as environment variables in the Durable Object.
+
+- [`1c3b75b`](https://github.com/cloudflare/sandbox-sdk/commit/1c3b75b00b3514fbd54ffca7735da5ca3899c6fc) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Fix `sleepAfter` configuration silently reverting to the default after the sandbox restarts. The configured sleep timeout is now retained reliably across the sandbox lifecycle.
+
+- [#507](https://github.com/cloudflare/sandbox-sdk/pull/507) [`5e55a38`](https://github.com/cloudflare/sandbox-sdk/commit/5e55a38280f96a84b145d8c4074eb71b4d3f15ff) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - Reduce waitIntervalMS default to 300ms
+
 ## 0.7.18
 
 ### Patch Changes
@@ -185,13 +195,13 @@
   As a base image:
 
   ```dockerfile
-  FROM docker.io/cloudflare/sandbox:0.7.18-musl
+  FROM docker.io/cloudflare/sandbox:0.7.19-musl
   ```
 
   Or copy the binary into your own Alpine image:
 
   ```dockerfile
-  COPY --from=docker.io/cloudflare/sandbox:0.7.18-musl /container-server/sandbox /sandbox
+  COPY --from=docker.io/cloudflare/sandbox:0.7.19-musl /container-server/sandbox /sandbox
   ```
 
 - [#377](https://github.com/cloudflare/sandbox-sdk/pull/377) [`d83642e`](https://github.com/cloudflare/sandbox-sdk/commit/d83642e855f68e4fb8c15c2452709923e55a83fd) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Allow port 8787 in `exposePort()`. It was incorrectly blocked.
@@ -414,10 +424,10 @@
 
   ```dockerfile
   # Before
-  FROM cloudflare/sandbox:0.7.18
+  FROM cloudflare/sandbox:0.7.19
 
   # After
-  FROM cloudflare/sandbox:0.7.18-python
+  FROM cloudflare/sandbox:0.7.19-python
   ```
 
   Without this change, Python execution will fail with `PYTHON_NOT_AVAILABLE` error.

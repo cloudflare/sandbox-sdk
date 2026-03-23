@@ -1,4 +1,4 @@
-FROM docker.io/cloudflare/sandbox:0.7.18
+FROM docker.io/cloudflare/sandbox:0.7.19
 RUN npm install -g @anthropic-ai/claude-code
 ENV COMMAND_TIMEOUT_MS=300000
 EXPOSE 3000
