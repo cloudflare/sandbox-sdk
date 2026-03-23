@@ -48,20 +48,33 @@ function createMockChildProcess() {
  * Uses env var overrides because the config parser treats `0 || defaultMinSize`
  * as falsy, falling through to default (3). Env vars take a separate code path.
  */
-function createTestPool(spawnDelayMs: number) {
+function createTestPool(
+  spawnDelayMs: number,
+  opts?: { maxProcesses?: number }
+) {
   const envKeys = [
     'JAVASCRIPT_POOL_MIN_SIZE',
     'PYTHON_POOL_MIN_SIZE',
     'TYPESCRIPT_POOL_MIN_SIZE'
   ] as const;
-  const saved = envKeys.map((k) => process.env[k]);
+  const maxEnvKeys = [
+    'JAVASCRIPT_POOL_MAX_SIZE',
+    'PYTHON_POOL_MAX_SIZE',
+    'TYPESCRIPT_POOL_MAX_SIZE'
+  ] as const;
+  const allKeys = [...envKeys, ...maxEnvKeys];
+  const saved = allKeys.map((k) => process.env[k]);
+
   for (const k of envKeys) process.env[k] = '0';
+  if (opts?.maxProcesses !== undefined) {
+    for (const k of maxEnvKeys) process.env[k] = String(opts.maxProcesses);
+  }
 
   const pool = new ProcessPoolManager({}, createNoOpLogger());
 
-  for (let i = 0; i < envKeys.length; i++) {
-    if (saved[i] === undefined) delete process.env[envKeys[i]];
-    else process.env[envKeys[i]] = saved[i];
+  for (let i = 0; i < allKeys.length; i++) {
+    if (saved[i] === undefined) delete process.env[allKeys[i]];
+    else process.env[allKeys[i]] = saved[i];
   }
 
   const tracker = {
@@ -290,6 +303,112 @@ describe('ProcessPoolManager concurrency (issue #276)', () => {
         'javascript'
       );
       expect(pool.getExecutorForContext('py-ctx-1')?.language).toBe('python');
+    });
+  });
+
+  describe('maxProcesses enforcement', () => {
+    it('should allow exactly maxProcesses parallel spawns', async () => {
+      const MAX = 4;
+      ({ pool, tracker } = createTestPool(50, { maxProcesses: MAX }));
+
+      await Promise.all(
+        Array.from({ length: MAX }, (_, i) =>
+          pool.reserveExecutorForContext(`ctx-${i}`, 'javascript')
+        )
+      );
+
+      expect(tracker.spawnCount).toBe(MAX);
+    });
+
+    it('should reject the (maxProcesses + 1)th spawn', async () => {
+      const MAX = 3;
+      ({ pool, tracker } = createTestPool(50, { maxProcesses: MAX }));
+
+      const results = await Promise.allSettled(
+        Array.from({ length: MAX + 1 }, (_, i) =>
+          pool.reserveExecutorForContext(`ctx-${i}`, 'javascript')
+        )
+      );
+
+      const fulfilled = results.filter((r) => r.status === 'fulfilled');
+      const rejected = results.filter((r) => r.status === 'rejected');
+
+      expect(fulfilled.length).toBe(MAX);
+      expect(rejected.length).toBe(1);
+      expect((rejected[0] as PromiseRejectedResult).reason.message).toContain(
+        'Maximum'
+      );
+    });
+
+    it('should not have an off-by-one at the boundary', async () => {
+      const MAX = 5;
+      ({ pool, tracker } = createTestPool(50, { maxProcesses: MAX }));
+
+      // Exactly MAX should succeed
+      await Promise.all(
+        Array.from({ length: MAX }, (_, i) =>
+          pool.reserveExecutorForContext(`exact-ctx-${i}`, 'javascript')
+        )
+      );
+      expect(tracker.spawnCount).toBe(MAX);
+
+      // One more should fail
+      await expect(
+        pool.reserveExecutorForContext('one-too-many', 'javascript')
+      ).rejects.toThrow('Maximum');
+    });
+
+    it('should free a permit when a context is released', async () => {
+      const MAX = 3;
+      ({ pool, tracker } = createTestPool(50, { maxProcesses: MAX }));
+
+      await Promise.all(
+        Array.from({ length: MAX }, (_, i) =>
+          pool.reserveExecutorForContext(`ctx-${i}`, 'javascript')
+        )
+      );
+
+      // At limit — next one should fail
+      await expect(
+        pool.reserveExecutorForContext('blocked', 'javascript')
+      ).rejects.toThrow('Maximum');
+
+      // Release one context
+      await pool.releaseExecutorForContext('ctx-0', 'javascript');
+
+      // Now a new one should succeed
+      await pool.reserveExecutorForContext('replacement', 'javascript');
+      expect(pool.getExecutorForContext('replacement')).toBeDefined();
+      expect(tracker.spawnCount).toBe(MAX + 1);
+    });
+
+    it('should release permit when spawn fails', async () => {
+      const MAX = 2;
+      ({ pool, tracker } = createTestPool(50, { maxProcesses: MAX }));
+
+      // Make the next createProcess call fail
+      let callCount = 0;
+      const originalCreate = (pool as any).createProcess.bind(pool);
+      (pool as any).createProcess = async (...args: any[]) => {
+        callCount++;
+        if (callCount === 2) {
+          throw new Error('Simulated spawn failure');
+        }
+        return originalCreate(...args);
+      };
+
+      // First succeeds, second fails
+      const results = await Promise.allSettled([
+        pool.reserveExecutorForContext('ok-ctx', 'javascript'),
+        pool.reserveExecutorForContext('fail-ctx', 'javascript')
+      ]);
+
+      expect(results[0].status).toBe('fulfilled');
+      expect(results[1].status).toBe('rejected');
+
+      // The failed spawn should have released its permit, so this should work
+      await pool.reserveExecutorForContext('after-failure', 'javascript');
+      expect(pool.getExecutorForContext('after-failure')).toBeDefined();
     });
   });
 });
