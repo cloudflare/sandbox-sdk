@@ -790,7 +790,7 @@ export class FileService implements FileSystemOperations {
         outcome,
         durationMs: Date.now() - startTime
       };
-      if (caughtError) {
+      if (caughtError || outcome === 'error') {
         this.logger.error('file.mkdir', caughtError, logEvent);
       } else {
         this.logger.info('file.mkdir', logEvent);
