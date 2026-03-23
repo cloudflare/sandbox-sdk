@@ -2,13 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'bun:test';
 import type { Logger } from '@repo/shared';
 import { createSupervisorController } from '../src/main';
 
-const mockLogger = {
-  info: vi.fn(),
-  error: vi.fn(),
-  warn: vi.fn(),
-  debug: vi.fn(),
-  child: vi.fn()
-} as unknown as Logger;
+const mockLogger = createNoOpLogger();
 
 describe('createSupervisorController', () => {
   beforeEach(() => {
