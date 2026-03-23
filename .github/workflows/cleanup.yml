@@ -13,7 +13,7 @@ permissions:
   pull-requests: read
 
 jobs:
-  # --- PR close: targeted cleanup ---
+  # --- PR close: backstop cleanup for anything per-run cleanup missed ---
   cleanup-pr:
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
@@ -46,7 +46,7 @@ jobs:
         continue-on-error: true
         run: |
           PR=${{ github.event.pull_request.number }}
-          CONTAINERS=$(wrangler containers list 2>/dev/null || echo "[]")
+          CONTAINERS=$(wrangler containers list --json 2>/dev/null || echo "[]")
 
           for suffix in "-http" "-websocket"; do
             WORKER="sandbox-e2e-test-worker-pr-${PR}${suffix}"
@@ -60,7 +60,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
-  # --- Daily sweep: catch anything PR-close missed ---
+  # --- Daily sweep: catch anything per-run or PR-close cleanup missed ---
   cleanup-stale:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
@@ -72,7 +72,7 @@ jobs:
       - name: Clean stale resources
         timeout-minutes: 10
         run: |
-          CONTAINERS=$(wrangler containers list 2>/dev/null || echo "[]")
+          CONTAINERS=$(wrangler containers list --json 2>/dev/null || echo "[]")
           PR_NUMBERS=$(echo "$CONTAINERS" | jq -r '.[].name' 2>/dev/null \
             | grep -oE 'pr-[0-9]+' | sed 's/pr-//' | sort -u)
 
