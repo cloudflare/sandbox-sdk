@@ -153,6 +153,7 @@ export class ProcessPoolManager {
   private executorLocks: Map<string, Mutex> = new Map();
 
   private javascriptExecutorPath?: string;
+  private pendingSpawns: Map<InterpreterLanguage, number> = new Map();
 
   constructor(
     customConfigs: Partial<
@@ -189,6 +190,7 @@ export class ProcessPoolManager {
       this.pools.set(executor, []);
       this.availableExecutors.set(executor, []);
       this.poolLocks.set(executor, new Mutex());
+      this.pendingSpawns.set(executor, 0);
     }
 
     const pythonConfig = this.poolConfigs.get('python');
@@ -241,17 +243,40 @@ export class ProcessPoolManager {
     language: InterpreterLanguage
   ): Promise<InterpreterProcess> {
     const mutex = this.poolLocks.get(language)!;
-    return await mutex.runExclusive(async () => {
+
+    // Check pool under lock — claim an executor or reserve a spawn slot
+    const existing = await mutex.runExclusive(() => {
       const available = this.availableExecutors.get(language) || [];
       if (available.length > 0) {
         return available.shift()!;
       }
-      // Create temporary executor if none available
-      const executor = await this.createProcess(language, undefined);
-      const pool = this.pools.get(language)!;
-      pool.push(executor);
-      return executor;
+      const pending = this.pendingSpawns.get(language) ?? 0;
+      this.pendingSpawns.set(language, pending + 1);
+      return null;
     });
+
+    if (existing) return existing;
+
+    // Spawn outside lock so parallel borrows aren't serialized behind it
+    try {
+      const executor = await this.createProcess(language, undefined);
+
+      // Register and release the spawn slot in one lock acquisition
+      await mutex.runExclusive(() => {
+        const pool = this.pools.get(language)!;
+        pool.push(executor);
+        const pending = this.pendingSpawns.get(language) ?? 0;
+        this.pendingSpawns.set(language, Math.max(0, pending - 1));
+      });
+
+      return executor;
+    } catch (err) {
+      await mutex.runExclusive(() => {
+        const pending = this.pendingSpawns.get(language) ?? 0;
+        this.pendingSpawns.set(language, Math.max(0, pending - 1));
+      });
+      throw err;
+    }
   }
 
   private async returnExecutor(
@@ -418,9 +443,10 @@ export class ProcessPoolManager {
     const config = this.poolConfigs.get(language)!;
     const pool = this.pools.get(language)!;
 
+    const pending = this.pendingSpawns.get(language) ?? 0;
     if (
       config.maxProcesses !== undefined &&
-      pool.length >= config.maxProcesses
+      pool.length + pending >= config.maxProcesses
     ) {
       throw new Error(
         `Maximum ${language} executor limit reached (${config.maxProcesses}). Cannot create new executor.`
@@ -670,42 +696,54 @@ export class ProcessPoolManager {
     }
 
     const mutex = this.poolLocks.get(language)!;
-    await mutex.runExclusive(async () => {
+
+    const existing = await mutex.runExclusive(() => {
       const available = this.availableExecutors.get(language) || [];
-
-      let executor: InterpreterProcess;
-
       if (available.length > 0) {
-        // Use an available executor
-        executor = available.shift()!;
+        const executor = available.shift()!;
         this.availableExecutors.set(language, available);
+        executor.sessionId = contextId;
+        this.contextExecutors.set(contextId, executor);
 
         this.logger.debug('Assigned available executor to context', {
           contextId,
           language,
           executorId: executor.id
         });
-      } else {
-        // No available executors, create a new one
-        executor = await this.createProcess(language, contextId);
+        return executor;
+      }
 
-        // Add to main pool for tracking
+      const pending = this.pendingSpawns.get(language) ?? 0;
+      this.pendingSpawns.set(language, pending + 1);
+      return null;
+    });
+
+    if (existing) return;
+
+    try {
+      const executor = await this.createProcess(language, contextId);
+
+      await mutex.runExclusive(() => {
         const pool = this.pools.get(language)!;
         pool.push(executor);
+        executor.sessionId = contextId;
+        this.contextExecutors.set(contextId, executor);
+        const pending = this.pendingSpawns.get(language) ?? 0;
+        this.pendingSpawns.set(language, Math.max(0, pending - 1));
 
         this.logger.debug('Created new executor for context', {
           contextId,
           language,
           executorId: executor.id
         });
-      }
-
-      // Assign executor to context
-      executor.sessionId = contextId;
-
-      // Track in contextExecutors map
-      this.contextExecutors.set(contextId, executor);
-    });
+      });
+    } catch (err) {
+      await mutex.runExclusive(() => {
+        const pending = this.pendingSpawns.get(language) ?? 0;
+        this.pendingSpawns.set(language, Math.max(0, pending - 1));
+      });
+      throw err;
+    }
   }
 
   async releaseExecutorForContext(
