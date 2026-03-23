@@ -1,8 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'bun:test';
 import type { Logger } from '@repo/shared';
-import { createSupervisorController } from '../src/main';
-
 import { createNoOpLogger } from '@repo/shared';
+import { createSupervisorController } from '../src/main';
 
 const mockLogger = createNoOpLogger();
 
