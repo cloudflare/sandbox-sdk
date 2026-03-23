@@ -38,7 +38,12 @@ export {
   shouldRedact
 } from './entropy.js';
 // Export environment utilities
-export { filterEnvVars, getEnvString, partitionEnvVars } from './env.js';
+export {
+  filterEnvVars,
+  getEnvString,
+  isValidEnvVarName,
+  partitionEnvVars
+} from './env.js';
 // Export git utilities
 export {
   extractRepoName,

@@ -3,7 +3,6 @@
 import { rm } from 'node:fs/promises';
 import {
   type ExecEvent,
-  getRedactionLabel,
   type Logger,
   type PtyOptions,
   partitionEnvVars,
@@ -949,7 +948,6 @@ export class SessionManager {
       for (const [key, value] of Object.entries(toSet)) {
         const exportCommand = `export ${key}=${shellEscape(value)}`;
         const mode = shouldRedact(options?.redact, value);
-        const redactionLabel = getRedactionLabel(mode);
         const result = await exec(exportCommand, { redact: mode });
 
         if (result.exitCode !== 0) {
@@ -957,9 +955,7 @@ export class SessionManager {
             code: ErrorCode.COMMAND_EXECUTION_ERROR,
             message: `Failed to set environment variable '${key}': ${result.stderr}`,
             details: {
-              command: redactionLabel
-                ? `export ${key}=${redactionLabel}`
-                : exportCommand,
+              command: exportCommand,
               exitCode: result.exitCode,
               stderr: result.stderr
             } satisfies CommandErrorContext

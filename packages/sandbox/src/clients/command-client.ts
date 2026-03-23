@@ -37,7 +37,7 @@ export class CommandClient extends BaseHttpClient {
       timeoutMs?: number;
       env?: Record<string, string | undefined>;
       cwd?: string;
-      /** Redacts the command in client-side logs and callbacks only. */
+      /** Redacts the command in client-side logs only. */
       redact?: RedactionMode;
     }
   ): Promise<ExecuteResponse> {
@@ -67,19 +67,17 @@ export class CommandClient extends BaseHttpClient {
         response.exitCode,
         response.stdout,
         response.stderr,
-        label ?? response.command
+        response.command
       );
 
       return response;
     } catch (error) {
       this.logError('execute', error);
 
-      const label = getRedactionLabel(options?.redact);
-
       // Call error callback if provided
       this.options.onError?.(
         error instanceof Error ? error.message : String(error),
-        label ?? command
+        command
       );
 
       throw error;

@@ -165,7 +165,7 @@ interface ExecOptions {
   env?: Record<string, string | undefined>;
   /** Maximum execution time in milliseconds */
   timeoutMs?: number;
-  /** When set, the command string is redacted from logs and error details.
+  /** When set, the command string is redacted from logs.
    *  'forced' = caller-requested (logged as [REDACTED])
    *  'auto'   = entropy-detected (logged as [AUTO-REDACTED]) */
   redact?: RedactionMode;
@@ -383,7 +383,7 @@ export class Session {
       });
 
       return {
-        command: getRedactionLabel(options?.redact) ?? command,
+        command,
         stdout,
         stderr,
         exitCode,
@@ -425,7 +425,6 @@ export class Session {
     // iteration, allowing the polling loop to observe null when destroyed.
     const sessionDir = this.sessionDir!;
     const shell = this.shell!;
-    const redactedCommand = getRedactionLabel(options?.redact) ?? command;
 
     const startTime = Date.now();
     const commandId = options?.commandId || randomUUID();
@@ -484,7 +483,7 @@ export class Session {
       yield {
         type: 'start',
         timestamp: new Date().toISOString(),
-        command: redactedCommand,
+        command,
         pid
       };
 
@@ -631,7 +630,7 @@ export class Session {
           stderr: '', // Already streamed
           exitCode,
           success: exitCode === 0,
-          command: redactedCommand,
+          command,
           duration,
           timestamp: new Date(startTime).toISOString()
         }

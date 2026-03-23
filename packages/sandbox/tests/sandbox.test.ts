@@ -549,6 +549,20 @@ describe('Sandbox - Automatic Session Management', () => {
         { redact: 'auto' }
       );
     });
+
+    it('should reject invalid environment variable names', async () => {
+      await expect(
+        sandbox.setEnvVars({
+          'INVALID-NAME': 'value'
+        })
+      ).rejects.toThrow('Invalid environment variable name: INVALID-NAME');
+
+      expect(sandbox.client.commands.execute).not.toHaveBeenCalledWith(
+        expect.stringContaining('INVALID-NAME'),
+        expect.any(String),
+        expect.anything()
+      );
+    });
   });
 
   describe('port exposure - workers.dev detection', () => {

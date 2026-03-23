@@ -220,6 +220,48 @@ describe('CommandClient', () => {
       expect(onError).toHaveBeenCalled();
     });
 
+    it('should keep callback command values raw when log redaction is enabled', async () => {
+      const mockResponse: ExecuteResponse = {
+        success: true,
+        stdout: '',
+        stderr: '',
+        exitCode: 0,
+        command: 'export API_TOKEN=secret-value',
+        timestamp: '2023-01-01T00:00:00Z'
+      };
+
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify(mockResponse), { status: 200 })
+      );
+
+      await client.execute('export API_TOKEN=secret-value', 'session-exec', {
+        redact: 'forced'
+      });
+
+      expect(onCommandComplete).toHaveBeenCalledWith(
+        true,
+        0,
+        '',
+        '',
+        'export API_TOKEN=secret-value'
+      );
+    });
+
+    it('should keep error callback command values raw when log redaction is enabled', async () => {
+      mockFetch.mockRejectedValue(new Error('Network connection failed'));
+
+      await expect(
+        client.execute('export API_TOKEN=secret-value', 'session-err', {
+          redact: 'forced'
+        })
+      ).rejects.toThrow('Network connection failed');
+
+      expect(onError).toHaveBeenCalledWith(
+        'Network connection failed',
+        'export API_TOKEN=secret-value'
+      );
+    });
+
     it('should handle empty command input', async () => {
       const errorResponse = {
         code: 'INVALID_COMMAND',

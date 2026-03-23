@@ -36,6 +36,7 @@ import {
   filterEnvVars,
   getEnvString,
   isTerminalStatus,
+  isValidEnvVarName,
   partitionEnvVars,
   type SessionDeleteResult,
   shellEscape,
@@ -716,10 +717,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   ): Promise<void> {
     const { toSet, toUnset } = partitionEnvVars(envVars);
 
-    for (const key of toUnset) {
-      delete this.envVars[key];
+    for (const key of [...toUnset, ...Object.keys(toSet)]) {
+      if (!isValidEnvVarName(key)) {
+        throw new Error(`Invalid environment variable name: ${key}`);
+      }
     }
-    this.envVars = { ...this.envVars, ...toSet };
 
     if (this.defaultSession) {
       for (const key of toUnset) {
@@ -753,6 +755,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         }
       }
     }
+
+    for (const key of toUnset) {
+      delete this.envVars[key];
+    }
+    this.envVars = { ...this.envVars, ...toSet };
   }
 
   /**
@@ -3297,6 +3304,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         options?: { redact?: boolean }
       ) => {
         const { toSet, toUnset } = partitionEnvVars(envVars);
+
+        for (const key of [...toUnset, ...Object.keys(toSet)]) {
+          if (!isValidEnvVarName(key)) {
+            throw new Error(`Invalid environment variable name: ${key}`);
+          }
+        }
 
         try {
           for (const key of toUnset) {

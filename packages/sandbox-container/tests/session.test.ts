@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { Logger } from '@repo/shared';
 import { Session } from '../src/session';
 
 describe('Session', () => {
@@ -496,7 +497,28 @@ describe('Session', () => {
       }
     });
 
-    it('should redact command values in start and complete stream events', async () => {
+    it('should redact command values in logs without changing stream events', async () => {
+      const infoCalls: Array<{ message: string; command?: unknown }> = [];
+      const logger: Logger = {
+        debug() {},
+        info(message, context) {
+          infoCalls.push({ message, command: context?.command });
+        },
+        warn() {},
+        error() {},
+        child() {
+          return logger;
+        }
+      };
+
+      await session.destroy();
+      session = new Session({
+        id: 'test-exec',
+        cwd: testDir,
+        logger
+      });
+      await session.initialize();
+
       const events: any[] = [];
 
       for await (const event of session.execStream('echo "secret"', {
@@ -506,11 +528,18 @@ describe('Session', () => {
       }
 
       expect(events[0].type).toBe('start');
-      expect(events[0].command).toBe('[REDACTED]');
+      expect(events[0].command).toBe('echo "secret"');
 
       const completeEvent = events.find((event) => event.type === 'complete');
       expect(completeEvent).toBeDefined();
-      expect(completeEvent.result.command).toBe('[REDACTED]');
+      expect(completeEvent.result.command).toBe('echo "secret"');
+      expect(
+        infoCalls.some(
+          ({ message, command }) =>
+            message === 'Streaming command execution started' &&
+            command === '[REDACTED]'
+        )
+      ).toBe(true);
     });
   });
 

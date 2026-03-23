@@ -13,6 +13,10 @@ export function getEnvString(
   return typeof value === 'string' ? value : undefined;
 }
 
+export function isValidEnvVarName(key: string): boolean {
+  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(key);
+}
+
 /**
  * Filter environment variables object to only include string values.
  * Skips undefined, null, and non-string values.
