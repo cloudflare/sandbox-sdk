@@ -9,7 +9,8 @@
   "type": "module",
   "dependencies": {
     "@cloudflare/containers": "^0.1.1",
-    "aws4fetch": "^1.0.20"
+    "aws4fetch": "^1.0.20",
+    "capnweb": "^0.6.1"
   },
   "devDependencies": {
     "@openai/agents": "^0.3.3",
