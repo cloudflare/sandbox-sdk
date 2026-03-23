@@ -457,6 +457,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       - name: Delete PR image tags from CF registry
+        if: ${{ needs.e2e.result != 'failure' && needs.e2e.result != 'cancelled' && needs.publish-preview.result != 'failure' && needs.publish-preview.result != 'cancelled' }}
         continue-on-error: true
         run: |
           PR=${{ github.event.pull_request.number }}
