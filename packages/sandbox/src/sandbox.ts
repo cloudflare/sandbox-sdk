@@ -1495,6 +1495,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       portParam
     );
 
+    const originalDefaultPort = this.defaultPort;
     const state = await this.getState();
     const containerRunning = this.ctx.container?.running;
 
@@ -1636,7 +1637,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     // After a legacy fallback, the current request's port may still reference the
     // original default (e.g., 8671). Remap it to the actual control port.
     const effectivePort =
-      port === DEFAULT_CONTROL_PORT && this.defaultPort === LEGACY_CONTROL_PORT
+      port === originalDefaultPort && this.defaultPort === LEGACY_CONTROL_PORT
         ? LEGACY_CONTROL_PORT
         : port;
 

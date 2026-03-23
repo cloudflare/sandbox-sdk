@@ -327,4 +327,41 @@ describe('Legacy port fallback (startWithLegacyFallback)', () => {
     expect(parentFetch).toHaveBeenCalledWith(expect.any(Request), 3000);
     parentFetch.mockRestore();
   });
+
+  it('remaps port for current request after fallback with custom SANDBOX_CONTROL_PORT', async () => {
+    const customCtx = createMockCtx();
+    const customSandbox = new Sandbox(customCtx, {
+      SANDBOX_CONTROL_PORT: '9500'
+    });
+    await vi.waitFor(() => {
+      expect(customCtx.blockConcurrencyWhile).toHaveBeenCalled();
+    });
+
+    const customSpy = vi
+      .spyOn(customSandbox as any, 'startAndWaitForPorts')
+      .mockRejectedValueOnce(new Error('failed to verify port'))
+      .mockResolvedValueOnce(undefined);
+
+    vi.spyOn(customSandbox as any, 'getState').mockResolvedValue({
+      status: 'unhealthy'
+    });
+    (customSandbox as any).ctx.container = { running: true };
+
+    const parentFetch = vi
+      .spyOn(
+        Object.getPrototypeOf(Object.getPrototypeOf(customSandbox)),
+        'containerFetch'
+      )
+      .mockResolvedValueOnce(new Response('ok'));
+
+    await customSandbox.containerFetch(
+      new Request('http://localhost/test'),
+      9500
+    );
+
+    expect(customSpy).toHaveBeenCalledTimes(2);
+    expect(customSandbox.defaultPort).toBe(3000);
+    expect(parentFetch).toHaveBeenCalledWith(expect.any(Request), 3000);
+    parentFetch.mockRestore();
+  });
 });

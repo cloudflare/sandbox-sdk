@@ -514,7 +514,7 @@ describe('WebSocket Protocol Types', () => {
       try {
         const transport = new WebSocketTransport({
           wsUrl: 'ws://localhost:8671/ws',
-          requestTimeoutMs: 1000
+          streamIdleTimeoutMs: 100
         });
 
         (transport as any).connect = vi.fn().mockResolvedValue(undefined);
