@@ -719,6 +719,19 @@ export class Session {
             }
             return !this.processExists(pid);
           };
+          const waitForPidsExit = async (
+            pids: number[],
+            timeoutMs: number
+          ): Promise<boolean> => {
+            const deadline = Date.now() + timeoutMs;
+            while (Date.now() < deadline) {
+              if (pids.every((treePid) => !this.processExists(treePid))) {
+                return true;
+              }
+              await Bun.sleep(50);
+            }
+            return pids.every((treePid) => !this.processExists(treePid));
+          };
 
           if (waitForExit) {
             const treePids = this.getProcessTreePids(pid);
@@ -732,9 +745,24 @@ export class Session {
               syntheticExitCode = 143;
             }
 
-            const pidsAlive = treePids.filter((treePid) =>
+            let pidsAlive = treePids.filter((treePid) =>
               this.processExists(treePid)
             );
+            if (pidsAlive.length > 0) {
+              for (const treePid of pidsAlive) {
+                try {
+                  process.kill(treePid, 'SIGKILL');
+                } catch {
+                  // Process already exited
+                }
+              }
+
+              await waitForPidsExit(pidsAlive, 5000);
+              pidsAlive = treePids.filter((treePid) =>
+                this.processExists(treePid)
+              );
+            }
+
             if (pidsAlive.length > 0) {
               this.logger.warn(
                 'killCommand did not fully terminate process tree',
