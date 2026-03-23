@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'bun:test';
 import type { Logger } from '@repo/shared';
 import { createSupervisorController } from '../src/main';
 
+import { createNoOpLogger } from '@repo/shared';
+
 const mockLogger = createNoOpLogger();
 
 describe('createSupervisorController', () => {
