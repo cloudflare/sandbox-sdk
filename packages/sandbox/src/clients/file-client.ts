@@ -133,14 +133,36 @@ export class FileClient extends BaseHttpClient {
 
       await this.transport.waitForContainer();
 
-      const response = await this.transport.fetch(
-        `/api/write?${url.searchParams.toString()}`,
-        {
-          method: 'POST',
-          body: stream,
-          duplex: 'half'
-        } as RequestInit
-      );
+      // TODO: Refactor the transport layer to support a concept of operations
+      // that cannot be streamed over WebSocket (e.g. via a supportsStreamBody()
+      // method), so FileClient doesn't need to know about transport internals.
+      //
+      // File writes always bypass WebSocket transport and go directly over HTTP.
+      // Sending a ReadableStream body over WebSocket requires buffering the
+      // entire file in memory before encoding it, which defeats the purpose of
+      // streaming and breaks large file uploads.
+      const writePath = `/api/write?${url.searchParams.toString()}`;
+      const fetchOptions: RequestInit = {
+        method: 'POST',
+        body: stream,
+        duplex: 'half'
+      } as RequestInit;
+
+      let response: Response;
+      if (this.options.stub) {
+        const writeUrl = `http://localhost:${this.options.port ?? 3000}${writePath}`;
+        response = await this.options.stub.containerFetch(
+          writeUrl,
+          fetchOptions,
+          this.options.port
+        );
+      } else {
+        const baseUrl = this.options.baseUrl ?? 'http://localhost:3000';
+        response = await globalThis.fetch(
+          `${baseUrl}${writePath}`,
+          fetchOptions
+        );
+      }
 
       if (!response.ok) {
         await this.handleErrorResponse(response);
