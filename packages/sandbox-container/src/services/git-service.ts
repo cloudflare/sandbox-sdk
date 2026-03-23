@@ -189,10 +189,10 @@ export class GitService {
       const errorMessage = caughtError.message;
 
       return this.returnError({
-        message: `Failed to clone repository '${repoUrl}': ${errorMessage}`,
+        message: `Failed to clone repository '${redactCredentials(repoUrl)}': ${errorMessage}`,
         code: ErrorCode.GIT_CLONE_FAILED,
         details: {
-          repository: repoUrl,
+          repository: redactCredentials(repoUrl),
           targetDir: options.targetDir,
           stderr: errorMessage
         } satisfies GitErrorContext
