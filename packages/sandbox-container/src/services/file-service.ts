@@ -377,7 +377,7 @@ export class FileService implements FileSystemOperations {
         outcome,
         durationMs: Date.now() - startTime
       };
-      if (caughtError) {
+      if (caughtError || outcome === 'error') {
         this.logger.error('file.write', caughtError, logEvent);
       } else {
         this.logger.info('file.write', logEvent);
