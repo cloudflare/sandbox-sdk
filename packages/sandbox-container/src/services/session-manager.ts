@@ -3,6 +3,8 @@
 import { rm } from 'node:fs/promises';
 import {
   type ExecEvent,
+  getRedactionLabel,
+  isValidEnvVarName,
   type Logger,
   type PtyOptions,
   partitionEnvVars,
@@ -18,7 +20,6 @@ import type {
 } from '@repo/shared/errors';
 import { ErrorCode } from '@repo/shared/errors';
 import { Mutex } from 'async-mutex';
-import { time } from 'console';
 import { CONFIG } from '../config';
 import {
   type ServiceError,
@@ -919,7 +920,7 @@ export class SessionManager {
       // Validate all keys first (POSIX portable character set)
       const allKeys = [...toUnset, ...Object.keys(toSet)];
       for (const key of allKeys) {
-        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+        if (!isValidEnvVarName(key)) {
           throw {
             code: ErrorCode.VALIDATION_FAILED,
             message: `Invalid environment variable name: ${key}`,
@@ -948,6 +949,7 @@ export class SessionManager {
       for (const [key, value] of Object.entries(toSet)) {
         const exportCommand = `export ${key}=${shellEscape(value)}`;
         const mode = shouldRedact(options?.redact, value);
+        const label = getRedactionLabel(mode);
         const result = await exec(exportCommand, { redact: mode });
 
         if (result.exitCode !== 0) {
@@ -955,7 +957,7 @@ export class SessionManager {
             code: ErrorCode.COMMAND_EXECUTION_ERROR,
             message: `Failed to set environment variable '${key}': ${result.stderr}`,
             details: {
-              command: exportCommand,
+              command: label ? `export ${key}=${label}` : exportCommand,
               exitCode: result.exitCode,
               stderr: result.stderr
             } satisfies CommandErrorContext

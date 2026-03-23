@@ -995,7 +995,7 @@ export interface ExecutionSession {
   setEnvVars(
     envVars: Record<string, string | undefined>,
     options?: {
-      /** Defaults to undefined. When unset, high-entropy values are redacted automatically. */
+      /** When omitted, high-entropy values are auto-redacted. Set `true` to force-redact all values, including short secrets, or `false` to skip redaction entirely. */
       redact?: boolean;
     }
   ): Promise<void>;
@@ -1258,7 +1258,7 @@ export interface ISandbox {
   setEnvVars(
     envVars: Record<string, string | undefined>,
     options?: {
-      /** Defaults to undefined. When unset, high-entropy values are redacted automatically. */
+      /** When omitted, high-entropy values are auto-redacted. Set `true` to force-redact all values, including short secrets, or `false` to skip redaction entirely. */
       redact?: boolean;
     }
   ): Promise<void>;

@@ -253,6 +253,122 @@ describe('SessionManager Locking', () => {
 
       await redactingSessionManager.destroy();
     });
+
+    it('should auto-redact high-entropy values in session command logs by default', async () => {
+      const infoCalls: Array<{ message: string; command?: unknown }> = [];
+      const logger: Logger = {
+        debug() {},
+        info(message, context) {
+          infoCalls.push({ message, command: context?.command });
+        },
+        warn() {},
+        error() {},
+        child() {
+          return logger;
+        }
+      };
+      const redactingSessionManager = new SessionManager(logger);
+      const sessionId = 'env-auto-redact-session';
+      await redactingSessionManager.createSession({
+        id: sessionId,
+        cwd: testDir
+      });
+      const secretValue = 'sk-ant-api03-xK9m2nP7qR4sT6uV8wX0yZ';
+
+      const result = await redactingSessionManager.setEnvVars(sessionId, {
+        API_TOKEN: secretValue
+      });
+
+      expect(result.success).toBe(true);
+      expect(
+        infoCalls.some(
+          ({ message, command }) =>
+            message === 'Command execution started' &&
+            command === '[AUTO-REDACTED]'
+        )
+      ).toBe(true);
+      expect(
+        infoCalls.some(
+          ({ command }) =>
+            typeof command === 'string' && command.includes(secretValue)
+        )
+      ).toBe(false);
+
+      await redactingSessionManager.destroy();
+    });
+
+    it('should skip auto-redaction when explicitly disabled', async () => {
+      const infoCalls: Array<{ message: string; command?: unknown }> = [];
+      const logger: Logger = {
+        debug() {},
+        info(message, context) {
+          infoCalls.push({ message, command: context?.command });
+        },
+        warn() {},
+        error() {},
+        child() {
+          return logger;
+        }
+      };
+      const redactingSessionManager = new SessionManager(logger);
+      const sessionId = 'env-redaction-disabled-session';
+      await redactingSessionManager.createSession({
+        id: sessionId,
+        cwd: testDir
+      });
+      const secretValue = 'sk-ant-api03-xK9m2nP7qR4sT6uV8wX0yZ';
+
+      const result = await redactingSessionManager.setEnvVars(
+        sessionId,
+        { API_TOKEN: secretValue },
+        { redact: false }
+      );
+
+      expect(result.success).toBe(true);
+      expect(
+        infoCalls.some(
+          ({ message, command }) =>
+            message === 'Command execution started' &&
+            typeof command === 'string' &&
+            command.includes(secretValue)
+        )
+      ).toBe(true);
+      expect(
+        infoCalls.some(
+          ({ command }) =>
+            command === '[AUTO-REDACTED]' || command === '[REDACTED]'
+        )
+      ).toBe(false);
+
+      await redactingSessionManager.destroy();
+    });
+
+    it('should redact failing export commands in error details when requested', async () => {
+      const sessionId = 'env-redacted-error-session';
+
+      const readonlyResult = await sessionManager.executeInSession(
+        sessionId,
+        'readonly MY_SECRET="fixed"',
+        testDir
+      );
+      expect(readonlyResult.success).toBe(true);
+
+      const result = await sessionManager.setEnvVars(
+        sessionId,
+        { MY_SECRET: 'secret-value' },
+        { redact: true }
+      );
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.details).toMatchObject({
+          command: 'export MY_SECRET=[REDACTED]'
+        });
+        expect(JSON.stringify(result.error.details)).not.toContain(
+          'secret-value'
+        );
+      }
+    });
   });
 
   describe('streaming execution locking', () => {

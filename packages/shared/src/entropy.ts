@@ -27,7 +27,9 @@ export function calculateEntropy(value: string): number {
  * a secret (API key, token, password, etc.).
  *
  * Default threshold of 4.0 bits/char catches most API keys and tokens
- * while allowing common config values like URLs and paths through.
+ * while allowing common config values like URLs and paths through. Values
+ * shorter than 8 characters are treated as non-secrets here, so short secrets
+ * require explicit `redact: true` to be covered.
  */
 export function isHighEntropy(value: string, threshold: number = 4.0): boolean {
   // Short values (< 8 chars) are unlikely to be secrets
@@ -46,6 +48,9 @@ export type RedactionMode = 'forced' | 'auto';
  *  - true  → always redact, regardless of content
  *  - undefined (default) → redact only when Shannon entropy suggests a secret
  *  - false → skip redaction entirely, even auto-detection
+ *
+ * When auto-detection is used, values shorter than 8 characters are not
+ * redacted unless the caller forces redaction.
  */
 export function shouldRedact(
   redact: boolean | undefined,

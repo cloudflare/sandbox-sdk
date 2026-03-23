@@ -165,7 +165,8 @@ interface ExecOptions {
   env?: Record<string, string | undefined>;
   /** Maximum execution time in milliseconds */
   timeoutMs?: number;
-  /** When set, the command string is redacted from logs.
+  /** When set, logger contexts use redacted command labels.
+   *  `exec()` results and `execStream()` events still return the raw command.
    *  'forced' = caller-requested (logged as [REDACTED])
    *  'auto'   = entropy-detected (logged as [AUTO-REDACTED]) */
   redact?: RedactionMode;

@@ -275,6 +275,41 @@ describe('Session', () => {
       expect(restoredResult.stdout.trim()).toBe('original');
     });
 
+    it('should redact command values in logs without changing exec results', async () => {
+      const infoCalls: Array<{ message: string; command?: unknown }> = [];
+      const logger: Logger = {
+        debug() {},
+        info(message, context) {
+          infoCalls.push({ message, command: context?.command });
+        },
+        warn() {},
+        error() {},
+        child() {
+          return logger;
+        }
+      };
+
+      await session.destroy();
+      session = new Session({
+        id: 'test-exec',
+        cwd: testDir,
+        logger
+      });
+      await session.initialize();
+
+      const result = await session.exec('echo "secret"', {
+        redact: 'forced'
+      });
+
+      expect(result.command).toBe('echo "secret"');
+      expect(
+        infoCalls.some(
+          ({ message, command }) =>
+            message === 'Command execution started' && command === '[REDACTED]'
+        )
+      ).toBe(true);
+    });
+
     it('should override cwd temporarily when option provided', async () => {
       // Create a subdirectory
       await session.exec('mkdir -p tempdir');

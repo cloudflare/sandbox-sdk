@@ -717,11 +717,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   ): Promise<void> {
     const { toSet, toUnset } = partitionEnvVars(envVars);
 
-    for (const key of [...toUnset, ...Object.keys(toSet)]) {
-      if (!isValidEnvVarName(key)) {
-        throw new Error(`Invalid environment variable name: ${key}`);
-      }
-    }
+    this.validateEnvVarNames([...toUnset, ...Object.keys(toSet)]);
 
     if (this.defaultSession) {
       for (const key of toUnset) {
@@ -756,10 +752,20 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       }
     }
 
+    // Commit the cached env snapshot only after the full batch succeeds.
+    // A later shell failure can leave the live session ahead of this snapshot.
     for (const key of toUnset) {
       delete this.envVars[key];
     }
     this.envVars = { ...this.envVars, ...toSet };
+  }
+
+  private validateEnvVarNames(keys: Iterable<string>): void {
+    for (const key of keys) {
+      if (!isValidEnvVarName(key)) {
+        throw new Error(`Invalid environment variable name: ${key}`);
+      }
+    }
   }
 
   /**
@@ -3305,11 +3311,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       ) => {
         const { toSet, toUnset } = partitionEnvVars(envVars);
 
-        for (const key of [...toUnset, ...Object.keys(toSet)]) {
-          if (!isValidEnvVarName(key)) {
-            throw new Error(`Invalid environment variable name: ${key}`);
-          }
-        }
+        this.validateEnvVarNames([...toUnset, ...Object.keys(toSet)]);
 
         try {
           for (const key of toUnset) {

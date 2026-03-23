@@ -37,7 +37,7 @@ export class CommandClient extends BaseHttpClient {
       timeoutMs?: number;
       env?: Record<string, string | undefined>;
       cwd?: string;
-      /** Redacts the command in client-side logs only. */
+      /** Controls client-side log redaction only; the raw command is still sent to the container. */
       redact?: RedactionMode;
     }
   ): Promise<ExecuteResponse> {
@@ -61,7 +61,8 @@ export class CommandClient extends BaseHttpClient {
         `${label ?? command}, Success: ${response.success}`
       );
 
-      // Call the callback if provided
+      // Callbacks receive the raw command so trusted consumers can correlate
+      // execution results with the command that actually ran.
       this.options.onCommandComplete?.(
         response.success,
         response.exitCode,
@@ -74,7 +75,8 @@ export class CommandClient extends BaseHttpClient {
     } catch (error) {
       this.logError('execute', error);
 
-      // Call error callback if provided
+      // Error callbacks receive the raw command for the same correlation model
+      // as completion callbacks.
       this.options.onError?.(
         error instanceof Error ? error.message : String(error),
         command
