@@ -7,6 +7,7 @@ import {
   spyOn,
   vi
 } from 'bun:test';
+import * as fsPromises from 'node:fs/promises';
 import type { Logger } from '@repo/shared';
 import type { ServiceResult } from '@sandbox-container/core/types';
 import {
@@ -496,6 +497,11 @@ describe('FileService', () => {
   });
 
   describe('write', () => {
+    // Mock fs.mkdir so tests don't touch the real filesystem
+    beforeEach(() => {
+      spyOn(fsPromises, 'mkdir').mockResolvedValue(undefined);
+    });
+
     function stringToStream(content: string): ReadableStream<Uint8Array> {
       return new ReadableStream({
         start(controller) {

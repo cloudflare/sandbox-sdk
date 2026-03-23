@@ -1,4 +1,5 @@
-import { resolve } from 'node:path';
+import { mkdir } from 'node:fs/promises';
+import { dirname, resolve } from 'node:path';
 import type { FileInfo, ListFilesOptions, Logger } from '@repo/shared';
 import { shellEscape } from '@repo/shared';
 import type {
@@ -268,6 +269,7 @@ export class FileService implements FileSystemOperations {
           }
 
           try {
+            await mkdir(dirname(targetPath), { recursive: true });
             await Bun.write(targetPath, new Response(stream));
           } catch (error) {
             const errorMessage =
