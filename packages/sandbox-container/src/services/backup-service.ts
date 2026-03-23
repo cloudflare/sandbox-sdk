@@ -138,6 +138,8 @@ export class BackupService {
         `mkdir -p ${shellEscape(BACKUP_WORK_DIR)}`
       );
       if (!mkdirResult.success) {
+        event.outcome = 'error';
+        event.errorMessage = 'Failed to create backup work directory';
         return serviceError({
           message: `Failed to create backup work directory: ${mkdirResult.error.message}`,
           code: ErrorCode.BACKUP_CREATE_FAILED,
@@ -151,6 +153,8 @@ export class BackupService {
         `test -d ${shellEscape(dir)}`
       );
       if (!checkResult.success || checkResult.data.exitCode !== 0) {
+        event.outcome = 'error';
+        event.errorMessage = 'Source directory does not exist';
         return serviceError({
           message: `Source directory does not exist: ${dir}`,
           code: ErrorCode.BACKUP_CREATE_FAILED,
@@ -168,6 +172,8 @@ export class BackupService {
         checkBinaryResult.success &&
         checkBinaryResult.data.stdout.includes('missing')
       ) {
+        event.outcome = 'error';
+        event.errorMessage = 'mksquashfs binary not found';
         return serviceError({
           message: `mksquashfs binary not found at ${BIN.mksquashfs}. Ensure squashfs-tools is installed.`,
           code: ErrorCode.BACKUP_CREATE_FAILED,
@@ -198,6 +204,8 @@ export class BackupService {
           writeExcludeResult.data.exitCode !== 0
         ) {
           shouldCleanupExcludeFile = true;
+          event.outcome = 'error';
+          event.errorMessage = 'Failed to write exclude patterns file';
           return serviceError({
             message: 'Failed to write exclude patterns file',
             code: ErrorCode.BACKUP_CREATE_FAILED,
@@ -230,6 +238,8 @@ export class BackupService {
       );
 
       if (!createResult.success) {
+        event.outcome = 'error';
+        event.errorMessage = 'Failed to create squashfs archive';
         return serviceError({
           message: `Failed to create squashfs archive: ${createResult.error.message}`,
           code: ErrorCode.BACKUP_CREATE_FAILED,
@@ -238,6 +248,8 @@ export class BackupService {
       }
 
       if (createResult.data.exitCode !== 0) {
+        event.outcome = 'error';
+        event.errorMessage = 'mksquashfs failed';
         return serviceError({
           message: `mksquashfs failed: ${createResult.data.stderr || createResult.data.stdout}`,
           code: ErrorCode.BACKUP_CREATE_FAILED,
@@ -422,6 +434,8 @@ export class BackupService {
         `test -f ${shellEscape(archivePath)}`
       );
       if (!checkResult.success || checkResult.data.exitCode !== 0) {
+        event.outcome = 'error';
+        event.errorMessage = 'Archive file does not exist';
         return serviceError({
           message: `Archive file does not exist: ${archivePath}`,
           code: ErrorCode.BACKUP_RESTORE_FAILED,
@@ -457,6 +471,8 @@ export class BackupService {
         `mkdir -p ${shellEscape(lowerDir)} ${shellEscape(upperDir)} ${shellEscape(workDir)} ${shellEscape(dir)}`
       );
       if (!mkdirResult.success) {
+        event.outcome = 'error';
+        event.errorMessage = 'Failed to create mount directories';
         return serviceError({
           message: `Failed to create mount directories: ${mkdirResult.error.message}`,
           code: ErrorCode.BACKUP_RESTORE_FAILED,
@@ -464,6 +480,8 @@ export class BackupService {
         });
       }
       if (mkdirResult.data.exitCode !== 0) {
+        event.outcome = 'error';
+        event.errorMessage = 'Failed to create mount directories';
         return serviceError({
           message: `Failed to create mount directories: ${mkdirResult.data.stderr}`,
           code: ErrorCode.BACKUP_RESTORE_FAILED,
@@ -478,6 +496,8 @@ export class BackupService {
         squashMountCmd
       );
       if (!squashMountResult.success) {
+        event.outcome = 'error';
+        event.errorMessage = 'Failed to mount squashfs';
         return serviceError({
           message: `Failed to mount squashfs: ${squashMountResult.error.message}`,
           code: ErrorCode.BACKUP_RESTORE_FAILED,
@@ -485,6 +505,8 @@ export class BackupService {
         });
       }
       if (squashMountResult.data.exitCode !== 0) {
+        event.outcome = 'error';
+        event.errorMessage = 'Failed to mount squashfs';
         return serviceError({
           message: `Failed to mount squashfs: ${squashMountResult.data.stderr}`,
           code: ErrorCode.BACKUP_RESTORE_FAILED,
@@ -511,6 +533,8 @@ export class BackupService {
           sessionId,
           `${BIN.fusermount} -u ${shellEscape(lowerDir)} 2>/dev/null || true`
         );
+        event.outcome = 'error';
+        event.errorMessage = 'Failed to mount overlayfs';
         return serviceError({
           message: `Failed to mount overlayfs: ${overlayMountResult.error.message}`,
           code: ErrorCode.BACKUP_RESTORE_FAILED,
@@ -523,6 +547,8 @@ export class BackupService {
           sessionId,
           `${BIN.fusermount} -u ${shellEscape(lowerDir)} 2>/dev/null || true`
         );
+        event.outcome = 'error';
+        event.errorMessage = 'Failed to mount overlayfs';
         return serviceError({
           message: `Failed to mount overlayfs: ${overlayMountResult.data.stderr}`,
           code: ErrorCode.BACKUP_RESTORE_FAILED,

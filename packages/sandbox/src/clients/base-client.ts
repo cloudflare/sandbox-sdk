@@ -216,10 +216,23 @@ export abstract class BaseHttpClient {
     body?: unknown,
     method: 'GET' | 'POST' = 'POST'
   ): Promise<ReadableStream<Uint8Array>> {
+    const streamHeaders =
+      method === 'POST'
+        ? {
+            ...this.options.defaultHeaders,
+            'Content-Type': 'application/json'
+          }
+        : this.options.defaultHeaders;
+
     // WebSocket mode uses Transport's streaming directly
     if (this.transport.getMode() === 'websocket') {
       try {
-        return await this.transport.fetchStream(path, body, method);
+        return await this.transport.fetchStream(
+          path,
+          body,
+          method,
+          streamHeaders
+        );
       } catch (error) {
         this.logError(`stream ${method} ${path}`, error);
         throw error;

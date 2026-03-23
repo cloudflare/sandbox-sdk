@@ -125,8 +125,9 @@ export class WebSocketTransport extends BaseTransport {
 
     const method = (options?.method || 'GET') as WSMethod;
     const body = this.parseBody(options?.body);
+    const headers = this.normalizeHeaders(options?.headers);
 
-    const result = await this.request(method, path, body);
+    const result = await this.request(method, path, body, headers);
 
     return new Response(JSON.stringify(result.body), {
       status: result.status,
@@ -140,9 +141,10 @@ export class WebSocketTransport extends BaseTransport {
   async fetchStream(
     path: string,
     body?: unknown,
-    method: 'GET' | 'POST' = 'POST'
+    method: 'GET' | 'POST' = 'POST',
+    headers?: Record<string, string>
   ): Promise<ReadableStream<Uint8Array>> {
-    return this.requestStream(method, path, body);
+    return this.requestStream(method, path, body, headers);
   }
 
   /**
@@ -166,6 +168,24 @@ export class WebSocketTransport extends BaseTransport {
     throw new Error(
       `WebSocket transport only supports string bodies. Got: ${typeof body}`
     );
+  }
+
+  /**
+   * Normalize RequestInit headers into a plain object for WSRequest.
+   */
+  private normalizeHeaders(
+    headers?: HeadersInit
+  ): Record<string, string> | undefined {
+    if (!headers) {
+      return undefined;
+    }
+
+    const normalized: Record<string, string> = {};
+    new Headers(headers).forEach((value, key) => {
+      normalized[key] = value;
+    });
+
+    return Object.keys(normalized).length > 0 ? normalized : undefined;
   }
 
   /**
@@ -308,7 +328,8 @@ export class WebSocketTransport extends BaseTransport {
   private async request<T>(
     method: WSMethod,
     path: string,
-    body?: unknown
+    body?: unknown,
+    headers?: Record<string, string>
   ): Promise<{ status: number; body: T }> {
     await this.connect();
 
@@ -318,7 +339,8 @@ export class WebSocketTransport extends BaseTransport {
       id,
       method,
       path,
-      body
+      body,
+      headers
     };
 
     return new Promise((resolve, reject) => {
@@ -373,7 +395,8 @@ export class WebSocketTransport extends BaseTransport {
   private async requestStream(
     method: WSMethod,
     path: string,
-    body?: unknown
+    body?: unknown,
+    headers?: Record<string, string>
   ): Promise<ReadableStream<Uint8Array>> {
     await this.connect();
 
@@ -383,7 +406,8 @@ export class WebSocketTransport extends BaseTransport {
       id,
       method,
       path,
-      body
+      body,
+      headers
     };
 
     const idleTimeoutMs =
