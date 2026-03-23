@@ -1,5 +1,52 @@
 # @cloudflare/sandbox
 
+## 0.7.18
+
+### Patch Changes
+
+- [#363](https://github.com/cloudflare/sandbox-sdk/pull/363) [`60967cd`](https://github.com/cloudflare/sandbox-sdk/commit/60967cd15e82929efbbacee00cdfb80d457b3b10) Thanks [@Destreyf](https://github.com/Destreyf)! - Add custom environment variable support to OpenCode integration.
+  Enable with `env` in `OpencodeOptions` to pass variables like OTEL endpoints or trace context.
+
+- [#489](https://github.com/cloudflare/sandbox-sdk/pull/489) [`80da532`](https://github.com/cloudflare/sandbox-sdk/commit/80da5321e9154d58ed24db0bb1aa822ed0b70c84) Thanks [@maschwenk](https://github.com/maschwenk)! - Fix environment variables not being inherited by PTY sessions opened via `sandbox.terminal`. Variables set with `setEnvVars()` were not being passed to the terminal environment.
+
+- [#468](https://github.com/cloudflare/sandbox-sdk/pull/468) [`378a85c`](https://github.com/cloudflare/sandbox-sdk/commit/378a85c2815755d22ea398a12cf787d0d3c2f72d) Thanks [@scuffi](https://github.com/scuffi)! - Add local R2 bucket mounting for development via bidirectional sync
+
+## 0.7.17
+
+### Patch Changes
+
+- [#474](https://github.com/cloudflare/sandbox-sdk/pull/474) [`5b0ce89`](https://github.com/cloudflare/sandbox-sdk/commit/5b0ce89eedb63d9920eaf82046a12e3837e1b660) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - Add `gitignore` and `excludes` options to `createBackup()`.
+  - `gitignore: true` excludes gitignored files when the directory is inside a git repo.
+    If git is not installed, a warning is logged and the backup proceeds without git-based exclusions.
+  - `excludes: string[]` allows explicit glob patterns to exclude from the backup.
+  - Both default to off/empty — existing behavior is unchanged.
+
+## 0.7.16
+
+### Patch Changes
+
+- [#470](https://github.com/cloudflare/sandbox-sdk/pull/470) [`887b032`](https://github.com/cloudflare/sandbox-sdk/commit/887b0321990a3e23f8060229ecc06210affb3f1c) Thanks [@maschwenk](https://github.com/maschwenk)! - Pass session env vars and working directory to PTY on creation
+
+## 0.7.15
+
+### Patch Changes
+
+- [#400](https://github.com/cloudflare/sandbox-sdk/pull/400) [`92e1fda`](https://github.com/cloudflare/sandbox-sdk/commit/92e1fdabb5313b9c23a755cebb9f8807954ca346) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - Improve idle timeout handling for long-running streams over WebSocket transport.
+
+  Streams now remain open as long as data is flowing, timing out only after 5 minutes of inactivity.
+
+- [#450](https://github.com/cloudflare/sandbox-sdk/pull/450) [`75dc1f9`](https://github.com/cloudflare/sandbox-sdk/commit/75dc1f9ae127479de782934d307c1acdbd2591d2) Thanks [@scuffi](https://github.com/scuffi)! - Support per-command and per-session timeouts for exec
+
+  Timeouts now propagate correctly through the full stack. Per-command `timeout` on `exec()` takes priority over session-level `commandTimeoutMs` set via `createSession()`, which takes priority over the container-level `COMMAND_TIMEOUT_MS` environment variable.
+
+## 0.7.14
+
+### Patch Changes
+
+- [#476](https://github.com/cloudflare/sandbox-sdk/pull/476) [`440eb1f`](https://github.com/cloudflare/sandbox-sdk/commit/440eb1fa929b8e57d69c055f256f9b9c40f2d36e) Thanks [@berry1001](https://github.com/berry1001)! - Fix sandboxes staying awake indefinitely after disabling `keepAlive`. Calling `setKeepAlive(false)` now correctly re-arms the `sleepAfter` timeout so the sandbox returns to its configured sleep lifecycle.
+
+- [#469](https://github.com/cloudflare/sandbox-sdk/pull/469) [`856f4dd`](https://github.com/cloudflare/sandbox-sdk/commit/856f4dd80c853fe857f4ecb88c3dc52a3e0bf110) Thanks [@maschwenk](https://github.com/maschwenk)! - Add `shell` option to `PtyOptions` to allow specifying which shell to spawn (e.g. `zsh`, `sh`, `fish`). Defaults to `bash` when not specified.
+
 ## 0.7.13
 
 ### Patch Changes
@@ -138,13 +185,13 @@
   As a base image:
 
   ```dockerfile
-  FROM docker.io/cloudflare/sandbox:0.7.13-musl
+  FROM docker.io/cloudflare/sandbox:0.7.18-musl
   ```
 
   Or copy the binary into your own Alpine image:
 
   ```dockerfile
-  COPY --from=docker.io/cloudflare/sandbox:0.7.13-musl /container-server/sandbox /sandbox
+  COPY --from=docker.io/cloudflare/sandbox:0.7.18-musl /container-server/sandbox /sandbox
   ```
 
 - [#377](https://github.com/cloudflare/sandbox-sdk/pull/377) [`d83642e`](https://github.com/cloudflare/sandbox-sdk/commit/d83642e855f68e4fb8c15c2452709923e55a83fd) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Allow port 8787 in `exposePort()`. It was incorrectly blocked.
@@ -367,10 +414,10 @@
 
   ```dockerfile
   # Before
-  FROM cloudflare/sandbox:0.7.13
+  FROM cloudflare/sandbox:0.7.18
 
   # After
-  FROM cloudflare/sandbox:0.7.13-python
+  FROM cloudflare/sandbox:0.7.18-python
   ```
 
   Without this change, Python execution will fail with `PYTHON_NOT_AVAILABLE` error.

@@ -25,8 +25,16 @@ export interface TransportConfig {
   /** Port number */
   port?: number;
 
-  /** Request timeout in milliseconds */
+  /** Request timeout in milliseconds (non-streaming requests) */
   requestTimeoutMs?: number;
+
+  /**
+   * Idle timeout for streaming requests in milliseconds (WebSocket only).
+   * The timer resets on every chunk, so streams stay alive as long as data
+   * is flowing. Only triggers when the stream is silent for this duration.
+   * @default 300000 (5 minutes)
+   */
+  streamIdleTimeoutMs?: number;
 
   /** Connection timeout in milliseconds (WebSocket only) */
   connectTimeoutMs?: number;

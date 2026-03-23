@@ -199,7 +199,7 @@ export class GitService {
       });
     } finally {
       const logEvent: Record<string, unknown> = {
-        repoUrl,
+        repoUrl: redactCredentials(repoUrl),
         targetDir: options.targetDir,
         branch: options.branch,
         sessionId,

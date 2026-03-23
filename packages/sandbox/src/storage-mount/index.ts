@@ -14,7 +14,7 @@ export {
   getProviderFlags,
   resolveS3fsOptions
 } from './provider-detection';
-export type { MountInfo } from './types';
+export type { FuseMountInfo, LocalSyncMountInfo, MountInfo } from './types';
 export {
   buildS3fsSource,
   validateBucketName,

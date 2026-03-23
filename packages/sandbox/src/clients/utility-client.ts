@@ -31,6 +31,7 @@ export interface CreateSessionRequest {
   id: string;
   env?: Record<string, string | undefined>;
   cwd?: string;
+  commandTimeoutMs?: number;
 }
 
 /**

@@ -1,5 +1,6 @@
 // SessionManager Service - Manages persistent execution sessions
 
+import { rm } from 'node:fs/promises';
 import {
   type ExecEvent,
   type Logger,
@@ -15,6 +16,7 @@ import type {
 } from '@repo/shared/errors';
 import { ErrorCode } from '@repo/shared/errors';
 import { Mutex } from 'async-mutex';
+import { time } from 'console';
 import { CONFIG } from '../config';
 import {
   type ServiceError,
@@ -316,7 +318,9 @@ export class SessionManager {
 
         const result = await session.exec(
           command,
-          cwd || env ? { cwd, env } : undefined
+          cwd || env || timeoutMs !== undefined
+            ? { cwd, env, timeoutMs }
+            : undefined
         );
 
         return {
@@ -370,7 +374,11 @@ export class SessionManager {
     fn: (
       exec: (
         command: string,
-        options?: { cwd?: string; env?: Record<string, string | undefined> }
+        options?: {
+          cwd?: string;
+          env?: Record<string, string | undefined>;
+          timeoutMs?: number;
+        }
       ) => Promise<RawExecResult>
     ) => Promise<T>,
     cwd?: string
@@ -393,7 +401,11 @@ export class SessionManager {
         // Provide exec function that uses the session directly (already under lock)
         const exec = async (
           command: string,
-          options?: { cwd?: string; env?: Record<string, string | undefined> }
+          options?: {
+            cwd?: string;
+            env?: Record<string, string | undefined>;
+            timeoutMs?: number;
+          }
         ): Promise<RawExecResult> => {
           return session.exec(command, options);
         };
@@ -705,8 +717,44 @@ export class SessionManager {
         return { success: true, data: session.pty };
       }
 
+      // Capture the session shell's current environment and working
+      // directory so the PTY inherits env vars set via setEnvVars()
+      // and reflects any directory changes made in the session.
+      //
+      // Captures env output to a temp file. The exec pipeline's
+      // `read`-based labeling strips \0 from stdout, so reading
+      // the file directly with Bun preserves the null-byte delimiters.
+      const sessionEnv: Record<string, string> = {};
+      let sessionCwd: string = CONFIG.DEFAULT_CWD;
+      const safeId = sessionId.replace(/[^a-zA-Z0-9_-]/g, '_');
+      const tempEnvFile = `/tmp/pty-env-${safeId}-${Date.now()}`;
+      try {
+        const envResult = await session.exec(`env -0 > '${tempEnvFile}'`);
+        if (envResult.exitCode === 0) {
+          const envText = await Bun.file(tempEnvFile).text();
+          for (const entry of envText.split('\0')) {
+            const idx = entry.indexOf('=');
+            if (idx > 0) {
+              sessionEnv[entry.slice(0, idx)] = entry.slice(idx + 1);
+            }
+          }
+        }
+
+        const cwdResult = await session.exec('pwd');
+        if (cwdResult.exitCode === 0 && cwdResult.stdout?.trim()) {
+          sessionCwd = cwdResult.stdout.trim();
+        }
+      } catch {
+        this.logger.warn('Failed to capture session state for PTY', {
+          sessionId
+        });
+      } finally {
+        await rm(tempEnvFile, { force: true }).catch(() => {});
+      }
+
       const pty = new Pty({
-        cwd: CONFIG.DEFAULT_CWD,
+        cwd: sessionCwd,
+        env: sessionEnv,
         logger: this.logger
       });
 

@@ -151,6 +151,10 @@ export interface CreateBackupRequest {
   dir: string;
   /** Path where the container should write the archive */
   archivePath: string;
+  /** Respect git ignore rules when the directory is inside a git repository */
+  gitignore?: boolean;
+  /** Glob patterns to exclude from the backup */
+  excludes?: string[];
   sessionId?: string;
 }
 

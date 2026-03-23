@@ -12,6 +12,7 @@ import type {
   ExecutionResult,
   ExecutionSession,
   ISandbox,
+  LocalMountBucketOptions,
   LogEvent,
   MountBucketOptions,
   PortWatchEvent,
@@ -19,6 +20,7 @@ import type {
   ProcessOptions,
   ProcessStatus,
   PtyOptions,
+  RemoteMountBucketOptions,
   RestoreBackupResult,
   RunCodeOptions,
   SandboxOptions,
@@ -55,6 +57,7 @@ import {
   SessionAlreadyExistsError
 } from './errors';
 import { CodeInterpreter } from './interpreter';
+import { LocalMountSyncManager } from './local-mount-sync';
 import { proxyTerminal } from './pty';
 import { isLocalhostPattern } from './request-handler';
 import { SecurityError, sanitizeSandboxId, validatePort } from './security';
@@ -71,8 +74,199 @@ import {
   InvalidMountConfigError,
   S3FSMountError
 } from './storage-mount/errors';
-import type { MountInfo } from './storage-mount/types';
+import type {
+  FuseMountInfo,
+  LocalSyncMountInfo,
+  MountInfo
+} from './storage-mount/types';
 import { SDK_VERSION } from './version';
+
+type SandboxConfiguration = {
+  sandboxName?: {
+    name: string;
+    normalizeId?: boolean;
+  };
+  baseUrl?: string;
+  sleepAfter?: string | number;
+  keepAlive?: boolean;
+  containerTimeouts?: NonNullable<SandboxOptions['containerTimeouts']>;
+};
+
+type CachedSandboxConfiguration = {
+  sandboxName?: string;
+  normalizeId?: boolean;
+  baseUrl?: string;
+  sleepAfter?: string | number;
+  keepAlive?: boolean;
+  containerTimeouts?: NonNullable<SandboxOptions['containerTimeouts']>;
+};
+
+type ConfigurableSandboxStub = {
+  configure?: (configuration: SandboxConfiguration) => Promise<void>;
+  setSandboxName?: (name: string, normalizeId?: boolean) => Promise<void>;
+  setBaseUrl?: (baseUrl: string) => Promise<void>;
+  setSleepAfter?: (sleepAfter: string | number) => Promise<void>;
+  setKeepAlive?: (keepAlive: boolean) => Promise<void>;
+  setContainerTimeouts?: (
+    timeouts: NonNullable<SandboxOptions['containerTimeouts']>
+  ) => Promise<void>;
+};
+
+const sandboxConfigurationCache = new WeakMap<
+  object,
+  Map<string, CachedSandboxConfiguration>
+>();
+
+function getNamespaceConfigurationCache(
+  namespace: object
+): Map<string, CachedSandboxConfiguration> {
+  const existing = sandboxConfigurationCache.get(namespace);
+  if (existing) {
+    return existing;
+  }
+
+  const created = new Map<string, CachedSandboxConfiguration>();
+  sandboxConfigurationCache.set(namespace, created);
+  return created;
+}
+
+function sameContainerTimeouts(
+  left?: NonNullable<SandboxOptions['containerTimeouts']>,
+  right?: NonNullable<SandboxOptions['containerTimeouts']>
+): boolean {
+  return (
+    left?.instanceGetTimeoutMS === right?.instanceGetTimeoutMS &&
+    left?.portReadyTimeoutMS === right?.portReadyTimeoutMS &&
+    left?.waitIntervalMS === right?.waitIntervalMS
+  );
+}
+
+function buildSandboxConfiguration(
+  effectiveId: string,
+  options: SandboxOptions | undefined,
+  cached: CachedSandboxConfiguration | undefined
+): SandboxConfiguration {
+  const configuration: SandboxConfiguration = {};
+
+  if (
+    cached?.sandboxName !== effectiveId ||
+    cached.normalizeId !== options?.normalizeId
+  ) {
+    configuration.sandboxName = {
+      name: effectiveId,
+      normalizeId: options?.normalizeId
+    };
+  }
+
+  if (options?.baseUrl !== undefined && cached?.baseUrl !== options.baseUrl) {
+    configuration.baseUrl = options.baseUrl;
+  }
+
+  if (
+    options?.sleepAfter !== undefined &&
+    cached?.sleepAfter !== options.sleepAfter
+  ) {
+    configuration.sleepAfter = options.sleepAfter;
+  }
+
+  if (
+    options?.keepAlive !== undefined &&
+    cached?.keepAlive !== options.keepAlive
+  ) {
+    configuration.keepAlive = options.keepAlive;
+  }
+
+  if (
+    options?.containerTimeouts &&
+    !sameContainerTimeouts(cached?.containerTimeouts, options.containerTimeouts)
+  ) {
+    configuration.containerTimeouts = options.containerTimeouts;
+  }
+
+  return configuration;
+}
+
+function hasSandboxConfiguration(configuration: SandboxConfiguration): boolean {
+  return (
+    configuration.sandboxName !== undefined ||
+    configuration.baseUrl !== undefined ||
+    configuration.sleepAfter !== undefined ||
+    configuration.keepAlive !== undefined ||
+    configuration.containerTimeouts !== undefined
+  );
+}
+
+function mergeSandboxConfiguration(
+  cached: CachedSandboxConfiguration | undefined,
+  configuration: SandboxConfiguration
+): CachedSandboxConfiguration {
+  return {
+    ...cached,
+    ...(configuration.sandboxName && {
+      sandboxName: configuration.sandboxName.name,
+      normalizeId: configuration.sandboxName.normalizeId
+    }),
+    ...(configuration.baseUrl !== undefined && {
+      baseUrl: configuration.baseUrl
+    }),
+    ...(configuration.sleepAfter !== undefined && {
+      sleepAfter: configuration.sleepAfter
+    }),
+    ...(configuration.keepAlive !== undefined && {
+      keepAlive: configuration.keepAlive
+    }),
+    ...(configuration.containerTimeouts !== undefined && {
+      containerTimeouts: configuration.containerTimeouts
+    })
+  };
+}
+
+function applySandboxConfiguration(
+  stub: ConfigurableSandboxStub,
+  configuration: SandboxConfiguration
+): Promise<void> {
+  if (stub.configure) {
+    return stub.configure(configuration);
+  }
+
+  const operations: Promise<void>[] = [];
+
+  if (configuration.sandboxName) {
+    operations.push(
+      stub.setSandboxName?.(
+        configuration.sandboxName.name,
+        configuration.sandboxName.normalizeId
+      ) ?? Promise.resolve()
+    );
+  }
+
+  if (configuration.baseUrl !== undefined) {
+    operations.push(
+      stub.setBaseUrl?.(configuration.baseUrl) ?? Promise.resolve()
+    );
+  }
+
+  if (configuration.sleepAfter !== undefined) {
+    operations.push(
+      stub.setSleepAfter?.(configuration.sleepAfter) ?? Promise.resolve()
+    );
+  }
+
+  if (configuration.keepAlive !== undefined) {
+    operations.push(
+      stub.setKeepAlive?.(configuration.keepAlive) ?? Promise.resolve()
+    );
+  }
+
+  if (configuration.containerTimeouts !== undefined) {
+    operations.push(
+      stub.setContainerTimeouts?.(configuration.containerTimeouts) ??
+        Promise.resolve()
+    );
+  }
+
+  return Promise.all(operations).then(() => undefined);
+}
 
 export function getSandbox<T extends Sandbox<any>>(
   ns: DurableObjectNamespace<T>,
@@ -94,24 +288,34 @@ export function getSandbox<T extends Sandbox<any>>(
     );
   }
 
-  const stub = getContainer(ns, effectiveId);
+  const stub = getContainer(
+    ns as unknown as DurableObjectNamespace<Container<Cloudflare.Env>>,
+    effectiveId
+  ) as unknown as T & ConfigurableSandboxStub;
 
-  stub.setSandboxName?.(effectiveId, options?.normalizeId);
+  const namespaceCache = getNamespaceConfigurationCache(ns);
+  const cachedConfiguration = namespaceCache.get(effectiveId);
+  const configuration = buildSandboxConfiguration(
+    effectiveId,
+    options,
+    cachedConfiguration
+  );
 
-  if (options?.baseUrl) {
-    stub.setBaseUrl(options.baseUrl);
-  }
+  if (hasSandboxConfiguration(configuration)) {
+    const nextConfiguration = mergeSandboxConfiguration(
+      cachedConfiguration,
+      configuration
+    );
+    namespaceCache.set(effectiveId, nextConfiguration);
 
-  if (options?.sleepAfter !== undefined) {
-    stub.setSleepAfter(options.sleepAfter);
-  }
+    void applySandboxConfiguration(stub, configuration).catch(() => {
+      if (cachedConfiguration) {
+        namespaceCache.set(effectiveId, cachedConfiguration);
+        return;
+      }
 
-  if (options?.keepAlive !== undefined) {
-    stub.setKeepAlive(options.keepAlive);
-  }
-
-  if (options?.containerTimeouts) {
-    stub.setContainerTimeouts(options.containerTimeouts);
+      namespaceCache.delete(effectiveId);
+    });
   }
 
   const defaultSessionId = `sandbox-${effectiveId}`;
@@ -214,6 +418,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private keepAliveEnabled: boolean = false;
   private activeMounts: Map<string, MountInfo> = new Map();
   private transport: 'http' | 'websocket' = 'http';
+
   // R2 bucket binding for backup storage (optional — only set if user configures BACKUP_BUCKET)
   private backupBucket: R2Bucket | null = null;
   /**
@@ -249,8 +454,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     portReadyTimeoutMS: 90_000, // 90 seconds (allows for heavy containers)
 
     // Polling interval for checking container readiness
-    // @cloudflare/containers default: 300ms (too aggressive)
-    waitIntervalMS: 1000 // 1 second (reduces load)
+    waitIntervalMS: 300
   };
 
   /**
@@ -434,6 +638,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         // Update the transport retry budget to reflect stored timeouts
         this.client.setRetryTimeoutMs(this.computeRetryTimeoutMs());
       }
+
+      // Restore sleep timeout if previously set via RPC
+      const storedSleepAfter = await this.ctx.storage.get<string | number>(
+        'sleepAfter'
+      );
+      if (storedSleepAfter !== undefined) {
+        this.sleepAfter = storedSleepAfter;
+        this.renewActivityTimeout();
+      }
     });
   }
 
@@ -443,6 +656,31 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       this.normalizeId = normalizeId || false;
       await this.ctx.storage.put('sandboxName', name);
       await this.ctx.storage.put('normalizeId', this.normalizeId);
+    }
+  }
+
+  async configure(configuration: SandboxConfiguration): Promise<void> {
+    if (configuration.sandboxName) {
+      await this.setSandboxName(
+        configuration.sandboxName.name,
+        configuration.sandboxName.normalizeId
+      );
+    }
+
+    if (configuration.baseUrl !== undefined) {
+      await this.setBaseUrl(configuration.baseUrl);
+    }
+
+    if (configuration.sleepAfter !== undefined) {
+      await this.setSleepAfter(configuration.sleepAfter);
+    }
+
+    if (configuration.keepAlive !== undefined) {
+      await this.setKeepAlive(configuration.keepAlive);
+    }
+
+    if (configuration.containerTimeouts !== undefined) {
+      await this.setContainerTimeouts(configuration.containerTimeouts);
     }
   }
 
@@ -463,6 +701,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   // RPC method to set the sleep timeout
   async setSleepAfter(sleepAfter: string | number): Promise<void> {
     this.sleepAfter = sleepAfter;
+    await this.ctx.storage.put('sleepAfter', sleepAfter);
     // Reschedule activity timeout to apply the new sleepAfter value immediately
     this.renewActivityTimeout();
   }
@@ -471,6 +710,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   async setKeepAlive(keepAlive: boolean): Promise<void> {
     this.keepAliveEnabled = keepAlive;
     await this.ctx.storage.put('keepAliveEnabled', keepAlive);
+
+    if (!keepAlive) {
+      this.renewActivityTimeout();
+    }
   }
 
   async setEnvVars(envVars: Record<string, string | undefined>): Promise<void> {
@@ -648,15 +891,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     };
   }
 
-  /*
-   * Mount an S3-compatible bucket as a local directory using S3FS-FUSE
+  /**
+   * Mount an S3-compatible bucket as a local directory.
    *
-   * Requires explicit endpoint URL. Credentials are auto-detected from environment
+   * Requires explicit endpoint URL for production. Credentials are auto-detected from environment
    * variables or can be provided explicitly.
    *
-   * @param bucket - Bucket name
+   * @param bucket - Bucket name (or R2 binding name when localBucket is true)
    * @param mountPath - Absolute path in container to mount at
-   * @param options - Configuration options with required endpoint
+   * @param options - Mount configuration
    * @throws MissingCredentialsError if no credentials found in environment
    * @throws S3FSMountError if S3FS mount command fails
    * @throws InvalidMountConfigError if bucket name, mount path, or endpoint is invalid
@@ -668,32 +911,133 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   ): Promise<void> {
     const mountStartTime = Date.now();
 
+    if ('localBucket' in options && options.localBucket) {
+      await this.mountBucketLocal(bucket, mountPath, options);
+      return;
+    }
+
+    await this.mountBucketFuse(
+      bucket,
+      mountPath,
+      options as RemoteMountBucketOptions
+    );
+  }
+
+  /**
+   * Local dev mount: bidirectional sync via R2 binding + file/watch APIs
+   */
+  private async mountBucketLocal(
+    bucket: string,
+    mountPath: string,
+    options: LocalMountBucketOptions
+  ): Promise<void> {
+    const envObj = this.env as Record<string, unknown>;
+    const r2Binding = envObj[bucket];
+    if (!r2Binding || !isR2Bucket(r2Binding)) {
+      throw new InvalidMountConfigError(
+        `R2 binding "${bucket}" not found in env or is not an R2Bucket. ` +
+          'Make sure the binding name matches your wrangler.jsonc R2 binding.'
+      );
+    }
+
+    if (!mountPath || !mountPath.startsWith('/')) {
+      throw new InvalidMountConfigError(
+        `Invalid mount path: "${mountPath}". Must be an absolute path starting with /`
+      );
+    }
+
+    if (this.activeMounts.has(mountPath)) {
+      throw new InvalidMountConfigError(
+        `Mount path already in use: ${mountPath}`
+      );
+    }
+
+    const sessionId = await this.ensureDefaultSession();
+
+    const syncManager = new LocalMountSyncManager({
+      bucket: r2Binding,
+      mountPath,
+      prefix: options.prefix,
+      readOnly: options.readOnly ?? false,
+      client: this.client,
+      sessionId,
+      logger: this.logger
+    });
+
+    const mountInfo: LocalSyncMountInfo = {
+      mountType: 'local-sync',
+      bucket,
+      mountPath,
+      syncManager,
+      mounted: false
+    };
+    this.activeMounts.set(mountPath, mountInfo);
+
+    try {
+      await syncManager.start();
+      mountInfo.mounted = true;
+      this.logger.info(
+        `Successfully mounted bucket ${bucket} to ${mountPath} (local sync)`
+      );
+    } catch (error) {
+      await syncManager.stop();
+      this.activeMounts.delete(mountPath);
+      throw error;
+    }
+  }
+
+  /**
+   * Production mount: S3FS-FUSE inside the container
+   */
+  private async mountBucketFuse(
+    bucket: string,
+    mountPath: string,
+    options: RemoteMountBucketOptions
+  ): Promise<void> {
+    const mountStartTime = Date.now();
     const prefix = options.prefix || undefined;
 
     this.validateMountOptions(bucket, mountPath, { ...options, prefix });
 
     // Build s3fs source: bucket name with optional prefix (e.g., "mybucket:/prefix/")
     const s3fsSource = buildS3fsSource(bucket, prefix);
-
-    // Detect provider from explicit option or URL pattern
     const provider: BucketProvider | null =
       options.provider || detectProviderFromUrl(options.endpoint);
 
+    this.logger.debug(`Detected provider: ${provider || 'unknown'}`, {
+      explicitProvider: options.provider,
+      prefix
+    });
+
+    // Attempt to load credentials from the DO env
+    const envObj = this.env as Record<string, unknown>;
+    const envCredentials = {
+      AWS_ACCESS_KEY_ID: getEnvString(envObj, 'AWS_ACCESS_KEY_ID'),
+      AWS_SECRET_ACCESS_KEY: getEnvString(envObj, 'AWS_SECRET_ACCESS_KEY'),
+      R2_ACCESS_KEY_ID: this.r2AccessKeyId || undefined,
+      R2_SECRET_ACCESS_KEY: this.r2SecretAccessKey || undefined
+    };
+
     // Detect credentials
-    const credentials = detectCredentials(options, this.envVars);
+    const credentials = detectCredentials(options, {
+      ...envCredentials,
+      ...this.envVars
+    });
 
     // Generate unique password file path
     const passwordFilePath = this.generatePasswordFilePath();
 
     // Reserve mount path before async operations so concurrent mounts see it
-    this.activeMounts.set(mountPath, {
+    const mountInfo: FuseMountInfo = {
+      mountType: 'fuse',
       bucket: s3fsSource,
       mountPath,
       endpoint: options.endpoint,
       provider,
       passwordFilePath,
       mounted: false
-    });
+    };
+    this.activeMounts.set(mountPath, mountInfo);
 
     try {
       // Create password file with credentials (uses bucket name only, not prefix)
@@ -711,16 +1055,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         passwordFilePath
       );
 
-      // Mark as successfully mounted
-      this.activeMounts.set(mountPath, {
-        bucket: s3fsSource,
-        mountPath,
-        endpoint: options.endpoint,
-        provider,
-        passwordFilePath,
-        mounted: true
-      });
-
+      mountInfo.mounted = true;
       this.logger.info('bucket.mount', {
         bucket,
         mountPath,
@@ -759,15 +1094,22 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
 
     // Unmount the filesystem
-    try {
-      await this.exec(`fusermount -u ${shellEscape(mountPath)}`);
+    if (mountInfo.mountType === 'local-sync') {
+      await mountInfo.syncManager.stop();
       mountInfo.mounted = false;
-
-      // Only remove from tracking if unmount succeeded
       this.activeMounts.delete(mountPath);
-    } finally {
-      // Always cleanup password file, even if unmount fails
-      await this.deletePasswordFile(mountInfo.passwordFilePath);
+    } else {
+      // FUSE unmount
+      try {
+        await this.exec(`fusermount -u ${shellEscape(mountPath)}`);
+        mountInfo.mounted = false;
+
+        // Only remove from tracking if unmount succeeded
+        this.activeMounts.delete(mountPath);
+      } finally {
+        // Always cleanup password file, even if unmount fails
+        await this.deletePasswordFile(mountInfo.passwordFilePath);
+      }
     }
 
     this.logger.info('bucket.unmount', {
@@ -784,15 +1126,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private validateMountOptions(
     bucket: string,
     mountPath: string,
-    options: MountBucketOptions
+    options: RemoteMountBucketOptions
   ): void {
-    // Require endpoint field
-    if (!options.endpoint) {
-      throw new InvalidMountConfigError(
-        'Endpoint is required. Provide the full S3-compatible endpoint URL.'
-      );
-    }
-
     // Basic URL validation
     try {
       new URL(options.endpoint);
@@ -870,7 +1205,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private async executeS3FSMount(
     bucket: string,
     mountPath: string,
-    options: MountBucketOptions,
+    options: RemoteMountBucketOptions,
     provider: BucketProvider | null,
     passwordFilePath: string
   ): Promise<void> {
@@ -931,11 +1266,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     // Disconnect WebSocket transport if active
     this.client.disconnect();
 
-    // Unmount all mounted buckets and cleanup password files
+    // Unmount all mounted buckets and cleanup
     for (const [mountPath, mountInfo] of this.activeMounts.entries()) {
-      if (mountInfo.mounted) {
+      if (mountInfo.mountType === 'local-sync') {
         try {
-          await this.exec(`fusermount -u ${shellEscape(mountPath)}`);
+          await mountInfo.syncManager.stop();
           mountInfo.mounted = false;
           mountResults.push({
             mountPath,
@@ -943,16 +1278,37 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
             outcome: 'success'
           });
         } catch (error) {
+          const errorMsg =
+            error instanceof Error ? error.message : String(error);
+          this.logger.warn(
+            `Failed to stop local sync for ${mountPath}: ${errorMsg}`
+          );
           mountResults.push({
             mountPath,
             bucket: mountInfo.bucket,
-            outcome: error instanceof Error ? error.message : String(error)
+            outcome: errorMsg
           });
         }
-      }
+      } else {
+        if (mountInfo.mounted) {
+          try {
+            this.logger.info(
+              `Unmounting bucket ${mountInfo.bucket} from ${mountPath}`
+            );
+            await this.exec(`fusermount -u ${shellEscape(mountPath)}`);
+            mountInfo.mounted = false;
+          } catch (error) {
+            const errorMsg =
+              error instanceof Error ? error.message : String(error);
+            this.logger.warn(
+              `Failed to unmount bucket ${mountInfo.bucket} from ${mountPath}: ${errorMsg}`
+            );
+          }
+        }
 
-      // Always cleanup password file
-      await this.deletePasswordFile(mountInfo.passwordFilePath);
+        // Always cleanup password file for FUSE mounts
+        await this.deletePasswordFile(mountInfo.passwordFilePath);
+      }
     }
 
     this.logger.info('sandbox.destroy', {
@@ -1011,8 +1367,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   override async onStop() {
     this.logger.debug('Sandbox stopped');
 
-    // Clear in-memory state that references the old container
-    // This prevents stale references after container restarts
+    // Stop local sync managers before clearing the map to avoid leaking timers
+    for (const [, m] of this.activeMounts) {
+      if (m.mountType === 'local-sync')
+        await m.syncManager.stop().catch(() => {});
+    }
+
     this.defaultSession = null;
     this.activeMounts.clear();
 
@@ -2874,7 +3234,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     await this.client.utils.createSession({
       id: sessionId,
       ...(envPayload && { env: envPayload }),
-      ...(options?.cwd && { cwd: options.cwd })
+      ...(options?.cwd && { cwd: options.cwd }),
+      ...(options?.commandTimeoutMs !== undefined && {
+        commandTimeoutMs: options.commandTimeoutMs
+      })
     });
 
     // Return wrapper that binds sessionId to all operations
@@ -3434,7 +3797,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     this.requirePresignedUrlSupport();
     const DEFAULT_TTL_SECONDS = 259200; // 3 days
     const MAX_NAME_LENGTH = 256;
-    const { dir, name, ttl = DEFAULT_TTL_SECONDS } = options;
+    const {
+      dir,
+      name,
+      ttl = DEFAULT_TTL_SECONDS,
+      gitignore = false,
+      excludes = []
+    } = options;
     Sandbox.validateBackupDir(dir, 'BackupOptions.dir');
     if (name !== undefined) {
       if (typeof name !== 'string' || name.length > MAX_NAME_LENGTH) {
@@ -3470,14 +3839,47 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       });
     }
 
+    if (typeof gitignore !== 'boolean') {
+      throw new InvalidBackupConfigError({
+        message: 'BackupOptions.gitignore must be a boolean',
+        code: ErrorCode.INVALID_BACKUP_CONFIG,
+        httpStatus: 400,
+        context: { reason: 'gitignore must be a boolean' },
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    if (
+      !Array.isArray(excludes) ||
+      !excludes.every((e: unknown) => typeof e === 'string')
+    ) {
+      throw new InvalidBackupConfigError({
+        message: 'BackupOptions.excludes must be an array of strings',
+        code: ErrorCode.INVALID_BACKUP_CONFIG,
+        httpStatus: 400,
+        context: { reason: 'excludes must be an array of strings' },
+        timestamp: new Date().toISOString()
+      });
+    }
+
     const backupSession = await this.ensureBackupSession();
     const backupId = crypto.randomUUID();
     const archivePath = `/var/backups/${backupId}.sqsh`;
 
+    this.logger.info('Creating backup', {
+      backupId,
+      dir,
+      name,
+      gitignore,
+      excludes
+    });
+
     const createResult = await this.client.backup.createArchive(
       dir,
       archivePath,
-      backupSession
+      backupSession,
+      gitignore,
+      excludes
     );
 
     if (!createResult.success) {

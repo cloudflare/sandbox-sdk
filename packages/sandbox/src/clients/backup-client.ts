@@ -23,12 +23,16 @@ export class BackupClient extends BaseHttpClient {
   async createArchive(
     dir: string,
     archivePath: string,
-    sessionId: string
+    sessionId: string,
+    gitignore = false,
+    excludes: string[] = []
   ): Promise<CreateBackupResponse> {
     try {
       const data: CreateBackupRequest = {
         dir,
         archivePath,
+        gitignore,
+        excludes,
         sessionId
       };
 
