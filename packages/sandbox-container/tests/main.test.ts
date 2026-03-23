@@ -20,7 +20,6 @@ describe('createSupervisorController', () => {
     const exit = vi.fn();
     const kill = vi.fn().mockReturnValue(true);
     const child = {
-      killed: false,
       exitCode: null,
       kill
     };
@@ -44,7 +43,6 @@ describe('createSupervisorController', () => {
     const exit = vi.fn();
     const kill = vi.fn().mockReturnValue(true);
     const child = {
-      killed: false,
       exitCode: 0,
       kill
     };
@@ -74,7 +72,6 @@ describe('createSupervisorController', () => {
     const exit = vi.fn();
     const kill = vi.fn().mockReturnValue(true);
     const child = {
-      killed: false,
       exitCode: null,
       kill
     };
@@ -112,5 +109,37 @@ describe('createSupervisorController', () => {
     controller.onChildExit(null, 'SIGTERM');
 
     expect(exit).toHaveBeenCalledWith(143);
+  });
+
+  it('does not exit when child exits with code 0 outside shutdown', () => {
+    const cleanup = vi.fn().mockResolvedValue(undefined);
+    const exit = vi.fn();
+
+    const controller = createSupervisorController({
+      cleanup,
+      getChild: () => null,
+      exit,
+      logger: mockLogger
+    });
+
+    controller.onChildExit(0, null);
+
+    expect(exit).not.toHaveBeenCalled();
+  });
+
+  it('exits with child exit code on non-zero exit outside shutdown', () => {
+    const cleanup = vi.fn().mockResolvedValue(undefined);
+    const exit = vi.fn();
+
+    const controller = createSupervisorController({
+      cleanup,
+      getChild: () => null,
+      exit,
+      logger: mockLogger
+    });
+
+    controller.onChildExit(1, null);
+
+    expect(exit).toHaveBeenCalledWith(1);
   });
 });

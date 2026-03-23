@@ -22,7 +22,6 @@ import { registerShutdownHandlers, startServer } from './server';
 const logger = createLogger({ component: 'container' });
 
 interface SupervisorChildProcess {
-  killed: boolean;
   exitCode: number | null;
   kill(signal?: NodeJS.Signals): boolean;
 }
@@ -81,7 +80,7 @@ export function createSupervisorController({
       controllerLogger.info('Received supervisor shutdown signal', { signal });
 
       const child = getChild();
-      if (child && child.exitCode === null && !child.killed) {
+      if (child && child.exitCode === null) {
         controllerLogger.info('Forwarding signal to child', { signal });
         child.kill(signal);
       }
@@ -155,6 +154,9 @@ export async function main(): Promise<void> {
 
   child.on('error', (err) => {
     logger.error('Failed to spawn user command', err, { command: userCmd[0] });
+    if (controller.isShuttingDown()) {
+      return;
+    }
     process.exit(1);
   });
 
