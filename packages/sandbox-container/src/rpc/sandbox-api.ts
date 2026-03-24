@@ -35,7 +35,7 @@ import type { ProcessService } from '../services/process-service';
 import type { SessionManager } from '../services/session-manager';
 import type { WatchService } from '../services/watch-service';
 
-export interface SandboxRpcApiDeps {
+export interface SandboxRpcAPIDeps {
   processService: ProcessService;
   fileService: FileService;
   portService: PortService;
@@ -74,10 +74,10 @@ function extractData<T>(result: any): T {
  * HTTP handler/router layer. ServiceResult errors are converted to
  * thrown exceptions which capnweb propagates back to the caller.
  */
-export class SandboxRpcApi extends RpcTarget {
-  #deps: SandboxRpcApiDeps;
+export class SandboxRpcAPI extends RpcTarget {
+  #deps: SandboxRpcAPIDeps;
 
-  constructor(deps: SandboxRpcApiDeps) {
+  constructor(deps: SandboxRpcAPIDeps) {
     super();
     this.#deps = deps;
   }

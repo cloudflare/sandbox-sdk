@@ -12,7 +12,7 @@ const BRIDGE_BASE_URL = 'http://localhost:3000';
  * and routes them through the container's Router. Later stages will
  * replace this bridge with direct service calls.
  */
-export class ContainerBridgeApi extends RpcTarget {
+export class ContainerBridgeAPI extends RpcTarget {
   #router: Router;
 
   constructor(router: Router) {

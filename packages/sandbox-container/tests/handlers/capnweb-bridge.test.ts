@@ -5,7 +5,7 @@ import type {
   RequestContext,
   RequestHandler
 } from '@sandbox-container/core/types';
-import { ContainerBridgeApi } from '@sandbox-container/handlers/capnweb-bridge';
+import { ContainerBridgeAPI } from '@sandbox-container/handlers/capnweb-bridge';
 
 const mockLogger = {
   info: vi.fn(),
@@ -26,9 +26,9 @@ const mockContext: RequestContext = {
   }
 };
 
-describe('ContainerBridgeApi', () => {
+describe('ContainerBridgeAPI', () => {
   let router: Router;
-  let bridge: ContainerBridgeApi;
+  let bridge: ContainerBridgeAPI;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -53,7 +53,7 @@ describe('ContainerBridgeApi', () => {
         handler
       });
 
-      bridge = new ContainerBridgeApi(router);
+      bridge = new ContainerBridgeAPI(router);
       const result = await bridge.fetch('GET', '/api/ping');
 
       expect(result.status).toBe(200);
@@ -86,7 +86,7 @@ describe('ContainerBridgeApi', () => {
         handler
       });
 
-      bridge = new ContainerBridgeApi(router);
+      bridge = new ContainerBridgeAPI(router);
       const body = JSON.stringify({
         command: 'echo hello',
         sessionId: 'test-session'
@@ -116,7 +116,7 @@ describe('ContainerBridgeApi', () => {
         handler
       });
 
-      bridge = new ContainerBridgeApi(router);
+      bridge = new ContainerBridgeAPI(router);
       const result = await bridge.fetch('GET', '/api/process/nonexistent');
 
       expect(result.status).toBe(404);
@@ -125,7 +125,7 @@ describe('ContainerBridgeApi', () => {
     });
 
     it('should return 404 for unregistered paths', async () => {
-      bridge = new ContainerBridgeApi(router);
+      bridge = new ContainerBridgeAPI(router);
       const result = await bridge.fetch('GET', '/api/nonexistent');
 
       expect(result.status).toBe(404);
@@ -148,7 +148,7 @@ describe('ContainerBridgeApi', () => {
         handler
       });
 
-      bridge = new ContainerBridgeApi(router);
+      bridge = new ContainerBridgeAPI(router);
       const result = await bridge.fetch('GET', '/api/test');
 
       expect(result.status).toBe(200);
@@ -171,7 +171,7 @@ describe('ContainerBridgeApi', () => {
         handler
       });
 
-      bridge = new ContainerBridgeApi(router);
+      bridge = new ContainerBridgeAPI(router);
       const result = await bridge.fetch('DELETE', '/api/file');
 
       expect(result.status).toBe(200);
@@ -209,7 +209,7 @@ describe('ContainerBridgeApi', () => {
         handler
       });
 
-      bridge = new ContainerBridgeApi(router);
+      bridge = new ContainerBridgeAPI(router);
       const body = JSON.stringify({ command: 'echo hello' });
       const stream = await bridge.fetchStream(
         'POST',
@@ -249,7 +249,7 @@ describe('ContainerBridgeApi', () => {
         handler
       });
 
-      bridge = new ContainerBridgeApi(router);
+      bridge = new ContainerBridgeAPI(router);
       const body = JSON.stringify({ command: 'bad-command' });
 
       await expect(
@@ -268,7 +268,7 @@ describe('ContainerBridgeApi', () => {
         handler
       });
 
-      bridge = new ContainerBridgeApi(router);
+      bridge = new ContainerBridgeAPI(router);
 
       await expect(
         bridge.fetchStream('POST', '/api/execute/stream')

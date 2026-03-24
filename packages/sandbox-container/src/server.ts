@@ -5,14 +5,14 @@ import { newWebSocketRpcSession } from 'capnweb';
 import { Container } from './core/container';
 import { Router } from './core/router';
 import { BunWebSocketShim } from './handlers/bun-ws-shim';
-import { ContainerBridgeApi } from './handlers/capnweb-bridge';
+import { ContainerBridgeAPI } from './handlers/capnweb-bridge';
 import type { PtyWSData } from './handlers/pty-ws-handler';
 import {
   type WSData as ControlWSData,
   generateConnectionId,
   WebSocketAdapter
 } from './handlers/ws-adapter';
-import { SandboxRpcApi } from './rpc/sandbox-api';
+import { SandboxRpcAPI } from './rpc/sandbox-api';
 
 export type CapnwebWSData = {
   type: 'capnweb';
@@ -42,8 +42,8 @@ async function createApplication(): Promise<{
   ) => Promise<Response>;
   container: Container;
   wsAdapter: WebSocketAdapter;
-  bridgeApi: ContainerBridgeApi;
-  rpcApi: SandboxRpcApi;
+  bridgeApi: ContainerBridgeAPI;
+  rpcApi: SandboxRpcAPI;
 }> {
   const container = new Container();
   await container.initialize();
@@ -56,10 +56,10 @@ async function createApplication(): Promise<{
   const wsAdapter = new WebSocketAdapter(router, logger);
 
   // Create capnweb bridge that routes RPC calls through the HTTP router
-  const bridgeApi = new ContainerBridgeApi(router);
+  const bridgeApi = new ContainerBridgeAPI(router);
 
   // Create native RPC API that calls services directly (bypasses HTTP routing)
-  const rpcApi = new SandboxRpcApi({
+  const rpcApi = new SandboxRpcAPI({
     processService: container.get('processService'),
     fileService: container.get('fileService'),
     portService: container.get('portService'),
