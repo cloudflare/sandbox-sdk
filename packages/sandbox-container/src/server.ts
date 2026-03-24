@@ -12,7 +12,7 @@ import {
   generateConnectionId,
   WebSocketAdapter
 } from './handlers/ws-adapter';
-import { SandboxRpcAPI } from './rpc/sandbox-api';
+import { SandboxRPCAPI } from './rpc/sandbox-api';
 
 export type CapnwebWSData = {
   type: 'capnweb';
@@ -43,7 +43,7 @@ async function createApplication(): Promise<{
   container: Container;
   wsAdapter: WebSocketAdapter;
   bridgeApi: ContainerBridgeAPI;
-  rpcApi: SandboxRpcAPI;
+  rpcAPI: SandboxRPCAPI;
 }> {
   const container = new Container();
   await container.initialize();
@@ -59,7 +59,7 @@ async function createApplication(): Promise<{
   const bridgeApi = new ContainerBridgeAPI(router);
 
   // Create native RPC API that calls services directly (bypasses HTTP routing)
-  const rpcApi = new SandboxRpcAPI({
+  const rpcAPI = new SandboxRPCAPI({
     processService: container.get('processService'),
     fileService: container.get('fileService'),
     portService: container.get('portService'),
@@ -142,7 +142,7 @@ async function createApplication(): Promise<{
     container,
     wsAdapter,
     bridgeApi,
-    rpcApi
+    rpcAPI
   };
 }
 
@@ -177,7 +177,7 @@ export async function startServer(): Promise<ServerInstance> {
           } else if (ws.data.type === 'capnweb') {
             const shim = new BunWebSocketShim(ws);
             (ws.data as CapnwebWSData).shim = shim;
-            newWebSocketRpcSession(shim as unknown as WebSocket, app.rpcApi);
+            newWebSocketRpcSession(shim as unknown as WebSocket, app.rpcAPI);
             logger.debug('capnweb session initialized', {
               connectionId: ws.data.connectionId
             });
