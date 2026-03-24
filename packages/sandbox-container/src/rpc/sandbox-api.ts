@@ -657,6 +657,94 @@ export class SandboxRPCAPI extends RpcTarget {
     throwIfError(result);
   }
 
+  async watchPorts(request: {
+    port: number;
+    mode: 'http' | 'tcp';
+    path?: string;
+    statusMin?: number;
+    statusMax?: number;
+    processId?: string;
+    interval?: number;
+  }): Promise<ReadableStream<Uint8Array>> {
+    const encoder = new TextEncoder();
+    const {
+      port,
+      mode,
+      path,
+      statusMin,
+      statusMax,
+      processId,
+      interval = 500
+    } = request;
+    const portService = this.#deps.portService;
+    const processService = this.#deps.processService;
+    let cancelled = false;
+
+    const clampedInterval = Math.max(100, Math.min(interval, 10000));
+
+    return new ReadableStream<Uint8Array>({
+      async start(controller) {
+        const emit = (event: Record<string, unknown>) => {
+          controller.enqueue(
+            encoder.encode(`data: ${JSON.stringify(event)}\n\n`)
+          );
+        };
+
+        emit({ type: 'watching', port });
+
+        try {
+          while (!cancelled) {
+            if (processId) {
+              const processResult = await processService.getProcess(processId);
+              if (!processResult.success) {
+                emit({ type: 'error', port, error: 'Process not found' });
+                return;
+              }
+              const proc = processResult.data;
+              if (
+                ['completed', 'failed', 'killed', 'error'].includes(proc.status)
+              ) {
+                emit({
+                  type: 'process_exited',
+                  port,
+                  exitCode: proc.exitCode ?? undefined
+                });
+                return;
+              }
+            }
+
+            const result = await portService.checkPortReady({
+              port,
+              mode,
+              path,
+              statusMin,
+              statusMax
+            });
+            if (result.ready) {
+              emit({ type: 'ready', port, statusCode: result.statusCode });
+              return;
+            }
+
+            await new Promise((resolve) =>
+              setTimeout(resolve, clampedInterval)
+            );
+          }
+        } catch (error) {
+          emit({
+            type: 'error',
+            port,
+            error: error instanceof Error ? error.message : 'Unknown error'
+          });
+        } finally {
+          controller.close();
+        }
+      },
+      cancel() {
+        cancelled = true;
+      }
+    });
+  }
+
   // =========================================================================
   // Git
   // =========================================================================
