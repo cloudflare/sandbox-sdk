@@ -1,3 +1,5 @@
+import type { RedactionMode } from '@repo/shared';
+
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'OPTIONS';
 
 export interface Handler<TRequest, TResponse> {
@@ -276,6 +278,7 @@ export interface ProcessOptions {
   timeoutMs?: number;
   env?: Record<string, string | undefined>;
   cwd?: string;
+  redact?: RedactionMode;
   encoding?: string;
   autoCleanup?: boolean;
 }

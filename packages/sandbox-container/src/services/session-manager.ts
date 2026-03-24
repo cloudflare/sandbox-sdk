@@ -301,9 +301,11 @@ export class SessionManager {
     command: string,
     cwd?: string,
     timeoutMs?: number,
-    env?: Record<string, string | undefined>
+    env?: Record<string, string | undefined>,
+    redact?: RedactionMode
   ): Promise<ServiceResult<RawExecResult>> {
     const lock = this.getSessionLock(sessionId);
+    const loggedCommand = getRedactionLabel(redact) ?? command;
 
     return lock.runExclusive(async () => {
       try {
@@ -321,8 +323,8 @@ export class SessionManager {
 
         const result = await session.exec(
           command,
-          cwd || env || timeoutMs !== undefined
-            ? { cwd, env, timeoutMs }
+          cwd || env || timeoutMs !== undefined || redact !== undefined
+            ? { cwd, env, timeoutMs, redact }
             : undefined
         );
 
@@ -340,7 +342,7 @@ export class SessionManager {
         if (sessionDestroyed) {
           this.logger.warn('Session destroyed during command execution', {
             sessionId,
-            command
+            command: loggedCommand
           });
           return {
             success: false,
@@ -351,7 +353,7 @@ export class SessionManager {
         this.logger.error(
           'Failed to execute command',
           error instanceof Error ? error : undefined,
-          { sessionId, command }
+          { sessionId, command: loggedCommand }
         );
 
         return {
@@ -490,7 +492,11 @@ export class SessionManager {
     sessionId: string,
     command: string,
     onEvent: (event: ExecEvent) => Promise<void>,
-    options: { cwd?: string; env?: Record<string, string | undefined> } = {},
+    options: {
+      cwd?: string;
+      env?: Record<string, string | undefined>;
+      redact?: RedactionMode;
+    } = {},
     commandId: string,
     lockOptions: { background?: boolean } = {}
   ): Promise<ServiceResult<{ continueStreaming: Promise<void> }>> {
@@ -527,13 +533,19 @@ export class SessionManager {
     sessionId: string,
     command: string,
     onEvent: (event: ExecEvent) => Promise<void>,
-    options: { cwd?: string; env?: Record<string, string | undefined> },
+    options: {
+      cwd?: string;
+      env?: Record<string, string | undefined>;
+      redact?: RedactionMode;
+    },
     commandId: string,
     lock: Mutex
   ): Promise<ServiceResult<{ continueStreaming: Promise<void> }>> {
     return lock.runExclusive(async () => {
+      const loggedCommand = getRedactionLabel(options.redact) ?? command;
+
       try {
-        const { cwd, env } = options;
+        const { cwd, env, redact } = options;
 
         const sessionResult = await this.getOrCreateSession(sessionId, {
           cwd: cwd || '/workspace'
@@ -546,7 +558,12 @@ export class SessionManager {
         }
 
         const session = sessionResult.data;
-        const generator = session.execStream(command, { commandId, cwd, env });
+        const generator = session.execStream(command, {
+          commandId,
+          cwd,
+          env,
+          redact
+        });
 
         // Process ALL events under lock
         for await (const event of generator) {
@@ -567,7 +584,7 @@ export class SessionManager {
         if (sessionDestroyed) {
           this.logger.warn('Session destroyed during streaming command', {
             sessionId,
-            command
+            command: loggedCommand
           });
           return {
             success: false,
@@ -578,7 +595,7 @@ export class SessionManager {
         this.logger.error(
           'Failed to execute streaming command',
           error instanceof Error ? error : undefined,
-          { sessionId, command }
+          { sessionId, command: loggedCommand }
         );
 
         return {
@@ -619,14 +636,20 @@ export class SessionManager {
     sessionId: string,
     command: string,
     onEvent: (event: ExecEvent) => Promise<void>,
-    options: { cwd?: string; env?: Record<string, string | undefined> },
+    options: {
+      cwd?: string;
+      env?: Record<string, string | undefined>;
+      redact?: RedactionMode;
+    },
     commandId: string,
     lock: Mutex
   ): Promise<ServiceResult<{ continueStreaming: Promise<void> }>> {
     // Acquire lock for startup phase only
     const startupResult = await lock.runExclusive(async () => {
+      const loggedCommand = getRedactionLabel(options.redact) ?? command;
+
       try {
-        const { cwd, env } = options;
+        const { cwd, env, redact } = options;
 
         const sessionResult = await this.getOrCreateSession(sessionId, {
           cwd: cwd || '/workspace'
@@ -637,7 +660,12 @@ export class SessionManager {
         }
 
         const session = sessionResult.data;
-        const generator = session.execStream(command, { commandId, cwd, env });
+        const generator = session.execStream(command, {
+          commandId,
+          cwd,
+          env,
+          redact
+        });
 
         // Process 'start' event under lock
         const firstResult = await generator.next();
@@ -683,7 +711,7 @@ export class SessionManager {
         if (sessionDestroyed) {
           this.logger.warn(
             'Session destroyed during streaming command startup',
-            { sessionId, command }
+            { sessionId, command: loggedCommand }
           );
           return {
             success: false as const,
@@ -694,7 +722,7 @@ export class SessionManager {
         this.logger.error(
           'Failed to start streaming command',
           error instanceof Error ? error : undefined,
-          { sessionId, command }
+          { sessionId, command: loggedCommand }
         );
 
         return {
@@ -949,7 +977,6 @@ export class SessionManager {
       for (const [key, value] of Object.entries(toSet)) {
         const exportCommand = `export ${key}=${shellEscape(value)}`;
         const mode = shouldRedact(options?.redact, value);
-        const label = getRedactionLabel(mode);
         const result = await exec(exportCommand, { redact: mode });
 
         if (result.exitCode !== 0) {
@@ -957,7 +984,7 @@ export class SessionManager {
             code: ErrorCode.COMMAND_EXECUTION_ERROR,
             message: `Failed to set environment variable '${key}': ${result.stderr}`,
             details: {
-              command: label ? `export ${key}=${label}` : exportCommand,
+              command: exportCommand,
               exitCode: result.exitCode,
               stderr: result.stderr
             } satisfies CommandErrorContext

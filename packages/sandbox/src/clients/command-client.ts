@@ -3,6 +3,10 @@ import { getRedactionLabel } from '@repo/shared';
 import { BaseHttpClient } from './base-client';
 import type { BaseApiResponse } from './types';
 
+type CommandExecuteRequest = ExecuteRequest & {
+  redact?: RedactionMode;
+};
+
 /**
  * Request interface for command execution
  */
@@ -42,14 +46,15 @@ export class CommandClient extends BaseHttpClient {
     }
   ): Promise<ExecuteResponse> {
     try {
-      const data: ExecuteRequest = {
+      const data: CommandExecuteRequest = {
         command,
         sessionId,
         ...(options?.timeoutMs !== undefined && {
           timeoutMs: options.timeoutMs
         }),
         ...(options?.env !== undefined && { env: options.env }),
-        ...(options?.cwd !== undefined && { cwd: options.cwd })
+        ...(options?.cwd !== undefined && { cwd: options.cwd }),
+        ...(options?.redact !== undefined && { redact: options.redact })
       };
 
       const response = await this.post<ExecuteResponse>('/api/execute', data);

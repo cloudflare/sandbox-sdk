@@ -3,13 +3,18 @@ import type {
   ExecResult,
   ExecuteRequest,
   Logger,
-  ProcessStartResult
+  ProcessStartResult,
+  RedactionMode
 } from '@repo/shared';
 import { ErrorCode } from '@repo/shared/errors';
 
 import type { RequestContext } from '../core/types';
 import type { ProcessService } from '../services/process-service';
 import { BaseHandler } from './base-handler';
+
+type ExecuteHandlerRequest = ExecuteRequest & {
+  redact?: RedactionMode;
+};
 
 export class ExecuteHandler extends BaseHandler<Request, Response> {
   constructor(
@@ -44,7 +49,7 @@ export class ExecuteHandler extends BaseHandler<Request, Response> {
     context: RequestContext
   ): Promise<Response> {
     // Parse request body directly
-    const body = await this.parseRequestBody<ExecuteRequest>(request);
+    const body = await this.parseRequestBody<ExecuteHandlerRequest>(request);
     const sessionId = body.sessionId || context.sessionId;
 
     // If this is a background process, start it as a process
@@ -55,7 +60,8 @@ export class ExecuteHandler extends BaseHandler<Request, Response> {
           sessionId,
           timeoutMs: body.timeoutMs,
           env: body.env,
-          cwd: body.cwd
+          cwd: body.cwd,
+          redact: body.redact
         }
       );
 
@@ -81,7 +87,8 @@ export class ExecuteHandler extends BaseHandler<Request, Response> {
       sessionId,
       timeoutMs: body.timeoutMs,
       env: body.env,
-      cwd: body.cwd
+      cwd: body.cwd,
+      redact: body.redact
     });
 
     if (!result.success) {
@@ -109,14 +116,15 @@ export class ExecuteHandler extends BaseHandler<Request, Response> {
     context: RequestContext
   ): Promise<Response> {
     // Parse request body directly
-    const body = await this.parseRequestBody<ExecuteRequest>(request);
+    const body = await this.parseRequestBody<ExecuteHandlerRequest>(request);
     const sessionId = body.sessionId || context.sessionId;
 
     // Start the process for streaming
     const processResult = await this.processService.startProcess(body.command, {
       sessionId,
       env: body.env,
-      cwd: body.cwd
+      cwd: body.cwd,
+      redact: body.redact
     });
 
     if (!processResult.success) {

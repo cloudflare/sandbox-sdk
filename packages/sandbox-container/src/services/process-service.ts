@@ -1,4 +1,4 @@
-import type { Logger } from '@repo/shared';
+import { getRedactionLabel, type Logger } from '@repo/shared';
 import type {
   CommandErrorContext,
   ProcessErrorContext,
@@ -22,6 +22,17 @@ export type { ProcessStore } from './process-store';
 
 export interface ProcessFilters {
   status?: ProcessStatus;
+}
+
+function buildProcessLogContext(command: string, options: ProcessOptions) {
+  return {
+    command: getRedactionLabel(options.redact) ?? command,
+    sessionId: options.sessionId,
+    cwd: options.cwd,
+    timeoutMs: options.timeoutMs,
+    hasEnv: options.env !== undefined,
+    redact: options.redact
+  };
 }
 
 export class ProcessService {
@@ -59,7 +70,8 @@ export class ProcessService {
         command,
         options.cwd,
         options.timeoutMs,
-        options.env
+        options.env,
+        options.redact
       );
 
       if (!result.success) {
@@ -84,7 +96,7 @@ export class ProcessService {
       this.logger.error(
         'Failed to execute command',
         error instanceof Error ? error : undefined,
-        { command, options }
+        buildProcessLogContext(command, options)
       );
 
       return {
@@ -208,7 +220,8 @@ export class ProcessService {
         },
         {
           cwd: options.cwd,
-          env: options.env
+          env: options.env,
+          redact: options.redact
         },
         processRecordData.id, // Pass process ID as commandId for tracking and killing
         { background: true } // Release lock after startup
@@ -238,7 +251,7 @@ export class ProcessService {
       this.logger.error(
         'Failed to start streaming command',
         error instanceof Error ? error : undefined,
-        { command, options }
+        buildProcessLogContext(command, options)
       );
 
       return {

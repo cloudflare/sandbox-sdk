@@ -238,6 +238,13 @@ describe('CommandClient', () => {
         redact: 'forced'
       });
 
+      const [, options] = mockFetch.mock.calls[0];
+      expect(JSON.parse(options.body as string)).toMatchObject({
+        command: 'export API_TOKEN=secret-value',
+        sessionId: 'session-exec',
+        redact: 'forced'
+      });
+
       expect(onCommandComplete).toHaveBeenCalledWith(
         true,
         0,

@@ -2,4 +2,4 @@
 '@cloudflare/sandbox': patch
 ---
 
-Add functionality to redact environment variables and command values in logs.
+Auto-redact high-entropy env var values in `setEnvVars` logs. Pass `redact: true` to force-redact all values, or `false` to skip auto-detection.

@@ -83,7 +83,8 @@ describe('ExecuteHandler', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           command: 'echo "hello"',
-          sessionId: 'session-456'
+          sessionId: 'session-456',
+          redact: 'forced'
         })
       });
 
@@ -103,7 +104,8 @@ describe('ExecuteHandler', () => {
       expect(mockProcessService.executeCommand).toHaveBeenCalledWith(
         'echo "hello"',
         expect.objectContaining({
-          sessionId: 'session-456'
+          sessionId: 'session-456',
+          redact: 'forced'
         })
       );
     });

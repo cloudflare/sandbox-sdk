@@ -3,6 +3,8 @@
  * Single source of truth for the contract between SDK clients and container handlers
  */
 
+import type { RedactionMode } from './entropy';
+
 /**
  * Request to execute a command
  */
@@ -13,6 +15,7 @@ export interface ExecuteRequest {
   timeoutMs?: number;
   env?: Record<string, string | undefined>;
   cwd?: string;
+  redact?: RedactionMode;
 }
 
 /**

@@ -210,6 +210,50 @@ describe('SessionManager Locking', () => {
   });
 
   describe('setEnvVars redaction option', () => {
+    it('should redact executeInSession command logs without changing result data', async () => {
+      const infoCalls: Array<{ message: string; command?: unknown }> = [];
+      const logger: Logger = {
+        debug() {},
+        info(message, context) {
+          infoCalls.push({ message, command: context?.command });
+        },
+        warn() {},
+        error() {},
+        child() {
+          return logger;
+        }
+      };
+      const redactingSessionManager = new SessionManager(logger);
+
+      const result = await redactingSessionManager.executeInSession(
+        'exec-redaction-session',
+        'echo "secret"',
+        testDir,
+        undefined,
+        undefined,
+        'forced'
+      );
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.command).toBe('echo "secret"');
+      }
+      expect(
+        infoCalls.some(
+          ({ message, command }) =>
+            message === 'Command execution started' && command === '[REDACTED]'
+        )
+      ).toBe(true);
+      expect(
+        infoCalls.some(
+          ({ command }) =>
+            typeof command === 'string' && command.includes('secret')
+        )
+      ).toBe(false);
+
+      await redactingSessionManager.destroy();
+    });
+
     it('should redact exported values in session command logs when requested', async () => {
       const infoCalls: Array<{ message: string; command?: unknown }> = [];
       const logger: Logger = {
@@ -343,7 +387,7 @@ describe('SessionManager Locking', () => {
       await redactingSessionManager.destroy();
     });
 
-    it('should redact failing export commands in error details when requested', async () => {
+    it('should keep failing export commands raw in error details', async () => {
       const sessionId = 'env-redacted-error-session';
 
       const readonlyResult = await sessionManager.executeInSession(
@@ -362,11 +406,9 @@ describe('SessionManager Locking', () => {
       expect(result.success).toBe(false);
       if (!result.success) {
         expect(result.error.details).toMatchObject({
-          command: 'export MY_SECRET=[REDACTED]'
+          command: "export MY_SECRET='secret-value'"
         });
-        expect(JSON.stringify(result.error.details)).not.toContain(
-          'secret-value'
-        );
+        expect(JSON.stringify(result.error.details)).toContain('secret-value');
       }
     });
   });

@@ -109,7 +109,33 @@ describe('ProcessService', () => {
         'echo "hello world"',
         '/tmp', // cwd
         undefined, // timeoutMs (not provided in options)
-        undefined // env (not provided in options)
+        undefined, // env (not provided in options)
+        undefined // redact (not provided in options)
+      );
+    });
+
+    it('should forward redaction metadata to SessionManager', async () => {
+      mocked(mockSessionManager.executeInSession).mockResolvedValue({
+        success: true,
+        data: {
+          exitCode: 0,
+          stdout: '',
+          stderr: ''
+        }
+      } as ServiceResult<RawExecResult>);
+
+      await processService.executeCommand('export API_TOKEN=secret-value', {
+        sessionId: 'session-123',
+        redact: 'forced'
+      });
+
+      expect(mockSessionManager.executeInSession).toHaveBeenCalledWith(
+        'session-123',
+        'export API_TOKEN=secret-value',
+        undefined,
+        undefined,
+        undefined,
+        'forced'
       );
     });
 
