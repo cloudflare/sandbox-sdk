@@ -1,16 +1,29 @@
 import { createLogger } from '@repo/shared';
 import type { ServerWebSocket } from 'bun';
 import { serve } from 'bun';
+import { newWebSocketRpcSession } from 'capnweb';
 import { Container } from './core/container';
 import { Router } from './core/router';
+import { BunWebSocketShim } from './handlers/bun-ws-shim';
+import { ContainerBridgeApi } from './handlers/capnweb-bridge';
 import type { PtyWSData } from './handlers/pty-ws-handler';
 import {
   type WSData as ControlWSData,
   generateConnectionId,
   WebSocketAdapter
 } from './handlers/ws-adapter';
+import { SandboxRpcApi } from './rpc/sandbox-api';
 
-export type WSData = (ControlWSData & { type: 'control' }) | PtyWSData;
+export type CapnwebWSData = {
+  type: 'capnweb';
+  connectionId: string;
+  shim?: BunWebSocketShim;
+};
+
+export type WSData =
+  | (ControlWSData & { type: 'control' })
+  | PtyWSData
+  | CapnwebWSData;
 
 import { setupRoutes } from './routes/setup';
 
@@ -29,6 +42,8 @@ async function createApplication(): Promise<{
   ) => Promise<Response>;
   container: Container;
   wsAdapter: WebSocketAdapter;
+  bridgeApi: ContainerBridgeApi;
+  rpcApi: SandboxRpcApi;
 }> {
   const container = new Container();
   await container.initialize();
@@ -39,6 +54,23 @@ async function createApplication(): Promise<{
 
   // Create WebSocket adapter with the router for control plane multiplexing
   const wsAdapter = new WebSocketAdapter(router, logger);
+
+  // Create capnweb bridge that routes RPC calls through the HTTP router
+  const bridgeApi = new ContainerBridgeApi(router);
+
+  // Create native RPC API that calls services directly (bypasses HTTP routing)
+  const rpcApi = new SandboxRpcApi({
+    processService: container.get('processService'),
+    fileService: container.get('fileService'),
+    portService: container.get('portService'),
+    gitService: container.get('gitService'),
+    interpreterService: container.get('interpreterService'),
+    backupService: container.get('backupService'),
+    desktopService: container.get('desktopService'),
+    watchService: container.get('watchService'),
+    sessionManager: container.get('sessionManager'),
+    logger
+  });
 
   return {
     fetch: async (
@@ -89,13 +121,28 @@ async function createApplication(): Promise<{
           }
           return new Response('WebSocket upgrade failed', { status: 500 });
         }
+
+        if (url.pathname === '/capnweb') {
+          const upgraded = server.upgrade(req, {
+            data: {
+              type: 'capnweb' as const,
+              connectionId: generateConnectionId()
+            }
+          });
+          if (upgraded) {
+            return undefined as unknown as Response;
+          }
+          return new Response('WebSocket upgrade failed', { status: 500 });
+        }
       }
 
       // Regular HTTP request
       return router.route(req);
     },
     container,
-    wsAdapter
+    wsAdapter,
+    bridgeApi,
+    rpcApi
   };
 }
 
@@ -127,6 +174,13 @@ export async function startServer(): Promise<ServerInstance> {
                   ws.close(1011, 'Internal error');
                 } catch {}
               });
+          } else if (ws.data.type === 'capnweb') {
+            const shim = new BunWebSocketShim(ws);
+            (ws.data as CapnwebWSData).shim = shim;
+            newWebSocketRpcSession(shim as unknown as WebSocket, app.rpcApi);
+            logger.debug('capnweb session initialized', {
+              connectionId: ws.data.connectionId
+            });
           } else {
             app.wsAdapter.onOpen(ws);
           }
@@ -143,6 +197,11 @@ export async function startServer(): Promise<ServerInstance> {
             app.container
               .get('ptyWsHandler')
               .onClose(ws as ServerWebSocket<PtyWSData>, code, reason);
+          } else if (ws.data.type === 'capnweb') {
+            const shim = (ws.data as CapnwebWSData).shim;
+            if (shim) {
+              shim.dispatchClose(code, reason);
+            }
           } else {
             app.wsAdapter.onClose(ws, code, reason);
           }
@@ -159,6 +218,11 @@ export async function startServer(): Promise<ServerInstance> {
             app.container
               .get('ptyWsHandler')
               .onMessage(ws as ServerWebSocket<PtyWSData>, message);
+          } else if (ws.data.type === 'capnweb') {
+            const shim = (ws.data as CapnwebWSData).shim;
+            if (shim) {
+              shim.dispatchMessage(message);
+            }
           } else {
             await app.wsAdapter.onMessage(ws, message);
           }

@@ -40,10 +40,14 @@ export class SandboxClient {
   private transport: ITransport | null = null;
 
   constructor(options: HttpClientOptions) {
-    // Create shared transport if WebSocket mode is enabled
-    if (options.transportMode === 'websocket' && options.wsUrl) {
+    // Create shared transport if WebSocket or capnweb mode is enabled
+    if (
+      (options.transportMode === 'websocket' ||
+        options.transportMode === 'capnweb') &&
+      options.wsUrl
+    ) {
       this.transport = createTransport({
-        mode: 'websocket',
+        mode: options.transportMode,
         wsUrl: options.wsUrl,
         baseUrl: options.baseUrl,
         logger: options.logger,

@@ -417,7 +417,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private logger: ReturnType<typeof createLogger>;
   private keepAliveEnabled: boolean = false;
   private activeMounts: Map<string, MountInfo> = new Map();
-  private transport: 'http' | 'websocket' = 'http';
+  private transport: 'http' | 'websocket' | 'capnweb' = 'http';
 
   // R2 bucket binding for backup storage (optional — only set if user configures BACKUP_BUCKET)
   private backupBucket: R2Bucket | null = null;
@@ -547,6 +547,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       ...(this.transport === 'websocket' && {
         transportMode: 'websocket' as const,
         wsUrl: 'ws://localhost:3000/ws'
+      }),
+      ...(this.transport === 'capnweb' && {
+        transportMode: 'capnweb' as const,
+        wsUrl: 'ws://localhost:3000/capnweb'
       })
     });
   }
@@ -573,11 +577,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     // Read transport setting from env var
     const transportEnv = envObj?.SANDBOX_TRANSPORT;
-    if (transportEnv === 'websocket') {
-      this.transport = 'websocket';
+    if (transportEnv === 'websocket' || transportEnv === 'capnweb') {
+      this.transport = transportEnv;
     } else if (transportEnv != null && transportEnv !== 'http') {
       this.logger.warn(
-        `Invalid SANDBOX_TRANSPORT value: "${transportEnv}". Must be "http" or "websocket". Defaulting to "http".`
+        `Invalid SANDBOX_TRANSPORT value: "${transportEnv}". Must be "http", "websocket", or "capnweb". Defaulting to "http".`
       );
     }
 

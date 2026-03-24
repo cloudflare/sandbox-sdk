@@ -41,6 +41,7 @@ export interface Dependencies {
   // Infrastructure
   logger: Logger;
   security: SecurityService;
+  sessionManager: SessionManager;
 
   // Handlers
   backupHandler: BackupHandler;
@@ -166,6 +167,7 @@ export class Container {
       // Infrastructure
       logger,
       security,
+      sessionManager,
 
       // Handlers
       backupHandler,
