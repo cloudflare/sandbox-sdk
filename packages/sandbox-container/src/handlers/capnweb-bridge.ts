@@ -20,7 +20,7 @@ export class ContainerBridgeAPI extends RpcTarget {
     this.#router = router;
   }
 
-  async fetch(
+  async httpFetch(
     method: string,
     path: string,
     body?: string
@@ -46,7 +46,7 @@ export class ContainerBridgeAPI extends RpcTarget {
     };
   }
 
-  async fetchStream(
+  async httpFetchStream(
     method: string,
     path: string,
     body?: string

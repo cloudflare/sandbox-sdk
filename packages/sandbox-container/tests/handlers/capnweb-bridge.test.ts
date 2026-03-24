@@ -54,7 +54,7 @@ describe('ContainerBridgeAPI', () => {
       });
 
       bridge = new ContainerBridgeAPI(router);
-      const result = await bridge.fetch('GET', '/api/ping');
+      const result = await bridge.httpFetch('GET', '/api/ping');
 
       expect(result.status).toBe(200);
       expect(result.body).toBeDefined();
@@ -91,7 +91,7 @@ describe('ContainerBridgeAPI', () => {
         command: 'echo hello',
         sessionId: 'test-session'
       });
-      const result = await bridge.fetch('POST', '/api/execute', body);
+      const result = await bridge.httpFetch('POST', '/api/execute', body);
 
       expect(result.status).toBe(200);
       expect(receivedBody).toEqual({
@@ -117,7 +117,7 @@ describe('ContainerBridgeAPI', () => {
       });
 
       bridge = new ContainerBridgeAPI(router);
-      const result = await bridge.fetch('GET', '/api/process/nonexistent');
+      const result = await bridge.httpFetch('GET', '/api/process/nonexistent');
 
       expect(result.status).toBe(404);
       const parsed = JSON.parse(result.body!);
@@ -126,7 +126,7 @@ describe('ContainerBridgeAPI', () => {
 
     it('should return 404 for unregistered paths', async () => {
       bridge = new ContainerBridgeAPI(router);
-      const result = await bridge.fetch('GET', '/api/nonexistent');
+      const result = await bridge.httpFetch('GET', '/api/nonexistent');
 
       expect(result.status).toBe(404);
     });
@@ -149,7 +149,7 @@ describe('ContainerBridgeAPI', () => {
       });
 
       bridge = new ContainerBridgeAPI(router);
-      const result = await bridge.fetch('GET', '/api/test');
+      const result = await bridge.httpFetch('GET', '/api/test');
 
       expect(result.status).toBe(200);
       expect(result.headers).toBeDefined();
@@ -172,7 +172,7 @@ describe('ContainerBridgeAPI', () => {
       });
 
       bridge = new ContainerBridgeAPI(router);
-      const result = await bridge.fetch('DELETE', '/api/file');
+      const result = await bridge.httpFetch('DELETE', '/api/file');
 
       expect(result.status).toBe(200);
     });
@@ -211,7 +211,7 @@ describe('ContainerBridgeAPI', () => {
 
       bridge = new ContainerBridgeAPI(router);
       const body = JSON.stringify({ command: 'echo hello' });
-      const stream = await bridge.fetchStream(
+      const stream = await bridge.httpFetchStream(
         'POST',
         '/api/execute/stream',
         body
@@ -253,7 +253,7 @@ describe('ContainerBridgeAPI', () => {
       const body = JSON.stringify({ command: 'bad-command' });
 
       await expect(
-        bridge.fetchStream('POST', '/api/execute/stream', body)
+        bridge.httpFetchStream('POST', '/api/execute/stream', body)
       ).rejects.toThrow('HTTP error 500');
     });
 
@@ -271,7 +271,7 @@ describe('ContainerBridgeAPI', () => {
       bridge = new ContainerBridgeAPI(router);
 
       await expect(
-        bridge.fetchStream('POST', '/api/execute/stream')
+        bridge.httpFetchStream('POST', '/api/execute/stream')
       ).rejects.toThrow('No response body');
     });
   });

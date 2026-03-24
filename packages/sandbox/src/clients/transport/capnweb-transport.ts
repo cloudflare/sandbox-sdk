@@ -15,7 +15,7 @@ const DEFAULT_CONNECT_TIMEOUT_MS = 30_000;
  * that bypass the HTTP layer for operations like streaming file writes.
  */
 export interface ContainerBridgeAPI {
-  fetch(
+  httpFetch(
     method: string,
     path: string,
     body?: string
@@ -25,7 +25,7 @@ export interface ContainerBridgeAPI {
     headers?: Record<string, string>;
   }>;
 
-  fetchStream(
+  httpFetchStream(
     method: string,
     path: string,
     body?: string
@@ -120,7 +120,7 @@ export class CapnwebTransport extends BaseTransport {
     const method = (options?.method || 'GET') as string;
     const body = this.extractBody(options?.body);
 
-    const result = await this.stub!.fetch(method, path, body);
+    const result = await this.stub!.httpFetch(method, path, body);
 
     return new Response(result.body ?? null, {
       status: result.status,
@@ -142,7 +142,7 @@ export class CapnwebTransport extends BaseTransport {
     const bodyStr =
       body && method === 'POST' ? JSON.stringify(body) : undefined;
 
-    return this.stub!.fetchStream(method, path, bodyStr);
+    return this.stub!.httpFetchStream(method, path, bodyStr);
   }
 
   /**

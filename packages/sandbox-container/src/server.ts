@@ -60,6 +60,7 @@ async function createApplication(): Promise<{
 
   // Create native RPC API that calls services directly (bypasses HTTP routing)
   const rpcAPI = new SandboxRPCAPI({
+    router,
     processService: container.get('processService'),
     fileService: container.get('fileService'),
     portService: container.get('portService'),
