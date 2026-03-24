@@ -73,6 +73,13 @@ describe('Parallel Context Creation (issue #276)', () => {
   test('parallel creations should not staircase', async () => {
     const PARALLEL = 6;
 
+    // Drain the pre-warmed pool (minSize=3) so every parallel request
+    // hits the spawn path. Without this, pool-hit (~200ms) vs spawn
+    // (~800ms) skews the ratio independent of parallelism.
+    const drain = await Promise.all(
+      Array.from({ length: 3 }, () => createContext('javascript'))
+    );
+
     const results = await Promise.all(
       Array.from({ length: PARALLEL }, () => createContext('javascript'))
     );
@@ -83,11 +90,10 @@ describe('Parallel Context Creation (issue #276)', () => {
 
     // With serialization, max/min ratio is roughly N (each waits for previous).
     // With parallel spawning, all requests complete in similar time.
-    // A ratio above 5 indicates staircase serialization.
     const ratio = maxTime / minTime;
     expect(ratio).toBeLessThan(5);
 
-    for (const r of results) {
+    for (const r of [...drain, ...results]) {
       await deleteContext(r.body.id);
     }
   }, 60000);
