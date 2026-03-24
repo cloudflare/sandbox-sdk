@@ -1,5 +1,13 @@
 # Capnweb Clean Separation Plan
 
+## Status
+
+**Phase 1 complete.** `ContainerConnection` class created with typed `ContainerRPCAPI`
+interface and 9 unit tests. Wired into Sandbox DO for stream file writes.
+
+**Phases 2–5 not started.** Migrating sandbox.ts requires updating the 50+ unit tests
+that mock `sandbox.client.*`. See Phase 2 notes for the recommended approach.
+
 ## Problem
 
 The current capnweb implementation is layered on top of the old HTTP transport
@@ -289,17 +297,30 @@ Each step: `npm run check && npm test && npm run test:e2e`
 
 ## Execution Order
 
-### Phase 1: Create ContainerConnection (~200 lines new code)
+### Phase 1: Create ContainerConnection (~200 lines new code) ✅ DONE
 
-1. Write `src/container-connection.ts` with the `ContainerRPCAPI` interface
-   and `ContainerConnection` class
-2. Write tests for it
-3. `npm run check && npm test`
+1. ~~Write `src/container-connection.ts` with the `ContainerRPCAPI` interface
+   and `ContainerConnection` class~~
+2. ~~Write tests for it~~
+3. ~~`npm run check && npm test`~~
 
-### Phase 2: Migrate sandbox.ts (modify ~200 lines, simplify ~500 lines)
+Also completed: wired into Sandbox DO for stream writeFile, added
+`writeFileStream` to FileService and SandboxRPCAPI, fixed `fetch`
+naming conflict (renamed to `httpFetch`/`httpFetchStream`).
 
-1. Add `private container: ContainerConnection` to Sandbox
-2. Initialize in `onStart()` alongside `this.client`
+### Phase 2: Migrate sandbox.ts (modify ~200 lines, simplify ~500 lines) — NOT STARTED
+
+**Note:** An initial attempt to replace all 48 `this.client.*` call sites broke
+50 unit tests in `sandbox.test.ts` and `process-readiness.test.ts` that mock
+`sandbox.client.commands.execute()`, `sandbox.client.files.writeFile()`, etc.
+The recommended approach: create new tests that mock `containerRPC.rpc()` instead,
+keep the old tests for the legacy path, then swap once the new tests cover everything.
+
+Also discovered: the `container` field name conflicts with the `Container` base
+class's private property — use `containerRPC` instead.
+
+1. Add `private containerRPC: ContainerConnection` to Sandbox
+2. Initialize in constructor alongside `this.client`
 3. Replace `this.client.*` calls one domain at a time:
    - Each domain: update calls → `npm run check && npm test`
    - Order: utility → sessions → commands → files → processes → ports → git → interpreter → backup → desktop → watch
