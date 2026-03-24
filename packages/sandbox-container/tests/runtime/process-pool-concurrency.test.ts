@@ -513,4 +513,65 @@ describe('ProcessPoolManager concurrency (issue #276)', () => {
       ).rejects.toThrow('Maximum');
     });
   });
+
+  describe('dead process detection before registration', () => {
+    it('should reject when process exits with non-zero code before registration', async () => {
+      const MAX = 3;
+      ({ pool, tracker } = createTestPool(50, { maxProcesses: MAX }));
+
+      const originalCreate = (pool as any).createProcess.bind(pool);
+      (pool as any).createProcess = async (...args: any[]) => {
+        const executor = await originalCreate(...args);
+        executor.process.exitCode = 1;
+        return executor;
+      };
+
+      await expect(
+        pool.reserveExecutorForContext('dead-ctx', 'javascript')
+      ).rejects.toThrow('Process exited before registration');
+    });
+
+    it('should reject when process is killed by signal before registration', async () => {
+      const MAX = 3;
+      ({ pool, tracker } = createTestPool(50, { maxProcesses: MAX }));
+
+      const originalCreate = (pool as any).createProcess.bind(pool);
+      (pool as any).createProcess = async (...args: any[]) => {
+        const executor = await originalCreate(...args);
+        executor.process.signalCode = 'SIGKILL';
+        return executor;
+      };
+
+      await expect(
+        pool.reserveExecutorForContext('oom-ctx', 'javascript')
+      ).rejects.toThrow('Process exited before registration');
+    });
+
+    it('should not leak a permit when dead process is detected', async () => {
+      const MAX = 2;
+      ({ pool, tracker } = createTestPool(50, { maxProcesses: MAX }));
+
+      let shouldDie = true;
+      const originalCreate = (pool as any).createProcess.bind(pool);
+      (pool as any).createProcess = async (...args: any[]) => {
+        const executor = await originalCreate(...args);
+        if (shouldDie) {
+          executor.process.exitCode = 1;
+          shouldDie = false;
+        }
+        return executor;
+      };
+
+      await expect(
+        pool.reserveExecutorForContext('dead-ctx', 'javascript')
+      ).rejects.toThrow('Process exited before registration');
+
+      await pool.reserveExecutorForContext('alive-ctx-1', 'javascript');
+      await pool.reserveExecutorForContext('alive-ctx-2', 'javascript');
+
+      await expect(
+        pool.reserveExecutorForContext('over-limit', 'javascript')
+      ).rejects.toThrow('Maximum');
+    });
+  });
 });

@@ -280,20 +280,39 @@ export class ProcessPoolManager {
         })
       : null;
 
-    let executor: InterpreterProcess | null = null;
+    let executor: InterpreterProcess;
     try {
       executor = await this.createProcess(language, sessionId);
+    } catch (err) {
+      release?.();
+      throw err;
+    }
+
+    if (release) this.processReleasers.set(executor.id, release);
+
+    try {
       await mutex.runExclusive(() => {
-        onSpawned(executor!);
-        if (release) this.processReleasers.set(executor!.id, release);
+        // A process can die between createProcess resolving and this mutex
+        // acquisition (e.g. OOM kill while mutex is contended). Check both
+        // exitCode (normal exit) and signalCode (signal kill) since either
+        // alone leaves the other null.
+        if (
+          executor.process.exitCode !== null ||
+          executor.process.signalCode !== null
+        ) {
+          throw new Error(
+            `Process exited before registration (exit=${executor.process.exitCode}, signal=${executor.process.signalCode})`
+          );
+        }
+        onSpawned(executor);
       });
       return executor;
     } catch (err) {
-      if (executor?.exitHandler) {
+      if (executor.exitHandler) {
         executor.process.removeListener('exit', executor.exitHandler);
       }
-      executor?.process.kill();
-      release?.();
+      executor.process.kill();
+      this.releaseProcessSlot(executor.id);
       throw err;
     }
   }
@@ -990,7 +1009,6 @@ export class ProcessPoolManager {
 
     this.pools.clear();
     this.executorLocks.clear();
-    this.processReleasers.clear();
   }
 }
 
