@@ -43,6 +43,7 @@ import {
 } from '@repo/shared';
 import { AwsClient } from 'aws4fetch';
 import { type Desktop, type ExecuteResponse, SandboxClient } from './clients';
+import { ContainerConnection } from './container-connection';
 import type { ErrorResponse } from './errors';
 import {
   BackupCreateError,
@@ -408,6 +409,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   sleepAfter: string | number = '10m'; // Sleep the sandbox if no requests are made in this timeframe
 
   client: SandboxClient;
+  containerRPC: ContainerConnection | null = null;
   private codeInterpreter: CodeInterpreter;
   private sandboxName: string | null = null;
   private normalizeId: boolean = false;
@@ -607,6 +609,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     // Create client with transport based on env var (may be updated from storage)
     this.client = this.createSandboxClient();
+
+    // Direct capnweb RPC connection for native stream operations
+    if (this.transport === 'capnweb') {
+      this.containerRPC = new ContainerConnection({
+        stub: this,
+        port: 3000,
+        logger: this.logger
+      });
+    }
 
     // Initialize code interpreter - pass 'this' after client is ready
     // The CodeInterpreter extracts client.interpreter from the sandbox
@@ -1253,8 +1264,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       }
     }
 
-    // Disconnect WebSocket transport if active
+    // Disconnect transports
     this.client.disconnect();
+    this.containerRPC?.disconnect();
 
     // Unmount all mounted buckets and cleanup
     for (const [mountPath, mountInfo] of this.activeMounts.entries()) {
@@ -2721,6 +2733,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     const session = options.sessionId ?? (await this.ensureDefaultSession());
 
     if (content instanceof ReadableStream) {
+      if (this.containerRPC) {
+        const rpc = await this.containerRPC.rpc();
+        return rpc.writeFileStream(path, content, session);
+      }
       return this.client.writeFileStream(path, content, session);
     }
 
