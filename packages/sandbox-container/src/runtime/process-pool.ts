@@ -158,6 +158,10 @@ export class ProcessPoolManager {
   // Permits are acquired before spawning and released when a process leaves the pool.
   private spawnLimits: Map<InterpreterLanguage, Semaphore | null> = new Map();
 
+  // One-shot release functions keyed by process ID. Populated on successful
+  // registration, consumed by whichever removal path fires first.
+  private processReleasers: Map<string, () => void> = new Map();
+
   constructor(
     customConfigs: Partial<
       Record<InterpreterLanguage, Partial<ExecutorPoolConfig>>
@@ -247,6 +251,14 @@ export class ProcessPoolManager {
     return resolved;
   }
 
+  private releaseProcessSlot(processId: string): void {
+    const releaser = this.processReleasers.get(processId);
+    if (releaser) {
+      releaser();
+      this.processReleasers.delete(processId);
+    }
+  }
+
   private async spawnAndRegister(
     language: InterpreterLanguage,
     sessionId: string | undefined,
@@ -271,9 +283,15 @@ export class ProcessPoolManager {
     let executor: InterpreterProcess | null = null;
     try {
       executor = await this.createProcess(language, sessionId);
-      await mutex.runExclusive(() => onSpawned(executor!));
+      await mutex.runExclusive(() => {
+        onSpawned(executor!);
+        if (release) this.processReleasers.set(executor!.id, release);
+      });
       return executor;
     } catch (err) {
+      if (executor?.exitHandler) {
+        executor.process.removeListener('exit', executor.exitHandler);
+      }
       executor?.process.kill();
       release?.();
       throw err;
@@ -543,7 +561,7 @@ export class ProcessPoolManager {
       }
 
       this.executorLocks.delete(id);
-      this.spawnLimits.get(language)?.release();
+      this.releaseProcessSlot(id);
     };
 
     interpreterProcess.exitHandler = exitHandler;
@@ -782,7 +800,7 @@ export class ProcessPoolManager {
       }
     }
 
-    this.spawnLimits.get(language)?.release();
+    this.releaseProcessSlot(executor.id);
 
     // Ensure minimum pool is maintained
     await this.ensureMinimumPool(language);
@@ -876,6 +894,9 @@ export class ProcessPoolManager {
           idleTime > config.idleTimeout &&
           available.length > config.minSize
         ) {
+          if (process.exitHandler) {
+            process.process.removeListener('exit', process.exitHandler);
+          }
           process.process.kill();
           available.splice(i, 1);
 
@@ -889,7 +910,7 @@ export class ProcessPoolManager {
             if (poolIndex > -1) pool.splice(poolIndex, 1);
           }
 
-          this.spawnLimits.get(language)?.release();
+          this.releaseProcessSlot(process.id);
 
           this.logger.debug('Cleaned up idle unassigned executor', {
             language,
@@ -969,6 +990,7 @@ export class ProcessPoolManager {
 
     this.pools.clear();
     this.executorLocks.clear();
+    this.processReleasers.clear();
   }
 }
 

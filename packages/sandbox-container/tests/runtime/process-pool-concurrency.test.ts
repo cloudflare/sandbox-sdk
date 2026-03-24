@@ -411,4 +411,106 @@ describe('ProcessPoolManager concurrency (issue #276)', () => {
       expect(pool.getExecutorForContext('after-failure')).toBeDefined();
     });
   });
+
+  describe('semaphore permit accounting', () => {
+    it('releasing one context should free exactly one permit, not two', async () => {
+      const MAX = 3;
+      ({ pool, tracker } = createTestPool(50, { maxProcesses: MAX }));
+
+      await Promise.all(
+        Array.from({ length: MAX }, (_, i) =>
+          pool.reserveExecutorForContext(`ctx-${i}`, 'javascript')
+        )
+      );
+
+      await pool.releaseExecutorForContext('ctx-0', 'javascript');
+      await pool.reserveExecutorForContext('new-ctx', 'javascript');
+
+      await expect(
+        pool.reserveExecutorForContext('overcounted', 'javascript')
+      ).rejects.toThrow('Maximum');
+    });
+
+    it('full create-delete cycle should restore exactly maxProcesses permits', async () => {
+      const MAX = 3;
+      ({ pool, tracker } = createTestPool(50, { maxProcesses: MAX }));
+
+      await Promise.all(
+        Array.from({ length: MAX }, (_, i) =>
+          pool.reserveExecutorForContext(`cycle1-${i}`, 'javascript')
+        )
+      );
+
+      for (let i = 0; i < MAX; i++) {
+        await pool.releaseExecutorForContext(`cycle1-${i}`, 'javascript');
+      }
+
+      await Promise.all(
+        Array.from({ length: MAX }, (_, i) =>
+          pool.reserveExecutorForContext(`cycle2-${i}`, 'javascript')
+        )
+      );
+
+      await expect(
+        pool.reserveExecutorForContext('over-limit', 'javascript')
+      ).rejects.toThrow('Maximum');
+    });
+
+    it('repeated create-delete cycles should not drift permit count', async () => {
+      const MAX = 3;
+      const CYCLES = 3;
+      ({ pool, tracker } = createTestPool(50, { maxProcesses: MAX }));
+
+      for (let cycle = 0; cycle < CYCLES; cycle++) {
+        await Promise.all(
+          Array.from({ length: MAX }, (_, i) =>
+            pool.reserveExecutorForContext(`c${cycle}-${i}`, 'javascript')
+          )
+        );
+
+        await expect(
+          pool.reserveExecutorForContext(`c${cycle}-overflow`, 'javascript')
+        ).rejects.toThrow('Maximum');
+
+        for (let i = 0; i < MAX; i++) {
+          await pool.releaseExecutorForContext(`c${cycle}-${i}`, 'javascript');
+        }
+      }
+
+      await Promise.all(
+        Array.from({ length: MAX }, (_, i) =>
+          pool.reserveExecutorForContext(`final-${i}`, 'javascript')
+        )
+      );
+      await expect(
+        pool.reserveExecutorForContext('final-over', 'javascript')
+      ).rejects.toThrow('Maximum');
+    });
+
+    it('partial releases should free exactly that many permits', async () => {
+      const MAX = 5;
+      const RELEASE = 2;
+      ({ pool, tracker } = createTestPool(50, { maxProcesses: MAX }));
+
+      await Promise.all(
+        Array.from({ length: MAX }, (_, i) =>
+          pool.reserveExecutorForContext(`ctx-${i}`, 'javascript')
+        )
+      );
+
+      for (let i = 0; i < RELEASE; i++) {
+        await pool.releaseExecutorForContext(`ctx-${i}`, 'javascript');
+      }
+
+      await Promise.all(
+        Array.from({ length: RELEASE }, (_, i) =>
+          pool.reserveExecutorForContext(`new-${i}`, 'javascript')
+        )
+      );
+
+      await expect(
+        pool.reserveExecutorForContext('one-too-many', 'javascript')
+      ).rejects.toThrow('Maximum');
+    });
+  });
 });
