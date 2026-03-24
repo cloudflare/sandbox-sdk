@@ -958,7 +958,7 @@ export interface ExecutionSession {
   // File operations
   writeFile(
     path: string,
-    content: string,
+    content: string | ReadableStream<Uint8Array>,
     options?: { encoding?: string }
   ): Promise<WriteFileResult>;
   readFile(
@@ -1215,7 +1215,7 @@ export interface ISandbox {
   // File operations
   writeFile(
     path: string,
-    content: string,
+    content: string | ReadableStream<Uint8Array>,
     options?: { encoding?: string }
   ): Promise<WriteFileResult>;
   readFile(

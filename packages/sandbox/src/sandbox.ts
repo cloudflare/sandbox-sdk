@@ -2715,10 +2715,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
   async writeFile(
     path: string,
-    content: string,
+    content: string | ReadableStream<Uint8Array>,
     options: { encoding?: string; sessionId?: string } = {}
   ) {
     const session = options.sessionId ?? (await this.ensureDefaultSession());
+
+    if (content instanceof ReadableStream) {
+      return this.client.writeFileStream(path, content, session);
+    }
+
     return this.client.files.writeFile(path, content, session, {
       encoding: options.encoding
     });

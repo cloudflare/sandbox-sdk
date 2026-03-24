@@ -350,6 +350,31 @@ export class SandboxRPCAPI extends RpcTarget {
     };
   }
 
+  async writeFileStream(
+    path: string,
+    stream: ReadableStream<Uint8Array>,
+    sessionId: string
+  ): Promise<{
+    success: boolean;
+    path: string;
+    bytesWritten: number;
+    timestamp: string;
+  }> {
+    const result = await this.#deps.fileService.writeFileStream(
+      path,
+      stream,
+      sessionId
+    );
+    throwIfError(result);
+    const data = (result as { data?: { bytesWritten: number } }).data;
+    return {
+      success: true,
+      path,
+      bytesWritten: data?.bytesWritten ?? 0,
+      timestamp: new Date().toISOString()
+    };
+  }
+
   async deleteFile(
     path: string,
     sessionId: string

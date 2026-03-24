@@ -8,9 +8,11 @@ import type { TransportConfig, TransportMode } from './types';
 const DEFAULT_CONNECT_TIMEOUT_MS = 30_000;
 
 /**
- * Minimal RPC interface exposed by the container's bridge endpoint.
- * The container's RpcTarget accepts fetch-like requests and delegates
- * to its internal HTTP router.
+ * RPC interface exposed by the container's capnweb endpoint.
+ *
+ * Includes the bridge methods (fetch/fetchStream) for backward compatibility
+ * with the HTTP-oriented ITransport interface, plus native RPC methods
+ * that bypass the HTTP layer for operations like streaming file writes.
  */
 export interface ContainerBridgeAPI {
   fetch(
@@ -28,6 +30,18 @@ export interface ContainerBridgeAPI {
     path: string,
     body?: string
   ): Promise<ReadableStream<Uint8Array>>;
+
+  /** Native RPC method for streaming file writes (bypasses HTTP layer) */
+  writeFileStream(
+    path: string,
+    stream: ReadableStream<Uint8Array>,
+    sessionId: string
+  ): Promise<{
+    success: boolean;
+    path: string;
+    bytesWritten: number;
+    timestamp: string;
+  }>;
 }
 
 /**
@@ -129,6 +143,24 @@ export class CapnwebTransport extends BaseTransport {
       body && method === 'POST' ? JSON.stringify(body) : undefined;
 
     return this.stub!.fetchStream(method, path, bodyStr);
+  }
+
+  /**
+   * Stream a file directly to the container via capnweb's native pipe mechanism.
+   * Bypasses the HTTP bridge — the stream flows with automatic backpressure.
+   */
+  async writeFileStream(
+    path: string,
+    stream: ReadableStream<Uint8Array>,
+    sessionId: string
+  ): Promise<{
+    success: boolean;
+    path: string;
+    bytesWritten: number;
+    timestamp: string;
+  }> {
+    await this.connect();
+    return this.stub!.writeFileStream(path, stream, sessionId);
   }
 
   /**
