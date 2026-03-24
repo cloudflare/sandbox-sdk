@@ -199,6 +199,7 @@ jobs:
           echo "docker=${{ hashFiles(
             'packages/sandbox/Dockerfile',
             'docker-bake.hcl',
+            'docker-images.txt',
             '.dockerignore',
             'package-lock.json',
             'package.json',
@@ -209,11 +210,12 @@ jobs:
             'tooling/typescript-config/**',
             'biome.json',
             '.bun-version',
-            'tests/e2e/test-worker/Dockerfile.standalone'
+            'tests/e2e/test-worker/Dockerfile.*'
           ) }}" >> $GITHUB_OUTPUT
           echo "deploy=${{ hashFiles(
             'packages/sandbox/Dockerfile',
             'docker-bake.hcl',
+            'docker-images.txt',
             '.dockerignore',
             'package-lock.json',
             'package.json',
@@ -224,7 +226,7 @@ jobs:
             'tooling/typescript-config/**',
             'biome.json',
             '.bun-version',
-            'tests/e2e/test-worker/Dockerfile.standalone',
+            'tests/e2e/test-worker/Dockerfile.*',
             'packages/sandbox/src/**',
             'tests/e2e/test-worker/**',
             'vitest.e2e.config.ts'
@@ -349,12 +351,15 @@ jobs:
       - name: Copy Docker images to Docker Hub
         if: ${{ needs.detect-changes.outputs.docker-changed == 'true' }}
         run: |
+          source .github/load-docker-images.sh
           BUILD_TAG="pr-${{ github.event.pull_request.number }}"
           PREVIEW="${{ steps.version.outputs.version }}"
           echo "${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}" | crane auth login index.docker.io --password-stdin -u "${{ secrets.DOCKER_HUB_USERNAME }}"
-          for suffix in "" "-python" "-opencode" "-musl" "-desktop"; do
+          for image in "${DOCKER_IMAGES[@]}"; do
+            [[ "$image" == "sandbox-standalone" ]] && continue  # CF registry only
+            suffix="${image#sandbox}"
             crane copy \
-              registry.cloudflare.com/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/sandbox${suffix}:${BUILD_TAG} \
+              registry.cloudflare.com/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/${image}:${BUILD_TAG} \
               docker.io/cloudflare/sandbox:${PREVIEW}${suffix}
           done
 
@@ -423,11 +428,70 @@ jobs:
               }
             }
 
+  # --- Per-run cleanup for PR test resources ---
+  cleanup-resources:
+    needs: [policy, detect-changes, build, e2e, publish-preview]
+    if: ${{ always() && needs.policy.outputs.run_privileged == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          sparse-checkout: |
+            docker-images.txt
+            .github/load-docker-images.sh
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Install wrangler
+        run: npm install -g wrangler@latest
+
+      - name: Delete test workers and containers
+        continue-on-error: true
+        run: |
+          PR=${{ github.event.pull_request.number }}
+          CONTAINERS=$(wrangler containers list --json 2>/dev/null || echo "[]")
+
+          for suffix in "-http" "-websocket"; do
+            WORKER="sandbox-e2e-test-worker-pr-${PR}${suffix}"
+            IDS=$(echo "$CONTAINERS" | jq -r --arg worker "$WORKER" '.[] | select(.name | startswith($worker)) | .id' 2>/dev/null)
+            wrangler delete --name "$WORKER" 2>/dev/null || true
+            for id in $IDS; do
+              wrangler containers delete "$id" 2>/dev/null || true
+            done
+          done
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Delete PR image tags from CF registry
+        if: ${{ needs.e2e.result != 'failure' && needs.e2e.result != 'cancelled' && needs.publish-preview.result != 'failure' && needs.publish-preview.result != 'cancelled' }}
+        continue-on-error: true
+        run: |
+          source .github/load-docker-images.sh
+          PR=${{ github.event.pull_request.number }}
+          for image in "${DOCKER_IMAGES[@]}"; do
+            wrangler containers images delete "$image:pr-$PR" 2>/dev/null || true
+          done
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
   # --- Gate job (required check for branch protection) ---
   gate:
     name: ci/gate
     if: always()
-    needs: [policy, detect-changes, build, e2e, publish-preview]
+    needs:
+      [policy, detect-changes, build, e2e, publish-preview, cleanup-resources]
     runs-on: ubuntu-latest
     permissions: {}
     timeout-minutes: 1
@@ -440,6 +504,7 @@ jobs:
           echo "build: ${{ needs.build.result }}"
           echo "e2e: ${{ needs.e2e.result }}"
           echo "publish-preview: ${{ needs.publish-preview.result }}"
+          echo "cleanup-resources: ${{ needs.cleanup-resources.result }}"
 
           # Gate 1: Authorization
           if [[ "${{ needs.policy.outputs.authorized }}" != "true" ]]; then

@@ -1,5 +1,13 @@
 # @cloudflare/sandbox
 
+## 0.7.20
+
+### Patch Changes
+
+- [#500](https://github.com/cloudflare/sandbox-sdk/pull/500) [`fcfb350`](https://github.com/cloudflare/sandbox-sdk/commit/fcfb35021860927548cd7209f6fc7bea38c53e04) Thanks [@aron-cf](https://github.com/aron-cf)! - Bump wrangler to 4.76.0
+
+- [#486](https://github.com/cloudflare/sandbox-sdk/pull/486) [`db66675`](https://github.com/cloudflare/sandbox-sdk/commit/db66675d437de051384fc6802c30d0785decfaec) Thanks [@berry1001](https://github.com/berry1001)! - Fix supervisor-mode sandbox shutdown so inactivity `SIGTERM` cleanly exits the `/sandbox` process even when the user CMD has already exited or daemonized work in the background.
+
 ## 0.7.19
 
 ### Patch Changes
@@ -195,13 +203,13 @@
   As a base image:
 
   ```dockerfile
-  FROM docker.io/cloudflare/sandbox:0.7.19-musl
+  FROM docker.io/cloudflare/sandbox:0.7.20-musl
   ```
 
   Or copy the binary into your own Alpine image:
 
   ```dockerfile
-  COPY --from=docker.io/cloudflare/sandbox:0.7.19-musl /container-server/sandbox /sandbox
+  COPY --from=docker.io/cloudflare/sandbox:0.7.20-musl /container-server/sandbox /sandbox
   ```
 
 - [#377](https://github.com/cloudflare/sandbox-sdk/pull/377) [`d83642e`](https://github.com/cloudflare/sandbox-sdk/commit/d83642e855f68e4fb8c15c2452709923e55a83fd) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Allow port 8787 in `exposePort()`. It was incorrectly blocked.
@@ -424,10 +432,10 @@
 
   ```dockerfile
   # Before
-  FROM cloudflare/sandbox:0.7.19
+  FROM cloudflare/sandbox:0.7.20
 
   # After
-  FROM cloudflare/sandbox:0.7.19-python
+  FROM cloudflare/sandbox:0.7.20-python
   ```
 
   Without this change, Python execution will fail with `PYTHON_NOT_AVAILABLE` error.

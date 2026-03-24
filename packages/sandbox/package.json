@@ -1,6 +1,6 @@
 {
   "name": "@cloudflare/sandbox",
-  "version": "0.7.19",
+  "version": "0.7.20",
   "repository": {
     "type": "git",
     "url": "https://github.com/cloudflare/sandbox-sdk"
@@ -16,7 +16,7 @@
     "@opencode-ai/sdk": "^1.1.40",
     "@repo/shared": "*",
     "@xterm/xterm": "^6.0.0",
-    "wrangler": "^4.70.0"
+    "wrangler": "^4.76.0"
   },
   "peerDependencies": {
     "@openai/agents": "^0.3.3",

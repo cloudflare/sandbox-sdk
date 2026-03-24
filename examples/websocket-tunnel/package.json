@@ -1,14 +1,14 @@
 {
-  "name": "@cloudflare/sandbox-claude-code-example",
+  "name": "@cloudflare/sandbox-websocket-tunnel-example",
   "version": "1.0.0",
   "type": "module",
   "private": true,
-  "description": "A minimal example of using the Claude Code with Sandbox SDK",
+  "description": "A minimal example of using the Sandbox SDK with websockets",
   "scripts": {
     "deploy": "wrangler deploy",
     "dev": "wrangler dev",
     "start": "wrangler dev",
-    "types": "wrangler types",
+    "cf-typegen": "wrangler types",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

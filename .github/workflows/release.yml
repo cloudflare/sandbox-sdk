@@ -135,10 +135,13 @@ jobs:
       - name: Publish Docker images to Docker Hub
         if: steps.changesets.outputs.published == 'true'
         run: |
+          source .github/load-docker-images.sh
           VERSION=${{ needs.build.outputs.version }}
-          for suffix in "" "-python" "-opencode" "-musl" "-desktop"; do
+          for image in "${DOCKER_IMAGES[@]}"; do
+            [[ "$image" == "sandbox-standalone" ]] && continue  # CF registry only
+            suffix="${image#sandbox}"
             crane copy \
-              registry.cloudflare.com/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/sandbox${suffix}:main \
+              registry.cloudflare.com/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/${image}:main \
               docker.io/cloudflare/sandbox:${VERSION}${suffix}
           done
 

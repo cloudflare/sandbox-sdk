@@ -140,14 +140,23 @@ jobs:
         if: ${{ !inputs.skip_docker && inputs.docker_hash != '' }}
         id: registry-check
         run: |
+          source .github/load-docker-images.sh
           REGISTRY="registry.cloudflare.com/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}"
           HASH="${{ inputs.docker_hash }}"
-          if crane digest "${REGISTRY}/sandbox:ci-${HASH}" >/dev/null 2>&1; then
+          ALL_HIT=true
+          for image in "${DOCKER_IMAGES[@]}"; do
+            if ! crane digest "${REGISTRY}/${image}:ci-${HASH}" >/dev/null 2>&1; then
+              ALL_HIT=false
+              echo "::notice::Missing image ${image}:ci-${HASH} — full build required"
+              break
+            fi
+          done
+          if [[ "$ALL_HIT" == "true" ]]; then
             echo "hit=true" >> $GITHUB_OUTPUT
-            echo "::notice::Docker images found in registry for ci-${HASH} — skipping build"
+            echo "::notice::All Docker images found in registry for ci-${HASH} — skipping build"
           else
             echo "hit=false" >> $GITHUB_OUTPUT
-            echo "::notice::No cached images for ci-${HASH} — building fresh"
+            echo "::notice::Cache miss for ci-${HASH} — building fresh"
           fi
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -155,11 +164,12 @@ jobs:
       - name: Retag cached images for this PR
         if: ${{ !inputs.skip_docker && steps.registry-check.outputs.hit == 'true' }}
         run: |
+          source .github/load-docker-images.sh
           REGISTRY="registry.cloudflare.com/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}"
           HASH="${{ inputs.docker_hash }}"
           TAG="${{ inputs.image_tag }}"
           pids=()
-          for image in sandbox sandbox-python sandbox-opencode sandbox-standalone sandbox-musl sandbox-desktop; do
+          for image in "${DOCKER_IMAGES[@]}"; do
             crane copy "${REGISTRY}/${image}:ci-${HASH}" "${REGISTRY}/${image}:${TAG}" &
             pids+=($!)
           done
@@ -213,18 +223,15 @@ jobs:
       - name: Push remaining images to CF registry
         if: ${{ !inputs.skip_docker && steps.registry-check.outputs.hit != 'true' }}
         run: |
+          source .github/load-docker-images.sh
           TAG="${{ inputs.image_tag }}"
-          npx wrangler containers push sandbox-python:${TAG} &
-          PID1=$!
-          npx wrangler containers push sandbox-opencode:${TAG} &
-          PID2=$!
-          npx wrangler containers push sandbox-standalone:${TAG} &
-          PID3=$!
-          npx wrangler containers push sandbox-musl:${TAG} &
-          PID4=$!
-          npx wrangler containers push sandbox-desktop:${TAG} &
-          PID5=$!
-          for pid in $PID1 $PID2 $PID3 $PID4 $PID5; do wait "$pid"; done
+          pids=()
+          for image in "${DOCKER_IMAGES[@]}"; do
+            [[ "$image" == "sandbox" ]] && continue  # base image already pushed
+            npx wrangler containers push "${image}:${TAG}" &
+            pids+=($!)
+          done
+          for pid in "${pids[@]}"; do wait "$pid"; done
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -232,11 +239,12 @@ jobs:
       - name: Tag images with content hash
         if: ${{ !inputs.skip_docker && steps.registry-check.outputs.hit != 'true' && inputs.docker_hash != '' }}
         run: |
+          source .github/load-docker-images.sh
           REGISTRY="registry.cloudflare.com/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}"
           HASH="${{ inputs.docker_hash }}"
           TAG="${{ inputs.image_tag }}"
           pids=()
-          for image in sandbox sandbox-python sandbox-opencode sandbox-standalone sandbox-musl sandbox-desktop; do
+          for image in "${DOCKER_IMAGES[@]}"; do
             crane copy "${REGISTRY}/${image}:${TAG}" "${REGISTRY}/${image}:ci-${HASH}" &
             pids+=($!)
           done
