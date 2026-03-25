@@ -398,7 +398,7 @@ export class Session {
       state.stderrLen = stderr.length;
       state.stderrPreview =
         stderr.length > 0 ? stderr.substring(0, 200) : undefined;
-      state.outcome = exitCode === 0 ? 'success' : 'error';
+      state.outcome = 'success';
 
       return {
         command,
@@ -638,7 +638,7 @@ export class Session {
 
       state.exitCode = exitCode;
       state.durationMs = duration;
-      state.outcome = exitCode === 0 ? 'success' : 'error';
+      state.outcome = 'success';
 
       yield {
         type: 'complete',

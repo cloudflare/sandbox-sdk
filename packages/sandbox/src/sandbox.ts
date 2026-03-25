@@ -1943,12 +1943,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       if (timeoutId) {
         clearTimeout(timeoutId);
       }
-      const isError =
-        !!execError ||
-        (execOutcome?.exitCode != null && execOutcome.exitCode !== 0);
       logCanonicalEvent(this.logger, {
         event: 'sandbox.exec',
-        outcome: isError ? 'error' : 'success',
+        outcome: execError ? 'error' : 'success',
         command,
         exitCode: execOutcome?.exitCode,
         durationMs: Date.now() - startTime,

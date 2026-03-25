@@ -179,7 +179,7 @@ export class ProcessService {
 
             logCanonicalEvent(this.logger, {
               event: 'process.exit',
-              outcome: exitCode === 0 ? 'success' : 'error',
+              outcome: 'success',
               command: command,
               pid: processRecord.pid,
               exitCode: exitCode,
