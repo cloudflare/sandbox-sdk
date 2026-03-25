@@ -1040,6 +1040,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     };
     this.activeMounts.set(mountPath, mountInfo);
 
+    let mountOutcome: 'success' | 'error' = 'error';
+    let mountError: Error | undefined;
     try {
       // Create password file with credentials (uses bucket name only, not prefix)
       await this.createPasswordFile(passwordFilePath, bucket, credentials);
@@ -1057,21 +1059,26 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       );
 
       mountInfo.mounted = true;
-      this.logger.info('bucket.mount', {
-        bucket,
-        mountPath,
-        provider: provider || 'unknown',
-        prefix,
-        outcome: 'success',
-        durationMs: Date.now() - mountStartTime
-      });
+      mountOutcome = 'success';
     } catch (error) {
+      mountError = error instanceof Error ? error : new Error(String(error));
       // Clean up password file on failure
       await this.deletePasswordFile(passwordFilePath);
 
       // Clean up reservation on failure
       this.activeMounts.delete(mountPath);
       throw error;
+    } finally {
+      logCanonicalEvent(this.logger, {
+        event: 'bucket.mount',
+        outcome: mountOutcome,
+        durationMs: Date.now() - mountStartTime,
+        bucket,
+        mountPath,
+        provider: provider || 'unknown',
+        prefix,
+        error: mountError
+      });
     }
   }
 
@@ -1094,31 +1101,42 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       );
     }
 
-    // Unmount the filesystem
-    if (mountInfo.mountType === 'local-sync') {
-      await mountInfo.syncManager.stop();
-      mountInfo.mounted = false;
-      this.activeMounts.delete(mountPath);
-    } else {
-      // FUSE unmount
-      try {
-        await this.exec(`fusermount -u ${shellEscape(mountPath)}`);
+    let unmountOutcome: 'success' | 'error' = 'error';
+    let unmountError: Error | undefined;
+    try {
+      // Unmount the filesystem
+      if (mountInfo.mountType === 'local-sync') {
+        await mountInfo.syncManager.stop();
         mountInfo.mounted = false;
-
-        // Only remove from tracking if unmount succeeded
         this.activeMounts.delete(mountPath);
-      } finally {
-        // Always cleanup password file, even if unmount fails
-        await this.deletePasswordFile(mountInfo.passwordFilePath);
-      }
-    }
+      } else {
+        // FUSE unmount
+        try {
+          await this.exec(`fusermount -u ${shellEscape(mountPath)}`);
+          mountInfo.mounted = false;
 
-    this.logger.info('bucket.unmount', {
-      mountPath,
-      bucket: mountInfo.bucket,
-      outcome: 'success',
-      durationMs: Date.now() - unmountStartTime
-    });
+          // Only remove from tracking if unmount succeeded
+          this.activeMounts.delete(mountPath);
+        } finally {
+          // Always cleanup password file, even if unmount fails
+          await this.deletePasswordFile(mountInfo.passwordFilePath);
+        }
+      }
+
+      unmountOutcome = 'success';
+    } catch (error) {
+      unmountError = error instanceof Error ? error : new Error(String(error));
+      throw error;
+    } finally {
+      logCanonicalEvent(this.logger, {
+        event: 'bucket.unmount',
+        outcome: unmountOutcome,
+        durationMs: Date.now() - unmountStartTime,
+        mountPath,
+        bucket: mountInfo.bucket,
+        error: unmountError
+      });
+    }
   }
 
   /**
