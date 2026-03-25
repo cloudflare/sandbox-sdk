@@ -39,7 +39,7 @@ export class InterceptorSandbox extends Sandbox<Env> {
 }
 
 /**
- * Comment out these lines to recreate issue.
+ * Comment/Uncomment these lines to recreate issue.
  *
  * We're essentially removing + re-adding the declarations back after definition here
  * which fixes the issue
