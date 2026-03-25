@@ -148,7 +148,10 @@ export class FileService implements FileSystemOperations {
           let mimeType = bunFile.type.split(';')[0].trim();
           if (mimeType === 'application/octet-stream') {
             const escapedPath = shellEscape(path);
-            const mimeResult = await exec(`file --mime-type -b ${escapedPath}`);
+            const mimeResult = await exec(
+              `file --mime-type -b ${escapedPath}`,
+              { origin: 'internal' }
+            );
             if (mimeResult.exitCode === 0) {
               mimeType = mimeResult.stdout.trim();
             }
@@ -302,7 +305,7 @@ export class FileService implements FileSystemOperations {
           let targetPath = path;
 
           if (!path.startsWith('/')) {
-            const pwdResult = await exec('pwd');
+            const pwdResult = await exec('pwd', { origin: 'internal' });
             if (pwdResult.exitCode !== 0) {
               throw {
                 code: ErrorCode.FILESYSTEM_ERROR,
@@ -427,7 +430,9 @@ export class FileService implements FileSystemOperations {
         sessionId,
         async (exec) => {
           // Check if file exists
-          const existsResult = await exec(`test -e ${escapedPath}`);
+          const existsResult = await exec(`test -e ${escapedPath}`, {
+            origin: 'internal'
+          });
           if (existsResult.exitCode !== 0) {
             throw {
               code: ErrorCode.FILE_NOT_FOUND,
@@ -440,7 +445,9 @@ export class FileService implements FileSystemOperations {
           }
 
           // Check if path is a directory (deleteFile only works on files)
-          const isDirResult = await exec(`test -d ${escapedPath}`);
+          const isDirResult = await exec(`test -d ${escapedPath}`, {
+            origin: 'internal'
+          });
           if (isDirResult.exitCode === 0) {
             throw {
               code: ErrorCode.IS_DIRECTORY,
@@ -454,7 +461,7 @@ export class FileService implements FileSystemOperations {
 
           // Delete file using rm command
           const command = `rm ${escapedPath}`;
-          const rmResult = await exec(command);
+          const rmResult = await exec(command, { origin: 'internal' });
 
           if (rmResult.exitCode !== 0) {
             throw {
@@ -555,7 +562,8 @@ export class FileService implements FileSystemOperations {
 
       const execResult = await this.sessionManager.executeInSession(
         sessionId,
-        command
+        command,
+        { origin: 'internal' }
       );
 
       if (!execResult.success) {
@@ -651,7 +659,8 @@ export class FileService implements FileSystemOperations {
 
       const execResult = await this.sessionManager.executeInSession(
         sessionId,
-        command
+        command,
+        { origin: 'internal' }
       );
 
       if (!execResult.success) {
@@ -744,7 +753,8 @@ export class FileService implements FileSystemOperations {
       // 4. Create directory using SessionManager
       const execResult = await this.sessionManager.executeInSession(
         sessionId,
-        command
+        command,
+        { origin: 'internal' }
       );
 
       if (!execResult.success) {
@@ -838,7 +848,8 @@ export class FileService implements FileSystemOperations {
 
       const execResult = await this.sessionManager.executeInSession(
         sessionId,
-        command
+        command,
+        { origin: 'internal' }
       );
 
       if (!execResult.success) {
@@ -935,7 +946,8 @@ export class FileService implements FileSystemOperations {
       // 5. Get file stats using SessionManager
       const execResult = await this.sessionManager.executeInSession(
         sessionId,
-        command
+        command,
+        { origin: 'internal' }
       );
 
       if (!execResult.success) {
@@ -996,7 +1008,11 @@ export class FileService implements FileSystemOperations {
     path: string,
     exec: (
       command: string,
-      options?: { cwd?: string; env?: Record<string, string | undefined> }
+      options?: {
+        cwd?: string;
+        env?: Record<string, string | undefined>;
+        origin?: 'user' | 'internal';
+      }
     ) => Promise<{ exitCode: number; stdout: string; stderr: string }>
   ): Promise<ServiceResult<FileMetadata>> {
     try {
@@ -1045,7 +1061,9 @@ export class FileService implements FileSystemOperations {
       let mimeType = bunFile.type.split(';')[0].trim();
       if (mimeType === 'application/octet-stream') {
         const escapedPath = shellEscape(path);
-        const mimeResult = await exec(`file --mime-type -b ${escapedPath}`);
+        const mimeResult = await exec(`file --mime-type -b ${escapedPath}`, {
+          origin: 'internal'
+        });
         if (mimeResult.exitCode === 0) {
           mimeType = mimeResult.stdout.trim();
         }
@@ -1241,7 +1259,8 @@ export class FileService implements FileSystemOperations {
 
       const execResult = await this.sessionManager.executeInSession(
         sessionId,
-        findCommand
+        findCommand,
+        { origin: 'internal' }
       );
 
       if (!execResult.success) {
@@ -1546,14 +1565,18 @@ export class FileService implements FileSystemOperations {
     path: string,
     exec: (
       command: string,
-      options?: { cwd?: string; env?: Record<string, string | undefined> }
+      options?: {
+        cwd?: string;
+        env?: Record<string, string | undefined>;
+        origin?: 'user' | 'internal';
+      }
     ) => Promise<{ exitCode: number; stdout: string; stderr: string }>
   ): Promise<string> {
     if (path.startsWith('/')) {
       return path;
     }
 
-    const pwdResult = await exec('pwd');
+    const pwdResult = await exec('pwd', { origin: 'internal' });
     if (pwdResult.exitCode !== 0) {
       throw {
         code: ErrorCode.FILESYSTEM_ERROR,

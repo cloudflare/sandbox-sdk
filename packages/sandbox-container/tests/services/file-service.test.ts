@@ -762,12 +762,13 @@ describe('FileService', () => {
       expect(mockSecurityService.validatePath).toHaveBeenCalledWith(oldPath);
       expect(mockSecurityService.validatePath).toHaveBeenCalledWith(newPath);
 
-      // Verify mv command was called (cwd is undefined, so only 2 params)
+      // Verify mv command was called
       // Should be the 2nd call after exists
       expect(mockSessionManager.executeInSession).toHaveBeenNthCalledWith(
         2,
         'session-123',
-        "mv '/tmp/old.txt' '/tmp/new.txt'"
+        "mv '/tmp/old.txt' '/tmp/new.txt'",
+        { origin: 'internal' }
       );
     });
 
@@ -818,12 +819,13 @@ describe('FileService', () => {
 
       expect(result.success).toBe(true);
 
-      // Verify mv command was called (cwd is undefined, so only 2 params)
+      // Verify mv command was called
       // Should be the 2nd call after exists
       expect(mockSessionManager.executeInSession).toHaveBeenNthCalledWith(
         2,
         'session-123',
-        "mv '/tmp/source.txt' '/tmp/dest.txt'"
+        "mv '/tmp/source.txt' '/tmp/dest.txt'",
+        { origin: 'internal' }
       );
     });
 
@@ -859,10 +861,11 @@ describe('FileService', () => {
 
       expect(result.success).toBe(true);
 
-      // Verify mkdir command was called (cwd is undefined, so only 2 params)
+      // Verify mkdir command was called
       expect(mockSessionManager.executeInSession).toHaveBeenCalledWith(
         'session-123',
-        "mkdir '/tmp/newdir'"
+        "mkdir '/tmp/newdir'",
+        { origin: 'internal' }
       );
     });
 
@@ -882,10 +885,11 @@ describe('FileService', () => {
 
       expect(result.success).toBe(true);
 
-      // Verify mkdir -p command was called (cwd is undefined, so only 2 params)
+      // Verify mkdir -p command was called
       expect(mockSessionManager.executeInSession).toHaveBeenCalledWith(
         'session-123',
-        "mkdir -p '/tmp/nested/dir'"
+        "mkdir -p '/tmp/nested/dir'",
+        { origin: 'internal' }
       );
     });
 
@@ -918,10 +922,11 @@ describe('FileService', () => {
         expect(result.data).toBe(true);
       }
 
-      // Verify test -e command was called (cwd is undefined, so only 2 params)
+      // Verify test -e command was called
       expect(mockSessionManager.executeInSession).toHaveBeenCalledWith(
         'session-123',
-        "test -e '/tmp/test.txt'"
+        "test -e '/tmp/test.txt'",
+        { origin: 'internal' }
       );
     });
 
@@ -986,7 +991,8 @@ describe('FileService', () => {
 
       expect(mockExec).toHaveBeenCalledTimes(1);
       expect(mockExec).toHaveBeenCalledWith(
-        "file --mime-type -b '/tmp/large-file.bin'"
+        "file --mime-type -b '/tmp/large-file.bin'",
+        { origin: 'internal' }
       );
     });
 

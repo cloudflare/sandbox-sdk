@@ -120,7 +120,7 @@ export class GitService {
       const result = await this.sessionManager
         .withSession(sessionId, async (exec) => {
           // Execute git clone
-          const cloneResult = await exec(command);
+          const cloneResult = await exec(command, { origin: 'internal' });
 
           if (cloneResult.exitCode !== 0) {
             if (cloneResult.exitCode === 124) {
@@ -162,7 +162,8 @@ export class GitService {
           const branchArgs = this.manager.buildGetCurrentBranchArgs();
           const branchCommand = this.buildCommand(branchArgs);
           const branchResult = await exec(branchCommand, {
-            cwd: targetDirectory
+            cwd: targetDirectory,
+            origin: 'internal'
           });
 
           let actualBranch: string;
@@ -274,7 +275,7 @@ export class GitService {
       const execResult = await this.sessionManager.executeInSession(
         sessionId,
         command,
-        { cwd: repoPath }
+        { cwd: repoPath, origin: 'internal' }
       );
 
       if (!execResult.success) {
@@ -365,7 +366,7 @@ export class GitService {
       const execResult = await this.sessionManager.executeInSession(
         sessionId,
         command,
-        { cwd: repoPath }
+        { cwd: repoPath, origin: 'internal' }
       );
 
       if (!execResult.success) {
@@ -440,7 +441,7 @@ export class GitService {
       const execResult = await this.sessionManager.executeInSession(
         sessionId,
         command,
-        { cwd: repoPath }
+        { cwd: repoPath, origin: 'internal' }
       );
 
       if (!execResult.success) {

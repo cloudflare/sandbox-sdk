@@ -159,7 +159,8 @@ export class ProcessService {
               pid: event.pid,
               durationMs: Date.now() - startTime,
               processId: processRecord.id,
-              sessionId
+              sessionId,
+              origin: options.origin
             });
           } else if (event.type === 'stdout' && event.data) {
             processRecord.stdout += event.data;
@@ -191,7 +192,8 @@ export class ProcessService {
                   ? endTime.getTime() - processRecord.startTime.getTime()
                   : Date.now() - startTime,
               processId: processRecord.id,
-              sessionId
+              sessionId,
+              origin: options.origin
             });
 
             processRecord.statusListeners.forEach((listener) => {
@@ -229,7 +231,8 @@ export class ProcessService {
               sessionId,
               durationMs: Date.now() - startTime,
               errorMessage: event.error,
-              error: new Error(event.error)
+              error: new Error(event.error),
+              origin: options.origin
             });
           }
         },

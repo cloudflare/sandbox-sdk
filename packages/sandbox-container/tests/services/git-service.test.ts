@@ -369,7 +369,7 @@ describe('GitService', () => {
       expect(mockSessionManager.executeInSession).toHaveBeenCalledWith(
         'session-123',
         "'git' 'checkout' 'develop'",
-        { cwd: '/tmp/repo' }
+        { cwd: '/tmp/repo', origin: 'internal' }
       );
     });
 
@@ -432,7 +432,7 @@ describe('GitService', () => {
       expect(mockSessionManager.executeInSession).toHaveBeenCalledWith(
         'session-123',
         "'git' 'branch' '--show-current'",
-        { cwd: '/tmp/repo' }
+        { cwd: '/tmp/repo', origin: 'internal' }
       );
     });
   });
@@ -475,7 +475,7 @@ describe('GitService', () => {
       expect(mockSessionManager.executeInSession).toHaveBeenCalledWith(
         'session-123',
         "'git' 'branch' '-a'",
-        { cwd: '/tmp/repo' }
+        { cwd: '/tmp/repo', origin: 'internal' }
       );
     });
 

@@ -761,7 +761,9 @@ export class SessionManager {
       const safeId = sessionId.replace(/[^a-zA-Z0-9_-]/g, '_');
       const tempEnvFile = `/tmp/pty-env-${safeId}-${Date.now()}`;
       try {
-        const envResult = await session.exec(`env -0 > '${tempEnvFile}'`);
+        const envResult = await session.exec(`env -0 > '${tempEnvFile}'`, {
+          origin: 'internal'
+        });
         if (envResult.exitCode === 0) {
           const envText = await Bun.file(tempEnvFile).text();
           for (const entry of envText.split('\0')) {
@@ -772,7 +774,7 @@ export class SessionManager {
           }
         }
 
-        const cwdResult = await session.exec('pwd');
+        const cwdResult = await session.exec('pwd', { origin: 'internal' });
         if (cwdResult.exitCode === 0 && cwdResult.stdout?.trim()) {
           sessionCwd = cwdResult.stdout.trim();
         }
