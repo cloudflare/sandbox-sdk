@@ -9,6 +9,8 @@
 export interface CanonicalEventPayload {
   /** domain.operation name (e.g., "sandbox.exec", "command.exec") */
   event: string;
+  /** Whether this event was user-initiated or internal infrastructure */
+  origin?: 'user' | 'internal';
   /** Result of the operation */
   outcome: 'success' | 'error';
   /** Wall-clock duration in milliseconds */

@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import { buildMessage, logCanonicalEvent } from '../../src/logger/canonical';
+import {
+  buildMessage,
+  logCanonicalEvent,
+  resolveLogLevel
+} from '../../src/logger/canonical';
 import type { Logger } from '../../src/logger/types';
 
 function createMockLogger(): Logger & {
@@ -357,5 +361,82 @@ describe('logCanonicalEvent', () => {
     expect(msg).toBe(
       'git.checkout success /workspace/my-repo branch=feature/test (80ms)'
     );
+  });
+});
+
+describe('resolveLogLevel', () => {
+  it('always returns error for error outcome regardless of origin or options', () => {
+    expect(
+      resolveLogLevel({
+        event: 'command.exec',
+        outcome: 'error',
+        durationMs: 0,
+        origin: 'internal'
+      })
+    ).toBe('error');
+    expect(
+      resolveLogLevel(
+        { event: 'file.read', outcome: 'error', durationMs: 0 },
+        { successLevel: 'debug' }
+      )
+    ).toBe('error');
+  });
+
+  it('uses explicit successLevel when provided', () => {
+    expect(
+      resolveLogLevel(
+        { event: 'version.check', outcome: 'success', durationMs: 0 },
+        { successLevel: 'warn' }
+      )
+    ).toBe('warn');
+    expect(
+      resolveLogLevel(
+        { event: 'version.check', outcome: 'success', durationMs: 0 },
+        { successLevel: 'debug' }
+      )
+    ).toBe('debug');
+  });
+
+  it('demotes internal origin to debug', () => {
+    expect(
+      resolveLogLevel({
+        event: 'command.exec',
+        outcome: 'success',
+        durationMs: 0,
+        origin: 'internal'
+      })
+    ).toBe('debug');
+  });
+
+  it('demotes DEBUG_ON_SUCCESS events to debug', () => {
+    for (const event of [
+      'session.create',
+      'session.destroy',
+      'file.read',
+      'file.write',
+      'file.delete',
+      'file.mkdir'
+    ]) {
+      expect(
+        resolveLogLevel({ event, outcome: 'success', durationMs: 0 })
+      ).toBe('debug');
+    }
+  });
+
+  it('defaults to info for user commands', () => {
+    expect(
+      resolveLogLevel({
+        event: 'sandbox.exec',
+        outcome: 'success',
+        durationMs: 0
+      })
+    ).toBe('info');
+    expect(
+      resolveLogLevel({
+        event: 'backup.create',
+        outcome: 'success',
+        durationMs: 0
+      })
+    ).toBe('info');
   });
 });
