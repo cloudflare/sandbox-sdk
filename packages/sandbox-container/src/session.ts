@@ -375,7 +375,7 @@ export class Session {
       event.durationMs = duration;
       event.stdoutLen = stdout.length;
       event.stderrLen = stderr.length;
-      event.outcome = 'success';
+      event.outcome = exitCode === 0 ? 'success' : 'error';
 
       return {
         command,
@@ -395,7 +395,7 @@ export class Session {
       throw error;
     } finally {
       event.durationMs = event.durationMs ?? Date.now() - startTime;
-      if (event.outcome === 'error') {
+      if (caughtError) {
         this.logger.error('command.exec', caughtError, event);
       } else {
         this.logger.info('command.exec', event);
@@ -609,7 +609,7 @@ export class Session {
 
       event.exitCode = exitCode;
       event.durationMs = duration;
-      event.outcome = 'success';
+      event.outcome = exitCode === 0 ? 'success' : 'error';
 
       yield {
         type: 'complete',
@@ -646,7 +646,7 @@ export class Session {
       };
     } finally {
       event.durationMs = event.durationMs ?? Date.now() - startTime;
-      if (event.outcome === 'error') {
+      if (caughtError) {
         this.logger.error('command.stream', caughtError, event);
       } else {
         this.logger.info('command.stream', event);
