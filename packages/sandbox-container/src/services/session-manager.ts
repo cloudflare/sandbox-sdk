@@ -145,13 +145,15 @@ export class SessionManager {
     let errorMessage: string | undefined;
 
     try {
-      // Check if session already exists
+      // Check if session already exists — log as info, not error.
+      // The session is usable; this is an expected condition when
+      // ensureBackupSession or other idempotent callers retry.
       if (this.sessions.has(options.id)) {
-        errorMessage = `Session '${options.id}' already exists`;
+        outcome = 'success';
         return {
           success: false,
           error: {
-            message: errorMessage,
+            message: `Session '${options.id}' already exists`,
             code: ErrorCode.SESSION_ALREADY_EXISTS,
             details: {
               sessionId: options.id
