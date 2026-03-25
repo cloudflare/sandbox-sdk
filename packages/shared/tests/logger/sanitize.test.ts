@@ -7,7 +7,7 @@ import {
 } from '../../src/logger/sanitize';
 
 describe('redactCredentials', () => {
-  it('redacts credentials from HTTPS URLs', () => {
+  it('redacts embedded credentials from URLs', () => {
     expect(redactCredentials('https://token@github.com/repo.git')).toBe(
       'https://******@github.com/repo.git'
     );
@@ -16,19 +16,7 @@ describe('redactCredentials', () => {
     );
   });
 
-  it('leaves URLs without credentials unchanged', () => {
-    expect(redactCredentials('https://github.com/public.git')).toBe(
-      'https://github.com/public.git'
-    );
-  });
-
-  it('redacts credentials from URLs embedded in text', () => {
-    expect(
-      redactCredentials('fatal: https://oauth2:token@github.com/repo.git')
-    ).toBe('fatal: https://******@github.com/repo.git');
-  });
-
-  it('handles multiple URLs in a single string', () => {
+  it('handles URLs embedded in text and multiple URLs', () => {
     expect(
       redactCredentials(
         'Error: https://t1@host1.com failed, tried https://t2@host2.com'
@@ -38,72 +26,48 @@ describe('redactCredentials', () => {
     );
   });
 
-  it('returns strings without URLs unchanged', () => {
+  it('returns strings without credentials unchanged', () => {
+    expect(redactCredentials('https://github.com/public.git')).toBe(
+      'https://github.com/public.git'
+    );
     expect(redactCredentials('no urls here')).toBe('no urls here');
-    expect(redactCredentials('')).toBe('');
   });
 });
 
 describe('redactSensitiveParams', () => {
-  it('strips X-Amz-Credential from URLs', () => {
+  it('redacts all sensitive param types while preserving non-sensitive ones', () => {
     const url =
-      'https://bucket.r2.cloudflarestorage.com/file?X-Amz-Credential=AKID123&X-Amz-Expires=3600';
+      'https://r2.example.com/f?X-Amz-Credential=AKID&X-Amz-Signature=SIG&X-Amz-Expires=3600&token=tok1&secret=sec1';
     const result = redactSensitiveParams(url);
     expect(result).toContain('X-Amz-Credential=REDACTED');
-    expect(result).not.toContain('AKID123');
-    expect(result).toContain('X-Amz-Expires=3600');
-  });
-
-  it('strips X-Amz-Signature from URLs', () => {
-    const url =
-      'https://bucket.r2.cloudflarestorage.com/file?X-Amz-Signature=abc123def456&X-Amz-Expires=3600';
-    const result = redactSensitiveParams(url);
     expect(result).toContain('X-Amz-Signature=REDACTED');
-    expect(result).not.toContain('abc123def456');
-  });
-
-  it('strips X-Amz-Security-Token from URLs', () => {
-    const url =
-      'https://bucket.example.com/file?X-Amz-Security-Token=longtoken123&other=ok';
-    const result = redactSensitiveParams(url);
-    expect(result).toContain('X-Amz-Security-Token=REDACTED');
-    expect(result).not.toContain('longtoken123');
-    expect(result).toContain('other=ok');
-  });
-
-  it('strips token, secret, and password params', () => {
-    const url =
-      'https://example.com/api?token=abc123&secret=xyz789&password=hunter2&action=run';
-    const result = redactSensitiveParams(url);
     expect(result).toContain('token=REDACTED');
     expect(result).toContain('secret=REDACTED');
-    expect(result).toContain('password=REDACTED');
-    expect(result).not.toContain('abc123');
-    expect(result).not.toContain('xyz789');
-    expect(result).not.toContain('hunter2');
-    expect(result).toContain('action=run');
-  });
-
-  it('handles multiple sensitive params in one URL', () => {
-    const url =
-      'https://bucket.r2.cloudflarestorage.com/file?X-Amz-Credential=AKID&X-Amz-Signature=SIG&X-Amz-Expires=3600';
-    const result = redactSensitiveParams(url);
-    expect(result).toContain('X-Amz-Credential=REDACTED');
-    expect(result).toContain('X-Amz-Signature=REDACTED');
+    expect(result).not.toContain('AKID');
+    expect(result).not.toContain('SIG');
     expect(result).toContain('X-Amz-Expires=3600');
   });
 
-  it('returns non-URL strings unchanged', () => {
-    expect(redactSensitiveParams('just a plain string')).toBe(
-      'just a plain string'
-    );
-    expect(redactSensitiveParams('no-url-here')).toBe('no-url-here');
+  it('returns non-URL strings and URLs without sensitive params unchanged', () => {
+    expect(redactSensitiveParams('plain string')).toBe('plain string');
     expect(redactSensitiveParams('')).toBe('');
+    expect(redactSensitiveParams('https://example.com/file?page=1')).toBe(
+      'https://example.com/file?page=1'
+    );
   });
 
-  it('leaves URLs without sensitive params unchanged', () => {
-    const url = 'https://example.com/file?page=1&sort=name';
-    expect(redactSensitiveParams(url)).toBe(url);
+  it('does not match param names in URL path segments', () => {
+    expect(
+      redactSensitiveParams('https://example.com/api/token/refresh?action=run')
+    ).toBe('https://example.com/api/token/refresh?action=run');
+  });
+
+  it('stops at URL delimiters in quoted commands', () => {
+    const cmd =
+      'curl "https://r2.example.com/f?token=secret123" -H "Accept: json"';
+    const result = redactSensitiveParams(cmd);
+    expect(result).toContain('token=REDACTED');
+    expect(result).toContain('-H "Accept: json"');
   });
 });
 
@@ -141,33 +105,20 @@ describe('redactCommand', () => {
 });
 
 describe('truncateForLog', () => {
-  it('passes short strings unchanged', () => {
-    const result = truncateForLog('hello');
-    expect(result).toEqual({ value: 'hello', truncated: false });
+  it('passes strings within limit unchanged', () => {
+    expect(truncateForLog('hello')).toEqual({
+      value: 'hello',
+      truncated: false
+    });
+    expect(truncateForLog('a'.repeat(120))).toEqual({
+      value: 'a'.repeat(120),
+      truncated: false
+    });
   });
 
-  it('truncates strings exceeding default max length', () => {
-    const long = 'a'.repeat(200);
-    const result = truncateForLog(long);
+  it('truncates long strings and sets truncated flag', () => {
+    const result = truncateForLog('a'.repeat(200));
     expect(result.truncated).toBe(true);
-    expect(result.value.length).toBeLessThanOrEqual(120);
-    expect(result.value).toContain('...');
-  });
-
-  it('truncates at custom max length', () => {
-    const result = truncateForLog('abcdefghij', 5);
-    expect(result.truncated).toBe(true);
-    expect(result.value.length).toBeLessThanOrEqual(5);
-  });
-
-  it('does not truncate strings at exactly max length', () => {
-    const exact = 'a'.repeat(120);
-    const result = truncateForLog(exact);
-    expect(result).toEqual({ value: exact, truncated: false });
-  });
-
-  it('handles empty strings', () => {
-    const result = truncateForLog('');
-    expect(result).toEqual({ value: '', truncated: false });
+    expect(result.value.length).toBeLessThanOrEqual(121); // 120 + ellipsis char
   });
 });

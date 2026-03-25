@@ -7,10 +7,11 @@
 
 /**
  * Sensitive query parameter names to redact from URLs.
- * Case-insensitive matching.
+ * Anchored to query string context ([?&]) to avoid matching path segments.
+ * Value matching stops at & and common URL/command delimiters.
  */
 const SENSITIVE_PARAMS =
-  /\b(X-Amz-Credential|X-Amz-Signature|X-Amz-Security-Token|token|secret|password)=[^&]*/gi;
+  /([?&])(X-Amz-Credential|X-Amz-Signature|X-Amz-Security-Token|token|secret|password)=[^&\s"'`<>]*/gi;
 
 /**
  * Redact credentials from URLs for secure logging
@@ -77,8 +78,8 @@ export function redactCredentials(text: string): string {
  * @returns String with sensitive params replaced by REDACTED
  */
 export function redactSensitiveParams(input: string): string {
-  if (!input.includes('://')) return input;
-  return input.replace(SENSITIVE_PARAMS, '$1=REDACTED');
+  if (!input.includes('?') || !input.includes('=')) return input;
+  return input.replace(SENSITIVE_PARAMS, '$1$2=REDACTED');
 }
 
 /**
@@ -109,5 +110,6 @@ export function truncateForLog(
   if (value.length <= maxLen) {
     return { value, truncated: false };
   }
-  return { value: `${value.substring(0, maxLen - 3)}...`, truncated: true };
+  const cutoff = Math.max(0, maxLen - 3);
+  return { value: `${value.substring(0, cutoff)}...`, truncated: true };
 }

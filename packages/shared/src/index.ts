@@ -59,7 +59,12 @@ export {
   TraceContext
 } from './logger/index.js';
 // Export sanitize helpers
-export { redactCredentials } from './logger/sanitize.js';
+export {
+  redactCommand,
+  redactCredentials,
+  redactSensitiveParams,
+  truncateForLog
+} from './logger/sanitize.js';
 // Export PTY types
 export type {
   PtyControlMessage,
