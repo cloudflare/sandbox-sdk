@@ -1,5 +1,5 @@
 import type { Logger } from '@repo/shared';
-import { shellEscape } from '@repo/shared';
+import { logCanonicalEvent, shellEscape } from '@repo/shared';
 import { ErrorCode, Operation } from '@repo/shared/errors';
 import type { ServiceResult } from '../core/types';
 import { serviceError, serviceSuccess } from '../core/types';
@@ -124,12 +124,10 @@ export class BackupService {
     }
 
     const startTime = Date.now();
-    const event: Record<string, unknown> = {
-      operation: Operation.BACKUP_CREATE,
-      dir,
-      archivePath
-    };
+    let outcome: 'success' | 'error' = 'error';
     let caughtError: Error | undefined;
+    let errorMessage: string | undefined;
+    let sizeBytes: number | undefined;
 
     try {
       // Ensure the work directory exists
@@ -138,8 +136,8 @@ export class BackupService {
         `mkdir -p ${shellEscape(BACKUP_WORK_DIR)}`
       );
       if (!mkdirResult.success) {
-        event.outcome = 'error';
-        event.errorMessage = 'Failed to create backup work directory';
+        outcome = 'error';
+        errorMessage = 'Failed to create backup work directory';
         return serviceError({
           message: `Failed to create backup work directory: ${mkdirResult.error.message}`,
           code: ErrorCode.BACKUP_CREATE_FAILED,
@@ -153,8 +151,7 @@ export class BackupService {
         `test -d ${shellEscape(dir)}`
       );
       if (!checkResult.success || checkResult.data.exitCode !== 0) {
-        event.outcome = 'error';
-        event.errorMessage = 'Source directory does not exist';
+        errorMessage = 'Source directory does not exist';
         return serviceError({
           message: `Source directory does not exist: ${dir}`,
           code: ErrorCode.BACKUP_CREATE_FAILED,
@@ -172,8 +169,7 @@ export class BackupService {
         checkBinaryResult.success &&
         checkBinaryResult.data.stdout.includes('missing')
       ) {
-        event.outcome = 'error';
-        event.errorMessage = 'mksquashfs binary not found';
+        errorMessage = 'mksquashfs binary not found';
         return serviceError({
           message: `mksquashfs binary not found at ${BIN.mksquashfs}. Ensure squashfs-tools is installed.`,
           code: ErrorCode.BACKUP_CREATE_FAILED,
@@ -204,8 +200,7 @@ export class BackupService {
           writeExcludeResult.data.exitCode !== 0
         ) {
           shouldCleanupExcludeFile = true;
-          event.outcome = 'error';
-          event.errorMessage = 'Failed to write exclude patterns file';
+          errorMessage = 'Failed to write exclude patterns file';
           return serviceError({
             message: 'Failed to write exclude patterns file',
             code: ErrorCode.BACKUP_CREATE_FAILED,
@@ -238,8 +233,7 @@ export class BackupService {
       );
 
       if (!createResult.success) {
-        event.outcome = 'error';
-        event.errorMessage = 'Failed to create squashfs archive';
+        errorMessage = 'Failed to create squashfs archive';
         return serviceError({
           message: `Failed to create squashfs archive: ${createResult.error.message}`,
           code: ErrorCode.BACKUP_CREATE_FAILED,
@@ -248,8 +242,7 @@ export class BackupService {
       }
 
       if (createResult.data.exitCode !== 0) {
-        event.outcome = 'error';
-        event.errorMessage = 'mksquashfs failed';
+        errorMessage = 'mksquashfs failed';
         return serviceError({
           message: `mksquashfs failed: ${createResult.data.stderr || createResult.data.stdout}`,
           code: ErrorCode.BACKUP_CREATE_FAILED,
@@ -269,13 +262,12 @@ export class BackupService {
         `stat -c %s ${shellEscape(archivePath)}`
       );
 
-      let sizeBytes = 0;
+      sizeBytes = 0;
       if (statResult.success && statResult.data.exitCode === 0) {
         sizeBytes = parseInt(statResult.data.stdout.trim(), 10) || 0;
       }
 
-      event.outcome = 'success';
-      event.sizeBytes = sizeBytes;
+      outcome = 'success';
 
       return serviceSuccess<CreateArchiveResult>({
         sizeBytes,
@@ -283,8 +275,7 @@ export class BackupService {
       });
     } catch (error) {
       caughtError = error instanceof Error ? error : new Error(String(error));
-      event.outcome = 'error';
-      event.errorMessage = caughtError.message;
+      errorMessage = caughtError.message;
       return serviceError({
         message: `Unexpected error creating backup: ${caughtError.message}`,
         code: ErrorCode.BACKUP_CREATE_FAILED,
@@ -302,12 +293,16 @@ export class BackupService {
           });
       }
 
-      event.durationMs = Date.now() - startTime;
-      if (event.outcome === 'success') {
-        this.logger.info('backup.create', event);
-      } else {
-        this.logger.error('backup.create', caughtError, event);
-      }
+      logCanonicalEvent(this.logger, {
+        event: 'backup.create',
+        outcome,
+        durationMs: Date.now() - startTime,
+        dir,
+        archivePath,
+        sizeBytes,
+        errorMessage,
+        error: caughtError
+      });
     }
   }
 
@@ -418,14 +413,9 @@ export class BackupService {
     const workDir = `${mountBase}/work`;
 
     const startTime = Date.now();
-    const event: Record<string, unknown> = {
-      operation: Operation.BACKUP_RESTORE,
-      dir,
-      archivePath,
-      backupId,
-      restoreId
-    };
+    let outcome: 'success' | 'error' = 'error';
     let caughtError: Error | undefined;
+    let errorMessage: string | undefined;
 
     try {
       // Verify the archive exists
@@ -434,8 +424,7 @@ export class BackupService {
         `test -f ${shellEscape(archivePath)}`
       );
       if (!checkResult.success || checkResult.data.exitCode !== 0) {
-        event.outcome = 'error';
-        event.errorMessage = 'Archive file does not exist';
+        errorMessage = 'Archive file does not exist';
         return serviceError({
           message: `Archive file does not exist: ${archivePath}`,
           code: ErrorCode.BACKUP_RESTORE_FAILED,
@@ -471,8 +460,7 @@ export class BackupService {
         `mkdir -p ${shellEscape(lowerDir)} ${shellEscape(upperDir)} ${shellEscape(workDir)} ${shellEscape(dir)}`
       );
       if (!mkdirResult.success) {
-        event.outcome = 'error';
-        event.errorMessage = 'Failed to create mount directories';
+        errorMessage = 'Failed to create mount directories';
         return serviceError({
           message: `Failed to create mount directories: ${mkdirResult.error.message}`,
           code: ErrorCode.BACKUP_RESTORE_FAILED,
@@ -480,8 +468,7 @@ export class BackupService {
         });
       }
       if (mkdirResult.data.exitCode !== 0) {
-        event.outcome = 'error';
-        event.errorMessage = 'Failed to create mount directories';
+        errorMessage = 'Failed to create mount directories';
         return serviceError({
           message: `Failed to create mount directories: ${mkdirResult.data.stderr}`,
           code: ErrorCode.BACKUP_RESTORE_FAILED,
@@ -496,8 +483,7 @@ export class BackupService {
         squashMountCmd
       );
       if (!squashMountResult.success) {
-        event.outcome = 'error';
-        event.errorMessage = 'Failed to mount squashfs';
+        errorMessage = 'Failed to mount squashfs';
         return serviceError({
           message: `Failed to mount squashfs: ${squashMountResult.error.message}`,
           code: ErrorCode.BACKUP_RESTORE_FAILED,
@@ -505,8 +491,7 @@ export class BackupService {
         });
       }
       if (squashMountResult.data.exitCode !== 0) {
-        event.outcome = 'error';
-        event.errorMessage = 'Failed to mount squashfs';
+        errorMessage = 'Failed to mount squashfs';
         return serviceError({
           message: `Failed to mount squashfs: ${squashMountResult.data.stderr}`,
           code: ErrorCode.BACKUP_RESTORE_FAILED,
@@ -533,8 +518,7 @@ export class BackupService {
           sessionId,
           `${BIN.fusermount} -u ${shellEscape(lowerDir)} 2>/dev/null || true`
         );
-        event.outcome = 'error';
-        event.errorMessage = 'Failed to mount overlayfs';
+        errorMessage = 'Failed to mount overlayfs';
         return serviceError({
           message: `Failed to mount overlayfs: ${overlayMountResult.error.message}`,
           code: ErrorCode.BACKUP_RESTORE_FAILED,
@@ -547,8 +531,7 @@ export class BackupService {
           sessionId,
           `${BIN.fusermount} -u ${shellEscape(lowerDir)} 2>/dev/null || true`
         );
-        event.outcome = 'error';
-        event.errorMessage = 'Failed to mount overlayfs';
+        errorMessage = 'Failed to mount overlayfs';
         return serviceError({
           message: `Failed to mount overlayfs: ${overlayMountResult.data.stderr}`,
           code: ErrorCode.BACKUP_RESTORE_FAILED,
@@ -556,13 +539,12 @@ export class BackupService {
         });
       }
 
-      event.outcome = 'success';
+      outcome = 'success';
 
       return serviceSuccess<RestoreArchiveResult>({ dir });
     } catch (error) {
       caughtError = error instanceof Error ? error : new Error(String(error));
-      event.outcome = 'error';
-      event.errorMessage = caughtError.message;
+      errorMessage = caughtError.message;
       // Best-effort cleanup of any FUSE mounts that may have been established
       await this.sessionManager
         .executeInSession(
@@ -582,12 +564,16 @@ export class BackupService {
         details: { dir, archivePath }
       });
     } finally {
-      event.durationMs = Date.now() - startTime;
-      if (event.outcome === 'success') {
-        this.logger.info('backup.restore', event);
-      } else {
-        this.logger.error('backup.restore', caughtError, event);
-      }
+      logCanonicalEvent(this.logger, {
+        event: 'backup.restore',
+        outcome,
+        durationMs: Date.now() - startTime,
+        dir,
+        archivePath,
+        backupId,
+        errorMessage,
+        error: caughtError
+      });
     }
   }
 
@@ -632,12 +618,9 @@ export class BackupService {
     const mountGlob = `${BACKUP_MOUNTS_DIR}/${backupId}`;
 
     const startTime = Date.now();
-    const event: Record<string, unknown> = {
-      operation: Operation.BACKUP_UNMOUNT,
-      dir,
-      backupId
-    };
+    let outcome: 'success' | 'error' = 'error';
     let caughtError: Error | undefined;
+    let errorMessage: string | undefined;
 
     try {
       // Unmount overlayfs first
@@ -659,9 +642,7 @@ export class BackupService {
         `mountpoint -q ${shellEscape(dir)} 2>/dev/null && echo "mounted" || echo "unmounted"`
       );
       if (mountCheck.success && mountCheck.data.stdout.trim() === 'mounted') {
-        event.outcome = 'error';
-        event.errorMessage = `Overlay mount still active at ${dir}`;
-        event.mountStillActive = true;
+        errorMessage = `Overlay mount still active at ${dir}`;
         return serviceError({
           message: `Failed to unmount overlay at ${dir}. Mount is still active.`,
           code: ErrorCode.BACKUP_RESTORE_FAILED,
@@ -675,25 +656,27 @@ export class BackupService {
         `rm -rf ${shellEscape(mountGlob)}_* ${shellEscape(mountGlob)} 2>/dev/null; true`
       );
 
-      event.outcome = 'success';
+      outcome = 'success';
 
       return serviceSuccess({ success: true });
     } catch (error) {
       caughtError = error instanceof Error ? error : new Error(String(error));
-      event.outcome = 'error';
-      event.errorMessage = caughtError.message;
+      errorMessage = caughtError.message;
       return serviceError({
         message: `Failed to unmount snapshot: ${caughtError.message}`,
         code: ErrorCode.BACKUP_RESTORE_FAILED,
         details: { dir, backupId }
       });
     } finally {
-      event.durationMs = Date.now() - startTime;
-      if (event.outcome === 'success') {
-        this.logger.info('backup.unmount', event);
-      } else {
-        this.logger.error('backup.unmount', caughtError, event);
-      }
+      logCanonicalEvent(this.logger, {
+        event: 'backup.unmount',
+        outcome,
+        durationMs: Date.now() - startTime,
+        dir,
+        backupId,
+        errorMessage,
+        error: caughtError
+      });
     }
   }
 }

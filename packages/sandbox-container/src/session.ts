@@ -115,6 +115,27 @@ const STDERR_PREFIX = '\x02\x02\x02';
 // Types
 // ============================================================================
 
+/** Accumulated state tracked during exec/execStream for canonical logging. */
+interface ExecState {
+  outcome?: 'success' | 'error';
+  durationMs?: number;
+  exitCode?: number;
+  stdoutLen?: number;
+  stderrLen?: number;
+  stderrPreview?: string;
+  errorMessage?: string;
+  /** exec-specific: timeout requested for this command */
+  timeout?: number;
+  /** execStream-specific: PID timed out */
+  pidTimeout?: boolean;
+  /** execStream-specific: PID obtained via fallback method */
+  pidFallback?: string;
+  /** execStream-specific: labeler output capture timed out */
+  labelerTimeout?: boolean;
+  /** execStream-specific: labeler timeout threshold in ms */
+  labelerTimeoutMs?: number;
+}
+
 export interface SessionOptions {
   /** Session identifier (generated if not provided) */
   id: string;
@@ -322,11 +343,7 @@ export class Session {
     const exitCodeFile = join(this.sessionDir!, `${commandId}.exit`);
     const pidFile = join(this.sessionDir!, `${commandId}.pid`);
 
-    const event: Record<string, unknown> = {
-      sessionId: this.id,
-      commandId,
-      operation: 'exec',
-      command: command.length > 100 ? `${command.substring(0, 100)}…` : command,
+    const state: ExecState = {
       ...(options?.timeoutMs && { timeout: options.timeoutMs })
     };
     let caughtError: Error | undefined;
@@ -375,11 +392,11 @@ export class Session {
 
       const duration = Date.now() - startTime;
 
-      event.exitCode = exitCode;
-      event.durationMs = duration;
-      event.stdoutLen = stdout.length;
-      event.stderrLen = stderr.length;
-      event.outcome = exitCode === 0 ? 'success' : 'error';
+      state.exitCode = exitCode;
+      state.durationMs = duration;
+      state.stdoutLen = stdout.length;
+      state.stderrLen = stderr.length;
+      state.outcome = exitCode === 0 ? 'success' : 'error';
 
       return {
         command,
@@ -391,29 +408,28 @@ export class Session {
       };
     } catch (error) {
       caughtError = error instanceof Error ? error : new Error(String(error));
-      event.outcome = 'error';
-      event.errorMessage = caughtError.message;
+      state.outcome = 'error';
+      state.errorMessage = caughtError.message;
       // Untrack and clean up on error
       this.untrackCommand(commandId);
       await this.cleanupCommandFiles(logFile, exitCodeFile);
       throw error;
     } finally {
-      const stderrPreview =
-        typeof event.stderrPreview === 'string'
-          ? redactSensitiveParams(event.stderrPreview)
-          : undefined;
+      const stderrPreview = state.stderrPreview
+        ? redactSensitiveParams(state.stderrPreview)
+        : undefined;
       logCanonicalEvent(this.logger, {
         event: 'command.exec',
-        outcome: (event.outcome as 'success' | 'error') ?? 'error',
-        durationMs: (event.durationMs as number) ?? Date.now() - startTime,
+        outcome: state.outcome ?? 'error',
+        durationMs: state.durationMs ?? Date.now() - startTime,
         command,
         sessionId: this.id,
         commandId,
-        exitCode: event.exitCode as number | undefined,
-        stdoutLen: event.stdoutLen as number | undefined,
-        stderrLen: event.stderrLen as number | undefined,
+        exitCode: state.exitCode,
+        stdoutLen: state.stdoutLen,
+        stderrLen: state.stderrLen,
         stderrPreview,
-        errorMessage: event.errorMessage as string | undefined,
+        errorMessage: state.errorMessage,
         error: caughtError
       });
     }
@@ -446,12 +462,7 @@ export class Session {
     const pidPipe = join(sessionDir, `${commandId}.pid.pipe`);
     const labelersDoneFile = join(sessionDir, `${commandId}.labelers.done`);
 
-    const event: Record<string, unknown> = {
-      sessionId: this.id,
-      commandId,
-      operation: 'execStream',
-      command: command.length > 100 ? `${command.substring(0, 100)}…` : command
-    };
+    const state: ExecState = {};
     let caughtError: Error | undefined;
 
     try {
@@ -487,10 +498,10 @@ export class Session {
       const pid = pidResult.pid;
 
       if (pid === undefined) {
-        event.pidTimeout = true;
+        state.pidTimeout = true;
       }
       if (pidResult.pidFallback) {
-        event.pidFallback = pidResult.pidFallback;
+        state.pidFallback = pidResult.pidFallback;
       }
 
       yield {
@@ -575,8 +586,8 @@ export class Session {
       }
 
       if (!labelersDone) {
-        event.labelerTimeout = true;
-        event.labelerTimeoutMs = maxWaitMs;
+        state.labelerTimeout = true;
+        state.labelerTimeoutMs = maxWaitMs;
       }
 
       // Read final chunks from log file after labelers are done
@@ -623,9 +634,9 @@ export class Session {
 
       const duration = Date.now() - startTime;
 
-      event.exitCode = exitCode;
-      event.durationMs = duration;
-      event.outcome = exitCode === 0 ? 'success' : 'error';
+      state.exitCode = exitCode;
+      state.durationMs = duration;
+      state.outcome = exitCode === 0 ? 'success' : 'error';
 
       yield {
         type: 'complete',
@@ -649,8 +660,8 @@ export class Session {
       await this.cleanupCommandFiles(logFile, exitCodeFile);
     } catch (error) {
       caughtError = error instanceof Error ? error : new Error(String(error));
-      event.outcome = 'error';
-      event.errorMessage = caughtError.message;
+      state.outcome = 'error';
+      state.errorMessage = caughtError.message;
       // Untrack and clean up on error
       this.untrackCommand(commandId);
       await this.cleanupCommandFiles(logFile, exitCodeFile);
@@ -663,13 +674,13 @@ export class Session {
     } finally {
       logCanonicalEvent(this.logger, {
         event: 'command.stream',
-        outcome: (event.outcome as 'success' | 'error') ?? 'error',
-        durationMs: (event.durationMs as number) ?? Date.now() - startTime,
+        outcome: state.outcome ?? 'error',
+        durationMs: state.durationMs ?? Date.now() - startTime,
         command,
         sessionId: this.id,
         commandId,
-        exitCode: event.exitCode as number | undefined,
-        errorMessage: event.errorMessage as string | undefined,
+        exitCode: state.exitCode,
+        errorMessage: state.errorMessage,
         error: caughtError
       });
     }

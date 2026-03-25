@@ -17,7 +17,6 @@ import type {
 } from '@repo/shared/errors';
 import { ErrorCode } from '@repo/shared/errors';
 import { Mutex } from 'async-mutex';
-import { time } from 'console';
 import { CONFIG } from '../config';
 import {
   type ServiceError,
@@ -143,14 +142,16 @@ export class SessionManager {
     const startTime = Date.now();
     let outcome: 'success' | 'error' = 'error';
     let caughtError: Error | undefined;
+    let errorMessage: string | undefined;
 
     try {
       // Check if session already exists
       if (this.sessions.has(options.id)) {
+        errorMessage = `Session '${options.id}' already exists`;
         return {
           success: false,
           error: {
-            message: `Session '${options.id}' already exists`,
+            message: errorMessage,
             code: ErrorCode.SESSION_ALREADY_EXISTS,
             details: {
               sessionId: options.id
@@ -197,6 +198,7 @@ export class SessionManager {
         durationMs: Date.now() - startTime,
         sessionId: options.id,
         cwd: options.cwd,
+        errorMessage,
         error: caughtError
       });
     }
@@ -901,15 +903,17 @@ export class SessionManager {
     const startTime = Date.now();
     let outcome: 'success' | 'error' = 'error';
     let caughtError: Error | undefined;
+    let errorMessage: string | undefined;
 
     try {
       const session = this.sessions.get(sessionId);
 
       if (!session) {
+        errorMessage = `Session '${sessionId}' not found`;
         return {
           success: false,
           error: {
-            message: `Session '${sessionId}' not found`,
+            message: errorMessage,
             code: ErrorCode.INTERNAL_ERROR,
             details: {
               sessionId,
@@ -956,6 +960,7 @@ export class SessionManager {
         outcome,
         durationMs: Date.now() - startTime,
         sessionId,
+        errorMessage,
         error: caughtError
       });
     }

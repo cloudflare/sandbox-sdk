@@ -93,17 +93,17 @@ export class PortService {
     const startTime = Date.now();
     let outcome: 'success' | 'error' = 'error';
     let caughtError: Error | undefined;
+    let errorMessage: string | undefined;
 
     try {
       // Validate port number
       const validation = this.security.validatePort(port);
       if (!validation.isValid) {
+        errorMessage = `Invalid port number ${port}: ${validation.errors.join(', ')}`;
         return {
           success: false,
           error: {
-            message: `Invalid port number ${port}: ${validation.errors.join(
-              ', '
-            )}`,
+            message: errorMessage,
             code: ErrorCode.INVALID_PORT_NUMBER,
             details: {
               port,
@@ -116,12 +116,11 @@ export class PortService {
       // Check if port is already exposed
       const existing = await this.store.get(port);
       if (existing) {
+        errorMessage = `Port ${port}${existing.name ? ` (${existing.name})` : ''} is already exposed`;
         return {
           success: false,
           error: {
-            message: `Port ${port}${
-              existing.name ? ` (${existing.name})` : ''
-            } is already exposed`,
+            message: errorMessage,
             code: ErrorCode.PORT_ALREADY_EXPOSED,
             details: {
               port,
@@ -164,6 +163,7 @@ export class PortService {
         durationMs: Date.now() - startTime,
         port,
         name,
+        errorMessage,
         error: caughtError
       });
     }
@@ -173,15 +173,17 @@ export class PortService {
     const startTime = Date.now();
     let outcome: 'success' | 'error' = 'error';
     let caughtError: Error | undefined;
+    let errorMessage: string | undefined;
 
     try {
       // Check if port is exposed
       const existing = await this.store.get(port);
       if (!existing) {
+        errorMessage = `Port ${port} is not exposed`;
         return {
           success: false,
           error: {
-            message: `Port ${port} is not exposed`,
+            message: errorMessage,
             code: ErrorCode.PORT_NOT_EXPOSED,
             details: {
               port
@@ -216,6 +218,7 @@ export class PortService {
         outcome,
         durationMs: Date.now() - startTime,
         port,
+        errorMessage,
         error: caughtError
       });
     }

@@ -67,14 +67,16 @@ export class GitService {
     const startTime = Date.now();
     let outcome: 'success' | 'error' = 'error';
     let caughtError: Error | undefined;
+    let errorMessage: string | undefined;
     const sessionId = options.sessionId || 'default';
 
     try {
       // Validate repository URL
       const urlValidation = this.security.validateGitUrl(repoUrl);
       if (!urlValidation.isValid) {
+        errorMessage = `Invalid Git URL '${repoUrl}': ${urlValidation.errors.join(', ')}`;
         return this.returnError({
-          message: `Invalid Git URL '${repoUrl}': ${urlValidation.errors.join(', ')}`,
+          message: errorMessage,
           code: ErrorCode.INVALID_GIT_URL,
           details: {
             validationErrors: urlValidation.errors.map((e) => ({
@@ -93,8 +95,9 @@ export class GitService {
       // Validate target directory path
       const pathValidation = this.security.validatePath(targetDirectory);
       if (!pathValidation.isValid) {
+        errorMessage = `Invalid target directory '${targetDirectory}': ${pathValidation.errors.join(', ')}`;
         return this.returnError({
-          message: `Invalid target directory '${targetDirectory}': ${pathValidation.errors.join(', ')}`,
+          message: errorMessage,
           code: ErrorCode.VALIDATION_FAILED,
           details: {
             validationErrors: pathValidation.errors.map((e) => ({
@@ -207,6 +210,7 @@ export class GitService {
         targetDir: options.targetDir,
         branch: options.branch,
         sessionId,
+        errorMessage,
         error: caughtError
       });
     }
@@ -220,13 +224,15 @@ export class GitService {
     const startTime = Date.now();
     let outcome: 'success' | 'error' = 'error';
     let caughtError: Error | undefined;
+    let errorMessage: string | undefined;
 
     try {
       // Validate repository path
       const pathValidation = this.security.validatePath(repoPath);
       if (!pathValidation.isValid) {
+        errorMessage = `Invalid repository path '${repoPath}': ${pathValidation.errors.join(', ')}`;
         return this.returnError({
-          message: `Invalid repository path '${repoPath}': ${pathValidation.errors.join(', ')}`,
+          message: errorMessage,
           code: ErrorCode.VALIDATION_FAILED,
           details: {
             validationErrors: pathValidation.errors.map((e) => ({
@@ -241,10 +247,9 @@ export class GitService {
       // Validate branch name (via manager)
       const branchValidation = this.manager.validateBranchName(branch);
       if (!branchValidation.isValid) {
+        errorMessage = `Invalid branch name '${branch}': ${branchValidation.error || 'Invalid format'}`;
         return this.returnError({
-          message: `Invalid branch name '${branch}': ${
-            branchValidation.error || 'Invalid format'
-          }`,
+          message: errorMessage,
           code: ErrorCode.VALIDATION_FAILED,
           details: {
             validationErrors: [
@@ -283,10 +288,9 @@ export class GitService {
           result.exitCode
         );
         outcome = 'error';
+        errorMessage = `Failed to checkout branch '${branch}' in '${repoPath}': ${result.stderr || `exit code ${result.exitCode}`}`;
         return this.returnError({
-          message: `Failed to checkout branch '${branch}' in '${repoPath}': ${
-            result.stderr || `exit code ${result.exitCode}`
-          }`,
+          message: errorMessage,
           code: errorCode,
           details: {
             branch,
@@ -322,6 +326,7 @@ export class GitService {
         repoPath,
         branch,
         sessionId,
+        errorMessage,
         error: caughtError
       });
     }

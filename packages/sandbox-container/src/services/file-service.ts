@@ -84,11 +84,13 @@ export class FileService implements FileSystemOperations {
     let sizeBytes: number | undefined;
     let outcome: 'success' | 'error' = 'error';
     let caughtError: Error | undefined;
+    let errorMessage: string | undefined;
 
     try {
       // 1. Validate path for security
       const validation = this.security.validatePath(path);
       if (!validation.isValid) {
+        errorMessage = `Invalid path format for '${path}': ${validation.errors.join(', ')}`;
         return {
           success: false,
           error: {
@@ -227,6 +229,7 @@ export class FileService implements FileSystemOperations {
         path,
         sessionId,
         sizeBytes,
+        errorMessage,
         error: caughtError
       });
     }
@@ -241,6 +244,7 @@ export class FileService implements FileSystemOperations {
     const startTime = Date.now();
     let outcome: 'success' | 'error' = 'error';
     let caughtError: Error | undefined;
+    let errorMessage: string | undefined;
     const normalizedEncoding =
       options.encoding === 'utf8' ? 'utf-8' : options.encoding || 'utf-8';
 
@@ -248,12 +252,11 @@ export class FileService implements FileSystemOperations {
       // 1. Validate path for security
       const validation = this.security.validatePath(path);
       if (!validation.isValid) {
+        errorMessage = `Invalid path format for '${path}': ${validation.errors.join(', ')}`;
         return {
           success: false,
           error: {
-            message: `Invalid path format for '${path}': ${validation.errors.join(
-              ', '
-            )}`,
+            message: errorMessage,
             code: ErrorCode.VALIDATION_FAILED,
             details: {
               validationErrors: validation.errors.map((e) => ({
@@ -270,6 +273,7 @@ export class FileService implements FileSystemOperations {
       if (normalizedEncoding === 'base64') {
         // Validate that content only contains valid base64 characters
         if (!/^[A-Za-z0-9+/=]*$/.test(content)) {
+          errorMessage = `Invalid base64 content for '${path}'`;
           return {
             success: false,
             error: {
@@ -374,6 +378,7 @@ export class FileService implements FileSystemOperations {
         path,
         sessionId,
         sizeBytes,
+        errorMessage,
         error: caughtError
       });
     }
@@ -386,11 +391,13 @@ export class FileService implements FileSystemOperations {
     const startTime = Date.now();
     let outcome: 'success' | 'error' = 'error';
     let caughtError: Error | undefined;
+    let errorMessage: string | undefined;
 
     try {
       // 1. Validate path for security
       const validation = this.security.validatePath(path);
       if (!validation.isValid) {
+        errorMessage = `Invalid path format for '${path}': ${validation.errors.join(', ')}`;
         return {
           success: false,
           error: {
@@ -486,6 +493,7 @@ export class FileService implements FileSystemOperations {
         durationMs: Date.now() - startTime,
         path,
         sessionId,
+        errorMessage,
         error: caughtError
       });
     }
@@ -690,11 +698,13 @@ export class FileService implements FileSystemOperations {
     const startTime = Date.now();
     let outcome: 'success' | 'error' = 'error';
     let caughtError: Error | undefined;
+    let errorMessage: string | undefined;
 
     try {
       // 1. Validate path for security
       const validation = this.security.validatePath(path);
       if (!validation.isValid) {
+        errorMessage = `Invalid path format for '${path}': ${validation.errors.join(', ')}`;
         return {
           success: false,
           error: {
@@ -781,6 +791,7 @@ export class FileService implements FileSystemOperations {
         path,
         sessionId,
         recursive: options.recursive ?? false,
+        errorMessage,
         error: caughtError
       });
     }
