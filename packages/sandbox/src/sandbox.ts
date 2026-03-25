@@ -36,6 +36,7 @@ import {
   filterEnvVars,
   getEnvString,
   isTerminalStatus,
+  logCanonicalEvent,
   partitionEnvVars,
   type SessionDeleteResult,
   shellEscape,
@@ -1311,10 +1312,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       }
     }
 
-    this.logger.info('sandbox.destroy', {
+    logCanonicalEvent(this.logger, {
+      event: 'sandbox.destroy',
+      outcome: 'success',
+      durationMs: Date.now() - startTime,
       mountsProcessed: mountResults.length,
-      mountResults,
-      durationMs: Date.now() - startTime
+      mountResults
     });
 
     await super.destroy();
@@ -1356,11 +1359,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       containerVersion = undefined;
     }
 
-    const level = outcome === 'compatible' ? 'debug' : 'warn';
-    this.logger[level]('version.check', {
+    logCanonicalEvent(this.logger, {
+      event: 'version.check',
+      outcome: outcome === 'compatible' ? 'success' : 'error',
+      durationMs: 0,
       sdkVersion,
       containerVersion,
-      outcome
+      versionOutcome: outcome
     });
   }
 
@@ -1903,22 +1908,16 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       if (timeoutId) {
         clearTimeout(timeoutId);
       }
-      const event: Record<string, unknown> = {
-        sessionId,
-        command:
-          command.length > 200 ? `${command.substring(0, 200)}…` : command,
-        durationMs: Date.now() - startTime,
+      logCanonicalEvent(this.logger, {
+        event: 'sandbox.exec',
         outcome: execError ? 'error' : 'success',
-        exitCode: execOutcome?.exitCode
-      };
-      if (execError) {
-        this.logger.debug('sandbox.exec', {
-          ...event,
-          errorMessage: execError.message
-        });
-      } else {
-        this.logger.debug('sandbox.exec', event);
-      }
+        command,
+        exitCode: execOutcome?.exitCode,
+        durationMs: Date.now() - startTime,
+        sessionId,
+        error: execError ?? undefined,
+        errorMessage: execError?.message
+      });
     }
   }
 
@@ -2988,12 +2987,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       token
     );
 
-    this.logger.debug('port.expose', {
-      port,
-      name: options?.name,
-      hostname: options.hostname,
+    logCanonicalEvent(this.logger, {
+      event: 'port.expose',
       outcome: 'success',
-      durationMs: Date.now() - exposeStartTime
+      port,
+      durationMs: Date.now() - exposeStartTime,
+      name: options?.name,
+      hostname: options.hostname
     });
 
     return {
@@ -3022,9 +3022,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       await this.ctx.storage.put('portTokens', tokens);
     }
 
-    this.logger.debug('port.unexpose', {
-      port,
+    logCanonicalEvent(this.logger, {
+      event: 'port.unexpose',
       outcome: 'success',
+      port,
       durationMs: Date.now() - unexposeStartTime
     });
   }
@@ -3862,6 +3863,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       });
     }
 
+    const backupStartTime = Date.now();
     const backupSession = await this.ensureBackupSession();
     const backupId = crypto.randomUUID();
     const archivePath = `/var/backups/${backupId}.sqsh`;
@@ -3917,13 +3919,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       };
       await bucket.put(metaKey, JSON.stringify(metadata));
 
-      this.logger.info('backup.create', {
+      logCanonicalEvent(this.logger, {
+        event: 'backup.create',
+        outcome: 'success',
+        durationMs: Date.now() - backupStartTime,
         backupId,
         dir,
         name,
         r2Key,
-        sizeBytes: createResult.sizeBytes,
-        outcome: 'success'
+        sizeBytes: createResult.sizeBytes
       });
 
       // Step 5: Clean up the local archive in the container
@@ -3980,6 +3984,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private async doRestoreBackup(
     backup: DirectoryBackup
   ): Promise<RestoreBackupResult> {
+    const restoreStartTime = Date.now();
     const bucket = this.requireBackupBucket();
     this.requirePresignedUrlSupport();
     const { id: backupId, dir } = backup;
@@ -4131,10 +4136,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         });
       }
 
-      this.logger.info('backup.restore', {
+      logCanonicalEvent(this.logger, {
+        event: 'backup.restore',
+        outcome: 'success',
+        durationMs: Date.now() - restoreStartTime,
         backupId,
-        dir,
-        outcome: 'success'
+        dir
       });
 
       return {
