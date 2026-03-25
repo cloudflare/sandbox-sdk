@@ -1,0 +1,195 @@
+import { describe, expect, it, vi } from 'vitest';
+import { buildMessage, logCanonicalEvent } from '../../src/logger/canonical';
+import type { Logger } from '../../src/logger/types';
+
+function createMockLogger(): Logger & {
+  info: ReturnType<typeof vi.fn>;
+  error: ReturnType<typeof vi.fn>;
+  debug: ReturnType<typeof vi.fn>;
+  warn: ReturnType<typeof vi.fn>;
+} {
+  const logger = {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    child: vi.fn(() => logger)
+  };
+  return logger;
+}
+
+describe('buildMessage', () => {
+  it('formats command success', () => {
+    const msg = buildMessage({
+      event: 'sandbox.exec',
+      outcome: 'success',
+      durationMs: 12,
+      command: 'cat /workspace/file.txt'
+    });
+    expect(msg).toBe('sandbox.exec success cat /workspace/file.txt (12ms)');
+  });
+
+  it('formats command error with reason', () => {
+    const msg = buildMessage({
+      event: 'command.exec',
+      outcome: 'error',
+      durationMs: 1001,
+      command: 'sleep 30',
+      errorMessage: 'timeout after 1000ms'
+    });
+    expect(msg).toBe(
+      'command.exec error sleep 30 \u2014 timeout after 1000ms (1001ms)'
+    );
+  });
+
+  it('formats command error with exit code', () => {
+    const msg = buildMessage({
+      event: 'command.exec',
+      outcome: 'error',
+      durationMs: 5,
+      command: 'exit 1',
+      exitCode: 1
+    });
+    expect(msg).toBe('command.exec error exit 1 \u2014 exitCode=1 (5ms)');
+  });
+
+  it('formats file write with size', () => {
+    const msg = buildMessage({
+      event: 'file.write',
+      outcome: 'success',
+      durationMs: 0,
+      path: '/workspace/test/file.txt',
+      sizeBytes: 6
+    });
+    expect(msg).toBe('file.write success /workspace/test/file.txt (0ms, 6B)');
+  });
+
+  it('formats session create with sessionId', () => {
+    const msg = buildMessage({
+      event: 'session.create',
+      outcome: 'success',
+      durationMs: 0,
+      sessionId: 'session-1c8a'
+    });
+    expect(msg).toBe('session.create success session-1c8a (0ms)');
+  });
+
+  it('formats port expose', () => {
+    const msg = buildMessage({
+      event: 'port.expose',
+      outcome: 'success',
+      durationMs: 5,
+      port: 8080
+    });
+    expect(msg).toBe('port.expose success 8080 (5ms)');
+  });
+
+  it('formats version check without outcome or duration', () => {
+    const msg = buildMessage({
+      event: 'version.check',
+      outcome: 'success',
+      durationMs: 0,
+      sdkVersion: '0.7.20',
+      containerVersion: '0.7.20'
+    });
+    expect(msg).toBe('version.check sdk=0.7.20 container=0.7.20');
+  });
+
+  it('truncates long commands', () => {
+    const longCmd = 'echo ' + 'a'.repeat(200);
+    const msg = buildMessage({
+      event: 'sandbox.exec',
+      outcome: 'success',
+      durationMs: 10,
+      command: longCmd
+    });
+    expect(msg).toContain('...');
+    expect(msg.length).toBeLessThan(longCmd.length + 50);
+  });
+
+  it('redacts presigned URLs in commands', () => {
+    const cmd =
+      'curl "https://bucket.r2.example.com/file?X-Amz-Credential=AKID&X-Amz-Signature=SIG"';
+    const msg = buildMessage({
+      event: 'sandbox.exec',
+      outcome: 'success',
+      durationMs: 5,
+      command: cmd
+    });
+    expect(msg).toContain('X-Amz-Credential=REDACTED');
+    expect(msg).toContain('X-Amz-Signature=REDACTED');
+    expect(msg).not.toContain('AKID');
+    expect(msg).not.toContain('SIG');
+  });
+});
+
+describe('logCanonicalEvent', () => {
+  it('calls logger.info for success outcome', () => {
+    const logger = createMockLogger();
+    logCanonicalEvent(logger, {
+      event: 'sandbox.exec',
+      outcome: 'success',
+      durationMs: 12,
+      command: 'ls'
+    });
+    expect(logger.info).toHaveBeenCalledOnce();
+    const [message, context] = logger.info.mock.calls[0];
+    expect(message).toContain('sandbox.exec success');
+    expect(context.event).toBe('sandbox.exec');
+    expect(context.outcome).toBe('success');
+    expect(context.durationMs).toBe(12);
+    expect(logger.error).not.toHaveBeenCalled();
+  });
+
+  it('calls logger.error for error outcome and passes Error object', () => {
+    const logger = createMockLogger();
+    const err = new Error('something broke');
+    logCanonicalEvent(logger, {
+      event: 'sandbox.exec',
+      outcome: 'error',
+      durationMs: 100,
+      command: 'bad-cmd',
+      errorMessage: 'something broke',
+      error: err
+    });
+    expect(logger.error).toHaveBeenCalledOnce();
+    const [message, errorArg, context] = logger.error.mock.calls[0];
+    expect(message).toContain('sandbox.exec error');
+    expect(errorArg).toBe(err);
+    expect(context.event).toBe('sandbox.exec');
+    expect(context.outcome).toBe('error');
+    expect(context.errorMessage).toBe('something broke');
+    expect(context).not.toHaveProperty('error');
+    expect(logger.info).not.toHaveBeenCalled();
+  });
+
+  it('sets commandTruncated when command is long', () => {
+    const logger = createMockLogger();
+    const longCmd = 'echo ' + 'x'.repeat(200);
+    logCanonicalEvent(logger, {
+      event: 'sandbox.exec',
+      outcome: 'success',
+      durationMs: 1,
+      command: longCmd
+    });
+    const [, context] = logger.info.mock.calls[0];
+    expect(context.commandTruncated).toBe(true);
+    expect(context.command).toContain('...');
+    expect(context.command.length).toBeLessThan(longCmd.length);
+  });
+
+  it('redacts command field in emitted context', () => {
+    const logger = createMockLogger();
+    logCanonicalEvent(logger, {
+      event: 'sandbox.exec',
+      outcome: 'success',
+      durationMs: 1,
+      command: 'curl https://user:pass@example.com/file?token=secret123'
+    });
+    const [, context] = logger.info.mock.calls[0];
+    expect(context.command).toContain('******@');
+    expect(context.command).toContain('token=REDACTED');
+    expect(context.command).not.toContain('user:pass');
+    expect(context.command).not.toContain('secret123');
+  });
+});

@@ -50,6 +50,9 @@ export type {
   RunCodeOptions
 } from './interpreter-types.js';
 export { Execution, ResultImpl } from './interpreter-types.js';
+// Export canonical event helpers
+export { buildMessage, logCanonicalEvent } from './logger/canonical.js';
+export type { CanonicalEventPayload } from './logger/canonical.types.js';
 // Export logger infrastructure
 export type { LogContext, Logger, LogLevel } from './logger/index.js';
 export {
