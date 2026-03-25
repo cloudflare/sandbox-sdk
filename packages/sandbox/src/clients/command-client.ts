@@ -51,11 +51,6 @@ export class CommandClient extends BaseHttpClient {
 
       const response = await this.post<ExecuteResponse>('/api/execute', data);
 
-      this.logSuccess(
-        'Command executed',
-        `${command}, Success: ${response.success}`
-      );
-
       // Call the callback if provided
       this.options.onCommandComplete?.(
         response.success,
@@ -67,8 +62,6 @@ export class CommandClient extends BaseHttpClient {
 
       return response;
     } catch (error) {
-      this.logError('execute', error);
-
       // Call error callback if provided
       this.options.onError?.(
         error instanceof Error ? error.message : String(error),
@@ -108,12 +101,8 @@ export class CommandClient extends BaseHttpClient {
       // Use doStreamFetch which handles both WebSocket and HTTP streaming
       const stream = await this.doStreamFetch('/api/execute/stream', data);
 
-      this.logSuccess('Command stream started', command);
-
       return stream;
     } catch (error) {
-      this.logError('executeStream', error);
-
       // Call error callback if provided
       this.options.onError?.(
         error instanceof Error ? error.message : String(error),

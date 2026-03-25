@@ -2,7 +2,6 @@ import type { Logger } from '@repo/shared';
 import { createNoOpLogger } from '@repo/shared';
 import type { ErrorResponse as NewErrorResponse } from '../errors';
 import { createErrorFromResponse, ErrorCode } from '../errors';
-import type { SandboxError } from '../errors/classes';
 import { createTransport, type ITransport } from './transport';
 import type { HttpClientOptions, ResponseHandler } from './types';
 
@@ -226,17 +225,7 @@ export abstract class BaseHttpClient {
 
     // WebSocket mode uses Transport's streaming directly
     if (this.transport.getMode() === 'websocket') {
-      try {
-        return await this.transport.fetchStream(
-          path,
-          body,
-          method,
-          streamHeaders
-        );
-      } catch (error) {
-        this.logError(`stream ${method} ${path}`, error);
-        throw error;
-      }
+      return this.transport.fetchStream(path, body, method, streamHeaders);
     }
 
     // HTTP mode: use doFetch + handleStreamResponse for proper error typing
@@ -247,42 +236,5 @@ export abstract class BaseHttpClient {
     });
 
     return this.handleStreamResponse(response);
-  }
-
-  /**
-   * Utility method to log successful operations
-   */
-  protected logSuccess(operation: string, details?: string): void {
-    this.logger.info(operation, details ? { details } : undefined);
-  }
-
-  /**
-   * Utility method to log errors intelligently
-   * Only logs unexpected errors (5xx), not expected errors (4xx)
-   *
-   * - 4xx errors (validation, not found, conflicts): Don't log (expected client errors)
-   * - 5xx errors (server failures, internal errors): DO log (unexpected server errors)
-   */
-  protected logError(operation: string, error: unknown): void {
-    // Check if it's a SandboxError with HTTP status
-    if (error && typeof error === 'object' && 'httpStatus' in error) {
-      const httpStatus = (error as SandboxError).httpStatus;
-
-      // Only log server errors (5xx), not client errors (4xx)
-      if (httpStatus >= 500) {
-        this.logger.error(
-          `Unexpected error in ${operation}`,
-          error instanceof Error ? error : new Error(String(error)),
-          { httpStatus }
-        );
-      }
-      // 4xx errors are expected (validation, not found, etc.) - don't log
-    } else {
-      // Non-SandboxError (unexpected) - log it
-      this.logger.error(
-        `Error in ${operation}`,
-        error instanceof Error ? error : new Error(String(error))
-      );
-    }
   }
 }

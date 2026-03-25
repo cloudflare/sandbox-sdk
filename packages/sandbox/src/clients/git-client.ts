@@ -76,14 +76,8 @@ export class GitClient extends BaseHttpClient {
         data
       );
 
-      this.logSuccess(
-        'Repository cloned',
-        `${repoUrl} (branch: ${response.branch}) -> ${response.targetDir}`
-      );
-
       return response;
     } catch (error) {
-      this.logError('checkout', error);
       throw error;
     }
   }
