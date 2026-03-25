@@ -114,15 +114,6 @@ export class BackupService {
     const excludeFilePath = `${archivePath}.exclude`;
     let shouldCleanupExcludeFile = false;
 
-    const pathError = validateBackupPaths(dir, archivePath);
-    if (pathError) {
-      return serviceError({
-        message: pathError,
-        code: ErrorCode.INVALID_BACKUP_CONFIG,
-        details: { dir, archivePath }
-      });
-    }
-
     const startTime = Date.now();
     let outcome: 'success' | 'error' = 'error';
     let caughtError: Error | undefined;
@@ -130,6 +121,15 @@ export class BackupService {
     let sizeBytes: number | undefined;
 
     try {
+      const pathError = validateBackupPaths(dir, archivePath);
+      if (pathError) {
+        errorMessage = pathError;
+        return serviceError({
+          message: pathError,
+          code: ErrorCode.INVALID_BACKUP_CONFIG,
+          details: { dir, archivePath }
+        });
+      }
       // Ensure the work directory exists
       const mkdirResult = await this.sessionManager.executeInSession(
         sessionId,
@@ -390,28 +390,10 @@ export class BackupService {
     archivePath: string,
     sessionId = 'default'
   ): Promise<ServiceResult<RestoreArchiveResult>> {
-    const pathError = validateBackupPaths(dir, archivePath);
-    if (pathError) {
-      return serviceError({
-        message: pathError,
-        code: ErrorCode.INVALID_BACKUP_CONFIG,
-        details: { dir, archivePath }
-      });
-    }
-
     // Extract backup ID from archive path (e.g., /var/backups/abc123.sqsh -> abc123)
     const backupId = archivePath
       .replace(`${BACKUP_WORK_DIR}/`, '')
       .replace('.sqsh', '');
-
-    // Each restore uses a unique mount base so stale upper-layer files from a
-    // previous overlay session cannot leak into a new mount.  Old mount bases
-    // for this backup ID are torn down (best-effort) before the new mount.
-    const restoreId = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    const mountBase = `${BACKUP_MOUNTS_DIR}/${backupId}_${restoreId}`;
-    const lowerDir = `${mountBase}/lower`;
-    const upperDir = `${mountBase}/upper`;
-    const workDir = `${mountBase}/work`;
 
     const startTime = Date.now();
     let outcome: 'success' | 'error' = 'error';
@@ -419,6 +401,24 @@ export class BackupService {
     let errorMessage: string | undefined;
 
     try {
+      const pathError = validateBackupPaths(dir, archivePath);
+      if (pathError) {
+        errorMessage = pathError;
+        return serviceError({
+          message: pathError,
+          code: ErrorCode.INVALID_BACKUP_CONFIG,
+          details: { dir, archivePath }
+        });
+      }
+
+      // Each restore uses a unique mount base so stale upper-layer files from a
+      // previous overlay session cannot leak into a new mount.  Old mount bases
+      // for this backup ID are torn down (best-effort) before the new mount.
+      const restoreId = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      const mountBase = `${BACKUP_MOUNTS_DIR}/${backupId}_${restoreId}`;
+      const lowerDir = `${mountBase}/lower`;
+      const upperDir = `${mountBase}/upper`;
+      const workDir = `${mountBase}/work`;
       // Verify the archive exists
       const checkResult = await this.sessionManager.executeInSession(
         sessionId,
@@ -546,17 +546,13 @@ export class BackupService {
     } catch (error) {
       caughtError = error instanceof Error ? error : new Error(String(error));
       errorMessage = caughtError.message;
-      // Best-effort cleanup of any FUSE mounts that may have been established
+      // Best-effort cleanup of any FUSE mounts that may have been established.
+      // Clean up the overlay on dir; per-restore lowerDir is scoped inside try
+      // and cleaned up by the mount-base glob teardown on the next restore.
       await this.sessionManager
         .executeInSession(
           sessionId,
           `${BIN.fusermount} -u ${shellEscape(dir)} 2>/dev/null || true`
-        )
-        .catch(() => {});
-      await this.sessionManager
-        .executeInSession(
-          sessionId,
-          `${BIN.fusermount} -u ${shellEscape(lowerDir)} 2>/dev/null || true`
         )
         .catch(() => {});
       return serviceError({

@@ -171,7 +171,7 @@ describe('logCanonicalEvent', () => {
     expect(logger.error).not.toHaveBeenCalled();
   });
 
-  it('calls logger.error for error outcome and passes Error object', () => {
+  it('calls logger.error for error outcome and passes sanitized Error object', () => {
     const logger = createMockLogger();
     const err = new Error('something broke');
     logCanonicalEvent(logger, {
@@ -185,7 +185,10 @@ describe('logCanonicalEvent', () => {
     expect(logger.error).toHaveBeenCalledOnce();
     const [message, errorArg, context] = logger.error.mock.calls[0];
     expect(message).toContain('sandbox.exec error');
-    expect(errorArg).toBe(err);
+    // Error is now a sanitized copy, not the original object
+    expect(errorArg).toBeInstanceOf(Error);
+    expect(errorArg.message).toBe('something broke');
+    expect(errorArg.name).toBe('Error');
     expect(context.event).toBe('sandbox.exec');
     expect(context.outcome).toBe('error');
     expect(context.errorMessage).toBe('something broke');
@@ -296,5 +299,63 @@ describe('logCanonicalEvent', () => {
     expect(context.errorMessage).not.toContain('SECRET_SIG');
     expect(context.errorMessage).not.toContain('SECRET_KEY');
     expect(message).not.toContain('SECRET_SIG');
+  });
+
+  it('sanitizes Error object (message + stack) before passing to logger', () => {
+    const logger = createMockLogger();
+    const presignedUrl =
+      'https://bucket.r2.example.com/file?X-Amz-Credential=AKIAIOSFODNN&X-Amz-Signature=abcdef123456';
+    const err = new Error(`Upload failed: ${presignedUrl}`);
+    logCanonicalEvent(logger, {
+      event: 'backup.create',
+      outcome: 'error',
+      durationMs: 200,
+      error: err
+    });
+    expect(logger.error).toHaveBeenCalledOnce();
+    const [, errorArg] = logger.error.mock.calls[0];
+    // The Error passed to logger should be sanitized
+    expect(errorArg).toBeInstanceOf(Error);
+    expect(errorArg.message).toContain('X-Amz-Credential=REDACTED');
+    expect(errorArg.message).toContain('X-Amz-Signature=REDACTED');
+    expect(errorArg.message).not.toContain('AKIAIOSFODNN');
+    expect(errorArg.message).not.toContain('abcdef123456');
+    // Stack should also be sanitized (it contains the message)
+    if (errorArg.stack) {
+      expect(errorArg.stack).not.toContain('AKIAIOSFODNN');
+      expect(errorArg.stack).not.toContain('abcdef123456');
+    }
+    // Original error should NOT be mutated
+    expect(err.message).toContain('AKIAIOSFODNN');
+  });
+
+  it('sanitizes URL credentials in Error object', () => {
+    const logger = createMockLogger();
+    const err = new Error(
+      'Failed to fetch https://user:secret_password@example.com/api/data'
+    );
+    logCanonicalEvent(logger, {
+      event: 'sandbox.exec',
+      outcome: 'error',
+      durationMs: 50,
+      error: err
+    });
+    expect(logger.error).toHaveBeenCalledOnce();
+    const [, errorArg] = logger.error.mock.calls[0];
+    expect(errorArg.message).toContain('******@');
+    expect(errorArg.message).not.toContain('user:secret_password');
+  });
+
+  it('includes branch in git.checkout buildMessage with repoPath', () => {
+    const msg = buildMessage({
+      event: 'git.checkout',
+      outcome: 'success',
+      durationMs: 80,
+      repoPath: '/workspace/my-repo',
+      branch: 'feature/test'
+    });
+    expect(msg).toBe(
+      'git.checkout success /workspace/my-repo branch=feature/test (80ms)'
+    );
   });
 });

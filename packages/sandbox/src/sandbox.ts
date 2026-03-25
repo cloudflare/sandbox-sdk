@@ -910,8 +910,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     mountPath: string,
     options: MountBucketOptions
   ): Promise<void> {
-    const mountStartTime = Date.now();
-
     if ('localBucket' in options && options.localBucket) {
       await this.mountBucketLocal(bucket, mountPath, options);
       return;
@@ -932,58 +930,77 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     mountPath: string,
     options: LocalMountBucketOptions
   ): Promise<void> {
-    const envObj = this.env as Record<string, unknown>;
-    const r2Binding = envObj[bucket];
-    if (!r2Binding || !isR2Bucket(r2Binding)) {
-      throw new InvalidMountConfigError(
-        `R2 binding "${bucket}" not found in env or is not an R2Bucket. ` +
-          'Make sure the binding name matches your wrangler.jsonc R2 binding.'
-      );
-    }
-
-    if (!mountPath || !mountPath.startsWith('/')) {
-      throw new InvalidMountConfigError(
-        `Invalid mount path: "${mountPath}". Must be an absolute path starting with /`
-      );
-    }
-
-    if (this.activeMounts.has(mountPath)) {
-      throw new InvalidMountConfigError(
-        `Mount path already in use: ${mountPath}`
-      );
-    }
-
-    const sessionId = await this.ensureDefaultSession();
-
-    const syncManager = new LocalMountSyncManager({
-      bucket: r2Binding,
-      mountPath,
-      prefix: options.prefix,
-      readOnly: options.readOnly ?? false,
-      client: this.client,
-      sessionId,
-      logger: this.logger
-    });
-
-    const mountInfo: LocalSyncMountInfo = {
-      mountType: 'local-sync',
-      bucket,
-      mountPath,
-      syncManager,
-      mounted: false
-    };
-    this.activeMounts.set(mountPath, mountInfo);
+    const mountStartTime = Date.now();
+    let mountOutcome: 'success' | 'error' = 'error';
+    let mountError: Error | undefined;
 
     try {
-      await syncManager.start();
-      mountInfo.mounted = true;
-      this.logger.info(
-        `Successfully mounted bucket ${bucket} to ${mountPath} (local sync)`
-      );
+      const envObj = this.env as Record<string, unknown>;
+      const r2Binding = envObj[bucket];
+      if (!r2Binding || !isR2Bucket(r2Binding)) {
+        throw new InvalidMountConfigError(
+          `R2 binding "${bucket}" not found in env or is not an R2Bucket. ` +
+            'Make sure the binding name matches your wrangler.jsonc R2 binding.'
+        );
+      }
+
+      if (!mountPath || !mountPath.startsWith('/')) {
+        throw new InvalidMountConfigError(
+          `Invalid mount path: "${mountPath}". Must be an absolute path starting with /`
+        );
+      }
+
+      if (this.activeMounts.has(mountPath)) {
+        throw new InvalidMountConfigError(
+          `Mount path already in use: ${mountPath}`
+        );
+      }
+
+      const sessionId = await this.ensureDefaultSession();
+
+      const syncManager = new LocalMountSyncManager({
+        bucket: r2Binding,
+        mountPath,
+        prefix: options.prefix,
+        readOnly: options.readOnly ?? false,
+        client: this.client,
+        sessionId,
+        logger: this.logger
+      });
+
+      const mountInfo: LocalSyncMountInfo = {
+        mountType: 'local-sync',
+        bucket,
+        mountPath,
+        syncManager,
+        mounted: false
+      };
+      this.activeMounts.set(mountPath, mountInfo);
+
+      try {
+        await syncManager.start();
+        mountInfo.mounted = true;
+      } catch (error) {
+        await syncManager.stop();
+        this.activeMounts.delete(mountPath);
+        throw error;
+      }
+
+      mountOutcome = 'success';
     } catch (error) {
-      await syncManager.stop();
-      this.activeMounts.delete(mountPath);
+      mountError = error instanceof Error ? error : new Error(String(error));
       throw error;
+    } finally {
+      logCanonicalEvent(this.logger, {
+        event: 'bucket.mount',
+        outcome: mountOutcome,
+        durationMs: Date.now() - mountStartTime,
+        bucket,
+        mountPath,
+        provider: 'local-sync',
+        prefix: options.prefix,
+        error: mountError
+      });
     }
   }
 
@@ -1926,9 +1943,12 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       if (timeoutId) {
         clearTimeout(timeoutId);
       }
+      const isError =
+        !!execError ||
+        (execOutcome?.exitCode != null && execOutcome.exitCode !== 0);
       logCanonicalEvent(this.logger, {
         event: 'sandbox.exec',
-        outcome: execError ? 'error' : 'success',
+        outcome: isError ? 'error' : 'success',
         command,
         exitCode: execOutcome?.exitCode,
         durationMs: Date.now() - startTime,
@@ -3843,101 +3863,98 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       gitignore = false,
       excludes = []
     } = options;
-    Sandbox.validateBackupDir(dir, 'BackupOptions.dir');
-    if (name !== undefined) {
-      if (typeof name !== 'string' || name.length > MAX_NAME_LENGTH) {
-        throw new InvalidBackupConfigError({
-          message: `BackupOptions.name must be a string of at most ${MAX_NAME_LENGTH} characters`,
-          code: ErrorCode.INVALID_BACKUP_CONFIG,
-          httpStatus: 400,
-          context: {
-            reason: `name must be a string of at most ${MAX_NAME_LENGTH} characters`
-          },
-          timestamp: new Date().toISOString()
-        });
-      }
-      // Reject control characters (could cause issues in R2 metadata or downstream systems)
-      // biome-ignore lint/suspicious/noControlCharactersInRegex: intentionally matching control chars
-      if (/[\u0000-\u001f\u007f]/.test(name)) {
-        throw new InvalidBackupConfigError({
-          message: 'BackupOptions.name must not contain control characters',
-          code: ErrorCode.INVALID_BACKUP_CONFIG,
-          httpStatus: 400,
-          context: { reason: 'name must not contain control characters' },
-          timestamp: new Date().toISOString()
-        });
-      }
-    }
-    if (ttl <= 0) {
-      throw new InvalidBackupConfigError({
-        message: 'BackupOptions.ttl must be a positive number of seconds',
-        code: ErrorCode.INVALID_BACKUP_CONFIG,
-        httpStatus: 400,
-        context: { reason: 'ttl must be a positive number of seconds' },
-        timestamp: new Date().toISOString()
-      });
-    }
-
-    if (typeof gitignore !== 'boolean') {
-      throw new InvalidBackupConfigError({
-        message: 'BackupOptions.gitignore must be a boolean',
-        code: ErrorCode.INVALID_BACKUP_CONFIG,
-        httpStatus: 400,
-        context: { reason: 'gitignore must be a boolean' },
-        timestamp: new Date().toISOString()
-      });
-    }
-
-    if (
-      !Array.isArray(excludes) ||
-      !excludes.every((e: unknown) => typeof e === 'string')
-    ) {
-      throw new InvalidBackupConfigError({
-        message: 'BackupOptions.excludes must be an array of strings',
-        code: ErrorCode.INVALID_BACKUP_CONFIG,
-        httpStatus: 400,
-        context: { reason: 'excludes must be an array of strings' },
-        timestamp: new Date().toISOString()
-      });
-    }
 
     const backupStartTime = Date.now();
-    const backupSession = await this.ensureBackupSession();
-    const backupId = crypto.randomUUID();
-    const archivePath = `/var/backups/${backupId}.sqsh`;
-
-    this.logger.info('Creating backup', {
-      backupId,
-      dir,
-      name,
-      gitignore,
-      excludes
-    });
-
-    const createResult = await this.client.backup.createArchive(
-      dir,
-      archivePath,
-      backupSession,
-      gitignore,
-      excludes
-    );
-
-    if (!createResult.success) {
-      throw new BackupCreateError({
-        message: 'Container failed to create backup archive',
-        code: ErrorCode.BACKUP_CREATE_FAILED,
-        httpStatus: 500,
-        context: { dir, backupId },
-        timestamp: new Date().toISOString()
-      });
-    }
-
-    const r2Key = `backups/${backupId}/data.sqsh`;
-    const metaKey = `backups/${backupId}/meta.json`;
-
+    let backupId: string | undefined;
+    let sizeBytes: number | undefined;
     let outcome: 'success' | 'error' = 'error';
     let caughtError: Error | undefined;
+
     try {
+      Sandbox.validateBackupDir(dir, 'BackupOptions.dir');
+      if (name !== undefined) {
+        if (typeof name !== 'string' || name.length > MAX_NAME_LENGTH) {
+          throw new InvalidBackupConfigError({
+            message: `BackupOptions.name must be a string of at most ${MAX_NAME_LENGTH} characters`,
+            code: ErrorCode.INVALID_BACKUP_CONFIG,
+            httpStatus: 400,
+            context: {
+              reason: `name must be a string of at most ${MAX_NAME_LENGTH} characters`
+            },
+            timestamp: new Date().toISOString()
+          });
+        }
+        // Reject control characters (could cause issues in R2 metadata or downstream systems)
+        // biome-ignore lint/suspicious/noControlCharactersInRegex: intentionally matching control chars
+        if (/[\u0000-\u001f\u007f]/.test(name)) {
+          throw new InvalidBackupConfigError({
+            message: 'BackupOptions.name must not contain control characters',
+            code: ErrorCode.INVALID_BACKUP_CONFIG,
+            httpStatus: 400,
+            context: { reason: 'name must not contain control characters' },
+            timestamp: new Date().toISOString()
+          });
+        }
+      }
+      if (ttl <= 0) {
+        throw new InvalidBackupConfigError({
+          message: 'BackupOptions.ttl must be a positive number of seconds',
+          code: ErrorCode.INVALID_BACKUP_CONFIG,
+          httpStatus: 400,
+          context: { reason: 'ttl must be a positive number of seconds' },
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      if (typeof gitignore !== 'boolean') {
+        throw new InvalidBackupConfigError({
+          message: 'BackupOptions.gitignore must be a boolean',
+          code: ErrorCode.INVALID_BACKUP_CONFIG,
+          httpStatus: 400,
+          context: { reason: 'gitignore must be a boolean' },
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      if (
+        !Array.isArray(excludes) ||
+        !excludes.every((e: unknown) => typeof e === 'string')
+      ) {
+        throw new InvalidBackupConfigError({
+          message: 'BackupOptions.excludes must be an array of strings',
+          code: ErrorCode.INVALID_BACKUP_CONFIG,
+          httpStatus: 400,
+          context: { reason: 'excludes must be an array of strings' },
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      const backupSession = await this.ensureBackupSession();
+      backupId = crypto.randomUUID();
+      const archivePath = `/var/backups/${backupId}.sqsh`;
+
+      const createResult = await this.client.backup.createArchive(
+        dir,
+        archivePath,
+        backupSession,
+        gitignore,
+        excludes
+      );
+
+      if (!createResult.success) {
+        throw new BackupCreateError({
+          message: 'Container failed to create backup archive',
+          code: ErrorCode.BACKUP_CREATE_FAILED,
+          httpStatus: 500,
+          context: { dir, backupId },
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      sizeBytes = createResult.sizeBytes;
+      const r2Key = `backups/${backupId}/data.sqsh`;
+      const metaKey = `backups/${backupId}/meta.json`;
+
       // Step 2: Upload archive to R2 via presigned URL (isolated backup session)
       await this.uploadBackupPresigned(
         archivePath,
@@ -3971,12 +3988,22 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     } catch (error) {
       caughtError = error instanceof Error ? error : new Error(String(error));
       // Clean up local archive and any partially-uploaded R2 objects
-      await this.execWithSession(
-        `rm -f ${shellEscape(archivePath)}`,
-        backupSession
-      ).catch(() => {});
-      await bucket.delete(r2Key).catch(() => {});
-      await bucket.delete(metaKey).catch(() => {});
+      if (backupId) {
+        const archivePath = `/var/backups/${backupId}.sqsh`;
+        const r2Key = `backups/${backupId}/data.sqsh`;
+        const metaKey = `backups/${backupId}/meta.json`;
+        const backupSession = this.defaultSession
+          ? `${this.defaultSession}-backup`
+          : undefined;
+        if (backupSession) {
+          await this.execWithSession(
+            `rm -f ${shellEscape(archivePath)}`,
+            backupSession
+          ).catch(() => {});
+        }
+        await bucket.delete(r2Key).catch(() => {});
+        await bucket.delete(metaKey).catch(() => {});
+      }
       throw error;
     } finally {
       logCanonicalEvent(this.logger, {
@@ -3986,7 +4013,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         backupId,
         dir,
         name,
-        sizeBytes: createResult.sizeBytes,
+        sizeBytes,
         error: caughtError
       });
     }
@@ -4032,99 +4059,100 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     this.requirePresignedUrlSupport();
     const { id: backupId, dir } = backup;
 
-    // Validate user-provided inputs (DirectoryBackup is deserialized from external storage)
-    if (!backupId || typeof backupId !== 'string') {
-      throw new InvalidBackupConfigError({
-        message: 'Invalid backup: missing or invalid id',
-        code: ErrorCode.INVALID_BACKUP_CONFIG,
-        httpStatus: 400,
-        context: { reason: 'missing or invalid id' },
-        timestamp: new Date().toISOString()
-      });
-    }
-    if (!Sandbox.UUID_REGEX.test(backupId)) {
-      throw new InvalidBackupConfigError({
-        message:
-          'Invalid backup: id must be a valid UUID (e.g. from createBackup)',
-        code: ErrorCode.INVALID_BACKUP_CONFIG,
-        httpStatus: 400,
-        context: { reason: 'id must be a valid UUID' },
-        timestamp: new Date().toISOString()
-      });
-    }
-    Sandbox.validateBackupDir(dir, 'Invalid backup: dir');
-
-    // Step 1: Read metadata to check TTL
-    const metaKey = `backups/${backupId}/meta.json`;
-    const metaObject = await bucket.get(metaKey);
-    if (!metaObject) {
-      throw new BackupNotFoundError({
-        message:
-          `Backup not found: ${backupId}. ` +
-          'Verify the backup ID is correct and the backup has not been deleted.',
-        code: ErrorCode.BACKUP_NOT_FOUND,
-        httpStatus: 404,
-        context: { backupId },
-        timestamp: new Date().toISOString()
-      });
-    }
-
-    const metadata = await metaObject.json<{
-      ttl: number;
-      createdAt: string;
-      dir: string;
-    }>();
-
-    // Check TTL with 60-second buffer to prevent race between check and restore completion
-    const TTL_BUFFER_MS = 60 * 1000;
-    const createdAt = new Date(metadata.createdAt).getTime();
-    if (Number.isNaN(createdAt)) {
-      throw new BackupRestoreError({
-        message: `Backup metadata has invalid createdAt timestamp: ${metadata.createdAt}`,
-        code: ErrorCode.BACKUP_RESTORE_FAILED,
-        httpStatus: 500,
-        context: { dir, backupId },
-        timestamp: new Date().toISOString()
-      });
-    }
-    const expiresAt = createdAt + metadata.ttl * 1000;
-    if (Date.now() + TTL_BUFFER_MS > expiresAt) {
-      throw new BackupExpiredError({
-        message:
-          `Backup ${backupId} has expired ` +
-          `(created: ${metadata.createdAt}, TTL: ${metadata.ttl}s). ` +
-          'Create a new backup.',
-        code: ErrorCode.BACKUP_EXPIRED,
-        httpStatus: 400,
-        context: {
-          backupId,
-          expiredAt: new Date(expiresAt).toISOString()
-        },
-        timestamp: new Date().toISOString()
-      });
-    }
-
-    // Step 2: Check archive exists and get its size via HEAD (no body stream)
-    const r2Key = `backups/${backupId}/data.sqsh`;
-    const archiveHead = await bucket.head(r2Key);
-    if (!archiveHead) {
-      throw new BackupNotFoundError({
-        message:
-          `Backup archive not found in R2: ${backupId}. ` +
-          'The archive may have been deleted by R2 lifecycle rules.',
-        code: ErrorCode.BACKUP_NOT_FOUND,
-        httpStatus: 404,
-        context: { backupId },
-        timestamp: new Date().toISOString()
-      });
-    }
-
-    const backupSession = await this.ensureBackupSession();
-    const archivePath = `/var/backups/${backupId}.sqsh`;
-
     let outcome: 'success' | 'error' = 'error';
     let caughtError: Error | undefined;
+
     try {
+      // Validate user-provided inputs (DirectoryBackup is deserialized from external storage)
+      if (!backupId || typeof backupId !== 'string') {
+        throw new InvalidBackupConfigError({
+          message: 'Invalid backup: missing or invalid id',
+          code: ErrorCode.INVALID_BACKUP_CONFIG,
+          httpStatus: 400,
+          context: { reason: 'missing or invalid id' },
+          timestamp: new Date().toISOString()
+        });
+      }
+      if (!Sandbox.UUID_REGEX.test(backupId)) {
+        throw new InvalidBackupConfigError({
+          message:
+            'Invalid backup: id must be a valid UUID (e.g. from createBackup)',
+          code: ErrorCode.INVALID_BACKUP_CONFIG,
+          httpStatus: 400,
+          context: { reason: 'id must be a valid UUID' },
+          timestamp: new Date().toISOString()
+        });
+      }
+      Sandbox.validateBackupDir(dir, 'Invalid backup: dir');
+
+      // Step 1: Read metadata to check TTL
+      const metaKey = `backups/${backupId}/meta.json`;
+      const metaObject = await bucket.get(metaKey);
+      if (!metaObject) {
+        throw new BackupNotFoundError({
+          message:
+            `Backup not found: ${backupId}. ` +
+            'Verify the backup ID is correct and the backup has not been deleted.',
+          code: ErrorCode.BACKUP_NOT_FOUND,
+          httpStatus: 404,
+          context: { backupId },
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      const metadata = await metaObject.json<{
+        ttl: number;
+        createdAt: string;
+        dir: string;
+      }>();
+
+      // Check TTL with 60-second buffer to prevent race between check and restore completion
+      const TTL_BUFFER_MS = 60 * 1000;
+      const createdAt = new Date(metadata.createdAt).getTime();
+      if (Number.isNaN(createdAt)) {
+        throw new BackupRestoreError({
+          message: `Backup metadata has invalid createdAt timestamp: ${metadata.createdAt}`,
+          code: ErrorCode.BACKUP_RESTORE_FAILED,
+          httpStatus: 500,
+          context: { dir, backupId },
+          timestamp: new Date().toISOString()
+        });
+      }
+      const expiresAt = createdAt + metadata.ttl * 1000;
+      if (Date.now() + TTL_BUFFER_MS > expiresAt) {
+        throw new BackupExpiredError({
+          message:
+            `Backup ${backupId} has expired ` +
+            `(created: ${metadata.createdAt}, TTL: ${metadata.ttl}s). ` +
+            'Create a new backup.',
+          code: ErrorCode.BACKUP_EXPIRED,
+          httpStatus: 400,
+          context: {
+            backupId,
+            expiredAt: new Date(expiresAt).toISOString()
+          },
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      // Step 2: Check archive exists and get its size via HEAD (no body stream)
+      const r2Key = `backups/${backupId}/data.sqsh`;
+      const archiveHead = await bucket.head(r2Key);
+      if (!archiveHead) {
+        throw new BackupNotFoundError({
+          message:
+            `Backup archive not found in R2: ${backupId}. ` +
+            'The archive may have been deleted by R2 lifecycle rules.',
+          code: ErrorCode.BACKUP_NOT_FOUND,
+          httpStatus: 404,
+          context: { backupId },
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      const backupSession = await this.ensureBackupSession();
+      const archivePath = `/var/backups/${backupId}.sqsh`;
+
       // Step 3: Tear down existing FUSE mounts before overwriting the archive.
       // squashfuse holds the .sqsh file open; writing a new archive to the same
       // path while the old mount is active corrupts the backing store.
@@ -4192,10 +4220,18 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       caughtError = error instanceof Error ? error : new Error(String(error));
       // Clean up archive file on failure only — squashfuse needs it as
       // backing storage for the lifetime of the mount
-      await this.execWithSession(
-        `rm -f ${shellEscape(archivePath)}`,
-        backupSession
-      ).catch(() => {});
+      if (backupId) {
+        const archivePath = `/var/backups/${backupId}.sqsh`;
+        const backupSession = this.defaultSession
+          ? `${this.defaultSession}-backup`
+          : undefined;
+        if (backupSession) {
+          await this.execWithSession(
+            `rm -f ${shellEscape(archivePath)}`,
+            backupSession
+          ).catch(() => {});
+        }
+      }
       throw error;
     } finally {
       logCanonicalEvent(this.logger, {

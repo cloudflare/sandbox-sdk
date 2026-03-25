@@ -1,10 +1,18 @@
 import type { CanonicalEventPayload } from './canonical.types.js';
-import {
-  redactCommand,
-  redactSensitiveParams,
-  truncateForLog
-} from './sanitize.js';
+import { redactCommand, truncateForLog } from './sanitize.js';
 import type { Logger } from './types.js';
+
+/**
+ * Sanitize an Error object by redacting sensitive data from message and stack.
+ * Produces a copy so the caller's original Error is not mutated.
+ */
+function sanitizeError(error: Error | undefined): Error | undefined {
+  if (!error) return undefined;
+  const sanitized = new Error(redactCommand(error.message));
+  sanitized.name = error.name;
+  sanitized.stack = error.stack ? redactCommand(error.stack) : undefined;
+  return sanitized;
+}
 
 /**
  * Sanitize and prepare payload fields for both message building and context emission.
@@ -70,7 +78,11 @@ export function buildMessage(
   } else if (payload.backupId !== undefined) {
     parts.push(payload.backupId);
   } else if (payload.repoPath !== undefined) {
-    parts.push(payload.repoPath);
+    let gitContext = payload.repoPath;
+    if (payload.branch !== undefined) {
+      gitContext += ` branch=${payload.branch}`;
+    }
+    parts.push(gitContext);
   } else if (payload.mountPath !== undefined) {
     parts.push(payload.mountPath);
   }
@@ -108,7 +120,7 @@ export function logCanonicalEvent(
   // then sanitize to prevent credential leaks (e.g., presigned URLs in error strings)
   const resolvedErrorMessage = payload.errorMessage ?? payload.error?.message;
   const sanitizedErrorMessage = resolvedErrorMessage
-    ? redactSensitiveParams(resolvedErrorMessage)
+    ? redactCommand(resolvedErrorMessage)
     : undefined;
   const enrichedPayload =
     sanitizedErrorMessage !== undefined
@@ -137,7 +149,7 @@ export function logCanonicalEvent(
   }
 
   if (payload.outcome === 'error') {
-    logger.error(message, payload.error, context);
+    logger.error(message, sanitizeError(payload.error), context);
   } else {
     logger.info(message, context);
   }

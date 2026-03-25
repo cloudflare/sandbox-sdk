@@ -99,7 +99,7 @@ import type { ExecEvent, Logger } from '@repo/shared';
 import {
   createNoOpLogger,
   logCanonicalEvent,
-  redactSensitiveParams
+  redactCommand
 } from '@repo/shared';
 import type { Subprocess } from 'bun';
 import { CONFIG } from './config';
@@ -418,7 +418,7 @@ export class Session {
       throw error;
     } finally {
       const stderrPreview = state.stderrPreview
-        ? redactSensitiveParams(state.stderrPreview)
+        ? redactCommand(state.stderrPreview)
         : undefined;
       logCanonicalEvent(this.logger, {
         event: 'command.exec',

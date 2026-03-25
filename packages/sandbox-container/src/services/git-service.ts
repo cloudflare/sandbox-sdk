@@ -3,6 +3,7 @@
 import {
   type Logger,
   logCanonicalEvent,
+  redactCommand,
   redactCredentials,
   sanitizeGitData,
   shellEscape
@@ -187,6 +188,9 @@ export class GitService {
         });
 
       outcome = result.success ? 'success' : 'error';
+      if (!result.success) {
+        errorMessage = result.error?.message;
+      }
       return result;
     } catch (error) {
       caughtError = error instanceof Error ? error : new Error(String(error));
@@ -206,7 +210,7 @@ export class GitService {
         event: 'git.clone',
         outcome,
         durationMs: Date.now() - startTime,
-        repoUrl: redactCredentials(repoUrl),
+        repoUrl: redactCommand(repoUrl),
         targetDir: options.targetDir,
         branch: options.branch,
         sessionId,
@@ -276,6 +280,7 @@ export class GitService {
 
       if (!execResult.success) {
         outcome = 'error';
+        errorMessage = execResult.error?.message;
         return execResult as ServiceResult<void>;
       }
 

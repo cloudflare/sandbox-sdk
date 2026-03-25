@@ -205,6 +205,9 @@ export class FileService implements FileSystemOperations {
         });
 
       outcome = result.success ? 'success' : 'error';
+      if (!result.success) {
+        errorMessage = result.error.message;
+      }
       return result;
     } catch (error) {
       caughtError = error instanceof Error ? error : new Error(String(error));
@@ -341,6 +344,7 @@ export class FileService implements FileSystemOperations {
 
       if (!writeResult.success) {
         outcome = 'error';
+        errorMessage = writeResult.error.message;
         return writeResult as ServiceResult<void>;
       }
 
@@ -470,6 +474,9 @@ export class FileService implements FileSystemOperations {
       );
 
       outcome = result.success ? 'success' : 'error';
+      if (!result.success) {
+        errorMessage = result.error?.message;
+      }
       return result;
     } catch (error) {
       caughtError = error instanceof Error ? error : new Error(String(error));
@@ -742,6 +749,7 @@ export class FileService implements FileSystemOperations {
 
       if (!execResult.success) {
         outcome = 'error';
+        errorMessage = execResult.error.message;
         return execResult as ServiceResult<void>;
       }
 
@@ -749,10 +757,11 @@ export class FileService implements FileSystemOperations {
 
       if (result.exitCode !== 0) {
         outcome = 'error';
+        errorMessage = `mkdir operation failed with exit code ${result.exitCode}`;
         return {
           success: false,
           error: {
-            message: `mkdir operation failed with exit code ${result.exitCode}`,
+            message: errorMessage,
             code: ErrorCode.FILESYSTEM_ERROR,
             details: {
               path,
