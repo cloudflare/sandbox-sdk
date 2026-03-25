@@ -40,6 +40,8 @@ export interface CanonicalEventPayload {
   backupId?: string;
   repoPath?: string;
   mountPath?: string;
+  mountsProcessed?: number;
+  mountFailures?: number;
   recursive?: boolean;
   name?: string;
 

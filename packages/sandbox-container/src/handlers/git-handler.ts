@@ -1,8 +1,9 @@
 // Git Handler
-import type {
-  GitCheckoutRequest,
-  GitCheckoutResult,
-  Logger
+import {
+  type GitCheckoutRequest,
+  type GitCheckoutResult,
+  type Logger,
+  redactCommand
 } from '@repo/shared';
 import { ErrorCode } from '@repo/shared/errors';
 
@@ -63,9 +64,9 @@ export class GitHandler extends BaseHandler<Request, Response> {
     } else {
       this.logger.error('Repository clone failed', undefined, {
         requestId: context.requestId,
-        repoUrl: body.repoUrl,
+        repoUrl: redactCommand(body.repoUrl),
         errorCode: result.error.code,
-        errorMessage: result.error.message
+        errorMessage: redactCommand(result.error.message)
       });
 
       return this.createErrorResponse(result.error, context);

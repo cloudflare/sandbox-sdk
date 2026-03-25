@@ -1,5 +1,5 @@
 import type { LogContext, Logger } from './logger';
-import { redactCredentials } from './logger/sanitize.js';
+import { redactCommand } from './logger/sanitize.js';
 
 /**
  * Fallback repository name used when URL parsing fails
@@ -51,7 +51,7 @@ export function extractRepoName(repoUrl: string): string {
 export function sanitizeGitData<T>(data: T): T {
   // Handle primitives
   if (typeof data === 'string') {
-    return redactCredentials(data) as T;
+    return redactCommand(data) as T;
   }
 
   if (data === null || data === undefined) {
@@ -93,10 +93,10 @@ export class GitLogger implements Logger {
     if (!error) return error;
 
     // Create a new error with sanitized message and stack
-    const sanitized = new Error(redactCredentials(error.message));
+    const sanitized = new Error(redactCommand(error.message));
     sanitized.name = error.name;
     if (error.stack) {
-      sanitized.stack = redactCredentials(error.stack);
+      sanitized.stack = redactCommand(error.stack);
     }
     // Preserve other enumerable properties
     const sanitizedRecord = sanitized as unknown as Record<string, unknown>;

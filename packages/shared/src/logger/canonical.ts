@@ -83,6 +83,11 @@ export function buildMessage(
       gitContext += ` branch=${payload.branch}`;
     }
     parts.push(gitContext);
+  } else if (payload.mountsProcessed !== undefined) {
+    let destroyContext = `${payload.mountsProcessed} mounts`;
+    if (payload.mountFailures)
+      destroyContext += `, ${payload.mountFailures} failed`;
+    parts.push(destroyContext);
   } else if (payload.mountPath !== undefined) {
     parts.push(payload.mountPath);
   }

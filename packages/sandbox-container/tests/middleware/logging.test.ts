@@ -63,7 +63,7 @@ describe('LoggingMiddleware', () => {
     expect(typeof loggedContext.durationMs).toBe('number');
   });
 
-  it('should log a 4xx response at warn level', async () => {
+  it('should log a 4xx response at debug level', async () => {
     const context = makeContext({ sandboxId: 'sandbox-warn' });
     const request = makeRequest('GET', '/api/missing');
     const mockResponse = new Response('Not found', { status: 404 });
@@ -71,20 +71,20 @@ describe('LoggingMiddleware', () => {
     const next = vi.fn().mockResolvedValue(mockResponse);
     await middleware.handle(request, context, next);
 
-    expect(mockLogger.warn).toHaveBeenCalledTimes(1);
-    expect(mockLogger.debug).not.toHaveBeenCalled();
+    expect(mockLogger.debug).toHaveBeenCalledTimes(1);
     expect(mockLogger.info).not.toHaveBeenCalled();
+    expect(mockLogger.warn).not.toHaveBeenCalled();
     expect(mockLogger.error).not.toHaveBeenCalled();
 
     const [message, loggedContext] = (
-      mockLogger.warn as ReturnType<typeof vi.fn>
+      mockLogger.debug as ReturnType<typeof vi.fn>
     ).mock.calls[0];
     expect(message).toBe('GET /api/missing 404');
     expect(loggedContext.sandboxId).toBe('sandbox-warn');
     expect(loggedContext.statusCode).toBe(404);
   });
 
-  it('should log a 5xx response at error level', async () => {
+  it('should log a 5xx response at debug level', async () => {
     const context = makeContext({ sandboxId: 'sandbox-err' });
     const request = makeRequest('GET', '/api/fail');
     const mockResponse = new Response('Internal error', { status: 500 });
@@ -92,19 +92,20 @@ describe('LoggingMiddleware', () => {
     const next = vi.fn().mockResolvedValue(mockResponse);
     await middleware.handle(request, context, next);
 
-    expect(mockLogger.error).toHaveBeenCalledTimes(1);
+    expect(mockLogger.debug).toHaveBeenCalledTimes(1);
     expect(mockLogger.info).not.toHaveBeenCalled();
     expect(mockLogger.warn).not.toHaveBeenCalled();
+    expect(mockLogger.error).not.toHaveBeenCalled();
 
-    const [message, , loggedContext] = (
-      mockLogger.error as ReturnType<typeof vi.fn>
+    const [message, loggedContext] = (
+      mockLogger.debug as ReturnType<typeof vi.fn>
     ).mock.calls[0];
     expect(message).toBe('GET /api/fail 500');
     expect(loggedContext.sandboxId).toBe('sandbox-err');
     expect(loggedContext.statusCode).toBe(500);
   });
 
-  it('should log an error level event and rethrow when next() throws', async () => {
+  it('should log at debug level and rethrow when next() throws', async () => {
     const context = makeContext({ sandboxId: 'sandbox-throw' });
     const request = makeRequest('DELETE', '/api/crash');
     const thrown = new Error('Handler exploded');
@@ -115,12 +116,13 @@ describe('LoggingMiddleware', () => {
       'Handler exploded'
     );
 
-    expect(mockLogger.error).toHaveBeenCalledTimes(1);
-    const [message, errorArg, loggedContext] = (
-      mockLogger.error as ReturnType<typeof vi.fn>
+    expect(mockLogger.debug).toHaveBeenCalledTimes(1);
+    expect(mockLogger.error).not.toHaveBeenCalled();
+    const [message, loggedContext] = (
+      mockLogger.debug as ReturnType<typeof vi.fn>
     ).mock.calls[0];
     expect(message).toBe('DELETE /api/crash 500');
-    expect(errorArg).toBe(thrown);
+    expect(loggedContext.error).toBe('Handler exploded');
     expect(loggedContext.sandboxId).toBe('sandbox-throw');
   });
 

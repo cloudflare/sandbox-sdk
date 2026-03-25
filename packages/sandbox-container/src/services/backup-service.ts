@@ -333,7 +333,9 @@ export class BackupService {
       insideWorkTreeResult.data.exitCode !== 0 ||
       insideWorkTreeResult.data.stdout.trim() !== 'true'
     ) {
-      opLogger.info('Backup directory is not inside a git repository', { dir });
+      opLogger.debug('Backup directory is not inside a git repository', {
+        dir
+      });
       return [];
     }
 

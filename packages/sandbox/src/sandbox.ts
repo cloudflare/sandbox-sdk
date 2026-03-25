@@ -1321,7 +1321,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         } else {
           if (mountInfo.mounted) {
             try {
-              this.logger.info(
+              this.logger.debug(
                 `Unmounting bucket ${mountInfo.bucket} from ${mountPath}`
               );
               await this.exec(`fusermount -u ${shellEscape(mountPath)}`);
