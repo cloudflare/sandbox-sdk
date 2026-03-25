@@ -1391,7 +1391,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     logCanonicalEvent(this.logger, {
       event: 'version.check',
-      outcome: outcome === 'compatible' ? 'success' : 'error',
+      outcome: 'success',
       durationMs: 0,
       sdkVersion,
       containerVersion,
@@ -3984,15 +3984,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         const archivePath = `/var/backups/${backupId}.sqsh`;
         const r2Key = `backups/${backupId}/data.sqsh`;
         const metaKey = `backups/${backupId}/meta.json`;
-        const backupSession = this.defaultSession
-          ? `${this.defaultSession}-backup`
-          : undefined;
-        if (backupSession) {
-          await this.execWithSession(
-            `rm -f ${shellEscape(archivePath)}`,
-            backupSession
-          ).catch(() => {});
-        }
+        await this.execWithSession(
+          `rm -f ${shellEscape(archivePath)}`,
+          '__sandbox_backup__'
+        ).catch(() => {});
         await bucket.delete(r2Key).catch(() => {});
         await bucket.delete(metaKey).catch(() => {});
       }
@@ -4214,15 +4209,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       // backing storage for the lifetime of the mount
       if (backupId) {
         const archivePath = `/var/backups/${backupId}.sqsh`;
-        const backupSession = this.defaultSession
-          ? `${this.defaultSession}-backup`
-          : undefined;
-        if (backupSession) {
-          await this.execWithSession(
-            `rm -f ${shellEscape(archivePath)}`,
-            backupSession
-          ).catch(() => {});
-        }
+        await this.execWithSession(
+          `rm -f ${shellEscape(archivePath)}`,
+          '__sandbox_backup__'
+        ).catch(() => {});
       }
       throw error;
     } finally {
