@@ -1393,14 +1393,25 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       containerVersion = undefined;
     }
 
-    logCanonicalEvent(this.logger, {
-      event: 'version.check',
-      outcome: 'success',
-      durationMs: 0,
-      sdkVersion,
-      containerVersion,
-      versionOutcome: outcome
-    });
+    const successLevel =
+      outcome === 'compatible'
+        ? ('debug' as const)
+        : outcome === 'container_version_unknown'
+          ? ('info' as const)
+          : ('warn' as const); // version_mismatch or check_failed
+
+    logCanonicalEvent(
+      this.logger,
+      {
+        event: 'version.check',
+        outcome: 'success',
+        durationMs: 0,
+        sdkVersion,
+        containerVersion: containerVersion ?? 'unknown',
+        versionOutcome: outcome
+      },
+      { successLevel }
+    );
   }
 
   override async onStop() {

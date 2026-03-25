@@ -75,7 +75,14 @@ export function buildMessage(
 
   // version.check has its own format: no outcome, no duration
   if (event === 'version.check') {
-    return `version.check sdk=${payload.sdkVersion} container=${payload.containerVersion}`;
+    const parts: string[] = ['version.check'];
+    if (payload.sdkVersion) parts.push(`sdk=${payload.sdkVersion}`);
+    if (payload.containerVersion)
+      parts.push(`container=${payload.containerVersion}`);
+    if (payload.versionOutcome && payload.versionOutcome !== 'compatible') {
+      parts.push(`(${payload.versionOutcome})`);
+    }
+    return parts.join(' ');
   }
 
   const parts: string[] = [event, payload.outcome];

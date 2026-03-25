@@ -29,6 +29,7 @@ export interface CanonicalEventPayload {
   errorMessage?: string;
   sdkVersion?: string;
   containerVersion?: string;
+  versionOutcome?: string;
   error?: Error;
 
   // Frequently-used domain fields (typed for autocomplete + typo safety)
