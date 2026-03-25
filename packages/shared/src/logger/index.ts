@@ -136,18 +136,23 @@ function getLogLevelFromEnv(): LogLevel {
 
 /**
  * Determine output mode based on component and environment:
- * - Container component always uses 'json-line' (Bun stdout → Containers pipeline)
- * - SANDBOX_LOG_FORMAT=pretty → 'pretty' (local dev only)
- * - Everything else → 'structured' (Workers/DOs — auto-indexed by Workers Logs)
+ * - SANDBOX_LOG_FORMAT=pretty → 'pretty' for all components (local wrangler dev)
+ * - Container/Executor without pretty → 'json-line' (Bun stdout → Containers pipeline)
+ * - Everything else without pretty → 'structured' (Workers/DOs → Workers Logs)
+ *
+ * In local dev, setting SANDBOX_LOG_FORMAT=pretty gives readable terminal
+ * output on both the DO side and container side. In production (where the
+ * var isn't set), DOs emit structured objects and containers emit single-line
+ * JSON — both queryable by their respective observability pipelines.
  */
 function getOutputMode(component: LogComponent): OutputMode {
-  if (component === 'container') {
-    return 'json-line';
-  }
-
   const format = getEnvVar('SANDBOX_LOG_FORMAT');
   if (format?.toLowerCase() === 'pretty') {
     return 'pretty';
+  }
+
+  if (component === 'container' || component === 'executor') {
+    return 'json-line';
   }
 
   return 'structured';

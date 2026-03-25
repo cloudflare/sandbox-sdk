@@ -554,17 +554,30 @@ describe('Logger Module', () => {
 
       const output = consoleLogSpy.mock.calls[0][0] as string;
       expect(typeof output).toBe('string');
-      expect(() => JSON.parse(output)).toThrow();
       expect(output).toContain('Pretty factory');
     });
 
-    it('should use json-line for container even when SANDBOX_LOG_FORMAT=pretty', () => {
+    it('should use pretty for container when SANDBOX_LOG_FORMAT=pretty', () => {
       process.env.SANDBOX_LOG_FORMAT = 'pretty';
       const logger = createLogger({
         component: 'container'
       });
 
-      logger.info('Container always json-line');
+      logger.info('Container pretty in local dev');
+
+      const output = consoleLogSpy.mock.calls[0][0] as string;
+      expect(typeof output).toBe('string');
+      expect(output).toContain('Container pretty in local dev');
+      expect(() => JSON.parse(output)).toThrow();
+    });
+
+    it('should default container to json-line when SANDBOX_LOG_FORMAT is not set', () => {
+      delete process.env.SANDBOX_LOG_FORMAT;
+      const logger = createLogger({
+        component: 'container'
+      });
+
+      logger.info('Container json-line in production');
 
       const output = consoleLogSpy.mock.calls[0][0] as string;
       expect(typeof output).toBe('string');
