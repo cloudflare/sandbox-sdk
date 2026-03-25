@@ -36,7 +36,6 @@ export {
   extractRepoName,
   FALLBACK_REPO_NAME,
   GitLogger,
-  redactCredentials,
   sanitizeGitData
 } from './git.js';
 // Export all interpreter types
@@ -59,6 +58,8 @@ export {
   LogLevelEnum,
   TraceContext
 } from './logger/index.js';
+// Export sanitize helpers
+export { redactCredentials } from './logger/sanitize.js';
 // Export PTY types
 export type {
   PtyControlMessage,
