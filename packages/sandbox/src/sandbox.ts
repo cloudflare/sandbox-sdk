@@ -1249,78 +1249,77 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    */
   override async destroy(): Promise<void> {
     const startTime = Date.now();
-    const mountResults: Array<{
-      mountPath: string;
-      bucket: string;
-      outcome: string;
-    }> = [];
+    let mountsProcessed = 0;
+    let mountFailures = 0;
+    let outcome: 'success' | 'error' = 'error';
+    let caughtError: Error | undefined;
 
-    // Best-effort desktop stop — only when container is already running
-    if (this.ctx.container?.running) {
-      try {
-        await this.client.desktop.stop();
-      } catch {
-        // Desktop may not be running or available — continue cleanup
-      }
-    }
-
-    // Disconnect WebSocket transport if active
-    this.client.disconnect();
-
-    // Unmount all mounted buckets and cleanup
-    for (const [mountPath, mountInfo] of this.activeMounts.entries()) {
-      if (mountInfo.mountType === 'local-sync') {
+    try {
+      // Best-effort desktop stop — only when container is already running
+      if (this.ctx.container?.running) {
         try {
-          await mountInfo.syncManager.stop();
-          mountInfo.mounted = false;
-          mountResults.push({
-            mountPath,
-            bucket: mountInfo.bucket,
-            outcome: 'success'
-          });
-        } catch (error) {
-          const errorMsg =
-            error instanceof Error ? error.message : String(error);
-          this.logger.warn(
-            `Failed to stop local sync for ${mountPath}: ${errorMsg}`
-          );
-          mountResults.push({
-            mountPath,
-            bucket: mountInfo.bucket,
-            outcome: errorMsg
-          });
+          await this.client.desktop.stop();
+        } catch {
+          // Desktop may not be running or available — continue cleanup
         }
-      } else {
-        if (mountInfo.mounted) {
+      }
+
+      // Disconnect WebSocket transport if active
+      this.client.disconnect();
+
+      // Unmount all mounted buckets and cleanup
+      for (const [mountPath, mountInfo] of this.activeMounts.entries()) {
+        mountsProcessed++;
+        if (mountInfo.mountType === 'local-sync') {
           try {
-            this.logger.info(
-              `Unmounting bucket ${mountInfo.bucket} from ${mountPath}`
-            );
-            await this.exec(`fusermount -u ${shellEscape(mountPath)}`);
+            await mountInfo.syncManager.stop();
             mountInfo.mounted = false;
           } catch (error) {
+            mountFailures++;
             const errorMsg =
               error instanceof Error ? error.message : String(error);
             this.logger.warn(
-              `Failed to unmount bucket ${mountInfo.bucket} from ${mountPath}: ${errorMsg}`
+              `Failed to stop local sync for ${mountPath}: ${errorMsg}`
             );
           }
+        } else {
+          if (mountInfo.mounted) {
+            try {
+              this.logger.info(
+                `Unmounting bucket ${mountInfo.bucket} from ${mountPath}`
+              );
+              await this.exec(`fusermount -u ${shellEscape(mountPath)}`);
+              mountInfo.mounted = false;
+            } catch (error) {
+              mountFailures++;
+              const errorMsg =
+                error instanceof Error ? error.message : String(error);
+              this.logger.warn(
+                `Failed to unmount bucket ${mountInfo.bucket} from ${mountPath}: ${errorMsg}`
+              );
+            }
+          }
+
+          // Always cleanup password file for FUSE mounts
+          await this.deletePasswordFile(mountInfo.passwordFilePath);
         }
-
-        // Always cleanup password file for FUSE mounts
-        await this.deletePasswordFile(mountInfo.passwordFilePath);
       }
+
+      outcome = 'success';
+      await super.destroy();
+    } catch (error) {
+      caughtError = error instanceof Error ? error : new Error(String(error));
+      throw error;
+    } finally {
+      logCanonicalEvent(this.logger, {
+        event: 'sandbox.destroy',
+        outcome,
+        durationMs: Date.now() - startTime,
+        mountsProcessed,
+        mountFailures,
+        error: caughtError
+      });
     }
-
-    logCanonicalEvent(this.logger, {
-      event: 'sandbox.destroy',
-      outcome: 'success',
-      durationMs: Date.now() - startTime,
-      mountsProcessed: mountResults.length,
-      mountResults
-    });
-
-    await super.destroy();
   }
 
   override onStart() {
@@ -2974,33 +2973,43 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
 
     const exposeStartTime = Date.now();
-    const sessionId = await this.ensureDefaultSession();
-    await this.client.ports.exposePort(port, sessionId, options?.name);
+    let outcome: 'success' | 'error' = 'error';
+    let caughtError: Error | undefined;
+    try {
+      const sessionId = await this.ensureDefaultSession();
+      await this.client.ports.exposePort(port, sessionId, options?.name);
 
-    tokens[port.toString()] = token;
-    await this.ctx.storage.put('portTokens', tokens);
+      tokens[port.toString()] = token;
+      await this.ctx.storage.put('portTokens', tokens);
 
-    const url = this.constructPreviewUrl(
-      port,
-      this.sandboxName,
-      options.hostname,
-      token
-    );
+      const url = this.constructPreviewUrl(
+        port,
+        this.sandboxName,
+        options.hostname,
+        token
+      );
 
-    logCanonicalEvent(this.logger, {
-      event: 'port.expose',
-      outcome: 'success',
-      port,
-      durationMs: Date.now() - exposeStartTime,
-      name: options?.name,
-      hostname: options.hostname
-    });
+      outcome = 'success';
 
-    return {
-      url,
-      port,
-      name: options?.name
-    };
+      return {
+        url,
+        port,
+        name: options?.name
+      };
+    } catch (error) {
+      caughtError = error instanceof Error ? error : new Error(String(error));
+      throw error;
+    } finally {
+      logCanonicalEvent(this.logger, {
+        event: 'port.expose',
+        outcome,
+        port,
+        durationMs: Date.now() - exposeStartTime,
+        name: options?.name,
+        hostname: options.hostname,
+        error: caughtError
+      });
+    }
   }
 
   async unexposePort(port: number) {
@@ -3011,23 +3020,34 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
 
     const unexposeStartTime = Date.now();
-    const sessionId = await this.ensureDefaultSession();
-    await this.client.ports.unexposePort(port, sessionId);
+    let outcome: 'success' | 'error' = 'error';
+    let caughtError: Error | undefined;
+    try {
+      const sessionId = await this.ensureDefaultSession();
+      await this.client.ports.unexposePort(port, sessionId);
 
-    // Clean up token for this port (storage is protected by input gates)
-    const tokens =
-      (await this.ctx.storage.get<Record<string, string>>('portTokens')) || {};
-    if (tokens[port.toString()]) {
-      delete tokens[port.toString()];
-      await this.ctx.storage.put('portTokens', tokens);
+      // Clean up token for this port (storage is protected by input gates)
+      const tokens =
+        (await this.ctx.storage.get<Record<string, string>>('portTokens')) ||
+        {};
+      if (tokens[port.toString()]) {
+        delete tokens[port.toString()];
+        await this.ctx.storage.put('portTokens', tokens);
+      }
+
+      outcome = 'success';
+    } catch (error) {
+      caughtError = error instanceof Error ? error : new Error(String(error));
+      throw error;
+    } finally {
+      logCanonicalEvent(this.logger, {
+        event: 'port.unexpose',
+        outcome,
+        port,
+        durationMs: Date.now() - unexposeStartTime,
+        error: caughtError
+      });
     }
-
-    logCanonicalEvent(this.logger, {
-      event: 'port.unexpose',
-      outcome: 'success',
-      port,
-      durationMs: Date.now() - unexposeStartTime
-    });
   }
 
   async getExposedPorts(hostname: string) {
@@ -3897,6 +3917,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     const r2Key = `backups/${backupId}/data.sqsh`;
     const metaKey = `backups/${backupId}/meta.json`;
 
+    let outcome: 'success' | 'error' = 'error';
+    let caughtError: Error | undefined;
     try {
       // Step 2: Upload archive to R2 via presigned URL (isolated backup session)
       await this.uploadBackupPresigned(
@@ -3919,18 +3941,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       };
       await bucket.put(metaKey, JSON.stringify(metadata));
 
-      logCanonicalEvent(this.logger, {
-        event: 'backup.create',
-        outcome: 'success',
-        durationMs: Date.now() - backupStartTime,
-        backupId,
-        dir,
-        name,
-        r2Key,
-        sizeBytes: createResult.sizeBytes
-      });
+      outcome = 'success';
 
-      // Step 5: Clean up the local archive in the container
+      // Clean up the local archive in the container
       await this.execWithSession(
         `rm -f ${shellEscape(archivePath)}`,
         backupSession
@@ -3938,6 +3951,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
       return { id: backupId, dir };
     } catch (error) {
+      caughtError = error instanceof Error ? error : new Error(String(error));
       // Clean up local archive and any partially-uploaded R2 objects
       await this.execWithSession(
         `rm -f ${shellEscape(archivePath)}`,
@@ -3946,6 +3960,17 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       await bucket.delete(r2Key).catch(() => {});
       await bucket.delete(metaKey).catch(() => {});
       throw error;
+    } finally {
+      logCanonicalEvent(this.logger, {
+        event: 'backup.create',
+        outcome,
+        durationMs: Date.now() - backupStartTime,
+        backupId,
+        dir,
+        name,
+        sizeBytes: createResult.sizeBytes,
+        error: caughtError
+      });
     }
   }
 
@@ -4079,6 +4104,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     const backupSession = await this.ensureBackupSession();
     const archivePath = `/var/backups/${backupId}.sqsh`;
 
+    let outcome: 'success' | 'error' = 'error';
+    let caughtError: Error | undefined;
     try {
       // Step 3: Tear down existing FUSE mounts before overwriting the archive.
       // squashfuse holds the .sqsh file open; writing a new archive to the same
@@ -4136,13 +4163,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         });
       }
 
-      logCanonicalEvent(this.logger, {
-        event: 'backup.restore',
-        outcome: 'success',
-        durationMs: Date.now() - restoreStartTime,
-        backupId,
-        dir
-      });
+      outcome = 'success';
 
       return {
         success: true,
@@ -4150,6 +4171,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         id: backupId
       };
     } catch (error) {
+      caughtError = error instanceof Error ? error : new Error(String(error));
       // Clean up archive file on failure only — squashfuse needs it as
       // backing storage for the lifetime of the mount
       await this.execWithSession(
@@ -4157,6 +4179,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         backupSession
       ).catch(() => {});
       throw error;
+    } finally {
+      logCanonicalEvent(this.logger, {
+        event: 'backup.restore',
+        outcome,
+        durationMs: Date.now() - restoreStartTime,
+        backupId,
+        dir,
+        error: caughtError
+      });
     }
   }
 }

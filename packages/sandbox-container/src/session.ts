@@ -670,10 +670,6 @@ export class Session {
         commandId,
         exitCode: event.exitCode as number | undefined,
         errorMessage: event.errorMessage as string | undefined,
-        labelerTimeout: event.labelerTimeout as boolean | undefined,
-        labelerTimeoutMs: event.labelerTimeoutMs as number | undefined,
-        pidTimeout: event.pidTimeout as boolean | undefined,
-        pidFallback: event.pidFallback as string | undefined,
         error: caughtError
       });
     }
