@@ -3,22 +3,49 @@ import { redactCommand, truncateForLog } from './sanitize.js';
 import type { Logger } from './types.js';
 
 /**
+ * Sanitize and prepare payload fields for both message building and context emission.
+ * Called once by logCanonicalEvent to avoid double-redaction.
+ */
+function sanitizePayload(payload: CanonicalEventPayload): {
+  sanitizedCommand?: string;
+  commandTruncated: boolean;
+} {
+  if (payload.command === undefined) {
+    return { commandTruncated: false };
+  }
+  const redacted = redactCommand(payload.command);
+  const { value, truncated } = truncateForLog(redacted);
+  return { sanitizedCommand: value, commandTruncated: truncated };
+}
+
+/**
  * Build a human-readable canonical event message for dashboards and log viewers.
  *
  * Format: `{event} {outcome} {key_context} [— {reason}] ({durationMs}ms[, {sizeBytes}B])`
+ *
+ * The if/else chain for key context has implicit priority: command > path >
+ * sessionId > port > repoUrl > pid. If a payload has multiple, only the
+ * highest-priority one appears in the message. All fields are still present
+ * as discrete queryable keys in the structured log context.
  */
-export function buildMessage(payload: CanonicalEventPayload): string {
+export function buildMessage(
+  payload: CanonicalEventPayload,
+  sanitizedCommand?: string
+): string {
   const { event } = payload;
 
-  // Special case: version.check has no outcome or duration
+  // version.check has its own format: no outcome, no duration
   if (event === 'version.check') {
     return `version.check sdk=${payload.sdkVersion} container=${payload.containerVersion}`;
   }
 
   const parts: string[] = [event, payload.outcome];
 
-  // Key context based on event type
-  if (payload.command !== undefined) {
+  // Key context — highest priority field shown in message
+  if (sanitizedCommand !== undefined) {
+    parts.push(sanitizedCommand);
+  } else if (payload.command !== undefined) {
+    // Fallback for direct buildMessage calls without pre-sanitized command
     const redacted = redactCommand(payload.command);
     const { value } = truncateForLog(redacted);
     parts.push(value);
@@ -60,14 +87,17 @@ export function buildMessage(payload: CanonicalEventPayload): string {
 /**
  * Log a canonical event — the single entry point for all structured operational events.
  *
- * Sanitizes command fields, selects log level from outcome, and emits
- * a structured log entry with the full payload as context.
+ * Sanitizes command fields once, builds the message, selects log level from
+ * outcome, and emits a structured log entry with the full payload as context.
  */
 export function logCanonicalEvent(
   logger: Logger,
   payload: CanonicalEventPayload
 ): void {
-  const message = buildMessage(payload);
+  // Sanitize once, use for both message and context
+  const { sanitizedCommand, commandTruncated } = sanitizePayload(payload);
+
+  const message = buildMessage(payload, sanitizedCommand);
 
   // Build context from payload, excluding the error object (passed separately)
   const context: Record<string, unknown> = {};
@@ -76,12 +106,10 @@ export function logCanonicalEvent(
     context[key] = value;
   }
 
-  // Sanitize command in context
-  if (payload.command !== undefined) {
-    const redacted = redactCommand(payload.command);
-    const { value, truncated } = truncateForLog(redacted);
-    context.command = value;
-    if (truncated) {
+  // Apply sanitized command to context
+  if (sanitizedCommand !== undefined) {
+    context.command = sanitizedCommand;
+    if (commandTruncated) {
       context.commandTruncated = true;
     }
   }

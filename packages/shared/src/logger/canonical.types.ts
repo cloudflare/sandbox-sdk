@@ -1,8 +1,20 @@
+/**
+ * Payload for a canonical log event.
+ *
+ * Required fields (event, outcome, durationMs) are enforced by TypeScript.
+ * Common optional fields are typed for autocomplete and typo detection.
+ * The index signature allows event-specific fields (e.g., labelerTimeout,
+ * mountResults) without requiring them in the shared interface.
+ */
 export interface CanonicalEventPayload {
+  /** domain.operation name (e.g., "sandbox.exec", "command.exec") */
   event: string;
+  /** Result of the operation */
   outcome: 'success' | 'error';
+  /** Wall-clock duration in milliseconds */
   durationMs: number;
 
+  // Common fields used across multiple event types
   command?: string;
   path?: string;
   sessionId?: string;
@@ -17,5 +29,18 @@ export interface CanonicalEventPayload {
   containerVersion?: string;
   error?: Error;
 
+  // Frequently-used domain fields (typed for autocomplete + typo safety)
+  commandId?: string;
+  processId?: string;
+  targetDir?: string;
+  cwd?: string;
+  stdoutLen?: number;
+  stderrLen?: number;
+  stderrPreview?: string;
+  backupId?: string;
+  recursive?: boolean;
+  name?: string;
+
+  /** Event-specific fields not worth typing in the shared interface */
   [key: string]: unknown;
 }
