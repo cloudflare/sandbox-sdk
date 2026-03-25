@@ -997,52 +997,52 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   ): Promise<void> {
     const mountStartTime = Date.now();
     const prefix = options.prefix || undefined;
-
-    this.validateMountOptions(bucket, mountPath, { ...options, prefix });
-
-    // Build s3fs source: bucket name with optional prefix (e.g., "mybucket:/prefix/")
-    const s3fsSource = buildS3fsSource(bucket, prefix);
-    const provider: BucketProvider | null =
-      options.provider || detectProviderFromUrl(options.endpoint);
-
-    this.logger.debug(`Detected provider: ${provider || 'unknown'}`, {
-      explicitProvider: options.provider,
-      prefix
-    });
-
-    // Attempt to load credentials from the DO env
-    const envObj = this.env as Record<string, unknown>;
-    const envCredentials = {
-      AWS_ACCESS_KEY_ID: getEnvString(envObj, 'AWS_ACCESS_KEY_ID'),
-      AWS_SECRET_ACCESS_KEY: getEnvString(envObj, 'AWS_SECRET_ACCESS_KEY'),
-      R2_ACCESS_KEY_ID: this.r2AccessKeyId || undefined,
-      R2_SECRET_ACCESS_KEY: this.r2SecretAccessKey || undefined
-    };
-
-    // Detect credentials
-    const credentials = detectCredentials(options, {
-      ...envCredentials,
-      ...this.envVars
-    });
-
-    // Generate unique password file path
-    const passwordFilePath = this.generatePasswordFilePath();
-
-    // Reserve mount path before async operations so concurrent mounts see it
-    const mountInfo: FuseMountInfo = {
-      mountType: 'fuse',
-      bucket: s3fsSource,
-      mountPath,
-      endpoint: options.endpoint,
-      provider,
-      passwordFilePath,
-      mounted: false
-    };
-    this.activeMounts.set(mountPath, mountInfo);
-
     let mountOutcome: 'success' | 'error' = 'error';
     let mountError: Error | undefined;
+    let passwordFilePath: string | undefined;
+    let provider: BucketProvider | null = null;
     try {
+      this.validateMountOptions(bucket, mountPath, { ...options, prefix });
+
+      // Build s3fs source: bucket name with optional prefix (e.g., "mybucket:/prefix/")
+      const s3fsSource = buildS3fsSource(bucket, prefix);
+      provider = options.provider || detectProviderFromUrl(options.endpoint);
+
+      this.logger.debug(`Detected provider: ${provider || 'unknown'}`, {
+        explicitProvider: options.provider,
+        prefix
+      });
+
+      // Attempt to load credentials from the DO env
+      const envObj = this.env as Record<string, unknown>;
+      const envCredentials = {
+        AWS_ACCESS_KEY_ID: getEnvString(envObj, 'AWS_ACCESS_KEY_ID'),
+        AWS_SECRET_ACCESS_KEY: getEnvString(envObj, 'AWS_SECRET_ACCESS_KEY'),
+        R2_ACCESS_KEY_ID: this.r2AccessKeyId || undefined,
+        R2_SECRET_ACCESS_KEY: this.r2SecretAccessKey || undefined
+      };
+
+      // Detect credentials
+      const credentials = detectCredentials(options, {
+        ...envCredentials,
+        ...this.envVars
+      });
+
+      // Generate unique password file path
+      passwordFilePath = this.generatePasswordFilePath();
+
+      // Reserve mount path before async operations so concurrent mounts see it
+      const mountInfo: FuseMountInfo = {
+        mountType: 'fuse',
+        bucket: s3fsSource,
+        mountPath,
+        endpoint: options.endpoint,
+        provider,
+        passwordFilePath,
+        mounted: false
+      };
+      this.activeMounts.set(mountPath, mountInfo);
+
       // Create password file with credentials (uses bucket name only, not prefix)
       await this.createPasswordFile(passwordFilePath, bucket, credentials);
 
@@ -1063,7 +1063,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     } catch (error) {
       mountError = error instanceof Error ? error : new Error(String(error));
       // Clean up password file on failure
-      await this.deletePasswordFile(passwordFilePath);
+      if (passwordFilePath) {
+        await this.deletePasswordFile(passwordFilePath);
+      }
 
       // Clean up reservation on failure
       this.activeMounts.delete(mountPath);
@@ -1090,20 +1092,19 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    */
   async unmountBucket(mountPath: string): Promise<void> {
     const unmountStartTime = Date.now();
+    let unmountOutcome: 'success' | 'error' = 'error';
+    let unmountError: Error | undefined;
 
     // Look up mount by path
     const mountInfo = this.activeMounts.get(mountPath);
 
-    // Throw error if mount doesn't exist
-    if (!mountInfo) {
-      throw new InvalidMountConfigError(
-        `No active mount found at path: ${mountPath}`
-      );
-    }
-
-    let unmountOutcome: 'success' | 'error' = 'error';
-    let unmountError: Error | undefined;
     try {
+      // Throw error if mount doesn't exist
+      if (!mountInfo) {
+        throw new InvalidMountConfigError(
+          `No active mount found at path: ${mountPath}`
+        );
+      }
       // Unmount the filesystem
       if (mountInfo.mountType === 'local-sync') {
         await mountInfo.syncManager.stop();
@@ -1133,7 +1134,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         outcome: unmountOutcome,
         durationMs: Date.now() - unmountStartTime,
         mountPath,
-        bucket: mountInfo.bucket,
+        bucket: mountInfo?.bucket,
         error: unmountError
       });
     }
@@ -2945,55 +2946,55 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     port: number,
     options: { name?: string; hostname: string; token?: string }
   ) {
-    if (!validatePort(port)) {
-      throw new SecurityError(
-        `Invalid port number: ${port}. Must be 1024-65535, excluding 3000 (sandbox control plane).`
-      );
-    }
-
-    // Check if hostname is workers.dev domain (doesn't support wildcard subdomains)
-    if (options.hostname.endsWith('.workers.dev')) {
-      const errorResponse: ErrorResponse = {
-        code: ErrorCode.CUSTOM_DOMAIN_REQUIRED,
-        message: `Port exposure requires a custom domain. .workers.dev domains do not support wildcard subdomains required for port proxying.`,
-        context: { originalError: options.hostname },
-        httpStatus: 400,
-        timestamp: new Date().toISOString()
-      };
-      throw new CustomDomainRequiredError(errorResponse);
-    }
-
-    // We need the sandbox name to construct preview URLs
-    if (!this.sandboxName) {
-      throw new Error(
-        'Sandbox name not available. Ensure sandbox is accessed through getSandbox()'
-      );
-    }
-
-    let token: string;
-    if (options.token !== undefined) {
-      this.validateCustomToken(options.token);
-      token = options.token;
-    } else {
-      token = this.generatePortToken();
-    }
-
-    // Allow re-exposing same port with same token, but reject if another port uses this token
-    const tokens =
-      (await this.ctx.storage.get<Record<string, string>>('portTokens')) || {};
-    const existingPort = Object.entries(tokens).find(
-      ([p, t]) => t === token && p !== port.toString()
-    );
-    if (existingPort) {
-      throw new SecurityError(
-        `Token '${token}' is already in use by port ${existingPort[0]}. Please use a different token.`
-      );
-    }
-
     const exposeStartTime = Date.now();
     let outcome: 'success' | 'error' = 'error';
     let caughtError: Error | undefined;
     try {
+      if (!validatePort(port)) {
+        throw new SecurityError(
+          `Invalid port number: ${port}. Must be 1024-65535, excluding 3000 (sandbox control plane).`
+        );
+      }
+
+      // Check if hostname is workers.dev domain (doesn't support wildcard subdomains)
+      if (options.hostname.endsWith('.workers.dev')) {
+        const errorResponse: ErrorResponse = {
+          code: ErrorCode.CUSTOM_DOMAIN_REQUIRED,
+          message: `Port exposure requires a custom domain. .workers.dev domains do not support wildcard subdomains required for port proxying.`,
+          context: { originalError: options.hostname },
+          httpStatus: 400,
+          timestamp: new Date().toISOString()
+        };
+        throw new CustomDomainRequiredError(errorResponse);
+      }
+
+      // We need the sandbox name to construct preview URLs
+      if (!this.sandboxName) {
+        throw new Error(
+          'Sandbox name not available. Ensure sandbox is accessed through getSandbox()'
+        );
+      }
+
+      let token: string;
+      if (options.token !== undefined) {
+        this.validateCustomToken(options.token);
+        token = options.token;
+      } else {
+        token = this.generatePortToken();
+      }
+
+      // Allow re-exposing same port with same token, but reject if another port uses this token
+      const tokens =
+        (await this.ctx.storage.get<Record<string, string>>('portTokens')) ||
+        {};
+      const existingPort = Object.entries(tokens).find(
+        ([p, t]) => t === token && p !== port.toString()
+      );
+      if (existingPort) {
+        throw new SecurityError(
+          `Token '${token}' is already in use by port ${existingPort[0]}. Please use a different token.`
+        );
+      }
       const sessionId = await this.ensureDefaultSession();
       await this.client.ports.exposePort(port, sessionId, options?.name);
 
@@ -3031,16 +3032,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   async unexposePort(port: number) {
-    if (!validatePort(port)) {
-      throw new SecurityError(
-        `Invalid port number: ${port}. Must be 1024-65535, excluding 3000 (sandbox control plane).`
-      );
-    }
-
     const unexposeStartTime = Date.now();
     let outcome: 'success' | 'error' = 'error';
     let caughtError: Error | undefined;
     try {
+      if (!validatePort(port)) {
+        throw new SecurityError(
+          `Invalid port number: ${port}. Must be 1024-65535, excluding 3000 (sandbox control plane).`
+        );
+      }
       const sessionId = await this.ensureDefaultSession();
       await this.client.ports.unexposePort(port, sessionId);
 

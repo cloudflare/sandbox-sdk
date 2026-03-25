@@ -255,4 +255,46 @@ describe('logCanonicalEvent', () => {
     expect(context.command).not.toContain('user:pass');
     expect(context.command).not.toContain('secret123');
   });
+
+  it('redacts presigned URL credentials in errorMessage', () => {
+    const logger = createMockLogger();
+    const presignedUrl =
+      'https://bucket.r2.example.com/file?X-Amz-Credential=AKIAIOSFODNN&X-Amz-Signature=abcdef123456';
+    logCanonicalEvent(logger, {
+      event: 'backup.create',
+      outcome: 'error',
+      durationMs: 500,
+      errorMessage: `Upload failed: ${presignedUrl}`,
+      error: new Error(`Upload failed: ${presignedUrl}`)
+    });
+    expect(logger.error).toHaveBeenCalledOnce();
+    const [message, , context] = logger.error.mock.calls[0];
+    // errorMessage in context should be sanitized
+    expect(context.errorMessage).toContain('X-Amz-Credential=REDACTED');
+    expect(context.errorMessage).toContain('X-Amz-Signature=REDACTED');
+    expect(context.errorMessage).not.toContain('AKIAIOSFODNN');
+    expect(context.errorMessage).not.toContain('abcdef123456');
+    // Message should also contain redacted version
+    expect(message).toContain('X-Amz-Credential=REDACTED');
+    expect(message).not.toContain('AKIAIOSFODNN');
+  });
+
+  it('redacts errorMessage auto-derived from error.message', () => {
+    const logger = createMockLogger();
+    const err = new Error(
+      'Failed: https://r2.example.com/data?X-Amz-Signature=SECRET_SIG&X-Amz-Credential=SECRET_KEY'
+    );
+    logCanonicalEvent(logger, {
+      event: 'sandbox.exec',
+      outcome: 'error',
+      durationMs: 100,
+      error: err
+    });
+    expect(logger.error).toHaveBeenCalledOnce();
+    const [message, , context] = logger.error.mock.calls[0];
+    expect(context.errorMessage).toContain('X-Amz-Signature=REDACTED');
+    expect(context.errorMessage).not.toContain('SECRET_SIG');
+    expect(context.errorMessage).not.toContain('SECRET_KEY');
+    expect(message).not.toContain('SECRET_SIG');
+  });
 });

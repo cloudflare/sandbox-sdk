@@ -176,7 +176,7 @@ export class SessionManager {
       };
     } catch (error) {
       caughtError = error instanceof Error ? error : new Error(String(error));
-      const errorMessage = caughtError.message;
+      errorMessage = caughtError.message;
       const errorStack = caughtError.stack;
 
       return {
@@ -941,7 +941,7 @@ export class SessionManager {
       };
     } catch (error) {
       caughtError = error instanceof Error ? error : new Error(String(error));
-      const errorMessage = caughtError.message;
+      errorMessage = caughtError.message;
 
       return {
         success: false,

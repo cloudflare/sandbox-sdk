@@ -218,11 +218,16 @@ export class ProcessService {
               listener('error');
             });
 
-            this.logger.error(
-              'Streaming command error',
-              new Error(event.error),
-              { processId: processRecord.id }
-            );
+            logCanonicalEvent(this.logger, {
+              event: 'process.error',
+              outcome: 'error',
+              command,
+              processId: processRecord.id,
+              sessionId,
+              durationMs: Date.now() - startTime,
+              errorMessage: event.error,
+              error: new Error(event.error)
+            });
           }
         },
         {

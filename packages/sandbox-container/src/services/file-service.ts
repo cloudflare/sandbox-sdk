@@ -208,7 +208,7 @@ export class FileService implements FileSystemOperations {
       return result;
     } catch (error) {
       caughtError = error instanceof Error ? error : new Error(String(error));
-      const errorMessage = caughtError.message;
+      errorMessage = caughtError.message;
       return {
         success: false,
         error: {
@@ -350,7 +350,7 @@ export class FileService implements FileSystemOperations {
       };
     } catch (error) {
       caughtError = error instanceof Error ? error : new Error(String(error));
-      const errorMessage = caughtError.message;
+      errorMessage = caughtError.message;
       return {
         success: false,
         error: {
@@ -473,7 +473,7 @@ export class FileService implements FileSystemOperations {
       return result;
     } catch (error) {
       caughtError = error instanceof Error ? error : new Error(String(error));
-      const errorMessage = caughtError.message;
+      errorMessage = caughtError.message;
       return {
         success: false,
         error: {
@@ -770,7 +770,7 @@ export class FileService implements FileSystemOperations {
       };
     } catch (error) {
       caughtError = error instanceof Error ? error : new Error(String(error));
-      const errorMessage = caughtError.message;
+      errorMessage = caughtError.message;
       return {
         success: false,
         error: {

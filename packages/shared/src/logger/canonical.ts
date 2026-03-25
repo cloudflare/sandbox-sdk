@@ -1,5 +1,9 @@
 import type { CanonicalEventPayload } from './canonical.types.js';
-import { redactCommand, truncateForLog } from './sanitize.js';
+import {
+  redactCommand,
+  redactSensitiveParams,
+  truncateForLog
+} from './sanitize.js';
 import type { Logger } from './types.js';
 
 /**
@@ -100,11 +104,15 @@ export function logCanonicalEvent(
   logger: Logger,
   payload: CanonicalEventPayload
 ): void {
-  // Auto-derive errorMessage from error.message when not explicitly set
+  // Auto-derive errorMessage from error.message when not explicitly set,
+  // then sanitize to prevent credential leaks (e.g., presigned URLs in error strings)
   const resolvedErrorMessage = payload.errorMessage ?? payload.error?.message;
+  const sanitizedErrorMessage = resolvedErrorMessage
+    ? redactSensitiveParams(resolvedErrorMessage)
+    : undefined;
   const enrichedPayload =
-    resolvedErrorMessage !== undefined
-      ? { ...payload, errorMessage: resolvedErrorMessage }
+    sanitizedErrorMessage !== undefined
+      ? { ...payload, errorMessage: sanitizedErrorMessage }
       : payload;
 
   // Sanitize once, use for both message and context

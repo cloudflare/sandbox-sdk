@@ -297,6 +297,7 @@ export class BackupService {
         event: 'backup.create',
         outcome,
         durationMs: Date.now() - startTime,
+        path: dir,
         dir,
         archivePath,
         sizeBytes,

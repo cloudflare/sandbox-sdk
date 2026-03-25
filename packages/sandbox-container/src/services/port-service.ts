@@ -141,7 +141,7 @@ export class PortService {
       };
     } catch (error) {
       caughtError = error instanceof Error ? error : new Error(String(error));
-      const errorMessage = caughtError.message;
+      errorMessage = caughtError.message;
       return {
         success: false,
         error: {
@@ -200,7 +200,7 @@ export class PortService {
       };
     } catch (error) {
       caughtError = error instanceof Error ? error : new Error(String(error));
-      const errorMessage = caughtError.message;
+      errorMessage = caughtError.message;
       return {
         success: false,
         error: {

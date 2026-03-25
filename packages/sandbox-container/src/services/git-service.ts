@@ -190,7 +190,7 @@ export class GitService {
       return result;
     } catch (error) {
       caughtError = error instanceof Error ? error : new Error(String(error));
-      const errorMessage = caughtError.message;
+      errorMessage = caughtError.message;
 
       return this.returnError({
         message: `Failed to clone repository '${redactCredentials(repoUrl)}': ${errorMessage}`,
@@ -307,7 +307,7 @@ export class GitService {
       };
     } catch (error) {
       caughtError = error instanceof Error ? error : new Error(String(error));
-      const errorMessage = caughtError.message;
+      errorMessage = caughtError.message;
 
       return this.returnError({
         message: `Failed to checkout branch '${branch}' in '${repoPath}': ${errorMessage}`,

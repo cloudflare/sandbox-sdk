@@ -396,6 +396,8 @@ export class Session {
       state.durationMs = duration;
       state.stdoutLen = stdout.length;
       state.stderrLen = stderr.length;
+      state.stderrPreview =
+        stderr.length > 0 ? stderr.substring(0, 200) : undefined;
       state.outcome = exitCode === 0 ? 'success' : 'error';
 
       return {
