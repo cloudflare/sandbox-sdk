@@ -6,6 +6,7 @@ import {
   type Logger,
   type PtyOptions,
   partitionEnvVars,
+  sanitizeCommandForLog,
   shellEscape
 } from '@repo/shared';
 import type {
@@ -337,7 +338,7 @@ export class SessionManager {
         if (sessionDestroyed) {
           this.logger.warn('Session destroyed during command execution', {
             sessionId,
-            command
+            command: sanitizeCommandForLog(command)
           });
           return {
             success: false,
@@ -348,7 +349,7 @@ export class SessionManager {
         this.logger.error(
           'Failed to execute command',
           error instanceof Error ? error : undefined,
-          { sessionId, command }
+          { sessionId, command: sanitizeCommandForLog(command) }
         );
 
         return {
@@ -562,7 +563,7 @@ export class SessionManager {
         if (sessionDestroyed) {
           this.logger.warn('Session destroyed during streaming command', {
             sessionId,
-            command
+            command: sanitizeCommandForLog(command)
           });
           return {
             success: false,
@@ -573,7 +574,7 @@ export class SessionManager {
         this.logger.error(
           'Failed to execute streaming command',
           error instanceof Error ? error : undefined,
-          { sessionId, command }
+          { sessionId, command: sanitizeCommandForLog(command) }
         );
 
         return {
@@ -678,7 +679,7 @@ export class SessionManager {
         if (sessionDestroyed) {
           this.logger.warn(
             'Session destroyed during streaming command startup',
-            { sessionId, command }
+            { sessionId, command: sanitizeCommandForLog(command) }
           );
           return {
             success: false as const,
@@ -689,7 +690,7 @@ export class SessionManager {
         this.logger.error(
           'Failed to start streaming command',
           error instanceof Error ? error : undefined,
-          { sessionId, command }
+          { sessionId, command: sanitizeCommandForLog(command) }
         );
 
         return {

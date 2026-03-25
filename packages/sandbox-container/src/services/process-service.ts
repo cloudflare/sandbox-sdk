@@ -1,4 +1,5 @@
 import type { Logger } from '@repo/shared';
+import { sanitizeCommandForLog } from '@repo/shared';
 import type {
   CommandErrorContext,
   ProcessErrorContext,
@@ -84,7 +85,7 @@ export class ProcessService {
       this.logger.error(
         'Failed to execute command',
         error instanceof Error ? error : undefined,
-        { command, options }
+        { command: sanitizeCommandForLog(command), options }
       );
 
       return {
@@ -224,7 +225,7 @@ export class ProcessService {
         streamResult.data.continueStreaming.catch((error) => {
           this.logger.error('Failed to execute streaming command', error, {
             processId: processRecord.id,
-            command
+            command: sanitizeCommandForLog(command)
           });
         });
 
@@ -238,7 +239,7 @@ export class ProcessService {
       this.logger.error(
         'Failed to start streaming command',
         error instanceof Error ? error : undefined,
-        { command, options }
+        { command: sanitizeCommandForLog(command), options }
       );
 
       return {

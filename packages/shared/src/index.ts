@@ -51,6 +51,8 @@ export type {
   RunCodeOptions
 } from './interpreter-types.js';
 export { Execution, ResultImpl } from './interpreter-types.js';
+// Export log sanitization utilities
+export { sanitizeCommandForLog } from './log-sanitize.js';
 // Export logger infrastructure
 export type { LogContext, Logger, LogLevel } from './logger/index.js';
 export {

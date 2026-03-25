@@ -1,4 +1,5 @@
 import type { ExecuteRequest } from '@repo/shared';
+import { sanitizeCommandForLog } from '@repo/shared';
 import { BaseHttpClient } from './base-client';
 import type { BaseApiResponse } from './types';
 
@@ -53,7 +54,7 @@ export class CommandClient extends BaseHttpClient {
 
       this.logSuccess(
         'Command executed',
-        `${command}, Success: ${response.success}`
+        `${sanitizeCommandForLog(command)}, Success: ${response.success}`
       );
 
       // Call the callback if provided
@@ -108,7 +109,7 @@ export class CommandClient extends BaseHttpClient {
       // Use doStreamFetch which handles both WebSocket and HTTP streaming
       const stream = await this.doStreamFetch('/api/execute/stream', data);
 
-      this.logSuccess('Command stream started', command);
+      this.logSuccess('Command stream started', sanitizeCommandForLog(command));
 
       return stream;
     } catch (error) {
