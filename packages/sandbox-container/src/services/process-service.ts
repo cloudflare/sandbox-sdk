@@ -57,9 +57,12 @@ export class ProcessService {
       const result = await this.sessionManager.executeInSession(
         sessionId,
         command,
-        options.cwd,
-        options.timeoutMs,
-        options.env
+        {
+          cwd: options.cwd,
+          timeoutMs: options.timeoutMs,
+          env: options.env,
+          origin: options.origin
+        }
       );
 
       if (!result.success) {
@@ -232,7 +235,8 @@ export class ProcessService {
         },
         {
           cwd: options.cwd,
-          env: options.env
+          env: options.env,
+          origin: options.origin
         },
         processRecordData.id, // Pass process ID as commandId for tracking and killing
         { background: true } // Release lock after startup

@@ -274,7 +274,7 @@ export class GitService {
       const execResult = await this.sessionManager.executeInSession(
         sessionId,
         command,
-        repoPath
+        { cwd: repoPath }
       );
 
       if (!execResult.success) {
@@ -365,7 +365,7 @@ export class GitService {
       const execResult = await this.sessionManager.executeInSession(
         sessionId,
         command,
-        repoPath
+        { cwd: repoPath }
       );
 
       if (!execResult.success) {
@@ -440,7 +440,7 @@ export class GitService {
       const execResult = await this.sessionManager.executeInSession(
         sessionId,
         command,
-        repoPath
+        { cwd: repoPath }
       );
 
       if (!execResult.success) {
