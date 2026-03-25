@@ -4,6 +4,7 @@ import { rm } from 'node:fs/promises';
 import {
   type ExecEvent,
   type Logger,
+  logCanonicalEvent,
   type PtyOptions,
   partitionEnvVars,
   shellEscape
@@ -190,17 +191,14 @@ export class SessionManager {
         }
       };
     } finally {
-      const logEvent: Record<string, unknown> = {
+      logCanonicalEvent(this.logger, {
+        event: 'session.create',
+        outcome,
+        durationMs: Date.now() - startTime,
         sessionId: options.id,
         cwd: options.cwd,
-        outcome,
-        durationMs: Date.now() - startTime
-      };
-      if (caughtError) {
-        this.logger.error('session.create', caughtError, logEvent);
-      } else {
-        this.logger.info('session.create', logEvent);
-      }
+        error: caughtError
+      });
     }
   }
 
@@ -953,16 +951,13 @@ export class SessionManager {
         }
       };
     } finally {
-      const logEvent: Record<string, unknown> = {
-        sessionId,
+      logCanonicalEvent(this.logger, {
+        event: 'session.destroy',
         outcome,
-        durationMs: Date.now() - startTime
-      };
-      if (caughtError) {
-        this.logger.error('session.destroy', caughtError, logEvent);
-      } else {
-        this.logger.info('session.destroy', logEvent);
-      }
+        durationMs: Date.now() - startTime,
+        sessionId,
+        error: caughtError
+      });
     }
   }
 

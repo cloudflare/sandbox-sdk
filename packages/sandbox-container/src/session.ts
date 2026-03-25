@@ -96,7 +96,11 @@ import { mkdir, open, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import type { ExecEvent, Logger } from '@repo/shared';
-import { createNoOpLogger } from '@repo/shared';
+import {
+  createNoOpLogger,
+  logCanonicalEvent,
+  redactSensitiveParams
+} from '@repo/shared';
 import type { Subprocess } from 'bun';
 import { CONFIG } from './config';
 import { SessionDestroyedError, ShellTerminatedError } from './errors';
@@ -394,12 +398,24 @@ export class Session {
       await this.cleanupCommandFiles(logFile, exitCodeFile);
       throw error;
     } finally {
-      event.durationMs = event.durationMs ?? Date.now() - startTime;
-      if (caughtError) {
-        this.logger.error('command.exec', caughtError, event);
-      } else {
-        this.logger.info('command.exec', event);
-      }
+      const stderrPreview =
+        typeof event.stderrPreview === 'string'
+          ? redactSensitiveParams(event.stderrPreview)
+          : undefined;
+      logCanonicalEvent(this.logger, {
+        event: 'command.exec',
+        outcome: (event.outcome as 'success' | 'error') ?? 'error',
+        durationMs: (event.durationMs as number) ?? Date.now() - startTime,
+        command,
+        sessionId: this.id,
+        commandId,
+        exitCode: event.exitCode as number | undefined,
+        stdoutLen: event.stdoutLen as number | undefined,
+        stderrLen: event.stderrLen as number | undefined,
+        stderrPreview,
+        errorMessage: event.errorMessage as string | undefined,
+        error: caughtError
+      });
     }
   }
 
@@ -645,12 +661,21 @@ export class Session {
         error: caughtError.message
       };
     } finally {
-      event.durationMs = event.durationMs ?? Date.now() - startTime;
-      if (caughtError) {
-        this.logger.error('command.stream', caughtError, event);
-      } else {
-        this.logger.info('command.stream', event);
-      }
+      logCanonicalEvent(this.logger, {
+        event: 'command.stream',
+        outcome: (event.outcome as 'success' | 'error') ?? 'error',
+        durationMs: (event.durationMs as number) ?? Date.now() - startTime,
+        command,
+        sessionId: this.id,
+        commandId,
+        exitCode: event.exitCode as number | undefined,
+        errorMessage: event.errorMessage as string | undefined,
+        labelerTimeout: event.labelerTimeout as boolean | undefined,
+        labelerTimeoutMs: event.labelerTimeoutMs as number | undefined,
+        pidTimeout: event.pidTimeout as boolean | undefined,
+        pidFallback: event.pidFallback as string | undefined,
+        error: caughtError
+      });
     }
   }
 

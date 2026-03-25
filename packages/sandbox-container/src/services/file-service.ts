@@ -1,6 +1,6 @@
 import { resolve } from 'node:path';
 import type { FileInfo, ListFilesOptions, Logger } from '@repo/shared';
-import { shellEscape } from '@repo/shared';
+import { logCanonicalEvent, shellEscape } from '@repo/shared';
 import type {
   FileNotFoundContext,
   FileSystemContext,
@@ -220,18 +220,15 @@ export class FileService implements FileSystemOperations {
         }
       };
     } finally {
-      const logEvent: Record<string, unknown> = {
+      logCanonicalEvent(this.logger, {
+        event: 'file.read',
+        outcome,
+        durationMs: Date.now() - startTime,
         path,
         sessionId,
         sizeBytes,
-        outcome,
-        durationMs: Date.now() - startTime
-      };
-      if (caughtError || outcome === 'error') {
-        this.logger.error('file.read', caughtError, logEvent);
-      } else {
-        this.logger.info('file.read', logEvent);
-      }
+        error: caughtError
+      });
     }
   }
 
@@ -370,18 +367,15 @@ export class FileService implements FileSystemOperations {
               normalizedEncoding === 'base64' ? 'base64' : 'utf-8'
             )
           : undefined;
-      const logEvent: Record<string, unknown> = {
+      logCanonicalEvent(this.logger, {
+        event: 'file.write',
+        outcome,
+        durationMs: Date.now() - startTime,
         path,
         sessionId,
         sizeBytes,
-        outcome,
-        durationMs: Date.now() - startTime
-      };
-      if (caughtError || outcome === 'error') {
-        this.logger.error('file.write', caughtError, logEvent);
-      } else {
-        this.logger.info('file.write', logEvent);
-      }
+        error: caughtError
+      });
     }
   }
 
@@ -486,17 +480,14 @@ export class FileService implements FileSystemOperations {
         }
       };
     } finally {
-      const logEvent: Record<string, unknown> = {
+      logCanonicalEvent(this.logger, {
+        event: 'file.delete',
+        outcome,
+        durationMs: Date.now() - startTime,
         path,
         sessionId,
-        outcome,
-        durationMs: Date.now() - startTime
-      };
-      if (caughtError) {
-        this.logger.error('file.delete', caughtError, logEvent);
-      } else {
-        this.logger.info('file.delete', logEvent);
-      }
+        error: caughtError
+      });
     }
   }
 
@@ -783,18 +774,15 @@ export class FileService implements FileSystemOperations {
         }
       };
     } finally {
-      const logEvent: Record<string, unknown> = {
+      logCanonicalEvent(this.logger, {
+        event: 'file.mkdir',
+        outcome,
+        durationMs: Date.now() - startTime,
         path,
         sessionId,
         recursive: options.recursive ?? false,
-        outcome,
-        durationMs: Date.now() - startTime
-      };
-      if (caughtError || outcome === 'error') {
-        this.logger.error('file.mkdir', caughtError, logEvent);
-      } else {
-        this.logger.info('file.mkdir', logEvent);
-      }
+        error: caughtError
+      });
     }
   }
 

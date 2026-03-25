@@ -2,6 +2,7 @@
 
 import {
   type Logger,
+  logCanonicalEvent,
   redactCredentials,
   sanitizeGitData,
   shellEscape
@@ -198,19 +199,16 @@ export class GitService {
         } satisfies GitErrorContext
       });
     } finally {
-      const logEvent: Record<string, unknown> = {
+      logCanonicalEvent(this.logger, {
+        event: 'git.clone',
+        outcome,
+        durationMs: Date.now() - startTime,
         repoUrl: redactCredentials(repoUrl),
         targetDir: options.targetDir,
         branch: options.branch,
         sessionId,
-        outcome,
-        durationMs: Date.now() - startTime
-      };
-      if (caughtError || outcome === 'error') {
-        this.logger.error('git.clone', caughtError, logEvent);
-      } else {
-        this.logger.info('git.clone', logEvent);
-      }
+        error: caughtError
+      });
     }
   }
 
@@ -317,18 +315,15 @@ export class GitService {
         } satisfies GitErrorContext
       });
     } finally {
-      const logEvent: Record<string, unknown> = {
+      logCanonicalEvent(this.logger, {
+        event: 'git.checkout',
+        outcome,
+        durationMs: Date.now() - startTime,
         repoPath,
         branch,
         sessionId,
-        outcome,
-        durationMs: Date.now() - startTime
-      };
-      if (caughtError) {
-        this.logger.error('git.checkout', caughtError, logEvent);
-      } else {
-        this.logger.info('git.checkout', logEvent);
-      }
+        error: caughtError
+      });
     }
   }
 

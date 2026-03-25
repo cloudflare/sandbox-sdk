@@ -1,6 +1,7 @@
 // Port Management Service
 
 import type { Logger, PortCheckRequest, PortCheckResponse } from '@repo/shared';
+import { logCanonicalEvent } from '@repo/shared';
 import type {
   InvalidPortContext,
   PortAlreadyExposedContext,
@@ -157,17 +158,14 @@ export class PortService {
         }
       };
     } finally {
-      const logEvent: Record<string, unknown> = {
+      logCanonicalEvent(this.logger, {
+        event: 'port.expose',
+        outcome,
+        durationMs: Date.now() - startTime,
         port,
         name,
-        outcome,
-        durationMs: Date.now() - startTime
-      };
-      if (caughtError) {
-        this.logger.error('port.expose', caughtError, logEvent);
-      } else {
-        this.logger.info('port.expose', logEvent);
-      }
+        error: caughtError
+      });
     }
   }
 
@@ -213,16 +211,13 @@ export class PortService {
         }
       };
     } finally {
-      const logEvent: Record<string, unknown> = {
-        port,
+      logCanonicalEvent(this.logger, {
+        event: 'port.unexpose',
         outcome,
-        durationMs: Date.now() - startTime
-      };
-      if (caughtError) {
-        this.logger.error('port.unexpose', caughtError, logEvent);
-      } else {
-        this.logger.info('port.unexpose', logEvent);
-      }
+        durationMs: Date.now() - startTime,
+        port,
+        error: caughtError
+      });
     }
   }
 
