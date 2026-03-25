@@ -4,7 +4,6 @@ import {
   type Logger,
   logCanonicalEvent,
   redactCommand,
-  redactCredentials,
   sanitizeGitData,
   shellEscape
 } from '@repo/shared';
@@ -126,10 +125,10 @@ export class GitService {
           if (cloneResult.exitCode !== 0) {
             if (cloneResult.exitCode === 124) {
               throw {
-                message: `Git clone timed out after ${GIT_CLONE_TIMEOUT_SECONDS} seconds for '${redactCredentials(repoUrl)}'`,
+                message: `Git clone timed out after ${GIT_CLONE_TIMEOUT_SECONDS} seconds for '${redactCommand(repoUrl)}'`,
                 code: ErrorCode.GIT_NETWORK_ERROR,
                 details: {
-                  repository: redactCredentials(repoUrl),
+                  repository: redactCommand(repoUrl),
                   targetDir: targetDirectory,
                   exitCode: 124,
                   stderr: 'Operation timed out'
@@ -143,16 +142,16 @@ export class GitService {
               cloneResult.exitCode
             );
             throw {
-              message: `Failed to clone repository '${redactCredentials(repoUrl)}': ${
-                redactCredentials(cloneResult.stderr || '') ||
+              message: `Failed to clone repository '${redactCommand(repoUrl)}': ${
+                redactCommand(cloneResult.stderr || '') ||
                 `exit code ${cloneResult.exitCode}`
               }`,
               code: errorCode,
               details: {
-                repository: redactCredentials(repoUrl),
+                repository: redactCommand(repoUrl),
                 targetDir: targetDirectory,
                 exitCode: cloneResult.exitCode,
-                stderr: redactCredentials(cloneResult.stderr || '')
+                stderr: redactCommand(cloneResult.stderr || '')
               } satisfies GitErrorContext
             };
           }
@@ -197,10 +196,10 @@ export class GitService {
       errorMessage = caughtError.message;
 
       return this.returnError({
-        message: `Failed to clone repository '${redactCredentials(repoUrl)}': ${errorMessage}`,
+        message: `Failed to clone repository '${redactCommand(repoUrl)}': ${errorMessage}`,
         code: ErrorCode.GIT_CLONE_FAILED,
         details: {
-          repository: redactCredentials(repoUrl),
+          repository: redactCommand(repoUrl),
           targetDir: options.targetDir,
           stderr: errorMessage
         } satisfies GitErrorContext

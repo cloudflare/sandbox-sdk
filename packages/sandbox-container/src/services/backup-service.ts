@@ -298,7 +298,6 @@ export class BackupService {
         outcome,
         durationMs: Date.now() - startTime,
         path: dir,
-        dir,
         archivePath,
         sizeBytes,
         errorMessage,
