@@ -121,6 +121,36 @@ describe('buildMessage', () => {
     expect(msg).not.toContain('AKID');
     expect(msg).not.toContain('SIG');
   });
+
+  it('formats backup event with backupId', () => {
+    const msg = buildMessage({
+      event: 'backup.create',
+      outcome: 'success',
+      durationMs: 250,
+      backupId: 'bkp-abc123'
+    });
+    expect(msg).toBe('backup.create success bkp-abc123 (250ms)');
+  });
+
+  it('formats git checkout with repoPath', () => {
+    const msg = buildMessage({
+      event: 'git.checkout',
+      outcome: 'success',
+      durationMs: 80,
+      repoPath: '/workspace/my-repo'
+    });
+    expect(msg).toBe('git.checkout success /workspace/my-repo (80ms)');
+  });
+
+  it('formats bucket mount with mountPath', () => {
+    const msg = buildMessage({
+      event: 'bucket.mount',
+      outcome: 'success',
+      durationMs: 15,
+      mountPath: '/mnt/data'
+    });
+    expect(msg).toBe('bucket.mount success /mnt/data (15ms)');
+  });
 });
 
 describe('logCanonicalEvent', () => {
@@ -176,6 +206,39 @@ describe('logCanonicalEvent', () => {
     expect(context.commandTruncated).toBe(true);
     expect(context.command).toContain('...');
     expect(context.command.length).toBeLessThan(longCmd.length);
+  });
+
+  it('auto-derives errorMessage from error.message when not explicitly set', () => {
+    const logger = createMockLogger();
+    const err = new Error('connection refused');
+    logCanonicalEvent(logger, {
+      event: 'sandbox.exec',
+      outcome: 'error',
+      durationMs: 50,
+      command: 'curl localhost',
+      error: err
+    });
+    expect(logger.error).toHaveBeenCalledOnce();
+    const [message, , context] = logger.error.mock.calls[0];
+    expect(message).toContain('\u2014 connection refused');
+    expect(context.errorMessage).toBe('connection refused');
+  });
+
+  it('preserves explicit errorMessage over error.message', () => {
+    const logger = createMockLogger();
+    const err = new Error('raw error detail');
+    logCanonicalEvent(logger, {
+      event: 'sandbox.exec',
+      outcome: 'error',
+      durationMs: 50,
+      command: 'curl localhost',
+      errorMessage: 'domain-specific reason',
+      error: err
+    });
+    expect(logger.error).toHaveBeenCalledOnce();
+    const [message, , context] = logger.error.mock.calls[0];
+    expect(message).toContain('\u2014 domain-specific reason');
+    expect(context.errorMessage).toBe('domain-specific reason');
   });
 
   it('redacts command field in emitted context', () => {

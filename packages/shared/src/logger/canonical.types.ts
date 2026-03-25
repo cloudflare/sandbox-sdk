@@ -38,6 +38,8 @@ export interface CanonicalEventPayload {
   stderrLen?: number;
   stderrPreview?: string;
   backupId?: string;
+  repoPath?: string;
+  mountPath?: string;
   recursive?: boolean;
   name?: string;
 

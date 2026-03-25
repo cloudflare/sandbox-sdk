@@ -63,6 +63,12 @@ export function buildMessage(
     parts.push(gitContext);
   } else if (payload.pid !== undefined) {
     parts.push(String(payload.pid));
+  } else if (payload.backupId !== undefined) {
+    parts.push(payload.backupId);
+  } else if (payload.repoPath !== undefined) {
+    parts.push(payload.repoPath);
+  } else if (payload.mountPath !== undefined) {
+    parts.push(payload.mountPath);
   }
 
   // Error reason after em-dash
@@ -94,14 +100,22 @@ export function logCanonicalEvent(
   logger: Logger,
   payload: CanonicalEventPayload
 ): void {
+  // Auto-derive errorMessage from error.message when not explicitly set
+  const resolvedErrorMessage = payload.errorMessage ?? payload.error?.message;
+  const enrichedPayload =
+    resolvedErrorMessage !== undefined
+      ? { ...payload, errorMessage: resolvedErrorMessage }
+      : payload;
+
   // Sanitize once, use for both message and context
-  const { sanitizedCommand, commandTruncated } = sanitizePayload(payload);
+  const { sanitizedCommand, commandTruncated } =
+    sanitizePayload(enrichedPayload);
 
-  const message = buildMessage(payload, sanitizedCommand);
+  const message = buildMessage(enrichedPayload, sanitizedCommand);
 
-  // Build context from payload, excluding the error object (passed separately)
+  // Build context from enriched payload, excluding the error object (passed separately)
   const context: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(payload)) {
+  for (const [key, value] of Object.entries(enrichedPayload)) {
     if (key === 'error') continue;
     context[key] = value;
   }
