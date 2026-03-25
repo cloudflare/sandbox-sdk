@@ -126,21 +126,52 @@ export type {
   ExecutionCallbacks,
   InterpreterClient
 } from './clients/interpreter-client.js';
-// Export backup and process readiness errors
+// Export SDK error classes
 export {
   BackupCreateError,
   BackupExpiredError,
   BackupNotFoundError,
   BackupRestoreError,
+  CodeExecutionError,
+  CommandError,
+  CommandNotFoundError,
+  ContextNotFoundError,
+  CustomDomainRequiredError,
   DesktopInvalidCoordinatesError,
   DesktopInvalidOptionsError,
   DesktopNotStartedError,
   DesktopProcessCrashedError,
   DesktopStartFailedError,
   DesktopUnavailableError,
+  FileExistsError,
+  FileNotFoundError,
+  FileSystemError,
+  FileTooLargeError,
+  GitAuthenticationError,
+  GitBranchNotFoundError,
+  GitCheckoutError,
+  GitCloneError,
+  GitError,
+  GitNetworkError,
+  GitRepositoryNotFoundError,
+  InterpreterNotReadyError,
   InvalidBackupConfigError,
+  InvalidGitUrlError,
+  InvalidPortError,
+  PermissionDeniedError,
+  PortAlreadyExposedError,
+  PortError,
+  PortInUseError,
+  PortNotExposedError,
+  ProcessError,
   ProcessExitedBeforeReadyError,
-  ProcessReadyTimeoutError
+  ProcessNotFoundError,
+  ProcessReadyTimeoutError,
+  SandboxError,
+  ServiceNotRespondingError,
+  SessionAlreadyExistsError,
+  SessionDestroyedError,
+  ValidationFailedError
 } from './errors';
 // Export file streaming utilities for binary file support
 export { collectFile, streamFile } from './file-stream';
