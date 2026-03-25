@@ -16,6 +16,8 @@ export { getSandbox, Sandbox } from './sandbox';
 
 // Legacy types are now imported from the new client architecture
 
+// Export container proxy for egress intercept
+export { ContainerProxy } from '@cloudflare/containers';
 // Export core SDK types for consumers
 export type {
   BackupOptions,
