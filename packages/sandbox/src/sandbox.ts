@@ -3544,22 +3544,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private static readonly PRESIGNED_URL_EXPIRY_SECONDS = 3600;
 
   /**
-   * Ensure a dedicated session for backup operations exists.
-   * Isolates backup shell commands (curl, stat, rm, mkdir) from user exec()
-   * calls to prevent session state interference and interleaving.
+   * Create a unique, dedicated session for a single backup operation.
+   * Each call produces a fresh session ID so concurrent or sequential
+   * operations never share shell state. Callers must destroy the session
+   * in a finally block via `client.utils.deleteSession()`.
    */
   private async ensureBackupSession(): Promise<string> {
-    const sessionId = '__sandbox_backup__';
-    try {
-      await this.client.utils.createSession({
-        id: sessionId,
-        cwd: '/'
-      });
-    } catch (error: unknown) {
-      if (!(error instanceof SessionAlreadyExistsError)) {
-        throw error;
-      }
-    }
+    const sessionId = `__sandbox_backup_${crypto.randomUUID()}`;
+    await this.client.utils.createSession({ id: sessionId, cwd: '/' });
     return sessionId;
   }
 
@@ -3861,6 +3853,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     let sizeBytes: number | undefined;
     let outcome: 'success' | 'error' = 'error';
     let caughtError: Error | undefined;
+    let backupSession: string | undefined;
 
     try {
       Sandbox.validateBackupDir(dir, 'BackupOptions.dir');
@@ -3921,7 +3914,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         });
       }
 
-      const backupSession = await this.ensureBackupSession();
+      backupSession = await this.ensureBackupSession();
       backupId = crypto.randomUUID();
       const archivePath = `/var/backups/${backupId}.sqsh`;
 
@@ -3980,19 +3973,22 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     } catch (error) {
       caughtError = error instanceof Error ? error : new Error(String(error));
       // Clean up local archive and any partially-uploaded R2 objects
-      if (backupId) {
+      if (backupId && backupSession) {
         const archivePath = `/var/backups/${backupId}.sqsh`;
         const r2Key = `backups/${backupId}/data.sqsh`;
         const metaKey = `backups/${backupId}/meta.json`;
         await this.execWithSession(
           `rm -f ${shellEscape(archivePath)}`,
-          '__sandbox_backup__'
+          backupSession
         ).catch(() => {});
         await bucket.delete(r2Key).catch(() => {});
         await bucket.delete(metaKey).catch(() => {});
       }
       throw error;
     } finally {
+      if (backupSession) {
+        await this.client.utils.deleteSession(backupSession).catch(() => {});
+      }
       logCanonicalEvent(this.logger, {
         event: 'backup.create',
         outcome,
@@ -4048,6 +4044,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     let outcome: 'success' | 'error' = 'error';
     let caughtError: Error | undefined;
+    let backupSession: string | undefined;
 
     try {
       // Validate user-provided inputs (DirectoryBackup is deserialized from external storage)
@@ -4137,7 +4134,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         });
       }
 
-      const backupSession = await this.ensureBackupSession();
+      backupSession = await this.ensureBackupSession();
       const archivePath = `/var/backups/${backupId}.sqsh`;
 
       // Step 3: Tear down existing FUSE mounts before overwriting the archive.
@@ -4207,15 +4204,18 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       caughtError = error instanceof Error ? error : new Error(String(error));
       // Clean up archive file on failure only — squashfuse needs it as
       // backing storage for the lifetime of the mount
-      if (backupId) {
+      if (backupId && backupSession) {
         const archivePath = `/var/backups/${backupId}.sqsh`;
         await this.execWithSession(
           `rm -f ${shellEscape(archivePath)}`,
-          '__sandbox_backup__'
+          backupSession
         ).catch(() => {});
       }
       throw error;
     } finally {
+      if (backupSession) {
+        await this.client.utils.deleteSession(backupSession).catch(() => {});
+      }
       logCanonicalEvent(this.logger, {
         event: 'backup.restore',
         outcome,
