@@ -1,4 +1,4 @@
-import type { Logger } from '@repo/shared';
+import { type Logger, logCanonicalEvent } from '@repo/shared';
 import type {
   CommandErrorContext,
   ProcessErrorContext,
@@ -149,15 +149,14 @@ export class ProcessService {
           if (event.type === 'start' && event.pid !== undefined) {
             processRecord.pid = event.pid;
             await this.store.update(processRecord.id, { pid: event.pid });
-            this.logger.info('process.start', {
-              processId: processRecord.id,
+            logCanonicalEvent(this.logger, {
+              event: 'process.start',
+              outcome: 'success',
+              command: command,
               pid: event.pid,
-              command:
-                command.length > 100
-                  ? `${command.substring(0, 100)}…`
-                  : command,
-              sessionId,
-              durationMs: Date.now() - startTime
+              durationMs: Date.now() - startTime,
+              processId: processRecord.id,
+              sessionId
             });
           } else if (event.type === 'stdout' && event.data) {
             processRecord.stdout += event.data;
@@ -178,20 +177,18 @@ export class ProcessService {
             processRecord.endTime = endTime;
             processRecord.exitCode = exitCode;
 
-            this.logger.info('process.exit', {
-              processId: processRecord.id,
+            logCanonicalEvent(this.logger, {
+              event: 'process.exit',
+              outcome: exitCode === 0 ? 'success' : 'error',
+              command: command,
               pid: processRecord.pid,
-              command:
-                command.length > 100
-                  ? `${command.substring(0, 100)}…`
-                  : command,
-              sessionId,
-              exitCode,
-              outcome: status,
+              exitCode: exitCode,
               durationMs:
                 processRecord.startTime instanceof Date
                   ? endTime.getTime() - processRecord.startTime.getTime()
-                  : Date.now() - startTime
+                  : Date.now() - startTime,
+              processId: processRecord.id,
+              sessionId
             });
 
             processRecord.statusListeners.forEach((listener) => {

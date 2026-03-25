@@ -35,7 +35,7 @@ describe('LoggingMiddleware', () => {
     middleware = new LoggingMiddleware(mockLogger);
   });
 
-  it('should log a successful request at info level with sandboxId', async () => {
+  it('should log a successful request at debug level with sandboxId', async () => {
     const context = makeContext({ sandboxId: 'sandbox-abc123' });
     const request = makeRequest('POST', '/api/exec');
     const mockResponse = new Response(JSON.stringify({ success: true }), {
@@ -46,11 +46,12 @@ describe('LoggingMiddleware', () => {
     const response = await middleware.handle(request, context, next);
 
     expect(response.status).toBe(200);
-    expect(mockLogger.info).toHaveBeenCalledTimes(1);
+    expect(mockLogger.debug).toHaveBeenCalledTimes(1);
+    expect(mockLogger.info).not.toHaveBeenCalled();
     expect(mockLogger.error).not.toHaveBeenCalled();
 
     const [message, loggedContext] = (
-      mockLogger.info as ReturnType<typeof vi.fn>
+      mockLogger.debug as ReturnType<typeof vi.fn>
     ).mock.calls[0];
     expect(message).toBe('POST /api/exec 200');
     expect(loggedContext.method).toBe('POST');
@@ -60,6 +61,27 @@ describe('LoggingMiddleware', () => {
     expect(loggedContext.sessionId).toBe('session-default');
     expect(loggedContext.statusCode).toBe(200);
     expect(typeof loggedContext.durationMs).toBe('number');
+  });
+
+  it('should log a 4xx response at warn level', async () => {
+    const context = makeContext({ sandboxId: 'sandbox-warn' });
+    const request = makeRequest('GET', '/api/missing');
+    const mockResponse = new Response('Not found', { status: 404 });
+
+    const next = vi.fn().mockResolvedValue(mockResponse);
+    await middleware.handle(request, context, next);
+
+    expect(mockLogger.warn).toHaveBeenCalledTimes(1);
+    expect(mockLogger.debug).not.toHaveBeenCalled();
+    expect(mockLogger.info).not.toHaveBeenCalled();
+    expect(mockLogger.error).not.toHaveBeenCalled();
+
+    const [message, loggedContext] = (
+      mockLogger.warn as ReturnType<typeof vi.fn>
+    ).mock.calls[0];
+    expect(message).toBe('GET /api/missing 404');
+    expect(loggedContext.sandboxId).toBe('sandbox-warn');
+    expect(loggedContext.statusCode).toBe(404);
   });
 
   it('should log a 5xx response at error level', async () => {
@@ -72,6 +94,7 @@ describe('LoggingMiddleware', () => {
 
     expect(mockLogger.error).toHaveBeenCalledTimes(1);
     expect(mockLogger.info).not.toHaveBeenCalled();
+    expect(mockLogger.warn).not.toHaveBeenCalled();
 
     const [message, , loggedContext] = (
       mockLogger.error as ReturnType<typeof vi.fn>
@@ -109,8 +132,8 @@ describe('LoggingMiddleware', () => {
     const next = vi.fn().mockResolvedValue(mockResponse);
     await middleware.handle(request, contextWithoutSandboxId, next);
 
-    const [, loggedContext] = (mockLogger.info as ReturnType<typeof vi.fn>).mock
-      .calls[0];
+    const [, loggedContext] = (mockLogger.debug as ReturnType<typeof vi.fn>)
+      .mock.calls[0];
     expect(loggedContext.sandboxId).toBeUndefined();
   });
 });
