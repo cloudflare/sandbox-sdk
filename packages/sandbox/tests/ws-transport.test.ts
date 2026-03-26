@@ -678,6 +678,51 @@ describe('WebSocketTransport', () => {
   });
 
   describe('fetch without connection', () => {
+    it('retries 503 upgrade responses during connectViaFetch', async () => {
+      vi.useFakeTimers();
+
+      try {
+        const transport = new WebSocketTransport({
+          wsUrl: 'ws://localhost:8671/ws',
+          retryTimeoutMs: 20_000
+        });
+
+        const attemptUpgrade = vi
+          .fn<() => Promise<Response>>()
+          .mockResolvedValueOnce(
+            new Response('Container is starting.', {
+              status: 503,
+              statusText: 'Service Unavailable'
+            })
+          )
+          .mockResolvedValueOnce(
+            new Response(null, {
+              status: 200,
+              statusText: 'OK'
+            })
+          );
+
+        const connectPromise = (
+          transport as unknown as {
+            fetchUpgradeWithRetry: (
+              attemptUpgrade: () => Promise<Response>
+            ) => Promise<Response>;
+          }
+        ).fetchUpgradeWithRetry(attemptUpgrade);
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(attemptUpgrade).toHaveBeenCalledTimes(1);
+
+        await vi.advanceTimersByTimeAsync(3_000);
+        const response = await connectPromise;
+
+        expect(attemptUpgrade).toHaveBeenCalledTimes(2);
+        expect(response.status).toBe(200);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it('should attempt to connect when making a fetch request', async () => {
       const transport = new WebSocketTransport({
         wsUrl: 'ws://invalid-url:9999/ws',

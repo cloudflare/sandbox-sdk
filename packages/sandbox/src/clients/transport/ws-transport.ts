@@ -19,6 +19,8 @@ import type { TransportConfig, TransportMode } from './types';
 const DEFAULT_REQUEST_TIMEOUT_MS = 120_000; // 2 minutes for non-streaming requests
 const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 300_000; // 5 minutes idle timeout for streams
 const DEFAULT_CONNECT_TIMEOUT_MS = 30_000; // 30 seconds for WebSocket connection
+const DEFAULT_CONNECT_RETRY_TIMEOUT_MS = 120_000; // 2 minutes total retry budget
+const MIN_TIME_FOR_CONNECT_RETRY_MS = 15_000; // Need 15s remaining to retry
 
 /**
  * Pending request tracker for response matching
@@ -203,6 +205,42 @@ export class WebSocketTransport extends BaseTransport {
     }
   }
 
+  private async fetchUpgradeWithRetry(
+    attemptUpgrade: () => Promise<Response>
+  ): Promise<Response> {
+    const retryTimeoutMs =
+      this.config.retryTimeoutMs ?? DEFAULT_CONNECT_RETRY_TIMEOUT_MS;
+    const startTime = Date.now();
+    let attempt = 0;
+
+    while (true) {
+      const response = await attemptUpgrade();
+
+      if (response.status !== 503) {
+        return response;
+      }
+
+      const elapsed = Date.now() - startTime;
+      const remaining = retryTimeoutMs - elapsed;
+
+      if (remaining <= MIN_TIME_FOR_CONNECT_RETRY_MS) {
+        return response;
+      }
+
+      const delay = Math.min(3000 * 2 ** attempt, 30000);
+
+      this.logger.info('WebSocket container not ready, retrying', {
+        status: response.status,
+        attempt: attempt + 1,
+        delayMs: delay,
+        remainingSec: Math.floor(remaining / 1000)
+      });
+
+      await this.sleep(delay);
+      attempt++;
+    }
+  }
+
   /**
    * Connect using fetch-based WebSocket (Cloudflare Workers style)
    * This is required when running inside a Durable Object.
@@ -213,8 +251,6 @@ export class WebSocketTransport extends BaseTransport {
   private async connectViaFetch(): Promise<void> {
     const timeoutMs =
       this.config.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS;
-
-    // Create abort controller for timeout
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -232,7 +268,9 @@ export class WebSocketTransport extends BaseTransport {
         signal: controller.signal
       });
 
-      const response = await this.config.stub!.fetch(request);
+      const response = await this.fetchUpgradeWithRetry(() =>
+        this.config.stub!.fetch(request)
+      );
 
       clearTimeout(timeout);
 
