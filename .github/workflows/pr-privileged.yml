@@ -254,6 +254,7 @@ jobs:
   e2e:
     needs: [policy, detect-changes, build]
     permissions:
+      actions: read
       contents: read
     if: |
       needs.policy.outputs.run_privileged == 'true' &&
