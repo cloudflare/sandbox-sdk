@@ -9,6 +9,7 @@
 // - Format validation only (null bytes, length limits)
 // - No content restrictions (no path blocking, no command blocking, no URL allowlists)
 import type { Logger } from '@repo/shared';
+import { redactCommand } from '@repo/shared';
 import { CONFIG } from '../config';
 import type { ValidationResult } from '../core/types';
 
