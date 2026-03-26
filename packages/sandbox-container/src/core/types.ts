@@ -279,6 +279,7 @@ export interface ProcessOptions {
   cwd?: string;
   encoding?: string;
   autoCleanup?: boolean;
+  origin?: 'user' | 'internal';
 }
 
 export interface CommandResult {

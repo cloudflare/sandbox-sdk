@@ -41,12 +41,14 @@ export class ProcessClient extends BaseHttpClient {
       cwd?: string;
       encoding?: string;
       autoCleanup?: boolean;
+      origin?: 'user' | 'internal';
     }
   ): Promise<ProcessStartResult> {
     try {
       const data: StartProcessRequest = {
         command,
         sessionId,
+        ...(options?.origin !== undefined && { origin: options.origin }),
         ...(options?.processId !== undefined && {
           processId: options.processId
         }),

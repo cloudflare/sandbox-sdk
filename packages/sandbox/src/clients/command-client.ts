@@ -36,6 +36,7 @@ export class CommandClient extends BaseHttpClient {
       timeoutMs?: number;
       env?: Record<string, string | undefined>;
       cwd?: string;
+      origin?: 'user' | 'internal';
     }
   ): Promise<ExecuteResponse> {
     try {
@@ -46,7 +47,8 @@ export class CommandClient extends BaseHttpClient {
           timeoutMs: options.timeoutMs
         }),
         ...(options?.env !== undefined && { env: options.env }),
-        ...(options?.cwd !== undefined && { cwd: options.cwd })
+        ...(options?.cwd !== undefined && { cwd: options.cwd }),
+        ...(options?.origin !== undefined && { origin: options.origin })
       };
 
       const response = await this.post<ExecuteResponse>('/api/execute', data);
@@ -85,6 +87,7 @@ export class CommandClient extends BaseHttpClient {
       timeoutMs?: number;
       env?: Record<string, string | undefined>;
       cwd?: string;
+      origin?: 'user' | 'internal';
     }
   ): Promise<ReadableStream<Uint8Array>> {
     try {
@@ -95,7 +98,8 @@ export class CommandClient extends BaseHttpClient {
           timeoutMs: options.timeoutMs
         }),
         ...(options?.env !== undefined && { env: options.env }),
-        ...(options?.cwd !== undefined && { cwd: options.cwd })
+        ...(options?.cwd !== undefined && { cwd: options.cwd }),
+        ...(options?.origin !== undefined && { origin: options.origin })
       };
 
       // Use doStreamFetch which handles both WebSocket and HTTP streaming

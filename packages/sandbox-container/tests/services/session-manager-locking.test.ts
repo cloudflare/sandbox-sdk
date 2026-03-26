@@ -33,13 +33,13 @@ describe('SessionManager Locking', () => {
       const cmd1 = sessionManager.executeInSession(
         sessionId,
         'echo "START-1"; sleep 0.05; echo "END-1"',
-        testDir
+        { cwd: testDir }
       );
 
       const cmd2 = sessionManager.executeInSession(
         sessionId,
         'echo "START-2"; sleep 0.05; echo "END-2"',
-        testDir
+        { cwd: testDir }
       );
 
       const [result1, result2] = await Promise.all([cmd1, cmd2]);
@@ -65,7 +65,9 @@ describe('SessionManager Locking', () => {
       const requests = Array(5)
         .fill(null)
         .map(() =>
-          sessionManager.executeInSession(sessionId, 'echo "created"', testDir)
+          sessionManager.executeInSession(sessionId, 'echo "created"', {
+            cwd: testDir
+          })
         );
 
       const results = await Promise.all(requests);
@@ -230,7 +232,7 @@ describe('SessionManager Locking', () => {
       const execPromise = sessionManager.executeInSession(
         sessionId,
         'echo "exec-done"',
-        testDir
+        { cwd: testDir }
       );
 
       const [streamResult, execResult] = await Promise.all([
@@ -261,7 +263,7 @@ describe('SessionManager Locking', () => {
       const execResult = await sessionManager.executeInSession(
         sessionId,
         'echo "exec-fast"',
-        testDir
+        { cwd: testDir }
       );
 
       expect(execResult.success).toBe(true);
@@ -331,7 +333,7 @@ describe('SessionManager Locking', () => {
       const result = await sessionManager.executeInSession(
         sessionId,
         'exit 1',
-        testDir
+        { cwd: testDir }
       );
 
       expect(result.success).toBe(false);

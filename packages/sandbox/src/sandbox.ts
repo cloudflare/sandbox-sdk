@@ -726,7 +726,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
         const result = await this.client.commands.execute(
           unsetCommand,
-          this.defaultSession
+          this.defaultSession,
+          { origin: 'internal' }
         );
 
         if (result.exitCode !== 0) {
@@ -741,7 +742,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
         const result = await this.client.commands.execute(
           exportCommand,
-          this.defaultSession
+          this.defaultSession,
+          { origin: 'internal' }
         );
 
         if (result.exitCode !== 0) {
@@ -1059,7 +1061,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       await this.createPasswordFile(passwordFilePath, bucket, credentials);
 
       // Create mount directory
-      await this.exec(`mkdir -p ${shellEscape(mountPath)}`);
+      await this.execInternal(`mkdir -p ${shellEscape(mountPath)}`);
 
       // Execute S3FS mount with password file (uses full s3fs source with prefix)
       await this.executeS3FSMount(
@@ -1125,7 +1127,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       } else {
         // FUSE unmount
         try {
-          await this.exec(`fusermount -u ${shellEscape(mountPath)}`);
+          await this.execInternal(`fusermount -u ${shellEscape(mountPath)}`);
           mountInfo.mounted = false;
 
           // Only remove from tracking if unmount succeeded
@@ -1214,7 +1216,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     await this.writeFile(passwordFilePath, content);
 
-    await this.exec(`chmod 0600 ${shellEscape(passwordFilePath)}`);
+    await this.execInternal(`chmod 0600 ${shellEscape(passwordFilePath)}`);
   }
 
   /**
@@ -1222,7 +1224,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    */
   private async deletePasswordFile(passwordFilePath: string): Promise<void> {
     try {
-      await this.exec(`rm -f ${shellEscape(passwordFilePath)}`);
+      await this.execInternal(`rm -f ${shellEscape(passwordFilePath)}`);
     } catch (error) {
       this.logger.warn('password file cleanup failed', {
         passwordFilePath,
@@ -1266,7 +1268,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     const mountCmd = `s3fs ${shellEscape(bucket)} ${shellEscape(mountPath)} -o ${optionsStr}`;
 
     // Execute mount command
-    const result = await this.exec(mountCmd);
+    const result = await this.execInternal(mountCmd);
 
     if (result.exitCode !== 0) {
       throw new S3FSMountError(
@@ -1319,7 +1321,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
               this.logger.debug(
                 `Unmounting bucket ${mountInfo.bucket} from ${mountPath}`
               );
-              await this.exec(`fusermount -u ${shellEscape(mountPath)}`);
+              await this.execInternal(
+                `fusermount -u ${shellEscape(mountPath)}`
+              );
               mountInfo.mounted = false;
             } catch (error) {
               mountFailures++;
@@ -1389,14 +1393,25 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       containerVersion = undefined;
     }
 
-    logCanonicalEvent(this.logger, {
-      event: 'version.check',
-      outcome: 'success',
-      durationMs: 0,
-      sdkVersion,
-      containerVersion,
-      versionOutcome: outcome
-    });
+    const successLevel =
+      outcome === 'compatible'
+        ? ('debug' as const)
+        : outcome === 'container_version_unknown'
+          ? ('info' as const)
+          : ('warn' as const); // version_mismatch or check_failed
+
+    logCanonicalEvent(
+      this.logger,
+      {
+        event: 'version.check',
+        outcome: 'success',
+        durationMs: 0,
+        sdkVersion,
+        containerVersion: containerVersion ?? 'unknown',
+        versionOutcome: outcome
+      },
+      { successLevel }
+    );
   }
 
   override async onStop() {
@@ -1860,6 +1875,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   /**
+   * Execute an infrastructure command (backup, mount, env setup, etc.)
+   * tagged with origin: 'internal' so logging demotes it to debug level.
+   */
+  private async execInternal(command: string): Promise<ExecResult> {
+    const session = await this.ensureDefaultSession();
+    return this.execWithSession(command, session, { origin: 'internal' });
+  }
+
+  /**
    * Internal session-aware exec implementation
    * Used by both public exec() and session wrappers
    */
@@ -1898,11 +1922,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           options &&
           (options.timeout !== undefined ||
             options.env !== undefined ||
-            options.cwd !== undefined)
+            options.cwd !== undefined ||
+            options.origin !== undefined)
             ? {
                 timeoutMs: options.timeout,
                 env: options.env,
-                cwd: options.cwd
+                cwd: options.cwd,
+                origin: options.origin
               }
             : undefined;
 
@@ -1945,6 +1971,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         exitCode: execOutcome?.exitCode,
         durationMs: Date.now() - startTime,
         sessionId,
+        origin: options?.origin ?? 'user',
         error: execError ?? undefined,
         errorMessage: execError?.message
       });
@@ -1968,7 +1995,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         {
           timeoutMs: options.timeout,
           env: options.env,
-          cwd: options.cwd
+          cwd: options.cwd,
+          origin: options.origin
         }
       );
 
@@ -3391,7 +3419,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
             const result = await this.client.commands.execute(
               unsetCommand,
-              sessionId
+              sessionId,
+              { origin: 'internal' }
             );
 
             if (result.exitCode !== 0) {
@@ -3406,7 +3435,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
             const result = await this.client.commands.execute(
               exportCommand,
-              sessionId
+              sessionId,
+              { origin: 'internal' }
             );
 
             if (result.exitCode !== 0) {
@@ -3544,22 +3574,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private static readonly PRESIGNED_URL_EXPIRY_SECONDS = 3600;
 
   /**
-   * Ensure a dedicated session for backup operations exists.
-   * Isolates backup shell commands (curl, stat, rm, mkdir) from user exec()
-   * calls to prevent session state interference and interleaving.
+   * Create a unique, dedicated session for a single backup operation.
+   * Each call produces a fresh session ID so concurrent or sequential
+   * operations never share shell state. Callers must destroy the session
+   * in a finally block via `client.utils.deleteSession()`.
    */
   private async ensureBackupSession(): Promise<string> {
-    const sessionId = '__sandbox_backup__';
-    try {
-      await this.client.utils.createSession({
-        id: sessionId,
-        cwd: '/'
-      });
-    } catch (error: unknown) {
-      if (!(error instanceof SessionAlreadyExistsError)) {
-        throw error;
-      }
-    }
+    const sessionId = `__sandbox_backup_${crypto.randomUUID()}`;
+    await this.client.utils.createSession({ id: sessionId, cwd: '/' });
     return sessionId;
   }
 
@@ -3680,7 +3702,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     ].join(' ');
 
     const result = await this.execWithSession(curlCmd, backupSession, {
-      timeout: 1810_000
+      timeout: 1810_000,
+      origin: 'internal'
     });
 
     if (result.exitCode !== 0) {
@@ -3732,7 +3755,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   ): Promise<void> {
     const presignedUrl = await this.generatePresignedGetUrl(r2Key);
 
-    await this.execWithSession('mkdir -p /var/backups', backupSession);
+    await this.execWithSession('mkdir -p /var/backups', backupSession, {
+      origin: 'internal'
+    });
 
     const tmpPath = `${archivePath}.tmp`;
     const curlCmd = [
@@ -3746,13 +3771,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     ].join(' ');
 
     const result = await this.execWithSession(curlCmd, backupSession, {
-      timeout: 1810_000
+      timeout: 1810_000,
+      origin: 'internal'
     });
 
     if (result.exitCode !== 0) {
       await this.execWithSession(
         `rm -f ${shellEscape(tmpPath)}`,
-        backupSession
+        backupSession,
+        { origin: 'internal' }
       ).catch(() => {});
       throw new BackupRestoreError({
         message: `Presigned URL download failed (exit code ${result.exitCode}): ${result.stderr}`,
@@ -3766,13 +3793,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     // Verify downloaded file size before committing
     const sizeCheck = await this.execWithSession(
       `stat -c %s ${shellEscape(tmpPath)}`,
-      backupSession
+      backupSession,
+      { origin: 'internal' }
     );
     const actualSize = parseInt(sizeCheck.stdout.trim(), 10);
     if (actualSize !== expectedSize) {
       await this.execWithSession(
         `rm -f ${shellEscape(tmpPath)}`,
-        backupSession
+        backupSession,
+        { origin: 'internal' }
       ).catch(() => {});
       throw new BackupRestoreError({
         message: `Downloaded archive size mismatch: expected ${expectedSize}, got ${actualSize}`,
@@ -3786,12 +3815,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     // Atomic move from temp to final path
     const mvResult = await this.execWithSession(
       `mv ${shellEscape(tmpPath)} ${shellEscape(archivePath)}`,
-      backupSession
+      backupSession,
+      { origin: 'internal' }
     );
     if (mvResult.exitCode !== 0) {
       await this.execWithSession(
         `rm -f ${shellEscape(tmpPath)}`,
-        backupSession
+        backupSession,
+        { origin: 'internal' }
       ).catch(() => {});
       throw new BackupRestoreError({
         message: `Failed to finalize downloaded archive: ${mvResult.stderr}`,
@@ -3861,6 +3892,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     let sizeBytes: number | undefined;
     let outcome: 'success' | 'error' = 'error';
     let caughtError: Error | undefined;
+    let backupSession: string | undefined;
 
     try {
       Sandbox.validateBackupDir(dir, 'BackupOptions.dir');
@@ -3921,7 +3953,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         });
       }
 
-      const backupSession = await this.ensureBackupSession();
+      backupSession = await this.ensureBackupSession();
       backupId = crypto.randomUUID();
       const archivePath = `/var/backups/${backupId}.sqsh`;
 
@@ -3973,26 +4005,31 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       // Clean up the local archive in the container
       await this.execWithSession(
         `rm -f ${shellEscape(archivePath)}`,
-        backupSession
+        backupSession,
+        { origin: 'internal' }
       ).catch(() => {});
 
       return { id: backupId, dir };
     } catch (error) {
       caughtError = error instanceof Error ? error : new Error(String(error));
       // Clean up local archive and any partially-uploaded R2 objects
-      if (backupId) {
+      if (backupId && backupSession) {
         const archivePath = `/var/backups/${backupId}.sqsh`;
         const r2Key = `backups/${backupId}/data.sqsh`;
         const metaKey = `backups/${backupId}/meta.json`;
         await this.execWithSession(
           `rm -f ${shellEscape(archivePath)}`,
-          '__sandbox_backup__'
+          backupSession,
+          { origin: 'internal' }
         ).catch(() => {});
         await bucket.delete(r2Key).catch(() => {});
         await bucket.delete(metaKey).catch(() => {});
       }
       throw error;
     } finally {
+      if (backupSession) {
+        await this.client.utils.deleteSession(backupSession).catch(() => {});
+      }
       logCanonicalEvent(this.logger, {
         event: 'backup.create',
         outcome,
@@ -4048,6 +4085,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     let outcome: 'success' | 'error' = 'error';
     let caughtError: Error | undefined;
+    let backupSession: string | undefined;
 
     try {
       // Validate user-provided inputs (DirectoryBackup is deserialized from external storage)
@@ -4137,7 +4175,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         });
       }
 
-      const backupSession = await this.ensureBackupSession();
+      backupSession = await this.ensureBackupSession();
       const archivePath = `/var/backups/${backupId}.sqsh`;
 
       // Step 3: Tear down existing FUSE mounts before overwriting the archive.
@@ -4149,11 +4187,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       const mountGlob = `/var/backups/mounts/${backupId}`;
       await this.execWithSession(
         `/usr/bin/fusermount3 -uz ${shellEscape(dir)} 2>/dev/null || true`,
-        backupSession
+        backupSession,
+        { origin: 'internal' }
       ).catch(() => {});
       await this.execWithSession(
         `for d in ${shellEscape(mountGlob)}_*/lower ${shellEscape(mountGlob)}/lower; do [ -d "$d" ] && /usr/bin/fusermount3 -uz "$d" 2>/dev/null; done; true`,
-        backupSession
+        backupSession,
+        { origin: 'internal' }
       ).catch(() => {});
 
       // Step 4: Write archive to the container (skip if already present and
@@ -4161,7 +4201,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       // squashfuse may still hold open).
       const sizeCheck = await this.execWithSession(
         `stat -c %s ${shellEscape(archivePath)} 2>/dev/null || echo 0`,
-        backupSession
+        backupSession,
+        { origin: 'internal' }
       ).catch(() => ({ stdout: '0' }));
       const existingSize = Number.parseInt(
         (sizeCheck.stdout ?? '0').trim(),
@@ -4207,15 +4248,19 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       caughtError = error instanceof Error ? error : new Error(String(error));
       // Clean up archive file on failure only — squashfuse needs it as
       // backing storage for the lifetime of the mount
-      if (backupId) {
+      if (backupId && backupSession) {
         const archivePath = `/var/backups/${backupId}.sqsh`;
         await this.execWithSession(
           `rm -f ${shellEscape(archivePath)}`,
-          '__sandbox_backup__'
+          backupSession,
+          { origin: 'internal' }
         ).catch(() => {});
       }
       throw error;
     } finally {
+      if (backupSession) {
+        await this.client.utils.deleteSession(backupSession).catch(() => {});
+      }
       logCanonicalEvent(this.logger, {
         event: 'backup.restore',
         outcome,

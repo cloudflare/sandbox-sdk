@@ -107,9 +107,12 @@ describe('ProcessService', () => {
       expect(mockSessionManager.executeInSession).toHaveBeenCalledWith(
         'default', // sessionId
         'echo "hello world"',
-        '/tmp', // cwd
-        undefined, // timeoutMs (not provided in options)
-        undefined // env (not provided in options)
+        {
+          cwd: '/tmp',
+          timeoutMs: undefined,
+          env: undefined,
+          origin: undefined
+        }
       );
     });
 

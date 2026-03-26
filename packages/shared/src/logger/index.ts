@@ -30,7 +30,12 @@ import { LogLevel as LogLevelEnum } from './types.js';
 
 // Export all public types and classes
 export type { Logger, LogContext, LogLevel };
-export { buildMessage, logCanonicalEvent } from './canonical.js';
+export type { LogLevelOptions } from './canonical.js';
+export {
+  buildMessage,
+  logCanonicalEvent,
+  resolveLogLevel
+} from './canonical.js';
 export type { CanonicalEventPayload } from './canonical.types.js';
 export type { OutputMode } from './logger.js';
 export { CloudflareLogger } from './logger.js';

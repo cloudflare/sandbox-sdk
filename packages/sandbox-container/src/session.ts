@@ -134,6 +134,8 @@ interface ExecState {
   labelerTimeout?: boolean;
   /** execStream-specific: labeler timeout threshold in ms */
   labelerTimeoutMs?: number;
+  /** Whether this command was initiated by the user or internally by the SDK */
+  origin?: 'user' | 'internal';
 }
 
 export interface SessionOptions {
@@ -190,6 +192,8 @@ interface ExecOptions {
   env?: Record<string, string | undefined>;
   /** Maximum execution time in milliseconds */
   timeoutMs?: number;
+  /** Whether this command was initiated by the user or internally by the SDK */
+  origin?: 'user' | 'internal';
 }
 
 /** Command handle for tracking and killing running commands */
@@ -344,7 +348,8 @@ export class Session {
     const pidFile = join(this.sessionDir!, `${commandId}.pid`);
 
     const state: ExecState = {
-      ...(options?.timeoutMs && { timeout: options.timeoutMs })
+      ...(options?.timeoutMs && { timeout: options.timeoutMs }),
+      ...(options?.origin && { origin: options.origin })
     };
     let caughtError: Error | undefined;
 
@@ -431,6 +436,7 @@ export class Session {
         stdoutLen: state.stdoutLen,
         stderrLen: state.stderrLen,
         stderrPreview,
+        origin: state.origin,
         errorMessage: state.errorMessage,
         error: caughtError
       });
@@ -464,7 +470,9 @@ export class Session {
     const pidPipe = join(sessionDir, `${commandId}.pid.pipe`);
     const labelersDoneFile = join(sessionDir, `${commandId}.labelers.done`);
 
-    const state: ExecState = {};
+    const state: ExecState = {
+      ...(options?.origin && { origin: options.origin })
+    };
     let caughtError: Error | undefined;
 
     try {
@@ -682,6 +690,7 @@ export class Session {
         sessionId: this.id,
         commandId,
         exitCode: state.exitCode,
+        origin: state.origin,
         errorMessage: state.errorMessage,
         error: caughtError
       });

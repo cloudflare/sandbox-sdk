@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import { buildMessage, logCanonicalEvent } from '../../src/logger/canonical';
+import {
+  buildMessage,
+  logCanonicalEvent,
+  resolveLogLevel
+} from '../../src/logger/canonical';
 import type { Logger } from '../../src/logger/types';
 
 function createMockLogger(): Logger & {
@@ -357,5 +361,151 @@ describe('logCanonicalEvent', () => {
     expect(msg).toBe(
       'git.checkout success /workspace/my-repo branch=feature/test (80ms)'
     );
+  });
+});
+
+describe('resolveLogLevel', () => {
+  it('always returns error for error outcome regardless of origin or options', () => {
+    expect(
+      resolveLogLevel({
+        event: 'command.exec',
+        outcome: 'error',
+        durationMs: 0,
+        origin: 'internal'
+      })
+    ).toBe('error');
+    expect(
+      resolveLogLevel(
+        { event: 'file.read', outcome: 'error', durationMs: 0 },
+        { successLevel: 'debug' }
+      )
+    ).toBe('error');
+  });
+
+  it('uses explicit successLevel when provided', () => {
+    expect(
+      resolveLogLevel(
+        { event: 'version.check', outcome: 'success', durationMs: 0 },
+        { successLevel: 'warn' }
+      )
+    ).toBe('warn');
+    expect(
+      resolveLogLevel(
+        { event: 'version.check', outcome: 'success', durationMs: 0 },
+        { successLevel: 'debug' }
+      )
+    ).toBe('debug');
+  });
+
+  it('demotes internal origin to debug', () => {
+    expect(
+      resolveLogLevel({
+        event: 'command.exec',
+        outcome: 'success',
+        durationMs: 0,
+        origin: 'internal'
+      })
+    ).toBe('debug');
+  });
+
+  it('demotes DEBUG_ON_SUCCESS events to debug', () => {
+    for (const event of [
+      'session.create',
+      'session.destroy',
+      'file.read',
+      'file.write',
+      'file.delete',
+      'file.mkdir'
+    ]) {
+      expect(
+        resolveLogLevel({ event, outcome: 'success', durationMs: 0 })
+      ).toBe('debug');
+    }
+  });
+
+  it('defaults to info for user commands', () => {
+    expect(
+      resolveLogLevel({
+        event: 'sandbox.exec',
+        outcome: 'success',
+        durationMs: 0
+      })
+    ).toBe('info');
+  });
+
+  it('successLevel takes precedence over origin: internal', () => {
+    expect(
+      resolveLogLevel(
+        {
+          event: 'command.exec',
+          outcome: 'success',
+          durationMs: 0,
+          origin: 'internal'
+        },
+        { successLevel: 'warn' }
+      )
+    ).toBe('warn');
+  });
+});
+
+describe('logCanonicalEvent level dispatch', () => {
+  it('calls logger.debug for internal origin commands', () => {
+    const logger = createMockLogger();
+    logCanonicalEvent(logger, {
+      event: 'command.exec',
+      outcome: 'success',
+      durationMs: 5,
+      command: 'mkdir -p /var/backups',
+      origin: 'internal'
+    });
+    expect(logger.debug).toHaveBeenCalledOnce();
+    expect(logger.info).not.toHaveBeenCalled();
+    expect(logger.error).not.toHaveBeenCalled();
+  });
+
+  it('calls logger.warn for version.check with successLevel: warn', () => {
+    const logger = createMockLogger();
+    logCanonicalEvent(
+      logger,
+      {
+        event: 'version.check',
+        outcome: 'success',
+        durationMs: 0,
+        sdkVersion: '0.7.20',
+        containerVersion: '0.7.19',
+        versionOutcome: 'version_mismatch'
+      },
+      { successLevel: 'warn' }
+    );
+    expect(logger.warn).toHaveBeenCalledOnce();
+    expect(logger.info).not.toHaveBeenCalled();
+    const [message] = logger.warn.mock.calls[0];
+    expect(message).toContain('version_mismatch');
+  });
+
+  it('calls logger.debug for DEBUG_ON_SUCCESS events', () => {
+    const logger = createMockLogger();
+    logCanonicalEvent(logger, {
+      event: 'file.write',
+      outcome: 'success',
+      durationMs: 1,
+      path: '/workspace/test.txt',
+      sizeBytes: 42
+    });
+    expect(logger.debug).toHaveBeenCalledOnce();
+    expect(logger.info).not.toHaveBeenCalled();
+  });
+
+  it('still calls logger.error for errors on DEBUG_ON_SUCCESS events', () => {
+    const logger = createMockLogger();
+    logCanonicalEvent(logger, {
+      event: 'file.write',
+      outcome: 'error',
+      durationMs: 1,
+      path: '/read-only/test.txt',
+      error: new Error('permission denied')
+    });
+    expect(logger.error).toHaveBeenCalledOnce();
+    expect(logger.debug).not.toHaveBeenCalled();
   });
 });

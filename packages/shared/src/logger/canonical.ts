@@ -2,6 +2,33 @@ import type { CanonicalEventPayload } from './canonical.types.js';
 import { redactCommand, truncateForLog } from './sanitize.js';
 import type { Logger } from './types.js';
 
+/** Events that are low-value at info on success */
+const DEBUG_ON_SUCCESS = new Set([
+  'session.create',
+  'session.destroy',
+  'file.read',
+  'file.write',
+  'file.delete',
+  'file.mkdir'
+]);
+
+export interface LogLevelOptions {
+  /** Override success level for events with special severity needs.
+   *  Cannot demote error outcomes — errors always stay at error. */
+  successLevel?: 'debug' | 'info' | 'warn';
+}
+
+export function resolveLogLevel(
+  payload: CanonicalEventPayload,
+  options?: LogLevelOptions
+): 'debug' | 'info' | 'warn' | 'error' {
+  if (payload.outcome === 'error') return 'error';
+  if (options?.successLevel) return options.successLevel;
+  if (payload.origin === 'internal') return 'debug';
+  if (DEBUG_ON_SUCCESS.has(payload.event)) return 'debug';
+  return 'info';
+}
+
 /**
  * Sanitize an Error object by redacting sensitive data from message and stack.
  * Produces a copy so the caller's original Error is not mutated.
@@ -48,7 +75,14 @@ export function buildMessage(
 
   // version.check has its own format: no outcome, no duration
   if (event === 'version.check') {
-    return `version.check sdk=${payload.sdkVersion} container=${payload.containerVersion}`;
+    const parts: string[] = ['version.check'];
+    if (payload.sdkVersion) parts.push(`sdk=${payload.sdkVersion}`);
+    if (payload.containerVersion)
+      parts.push(`container=${payload.containerVersion}`);
+    if (payload.versionOutcome && payload.versionOutcome !== 'compatible') {
+      parts.push(`(${payload.versionOutcome})`);
+    }
+    return parts.join(' ');
   }
 
   const parts: string[] = [event, payload.outcome];
@@ -119,7 +153,8 @@ export function buildMessage(
  */
 export function logCanonicalEvent(
   logger: Logger,
-  payload: CanonicalEventPayload
+  payload: CanonicalEventPayload,
+  options?: LogLevelOptions
 ): void {
   // Auto-derive errorMessage from error.message when not explicitly set,
   // then sanitize to prevent credential leaks (e.g., presigned URLs in error strings)
@@ -153,8 +188,13 @@ export function logCanonicalEvent(
     }
   }
 
-  if (payload.outcome === 'error') {
+  const level = resolveLogLevel(enrichedPayload, options);
+  if (level === 'error') {
     logger.error(message, sanitizeError(payload.error), context);
+  } else if (level === 'warn') {
+    logger.warn(message, context);
+  } else if (level === 'debug') {
+    logger.debug(message, context);
   } else {
     logger.info(message, context);
   }
