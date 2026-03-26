@@ -96,7 +96,7 @@ import { mkdir, open, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import type { ExecEvent, Logger } from '@repo/shared';
-import { createNoOpLogger } from '@repo/shared';
+import { createNoOpLogger, sanitizeCommandForLog } from '@repo/shared';
 import type { Subprocess } from 'bun';
 import { CONFIG } from './config';
 import { SessionDestroyedError, ShellTerminatedError } from './errors';
@@ -322,7 +322,7 @@ export class Session {
       sessionId: this.id,
       commandId,
       operation: 'exec',
-      command: command.substring(0, 100),
+      command: sanitizeCommandForLog(command).substring(0, 100),
       ...(options?.timeoutMs && { timeout: options.timeoutMs })
     });
 
@@ -434,7 +434,7 @@ export class Session {
       sessionId: this.id,
       commandId,
       operation: 'execStream',
-      command: command.substring(0, 100)
+      command: sanitizeCommandForLog(command).substring(0, 100)
     });
 
     try {

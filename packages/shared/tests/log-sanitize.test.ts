@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { sanitizeCommandForLog } from '../src/log-sanitize';
 
 describe('sanitizeCommandForLog', () => {
@@ -204,6 +204,46 @@ describe('sanitizeCommandForLog', () => {
       const sanitized = sanitizeCommandForLog(original);
       expect(original).toBe('export API_KEY=supersecret');
       expect(sanitized).toBe('export API_KEY=[REDACTED]');
+    });
+  });
+
+  describe('SANDBOX_LOG_REDACTION toggle', () => {
+    const SENSITIVE = 'export API_KEY=supersecret';
+
+    beforeEach(() => {
+      delete process.env.SANDBOX_LOG_REDACTION;
+    });
+
+    afterEach(() => {
+      delete process.env.SANDBOX_LOG_REDACTION;
+    });
+
+    it('redacts by default when env var is unset', () => {
+      expect(sanitizeCommandForLog(SENSITIVE)).toBe(
+        'export API_KEY=[REDACTED]'
+      );
+    });
+
+    it('passes command through unchanged when set to "disabled"', () => {
+      process.env.SANDBOX_LOG_REDACTION = 'disabled';
+      expect(sanitizeCommandForLog(SENSITIVE)).toBe(SENSITIVE);
+    });
+
+    it('passes command through unchanged when set to "false"', () => {
+      process.env.SANDBOX_LOG_REDACTION = 'false';
+      expect(sanitizeCommandForLog(SENSITIVE)).toBe(SENSITIVE);
+    });
+
+    it('passes command through unchanged when set to "0"', () => {
+      process.env.SANDBOX_LOG_REDACTION = '0';
+      expect(sanitizeCommandForLog(SENSITIVE)).toBe(SENSITIVE);
+    });
+
+    it('still redacts when set to any other value', () => {
+      process.env.SANDBOX_LOG_REDACTION = 'enabled';
+      expect(sanitizeCommandForLog(SENSITIVE)).toBe(
+        'export API_KEY=[REDACTED]'
+      );
     });
   });
 });

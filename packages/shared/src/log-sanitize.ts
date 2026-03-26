@@ -110,9 +110,14 @@ const SENSITIVE_FLAG_RE = new RegExp(
  *
  * Only intended for log strings. Does not affect the command itself,
  * HTTP payloads, return values, or any execution behavior.
+ *
+ * Set SANDBOX_LOG_REDACTION=disabled (or '0' / 'false') to disable redaction.
  */
 export function sanitizeCommandForLog(command: string): string {
   if (!command) return command;
+
+  const flag = process.env.SANDBOX_LOG_REDACTION;
+  if (flag === 'disabled' || flag === '0' || flag === 'false') return command;
 
   let out = command;
 

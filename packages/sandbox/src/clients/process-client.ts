@@ -7,6 +7,7 @@ import type {
   ProcessStartResult,
   StartProcessRequest
 } from '@repo/shared';
+import { sanitizeCommandForLog } from '@repo/shared';
 import { BaseHttpClient } from './base-client';
 import type { HttpClientOptions } from './types';
 
@@ -68,7 +69,7 @@ export class ProcessClient extends BaseHttpClient {
 
       this.logSuccess(
         'Process started',
-        `${command} (ID: ${response.processId})`
+        `${sanitizeCommandForLog(command)} (ID: ${response.processId})`
       );
 
       return response;
