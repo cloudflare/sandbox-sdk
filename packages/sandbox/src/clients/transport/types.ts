@@ -66,7 +66,8 @@ export interface ITransport {
   fetchStream(
     path: string,
     body?: unknown,
-    method?: 'GET' | 'POST'
+    method?: 'GET' | 'POST',
+    headers?: Record<string, string>
   ): Promise<ReadableStream<Uint8Array>>;
 
   /**

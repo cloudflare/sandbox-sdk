@@ -59,6 +59,13 @@ export interface HttpClientOptions {
    * Passed through to the transport layer. Defaults to 120_000 (2 minutes).
    */
   retryTimeoutMs?: number;
+
+  /**
+   * Headers merged into every outgoing container request.
+   * Used to propagate stable context (e.g. sandboxId) from the Durable Object
+   * to the container so container logs carry the same identifiers as DO logs.
+   */
+  defaultHeaders?: Record<string, string>;
 }
 
 /**

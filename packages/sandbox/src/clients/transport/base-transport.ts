@@ -96,7 +96,8 @@ export abstract class BaseTransport implements ITransport {
   abstract fetchStream(
     path: string,
     body?: unknown,
-    method?: 'GET' | 'POST'
+    method?: 'GET' | 'POST',
+    headers?: Record<string, string>
   ): Promise<ReadableStream<Uint8Array>>;
 
   /**

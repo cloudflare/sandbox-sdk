@@ -3,8 +3,7 @@
  *
  * Provides structured, trace-aware logging with:
  * - Explicit logger passing via constructor injection
- * - Pretty printing for local development
- * - JSON output for production
+ * - Three output modes: structured (Workers/DOs), json-line (container), pretty (local dev)
  * - Environment auto-detection
  * - Log level configuration
  *
@@ -18,10 +17,12 @@
  * const service = new MyService(logger);
  *
  * // Create child loggers for additional context
- * const execLogger = logger.child({ operation: 'exec', commandId: 'cmd-456' });
+ * const execLogger = logger.child({ commandId: 'cmd-456' });
  * execLogger.info('Operation started');
  * ```
  */
+
+import type { OutputMode } from './logger.js';
 import { CloudflareLogger } from './logger.js';
 import { TraceContext } from './trace-context.js';
 import type { LogComponent, LogContext, Logger, LogLevel } from './types.js';
@@ -29,6 +30,14 @@ import { LogLevel as LogLevelEnum } from './types.js';
 
 // Export all public types and classes
 export type { Logger, LogContext, LogLevel };
+export type { LogLevelOptions } from './canonical.js';
+export {
+  buildMessage,
+  logCanonicalEvent,
+  resolveLogLevel
+} from './canonical.js';
+export type { CanonicalEventPayload } from './canonical.types.js';
+export type { OutputMode } from './logger.js';
 export { CloudflareLogger } from './logger.js';
 export { TraceContext } from './trace-context.js';
 export { LogLevel as LogLevelEnum } from './types.js';
@@ -88,15 +97,22 @@ export function createLogger(
   context: Partial<LogContext> & { component: LogComponent }
 ): Logger {
   const minLevel = getLogLevelFromEnv();
-  const pretty = isPrettyPrintEnabled();
+  const outputMode = getOutputMode(context.component);
 
   const baseContext: LogContext = {
     ...context,
     traceId: context.traceId || TraceContext.generate(),
-    component: context.component
+    component: context.component,
+    serviceVersion:
+      context.serviceVersion || getEnvVar('SANDBOX_VERSION') || undefined,
+    instanceId:
+      context.instanceId ||
+      getEnvVar('HOSTNAME') ||
+      getEnvVar('SANDBOX_INSTANCE_ID') ||
+      undefined
   };
 
-  return new CloudflareLogger(baseContext, minLevel, pretty);
+  return new CloudflareLogger(baseContext, minLevel, outputMode);
 }
 
 /**
@@ -124,20 +140,27 @@ function getLogLevelFromEnv(): LogLevel {
 }
 
 /**
- * Check if pretty printing should be enabled
+ * Determine output mode based on component and environment:
+ * - SANDBOX_LOG_FORMAT=pretty → 'pretty' for all components (local wrangler dev)
+ * - Container/Executor without pretty → 'json-line' (Bun stdout → Containers pipeline)
+ * - Everything else without pretty → 'structured' (Workers/DOs → Workers Logs)
  *
- * Checks SANDBOX_LOG_FORMAT env var, falls back to auto-detection:
- * - Local development: pretty (colored, human-readable)
- * - Production: json (structured)
+ * In local dev, setting SANDBOX_LOG_FORMAT=pretty gives readable terminal
+ * output on both the DO side and container side. In production (where the
+ * var isn't set), DOs emit structured objects and containers emit single-line
+ * JSON — both queryable by their respective observability pipelines.
  */
-function isPrettyPrintEnabled(): boolean {
-  // Check explicit SANDBOX_LOG_FORMAT env var
+function getOutputMode(component: LogComponent): OutputMode {
   const format = getEnvVar('SANDBOX_LOG_FORMAT');
-  if (format) {
-    return format.toLowerCase() === 'pretty';
+  if (format?.toLowerCase() === 'pretty') {
+    return 'pretty';
   }
 
-  return false;
+  if (component === 'container' || component === 'executor') {
+    return 'json-line';
+  }
+
+  return 'structured';
 }
 
 /**

@@ -187,6 +187,117 @@ describe('WebSocket Protocol Types', () => {
     });
   });
 
+  describe('request headers', () => {
+    it('should include headers in websocket requests', async () => {
+      const transport = new WebSocketTransport({
+        wsUrl: 'ws://localhost:3000/ws',
+        requestTimeoutMs: 1000
+      });
+
+      (transport as any).connect = vi.fn().mockResolvedValue(undefined);
+      const wsSend = vi.fn();
+      (transport as any).ws = {
+        readyState: WebSocket.OPEN,
+        send: wsSend,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        close: vi.fn()
+      };
+
+      const requestPromise = (transport as any).request(
+        'GET',
+        '/api/health',
+        undefined,
+        {
+          'X-Sandbox-Id': 'sandbox-123',
+          'X-Custom-Header': 'custom-value'
+        }
+      ) as Promise<{ status: number; body: { ok: boolean } }>;
+
+      await Promise.resolve();
+
+      expect(wsSend).toHaveBeenCalledTimes(1);
+      const request = JSON.parse(wsSend.mock.calls[0]![0]) as WSRequest;
+      expect(request.headers).toEqual({
+        'X-Custom-Header': 'custom-value',
+        'X-Sandbox-Id': 'sandbox-123'
+      });
+
+      const pendingIds = Array.from(
+        ((transport as any).pendingRequests as Map<string, unknown>).keys()
+      );
+      const requestId = pendingIds[0]!;
+
+      (transport as any).handleResponse({
+        type: 'response',
+        id: requestId,
+        status: 200,
+        body: { ok: true },
+        done: true
+      });
+
+      const response = await requestPromise;
+      expect(response.status).toBe(200);
+    });
+
+    it('should include headers in websocket streaming requests', async () => {
+      vi.useFakeTimers();
+      try {
+        const transport = new WebSocketTransport({
+          wsUrl: 'ws://localhost:3000/ws',
+          requestTimeoutMs: 1000
+        });
+
+        (transport as any).connect = vi.fn().mockResolvedValue(undefined);
+        const wsSend = vi.fn();
+        (transport as any).ws = {
+          readyState: WebSocket.OPEN,
+          send: wsSend,
+          addEventListener: vi.fn(),
+          removeEventListener: vi.fn(),
+          close: vi.fn()
+        };
+
+        const streamPromise = transport.fetchStream(
+          '/api/watch',
+          { path: '/workspace' },
+          'POST',
+          {
+            'X-Sandbox-Id': 'sandbox-stream',
+            'Content-Type': 'application/json'
+          }
+        );
+
+        await Promise.resolve();
+
+        expect(wsSend).toHaveBeenCalledTimes(1);
+        const request = JSON.parse(wsSend.mock.calls[0]![0]) as WSRequest;
+        expect(request.headers).toEqual({
+          'Content-Type': 'application/json',
+          'X-Sandbox-Id': 'sandbox-stream'
+        });
+
+        const pendingIds = Array.from(
+          ((transport as any).pendingRequests as Map<string, unknown>).keys()
+        );
+        const requestId = pendingIds[0]!;
+
+        (transport as any).handleStreamChunk({
+          type: 'stream',
+          id: requestId,
+          data: '{"type":"watching"}'
+        });
+
+        const stream = await streamPromise;
+        const reader = stream.getReader();
+        const readResult = await reader.read();
+        expect(readResult.done).toBe(false);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
   describe('stream request first-message handling', () => {
     it('should reject before returning stream when first message is an error response', async () => {
       vi.useFakeTimers();

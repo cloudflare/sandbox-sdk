@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WebSocket Ping/Pong</title>
+    <style>
+        body {
+            font-family: monospace;
+            max-width: 600px;
+            margin: 60px auto;
+            padding: 0 20px;
+            background: #0f0f0f;
+            color: #e0e0e0;
+        }
+
+        h1 {
+            color: #f6821f;
+            margin-bottom: 4px;
+        }
+
+        p.subtitle {
+            color: #888;
+            margin-top: 0;
+            margin-bottom: 24px;
+        }
+
+        #status {
+            padding: 8px 12px;
+            border-radius: 4px;
+            margin-bottom: 16px;
+            font-size: 13px;
+            background: #1a1a1a;
+        }
+
+        #status.connected {
+            border-left: 3px solid #4caf50;
+        }
+
+        #status.disconnected {
+            border-left: 3px solid #f44336;
+        }
+
+        #status.connecting {
+            border-left: 3px solid #ff9800;
+        }
+
+        #log {
+            background: #1a1a1a;
+            border-radius: 4px;
+            padding: 12px;
+            height: 280px;
+            overflow-y: auto;
+            margin-bottom: 16px;
+            font-size: 13px;
+            line-height: 1.6;
+        }
+
+        .log-entry {
+            margin: 2px 0;
+        }
+
+        .log-entry.sent {
+            color: #64b5f6;
+        }
+
+        .log-entry.received {
+            color: #81c784;
+        }
+
+        .log-entry.info {
+            color: #888;
+        }
+
+        .log-entry.error {
+            color: #e57373;
+        }
+
+        #controls {
+            display: flex;
+            gap: 8px;
+        }
+
+        button {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-family: monospace;
+            font-size: 13px;
+        }
+
+        #pingBtn {
+            background: #f6821f;
+            color: #fff;
+        }
+
+        #pingBtn:disabled {
+            background: #555;
+            cursor: not-allowed;
+        }
+
+        #connectBtn {
+            background: #333;
+            color: #e0e0e0;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>WebSocket Ping/Pong</h1>
+    <p class="subtitle">Client &harr; Cloudflare Sandbox</p>
+
+    <div id="status" class="disconnected">Disconnected</div>
+    <div id="log"></div>
+
+    <div id="controls">
+        <button id="pingBtn" disabled>Send ping</button>
+        <button id="connectBtn">Connect</button>
+    </div>
+
+    <script>
+        const statusEl = document.getElementById('status');
+        const logEl = document.getElementById('log');
+        const pingBtn = document.getElementById('pingBtn');
+        const connectBtn = document.getElementById('connectBtn');
+
+        let ws = null;
+
+        function addLog(message, type = 'info') {
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+            const time = new Date().toLocaleTimeString();
+            entry.textContent = `[${time}] ${message}`;
+            logEl.appendChild(entry);
+            logEl.scrollTop = logEl.scrollHeight;
+        }
+
+        function setStatus(text, cls) {
+            statusEl.textContent = text;
+            statusEl.className = cls;
+        }
+
+        function connect() {
+            const sandboxURL = document.documentElement.dataset.sandboxEndpoint;
+
+            const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const url = sandboxURL ? sandboxURL : `${protocol}//${location.host}/ws`;
+
+
+            setStatus('Connecting...', 'connecting');
+            connectBtn.textContent = 'Disconnect';
+            addLog(`Connecting to ${url}`, 'info');
+
+            ws = new WebSocket(url);
+
+            ws.onopen = () => {
+                setStatus('Connected', 'connected');
+                pingBtn.disabled = false;
+                addLog('Connection established', 'info');
+            };
+
+            ws.onmessage = (event) => {
+                addLog(`Received: ${event.data}`, 'received');
+                // Auto-reply: pong → ping after a short delay
+                if (event.data === 'pong') {
+                    setTimeout(() => {
+                        if (ws && ws.readyState === WebSocket.OPEN) {
+                            ws.send('ping');
+                            addLog('Sent: ping', 'sent');
+                        }
+                    }, 1000);
+                }
+            };
+
+            ws.onclose = () => {
+                setStatus('Disconnected', 'disconnected');
+                pingBtn.disabled = true;
+                connectBtn.textContent = 'Connect';
+                addLog('Connection closed', 'info');
+                ws = null;
+            };
+
+            ws.onerror = () => {
+                addLog('WebSocket error', 'error');
+            };
+        }
+
+        function disconnect() {
+            if (ws) ws.close();
+        }
+
+        pingBtn.addEventListener('click', () => {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send('ping');
+                addLog('Sent: ping', 'sent');
+            }
+        });
+
+        connectBtn.addEventListener('click', () => {
+            if (ws) disconnect();
+            else connect();
+        });
+    </script>
+</body>
+
+</html>

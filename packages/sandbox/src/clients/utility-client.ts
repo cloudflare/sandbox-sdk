@@ -67,10 +67,8 @@ export class UtilityClient extends BaseHttpClient {
     try {
       const response = await this.get<PingResponse>('/api/ping');
 
-      this.logSuccess('Ping successful', response.message);
       return response.message;
     } catch (error) {
-      this.logError('ping', error);
       throw error;
     }
   }
@@ -82,14 +80,8 @@ export class UtilityClient extends BaseHttpClient {
     try {
       const response = await this.get<CommandsResponse>('/api/commands');
 
-      this.logSuccess(
-        'Commands retrieved',
-        `${response.count} commands available`
-      );
-
       return response.availableCommands;
     } catch (error) {
-      this.logError('getCommands', error);
       throw error;
     }
   }
@@ -107,10 +99,8 @@ export class UtilityClient extends BaseHttpClient {
         options
       );
 
-      this.logSuccess('Session created', `ID: ${options.id}`);
       return response;
     } catch (error) {
-      this.logError('createSession', error);
       throw error;
     }
   }
@@ -126,10 +116,8 @@ export class UtilityClient extends BaseHttpClient {
         { sessionId }
       );
 
-      this.logSuccess('Session deleted', `ID: ${sessionId}`);
       return response;
     } catch (error) {
-      this.logError('deleteSession', error);
       throw error;
     }
   }
@@ -142,7 +130,6 @@ export class UtilityClient extends BaseHttpClient {
     try {
       const response = await this.get<VersionResponse>('/api/version');
 
-      this.logSuccess('Version retrieved', response.version);
       return response.version;
     } catch (error) {
       // If version endpoint doesn't exist (old container), return 'unknown'

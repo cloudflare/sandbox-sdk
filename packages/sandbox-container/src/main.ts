@@ -15,11 +15,28 @@
 
 import { type ChildProcess, spawn } from 'node:child_process';
 import { constants } from 'node:os';
+import { createInterface } from 'node:readline';
 import type { Logger } from '@repo/shared';
 import { createLogger } from '@repo/shared';
 import { registerShutdownHandlers, startServer } from './server';
 
 const logger = createLogger({ component: 'container' });
+const ANSI_ESCAPE_REGEX =
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: ANSI escape codes are intentional
+  /\u001b\[[0-9;]*[A-Za-z]/g;
+
+const MAX_LOG_LINE_LENGTH = 4000;
+
+function normalizeLogLine(line: string): string | null {
+  const cleaned = line.replace(ANSI_ESCAPE_REGEX, '').trim();
+  if (!cleaned) {
+    return null;
+  }
+  if (cleaned.length > MAX_LOG_LINE_LENGTH) {
+    return `${cleaned.slice(0, MAX_LOG_LINE_LENGTH)}...[truncated ${cleaned.length - MAX_LOG_LINE_LENGTH} chars]`;
+  }
+  return cleaned;
+}
 
 interface SupervisorChildProcess {
   exitCode: number | null;
@@ -146,11 +163,40 @@ export async function main(): Promise<void> {
     args: userCmd.slice(1)
   });
 
+  const useRawChildStdio = process.env.SANDBOX_RAW_CHILD_STDIO === '1';
+
   child = spawn(userCmd[0], userCmd.slice(1), {
-    stdio: 'inherit',
+    stdio: useRawChildStdio ? 'inherit' : 'pipe',
     env: process.env,
     shell: false
   });
+
+  if (!useRawChildStdio) {
+    const stdout = child.stdout;
+    const stderr = child.stderr;
+
+    if (stdout) {
+      const stdoutReader = createInterface({ input: stdout });
+      stdoutReader.on('line', (line) => {
+        const message = normalizeLogLine(line);
+        if (!message) {
+          return;
+        }
+        logger.debug('User command stdout', { message });
+      });
+    }
+
+    if (stderr) {
+      const stderrReader = createInterface({ input: stderr });
+      stderrReader.on('line', (line) => {
+        const message = normalizeLogLine(line);
+        if (!message) {
+          return;
+        }
+        logger.debug('User command stderr', { message });
+      });
+    }
+  }
 
   child.on('error', (err) => {
     logger.error('Failed to spawn user command', err, { command: userCmd[0] });

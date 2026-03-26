@@ -1,4 +1,5 @@
 import type { LogContext, Logger } from './logger';
+import { redactCommand } from './logger/sanitize.js';
 
 /**
  * Fallback repository name used when URL parsing fails
@@ -44,67 +45,13 @@ export function extractRepoName(repoUrl: string): string {
 }
 
 /**
- * Redact credentials from URLs for secure logging
- *
- * Replaces any credentials (username:password, tokens, etc.) embedded
- * in URLs with ****** to prevent sensitive data exposure in logs.
- * Works with URLs embedded in text (e.g., "Error: https://token@github.com/repo.git failed")
- *
- * @param text - String that may contain URLs with credentials
- * @returns String with credentials redacted from any URLs
- */
-export function redactCredentials(text: string): string {
-  // Scan for http(s):// URLs and redact any credentials found
-  let result = text;
-  let pos = 0;
-
-  while (pos < result.length) {
-    const httpPos = result.indexOf('http://', pos);
-    const httpsPos = result.indexOf('https://', pos);
-
-    let protocolPos = -1;
-    let protocolLen = 0;
-
-    if (httpPos === -1 && httpsPos === -1) break;
-    if (httpPos !== -1 && (httpsPos === -1 || httpPos < httpsPos)) {
-      protocolPos = httpPos;
-      protocolLen = 7; // 'http://'.length
-    } else {
-      protocolPos = httpsPos;
-      protocolLen = 8; // 'https://'.length
-    }
-
-    // Look for @ after the protocol
-    const searchStart = protocolPos + protocolLen;
-    const atPos = result.indexOf('@', searchStart);
-
-    // Find where the URL ends (whitespace, quotes, or structural delimiters)
-    let urlEnd = searchStart;
-    while (urlEnd < result.length) {
-      const char = result[urlEnd];
-      if (/[\s"'`<>,;{}[\]]/.test(char)) break;
-      urlEnd++;
-    }
-
-    if (atPos !== -1 && atPos < urlEnd) {
-      result = `${result.substring(0, searchStart)}******${result.substring(atPos)}`;
-      pos = searchStart + 6; // Move past '******'
-    } else {
-      pos = protocolPos + protocolLen;
-    }
-  }
-
-  return result;
-}
-
-/**
  * Sanitize data by redacting credentials from any strings
  * Recursively processes objects and arrays to ensure credentials are never leaked
  */
 export function sanitizeGitData<T>(data: T): T {
   // Handle primitives
   if (typeof data === 'string') {
-    return redactCredentials(data) as T;
+    return redactCommand(data) as T;
   }
 
   if (data === null || data === undefined) {
@@ -146,10 +93,10 @@ export class GitLogger implements Logger {
     if (!error) return error;
 
     // Create a new error with sanitized message and stack
-    const sanitized = new Error(redactCredentials(error.message));
+    const sanitized = new Error(redactCommand(error.message));
     sanitized.name = error.name;
     if (error.stack) {
-      sanitized.stack = redactCredentials(error.stack);
+      sanitized.stack = redactCommand(error.stack);
     }
     // Preserve other enumerable properties
     const sanitizedRecord = sanitized as unknown as Record<string, unknown>;

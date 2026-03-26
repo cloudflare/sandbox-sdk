@@ -3,10 +3,10 @@ import {
   extractRepoName,
   FALLBACK_REPO_NAME,
   GitLogger,
-  redactCredentials,
   sanitizeGitData
 } from '../src/git';
 import { createNoOpLogger } from '../src/logger';
+import { redactCredentials } from '../src/logger/sanitize';
 
 describe('extractRepoName', () => {
   it('should extract repo name from HTTPS URLs with .git suffix', () => {

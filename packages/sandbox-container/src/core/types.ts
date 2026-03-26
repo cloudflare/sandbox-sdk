@@ -6,6 +6,7 @@ export interface Handler<TRequest, TResponse> {
 
 export interface RequestContext {
   sessionId?: string;
+  sandboxId?: string;
   corsHeaders: Record<string, string>;
   requestId: string;
   timestamp: Date;
@@ -278,6 +279,7 @@ export interface ProcessOptions {
   cwd?: string;
   encoding?: string;
   autoCleanup?: boolean;
+  origin?: 'user' | 'internal';
 }
 
 export interface CommandResult {

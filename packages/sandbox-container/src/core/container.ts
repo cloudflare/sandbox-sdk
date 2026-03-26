@@ -122,8 +122,8 @@ export class Container {
     const portService = new PortService(portStore, securityAdapter, logger);
     const gitService = new GitService(
       securityAdapter,
-      gitLogger,
-      sessionManager
+      sessionManager,
+      gitLogger
     );
     const interpreterService = new InterpreterService(logger);
     const backupService = new BackupService(logger, sessionManager);

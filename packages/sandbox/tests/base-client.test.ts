@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BaseApiResponse, HttpClientOptions } from '../src/clients';
 import { BaseHttpClient } from '../src/clients/base-client';
+import type { ITransport, TransportMode } from '../src/clients/transport';
 import type { ErrorResponse } from '../src/errors';
 import {
   CommandError,
@@ -26,6 +27,62 @@ interface TestStatusResponse extends BaseApiResponse {
   status: string;
 }
 
+class MockTransport implements ITransport {
+  public fetchMock =
+    vi.fn<(path: string, options?: RequestInit) => Promise<Response>>();
+  public fetchStreamMock =
+    vi.fn<
+      (
+        path: string,
+        body?: unknown,
+        method?: 'GET' | 'POST',
+        headers?: Record<string, string>
+      ) => Promise<ReadableStream<Uint8Array>>
+    >();
+  public connectMock = vi.fn<() => Promise<void>>();
+  public disconnectMock = vi.fn<() => void>();
+  public isConnectedMock = vi.fn<() => boolean>();
+  public setRetryTimeoutMsMock = vi.fn<(ms: number) => void>();
+
+  constructor(private mode: TransportMode = 'http') {
+    this.connectMock.mockResolvedValue(undefined);
+    this.isConnectedMock.mockReturnValue(true);
+  }
+
+  fetch(path: string, options?: RequestInit): Promise<Response> {
+    return this.fetchMock(path, options);
+  }
+
+  fetchStream(
+    path: string,
+    body?: unknown,
+    method?: 'GET' | 'POST',
+    headers?: Record<string, string>
+  ): Promise<ReadableStream<Uint8Array>> {
+    return this.fetchStreamMock(path, body, method, headers);
+  }
+
+  getMode(): TransportMode {
+    return this.mode;
+  }
+
+  connect(): Promise<void> {
+    return this.connectMock();
+  }
+
+  disconnect(): void {
+    this.disconnectMock();
+  }
+
+  isConnected(): boolean {
+    return this.isConnectedMock();
+  }
+
+  setRetryTimeoutMs(ms: number): void {
+    this.setRetryTimeoutMsMock(ms);
+  }
+}
+
 class TestHttpClient extends BaseHttpClient {
   constructor(options: HttpClientOptions = {}) {
     super({
@@ -48,6 +105,14 @@ class TestHttpClient extends BaseHttpClient {
   public async testStreamRequest(endpoint: string): Promise<ReadableStream> {
     const response = await this.doFetch(endpoint);
     return this.handleStreamResponse(response);
+  }
+
+  public async testDoStreamFetch(
+    endpoint: string,
+    body?: unknown,
+    method: 'GET' | 'POST' = 'POST'
+  ): Promise<ReadableStream<Uint8Array>> {
+    return this.doStreamFetch(endpoint, body, method);
   }
 
   public async testErrorHandling(errorResponse: ErrorResponse) {
@@ -281,6 +346,122 @@ describe('BaseHttpClient', () => {
       await expect(
         client.testStreamRequest('/api/empty-stream')
       ).rejects.toThrow('No response body for streaming');
+    });
+  });
+
+  describe('defaultHeaders', () => {
+    it('should merge defaultHeaders into every request', async () => {
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify({ success: true, data: 'ok' }), {
+          status: 200
+        })
+      );
+
+      const clientWithHeaders = new TestHttpClient({
+        baseUrl: 'http://test.com',
+        port: 3000,
+        defaultHeaders: {
+          'X-Sandbox-Id': 'sandbox-abc123',
+          'X-Custom-Header': 'custom-value'
+        }
+      });
+
+      await clientWithHeaders.testRequest('/api/test');
+
+      const [, options] = mockFetch.mock.calls[0];
+      expect(options.headers['X-Sandbox-Id']).toBe('sandbox-abc123');
+      expect(options.headers['X-Custom-Header']).toBe('custom-value');
+    });
+
+    it('should not add extra headers when defaultHeaders is not set', async () => {
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify({ success: true, data: 'ok' }), {
+          status: 200
+        })
+      );
+
+      await client.testRequest('/api/test');
+
+      const [, options] = mockFetch.mock.calls[0];
+      const headers = options.headers ?? {};
+      expect(headers['X-Sandbox-Id']).toBeUndefined();
+    });
+
+    it('should not allow defaultHeaders to override Content-Type on POST', async () => {
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify({ success: true, id: '1' }), {
+          status: 201
+        })
+      );
+
+      const clientWithHeaders = new TestHttpClient({
+        baseUrl: 'http://test.com',
+        port: 3000,
+        defaultHeaders: {
+          'X-Sandbox-Id': 'sandbox-xyz',
+          'Content-Type': 'text/plain' // should be overridden by POST logic
+        }
+      });
+
+      await clientWithHeaders.testRequest('/api/create', { name: 'test' });
+
+      const [, options] = mockFetch.mock.calls[0];
+      // POST Content-Type should always be application/json regardless of defaultHeaders
+      expect(options.headers['Content-Type']).toBe('application/json');
+      // Custom header should still be present
+      expect(options.headers['X-Sandbox-Id']).toBe('sandbox-xyz');
+    });
+
+    it('should pass defaultHeaders to websocket transport requests', async () => {
+      const transport = new MockTransport('websocket');
+      transport.fetchMock.mockResolvedValue(
+        new Response(JSON.stringify({ success: true, data: 'ok' }), {
+          status: 200
+        })
+      );
+
+      const clientWithHeaders = new TestHttpClient({
+        transport,
+        defaultHeaders: {
+          'X-Sandbox-Id': 'sandbox-ws',
+          'X-Custom-Header': 'custom-value'
+        }
+      });
+
+      await clientWithHeaders.testRequest('/api/test');
+
+      const [, options] = transport.fetchMock.mock.calls[0]!;
+      expect(options?.headers).toEqual({
+        'X-Sandbox-Id': 'sandbox-ws',
+        'X-Custom-Header': 'custom-value'
+      });
+    });
+
+    it('should pass defaultHeaders to websocket streaming requests', async () => {
+      const transport = new MockTransport('websocket');
+      transport.fetchStreamMock.mockResolvedValue(
+        new ReadableStream<Uint8Array>()
+      );
+
+      const clientWithHeaders = new TestHttpClient({
+        transport,
+        defaultHeaders: {
+          'X-Sandbox-Id': 'sandbox-stream'
+        }
+      });
+
+      await clientWithHeaders.testDoStreamFetch('/api/execute/stream', {
+        command: 'echo hello'
+      });
+
+      const [, body, method, headers] =
+        transport.fetchStreamMock.mock.calls[0]!;
+      expect(body).toEqual({ command: 'echo hello' });
+      expect(method).toBe('POST');
+      expect(headers).toEqual({
+        'X-Sandbox-Id': 'sandbox-stream',
+        'Content-Type': 'application/json'
+      });
     });
   });
 
