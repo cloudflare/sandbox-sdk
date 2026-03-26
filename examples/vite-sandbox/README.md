@@ -55,7 +55,7 @@ Depending on your Vite configuration and application setup the above setup may s
     "assets": {
         "binding": "Assets",
         "not_found_handling": "none",
-        "run_worker_first": ["/*", "!/assets]
+        "run_worker_first": ["/*", "!/assets"]
     },
     ```
 

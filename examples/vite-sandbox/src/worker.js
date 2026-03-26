@@ -38,7 +38,8 @@ async function handleAPISandboxRoute(url, env) {
       env: {
         VITE_BASE: VITE_BASE,
         VITE_PORT: `${VITE_PORT}`,
-        VITE_HMR_CLIENT_PORT: url.port ? `${url.port}` : undefined
+        VITE_HMR_CLIENT_PORT:
+          url.port || (url.protocol === 'https:' ? '443' : '80')
       }
     });
     await process.waitForPort(VITE_PORT);
