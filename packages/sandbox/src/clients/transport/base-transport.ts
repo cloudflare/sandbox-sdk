@@ -34,6 +34,10 @@ export abstract class BaseTransport implements ITransport {
     this.retryTimeoutMs = ms;
   }
 
+  protected getRetryTimeoutMs(): number {
+    return this.retryTimeoutMs;
+  }
+
   /**
    * Fetch with automatic retry for 503 (container starting)
    *

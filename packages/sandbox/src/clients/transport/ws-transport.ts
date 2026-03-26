@@ -19,7 +19,6 @@ import type { TransportConfig, TransportMode } from './types';
 const DEFAULT_REQUEST_TIMEOUT_MS = 120_000; // 2 minutes for non-streaming requests
 const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 300_000; // 5 minutes idle timeout for streams
 const DEFAULT_CONNECT_TIMEOUT_MS = 30_000; // 30 seconds for WebSocket connection
-const DEFAULT_CONNECT_RETRY_TIMEOUT_MS = 120_000; // 2 minutes total retry budget
 const MIN_TIME_FOR_CONNECT_RETRY_MS = 15_000; // Need 15s remaining to retry
 
 /**
@@ -208,8 +207,7 @@ export class WebSocketTransport extends BaseTransport {
   private async fetchUpgradeWithRetry(
     attemptUpgrade: () => Promise<Response>
   ): Promise<Response> {
-    const retryTimeoutMs =
-      this.config.retryTimeoutMs ?? DEFAULT_CONNECT_RETRY_TIMEOUT_MS;
+    const retryTimeoutMs = this.getRetryTimeoutMs();
     const startTime = Date.now();
     let attempt = 0;
 
@@ -251,28 +249,15 @@ export class WebSocketTransport extends BaseTransport {
   private async connectViaFetch(): Promise<void> {
     const timeoutMs =
       this.config.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
       // Build the WebSocket URL for the container
       const wsPath = new URL(this.config.wsUrl!).pathname;
       const httpUrl = `http://localhost:${this.config.port ?? DEFAULT_CONTROL_PORT}${wsPath}`;
 
-      // Create a Request with WebSocket upgrade headers
-      const request = new Request(httpUrl, {
-        headers: {
-          Upgrade: 'websocket',
-          Connection: 'Upgrade'
-        },
-        signal: controller.signal
-      });
-
       const response = await this.fetchUpgradeWithRetry(() =>
-        this.config.stub!.fetch(request)
+        this.fetchUpgradeAttempt(httpUrl, timeoutMs)
       );
-
-      clearTimeout(timeout);
 
       // Check if upgrade was successful
       if (response.status !== 101) {
@@ -301,13 +286,34 @@ export class WebSocketTransport extends BaseTransport {
         url: this.config.wsUrl
       });
     } catch (error) {
-      clearTimeout(timeout);
       this.state = 'error';
       this.logger.error(
         'WebSocket fetch connection failed',
         error instanceof Error ? error : new Error(String(error))
       );
       throw error;
+    }
+  }
+
+  private async fetchUpgradeAttempt(
+    httpUrl: string,
+    timeoutMs: number
+  ): Promise<Response> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const request = new Request(httpUrl, {
+        headers: {
+          Upgrade: 'websocket',
+          Connection: 'Upgrade'
+        },
+        signal: controller.signal
+      });
+
+      return await this.config.stub!.fetch(request);
+    } finally {
+      clearTimeout(timeout);
     }
   }
 
