@@ -1,5 +1,11 @@
 # @cloudflare/sandbox
 
+## 0.8.0
+
+### Minor Changes
+
+- [#519](https://github.com/cloudflare/sandbox-sdk/pull/519) [`4103149`](https://github.com/cloudflare/sandbox-sdk/commit/41031498a412f2bff125254d8d5b904a508b3847) Thanks [@scuffi](https://github.com/scuffi)! - Add outbound HTTP interception for sandboxes. Define `outbound` or `outboundByHost` handlers on your Sandbox class to intercept, modify, or block HTTP requests made from within the sandbox -- with full access to Workers bindings like KV and R2. `ContainerProxy` is now exported directly from `@cloudflare/sandbox`. Requires `@cloudflare/containers` 0.2.0+.
+
 ## 0.7.21
 
 ### Patch Changes
@@ -211,13 +217,13 @@
   As a base image:
 
   ```dockerfile
-  FROM docker.io/cloudflare/sandbox:0.7.21-musl
+  FROM docker.io/cloudflare/sandbox:0.8.0-musl
   ```
 
   Or copy the binary into your own Alpine image:
 
   ```dockerfile
-  COPY --from=docker.io/cloudflare/sandbox:0.7.21-musl /container-server/sandbox /sandbox
+  COPY --from=docker.io/cloudflare/sandbox:0.8.0-musl /container-server/sandbox /sandbox
   ```
 
 - [#377](https://github.com/cloudflare/sandbox-sdk/pull/377) [`d83642e`](https://github.com/cloudflare/sandbox-sdk/commit/d83642e855f68e4fb8c15c2452709923e55a83fd) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Allow port 8787 in `exposePort()`. It was incorrectly blocked.
@@ -440,10 +446,10 @@
 
   ```dockerfile
   # Before
-  FROM cloudflare/sandbox:0.7.21
+  FROM cloudflare/sandbox:0.8.0
 
   # After
-  FROM cloudflare/sandbox:0.7.21-python
+  FROM cloudflare/sandbox:0.8.0-python
   ```
 
   Without this change, Python execution will fail with `PYTHON_NOT_AVAILABLE` error.
