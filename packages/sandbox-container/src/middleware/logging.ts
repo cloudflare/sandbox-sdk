@@ -41,10 +41,10 @@ export class LoggingMiddleware implements Middleware {
       };
 
       const msg = `${method} ${pathname} ${statusCode}`;
-      if (isError) {
-        this.logger.error(msg, requestError, wideEvent);
+      if (statusCode >= 500) {
+        this.logger.warn(msg, { ...wideEvent, error: requestError?.message });
       } else {
-        this.logger.info(msg, wideEvent);
+        this.logger.debug(msg, wideEvent);
       }
     }
   }

@@ -6,6 +6,14 @@ import type { LogContext, Logger, LogLevel } from './types.js';
 import { LogLevel as LogLevelEnum } from './types.js';
 
 /**
+ * Output mode for log entries:
+ * - 'pretty'     — ANSI-colored single-line string (local dev)
+ * - 'structured' — raw object passed to console (Workers/DOs — auto-indexed by Workers Logs)
+ * - 'json-line'  — JSON.stringify string (container stdout — parsed by Containers pipeline)
+ */
+export type OutputMode = 'pretty' | 'structured' | 'json-line';
+
+/**
  * ANSI color codes for terminal output
  */
 const COLORS = {
@@ -27,12 +35,12 @@ export class CloudflareLogger implements Logger {
    *
    * @param baseContext Base context included in all log entries
    * @param minLevel Minimum log level to output (default: INFO)
-   * @param pretty Enable pretty printing for human-readable output (default: false)
+   * @param outputMode How log entries are formatted and emitted (default: 'structured')
    */
   constructor(
     private readonly baseContext: LogContext,
     private readonly minLevel: LogLevel = LogLevelEnum.INFO,
-    private readonly pretty: boolean = false
+    private readonly outputMode: OutputMode = 'structured'
   ) {}
 
   /**
@@ -82,7 +90,7 @@ export class CloudflareLogger implements Logger {
     return new CloudflareLogger(
       { ...this.baseContext, ...context } as LogContext,
       this.minLevel,
-      this.pretty
+      this.outputMode
     );
   }
 
@@ -104,7 +112,7 @@ export class CloudflareLogger implements Logger {
   ): Record<string, unknown> {
     const logData: Record<string, unknown> = {
       level,
-      msg: message,
+      message,
       ...this.baseContext,
       ...context,
       timestamp: new Date().toISOString()
@@ -123,27 +131,43 @@ export class CloudflareLogger implements Logger {
   }
 
   /**
-   * Output log data to console (pretty or JSON)
+   * Output log data using the configured output mode
    */
   private output(
     consoleFn: typeof console.log | typeof console.warn | typeof console.error,
     data: Record<string, unknown>
   ): void {
-    if (this.pretty) {
-      this.outputPretty(consoleFn, data);
-    } else {
-      this.outputJson(consoleFn, data);
+    switch (this.outputMode) {
+      case 'pretty':
+        this.outputPretty(consoleFn, data);
+        break;
+      case 'json-line':
+        this.outputJsonLine(consoleFn, data);
+        break;
+      case 'structured':
+        this.outputStructured(consoleFn, data);
+        break;
     }
   }
 
   /**
-   * Output as JSON (production)
+   * Output as JSON string (container stdout — parsed by Containers pipeline)
    */
-  private outputJson(
+  private outputJsonLine(
     consoleFn: typeof console.log | typeof console.warn | typeof console.error,
     data: Record<string, unknown>
   ): void {
     consoleFn(JSON.stringify(data));
+  }
+
+  /**
+   * Output as raw object (Workers/DOs — Workers Logs auto-indexes fields)
+   */
+  private outputStructured(
+    consoleFn: typeof console.log | typeof console.warn | typeof console.error,
+    data: Record<string, unknown>
+  ): void {
+    consoleFn(data);
   }
 
   /**
@@ -160,7 +184,7 @@ export class CloudflareLogger implements Logger {
   ): void {
     const {
       level,
-      msg,
+      message: msg,
       timestamp,
       traceId,
       component,
@@ -168,8 +192,6 @@ export class CloudflareLogger implements Logger {
       sessionId,
       processId,
       commandId,
-      operation,
-      duration,
       durationMs,
       serviceVersion,
       instanceId,
@@ -190,13 +212,11 @@ export class CloudflareLogger implements Logger {
     // Append all context as compact key=value pairs on the same line
     const pairs: string[] = [];
     if (traceId) pairs.push(`trace=${String(traceId).substring(0, 12)}`);
-    if (operation) pairs.push(`op=${operation}`);
     if (commandId) pairs.push(`cmd=${String(commandId).substring(0, 12)}`);
     if (sandboxId) pairs.push(`sandbox=${sandboxId}`);
     if (sessionId) pairs.push(`session=${String(sessionId).substring(0, 12)}`);
     if (processId) pairs.push(`proc=${processId}`);
-    const dur = durationMs ?? duration;
-    if (dur !== undefined) pairs.push(`dur=${dur}ms`);
+    if (durationMs !== undefined) pairs.push(`dur=${durationMs}ms`);
 
     // Append remaining context fields inline
     for (const [key, value] of Object.entries(rest)) {

@@ -96,7 +96,11 @@ import { mkdir, open, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import type { ExecEvent, Logger } from '@repo/shared';
-import { createNoOpLogger } from '@repo/shared';
+import {
+  createNoOpLogger,
+  logCanonicalEvent,
+  redactCommand
+} from '@repo/shared';
 import type { Subprocess } from 'bun';
 import { CONFIG } from './config';
 import { SessionDestroyedError, ShellTerminatedError } from './errors';
@@ -110,6 +114,29 @@ const STDERR_PREFIX = '\x02\x02\x02';
 // ============================================================================
 // Types
 // ============================================================================
+
+/** Accumulated state tracked during exec/execStream for canonical logging. */
+interface ExecState {
+  outcome?: 'success' | 'error';
+  durationMs?: number;
+  exitCode?: number;
+  stdoutLen?: number;
+  stderrLen?: number;
+  stderrPreview?: string;
+  errorMessage?: string;
+  /** exec-specific: timeout requested for this command */
+  timeout?: number;
+  /** execStream-specific: PID timed out */
+  pidTimeout?: boolean;
+  /** execStream-specific: PID obtained via fallback method */
+  pidFallback?: string;
+  /** execStream-specific: labeler output capture timed out */
+  labelerTimeout?: boolean;
+  /** execStream-specific: labeler timeout threshold in ms */
+  labelerTimeoutMs?: number;
+  /** Whether this command was initiated by the user or internally by the SDK */
+  origin?: 'user' | 'internal';
+}
 
 export interface SessionOptions {
   /** Session identifier (generated if not provided) */
@@ -165,6 +192,8 @@ interface ExecOptions {
   env?: Record<string, string | undefined>;
   /** Maximum execution time in milliseconds */
   timeoutMs?: number;
+  /** Whether this command was initiated by the user or internally by the SDK */
+  origin?: 'user' | 'internal';
 }
 
 /** Command handle for tracking and killing running commands */
@@ -318,12 +347,9 @@ export class Session {
     const exitCodeFile = join(this.sessionDir!, `${commandId}.exit`);
     const pidFile = join(this.sessionDir!, `${commandId}.pid`);
 
-    const event: Record<string, unknown> = {
-      sessionId: this.id,
-      commandId,
-      operation: 'exec',
-      command: command.length > 100 ? `${command.substring(0, 100)}…` : command,
-      ...(options?.timeoutMs && { timeout: options.timeoutMs })
+    const state: ExecState = {
+      ...(options?.timeoutMs && { timeout: options.timeoutMs }),
+      ...(options?.origin && { origin: options.origin })
     };
     let caughtError: Error | undefined;
 
@@ -371,11 +397,13 @@ export class Session {
 
       const duration = Date.now() - startTime;
 
-      event.exitCode = exitCode;
-      event.durationMs = duration;
-      event.stdoutLen = stdout.length;
-      event.stderrLen = stderr.length;
-      event.outcome = 'success';
+      state.exitCode = exitCode;
+      state.durationMs = duration;
+      state.stdoutLen = stdout.length;
+      state.stderrLen = stderr.length;
+      state.stderrPreview =
+        stderr.length > 0 ? stderr.substring(0, 200) : undefined;
+      state.outcome = 'success';
 
       return {
         command,
@@ -387,19 +415,31 @@ export class Session {
       };
     } catch (error) {
       caughtError = error instanceof Error ? error : new Error(String(error));
-      event.outcome = 'error';
-      event.errorMessage = caughtError.message;
+      state.outcome = 'error';
+      state.errorMessage = caughtError.message;
       // Untrack and clean up on error
       this.untrackCommand(commandId);
       await this.cleanupCommandFiles(logFile, exitCodeFile);
       throw error;
     } finally {
-      event.durationMs = event.durationMs ?? Date.now() - startTime;
-      if (event.outcome === 'error') {
-        this.logger.error('command.exec', caughtError, event);
-      } else {
-        this.logger.info('command.exec', event);
-      }
+      const stderrPreview = state.stderrPreview
+        ? redactCommand(state.stderrPreview)
+        : undefined;
+      logCanonicalEvent(this.logger, {
+        event: 'command.exec',
+        outcome: state.outcome ?? 'error',
+        durationMs: state.durationMs ?? Date.now() - startTime,
+        command,
+        sessionId: this.id,
+        commandId,
+        exitCode: state.exitCode,
+        stdoutLen: state.stdoutLen,
+        stderrLen: state.stderrLen,
+        stderrPreview,
+        origin: state.origin,
+        errorMessage: state.errorMessage,
+        error: caughtError
+      });
     }
   }
 
@@ -430,11 +470,8 @@ export class Session {
     const pidPipe = join(sessionDir, `${commandId}.pid.pipe`);
     const labelersDoneFile = join(sessionDir, `${commandId}.labelers.done`);
 
-    const event: Record<string, unknown> = {
-      sessionId: this.id,
-      commandId,
-      operation: 'execStream',
-      command: command.length > 100 ? `${command.substring(0, 100)}…` : command
+    const state: ExecState = {
+      ...(options?.origin && { origin: options.origin })
     };
     let caughtError: Error | undefined;
 
@@ -471,10 +508,10 @@ export class Session {
       const pid = pidResult.pid;
 
       if (pid === undefined) {
-        event.pidTimeout = true;
+        state.pidTimeout = true;
       }
       if (pidResult.pidFallback) {
-        event.pidFallback = pidResult.pidFallback;
+        state.pidFallback = pidResult.pidFallback;
       }
 
       yield {
@@ -559,8 +596,8 @@ export class Session {
       }
 
       if (!labelersDone) {
-        event.labelerTimeout = true;
-        event.labelerTimeoutMs = maxWaitMs;
+        state.labelerTimeout = true;
+        state.labelerTimeoutMs = maxWaitMs;
       }
 
       // Read final chunks from log file after labelers are done
@@ -607,9 +644,9 @@ export class Session {
 
       const duration = Date.now() - startTime;
 
-      event.exitCode = exitCode;
-      event.durationMs = duration;
-      event.outcome = 'success';
+      state.exitCode = exitCode;
+      state.durationMs = duration;
+      state.outcome = 'success';
 
       yield {
         type: 'complete',
@@ -633,8 +670,8 @@ export class Session {
       await this.cleanupCommandFiles(logFile, exitCodeFile);
     } catch (error) {
       caughtError = error instanceof Error ? error : new Error(String(error));
-      event.outcome = 'error';
-      event.errorMessage = caughtError.message;
+      state.outcome = 'error';
+      state.errorMessage = caughtError.message;
       // Untrack and clean up on error
       this.untrackCommand(commandId);
       await this.cleanupCommandFiles(logFile, exitCodeFile);
@@ -645,12 +682,18 @@ export class Session {
         error: caughtError.message
       };
     } finally {
-      event.durationMs = event.durationMs ?? Date.now() - startTime;
-      if (event.outcome === 'error') {
-        this.logger.error('command.stream', caughtError, event);
-      } else {
-        this.logger.info('command.stream', event);
-      }
+      logCanonicalEvent(this.logger, {
+        event: 'command.stream',
+        outcome: state.outcome ?? 'error',
+        durationMs: state.durationMs ?? Date.now() - startTime,
+        command,
+        sessionId: this.id,
+        commandId,
+        exitCode: state.exitCode,
+        origin: state.origin,
+        errorMessage: state.errorMessage,
+        error: caughtError
+      });
     }
   }
 

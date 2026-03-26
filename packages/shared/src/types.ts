@@ -66,6 +66,13 @@ export interface ExecOptions extends BaseExecOptions {
    * AbortSignal for cancelling execution
    */
   signal?: AbortSignal;
+
+  /**
+   * Whether this command was initiated by the user or by internal
+   * infrastructure (backup, bucket mount, env setup, etc.).
+   * Defaults to 'user' when omitted.
+   */
+  origin?: 'user' | 'internal';
 }
 
 export interface ExecResult {

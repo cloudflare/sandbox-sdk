@@ -1,6 +1,6 @@
 import { resolve } from 'node:path';
 import type { FileInfo, ListFilesOptions, Logger } from '@repo/shared';
-import { shellEscape } from '@repo/shared';
+import { logCanonicalEvent, shellEscape } from '@repo/shared';
 import type {
   FileNotFoundContext,
   FileSystemContext,
@@ -84,11 +84,13 @@ export class FileService implements FileSystemOperations {
     let sizeBytes: number | undefined;
     let outcome: 'success' | 'error' = 'error';
     let caughtError: Error | undefined;
+    let errorMessage: string | undefined;
 
     try {
       // 1. Validate path for security
       const validation = this.security.validatePath(path);
       if (!validation.isValid) {
+        errorMessage = `Invalid path format for '${path}': ${validation.errors.join(', ')}`;
         return {
           success: false,
           error: {
@@ -146,7 +148,10 @@ export class FileService implements FileSystemOperations {
           let mimeType = bunFile.type.split(';')[0].trim();
           if (mimeType === 'application/octet-stream') {
             const escapedPath = shellEscape(path);
-            const mimeResult = await exec(`file --mime-type -b ${escapedPath}`);
+            const mimeResult = await exec(
+              `file --mime-type -b ${escapedPath}`,
+              { origin: 'internal' }
+            );
             if (mimeResult.exitCode === 0) {
               mimeType = mimeResult.stdout.trim();
             }
@@ -203,10 +208,13 @@ export class FileService implements FileSystemOperations {
         });
 
       outcome = result.success ? 'success' : 'error';
+      if (!result.success) {
+        errorMessage = result.error.message;
+      }
       return result;
     } catch (error) {
       caughtError = error instanceof Error ? error : new Error(String(error));
-      const errorMessage = caughtError.message;
+      errorMessage = caughtError.message;
       return {
         success: false,
         error: {
@@ -220,18 +228,16 @@ export class FileService implements FileSystemOperations {
         }
       };
     } finally {
-      const logEvent: Record<string, unknown> = {
+      logCanonicalEvent(this.logger, {
+        event: 'file.read',
+        outcome,
+        durationMs: Date.now() - startTime,
         path,
         sessionId,
         sizeBytes,
-        outcome,
-        durationMs: Date.now() - startTime
-      };
-      if (caughtError || outcome === 'error') {
-        this.logger.error('file.read', caughtError, logEvent);
-      } else {
-        this.logger.info('file.read', logEvent);
-      }
+        errorMessage,
+        error: caughtError
+      });
     }
   }
 
@@ -244,6 +250,7 @@ export class FileService implements FileSystemOperations {
     const startTime = Date.now();
     let outcome: 'success' | 'error' = 'error';
     let caughtError: Error | undefined;
+    let errorMessage: string | undefined;
     const normalizedEncoding =
       options.encoding === 'utf8' ? 'utf-8' : options.encoding || 'utf-8';
 
@@ -251,12 +258,11 @@ export class FileService implements FileSystemOperations {
       // 1. Validate path for security
       const validation = this.security.validatePath(path);
       if (!validation.isValid) {
+        errorMessage = `Invalid path format for '${path}': ${validation.errors.join(', ')}`;
         return {
           success: false,
           error: {
-            message: `Invalid path format for '${path}': ${validation.errors.join(
-              ', '
-            )}`,
+            message: errorMessage,
             code: ErrorCode.VALIDATION_FAILED,
             details: {
               validationErrors: validation.errors.map((e) => ({
@@ -273,6 +279,7 @@ export class FileService implements FileSystemOperations {
       if (normalizedEncoding === 'base64') {
         // Validate that content only contains valid base64 characters
         if (!/^[A-Za-z0-9+/=]*$/.test(content)) {
+          errorMessage = `Invalid base64 content for '${path}'`;
           return {
             success: false,
             error: {
@@ -298,7 +305,7 @@ export class FileService implements FileSystemOperations {
           let targetPath = path;
 
           if (!path.startsWith('/')) {
-            const pwdResult = await exec('pwd');
+            const pwdResult = await exec('pwd', { origin: 'internal' });
             if (pwdResult.exitCode !== 0) {
               throw {
                 code: ErrorCode.FILESYSTEM_ERROR,
@@ -340,6 +347,7 @@ export class FileService implements FileSystemOperations {
 
       if (!writeResult.success) {
         outcome = 'error';
+        errorMessage = writeResult.error.message;
         return writeResult as ServiceResult<void>;
       }
 
@@ -349,7 +357,7 @@ export class FileService implements FileSystemOperations {
       };
     } catch (error) {
       caughtError = error instanceof Error ? error : new Error(String(error));
-      const errorMessage = caughtError.message;
+      errorMessage = caughtError.message;
       return {
         success: false,
         error: {
@@ -370,18 +378,16 @@ export class FileService implements FileSystemOperations {
               normalizedEncoding === 'base64' ? 'base64' : 'utf-8'
             )
           : undefined;
-      const logEvent: Record<string, unknown> = {
+      logCanonicalEvent(this.logger, {
+        event: 'file.write',
+        outcome,
+        durationMs: Date.now() - startTime,
         path,
         sessionId,
         sizeBytes,
-        outcome,
-        durationMs: Date.now() - startTime
-      };
-      if (caughtError || outcome === 'error') {
-        this.logger.error('file.write', caughtError, logEvent);
-      } else {
-        this.logger.info('file.write', logEvent);
-      }
+        errorMessage,
+        error: caughtError
+      });
     }
   }
 
@@ -392,11 +398,13 @@ export class FileService implements FileSystemOperations {
     const startTime = Date.now();
     let outcome: 'success' | 'error' = 'error';
     let caughtError: Error | undefined;
+    let errorMessage: string | undefined;
 
     try {
       // 1. Validate path for security
       const validation = this.security.validatePath(path);
       if (!validation.isValid) {
+        errorMessage = `Invalid path format for '${path}': ${validation.errors.join(', ')}`;
         return {
           success: false,
           error: {
@@ -422,7 +430,9 @@ export class FileService implements FileSystemOperations {
         sessionId,
         async (exec) => {
           // Check if file exists
-          const existsResult = await exec(`test -e ${escapedPath}`);
+          const existsResult = await exec(`test -e ${escapedPath}`, {
+            origin: 'internal'
+          });
           if (existsResult.exitCode !== 0) {
             throw {
               code: ErrorCode.FILE_NOT_FOUND,
@@ -435,7 +445,9 @@ export class FileService implements FileSystemOperations {
           }
 
           // Check if path is a directory (deleteFile only works on files)
-          const isDirResult = await exec(`test -d ${escapedPath}`);
+          const isDirResult = await exec(`test -d ${escapedPath}`, {
+            origin: 'internal'
+          });
           if (isDirResult.exitCode === 0) {
             throw {
               code: ErrorCode.IS_DIRECTORY,
@@ -449,7 +461,7 @@ export class FileService implements FileSystemOperations {
 
           // Delete file using rm command
           const command = `rm ${escapedPath}`;
-          const rmResult = await exec(command);
+          const rmResult = await exec(command, { origin: 'internal' });
 
           if (rmResult.exitCode !== 0) {
             throw {
@@ -469,10 +481,13 @@ export class FileService implements FileSystemOperations {
       );
 
       outcome = result.success ? 'success' : 'error';
+      if (!result.success) {
+        errorMessage = result.error?.message;
+      }
       return result;
     } catch (error) {
       caughtError = error instanceof Error ? error : new Error(String(error));
-      const errorMessage = caughtError.message;
+      errorMessage = caughtError.message;
       return {
         success: false,
         error: {
@@ -486,17 +501,15 @@ export class FileService implements FileSystemOperations {
         }
       };
     } finally {
-      const logEvent: Record<string, unknown> = {
+      logCanonicalEvent(this.logger, {
+        event: 'file.delete',
+        outcome,
+        durationMs: Date.now() - startTime,
         path,
         sessionId,
-        outcome,
-        durationMs: Date.now() - startTime
-      };
-      if (caughtError) {
-        this.logger.error('file.delete', caughtError, logEvent);
-      } else {
-        this.logger.info('file.delete', logEvent);
-      }
+        errorMessage,
+        error: caughtError
+      });
     }
   }
 
@@ -549,7 +562,8 @@ export class FileService implements FileSystemOperations {
 
       const execResult = await this.sessionManager.executeInSession(
         sessionId,
-        command
+        command,
+        { origin: 'internal' }
       );
 
       if (!execResult.success) {
@@ -645,7 +659,8 @@ export class FileService implements FileSystemOperations {
 
       const execResult = await this.sessionManager.executeInSession(
         sessionId,
-        command
+        command,
+        { origin: 'internal' }
       );
 
       if (!execResult.success) {
@@ -699,11 +714,13 @@ export class FileService implements FileSystemOperations {
     const startTime = Date.now();
     let outcome: 'success' | 'error' = 'error';
     let caughtError: Error | undefined;
+    let errorMessage: string | undefined;
 
     try {
       // 1. Validate path for security
       const validation = this.security.validatePath(path);
       if (!validation.isValid) {
+        errorMessage = `Invalid path format for '${path}': ${validation.errors.join(', ')}`;
         return {
           success: false,
           error: {
@@ -736,11 +753,13 @@ export class FileService implements FileSystemOperations {
       // 4. Create directory using SessionManager
       const execResult = await this.sessionManager.executeInSession(
         sessionId,
-        command
+        command,
+        { origin: 'internal' }
       );
 
       if (!execResult.success) {
         outcome = 'error';
+        errorMessage = execResult.error.message;
         return execResult as ServiceResult<void>;
       }
 
@@ -748,10 +767,11 @@ export class FileService implements FileSystemOperations {
 
       if (result.exitCode !== 0) {
         outcome = 'error';
+        errorMessage = `mkdir operation failed with exit code ${result.exitCode}`;
         return {
           success: false,
           error: {
-            message: `mkdir operation failed with exit code ${result.exitCode}`,
+            message: errorMessage,
             code: ErrorCode.FILESYSTEM_ERROR,
             details: {
               path,
@@ -769,7 +789,7 @@ export class FileService implements FileSystemOperations {
       };
     } catch (error) {
       caughtError = error instanceof Error ? error : new Error(String(error));
-      const errorMessage = caughtError.message;
+      errorMessage = caughtError.message;
       return {
         success: false,
         error: {
@@ -783,18 +803,16 @@ export class FileService implements FileSystemOperations {
         }
       };
     } finally {
-      const logEvent: Record<string, unknown> = {
+      logCanonicalEvent(this.logger, {
+        event: 'file.mkdir',
+        outcome,
+        durationMs: Date.now() - startTime,
         path,
         sessionId,
         recursive: options.recursive ?? false,
-        outcome,
-        durationMs: Date.now() - startTime
-      };
-      if (caughtError || outcome === 'error') {
-        this.logger.error('file.mkdir', caughtError, logEvent);
-      } else {
-        this.logger.info('file.mkdir', logEvent);
-      }
+        errorMessage,
+        error: caughtError
+      });
     }
   }
 
@@ -830,7 +848,8 @@ export class FileService implements FileSystemOperations {
 
       const execResult = await this.sessionManager.executeInSession(
         sessionId,
-        command
+        command,
+        { origin: 'internal' }
       );
 
       if (!execResult.success) {
@@ -927,7 +946,8 @@ export class FileService implements FileSystemOperations {
       // 5. Get file stats using SessionManager
       const execResult = await this.sessionManager.executeInSession(
         sessionId,
-        command
+        command,
+        { origin: 'internal' }
       );
 
       if (!execResult.success) {
@@ -988,7 +1008,11 @@ export class FileService implements FileSystemOperations {
     path: string,
     exec: (
       command: string,
-      options?: { cwd?: string; env?: Record<string, string | undefined> }
+      options?: {
+        cwd?: string;
+        env?: Record<string, string | undefined>;
+        origin?: 'user' | 'internal';
+      }
     ) => Promise<{ exitCode: number; stdout: string; stderr: string }>
   ): Promise<ServiceResult<FileMetadata>> {
     try {
@@ -1037,7 +1061,9 @@ export class FileService implements FileSystemOperations {
       let mimeType = bunFile.type.split(';')[0].trim();
       if (mimeType === 'application/octet-stream') {
         const escapedPath = shellEscape(path);
-        const mimeResult = await exec(`file --mime-type -b ${escapedPath}`);
+        const mimeResult = await exec(`file --mime-type -b ${escapedPath}`, {
+          origin: 'internal'
+        });
         if (mimeResult.exitCode === 0) {
           mimeType = mimeResult.stdout.trim();
         }
@@ -1233,7 +1259,8 @@ export class FileService implements FileSystemOperations {
 
       const execResult = await this.sessionManager.executeInSession(
         sessionId,
-        findCommand
+        findCommand,
+        { origin: 'internal' }
       );
 
       if (!execResult.success) {
@@ -1538,14 +1565,18 @@ export class FileService implements FileSystemOperations {
     path: string,
     exec: (
       command: string,
-      options?: { cwd?: string; env?: Record<string, string | undefined> }
+      options?: {
+        cwd?: string;
+        env?: Record<string, string | undefined>;
+        origin?: 'user' | 'internal';
+      }
     ) => Promise<{ exitCode: number; stdout: string; stderr: string }>
   ): Promise<string> {
     if (path.startsWith('/')) {
       return path;
     }
 
-    const pwdResult = await exec('pwd');
+    const pwdResult = await exec('pwd', { origin: 'internal' });
     if (pwdResult.exitCode !== 0) {
       throw {
         code: ErrorCode.FILESYSTEM_ERROR,

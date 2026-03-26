@@ -61,13 +61,6 @@ export class GitHandler extends BaseHandler<Request, Response> {
 
       return this.createTypedResponse(response, context);
     } else {
-      this.logger.error('Repository clone failed', undefined, {
-        requestId: context.requestId,
-        repoUrl: body.repoUrl,
-        errorCode: result.error.code,
-        errorMessage: result.error.message
-      });
-
       return this.createErrorResponse(result.error, context);
     }
   }

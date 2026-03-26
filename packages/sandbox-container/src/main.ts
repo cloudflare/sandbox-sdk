@@ -182,7 +182,7 @@ export async function main(): Promise<void> {
         if (!message) {
           return;
         }
-        logger.info('User command stdout', { message });
+        logger.debug('User command stdout', { message });
       });
     }
 
@@ -193,7 +193,7 @@ export async function main(): Promise<void> {
         if (!message) {
           return;
         }
-        logger.warn('User command stderr', { message });
+        logger.debug('User command stderr', { message });
       });
     }
   }

@@ -4,6 +4,7 @@ import { rm } from 'node:fs/promises';
 import {
   type ExecEvent,
   type Logger,
+  logCanonicalEvent,
   type PtyOptions,
   partitionEnvVars,
   shellEscape
@@ -16,7 +17,6 @@ import type {
 } from '@repo/shared/errors';
 import { ErrorCode } from '@repo/shared/errors';
 import { Mutex } from 'async-mutex';
-import { time } from 'console';
 import { CONFIG } from '../config';
 import {
   type ServiceError,
@@ -27,6 +27,13 @@ import {
 import { SessionDestroyedError, ShellTerminatedError } from '../errors';
 import { Pty } from '../pty';
 import { type RawExecResult, Session, type SessionOptions } from '../session';
+
+export interface ExecuteInSessionOptions {
+  cwd?: string;
+  timeoutMs?: number;
+  env?: Record<string, string | undefined>;
+  origin?: 'user' | 'internal';
+}
 
 /**
  * SessionManager manages persistent execution sessions.
@@ -142,10 +149,14 @@ export class SessionManager {
     const startTime = Date.now();
     let outcome: 'success' | 'error' = 'error';
     let caughtError: Error | undefined;
+    let errorMessage: string | undefined;
 
     try {
-      // Check if session already exists
+      // Check if session already exists — log as info, not error.
+      // The session is usable; this is an expected condition when
+      // ensureBackupSession or other idempotent callers retry.
       if (this.sessions.has(options.id)) {
+        outcome = 'success';
         return {
           success: false,
           error: {
@@ -174,7 +185,7 @@ export class SessionManager {
       };
     } catch (error) {
       caughtError = error instanceof Error ? error : new Error(String(error));
-      const errorMessage = caughtError.message;
+      errorMessage = caughtError.message;
       const errorStack = caughtError.stack;
 
       return {
@@ -190,17 +201,15 @@ export class SessionManager {
         }
       };
     } finally {
-      const logEvent: Record<string, unknown> = {
+      logCanonicalEvent(this.logger, {
+        event: 'session.create',
+        outcome,
+        durationMs: Date.now() - startTime,
         sessionId: options.id,
         cwd: options.cwd,
-        outcome,
-        durationMs: Date.now() - startTime
-      };
-      if (caughtError) {
-        this.logger.error('session.create', caughtError, logEvent);
-      } else {
-        this.logger.info('session.create', logEvent);
-      }
+        errorMessage,
+        error: caughtError
+      });
     }
   }
 
@@ -296,10 +305,9 @@ export class SessionManager {
   async executeInSession(
     sessionId: string,
     command: string,
-    cwd?: string,
-    timeoutMs?: number,
-    env?: Record<string, string | undefined>
+    options?: ExecuteInSessionOptions
   ): Promise<ServiceResult<RawExecResult>> {
+    const { cwd, timeoutMs, env, origin } = options ?? {};
     const lock = this.getSessionLock(sessionId);
 
     return lock.runExclusive(async () => {
@@ -318,8 +326,8 @@ export class SessionManager {
 
         const result = await session.exec(
           command,
-          cwd || env || timeoutMs !== undefined
-            ? { cwd, env, timeoutMs }
+          cwd || env || timeoutMs !== undefined || origin !== undefined
+            ? { cwd, env, timeoutMs, origin }
             : undefined
         );
 
@@ -378,6 +386,7 @@ export class SessionManager {
           cwd?: string;
           env?: Record<string, string | undefined>;
           timeoutMs?: number;
+          origin?: 'user' | 'internal';
         }
       ) => Promise<RawExecResult>
     ) => Promise<T>,
@@ -405,6 +414,7 @@ export class SessionManager {
             cwd?: string;
             env?: Record<string, string | undefined>;
             timeoutMs?: number;
+            origin?: 'user' | 'internal';
           }
         ): Promise<RawExecResult> => {
           return session.exec(command, options);
@@ -470,7 +480,11 @@ export class SessionManager {
     sessionId: string,
     command: string,
     onEvent: (event: ExecEvent) => Promise<void>,
-    options: { cwd?: string; env?: Record<string, string | undefined> } = {},
+    options: {
+      cwd?: string;
+      env?: Record<string, string | undefined>;
+      origin?: 'user' | 'internal';
+    } = {},
     commandId: string,
     lockOptions: { background?: boolean } = {}
   ): Promise<ServiceResult<{ continueStreaming: Promise<void> }>> {
@@ -507,13 +521,17 @@ export class SessionManager {
     sessionId: string,
     command: string,
     onEvent: (event: ExecEvent) => Promise<void>,
-    options: { cwd?: string; env?: Record<string, string | undefined> },
+    options: {
+      cwd?: string;
+      env?: Record<string, string | undefined>;
+      origin?: 'user' | 'internal';
+    },
     commandId: string,
     lock: Mutex
   ): Promise<ServiceResult<{ continueStreaming: Promise<void> }>> {
     return lock.runExclusive(async () => {
       try {
-        const { cwd, env } = options;
+        const { cwd, env, origin } = options;
 
         const sessionResult = await this.getOrCreateSession(sessionId, {
           cwd: cwd || '/workspace'
@@ -526,7 +544,12 @@ export class SessionManager {
         }
 
         const session = sessionResult.data;
-        const generator = session.execStream(command, { commandId, cwd, env });
+        const generator = session.execStream(command, {
+          commandId,
+          cwd,
+          env,
+          origin
+        });
 
         // Process ALL events under lock
         for await (const event of generator) {
@@ -589,14 +612,18 @@ export class SessionManager {
     sessionId: string,
     command: string,
     onEvent: (event: ExecEvent) => Promise<void>,
-    options: { cwd?: string; env?: Record<string, string | undefined> },
+    options: {
+      cwd?: string;
+      env?: Record<string, string | undefined>;
+      origin?: 'user' | 'internal';
+    },
     commandId: string,
     lock: Mutex
   ): Promise<ServiceResult<{ continueStreaming: Promise<void> }>> {
     // Acquire lock for startup phase only
     const startupResult = await lock.runExclusive(async () => {
       try {
-        const { cwd, env } = options;
+        const { cwd, env, origin } = options;
 
         const sessionResult = await this.getOrCreateSession(sessionId, {
           cwd: cwd || '/workspace'
@@ -607,7 +634,12 @@ export class SessionManager {
         }
 
         const session = sessionResult.data;
-        const generator = session.execStream(command, { commandId, cwd, env });
+        const generator = session.execStream(command, {
+          commandId,
+          cwd,
+          env,
+          origin
+        });
 
         // Process 'start' event under lock
         const firstResult = await generator.next();
@@ -729,7 +761,9 @@ export class SessionManager {
       const safeId = sessionId.replace(/[^a-zA-Z0-9_-]/g, '_');
       const tempEnvFile = `/tmp/pty-env-${safeId}-${Date.now()}`;
       try {
-        const envResult = await session.exec(`env -0 > '${tempEnvFile}'`);
+        const envResult = await session.exec(`env -0 > '${tempEnvFile}'`, {
+          origin: 'internal'
+        });
         if (envResult.exitCode === 0) {
           const envText = await Bun.file(tempEnvFile).text();
           for (const entry of envText.split('\0')) {
@@ -740,7 +774,7 @@ export class SessionManager {
           }
         }
 
-        const cwdResult = await session.exec('pwd');
+        const cwdResult = await session.exec('pwd', { origin: 'internal' });
         if (cwdResult.exitCode === 0 && cwdResult.stdout?.trim()) {
           sessionCwd = cwdResult.stdout.trim();
         }
@@ -903,15 +937,17 @@ export class SessionManager {
     const startTime = Date.now();
     let outcome: 'success' | 'error' = 'error';
     let caughtError: Error | undefined;
+    let errorMessage: string | undefined;
 
     try {
       const session = this.sessions.get(sessionId);
 
       if (!session) {
+        errorMessage = `Session '${sessionId}' not found`;
         return {
           success: false,
           error: {
-            message: `Session '${sessionId}' not found`,
+            message: errorMessage,
             code: ErrorCode.INTERNAL_ERROR,
             details: {
               sessionId,
@@ -939,7 +975,7 @@ export class SessionManager {
       };
     } catch (error) {
       caughtError = error instanceof Error ? error : new Error(String(error));
-      const errorMessage = caughtError.message;
+      errorMessage = caughtError.message;
 
       return {
         success: false,
@@ -953,16 +989,14 @@ export class SessionManager {
         }
       };
     } finally {
-      const logEvent: Record<string, unknown> = {
-        sessionId,
+      logCanonicalEvent(this.logger, {
+        event: 'session.destroy',
         outcome,
-        durationMs: Date.now() - startTime
-      };
-      if (caughtError) {
-        this.logger.error('session.destroy', caughtError, logEvent);
-      } else {
-        this.logger.info('session.destroy', logEvent);
-      }
+        durationMs: Date.now() - startTime,
+        sessionId,
+        errorMessage,
+        error: caughtError
+      });
     }
   }
 

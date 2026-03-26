@@ -8,7 +8,7 @@
 // - Only protect port 3000 (SDK control plane) from interference
 // - Format validation only (null bytes, length limits)
 // - No content restrictions (no path blocking, no command blocking, no URL allowlists)
-import type { Logger } from '@repo/shared';
+import { type Logger, redactCommand } from '@repo/shared';
 import type { ValidationResult } from '../core/types';
 
 export class SecurityService {
@@ -239,7 +239,7 @@ export class SecurityService {
 
     if (!isValid) {
       this.logger.warn('Git URL validation failed', {
-        gitUrl: trimmedUrl,
+        gitUrl: redactCommand(trimmedUrl),
         errors
       });
     }

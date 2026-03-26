@@ -1,6 +1,7 @@
 // Port Management Service
 
 import type { Logger, PortCheckRequest, PortCheckResponse } from '@repo/shared';
+import { logCanonicalEvent } from '@repo/shared';
 import type {
   InvalidPortContext,
   PortAlreadyExposedContext,
@@ -92,17 +93,17 @@ export class PortService {
     const startTime = Date.now();
     let outcome: 'success' | 'error' = 'error';
     let caughtError: Error | undefined;
+    let errorMessage: string | undefined;
 
     try {
       // Validate port number
       const validation = this.security.validatePort(port);
       if (!validation.isValid) {
+        errorMessage = `Invalid port number ${port}: ${validation.errors.join(', ')}`;
         return {
           success: false,
           error: {
-            message: `Invalid port number ${port}: ${validation.errors.join(
-              ', '
-            )}`,
+            message: errorMessage,
             code: ErrorCode.INVALID_PORT_NUMBER,
             details: {
               port,
@@ -115,12 +116,11 @@ export class PortService {
       // Check if port is already exposed
       const existing = await this.store.get(port);
       if (existing) {
+        errorMessage = `Port ${port}${existing.name ? ` (${existing.name})` : ''} is already exposed`;
         return {
           success: false,
           error: {
-            message: `Port ${port}${
-              existing.name ? ` (${existing.name})` : ''
-            } is already exposed`,
+            message: errorMessage,
             code: ErrorCode.PORT_ALREADY_EXPOSED,
             details: {
               port,
@@ -141,7 +141,7 @@ export class PortService {
       };
     } catch (error) {
       caughtError = error instanceof Error ? error : new Error(String(error));
-      const errorMessage = caughtError.message;
+      errorMessage = caughtError.message;
       return {
         success: false,
         error: {
@@ -157,17 +157,15 @@ export class PortService {
         }
       };
     } finally {
-      const logEvent: Record<string, unknown> = {
+      logCanonicalEvent(this.logger, {
+        event: 'port.expose',
+        outcome,
+        durationMs: Date.now() - startTime,
         port,
         name,
-        outcome,
-        durationMs: Date.now() - startTime
-      };
-      if (caughtError) {
-        this.logger.error('port.expose', caughtError, logEvent);
-      } else {
-        this.logger.info('port.expose', logEvent);
-      }
+        errorMessage,
+        error: caughtError
+      });
     }
   }
 
@@ -175,15 +173,17 @@ export class PortService {
     const startTime = Date.now();
     let outcome: 'success' | 'error' = 'error';
     let caughtError: Error | undefined;
+    let errorMessage: string | undefined;
 
     try {
       // Check if port is exposed
       const existing = await this.store.get(port);
       if (!existing) {
+        errorMessage = `Port ${port} is not exposed`;
         return {
           success: false,
           error: {
-            message: `Port ${port} is not exposed`,
+            message: errorMessage,
             code: ErrorCode.PORT_NOT_EXPOSED,
             details: {
               port
@@ -200,7 +200,7 @@ export class PortService {
       };
     } catch (error) {
       caughtError = error instanceof Error ? error : new Error(String(error));
-      const errorMessage = caughtError.message;
+      errorMessage = caughtError.message;
       return {
         success: false,
         error: {
@@ -213,16 +213,14 @@ export class PortService {
         }
       };
     } finally {
-      const logEvent: Record<string, unknown> = {
-        port,
+      logCanonicalEvent(this.logger, {
+        event: 'port.unexpose',
         outcome,
-        durationMs: Date.now() - startTime
-      };
-      if (caughtError) {
-        this.logger.error('port.unexpose', caughtError, logEvent);
-      } else {
-        this.logger.info('port.unexpose', logEvent);
-      }
+        durationMs: Date.now() - startTime,
+        port,
+        errorMessage,
+        error: caughtError
+      });
     }
   }
 

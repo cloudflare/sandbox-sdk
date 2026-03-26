@@ -41,12 +41,14 @@ export class ProcessClient extends BaseHttpClient {
       cwd?: string;
       encoding?: string;
       autoCleanup?: boolean;
+      origin?: 'user' | 'internal';
     }
   ): Promise<ProcessStartResult> {
     try {
       const data: StartProcessRequest = {
         command,
         sessionId,
+        ...(options?.origin !== undefined && { origin: options.origin }),
         ...(options?.processId !== undefined && {
           processId: options.processId
         }),
@@ -66,14 +68,8 @@ export class ProcessClient extends BaseHttpClient {
         data
       );
 
-      this.logSuccess(
-        'Process started',
-        `${command} (ID: ${response.processId})`
-      );
-
       return response;
     } catch (error) {
-      this.logError('startProcess', error);
       throw error;
     }
   }
@@ -86,13 +82,8 @@ export class ProcessClient extends BaseHttpClient {
       const url = `/api/process/list`;
       const response = await this.get<ProcessListResult>(url);
 
-      this.logSuccess(
-        'Processes listed',
-        `${response.processes.length} processes`
-      );
       return response;
     } catch (error) {
-      this.logError('listProcesses', error);
       throw error;
     }
   }
@@ -106,10 +97,8 @@ export class ProcessClient extends BaseHttpClient {
       const url = `/api/process/${processId}`;
       const response = await this.get<ProcessInfoResult>(url);
 
-      this.logSuccess('Process retrieved', `ID: ${processId}`);
       return response;
     } catch (error) {
-      this.logError('getProcess', error);
       throw error;
     }
   }
@@ -123,10 +112,8 @@ export class ProcessClient extends BaseHttpClient {
       const url = `/api/process/${processId}`;
       const response = await this.delete<ProcessKillResult>(url);
 
-      this.logSuccess('Process killed', `ID: ${processId}`);
       return response;
     } catch (error) {
-      this.logError('killProcess', error);
       throw error;
     }
   }
@@ -139,14 +126,8 @@ export class ProcessClient extends BaseHttpClient {
       const url = `/api/process/kill-all`;
       const response = await this.delete<ProcessCleanupResult>(url);
 
-      this.logSuccess(
-        'All processes killed',
-        `${response.cleanedCount} processes terminated`
-      );
-
       return response;
     } catch (error) {
-      this.logError('killAllProcesses', error);
       throw error;
     }
   }
@@ -160,14 +141,8 @@ export class ProcessClient extends BaseHttpClient {
       const url = `/api/process/${processId}/logs`;
       const response = await this.get<ProcessLogsResult>(url);
 
-      this.logSuccess(
-        'Process logs retrieved',
-        `ID: ${processId}, stdout: ${response.stdout.length} chars, stderr: ${response.stderr.length} chars`
-      );
-
       return response;
     } catch (error) {
-      this.logError('getProcessLogs', error);
       throw error;
     }
   }
@@ -184,11 +159,8 @@ export class ProcessClient extends BaseHttpClient {
       // Use doStreamFetch with GET method (process log streaming is GET)
       const stream = await this.doStreamFetch(url, undefined, 'GET');
 
-      this.logSuccess('Process log stream started', `ID: ${processId}`);
-
       return stream;
     } catch (error) {
-      this.logError('streamProcessLogs', error);
       throw error;
     }
   }

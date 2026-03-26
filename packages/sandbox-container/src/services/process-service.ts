@@ -1,4 +1,4 @@
-import type { Logger } from '@repo/shared';
+import { type Logger, logCanonicalEvent } from '@repo/shared';
 import type {
   CommandErrorContext,
   ProcessErrorContext,
@@ -57,9 +57,12 @@ export class ProcessService {
       const result = await this.sessionManager.executeInSession(
         sessionId,
         command,
-        options.cwd,
-        options.timeoutMs,
-        options.env
+        {
+          cwd: options.cwd,
+          timeoutMs: options.timeoutMs,
+          env: options.env,
+          origin: options.origin
+        }
       );
 
       if (!result.success) {
@@ -149,15 +152,15 @@ export class ProcessService {
           if (event.type === 'start' && event.pid !== undefined) {
             processRecord.pid = event.pid;
             await this.store.update(processRecord.id, { pid: event.pid });
-            this.logger.info('process.start', {
-              processId: processRecord.id,
+            logCanonicalEvent(this.logger, {
+              event: 'process.start',
+              outcome: 'success',
+              command: command,
               pid: event.pid,
-              command:
-                command.length > 100
-                  ? `${command.substring(0, 100)}…`
-                  : command,
+              durationMs: Date.now() - startTime,
+              processId: processRecord.id,
               sessionId,
-              durationMs: Date.now() - startTime
+              origin: options.origin
             });
           } else if (event.type === 'stdout' && event.data) {
             processRecord.stdout += event.data;
@@ -178,20 +181,19 @@ export class ProcessService {
             processRecord.endTime = endTime;
             processRecord.exitCode = exitCode;
 
-            this.logger.info('process.exit', {
-              processId: processRecord.id,
+            logCanonicalEvent(this.logger, {
+              event: 'process.exit',
+              outcome: 'success',
+              command: command,
               pid: processRecord.pid,
-              command:
-                command.length > 100
-                  ? `${command.substring(0, 100)}…`
-                  : command,
-              sessionId,
-              exitCode,
-              outcome: status,
+              exitCode: exitCode,
               durationMs:
                 processRecord.startTime instanceof Date
                   ? endTime.getTime() - processRecord.startTime.getTime()
-                  : Date.now() - startTime
+                  : Date.now() - startTime,
+              processId: processRecord.id,
+              sessionId,
+              origin: options.origin
             });
 
             processRecord.statusListeners.forEach((listener) => {
@@ -221,16 +223,23 @@ export class ProcessService {
               listener('error');
             });
 
-            this.logger.error(
-              'Streaming command error',
-              new Error(event.error),
-              { processId: processRecord.id }
-            );
+            logCanonicalEvent(this.logger, {
+              event: 'process.error',
+              outcome: 'error',
+              command,
+              processId: processRecord.id,
+              sessionId,
+              durationMs: Date.now() - startTime,
+              errorMessage: event.error,
+              error: new Error(event.error),
+              origin: options.origin
+            });
           }
         },
         {
           cwd: options.cwd,
-          env: options.env
+          env: options.env,
+          origin: options.origin
         },
         processRecordData.id, // Pass process ID as commandId for tracking and killing
         { background: true } // Release lock after startup
