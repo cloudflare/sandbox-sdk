@@ -125,13 +125,12 @@ jobs:
           # Extract current PR number for exclusion
           CURRENT_PR_NUM=$(echo "$CURRENT_PR" | grep -oP 'pr-\K[0-9]+$' || echo "")
 
-          # Get PR numbers with in-progress or queued CI to protect from eviction.
+          # Get PR numbers with in-progress CI to protect from eviction.
           # Uses pull_requests[].number from the workflow run API for reliable matching.
-          ACTIVE_PR_NUMS=$(gh run list --workflow=pr-privileged.yml --status=in_progress \
-            --json pullRequests --jq '.[].pullRequests[].number' 2>/dev/null || true)
-          QUEUED_PR_NUMS=$(gh run list --workflow=pr-privileged.yml --status=queued \
-            --json pullRequests --jq '.[].pullRequests[].number' 2>/dev/null || true)
-          PROTECTED_PRS=$(printf '%s\n' $ACTIVE_PR_NUMS $QUEUED_PR_NUMS | sort -un)
+          # Queued runs are NOT protected — they haven't started using workers yet
+          # and can redeploy if their warm cache is evicted.
+          PROTECTED_PRS=$(gh run list --workflow=pr-privileged.yml --status=in_progress \
+            --json pullRequests --jq '.[].pullRequests[].number' 2>/dev/null | sort -un || true)
 
           # Build list of eviction candidates with recency info
           declare -A CANDIDATES

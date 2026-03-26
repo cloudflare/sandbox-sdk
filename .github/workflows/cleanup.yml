@@ -19,8 +19,8 @@ jobs:
   #
   # Image tags (pr-* and ci-*) are NOT deleted here. Deleting pr-* tags was
   # observed to break the ci-* content-addressed Docker cache, likely because
-  # they share underlying manifests and deletion triggers GC. Image storage
-  # is controlled by nightly ci-* eviction in the daily sweep instead.
+  # they share underlying manifests and deletion triggers GC. Image cleanup
+  # happens in the daily sweep only for closed/stale PRs.
   cleanup-pr:
     if: github.event_name == 'pull_request_target'
     runs-on: ubuntu-latest
@@ -132,9 +132,8 @@ jobs:
               # Delete pr-* images for closed/stale PRs. These tags are no
               # longer referenced by any active CI run. Note: if the CF
               # registry GC's shared manifests on tag deletion, this could
-              # invalidate ci-* tags sharing the same digest. The nightly
-              # ci-* eviction handles that case — the cache rebuilds on
-              # next use (~6 min one-time cost).
+              # invalidate ci-* tags sharing the same digest — the cache
+              # rebuilds on next use (~6 min one-time cost).
               for image in "${DOCKER_IMAGES[@]}"; do
                 wrangler containers images delete "$image:pr-$PR" 2>/dev/null || true
               done
@@ -144,42 +143,6 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Evict stale Docker cache images
-        timeout-minutes: 5
-        continue-on-error: true
-        run: |
-          # ci-* tags are the content-addressed Docker cache. Each unique
-          # docker_hash creates 6 images (one per variant). Without eviction
-          # these accumulate and eventually hit the 50GB storage limit.
-          #
-          # Policy: delete all ci-* tags nightly. The cache is rebuilt on the
-          # first build the next day (~6 min one-time cost) and all subsequent
-          # builds that day hit it. We can't reliably match the main branch's
-          # hashFiles() output from bash, and a wrong match would either keep
-          # everything (defeating eviction) or delete the active cache.
-          source .github/load-docker-images.sh
-          ALL_IMAGES=$(wrangler containers images list --json 2>/dev/null || echo "[]")
-          CI_HASHES=$(echo "$ALL_IMAGES" | jq -r '.[].tags[]?' 2>/dev/null \
-            | grep -oE '^ci-[a-f0-9]+$' | sort -u || true)
-
-          if [ -z "$CI_HASHES" ]; then
-            echo "No ci-* cache tags found"
-            exit 0
-          fi
-
-          DELETED=0
-          for TAG in $CI_HASHES; do
-            echo "Deleting $TAG"
-            for image in "${DOCKER_IMAGES[@]}"; do
-              wrangler containers images delete "$image:$TAG" 2>/dev/null || true
-            done
-            DELETED=$((DELETED + 1))
-          done
-          echo "Cache eviction: deleted $DELETED ci-* tag(s)"
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       - name: Clean stale GHA caches
         timeout-minutes: 2
