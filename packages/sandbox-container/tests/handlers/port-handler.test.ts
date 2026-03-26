@@ -99,7 +99,7 @@ describe('PortHandler', () => {
         data: mockPortInfo
       });
 
-      const request = new Request('http://localhost:3000/api/expose-port', {
+      const request = new Request('http://localhost:8671/api/expose-port', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(exposePortData)
@@ -138,7 +138,7 @@ describe('PortHandler', () => {
         data: mockPortInfo
       });
 
-      const request = new Request('http://localhost:3000/api/expose-port', {
+      const request = new Request('http://localhost:8671/api/expose-port', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(exposePortData)
@@ -167,7 +167,7 @@ describe('PortHandler', () => {
         }
       });
 
-      const request = new Request('http://localhost:3000/api/expose-port', {
+      const request = new Request('http://localhost:8671/api/expose-port', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(exposePortData)
@@ -194,7 +194,7 @@ describe('PortHandler', () => {
         }
       });
 
-      const request = new Request('http://localhost:3000/api/expose-port', {
+      const request = new Request('http://localhost:8671/api/expose-port', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(exposePortData)
@@ -218,7 +218,7 @@ describe('PortHandler', () => {
       });
 
       const request = new Request(
-        'http://localhost:3000/api/exposed-ports/8080',
+        'http://localhost:8671/api/exposed-ports/8080',
         {
           method: 'DELETE'
         }
@@ -245,7 +245,7 @@ describe('PortHandler', () => {
       });
 
       const request = new Request(
-        'http://localhost:3000/api/exposed-ports/8080',
+        'http://localhost:8671/api/exposed-ports/8080',
         {
           method: 'DELETE'
         }
@@ -263,7 +263,7 @@ describe('PortHandler', () => {
 
     it('should handle invalid port numbers in URL', async () => {
       const request = new Request(
-        'http://localhost:3000/api/exposed-ports/invalid',
+        'http://localhost:8671/api/exposed-ports/invalid',
         {
           method: 'DELETE'
         }
@@ -284,7 +284,7 @@ describe('PortHandler', () => {
 
     it('should handle unsupported methods on exposed-ports endpoint', async () => {
       const request = new Request(
-        'http://localhost:3000/api/exposed-ports/8080',
+        'http://localhost:8671/api/exposed-ports/8080',
         {
           method: 'GET' // Not supported for individual ports
         }
@@ -323,7 +323,7 @@ describe('PortHandler', () => {
         data: mockPorts
       });
 
-      const request = new Request('http://localhost:3000/api/exposed-ports', {
+      const request = new Request('http://localhost:8671/api/exposed-ports', {
         method: 'GET'
       });
 
@@ -349,7 +349,7 @@ describe('PortHandler', () => {
         data: []
       });
 
-      const request = new Request('http://localhost:3000/api/exposed-ports', {
+      const request = new Request('http://localhost:8671/api/exposed-ports', {
         method: 'GET'
       });
 
@@ -371,7 +371,7 @@ describe('PortHandler', () => {
         }
       });
 
-      const request = new Request('http://localhost:3000/api/exposed-ports', {
+      const request = new Request('http://localhost:8671/api/exposed-ports', {
         method: 'GET'
       });
 
@@ -397,7 +397,7 @@ describe('PortHandler', () => {
         mockProxyResponse
       );
 
-      const request = new Request('http://localhost:3000/proxy/8080/api/data', {
+      const request = new Request('http://localhost:8671/proxy/8080/api/data', {
         method: 'GET',
         headers: { Authorization: 'Bearer token' }
       });
@@ -424,7 +424,7 @@ describe('PortHandler', () => {
 
       const requestBody = JSON.stringify({ data: 'test' });
       const request = new Request(
-        'http://localhost:3000/proxy/3000/api/create',
+        'http://localhost:8671/proxy/3000/api/create',
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -451,7 +451,7 @@ describe('PortHandler', () => {
         mockErrorResponse
       );
 
-      const request = new Request('http://localhost:3000/proxy/9999/api/data', {
+      const request = new Request('http://localhost:8671/proxy/9999/api/data', {
         method: 'GET'
       });
 
@@ -463,7 +463,7 @@ describe('PortHandler', () => {
     });
 
     it('should handle invalid proxy URL format', async () => {
-      const request = new Request('http://localhost:3000/proxy/', {
+      const request = new Request('http://localhost:8671/proxy/', {
         method: 'GET'
       });
 
@@ -482,7 +482,7 @@ describe('PortHandler', () => {
 
     it('should handle invalid port number in proxy URL', async () => {
       const request = new Request(
-        'http://localhost:3000/proxy/invalid-port/api/data',
+        'http://localhost:8671/proxy/invalid-port/api/data',
         {
           method: 'GET'
         }
@@ -504,7 +504,7 @@ describe('PortHandler', () => {
       const proxyError = new Error('Connection refused');
       (mockPortService.proxyRequest as any).mockRejectedValue(proxyError);
 
-      const request = new Request('http://localhost:3000/proxy/8080/api/data', {
+      const request = new Request('http://localhost:8671/proxy/8080/api/data', {
         method: 'GET'
       });
 
@@ -521,7 +521,7 @@ describe('PortHandler', () => {
     it('should handle non-Error exceptions in proxy', async () => {
       (mockPortService.proxyRequest as any).mockRejectedValue('String error');
 
-      const request = new Request('http://localhost:3000/proxy/8080/api/data', {
+      const request = new Request('http://localhost:8671/proxy/8080/api/data', {
         method: 'GET'
       });
 
@@ -539,7 +539,7 @@ describe('PortHandler', () => {
   describe('route handling', () => {
     it('should return 500 for invalid endpoints', async () => {
       const request = new Request(
-        'http://localhost:3000/api/invalid-endpoint',
+        'http://localhost:8671/api/invalid-endpoint',
         {
           method: 'GET'
         }
@@ -556,7 +556,7 @@ describe('PortHandler', () => {
     });
 
     it('should handle malformed exposed-ports URLs', async () => {
-      const request = new Request('http://localhost:3000/api/exposed-ports/', {
+      const request = new Request('http://localhost:8671/api/exposed-ports/', {
         method: 'DELETE'
       });
 
@@ -576,7 +576,7 @@ describe('PortHandler', () => {
         mockProxyResponse
       );
 
-      const request = new Request('http://localhost:3000/proxy/8080/', {
+      const request = new Request('http://localhost:8671/proxy/8080/', {
         method: 'GET'
       });
 
@@ -595,7 +595,7 @@ describe('PortHandler', () => {
         data: []
       });
 
-      const request = new Request('http://localhost:3000/api/exposed-ports', {
+      const request = new Request('http://localhost:8671/api/exposed-ports', {
         method: 'GET'
       });
 
@@ -611,7 +611,7 @@ describe('PortHandler', () => {
     });
 
     it('should include CORS headers in error responses', async () => {
-      const request = new Request('http://localhost:3000/api/invalid', {
+      const request = new Request('http://localhost:8671/api/invalid', {
         method: 'GET'
       });
 
@@ -659,7 +659,7 @@ describe('PortHandler', () => {
         statusCode: 200
       });
 
-      const request = new Request('http://localhost:3000/api/port-watch', {
+      const request = new Request('http://localhost:8671/api/port-watch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ port: 8080 })
@@ -685,7 +685,7 @@ describe('PortHandler', () => {
         data: { status: 'completed', exitCode: 0 }
       });
 
-      const request = new Request('http://localhost:3000/api/port-watch', {
+      const request = new Request('http://localhost:8671/api/port-watch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ port: 8080, processId: 'proc-123' })
@@ -707,7 +707,7 @@ describe('PortHandler', () => {
         success: false
       });
 
-      const request = new Request('http://localhost:3000/api/port-watch', {
+      const request = new Request('http://localhost:8671/api/port-watch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ port: 8080, processId: 'nonexistent' })
@@ -727,7 +727,7 @@ describe('PortHandler', () => {
         mockPortService.checkPortReady as ReturnType<typeof vi.fn>
       ).mockRejectedValue(new Error('Connection refused'));
 
-      const request = new Request('http://localhost:3000/api/port-watch', {
+      const request = new Request('http://localhost:8671/api/port-watch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ port: 8080 })
@@ -746,7 +746,7 @@ describe('PortHandler', () => {
   describe('URL parsing edge cases', () => {
     it('should handle ports with leading zeros', async () => {
       const request = new Request(
-        'http://localhost:3000/api/exposed-ports/008080',
+        'http://localhost:8671/api/exposed-ports/008080',
         {
           method: 'DELETE'
         }
@@ -765,7 +765,7 @@ describe('PortHandler', () => {
 
     it('should handle very large port numbers', async () => {
       const request = new Request(
-        'http://localhost:3000/api/exposed-ports/999999',
+        'http://localhost:8671/api/exposed-ports/999999',
         {
           method: 'DELETE'
         }
@@ -794,7 +794,7 @@ describe('PortHandler', () => {
       );
 
       const request = new Request(
-        'http://localhost:3000/proxy/8080/api/search?q=test&page=1',
+        'http://localhost:8671/proxy/8080/api/search?q=test&page=1',
         {
           method: 'GET'
         }

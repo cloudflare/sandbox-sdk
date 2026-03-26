@@ -303,7 +303,7 @@ describe('WebSocket Protocol Types', () => {
       vi.useFakeTimers();
       try {
         const transport = new WebSocketTransport({
-          wsUrl: 'ws://localhost:3000/ws',
+          wsUrl: 'ws://localhost:8671/ws',
           requestTimeoutMs: 1000
         });
 
@@ -355,7 +355,7 @@ describe('WebSocket Protocol Types', () => {
       vi.useFakeTimers();
       try {
         const transport = new WebSocketTransport({
-          wsUrl: 'ws://localhost:3000/ws',
+          wsUrl: 'ws://localhost:8671/ws',
           requestTimeoutMs: 1000
         });
 
@@ -419,7 +419,7 @@ describe('WebSocket Protocol Types', () => {
       vi.useFakeTimers();
       try {
         const transport = new WebSocketTransport({
-          wsUrl: 'ws://localhost:3000/ws',
+          wsUrl: 'ws://localhost:8671/ws',
           streamIdleTimeoutMs: 1000
         });
 
@@ -459,7 +459,7 @@ describe('WebSocket Protocol Types', () => {
       vi.useFakeTimers();
       try {
         const transport = new WebSocketTransport({
-          wsUrl: 'ws://localhost:3000/ws',
+          wsUrl: 'ws://localhost:8671/ws',
           streamIdleTimeoutMs: 1000
         });
 
@@ -513,7 +513,7 @@ describe('WebSocket Protocol Types', () => {
       vi.useFakeTimers();
       try {
         const transport = new WebSocketTransport({
-          wsUrl: 'ws://localhost:3000/ws',
+          wsUrl: 'ws://localhost:8671/ws',
           streamIdleTimeoutMs: 100
         });
 
@@ -590,14 +590,14 @@ describe('WebSocketTransport', () => {
   describe('initial state', () => {
     it('should not be connected after construction', () => {
       const transport = new WebSocketTransport({
-        wsUrl: 'ws://localhost:3000/ws'
+        wsUrl: 'ws://localhost:8671/ws'
       });
       expect(transport.isConnected()).toBe(false);
     });
 
     it('should accept custom options', () => {
       const transport = new WebSocketTransport({
-        wsUrl: 'ws://localhost:3000/ws',
+        wsUrl: 'ws://localhost:8671/ws',
         connectTimeoutMs: 5000,
         requestTimeoutMs: 60000
       });
@@ -614,7 +614,7 @@ describe('WebSocketTransport', () => {
   describe('disconnect', () => {
     it('should be safe to call disconnect when not connected', () => {
       const transport = new WebSocketTransport({
-        wsUrl: 'ws://localhost:3000/ws'
+        wsUrl: 'ws://localhost:8671/ws'
       });
       // Should not throw
       transport.disconnect();
@@ -623,7 +623,7 @@ describe('WebSocketTransport', () => {
 
     it('should be safe to call disconnect multiple times', () => {
       const transport = new WebSocketTransport({
-        wsUrl: 'ws://localhost:3000/ws'
+        wsUrl: 'ws://localhost:8671/ws'
       });
       transport.disconnect();
       transport.disconnect();

@@ -1,7 +1,10 @@
+ARG BUILD_INTERNAL_SERVER_PORT=8671
 FROM docker.io/cloudflare/sandbox-test:0.8.0-musl
+
+ARG BUILD_INTERNAL_SERVER_PORT
 
 # Install snapshot tools (Alpine uses apk)
 # squashfs-tools: create archives, squashfuse: mount, fuse-overlayfs: COW layer
 RUN apk add --no-cache squashfs-tools squashfuse fuse-overlayfs
 
-EXPOSE 3000 8080
+EXPOSE ${BUILD_INTERNAL_SERVER_PORT} 8080

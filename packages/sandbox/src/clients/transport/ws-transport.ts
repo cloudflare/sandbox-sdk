@@ -1,4 +1,5 @@
 import {
+  DEFAULT_CONTROL_PORT,
   generateRequestId,
   isWSError,
   isWSResponse,
@@ -252,7 +253,7 @@ export class WebSocketTransport extends BaseTransport {
     try {
       // Build the WebSocket URL for the container
       const wsPath = new URL(this.config.wsUrl!).pathname;
-      const httpUrl = `http://localhost:${this.config.port || 3000}${wsPath}`;
+      const httpUrl = `http://localhost:${this.config.port ?? DEFAULT_CONTROL_PORT}${wsPath}`;
 
       const response = await this.fetchUpgradeWithRetry(() =>
         this.fetchUpgradeAttempt(httpUrl, timeoutMs)
