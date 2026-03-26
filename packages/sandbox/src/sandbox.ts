@@ -116,6 +116,9 @@ type ConfigurableSandboxStub = {
 
 const LEGACY_CONTROL_PORT = 3000;
 
+/** Header used by @cloudflare/containers switchPort() to target a specific container port. */
+const CONTAINER_TARGET_PORT_HEADER = 'cf-container-target-port';
+
 const sandboxConfigurationCache = new WeakMap<
   object,
   Map<string, CachedSandboxConfiguration>
@@ -324,42 +327,21 @@ export function getSandbox<T extends Sandbox<any>>(
 
   const defaultSessionId = `sandbox-${effectiveId}`;
 
-  let cachedControlPort: number | null = null;
-  async function getControlPort(): Promise<number> {
-    if (cachedControlPort !== null) return cachedControlPort;
-    cachedControlPort = await stub.getControlPort();
-    return cachedControlPort;
-  }
-
   // IMPORTANT: Any method that returns ExecutionSession must be listed here
   // to ensure the returned session uses proxyTerminal instead of RPC's terminal.
   const enhancedMethods = {
     fetch: (request: Request) => stub.fetch(request),
     createSession: async (opts?: SessionOptions): Promise<ExecutionSession> => {
       const rpcSession = await stub.createSession(opts);
-      return enhanceSession(
-        stub,
-        rpcSession as ExecutionSession,
-        getControlPort
-      );
+      return enhanceSession(stub, rpcSession as ExecutionSession);
     },
     getSession: async (sessionId: string): Promise<ExecutionSession> => {
       const rpcSession = await stub.getSession(sessionId);
-      return enhanceSession(
-        stub,
-        rpcSession as ExecutionSession,
-        getControlPort
-      );
+      return enhanceSession(stub, rpcSession as ExecutionSession);
     },
-    terminal: async (request: Request, opts?: PtyOptions) =>
-      proxyTerminal(
-        stub,
-        defaultSessionId,
-        request,
-        opts,
-        await getControlPort()
-      ),
-    wsConnect: connect(stub, getControlPort),
+    terminal: (request: Request, opts?: PtyOptions) =>
+      proxyTerminal(stub, defaultSessionId, request, opts),
+    wsConnect: connect(stub),
     // Client-side proxy for desktop operations. Each method call is dispatched
     // to the DO's callDesktop() method, avoiding RPC pipelining through getters.
     desktop: new Proxy({} as Desktop, {
@@ -386,25 +368,22 @@ export function getSandbox<T extends Sandbox<any>>(
 
 function enhanceSession(
   stub: { fetch: (request: Request) => Promise<Response> },
-  rpcSession: ExecutionSession,
-  getControlPort: () => Promise<number>
+  rpcSession: ExecutionSession
 ): ExecutionSession {
   return {
     ...rpcSession,
-    terminal: async (request: Request, opts?: PtyOptions) =>
-      proxyTerminal(stub, rpcSession.id, request, opts, await getControlPort())
+    terminal: (request: Request, opts?: PtyOptions) =>
+      proxyTerminal(stub, rpcSession.id, request, opts)
   };
 }
 
-export function connect(
-  stub: { fetch: (request: Request) => Promise<Response> },
-  getControlPort: () => Promise<number>
-) {
+export function connect(stub: {
+  fetch: (request: Request) => Promise<Response>;
+}) {
   return async (request: Request, port: number) => {
-    const controlPort = await getControlPort();
-    if (!validatePort(port, controlPort)) {
+    if (!Number.isInteger(port) || port < 1024 || port > 65535) {
       throw new SecurityError(
-        `Invalid port number: ${port}. Must be 1024-65535, excluding ${controlPort} (sandbox control plane).`
+        `Invalid port number: ${port}. Must be an integer between 1024 and 65535.`
       );
     }
     const portSwitchedRequest = switchPort(request, port);
@@ -595,6 +574,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       this.defaultPort = parseInt(controlPortStr, 10) || DEFAULT_CONTROL_PORT;
     }
     this.envVars.SANDBOX_CONTROL_PORT = String(this.defaultPort);
+    // Set sandbox environment variables from env object
     const sandboxEnvKeys = ['SANDBOX_LOG_LEVEL', 'SANDBOX_LOG_FORMAT'] as const;
     sandboxEnvKeys.forEach((key) => {
       if (envObj?.[key]) {
@@ -680,10 +660,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         this.renewActivityTimeout();
       }
     });
-  }
-
-  getControlPort(): number {
-    return this.defaultPort!;
   }
 
   async setSandboxName(name: string, normalizeId?: boolean): Promise<void> {
@@ -1635,7 +1611,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
 
     // After a legacy fallback, the current request's port may still reference the
-    // original default (e.g., 8671). Remap it to the actual control port.
+    // originally configured control port. Remap it to the actual (fallback) port.
     const effectivePort =
       port === originalDefaultPort && this.defaultPort === LEGACY_CONTROL_PORT
         ? LEGACY_CONTROL_PORT
@@ -1877,14 +1853,46 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       connectionHeader?.toLowerCase().includes('upgrade');
 
     if (isWebSocket) {
-      // WebSocket path: Let parent Container class handle WebSocket proxying
-      // This bypasses containerFetch() which uses JSRPC and cannot handle WebSocket upgrades
+      // WebSocket path: Let parent Container class handle WebSocket proxying.
+      // This bypasses containerFetch() which uses JSRPC and cannot handle WebSocket upgrades.
+      const switchedPort = this.getExplicitPort(request);
+      const hasRawHeader = request.headers.has(CONTAINER_TARGET_PORT_HEADER);
+
+      // Validate only when a specific port was explicitly targeted (via switchPort).
+      // Without a switched port, this is a control-plane WebSocket (PTY, /ws, /api/ws)
+      // routed to defaultPort by Container.fetch() — no validation needed.
+      if (
+        switchedPort !== null &&
+        !validatePort(switchedPort, this.defaultPort)
+      ) {
+        requestLogger.warn(
+          'WebSocket connection rejected: invalid target port',
+          {
+            port: switchedPort,
+            path: url.pathname
+          }
+        );
+        return new Response(
+          `Invalid port for WebSocket connection: ${switchedPort}. Must be 1024-65535, excluding ${this.defaultPort} (sandbox control plane).`,
+          { status: 403 }
+        );
+      }
+
+      // If the header was present but malformed (getExplicitPort returned null),
+      // strip it so Container.fetch() doesn't re-parse it with its own lenient parseInt.
+      let wsRequest = request;
+      if (hasRawHeader && switchedPort === null) {
+        const sanitizedHeaders = new Headers(request.headers);
+        sanitizedHeaders.delete(CONTAINER_TARGET_PORT_HEADER);
+        wsRequest = new Request(request, { headers: sanitizedHeaders });
+      }
+
       try {
         requestLogger.debug('WebSocket upgrade requested', {
           path: url.pathname,
-          port: this.determinePort(url)
+          port: switchedPort ?? this.defaultPort
         });
-        return await super.fetch(request);
+        return await super.fetch(wsRequest);
       } catch (error) {
         requestLogger.error(
           'WebSocket connection failed',
@@ -1896,7 +1904,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
 
     // Non-WebSocket: Use existing port determination and HTTP routing logic
-    const port = this.determinePort(url);
+    const port = this.resolvePort(url, request);
 
     // Route to the appropriate port
     return await this.containerFetch(request, port);
@@ -1909,15 +1917,41 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     );
   }
 
-  private determinePort(url: URL): number {
-    const proxyMatch = url.pathname.match(/^\/proxy\/(\d+)/);
-    if (proxyMatch) {
-      return parseInt(proxyMatch[1], 10);
-    }
+  /**
+   * Read the port explicitly set by switchPort() from @cloudflare/containers.
+   * Returns null when no explicit port was set (control-plane requests).
+   */
+  private getExplicitPort(request: Request): number | null {
+    const raw = request.headers.get(CONTAINER_TARGET_PORT_HEADER);
+    if (raw === null) return null;
 
-    // All other requests go to control plane on the default port
-    // This includes /api/* endpoints and any other control requests
-    return this.defaultPort;
+    // Strict digit-only parse. Malformed values (e.g. "8080abc", "8080.5")
+    // did not come from switchPort() and are treated as absent.
+    if (!/^\d+$/.test(raw)) {
+      this.logger.warn(
+        `Ignoring malformed ${CONTAINER_TARGET_PORT_HEADER} header`,
+        {
+          value: raw
+        }
+      );
+      return null;
+    }
+    return parseInt(raw, 10);
+  }
+
+  /** Extract port from proxy URL path (/proxy/8080/*), null if no match. */
+  private getProxyPort(url: URL): number | null {
+    const match = url.pathname.match(/^\/proxy\/(\d+)/);
+    return match ? parseInt(match[1], 10) : null;
+  }
+
+  /** Resolve target port for HTTP requests: explicit port → proxy path → default. */
+  private resolvePort(url: URL, request: Request): number {
+    return (
+      this.getExplicitPort(request) ??
+      this.getProxyPort(url) ??
+      this.defaultPort
+    );
   }
 
   /**
