@@ -428,44 +428,6 @@ jobs:
               }
             }
 
-  # --- Per-run cleanup for PR container apps ---
-  # Deletes test workers and containers to stay under the account-wide container
-  # app limit. Image tags (pr-*) are NOT deleted here — per-run deletion was
-  # observed to break the content-addressed Docker cache (ci-* tags), likely
-  # due to shared manifests being garbage-collected. PR image cleanup happens
-  # at PR close (cleanup.yml) where the cache is no longer needed.
-  cleanup-resources:
-    needs: [policy, detect-changes, build, e2e, publish-preview]
-    if: ${{ always() && needs.policy.outputs.run_privileged == 'true' }}
-    runs-on: ubuntu-latest
-    permissions: {}
-    timeout-minutes: 5
-    steps:
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24
-
-      - name: Install wrangler
-        run: npm install -g wrangler@latest
-
-      - name: Delete test workers and containers
-        continue-on-error: true
-        run: |
-          PR=${{ github.event.pull_request.number }}
-          CONTAINERS=$(wrangler containers list --json 2>/dev/null || echo "[]")
-
-          for suffix in "-http" "-websocket"; do
-            WORKER="sandbox-e2e-test-worker-pr-${PR}${suffix}"
-            IDS=$(echo "$CONTAINERS" | jq -r --arg worker "$WORKER" '.[] | select(.name | startswith($worker)) | .id' 2>/dev/null)
-            wrangler delete --name "$WORKER" 2>/dev/null || true
-            for id in $IDS; do
-              wrangler containers delete "$id" 2>/dev/null || true
-            done
-          done
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-
   # --- Gate job (required check for branch protection) ---
   gate:
     name: ci/gate
