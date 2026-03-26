@@ -1,5 +1,13 @@
 # @cloudflare/sandbox
 
+## 0.7.21
+
+### Patch Changes
+
+- [#523](https://github.com/cloudflare/sandbox-sdk/pull/523) [`e3fd7a6`](https://github.com/cloudflare/sandbox-sdk/commit/e3fd7a69a16bc50c36b80fda44301f326a160b91) Thanks [@dependabot](https://github.com/apps/dependabot)! - Bump picomatch
+
+- [#456](https://github.com/cloudflare/sandbox-sdk/pull/456) [`734f16d`](https://github.com/cloudflare/sandbox-sdk/commit/734f16d2b1787f5af6798858842d04d3f8dc1c5e) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - Structured logging for Workers Observability and Containers Logs. All operations emit queryable fields (`event`, `outcome`, `durationMs`, `command`, `exitCode`, `sessionId`) that can be filtered and aggregated in the dashboard. Presigned R2 URL parameters and embedded git URL credentials are redacted from all log fields. Set `SANDBOX_LOG_FORMAT=pretty` for readable local dev output.
+
 ## 0.7.20
 
 ### Patch Changes
@@ -203,13 +211,13 @@
   As a base image:
 
   ```dockerfile
-  FROM docker.io/cloudflare/sandbox:0.7.20-musl
+  FROM docker.io/cloudflare/sandbox:0.7.21-musl
   ```
 
   Or copy the binary into your own Alpine image:
 
   ```dockerfile
-  COPY --from=docker.io/cloudflare/sandbox:0.7.20-musl /container-server/sandbox /sandbox
+  COPY --from=docker.io/cloudflare/sandbox:0.7.21-musl /container-server/sandbox /sandbox
   ```
 
 - [#377](https://github.com/cloudflare/sandbox-sdk/pull/377) [`d83642e`](https://github.com/cloudflare/sandbox-sdk/commit/d83642e855f68e4fb8c15c2452709923e55a83fd) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Allow port 8787 in `exposePort()`. It was incorrectly blocked.
@@ -432,10 +440,10 @@
 
   ```dockerfile
   # Before
-  FROM cloudflare/sandbox:0.7.20
+  FROM cloudflare/sandbox:0.7.21
 
   # After
-  FROM cloudflare/sandbox:0.7.20-python
+  FROM cloudflare/sandbox:0.7.21-python
   ```
 
   Without this change, Python execution will fail with `PYTHON_NOT_AVAILABLE` error.
