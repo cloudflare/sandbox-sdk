@@ -47,7 +47,7 @@
     "@vitejs/plugin-react": "^5.1.1",
     "@vitest/ui": "^3.2.4",
     "fast-glob": "^3.3.3",
-    "happy-dom": "^20.0.10",
+    "happy-dom": "^20.8.9",
     "lefthook": "^2.0.4",
     "pkg-pr-new": "^0.0.60",
     "prettier": "^3.6.2",
