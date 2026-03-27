@@ -218,6 +218,21 @@ Turbo handles task orchestration (`turbo.json`) with dependency-aware builds.
 - Use the newly defined type everywhere appropriate for consistency
 - This ensures type safety and catches errors at compile time rather than runtime
 
+### Style Guide
+
+**Uppercase acronyms in identifiers.** When an acronym appears in a camelCase or
+PascalCase identifier, keep it fully uppercase:
+
+| ✅ Do             | ❌ Don't          |
+| ----------------- | ----------------- |
+| `SandboxRPCAPI`   | `SandboxRpcApi`   |
+| `containerURL`    | `containerUrl`    |
+| `parseHTTPHeader` | `parseHttpHeader` |
+| `getAPIKey`       | `getApiKey`       |
+
+This applies to all acronyms: API, URL, HTTP, RPC, SSE, SSH, DNS, ID, etc.
+Exception: library-provided names (e.g. capnweb's `RpcTarget`) keep their original casing.
+
 ### Git Commits
 
 See the **git-commit** skill (`.opencode/skill/git-commit/SKILL.md`) for detailed commit message guidelines.
