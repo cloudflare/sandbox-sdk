@@ -19,7 +19,6 @@ import type { TransportConfig, TransportMode } from './types';
 const DEFAULT_REQUEST_TIMEOUT_MS = 120_000; // 2 minutes for non-streaming requests
 const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 300_000; // 5 minutes idle timeout for streams
 const DEFAULT_CONNECT_TIMEOUT_MS = 30_000; // 30 seconds for WebSocket connection
-const MIN_TIME_FOR_CONNECT_RETRY_MS = 15_000; // Need 15s remaining to retry
 
 /**
  * Pending request tracker for response matching
@@ -204,41 +203,6 @@ export class WebSocketTransport extends BaseTransport {
     }
   }
 
-  private async fetchUpgradeWithRetry(
-    attemptUpgrade: () => Promise<Response>
-  ): Promise<Response> {
-    const retryTimeoutMs = this.getRetryTimeoutMs();
-    const startTime = Date.now();
-    let attempt = 0;
-
-    while (true) {
-      const response = await attemptUpgrade();
-
-      if (response.status !== 503) {
-        return response;
-      }
-
-      const elapsed = Date.now() - startTime;
-      const remaining = retryTimeoutMs - elapsed;
-
-      if (remaining <= MIN_TIME_FOR_CONNECT_RETRY_MS) {
-        return response;
-      }
-
-      const delay = Math.min(3000 * 2 ** attempt, 30000);
-
-      this.logger.info('WebSocket container not ready, retrying', {
-        status: response.status,
-        attempt: attempt + 1,
-        delayMs: delay,
-        remainingSec: Math.floor(remaining / 1000)
-      });
-
-      await this.sleep(delay);
-      attempt++;
-    }
-  }
-
   /**
    * Connect using fetch-based WebSocket (Cloudflare Workers style)
    * This is required when running inside a Durable Object.
@@ -250,14 +214,27 @@ export class WebSocketTransport extends BaseTransport {
     const timeoutMs =
       this.config.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS;
 
+    // Create abort controller for timeout
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
     try {
       // Build the WebSocket URL for the container
       const wsPath = new URL(this.config.wsUrl!).pathname;
       const httpUrl = `http://localhost:${this.config.port ?? DEFAULT_CONTROL_PORT}${wsPath}`;
 
-      const response = await this.fetchUpgradeWithRetry(() =>
-        this.fetchUpgradeAttempt(httpUrl, timeoutMs)
-      );
+      // Create a Request with WebSocket upgrade headers
+      const request = new Request(httpUrl, {
+        headers: {
+          Upgrade: 'websocket',
+          Connection: 'Upgrade'
+        },
+        signal: controller.signal
+      });
+
+      const response = await this.config.stub!.fetch(request);
+
+      clearTimeout(timeout);
 
       // Check if upgrade was successful
       if (response.status !== 101) {
@@ -286,34 +263,13 @@ export class WebSocketTransport extends BaseTransport {
         url: this.config.wsUrl
       });
     } catch (error) {
+      clearTimeout(timeout);
       this.state = 'error';
       this.logger.error(
         'WebSocket fetch connection failed',
         error instanceof Error ? error : new Error(String(error))
       );
       throw error;
-    }
-  }
-
-  private async fetchUpgradeAttempt(
-    httpUrl: string,
-    timeoutMs: number
-  ): Promise<Response> {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
-
-    try {
-      const request = new Request(httpUrl, {
-        headers: {
-          Upgrade: 'websocket',
-          Connection: 'Upgrade'
-        },
-        signal: controller.signal
-      });
-
-      return await this.config.stub!.fetch(request);
-    } finally {
-      clearTimeout(timeout);
     }
   }
 
