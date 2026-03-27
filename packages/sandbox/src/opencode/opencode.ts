@@ -83,7 +83,7 @@ async function ensureOpencodeServer(
   directory?: string,
   config?: Config,
   customEnv?: Record<string, string>
-): Promise<Process> {
+): Promise<{ process: Process; created: boolean }> {
   // Check if OpenCode is already running on this port
   const existingProcess = await findExistingOpencodeProcess(sandbox, port);
   if (existingProcess) {
@@ -113,21 +113,21 @@ async function ensureOpencodeServer(
       port,
       processId: existingProcess.id
     });
-    return existingProcess;
+    return { process: existingProcess, created: false };
   }
 
   // Try to start a new OpenCode server
   try {
-    return await startOpencodeServer(
+    const process = await startOpencodeServer(
       sandbox,
       port,
       directory,
       config,
       customEnv
     );
+    return { process, created: true };
   } catch (startupError) {
-    // Startup failed - check if another concurrent request started the server
-    // This handles the race condition where multiple requests try to start simultaneously
+    // A concurrent request may have started the server in the meantime
     const retryProcess = await findExistingOpencodeProcess(sandbox, port);
     if (retryProcess) {
       getLogger().debug(
@@ -155,7 +155,7 @@ async function ensureOpencodeServer(
           );
         }
       }
-      return retryProcess;
+      return { process: retryProcess, created: false };
     }
 
     // No concurrent server found - the failure was genuine
@@ -318,7 +318,7 @@ export async function createOpencodeServer(
   options?: OpencodeOptions
 ): Promise<OpencodeServer> {
   const port = options?.port ?? DEFAULT_PORT;
-  const process = await ensureOpencodeServer(
+  const { process, created } = await ensureOpencodeServer(
     sandbox,
     port,
     options?.directory,
@@ -326,11 +326,19 @@ export async function createOpencodeServer(
     options?.env
   );
 
-  return {
+  const server: OpencodeServer = {
     port,
     url: `http://localhost:${port}`,
+    process,
     close: () => process.kill('SIGTERM')
   };
+
+  // Call onStart only when the process was freshly created (not reused)
+  if (created && options?.onStart) {
+    await options.onStart(server);
+  }
+
+  return server;
 }
 
 /**

@@ -1,5 +1,6 @@
 import type { Config } from '@opencode-ai/sdk/v2';
 import type { OpencodeClient } from '@opencode-ai/sdk/v2/client';
+import type { Process } from '@repo/shared';
 import { ErrorCode, type OpencodeStartupContext } from '@repo/shared/errors';
 
 /**
@@ -14,6 +15,13 @@ export interface OpencodeOptions {
   config?: Config;
   /** Additional environment variables to pass to the OpenCode process */
   env?: Record<string, string>;
+  /**
+   * Called once when the OpenCode server process starts for the first time.
+   * Use this to set up logging, metrics, or other one-time initialization.
+   *
+   * @param server - The server handle with process, port, and url
+   */
+  onStart?: (server: OpencodeServer) => void | Promise<void>;
 }
 
 /**
@@ -24,6 +32,8 @@ export interface OpencodeServer {
   port: number;
   /** Base URL for SDK client (http://localhost:{port}) */
   url: string;
+  /** The underlying process running `opencode serve` */
+  process: Process;
   /** Close the server gracefully */
   close(): Promise<void>;
 }

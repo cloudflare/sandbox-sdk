@@ -338,6 +338,7 @@ describe('proxyToOpencodeServer', () => {
   const server: OpencodeServer = {
     port: 4096,
     url: 'http://localhost:4096',
+    process: {} as unknown as Process,
     close: vi.fn()
   };
 
@@ -375,6 +376,7 @@ describe('proxyToOpencode', () => {
   const server: OpencodeServer = {
     port: 4096,
     url: 'http://localhost:4096',
+    process: {} as unknown as Process,
     close: vi.fn()
   };
 
