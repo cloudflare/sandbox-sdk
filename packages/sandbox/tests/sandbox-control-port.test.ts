@@ -471,3 +471,98 @@ describe('CodeInterpreter client freshness after fallback', () => {
     expect(interpreterClient).toBe(newClient);
   });
 });
+
+describe('WebSocket upgrade startup handling', () => {
+  let sandbox: Sandbox;
+  let mockCtx: any;
+  let parentFetch: ReturnType<typeof vi.spyOn>;
+  let startWithLegacyFallback: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    mockCtx = createMockCtx();
+    sandbox = new Sandbox(mockCtx, {});
+    await vi.waitFor(() => {
+      expect(mockCtx.blockConcurrencyWhile).toHaveBeenCalled();
+    });
+
+    parentFetch = vi
+      .spyOn(Object.getPrototypeOf(Object.getPrototypeOf(sandbox)), 'fetch')
+      .mockResolvedValue(new Response('ok'));
+  });
+
+  afterEach(() => {
+    parentFetch?.mockRestore();
+    vi.restoreAllMocks();
+  });
+
+  it('calls startWithLegacyFallback before super.fetch for control-plane WebSocket when container is not running', async () => {
+    vi.spyOn(sandbox as any, 'getState').mockResolvedValue({
+      status: 'starting'
+    });
+    (sandbox as any).ctx.container = { running: false };
+
+    startWithLegacyFallback = vi
+      .spyOn(sandbox as any, 'startWithLegacyFallback')
+      .mockResolvedValue(undefined);
+
+    const request = new Request('http://localhost/ws', {
+      headers: { Upgrade: 'websocket', Connection: 'upgrade' }
+    });
+
+    await sandbox.fetch(request);
+
+    expect(startWithLegacyFallback).toHaveBeenCalledWith(
+      sandbox.defaultPort,
+      expect.anything()
+    );
+    expect(parentFetch).toHaveBeenCalled();
+  });
+
+  it('uses explicit target port for switched-port WebSocket startup', async () => {
+    vi.spyOn(sandbox as any, 'getState').mockResolvedValue({
+      status: 'starting'
+    });
+    (sandbox as any).ctx.container = { running: false };
+
+    startWithLegacyFallback = vi
+      .spyOn(sandbox as any, 'startWithLegacyFallback')
+      .mockResolvedValue(undefined);
+
+    const request = new Request('http://localhost/ws', {
+      headers: {
+        Upgrade: 'websocket',
+        Connection: 'upgrade',
+        'cf-container-target-port': '8080'
+      }
+    });
+
+    await sandbox.fetch(request);
+
+    expect(startWithLegacyFallback).toHaveBeenCalledWith(
+      8080,
+      expect.anything()
+    );
+    expect(parentFetch).toHaveBeenCalled();
+  });
+
+  it('skips startup when container is already healthy and running', async () => {
+    vi.spyOn(sandbox as any, 'getState').mockResolvedValue({
+      status: 'healthy'
+    });
+    (sandbox as any).ctx.container = { running: true };
+
+    startWithLegacyFallback = vi
+      .spyOn(sandbox as any, 'startWithLegacyFallback')
+      .mockResolvedValue(undefined);
+
+    const request = new Request('http://localhost/ws', {
+      headers: { Upgrade: 'websocket', Connection: 'upgrade' }
+    });
+
+    await sandbox.fetch(request);
+
+    expect(startWithLegacyFallback).not.toHaveBeenCalled();
+    expect(parentFetch).toHaveBeenCalled();
+  });
+});
