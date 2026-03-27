@@ -12,44 +12,40 @@ export class LoggingMiddleware implements Middleware {
   ): Promise<Response> {
     const startTime = Date.now();
     const method = request.method;
-    const pathname = new URL(request.url).pathname;
+    const url = new URL(request.url);
+    const pathname = url.pathname;
 
-    this.logger.info('Request started', {
-      requestId: context.requestId,
-      method,
-      pathname,
-      sessionId: context.sessionId,
-      timestamp: context.timestamp.toISOString()
-    });
+    let response: Response | undefined;
+    let requestError: Error | undefined;
 
     try {
-      const response = await next();
-      const duration = Date.now() - startTime;
-
-      this.logger.info('Request completed', {
-        requestId: context.requestId,
-        method,
-        pathname,
-        status: response.status,
-        duration
-      });
-
+      response = await next();
       return response;
     } catch (error) {
-      const duration = Date.now() - startTime;
-
-      this.logger.error(
-        'Request failed',
-        error instanceof Error ? error : new Error('Unknown error'),
-        {
-          requestId: context.requestId,
-          method,
-          pathname,
-          duration
-        }
-      );
-
+      requestError =
+        error instanceof Error ? error : new Error('Unknown request failure');
       throw error;
+    } finally {
+      const statusCode = response?.status ?? 500;
+      const durationMs = Date.now() - startTime;
+      const isError = statusCode >= 500 || Boolean(requestError);
+
+      const wideEvent: Record<string, unknown> = {
+        method,
+        pathname,
+        statusCode,
+        durationMs,
+        requestId: context.requestId,
+        sessionId: context.sessionId,
+        sandboxId: context.sandboxId
+      };
+
+      const msg = `${method} ${pathname} ${statusCode}`;
+      if (statusCode >= 500) {
+        this.logger.warn(msg, { ...wideEvent, error: requestError?.message });
+      } else {
+        this.logger.debug(msg, wideEvent);
+      }
     }
   }
 }

@@ -1,4 +1,3 @@
-import { switchPort } from '@cloudflare/containers';
 import type { PtyOptions } from '@repo/shared';
 
 export async function proxyTerminal(
@@ -24,5 +23,5 @@ export async function proxyTerminal(
   const ptyUrl = `http://localhost/ws/pty?${params}`;
   const ptyRequest = new Request(ptyUrl, request);
 
-  return stub.fetch(switchPort(ptyRequest, 3000));
+  return stub.fetch(ptyRequest);
 }

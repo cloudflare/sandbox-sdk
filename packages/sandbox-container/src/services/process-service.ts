@@ -1,4 +1,4 @@
-import type { Logger } from '@repo/shared';
+import { type Logger, logCanonicalEvent } from '@repo/shared';
 import type {
   CommandErrorContext,
   ProcessErrorContext,
@@ -57,9 +57,12 @@ export class ProcessService {
       const result = await this.sessionManager.executeInSession(
         sessionId,
         command,
-        options.cwd,
-        options.timeoutMs,
-        options.env
+        {
+          cwd: options.cwd,
+          timeoutMs: options.timeoutMs,
+          env: options.env,
+          origin: options.origin
+        }
       );
 
       if (!result.success) {
@@ -81,11 +84,6 @@ export class ProcessService {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(
-        'Failed to execute command',
-        error instanceof Error ? error : undefined,
-        { command, options }
-      );
 
       return {
         success: false,
@@ -109,6 +107,7 @@ export class ProcessService {
     command: string,
     options: ProcessOptions = {}
   ): Promise<ServiceResult<ProcessRecord>> {
+    const startTime = Date.now();
     try {
       // 1. Validate command (business logic via manager)
       const validation = this.manager.validateCommand(command);
@@ -153,6 +152,16 @@ export class ProcessService {
           if (event.type === 'start' && event.pid !== undefined) {
             processRecord.pid = event.pid;
             await this.store.update(processRecord.id, { pid: event.pid });
+            logCanonicalEvent(this.logger, {
+              event: 'process.start',
+              outcome: 'success',
+              command: command,
+              pid: event.pid,
+              durationMs: Date.now() - startTime,
+              processId: processRecord.id,
+              sessionId,
+              origin: options.origin
+            });
           } else if (event.type === 'stdout' && event.data) {
             processRecord.stdout += event.data;
             processRecord.outputListeners.forEach((listener) => {
@@ -171,6 +180,21 @@ export class ProcessService {
             processRecord.status = status;
             processRecord.endTime = endTime;
             processRecord.exitCode = exitCode;
+
+            logCanonicalEvent(this.logger, {
+              event: 'process.exit',
+              outcome: 'success',
+              command: command,
+              pid: processRecord.pid,
+              exitCode: exitCode,
+              durationMs:
+                processRecord.startTime instanceof Date
+                  ? endTime.getTime() - processRecord.startTime.getTime()
+                  : Date.now() - startTime,
+              processId: processRecord.id,
+              sessionId,
+              origin: options.origin
+            });
 
             processRecord.statusListeners.forEach((listener) => {
               listener(status);
@@ -199,16 +223,23 @@ export class ProcessService {
               listener('error');
             });
 
-            this.logger.error(
-              'Streaming command error',
-              new Error(event.error),
-              { processId: processRecord.id }
-            );
+            logCanonicalEvent(this.logger, {
+              event: 'process.error',
+              outcome: 'error',
+              command,
+              processId: processRecord.id,
+              sessionId,
+              durationMs: Date.now() - startTime,
+              errorMessage: event.error,
+              error: new Error(event.error),
+              origin: options.origin
+            });
           }
         },
         {
           cwd: options.cwd,
-          env: options.env
+          env: options.env,
+          origin: options.origin
         },
         processRecordData.id, // Pass process ID as commandId for tracking and killing
         { background: true } // Release lock after startup
@@ -222,9 +253,10 @@ export class ProcessService {
       // This ensures all output is captured before returning logs
       processRecord.streamingComplete =
         streamResult.data.continueStreaming.catch((error) => {
-          this.logger.error('Failed to execute streaming command', error, {
+          this.logger.debug('process.streamComplete', {
             processId: processRecord.id,
-            command
+            outcome: 'error',
+            errorMessage: error instanceof Error ? error.message : String(error)
           });
         });
 
@@ -235,11 +267,6 @@ export class ProcessService {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(
-        'Failed to start streaming command',
-        error instanceof Error ? error : undefined,
-        { command, options }
-      );
 
       return {
         success: false,
@@ -312,11 +339,6 @@ export class ProcessService {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(
-        'Failed to get process',
-        error instanceof Error ? error : undefined,
-        { processId: id }
-      );
 
       return {
         success: false,
@@ -373,11 +395,6 @@ export class ProcessService {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(
-        'Failed to kill process',
-        error instanceof Error ? error : undefined,
-        { processId: id }
-      );
 
       return {
         success: false,
@@ -406,11 +423,6 @@ export class ProcessService {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(
-        'Failed to list processes',
-        error instanceof Error ? error : undefined,
-        { filters }
-      );
 
       return {
         success: false,
@@ -445,10 +457,6 @@ export class ProcessService {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(
-        'Failed to kill all processes',
-        error instanceof Error ? error : undefined
-      );
 
       return {
         success: false,

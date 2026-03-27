@@ -15,12 +15,119 @@
 
 import { type ChildProcess, spawn } from 'node:child_process';
 import { constants } from 'node:os';
+import { createInterface } from 'node:readline';
+import type { Logger } from '@repo/shared';
 import { createLogger } from '@repo/shared';
 import { registerShutdownHandlers, startServer } from './server';
 
 const logger = createLogger({ component: 'container' });
+const ANSI_ESCAPE_REGEX =
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: ANSI escape codes are intentional
+  /\u001b\[[0-9;]*[A-Za-z]/g;
 
-async function main(): Promise<void> {
+const MAX_LOG_LINE_LENGTH = 4000;
+
+function normalizeLogLine(line: string): string | null {
+  const cleaned = line.replace(ANSI_ESCAPE_REGEX, '').trim();
+  if (!cleaned) {
+    return null;
+  }
+  if (cleaned.length > MAX_LOG_LINE_LENGTH) {
+    return `${cleaned.slice(0, MAX_LOG_LINE_LENGTH)}...[truncated ${cleaned.length - MAX_LOG_LINE_LENGTH} chars]`;
+  }
+  return cleaned;
+}
+
+interface SupervisorChildProcess {
+  exitCode: number | null;
+  kill(signal?: NodeJS.Signals): boolean;
+}
+
+interface SupervisorControllerOptions {
+  cleanup: () => Promise<void>;
+  getChild: () => SupervisorChildProcess | null;
+  exit?: (code: number) => void;
+  logger?: Logger;
+}
+
+export interface SupervisorController {
+  isShuttingDown: () => boolean;
+  onChildExit: (code: number | null, signal: NodeJS.Signals | null) => void;
+  onSignal: (signal: NodeJS.Signals) => Promise<void>;
+}
+
+export function createSupervisorController({
+  cleanup,
+  getChild,
+  exit = process.exit,
+  logger: controllerLogger = logger
+}: SupervisorControllerOptions): SupervisorController {
+  let shuttingDown = false;
+
+  return {
+    isShuttingDown: () => shuttingDown,
+    onChildExit: (code, signal) => {
+      if (shuttingDown) {
+        return;
+      }
+
+      if (signal) {
+        controllerLogger.info('User command killed by signal', { signal });
+        const signalNum = constants.signals[signal] ?? 15;
+        exit(128 + signalNum);
+        return;
+      }
+
+      if (code !== 0) {
+        controllerLogger.info('User command failed', { exitCode: code });
+        exit(code ?? 1);
+        return;
+      }
+
+      controllerLogger.info(
+        'User command completed successfully, server continues running'
+      );
+    },
+    onSignal: async (signal) => {
+      if (shuttingDown) {
+        return;
+      }
+
+      shuttingDown = true;
+      controllerLogger.info('Received supervisor shutdown signal', { signal });
+
+      const child = getChild();
+      if (child && child.exitCode === null) {
+        controllerLogger.info('Forwarding signal to child', { signal });
+        child.kill(signal);
+      }
+
+      try {
+        await cleanup();
+        exit(0);
+      } catch (error) {
+        controllerLogger.error(
+          'Supervisor cleanup failed',
+          error instanceof Error ? error : new Error(String(error))
+        );
+        exit(1);
+      }
+    }
+  };
+}
+
+export function registerSupervisorShutdownHandlers(
+  controller: SupervisorController
+): void {
+  process.on('SIGTERM', () => {
+    void controller.onSignal('SIGTERM');
+  });
+  process.on('SIGINT', () => {
+    void controller.onSignal('SIGINT');
+  });
+}
+
+export async function main(): Promise<void> {
   const userCmd = process.argv.slice(2);
 
   logger.info('Starting sandbox entrypoint', {
@@ -44,50 +151,69 @@ async function main(): Promise<void> {
 
   let child: ChildProcess | null = null;
 
-  // Register signal handlers before spawn to avoid race window
-  const forwardSignal = (signal: NodeJS.Signals) => {
-    if (child && !child.killed) {
-      logger.info('Forwarding signal to child', { signal });
-      child.kill(signal);
-    }
-  };
-  process.on('SIGTERM', () => forwardSignal('SIGTERM'));
-  process.on('SIGINT', () => forwardSignal('SIGINT'));
+  const controller = createSupervisorController({
+    cleanup,
+    getChild: () => child,
+    logger
+  });
+  registerSupervisorShutdownHandlers(controller);
 
   logger.info('Spawning user command', {
     command: userCmd[0],
     args: userCmd.slice(1)
   });
 
+  const useRawChildStdio = process.env.SANDBOX_RAW_CHILD_STDIO === '1';
+
   child = spawn(userCmd[0], userCmd.slice(1), {
-    stdio: 'inherit',
+    stdio: useRawChildStdio ? 'inherit' : 'pipe',
     env: process.env,
     shell: false
   });
 
+  if (!useRawChildStdio) {
+    const stdout = child.stdout;
+    const stderr = child.stderr;
+
+    if (stdout) {
+      const stdoutReader = createInterface({ input: stdout });
+      stdoutReader.on('line', (line) => {
+        const message = normalizeLogLine(line);
+        if (!message) {
+          return;
+        }
+        logger.debug('User command stdout', { message });
+      });
+    }
+
+    if (stderr) {
+      const stderrReader = createInterface({ input: stderr });
+      stderrReader.on('line', (line) => {
+        const message = normalizeLogLine(line);
+        if (!message) {
+          return;
+        }
+        logger.debug('User command stderr', { message });
+      });
+    }
+  }
+
   child.on('error', (err) => {
     logger.error('Failed to spawn user command', err, { command: userCmd[0] });
+    if (controller.isShuttingDown()) {
+      return;
+    }
     process.exit(1);
   });
 
   child.on('exit', (code, signal) => {
-    if (signal) {
-      logger.info('User command killed by signal', { signal });
-      // Unix convention: 128 + signal number
-      const signalNum = constants.signals[signal] ?? 15;
-      process.exit(128 + signalNum);
-    } else if (code !== 0) {
-      logger.info('User command failed', { exitCode: code });
-      process.exit(code ?? 1);
-    } else {
-      logger.info(
-        'User command completed successfully, server continues running'
-      );
-    }
+    controller.onChildExit(code, signal);
   });
 }
 
-main().catch((err) => {
-  logger.error('Entrypoint failed', err);
-  process.exit(1);
-});
+if (import.meta.main) {
+  main().catch((err) => {
+    logger.error('Entrypoint failed', err);
+    process.exit(1);
+  });
+}

@@ -71,11 +71,9 @@ describe('GitService', () => {
             // Only pass cwd if it's defined to match test expectations
             const result =
               options?.cwd !== undefined
-                ? await mockSessionManager.executeInSession(
-                    _sessionId,
-                    cmd,
-                    options.cwd
-                  )
+                ? await mockSessionManager.executeInSession(_sessionId, cmd, {
+                    cwd: options.cwd
+                  })
                 : await mockSessionManager.executeInSession(_sessionId, cmd);
             if (result.success) {
               return result.data;
@@ -105,8 +103,8 @@ describe('GitService', () => {
 
     gitService = new GitService(
       mockSecurityService,
-      mockLogger,
-      mockSessionManager
+      mockSessionManager,
+      mockLogger
     );
   });
 
@@ -161,7 +159,7 @@ describe('GitService', () => {
         2,
         'default',
         "'git' 'branch' '--show-current'",
-        '/workspace/repo'
+        { cwd: '/workspace/repo' }
       );
     });
 
@@ -371,7 +369,7 @@ describe('GitService', () => {
       expect(mockSessionManager.executeInSession).toHaveBeenCalledWith(
         'session-123',
         "'git' 'checkout' 'develop'",
-        '/tmp/repo'
+        { cwd: '/tmp/repo', origin: 'internal' }
       );
     });
 
@@ -434,7 +432,7 @@ describe('GitService', () => {
       expect(mockSessionManager.executeInSession).toHaveBeenCalledWith(
         'session-123',
         "'git' 'branch' '--show-current'",
-        '/tmp/repo'
+        { cwd: '/tmp/repo', origin: 'internal' }
       );
     });
   });
@@ -477,7 +475,7 @@ describe('GitService', () => {
       expect(mockSessionManager.executeInSession).toHaveBeenCalledWith(
         'session-123',
         "'git' 'branch' '-a'",
-        '/tmp/repo'
+        { cwd: '/tmp/repo', origin: 'internal' }
       );
     });
 

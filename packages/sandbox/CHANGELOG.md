@@ -1,5 +1,37 @@
 # @cloudflare/sandbox
 
+## 0.8.0
+
+### Minor Changes
+
+- [#519](https://github.com/cloudflare/sandbox-sdk/pull/519) [`4103149`](https://github.com/cloudflare/sandbox-sdk/commit/41031498a412f2bff125254d8d5b904a508b3847) Thanks [@scuffi](https://github.com/scuffi)! - Add outbound HTTP interception for sandboxes. Define `outbound` or `outboundByHost` handlers on your Sandbox class to intercept, modify, or block HTTP requests made from within the sandbox -- with full access to Workers bindings like KV and R2. `ContainerProxy` is now exported directly from `@cloudflare/sandbox`. Requires `@cloudflare/containers` 0.2.0+.
+
+## 0.7.21
+
+### Patch Changes
+
+- [#523](https://github.com/cloudflare/sandbox-sdk/pull/523) [`e3fd7a6`](https://github.com/cloudflare/sandbox-sdk/commit/e3fd7a69a16bc50c36b80fda44301f326a160b91) Thanks [@dependabot](https://github.com/apps/dependabot)! - Bump picomatch
+
+- [#456](https://github.com/cloudflare/sandbox-sdk/pull/456) [`734f16d`](https://github.com/cloudflare/sandbox-sdk/commit/734f16d2b1787f5af6798858842d04d3f8dc1c5e) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - Structured logging for Workers Observability and Containers Logs. All operations emit queryable fields (`event`, `outcome`, `durationMs`, `command`, `exitCode`, `sessionId`) that can be filtered and aggregated in the dashboard. Presigned R2 URL parameters and embedded git URL credentials are redacted from all log fields. Set `SANDBOX_LOG_FORMAT=pretty` for readable local dev output.
+
+## 0.7.20
+
+### Patch Changes
+
+- [#500](https://github.com/cloudflare/sandbox-sdk/pull/500) [`fcfb350`](https://github.com/cloudflare/sandbox-sdk/commit/fcfb35021860927548cd7209f6fc7bea38c53e04) Thanks [@aron-cf](https://github.com/aron-cf)! - Bump wrangler to 4.76.0
+
+- [#486](https://github.com/cloudflare/sandbox-sdk/pull/486) [`db66675`](https://github.com/cloudflare/sandbox-sdk/commit/db66675d437de051384fc6802c30d0785decfaec) Thanks [@berry1001](https://github.com/berry1001)! - Fix supervisor-mode sandbox shutdown so inactivity `SIGTERM` cleanly exits the `/sandbox` process even when the user CMD has already exited or daemonized work in the background.
+
+## 0.7.19
+
+### Patch Changes
+
+- [#503](https://github.com/cloudflare/sandbox-sdk/pull/503) [`05caafc`](https://github.com/cloudflare/sandbox-sdk/commit/05caafc1a746bc98e293776836bb9ae1fdd2f332) Thanks [@scuffi](https://github.com/scuffi)! - Add automatic detection of S3 credentials when mounting buckets. Now we do not need to explicitly declare credentials when mounting buckets if they are set as environment variables in the Durable Object.
+
+- [`1c3b75b`](https://github.com/cloudflare/sandbox-sdk/commit/1c3b75b00b3514fbd54ffca7735da5ca3899c6fc) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Fix `sleepAfter` configuration silently reverting to the default after the sandbox restarts. The configured sleep timeout is now retained reliably across the sandbox lifecycle.
+
+- [#507](https://github.com/cloudflare/sandbox-sdk/pull/507) [`5e55a38`](https://github.com/cloudflare/sandbox-sdk/commit/5e55a38280f96a84b145d8c4074eb71b4d3f15ff) Thanks [@whoiskatrin](https://github.com/whoiskatrin)! - Reduce waitIntervalMS default to 300ms
+
 ## 0.7.18
 
 ### Patch Changes
@@ -185,13 +217,13 @@
   As a base image:
 
   ```dockerfile
-  FROM docker.io/cloudflare/sandbox:0.7.18-musl
+  FROM docker.io/cloudflare/sandbox:0.7.2-musl
   ```
 
   Or copy the binary into your own Alpine image:
 
   ```dockerfile
-  COPY --from=docker.io/cloudflare/sandbox:0.7.18-musl /container-server/sandbox /sandbox
+  COPY --from=docker.io/cloudflare/sandbox:0.7.2-musl /container-server/sandbox /sandbox
   ```
 
 - [#377](https://github.com/cloudflare/sandbox-sdk/pull/377) [`d83642e`](https://github.com/cloudflare/sandbox-sdk/commit/d83642e855f68e4fb8c15c2452709923e55a83fd) Thanks [@ghostwriternr](https://github.com/ghostwriternr)! - Allow port 8787 in `exposePort()`. It was incorrectly blocked.
@@ -414,10 +446,10 @@
 
   ```dockerfile
   # Before
-  FROM cloudflare/sandbox:0.7.18
+  FROM cloudflare/sandbox:0.6.0
 
   # After
-  FROM cloudflare/sandbox:0.7.18-python
+  FROM cloudflare/sandbox:0.6.0-python
   ```
 
   Without this change, Python execution will fail with `PYTHON_NOT_AVAILABLE` error.

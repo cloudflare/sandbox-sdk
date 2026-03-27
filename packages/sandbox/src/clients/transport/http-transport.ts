@@ -1,3 +1,4 @@
+import { DEFAULT_CONTROL_PORT } from '@repo/shared';
 import { BaseTransport } from './base-transport';
 import type { TransportConfig, TransportMode } from './types';
 
@@ -12,7 +13,9 @@ export class HttpTransport extends BaseTransport {
 
   constructor(config: TransportConfig) {
     super(config);
-    this.baseUrl = config.baseUrl ?? 'http://localhost:3000';
+    this.baseUrl =
+      config.baseUrl ??
+      `http://localhost:${config.port ?? DEFAULT_CONTROL_PORT}`;
   }
 
   getMode(): TransportMode {
@@ -50,10 +53,11 @@ export class HttpTransport extends BaseTransport {
   async fetchStream(
     path: string,
     body?: unknown,
-    method: 'GET' | 'POST' = 'POST'
+    method: 'GET' | 'POST' = 'POST',
+    headers?: Record<string, string>
   ): Promise<ReadableStream<Uint8Array>> {
     const url = this.buildUrl(path);
-    const options = this.buildStreamOptions(body, method);
+    const options = this.buildStreamOptions(body, method, headers);
 
     let response: Response;
     if (this.config.stub) {
@@ -87,14 +91,15 @@ export class HttpTransport extends BaseTransport {
 
   private buildStreamOptions(
     body: unknown,
-    method: 'GET' | 'POST'
+    method: 'GET' | 'POST',
+    headers?: Record<string, string>
   ): RequestInit {
     return {
       method,
       headers:
         body && method === 'POST'
-          ? { 'Content-Type': 'application/json' }
-          : undefined,
+          ? { ...headers, 'Content-Type': 'application/json' }
+          : headers,
       body: body && method === 'POST' ? JSON.stringify(body) : undefined
     };
   }

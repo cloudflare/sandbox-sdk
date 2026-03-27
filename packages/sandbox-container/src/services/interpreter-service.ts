@@ -72,11 +72,6 @@ export class InterpreterService {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(
-        'Failed to get health status',
-        error instanceof Error ? error : undefined
-      );
-
       return {
         success: false,
         error: {
@@ -139,11 +134,6 @@ export class InterpreterService {
 
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(
-        'Failed to create context',
-        error instanceof Error ? error : undefined,
-        { request }
-      );
 
       if (error instanceof InterpreterNotReadyError) {
         return {
@@ -200,11 +190,6 @@ export class InterpreterService {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(
-        'Failed to list contexts',
-        error instanceof Error ? error : undefined
-      );
-
       return {
         success: false,
         error: {
@@ -243,15 +228,10 @@ export class InterpreterService {
           context.language as InterpreterLanguage
         );
       } catch (error) {
-        this.logger.error(
-          'Failed to release executor for context',
-          error as Error,
-          {
-            contextId,
-            language: context.language
-          }
+        throw new Error(
+          `Failed to release executor for context '${contextId}'`,
+          { cause: error }
         );
-        throw error;
       } finally {
         // Always remove context from map, even if release fails
         this.contexts.delete(contextId);
@@ -263,12 +243,6 @@ export class InterpreterService {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(
-        'Failed to delete context',
-        error instanceof Error ? error : undefined,
-        { contextId }
-      );
-
       return {
         success: false,
         error: {
@@ -450,12 +424,6 @@ export class InterpreterService {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(
-        'Failed to execute code',
-        error instanceof Error ? error : undefined,
-        { contextId }
-      );
-
       // Return error as JSON response
       return new Response(
         JSON.stringify({
@@ -491,9 +459,6 @@ export class InterpreterService {
       case 'ts':
         return 'typescript';
       default:
-        this.logger.warn('Unknown language, defaulting to python', {
-          requestedLanguage: language
-        });
         return 'python';
     }
   }

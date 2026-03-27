@@ -33,9 +33,11 @@ import type {
 } from '@repo/shared';
 import {
   createLogger,
+  DEFAULT_CONTROL_PORT,
   filterEnvVars,
   getEnvString,
   isTerminalStatus,
+  logCanonicalEvent,
   partitionEnvVars,
   type SessionDeleteResult,
   shellEscape,
@@ -111,6 +113,11 @@ type ConfigurableSandboxStub = {
     timeouts: NonNullable<SandboxOptions['containerTimeouts']>
   ) => Promise<void>;
 };
+
+const LEGACY_CONTROL_PORT = 3000;
+
+/** Header used by @cloudflare/containers switchPort() to target a specific container port. */
+const CONTAINER_TARGET_PORT_HEADER = 'cf-container-target-port';
 
 const sandboxConfigurationCache = new WeakMap<
   object,
@@ -374,9 +381,9 @@ export function connect(stub: {
   fetch: (request: Request) => Promise<Response>;
 }) {
   return async (request: Request, port: number) => {
-    if (!validatePort(port)) {
+    if (!Number.isInteger(port) || port < 1024 || port > 65535) {
       throw new SecurityError(
-        `Invalid port number: ${port}. Must be 1024-65535, excluding 3000 (sandbox control plane).`
+        `Invalid port number: ${port}. Must be an integer between 1024 and 65535.`
       );
     }
     const portSwitchedRequest = switchPort(request, port);
@@ -404,7 +411,7 @@ function isR2Bucket(value: unknown): value is R2Bucket {
 }
 
 export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
-  defaultPort = 3000; // Default port for the container's Bun server
+  defaultPort = DEFAULT_CONTROL_PORT; // Overridden in constructor if SANDBOX_CONTROL_PORT env var is set
   sleepAfter: string | number = '10m'; // Sleep the sandbox if no requests are made in this timeframe
 
   client: SandboxClient;
@@ -454,8 +461,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     portReadyTimeoutMS: 90_000, // 90 seconds (allows for heavy containers)
 
     // Polling interval for checking container readiness
-    // @cloudflare/containers default: 300ms (too aggressive)
-    waitIntervalMS: 1000 // 1 second (reduces load)
+    waitIntervalMS: 300
   };
 
   /**
@@ -540,14 +546,19 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * Create a SandboxClient with current transport settings
    */
   private createSandboxClient(): SandboxClient {
+    const port = this.defaultPort;
     return new SandboxClient({
       logger: this.logger,
-      port: 3000,
+      port,
       stub: this,
+      baseUrl: `http://localhost:${port}`,
       retryTimeoutMs: this.computeRetryTimeoutMs(),
+      defaultHeaders: {
+        'X-Sandbox-Id': this.ctx.id.toString()
+      },
       ...(this.transport === 'websocket' && {
         transportMode: 'websocket' as const,
-        wsUrl: 'ws://localhost:3000/ws'
+        wsUrl: `ws://localhost:${port}/ws`
       })
     });
   }
@@ -556,6 +567,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     super(ctx, env);
 
     const envObj = env as Record<string, unknown>;
+
+    // Read control port from env (must happen before createSandboxClient)
+    const controlPortStr = getEnvString(envObj, 'SANDBOX_CONTROL_PORT');
+    if (controlPortStr) {
+      this.defaultPort = parseInt(controlPortStr, 10) || DEFAULT_CONTROL_PORT;
+    }
+    this.envVars.SANDBOX_CONTROL_PORT = String(this.defaultPort);
     // Set sandbox environment variables from env object
     const sandboxEnvKeys = ['SANDBOX_LOG_LEVEL', 'SANDBOX_LOG_FORMAT'] as const;
     sandboxEnvKeys.forEach((key) => {
@@ -632,6 +650,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         // Update the transport retry budget to reflect stored timeouts
         this.client.setRetryTimeoutMs(this.computeRetryTimeoutMs());
       }
+
+      // Restore sleep timeout if previously set via RPC
+      const storedSleepAfter = await this.ctx.storage.get<string | number>(
+        'sleepAfter'
+      );
+      if (storedSleepAfter !== undefined) {
+        this.sleepAfter = storedSleepAfter;
+        this.renewActivityTimeout();
+      }
     });
   }
 
@@ -686,6 +713,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   // RPC method to set the sleep timeout
   async setSleepAfter(sleepAfter: string | number): Promise<void> {
     this.sleepAfter = sleepAfter;
+    await this.ctx.storage.put('sleepAfter', sleepAfter);
     // Reschedule activity timeout to apply the new sleepAfter value immediately
     this.renewActivityTimeout();
   }
@@ -714,7 +742,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
         const result = await this.client.commands.execute(
           unsetCommand,
-          this.defaultSession
+          this.defaultSession,
+          { origin: 'internal' }
         );
 
         if (result.exitCode !== 0) {
@@ -729,7 +758,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
         const result = await this.client.commands.execute(
           exportCommand,
-          this.defaultSession
+          this.defaultSession,
+          { origin: 'internal' }
         );
 
         if (result.exitCode !== 0) {
@@ -893,8 +923,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     mountPath: string,
     options: MountBucketOptions
   ): Promise<void> {
-    this.logger.info(`Mounting bucket ${bucket} to ${mountPath}`);
-
     if ('localBucket' in options && options.localBucket) {
       await this.mountBucketLocal(bucket, mountPath, options);
       return;
@@ -915,58 +943,77 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     mountPath: string,
     options: LocalMountBucketOptions
   ): Promise<void> {
-    const envObj = this.env as Record<string, unknown>;
-    const r2Binding = envObj[bucket];
-    if (!r2Binding || !isR2Bucket(r2Binding)) {
-      throw new InvalidMountConfigError(
-        `R2 binding "${bucket}" not found in env or is not an R2Bucket. ` +
-          'Make sure the binding name matches your wrangler.jsonc R2 binding.'
-      );
-    }
-
-    if (!mountPath || !mountPath.startsWith('/')) {
-      throw new InvalidMountConfigError(
-        `Invalid mount path: "${mountPath}". Must be an absolute path starting with /`
-      );
-    }
-
-    if (this.activeMounts.has(mountPath)) {
-      throw new InvalidMountConfigError(
-        `Mount path already in use: ${mountPath}`
-      );
-    }
-
-    const sessionId = await this.ensureDefaultSession();
-
-    const syncManager = new LocalMountSyncManager({
-      bucket: r2Binding,
-      mountPath,
-      prefix: options.prefix,
-      readOnly: options.readOnly ?? false,
-      client: this.client,
-      sessionId,
-      logger: this.logger
-    });
-
-    const mountInfo: LocalSyncMountInfo = {
-      mountType: 'local-sync',
-      bucket,
-      mountPath,
-      syncManager,
-      mounted: false
-    };
-    this.activeMounts.set(mountPath, mountInfo);
+    const mountStartTime = Date.now();
+    let mountOutcome: 'success' | 'error' = 'error';
+    let mountError: Error | undefined;
 
     try {
-      await syncManager.start();
-      mountInfo.mounted = true;
-      this.logger.info(
-        `Successfully mounted bucket ${bucket} to ${mountPath} (local sync)`
-      );
+      const envObj = this.env as Record<string, unknown>;
+      const r2Binding = envObj[bucket];
+      if (!r2Binding || !isR2Bucket(r2Binding)) {
+        throw new InvalidMountConfigError(
+          `R2 binding "${bucket}" not found in env or is not an R2Bucket. ` +
+            'Make sure the binding name matches your wrangler.jsonc R2 binding.'
+        );
+      }
+
+      if (!mountPath || !mountPath.startsWith('/')) {
+        throw new InvalidMountConfigError(
+          `Invalid mount path: "${mountPath}". Must be an absolute path starting with /`
+        );
+      }
+
+      if (this.activeMounts.has(mountPath)) {
+        throw new InvalidMountConfigError(
+          `Mount path already in use: ${mountPath}`
+        );
+      }
+
+      const sessionId = await this.ensureDefaultSession();
+
+      const syncManager = new LocalMountSyncManager({
+        bucket: r2Binding,
+        mountPath,
+        prefix: options.prefix,
+        readOnly: options.readOnly ?? false,
+        client: this.client,
+        sessionId,
+        logger: this.logger
+      });
+
+      const mountInfo: LocalSyncMountInfo = {
+        mountType: 'local-sync',
+        bucket,
+        mountPath,
+        syncManager,
+        mounted: false
+      };
+      this.activeMounts.set(mountPath, mountInfo);
+
+      try {
+        await syncManager.start();
+        mountInfo.mounted = true;
+      } catch (error) {
+        await syncManager.stop();
+        this.activeMounts.delete(mountPath);
+        throw error;
+      }
+
+      mountOutcome = 'success';
     } catch (error) {
-      await syncManager.stop();
-      this.activeMounts.delete(mountPath);
+      mountError = error instanceof Error ? error : new Error(String(error));
       throw error;
+    } finally {
+      logCanonicalEvent(this.logger, {
+        event: 'bucket.mount',
+        outcome: mountOutcome,
+        durationMs: Date.now() - mountStartTime,
+        bucket,
+        mountPath,
+        provider: 'local-sync',
+        prefix: options.prefix,
+        error: mountError
+      });
     }
   }
 
@@ -978,44 +1025,59 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     mountPath: string,
     options: RemoteMountBucketOptions
   ): Promise<void> {
+    const mountStartTime = Date.now();
     const prefix = options.prefix || undefined;
-
-    this.validateMountOptions(bucket, mountPath, { ...options, prefix });
-
-    // Build s3fs source: bucket name with optional prefix (e.g., "mybucket:/prefix/")
-    const s3fsSource = buildS3fsSource(bucket, prefix);
-    const provider: BucketProvider | null =
-      options.provider || detectProviderFromUrl(options.endpoint);
-
-    this.logger.debug(`Detected provider: ${provider || 'unknown'}`, {
-      explicitProvider: options.provider,
-      prefix
-    });
-
-    // Detect credentials
-    const credentials = detectCredentials(options, this.envVars);
-
-    // Generate unique password file path
-    const passwordFilePath = this.generatePasswordFilePath();
-
-    // Reserve mount path before async operations so concurrent mounts see it
-    const mountInfo: FuseMountInfo = {
-      mountType: 'fuse',
-      bucket: s3fsSource,
-      mountPath,
-      endpoint: options.endpoint,
-      provider,
-      passwordFilePath,
-      mounted: false
-    };
-    this.activeMounts.set(mountPath, mountInfo);
-
+    let mountOutcome: 'success' | 'error' = 'error';
+    let mountError: Error | undefined;
+    let passwordFilePath: string | undefined;
+    let provider: BucketProvider | null = null;
     try {
+      this.validateMountOptions(bucket, mountPath, { ...options, prefix });
+
+      // Build s3fs source: bucket name with optional prefix (e.g., "mybucket:/prefix/")
+      const s3fsSource = buildS3fsSource(bucket, prefix);
+      provider = options.provider || detectProviderFromUrl(options.endpoint);
+
+      this.logger.debug(`Detected provider: ${provider || 'unknown'}`, {
+        explicitProvider: options.provider,
+        prefix
+      });
+
+      // Attempt to load credentials from the DO env
+      const envObj = this.env as Record<string, unknown>;
+      const envCredentials = {
+        AWS_ACCESS_KEY_ID: getEnvString(envObj, 'AWS_ACCESS_KEY_ID'),
+        AWS_SECRET_ACCESS_KEY: getEnvString(envObj, 'AWS_SECRET_ACCESS_KEY'),
+        R2_ACCESS_KEY_ID: this.r2AccessKeyId || undefined,
+        R2_SECRET_ACCESS_KEY: this.r2SecretAccessKey || undefined
+      };
+
+      // Detect credentials
+      const credentials = detectCredentials(options, {
+        ...envCredentials,
+        ...this.envVars
+      });
+
+      // Generate unique password file path
+      passwordFilePath = this.generatePasswordFilePath();
+
+      // Reserve mount path before async operations so concurrent mounts see it
+      const mountInfo: FuseMountInfo = {
+        mountType: 'fuse',
+        bucket: s3fsSource,
+        mountPath,
+        endpoint: options.endpoint,
+        provider,
+        passwordFilePath,
+        mounted: false
+      };
+      this.activeMounts.set(mountPath, mountInfo);
+
       // Create password file with credentials (uses bucket name only, not prefix)
       await this.createPasswordFile(passwordFilePath, bucket, credentials);
 
       // Create mount directory
-      await this.exec(`mkdir -p ${shellEscape(mountPath)}`);
+      await this.execInternal(`mkdir -p ${shellEscape(mountPath)}`);
 
       // Execute S3FS mount with password file (uses full s3fs source with prefix)
       await this.executeS3FSMount(
@@ -1027,14 +1089,28 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       );
 
       mountInfo.mounted = true;
-      this.logger.info(`Successfully mounted bucket ${bucket} to ${mountPath}`);
+      mountOutcome = 'success';
     } catch (error) {
+      mountError = error instanceof Error ? error : new Error(String(error));
       // Clean up password file on failure
-      await this.deletePasswordFile(passwordFilePath);
+      if (passwordFilePath) {
+        await this.deletePasswordFile(passwordFilePath);
+      }
 
       // Clean up reservation on failure
       this.activeMounts.delete(mountPath);
       throw error;
+    } finally {
+      logCanonicalEvent(this.logger, {
+        event: 'bucket.mount',
+        outcome: mountOutcome,
+        durationMs: Date.now() - mountStartTime,
+        bucket,
+        mountPath,
+        provider: provider || 'unknown',
+        prefix,
+        error: mountError
+      });
     }
   }
 
@@ -1045,38 +1121,53 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * @throws InvalidMountConfigError if mount path doesn't exist or isn't mounted
    */
   async unmountBucket(mountPath: string): Promise<void> {
-    this.logger.info(`Unmounting bucket from ${mountPath}`);
+    const unmountStartTime = Date.now();
+    let unmountOutcome: 'success' | 'error' = 'error';
+    let unmountError: Error | undefined;
 
     // Look up mount by path
     const mountInfo = this.activeMounts.get(mountPath);
 
-    // Throw error if mount doesn't exist
-    if (!mountInfo) {
-      throw new InvalidMountConfigError(
-        `No active mount found at path: ${mountPath}`
-      );
-    }
-
-    // Unmount the filesystem
-    if (mountInfo.mountType === 'local-sync') {
-      await mountInfo.syncManager.stop();
-      mountInfo.mounted = false;
-      this.activeMounts.delete(mountPath);
-    } else {
-      // FUSE unmount
-      try {
-        await this.exec(`fusermount -u ${shellEscape(mountPath)}`);
-        mountInfo.mounted = false;
-
-        // Only remove from tracking if unmount succeeded
-        this.activeMounts.delete(mountPath);
-      } finally {
-        // Always cleanup password file, even if unmount fails
-        await this.deletePasswordFile(mountInfo.passwordFilePath);
+    try {
+      // Throw error if mount doesn't exist
+      if (!mountInfo) {
+        throw new InvalidMountConfigError(
+          `No active mount found at path: ${mountPath}`
+        );
       }
-    }
+      // Unmount the filesystem
+      if (mountInfo.mountType === 'local-sync') {
+        await mountInfo.syncManager.stop();
+        mountInfo.mounted = false;
+        this.activeMounts.delete(mountPath);
+      } else {
+        // FUSE unmount
+        try {
+          await this.execInternal(`fusermount -u ${shellEscape(mountPath)}`);
+          mountInfo.mounted = false;
 
-    this.logger.info(`Successfully unmounted bucket from ${mountPath}`);
+          // Only remove from tracking if unmount succeeded
+          this.activeMounts.delete(mountPath);
+        } finally {
+          // Always cleanup password file, even if unmount fails
+          await this.deletePasswordFile(mountInfo.passwordFilePath);
+        }
+      }
+
+      unmountOutcome = 'success';
+    } catch (error) {
+      unmountError = error instanceof Error ? error : new Error(String(error));
+      throw error;
+    } finally {
+      logCanonicalEvent(this.logger, {
+        event: 'bucket.unmount',
+        outcome: unmountOutcome,
+        durationMs: Date.now() - unmountStartTime,
+        mountPath,
+        bucket: mountInfo?.bucket,
+        error: unmountError
+      });
+    }
   }
 
   /**
@@ -1141,9 +1232,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
     await this.writeFile(passwordFilePath, content);
 
-    await this.exec(`chmod 0600 ${shellEscape(passwordFilePath)}`);
-
-    this.logger.debug(`Created password file: ${passwordFilePath}`);
+    await this.execInternal(`chmod 0600 ${shellEscape(passwordFilePath)}`);
   }
 
   /**
@@ -1151,10 +1240,10 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    */
   private async deletePasswordFile(passwordFilePath: string): Promise<void> {
     try {
-      await this.exec(`rm -f ${shellEscape(passwordFilePath)}`);
-      this.logger.debug(`Deleted password file: ${passwordFilePath}`);
+      await this.execInternal(`rm -f ${shellEscape(passwordFilePath)}`);
     } catch (error) {
-      this.logger.warn(`Failed to delete password file ${passwordFilePath}`, {
+      this.logger.warn('password file cleanup failed', {
+        passwordFilePath,
         error: error instanceof Error ? error.message : String(error)
       });
     }
@@ -1194,79 +1283,94 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     const optionsStr = shellEscape(s3fsArgs.join(','));
     const mountCmd = `s3fs ${shellEscape(bucket)} ${shellEscape(mountPath)} -o ${optionsStr}`;
 
-    this.logger.debug('Executing s3fs mount', {
-      bucket,
-      mountPath,
-      provider,
-      resolvedOptions
-    });
-
     // Execute mount command
-    const result = await this.exec(mountCmd);
+    const result = await this.execInternal(mountCmd);
 
     if (result.exitCode !== 0) {
       throw new S3FSMountError(
         `S3FS mount failed: ${result.stderr || result.stdout || 'Unknown error'}`
       );
     }
-
-    this.logger.debug('Mount command executed successfully');
   }
 
   /**
    * Cleanup and destroy the sandbox container
    */
   override async destroy(): Promise<void> {
-    this.logger.info('Destroying sandbox container');
+    const startTime = Date.now();
+    let mountsProcessed = 0;
+    let mountFailures = 0;
+    let outcome: 'success' | 'error' = 'error';
+    let caughtError: Error | undefined;
 
-    // Best-effort desktop stop — only when container is already running
-    if (this.ctx.container?.running) {
-      try {
-        await this.client.desktop.stop();
-      } catch {
-        // Desktop may not be running or available — continue cleanup
-      }
-    }
-
-    // Disconnect WebSocket transport if active
-    this.client.disconnect();
-
-    // Unmount all mounted buckets and cleanup
-    for (const [mountPath, mountInfo] of this.activeMounts.entries()) {
-      if (mountInfo.mountType === 'local-sync') {
+    try {
+      // Best-effort desktop stop — only when container is already running
+      if (this.ctx.container?.running) {
         try {
-          await mountInfo.syncManager.stop();
-          mountInfo.mounted = false;
-        } catch (error) {
-          const errorMsg =
-            error instanceof Error ? error.message : String(error);
-          this.logger.warn(
-            `Failed to stop local sync for ${mountPath}: ${errorMsg}`
-          );
+          await this.client.desktop.stop();
+        } catch {
+          // Desktop may not be running or available — continue cleanup
         }
-      } else {
-        if (mountInfo.mounted) {
+      }
+
+      // Disconnect WebSocket transport if active
+      this.client.disconnect();
+
+      // Unmount all mounted buckets and cleanup
+      for (const [mountPath, mountInfo] of this.activeMounts.entries()) {
+        mountsProcessed++;
+        if (mountInfo.mountType === 'local-sync') {
           try {
-            this.logger.info(
-              `Unmounting bucket ${mountInfo.bucket} from ${mountPath}`
-            );
-            await this.exec(`fusermount -u ${shellEscape(mountPath)}`);
+            await mountInfo.syncManager.stop();
             mountInfo.mounted = false;
           } catch (error) {
+            mountFailures++;
             const errorMsg =
               error instanceof Error ? error.message : String(error);
             this.logger.warn(
-              `Failed to unmount bucket ${mountInfo.bucket} from ${mountPath}: ${errorMsg}`
+              `Failed to stop local sync for ${mountPath}: ${errorMsg}`
             );
           }
+        } else {
+          if (mountInfo.mounted) {
+            try {
+              this.logger.debug(
+                `Unmounting bucket ${mountInfo.bucket} from ${mountPath}`
+              );
+              await this.execInternal(
+                `fusermount -u ${shellEscape(mountPath)}`
+              );
+              mountInfo.mounted = false;
+            } catch (error) {
+              mountFailures++;
+              const errorMsg =
+                error instanceof Error ? error.message : String(error);
+              this.logger.warn(
+                `Failed to unmount bucket ${mountInfo.bucket} from ${mountPath}: ${errorMsg}`
+              );
+            }
+          }
+
+          // Always cleanup password file for FUSE mounts
+          await this.deletePasswordFile(mountInfo.passwordFilePath);
         }
-
-        // Always cleanup password file for FUSE mounts
-        await this.deletePasswordFile(mountInfo.passwordFilePath);
       }
-    }
 
-    await super.destroy();
+      outcome = 'success';
+      await super.destroy();
+    } catch (error) {
+      caughtError = error instanceof Error ? error : new Error(String(error));
+      throw error;
+    } finally {
+      logCanonicalEvent(this.logger, {
+        event: 'sandbox.destroy',
+        outcome,
+        durationMs: Date.now() - startTime,
+        mountsProcessed,
+        mountFailures,
+        error: caughtError
+      });
+    }
   }
 
   override onStart() {
@@ -1286,46 +1390,44 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
    * Logs a warning if there's a mismatch
    */
   private async checkVersionCompatibility(): Promise<void> {
+    const sdkVersion = SDK_VERSION;
+    let containerVersion: string | undefined;
+    let outcome: string;
+
     try {
-      // Get the SDK version (imported from version.ts)
-      const sdkVersion = SDK_VERSION;
+      containerVersion = await this.client.utils.getVersion();
 
-      // Get container version
-      const containerVersion = await this.client.utils.getVersion();
-
-      // If container version is unknown, it's likely an old container without the endpoint
       if (containerVersion === 'unknown') {
-        this.logger.warn(
-          'Container version check: Container version could not be determined. ' +
-            'This may indicate an outdated container image. ' +
-            'Please update your container to match SDK version ' +
-            sdkVersion
-        );
-        return;
-      }
-
-      // Check if versions match
-      if (containerVersion !== sdkVersion) {
-        const message =
-          `Version mismatch detected! SDK version (${sdkVersion}) does not match ` +
-          `container version (${containerVersion}). This may cause compatibility issues. ` +
-          `Please update your container image to version ${sdkVersion}`;
-
-        // Log warning - we can't reliably detect dev vs prod environment in Durable Objects
-        // so we always use warning level as requested by the user
-        this.logger.warn(message);
+        outcome = 'container_version_unknown';
+      } else if (containerVersion !== sdkVersion) {
+        outcome = 'version_mismatch';
       } else {
-        this.logger.debug('Version check passed', {
-          sdkVersion,
-          containerVersion
-        });
+        outcome = 'compatible';
       }
     } catch (error) {
-      // Don't fail the sandbox initialization if version check fails
-      this.logger.debug('Version compatibility check encountered an error', {
-        error: error instanceof Error ? error.message : String(error)
-      });
+      outcome = 'check_failed';
+      containerVersion = undefined;
     }
+
+    const successLevel =
+      outcome === 'compatible'
+        ? ('debug' as const)
+        : outcome === 'container_version_unknown'
+          ? ('info' as const)
+          : ('warn' as const); // version_mismatch or check_failed
+
+    logCanonicalEvent(
+      this.logger,
+      {
+        event: 'version.check',
+        outcome: 'success',
+        durationMs: 0,
+        sdkVersion,
+        containerVersion: containerVersion ?? 'unknown',
+        versionOutcome: outcome
+      },
+      { successLevel }
+    );
   }
 
   override async onStop() {
@@ -1363,13 +1465,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     portOrInit?: number | RequestInit,
     portParam?: number
   ): Promise<Response> {
-    // Parse arguments to extract request and port
     const { request, port } = this.parseContainerFetchArgs(
       requestOrUrl,
       portOrInit,
       portParam
     );
 
+    const originalDefaultPort = this.defaultPort;
     const state = await this.getState();
     const containerRunning = this.ctx.container?.running;
 
@@ -1379,27 +1481,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     const staleStateDetected =
       state.status === 'healthy' && containerRunning === false;
     if (state.status !== 'healthy' || containerRunning === false) {
-      if (staleStateDetected) {
-        this.logger.debug(
-          'Stale container state detected: persisted state is healthy but container is not running'
-        );
-      }
-
       try {
         this.logger.debug('Starting container with configured timeouts', {
           instanceTimeout: this.containerTimeouts.instanceGetTimeoutMS,
           portTimeout: this.containerTimeouts.portReadyTimeoutMS
         });
 
-        await this.startAndWaitForPorts({
-          ports: port,
-          cancellationOptions: {
-            instanceGetTimeoutMS: this.containerTimeouts.instanceGetTimeoutMS,
-            portReadyTimeoutMS: this.containerTimeouts.portReadyTimeoutMS,
-            waitInterval: this.containerTimeouts.waitIntervalMS,
-            abort: request.signal
-          }
-        });
+        await this.startWithLegacyFallback(port, request.signal);
       } catch (e) {
         // 1. Provisioning: Container VM not yet available
         if (this.isNoInstanceError(e)) {
@@ -1459,16 +1547,18 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           // next request gets a fresh instance with a clean container binding. This mirrors the
           // recovery pattern in the base Container class for 'Network connection lost' errors.
           if (staleStateDetected) {
-            this.logger.warn(
-              'Container startup failed after stale state detection, aborting DO for recovery',
-              { error: e instanceof Error ? e.message : String(e) }
-            );
+            this.logger.warn('container.startup', {
+              outcome: 'stale_state_abort',
+              staleStateDetected: true,
+              error: e instanceof Error ? e.message : String(e)
+            });
             this.ctx.abort();
           } else {
-            this.logger.debug(
-              'Transient container startup error, returning 503',
-              { error: e instanceof Error ? e.message : String(e) }
-            );
+            this.logger.debug('container.startup', {
+              outcome: 'transient_error',
+              staleStateDetected,
+              error: e instanceof Error ? e.message : String(e)
+            });
           }
           const errorBody: ErrorResponse = {
             code: ErrorCode.INTERNAL_ERROR,
@@ -1493,10 +1583,11 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
         // 4. Unrecognized errors: Treat as transient since retries are safe
         // and new platform error messages may not yet be in our pattern list.
-        this.logger.warn(
-          'Unrecognized container startup error, returning 503 for retry',
-          { error: e instanceof Error ? e.message : String(e) }
-        );
+        this.logger.warn('container.startup', {
+          outcome: 'unrecognized_error',
+          staleStateDetected,
+          error: e instanceof Error ? e.message : String(e)
+        });
         const errorBody: ErrorResponse = {
           code: ErrorCode.INTERNAL_ERROR,
           message: 'Container is starting. Please retry in a moment.',
@@ -1519,8 +1610,69 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       }
     }
 
-    // Delegate to parent for the actual fetch (handles TCP port access internally)
-    return await super.containerFetch(requestOrUrl, portOrInit, portParam);
+    // After a legacy fallback, the current request's port may still reference the
+    // originally configured control port. Remap it to the actual (fallback) port.
+    const effectivePort =
+      port === originalDefaultPort && this.defaultPort === LEGACY_CONTROL_PORT
+        ? LEGACY_CONTROL_PORT
+        : port;
+
+    return await super.containerFetch(request, effectivePort);
+  }
+
+  /**
+   * Start the container and wait for the requested port, with backwards-compatible
+   * fallback to port 3000 for older container images that predate SANDBOX_CONTROL_PORT.
+   * Succeeds silently (with or without fallback) or throws the original error.
+   */
+  private async startWithLegacyFallback(
+    port: number,
+    signal?: AbortSignal
+  ): Promise<void> {
+    try {
+      await this.startAndWaitForPorts({
+        ports: port,
+        cancellationOptions: {
+          instanceGetTimeoutMS: this.containerTimeouts.instanceGetTimeoutMS,
+          portReadyTimeoutMS: this.containerTimeouts.portReadyTimeoutMS,
+          waitInterval: this.containerTimeouts.waitIntervalMS,
+          abort: signal
+        }
+      });
+    } catch (e) {
+      // Fallback only applies to the control port when the container is running
+      // but not listening on the expected port (version mismatch).
+      // Throw original error
+      if (
+        port !== this.defaultPort ||
+        port === LEGACY_CONTROL_PORT ||
+        !this.ctx.container?.running
+      ) {
+        throw e;
+      }
+
+      try {
+        await this.startAndWaitForPorts({
+          ports: LEGACY_CONTROL_PORT,
+          cancellationOptions: {
+            portReadyTimeoutMS: 10_000,
+            waitInterval: this.containerTimeouts.waitIntervalMS,
+            abort: signal
+          }
+        });
+      } catch {
+        throw e;
+      }
+
+      this.logger.warn(
+        `Container responded on legacy port ${LEGACY_CONTROL_PORT} instead of ${port}. ` +
+          'Your Docker image does not support the SANDBOX_CONTROL_PORT environment variable. ' +
+          'Update your Dockerfile base image to match the SDK version. ' +
+          'This fallback will be removed in a future release.'
+      );
+      this.defaultPort = LEGACY_CONTROL_PORT;
+      this.client = this.createSandboxClient();
+    }
   }
 
   /**
@@ -1701,14 +1853,46 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       connectionHeader?.toLowerCase().includes('upgrade');
 
     if (isWebSocket) {
-      // WebSocket path: Let parent Container class handle WebSocket proxying
-      // This bypasses containerFetch() which uses JSRPC and cannot handle WebSocket upgrades
+      // WebSocket path: Let parent Container class handle WebSocket proxying.
+      // This bypasses containerFetch() which uses JSRPC and cannot handle WebSocket upgrades.
+      const switchedPort = this.getExplicitPort(request);
+      const hasRawHeader = request.headers.has(CONTAINER_TARGET_PORT_HEADER);
+
+      // Validate only when a specific port was explicitly targeted (via switchPort).
+      // Without a switched port, this is a control-plane WebSocket (PTY, /ws, /api/ws)
+      // routed to defaultPort by Container.fetch() — no validation needed.
+      if (
+        switchedPort !== null &&
+        !validatePort(switchedPort, this.defaultPort)
+      ) {
+        requestLogger.warn(
+          'WebSocket connection rejected: invalid target port',
+          {
+            port: switchedPort,
+            path: url.pathname
+          }
+        );
+        return new Response(
+          `Invalid port for WebSocket connection: ${switchedPort}. Must be 1024-65535, excluding ${this.defaultPort} (sandbox control plane).`,
+          { status: 403 }
+        );
+      }
+
+      // If the header was present but malformed (getExplicitPort returned null),
+      // strip it so Container.fetch() doesn't re-parse it with its own lenient parseInt.
+      let wsRequest = request;
+      if (hasRawHeader && switchedPort === null) {
+        const sanitizedHeaders = new Headers(request.headers);
+        sanitizedHeaders.delete(CONTAINER_TARGET_PORT_HEADER);
+        wsRequest = new Request(request, { headers: sanitizedHeaders });
+      }
+
       try {
         requestLogger.debug('WebSocket upgrade requested', {
           path: url.pathname,
-          port: this.determinePort(url)
+          port: switchedPort ?? this.defaultPort
         });
-        return await super.fetch(request);
+        return await super.fetch(wsRequest);
       } catch (error) {
         requestLogger.error(
           'WebSocket connection failed',
@@ -1720,7 +1904,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     }
 
     // Non-WebSocket: Use existing port determination and HTTP routing logic
-    const port = this.determinePort(url);
+    const port = this.resolvePort(url, request);
 
     // Route to the appropriate port
     return await this.containerFetch(request, port);
@@ -1733,16 +1917,41 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     );
   }
 
-  private determinePort(url: URL): number {
-    // Extract port from proxy requests (e.g., /proxy/8080/*)
-    const proxyMatch = url.pathname.match(/^\/proxy\/(\d+)/);
-    if (proxyMatch) {
-      return parseInt(proxyMatch[1], 10);
-    }
+  /**
+   * Read the port explicitly set by switchPort() from @cloudflare/containers.
+   * Returns null when no explicit port was set (control-plane requests).
+   */
+  private getExplicitPort(request: Request): number | null {
+    const raw = request.headers.get(CONTAINER_TARGET_PORT_HEADER);
+    if (raw === null) return null;
 
-    // All other requests go to control plane on port 3000
-    // This includes /api/* endpoints and any other control requests
-    return 3000;
+    // Strict digit-only parse. Malformed values (e.g. "8080abc", "8080.5")
+    // did not come from switchPort() and are treated as absent.
+    if (!/^\d+$/.test(raw)) {
+      this.logger.warn(
+        `Ignoring malformed ${CONTAINER_TARGET_PORT_HEADER} header`,
+        {
+          value: raw
+        }
+      );
+      return null;
+    }
+    return parseInt(raw, 10);
+  }
+
+  /** Extract port from proxy URL path (/proxy/8080/*), null if no match. */
+  private getProxyPort(url: URL): number | null {
+    const match = url.pathname.match(/^\/proxy\/(\d+)/);
+    return match ? parseInt(match[1], 10) : null;
+  }
+
+  /** Resolve target port for HTTP requests: explicit port → proxy path → default. */
+  private resolvePort(url: URL, request: Request): number {
+    return (
+      this.getExplicitPort(request) ??
+      this.getProxyPort(url) ??
+      this.defaultPort
+    );
   }
 
   /**
@@ -1797,6 +2006,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   }
 
   /**
+   * Execute an infrastructure command (backup, mount, env setup, etc.)
+   * tagged with origin: 'internal' so logging demotes it to debug level.
+   */
+  private async execInternal(command: string): Promise<ExecResult> {
+    const session = await this.ensureDefaultSession();
+    return this.execWithSession(command, session, { origin: 'internal' });
+  }
+
+  /**
    * Internal session-aware exec implementation
    * Used by both public exec() and session wrappers
    */
@@ -1809,6 +2027,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     const timestamp = new Date().toISOString();
 
     let timeoutId: NodeJS.Timeout | undefined;
+    let execOutcome: { exitCode: number; success: boolean } | undefined;
+    let execError: Error | undefined;
 
     try {
       // Handle cancellation
@@ -1833,11 +2053,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           options &&
           (options.timeout !== undefined ||
             options.env !== undefined ||
-            options.cwd !== undefined)
+            options.cwd !== undefined ||
+            options.origin !== undefined)
             ? {
                 timeoutMs: options.timeout,
                 env: options.env,
-                cwd: options.cwd
+                cwd: options.cwd,
+                origin: options.origin
               }
             : undefined;
 
@@ -1855,6 +2077,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         );
       }
 
+      execOutcome = { exitCode: result.exitCode, success: result.success };
+
       // Call completion callback if provided
       if (options?.onComplete) {
         options.onComplete(result);
@@ -1862,6 +2086,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
       return result;
     } catch (error) {
+      execError = error instanceof Error ? error : new Error(String(error));
       if (options?.onError && error instanceof Error) {
         options.onError(error);
       }
@@ -1870,6 +2095,17 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       if (timeoutId) {
         clearTimeout(timeoutId);
       }
+      logCanonicalEvent(this.logger, {
+        event: 'sandbox.exec',
+        outcome: execError ? 'error' : 'success',
+        command,
+        exitCode: execOutcome?.exitCode,
+        durationMs: Date.now() - startTime,
+        sessionId,
+        origin: options?.origin ?? 'user',
+        error: execError ?? undefined,
+        errorMessage: execError?.message
+      });
     }
   }
 
@@ -1890,7 +2126,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         {
           timeoutMs: options.timeout,
           env: options.env,
-          cwd: options.cwd
+          cwd: options.cwd,
+          origin: options.origin
         }
       );
 
@@ -2880,87 +3117,125 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     port: number,
     options: { name?: string; hostname: string; token?: string }
   ) {
-    if (!validatePort(port)) {
-      throw new SecurityError(
-        `Invalid port number: ${port}. Must be 1024-65535, excluding 3000 (sandbox control plane).`
-      );
-    }
+    const exposeStartTime = Date.now();
+    let outcome: 'success' | 'error' = 'error';
+    let caughtError: Error | undefined;
+    try {
+      if (!validatePort(port, this.defaultPort)) {
+        throw new SecurityError(
+          `Invalid port number: ${port}. Must be 1024-65535, excluding ${this.defaultPort} (sandbox control plane).`
+        );
+      }
 
-    // Check if hostname is workers.dev domain (doesn't support wildcard subdomains)
-    if (options.hostname.endsWith('.workers.dev')) {
-      const errorResponse: ErrorResponse = {
-        code: ErrorCode.CUSTOM_DOMAIN_REQUIRED,
-        message: `Port exposure requires a custom domain. .workers.dev domains do not support wildcard subdomains required for port proxying.`,
-        context: { originalError: options.hostname },
-        httpStatus: 400,
-        timestamp: new Date().toISOString()
+      // Check if hostname is workers.dev domain (doesn't support wildcard subdomains)
+      if (options.hostname.endsWith('.workers.dev')) {
+        const errorResponse: ErrorResponse = {
+          code: ErrorCode.CUSTOM_DOMAIN_REQUIRED,
+          message: `Port exposure requires a custom domain. .workers.dev domains do not support wildcard subdomains required for port proxying.`,
+          context: { originalError: options.hostname },
+          httpStatus: 400,
+          timestamp: new Date().toISOString()
+        };
+        throw new CustomDomainRequiredError(errorResponse);
+      }
+
+      // We need the sandbox name to construct preview URLs
+      if (!this.sandboxName) {
+        throw new Error(
+          'Sandbox name not available. Ensure sandbox is accessed through getSandbox()'
+        );
+      }
+
+      let token: string;
+      if (options.token !== undefined) {
+        this.validateCustomToken(options.token);
+        token = options.token;
+      } else {
+        token = this.generatePortToken();
+      }
+
+      // Allow re-exposing same port with same token, but reject if another port uses this token
+      const tokens =
+        (await this.ctx.storage.get<Record<string, string>>('portTokens')) ||
+        {};
+      const existingPort = Object.entries(tokens).find(
+        ([p, t]) => t === token && p !== port.toString()
+      );
+      if (existingPort) {
+        throw new SecurityError(
+          `Token '${token}' is already in use by port ${existingPort[0]}. Please use a different token.`
+        );
+      }
+      const sessionId = await this.ensureDefaultSession();
+      await this.client.ports.exposePort(port, sessionId, options?.name);
+
+      tokens[port.toString()] = token;
+      await this.ctx.storage.put('portTokens', tokens);
+
+      const url = this.constructPreviewUrl(
+        port,
+        this.sandboxName,
+        options.hostname,
+        token
+      );
+
+      outcome = 'success';
+
+      return {
+        url,
+        port,
+        name: options?.name
       };
-      throw new CustomDomainRequiredError(errorResponse);
+    } catch (error) {
+      caughtError = error instanceof Error ? error : new Error(String(error));
+      throw error;
+    } finally {
+      logCanonicalEvent(this.logger, {
+        event: 'port.expose',
+        outcome,
+        port,
+        durationMs: Date.now() - exposeStartTime,
+        name: options?.name,
+        hostname: options.hostname,
+        error: caughtError
+      });
     }
-
-    // We need the sandbox name to construct preview URLs
-    if (!this.sandboxName) {
-      throw new Error(
-        'Sandbox name not available. Ensure sandbox is accessed through getSandbox()'
-      );
-    }
-
-    let token: string;
-    if (options.token !== undefined) {
-      this.validateCustomToken(options.token);
-      token = options.token;
-    } else {
-      token = this.generatePortToken();
-    }
-
-    // Allow re-exposing same port with same token, but reject if another port uses this token
-    const tokens =
-      (await this.ctx.storage.get<Record<string, string>>('portTokens')) || {};
-    const existingPort = Object.entries(tokens).find(
-      ([p, t]) => t === token && p !== port.toString()
-    );
-    if (existingPort) {
-      throw new SecurityError(
-        `Token '${token}' is already in use by port ${existingPort[0]}. Please use a different token.`
-      );
-    }
-
-    const sessionId = await this.ensureDefaultSession();
-    await this.client.ports.exposePort(port, sessionId, options?.name);
-
-    tokens[port.toString()] = token;
-    await this.ctx.storage.put('portTokens', tokens);
-
-    const url = this.constructPreviewUrl(
-      port,
-      this.sandboxName,
-      options.hostname,
-      token
-    );
-
-    return {
-      url,
-      port,
-      name: options?.name
-    };
   }
 
   async unexposePort(port: number) {
-    if (!validatePort(port)) {
-      throw new SecurityError(
-        `Invalid port number: ${port}. Must be 1024-65535, excluding 3000 (sandbox control plane).`
-      );
-    }
+    const unexposeStartTime = Date.now();
+    let outcome: 'success' | 'error' = 'error';
+    let caughtError: Error | undefined;
+    try {
+      if (!validatePort(port, this.defaultPort)) {
+        throw new SecurityError(
+          `Invalid port number: ${port}. Must be 1024-65535, excluding ${this.defaultPort} (sandbox control plane).`
+        );
+      }
+      const sessionId = await this.ensureDefaultSession();
+      await this.client.ports.unexposePort(port, sessionId);
 
-    const sessionId = await this.ensureDefaultSession();
-    await this.client.ports.unexposePort(port, sessionId);
+      // Clean up token for this port (storage is protected by input gates)
+      const tokens =
+        (await this.ctx.storage.get<Record<string, string>>('portTokens')) ||
+        {};
+      if (tokens[port.toString()]) {
+        delete tokens[port.toString()];
+        await this.ctx.storage.put('portTokens', tokens);
+      }
 
-    // Clean up token for this port (storage is protected by input gates)
-    const tokens =
-      (await this.ctx.storage.get<Record<string, string>>('portTokens')) || {};
-    if (tokens[port.toString()]) {
-      delete tokens[port.toString()];
-      await this.ctx.storage.put('portTokens', tokens);
+      outcome = 'success';
+    } catch (error) {
+      caughtError = error instanceof Error ? error : new Error(String(error));
+      throw error;
+    } finally {
+      logCanonicalEvent(this.logger, {
+        event: 'port.unexpose',
+        outcome,
+        port,
+        durationMs: Date.now() - unexposeStartTime,
+        error: caughtError
+      });
     }
   }
 
@@ -3089,9 +3364,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     hostname: string,
     token: string
   ): string {
-    if (!validatePort(port)) {
+    if (!validatePort(port, this.defaultPort)) {
       throw new SecurityError(
-        `Invalid port number: ${port}. Must be 1024-65535, excluding 3000 (sandbox control plane).`
+        `Invalid port number: ${port}. Must be 1024-65535, excluding ${this.defaultPort} (sandbox control plane).`
       );
     }
 
@@ -3275,7 +3550,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
             const result = await this.client.commands.execute(
               unsetCommand,
-              sessionId
+              sessionId,
+              { origin: 'internal' }
             );
 
             if (result.exitCode !== 0) {
@@ -3290,7 +3566,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
 
             const result = await this.client.commands.execute(
               exportCommand,
-              sessionId
+              sessionId,
+              { origin: 'internal' }
             );
 
             if (result.exitCode !== 0) {
@@ -3428,22 +3705,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private static readonly PRESIGNED_URL_EXPIRY_SECONDS = 3600;
 
   /**
-   * Ensure a dedicated session for backup operations exists.
-   * Isolates backup shell commands (curl, stat, rm, mkdir) from user exec()
-   * calls to prevent session state interference and interleaving.
+   * Create a unique, dedicated session for a single backup operation.
+   * Each call produces a fresh session ID so concurrent or sequential
+   * operations never share shell state. Callers must destroy the session
+   * in a finally block via `client.utils.deleteSession()`.
    */
   private async ensureBackupSession(): Promise<string> {
-    const sessionId = '__sandbox_backup__';
-    try {
-      await this.client.utils.createSession({
-        id: sessionId,
-        cwd: '/'
-      });
-    } catch (error: unknown) {
-      if (!(error instanceof SessionAlreadyExistsError)) {
-        throw error;
-      }
-    }
+    const sessionId = `__sandbox_backup_${crypto.randomUUID()}`;
+    await this.client.utils.createSession({ id: sessionId, cwd: '/' });
     return sessionId;
   }
 
@@ -3551,12 +3820,6 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   ): Promise<void> {
     const presignedUrl = await this.generatePresignedPutUrl(r2Key);
 
-    this.logger.info('Uploading backup via presigned PUT', {
-      r2Key,
-      archiveSize,
-      backupId
-    });
-
     const curlCmd = [
       'curl -sSf',
       '-X PUT',
@@ -3570,7 +3833,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     ].join(' ');
 
     const result = await this.execWithSession(curlCmd, backupSession, {
-      timeout: 1810_000
+      timeout: 1810_000,
+      origin: 'internal'
     });
 
     if (result.exitCode !== 0) {
@@ -3622,13 +3886,9 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   ): Promise<void> {
     const presignedUrl = await this.generatePresignedGetUrl(r2Key);
 
-    this.logger.info('Downloading backup via presigned GET', {
-      r2Key,
-      expectedSize,
-      backupId
+    await this.execWithSession('mkdir -p /var/backups', backupSession, {
+      origin: 'internal'
     });
-
-    await this.execWithSession('mkdir -p /var/backups', backupSession);
 
     const tmpPath = `${archivePath}.tmp`;
     const curlCmd = [
@@ -3642,13 +3902,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     ].join(' ');
 
     const result = await this.execWithSession(curlCmd, backupSession, {
-      timeout: 1810_000
+      timeout: 1810_000,
+      origin: 'internal'
     });
 
     if (result.exitCode !== 0) {
       await this.execWithSession(
         `rm -f ${shellEscape(tmpPath)}`,
-        backupSession
+        backupSession,
+        { origin: 'internal' }
       ).catch(() => {});
       throw new BackupRestoreError({
         message: `Presigned URL download failed (exit code ${result.exitCode}): ${result.stderr}`,
@@ -3662,13 +3924,15 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     // Verify downloaded file size before committing
     const sizeCheck = await this.execWithSession(
       `stat -c %s ${shellEscape(tmpPath)}`,
-      backupSession
+      backupSession,
+      { origin: 'internal' }
     );
     const actualSize = parseInt(sizeCheck.stdout.trim(), 10);
     if (actualSize !== expectedSize) {
       await this.execWithSession(
         `rm -f ${shellEscape(tmpPath)}`,
-        backupSession
+        backupSession,
+        { origin: 'internal' }
       ).catch(() => {});
       throw new BackupRestoreError({
         message: `Downloaded archive size mismatch: expected ${expectedSize}, got ${actualSize}`,
@@ -3682,12 +3946,14 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
     // Atomic move from temp to final path
     const mvResult = await this.execWithSession(
       `mv ${shellEscape(tmpPath)} ${shellEscape(archivePath)}`,
-      backupSession
+      backupSession,
+      { origin: 'internal' }
     );
     if (mvResult.exitCode !== 0) {
       await this.execWithSession(
         `rm -f ${shellEscape(tmpPath)}`,
-        backupSession
+        backupSession,
+        { origin: 'internal' }
       ).catch(() => {});
       throw new BackupRestoreError({
         message: `Failed to finalize downloaded archive: ${mvResult.stderr}`,
@@ -3751,98 +4017,99 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       gitignore = false,
       excludes = []
     } = options;
-    Sandbox.validateBackupDir(dir, 'BackupOptions.dir');
-    if (name !== undefined) {
-      if (typeof name !== 'string' || name.length > MAX_NAME_LENGTH) {
-        throw new InvalidBackupConfigError({
-          message: `BackupOptions.name must be a string of at most ${MAX_NAME_LENGTH} characters`,
-          code: ErrorCode.INVALID_BACKUP_CONFIG,
-          httpStatus: 400,
-          context: {
-            reason: `name must be a string of at most ${MAX_NAME_LENGTH} characters`
-          },
-          timestamp: new Date().toISOString()
-        });
-      }
-      // Reject control characters (could cause issues in R2 metadata or downstream systems)
-      // biome-ignore lint/suspicious/noControlCharactersInRegex: intentionally matching control chars
-      if (/[\u0000-\u001f\u007f]/.test(name)) {
-        throw new InvalidBackupConfigError({
-          message: 'BackupOptions.name must not contain control characters',
-          code: ErrorCode.INVALID_BACKUP_CONFIG,
-          httpStatus: 400,
-          context: { reason: 'name must not contain control characters' },
-          timestamp: new Date().toISOString()
-        });
-      }
-    }
-    if (ttl <= 0) {
-      throw new InvalidBackupConfigError({
-        message: 'BackupOptions.ttl must be a positive number of seconds',
-        code: ErrorCode.INVALID_BACKUP_CONFIG,
-        httpStatus: 400,
-        context: { reason: 'ttl must be a positive number of seconds' },
-        timestamp: new Date().toISOString()
-      });
-    }
 
-    if (typeof gitignore !== 'boolean') {
-      throw new InvalidBackupConfigError({
-        message: 'BackupOptions.gitignore must be a boolean',
-        code: ErrorCode.INVALID_BACKUP_CONFIG,
-        httpStatus: 400,
-        context: { reason: 'gitignore must be a boolean' },
-        timestamp: new Date().toISOString()
-      });
-    }
-
-    if (
-      !Array.isArray(excludes) ||
-      !excludes.every((e: unknown) => typeof e === 'string')
-    ) {
-      throw new InvalidBackupConfigError({
-        message: 'BackupOptions.excludes must be an array of strings',
-        code: ErrorCode.INVALID_BACKUP_CONFIG,
-        httpStatus: 400,
-        context: { reason: 'excludes must be an array of strings' },
-        timestamp: new Date().toISOString()
-      });
-    }
-
-    const backupSession = await this.ensureBackupSession();
-    const backupId = crypto.randomUUID();
-    const archivePath = `/var/backups/${backupId}.sqsh`;
-
-    this.logger.info('Creating backup', {
-      backupId,
-      dir,
-      name,
-      gitignore,
-      excludes
-    });
-
-    const createResult = await this.client.backup.createArchive(
-      dir,
-      archivePath,
-      backupSession,
-      gitignore,
-      excludes
-    );
-
-    if (!createResult.success) {
-      throw new BackupCreateError({
-        message: 'Container failed to create backup archive',
-        code: ErrorCode.BACKUP_CREATE_FAILED,
-        httpStatus: 500,
-        context: { dir, backupId },
-        timestamp: new Date().toISOString()
-      });
-    }
-
-    const r2Key = `backups/${backupId}/data.sqsh`;
-    const metaKey = `backups/${backupId}/meta.json`;
+    const backupStartTime = Date.now();
+    let backupId: string | undefined;
+    let sizeBytes: number | undefined;
+    let outcome: 'success' | 'error' = 'error';
+    let caughtError: Error | undefined;
+    let backupSession: string | undefined;
 
     try {
+      Sandbox.validateBackupDir(dir, 'BackupOptions.dir');
+      if (name !== undefined) {
+        if (typeof name !== 'string' || name.length > MAX_NAME_LENGTH) {
+          throw new InvalidBackupConfigError({
+            message: `BackupOptions.name must be a string of at most ${MAX_NAME_LENGTH} characters`,
+            code: ErrorCode.INVALID_BACKUP_CONFIG,
+            httpStatus: 400,
+            context: {
+              reason: `name must be a string of at most ${MAX_NAME_LENGTH} characters`
+            },
+            timestamp: new Date().toISOString()
+          });
+        }
+        // Reject control characters (could cause issues in R2 metadata or downstream systems)
+        // biome-ignore lint/suspicious/noControlCharactersInRegex: intentionally matching control chars
+        if (/[\u0000-\u001f\u007f]/.test(name)) {
+          throw new InvalidBackupConfigError({
+            message: 'BackupOptions.name must not contain control characters',
+            code: ErrorCode.INVALID_BACKUP_CONFIG,
+            httpStatus: 400,
+            context: { reason: 'name must not contain control characters' },
+            timestamp: new Date().toISOString()
+          });
+        }
+      }
+      if (ttl <= 0) {
+        throw new InvalidBackupConfigError({
+          message: 'BackupOptions.ttl must be a positive number of seconds',
+          code: ErrorCode.INVALID_BACKUP_CONFIG,
+          httpStatus: 400,
+          context: { reason: 'ttl must be a positive number of seconds' },
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      if (typeof gitignore !== 'boolean') {
+        throw new InvalidBackupConfigError({
+          message: 'BackupOptions.gitignore must be a boolean',
+          code: ErrorCode.INVALID_BACKUP_CONFIG,
+          httpStatus: 400,
+          context: { reason: 'gitignore must be a boolean' },
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      if (
+        !Array.isArray(excludes) ||
+        !excludes.every((e: unknown) => typeof e === 'string')
+      ) {
+        throw new InvalidBackupConfigError({
+          message: 'BackupOptions.excludes must be an array of strings',
+          code: ErrorCode.INVALID_BACKUP_CONFIG,
+          httpStatus: 400,
+          context: { reason: 'excludes must be an array of strings' },
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      backupSession = await this.ensureBackupSession();
+      backupId = crypto.randomUUID();
+      const archivePath = `/var/backups/${backupId}.sqsh`;
+
+      const createResult = await this.client.backup.createArchive(
+        dir,
+        archivePath,
+        backupSession,
+        gitignore,
+        excludes
+      );
+
+      if (!createResult.success) {
+        throw new BackupCreateError({
+          message: 'Container failed to create backup archive',
+          code: ErrorCode.BACKUP_CREATE_FAILED,
+          httpStatus: 500,
+          context: { dir, backupId },
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      sizeBytes = createResult.sizeBytes;
+      const r2Key = `backups/${backupId}/data.sqsh`;
+      const metaKey = `backups/${backupId}/meta.json`;
+
       // Step 2: Upload archive to R2 via presigned URL (isolated backup session)
       await this.uploadBackupPresigned(
         archivePath,
@@ -3864,28 +4131,46 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       };
       await bucket.put(metaKey, JSON.stringify(metadata));
 
-      this.logger.info('Backup uploaded to R2', {
-        backupId,
-        r2Key,
-        sizeBytes: createResult.sizeBytes
-      });
+      outcome = 'success';
 
-      // Step 5: Clean up the local archive in the container
+      // Clean up the local archive in the container
       await this.execWithSession(
         `rm -f ${shellEscape(archivePath)}`,
-        backupSession
+        backupSession,
+        { origin: 'internal' }
       ).catch(() => {});
 
       return { id: backupId, dir };
     } catch (error) {
+      caughtError = error instanceof Error ? error : new Error(String(error));
       // Clean up local archive and any partially-uploaded R2 objects
-      await this.execWithSession(
-        `rm -f ${shellEscape(archivePath)}`,
-        backupSession
-      ).catch(() => {});
-      await bucket.delete(r2Key).catch(() => {});
-      await bucket.delete(metaKey).catch(() => {});
+      if (backupId && backupSession) {
+        const archivePath = `/var/backups/${backupId}.sqsh`;
+        const r2Key = `backups/${backupId}/data.sqsh`;
+        const metaKey = `backups/${backupId}/meta.json`;
+        await this.execWithSession(
+          `rm -f ${shellEscape(archivePath)}`,
+          backupSession,
+          { origin: 'internal' }
+        ).catch(() => {});
+        await bucket.delete(r2Key).catch(() => {});
+        await bucket.delete(metaKey).catch(() => {});
+      }
       throw error;
+    } finally {
+      if (backupSession) {
+        await this.client.utils.deleteSession(backupSession).catch(() => {});
+      }
+      logCanonicalEvent(this.logger, {
+        event: 'backup.create',
+        outcome,
+        durationMs: Date.now() - backupStartTime,
+        backupId,
+        dir,
+        name,
+        sizeBytes,
+        error: caughtError
+      });
     }
   }
 
@@ -3924,103 +4209,106 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
   private async doRestoreBackup(
     backup: DirectoryBackup
   ): Promise<RestoreBackupResult> {
+    const restoreStartTime = Date.now();
     const bucket = this.requireBackupBucket();
     this.requirePresignedUrlSupport();
     const { id: backupId, dir } = backup;
 
-    // Validate user-provided inputs (DirectoryBackup is deserialized from external storage)
-    if (!backupId || typeof backupId !== 'string') {
-      throw new InvalidBackupConfigError({
-        message: 'Invalid backup: missing or invalid id',
-        code: ErrorCode.INVALID_BACKUP_CONFIG,
-        httpStatus: 400,
-        context: { reason: 'missing or invalid id' },
-        timestamp: new Date().toISOString()
-      });
-    }
-    if (!Sandbox.UUID_REGEX.test(backupId)) {
-      throw new InvalidBackupConfigError({
-        message:
-          'Invalid backup: id must be a valid UUID (e.g. from createBackup)',
-        code: ErrorCode.INVALID_BACKUP_CONFIG,
-        httpStatus: 400,
-        context: { reason: 'id must be a valid UUID' },
-        timestamp: new Date().toISOString()
-      });
-    }
-    Sandbox.validateBackupDir(dir, 'Invalid backup: dir');
-
-    this.logger.info('Restoring backup', { backupId, dir });
-
-    // Step 1: Read metadata to check TTL
-    const metaKey = `backups/${backupId}/meta.json`;
-    const metaObject = await bucket.get(metaKey);
-    if (!metaObject) {
-      throw new BackupNotFoundError({
-        message:
-          `Backup not found: ${backupId}. ` +
-          'Verify the backup ID is correct and the backup has not been deleted.',
-        code: ErrorCode.BACKUP_NOT_FOUND,
-        httpStatus: 404,
-        context: { backupId },
-        timestamp: new Date().toISOString()
-      });
-    }
-
-    const metadata = await metaObject.json<{
-      ttl: number;
-      createdAt: string;
-      dir: string;
-    }>();
-
-    // Check TTL with 60-second buffer to prevent race between check and restore completion
-    const TTL_BUFFER_MS = 60 * 1000;
-    const createdAt = new Date(metadata.createdAt).getTime();
-    if (Number.isNaN(createdAt)) {
-      throw new BackupRestoreError({
-        message: `Backup metadata has invalid createdAt timestamp: ${metadata.createdAt}`,
-        code: ErrorCode.BACKUP_RESTORE_FAILED,
-        httpStatus: 500,
-        context: { dir, backupId },
-        timestamp: new Date().toISOString()
-      });
-    }
-    const expiresAt = createdAt + metadata.ttl * 1000;
-    if (Date.now() + TTL_BUFFER_MS > expiresAt) {
-      throw new BackupExpiredError({
-        message:
-          `Backup ${backupId} has expired ` +
-          `(created: ${metadata.createdAt}, TTL: ${metadata.ttl}s). ` +
-          'Create a new backup.',
-        code: ErrorCode.BACKUP_EXPIRED,
-        httpStatus: 400,
-        context: {
-          backupId,
-          expiredAt: new Date(expiresAt).toISOString()
-        },
-        timestamp: new Date().toISOString()
-      });
-    }
-
-    // Step 2: Check archive exists and get its size via HEAD (no body stream)
-    const r2Key = `backups/${backupId}/data.sqsh`;
-    const archiveHead = await bucket.head(r2Key);
-    if (!archiveHead) {
-      throw new BackupNotFoundError({
-        message:
-          `Backup archive not found in R2: ${backupId}. ` +
-          'The archive may have been deleted by R2 lifecycle rules.',
-        code: ErrorCode.BACKUP_NOT_FOUND,
-        httpStatus: 404,
-        context: { backupId },
-        timestamp: new Date().toISOString()
-      });
-    }
-
-    const backupSession = await this.ensureBackupSession();
-    const archivePath = `/var/backups/${backupId}.sqsh`;
+    let outcome: 'success' | 'error' = 'error';
+    let caughtError: Error | undefined;
+    let backupSession: string | undefined;
 
     try {
+      // Validate user-provided inputs (DirectoryBackup is deserialized from external storage)
+      if (!backupId || typeof backupId !== 'string') {
+        throw new InvalidBackupConfigError({
+          message: 'Invalid backup: missing or invalid id',
+          code: ErrorCode.INVALID_BACKUP_CONFIG,
+          httpStatus: 400,
+          context: { reason: 'missing or invalid id' },
+          timestamp: new Date().toISOString()
+        });
+      }
+      if (!Sandbox.UUID_REGEX.test(backupId)) {
+        throw new InvalidBackupConfigError({
+          message:
+            'Invalid backup: id must be a valid UUID (e.g. from createBackup)',
+          code: ErrorCode.INVALID_BACKUP_CONFIG,
+          httpStatus: 400,
+          context: { reason: 'id must be a valid UUID' },
+          timestamp: new Date().toISOString()
+        });
+      }
+      Sandbox.validateBackupDir(dir, 'Invalid backup: dir');
+
+      // Step 1: Read metadata to check TTL
+      const metaKey = `backups/${backupId}/meta.json`;
+      const metaObject = await bucket.get(metaKey);
+      if (!metaObject) {
+        throw new BackupNotFoundError({
+          message:
+            `Backup not found: ${backupId}. ` +
+            'Verify the backup ID is correct and the backup has not been deleted.',
+          code: ErrorCode.BACKUP_NOT_FOUND,
+          httpStatus: 404,
+          context: { backupId },
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      const metadata = await metaObject.json<{
+        ttl: number;
+        createdAt: string;
+        dir: string;
+      }>();
+
+      // Check TTL with 60-second buffer to prevent race between check and restore completion
+      const TTL_BUFFER_MS = 60 * 1000;
+      const createdAt = new Date(metadata.createdAt).getTime();
+      if (Number.isNaN(createdAt)) {
+        throw new BackupRestoreError({
+          message: `Backup metadata has invalid createdAt timestamp: ${metadata.createdAt}`,
+          code: ErrorCode.BACKUP_RESTORE_FAILED,
+          httpStatus: 500,
+          context: { dir, backupId },
+          timestamp: new Date().toISOString()
+        });
+      }
+      const expiresAt = createdAt + metadata.ttl * 1000;
+      if (Date.now() + TTL_BUFFER_MS > expiresAt) {
+        throw new BackupExpiredError({
+          message:
+            `Backup ${backupId} has expired ` +
+            `(created: ${metadata.createdAt}, TTL: ${metadata.ttl}s). ` +
+            'Create a new backup.',
+          code: ErrorCode.BACKUP_EXPIRED,
+          httpStatus: 400,
+          context: {
+            backupId,
+            expiredAt: new Date(expiresAt).toISOString()
+          },
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      // Step 2: Check archive exists and get its size via HEAD (no body stream)
+      const r2Key = `backups/${backupId}/data.sqsh`;
+      const archiveHead = await bucket.head(r2Key);
+      if (!archiveHead) {
+        throw new BackupNotFoundError({
+          message:
+            `Backup archive not found in R2: ${backupId}. ` +
+            'The archive may have been deleted by R2 lifecycle rules.',
+          code: ErrorCode.BACKUP_NOT_FOUND,
+          httpStatus: 404,
+          context: { backupId },
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      backupSession = await this.ensureBackupSession();
+      const archivePath = `/var/backups/${backupId}.sqsh`;
+
       // Step 3: Tear down existing FUSE mounts before overwriting the archive.
       // squashfuse holds the .sqsh file open; writing a new archive to the same
       // path while the old mount is active corrupts the backing store.
@@ -4030,11 +4318,13 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       const mountGlob = `/var/backups/mounts/${backupId}`;
       await this.execWithSession(
         `/usr/bin/fusermount3 -uz ${shellEscape(dir)} 2>/dev/null || true`,
-        backupSession
+        backupSession,
+        { origin: 'internal' }
       ).catch(() => {});
       await this.execWithSession(
         `for d in ${shellEscape(mountGlob)}_*/lower ${shellEscape(mountGlob)}/lower; do [ -d "$d" ] && /usr/bin/fusermount3 -uz "$d" 2>/dev/null; done; true`,
-        backupSession
+        backupSession,
+        { origin: 'internal' }
       ).catch(() => {});
 
       // Step 4: Write archive to the container (skip if already present and
@@ -4042,7 +4332,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
       // squashfuse may still hold open).
       const sizeCheck = await this.execWithSession(
         `stat -c %s ${shellEscape(archivePath)} 2>/dev/null || echo 0`,
-        backupSession
+        backupSession,
+        { origin: 'internal' }
       ).catch(() => ({ stdout: '0' }));
       const existingSize = Number.parseInt(
         (sizeCheck.stdout ?? '0').trim(),
@@ -4077,7 +4368,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         });
       }
 
-      this.logger.info('Backup restored', { backupId, dir });
+      outcome = 'success';
 
       return {
         success: true,
@@ -4085,13 +4376,30 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         id: backupId
       };
     } catch (error) {
+      caughtError = error instanceof Error ? error : new Error(String(error));
       // Clean up archive file on failure only — squashfuse needs it as
       // backing storage for the lifetime of the mount
-      await this.execWithSession(
-        `rm -f ${shellEscape(archivePath)}`,
-        backupSession
-      ).catch(() => {});
+      if (backupId && backupSession) {
+        const archivePath = `/var/backups/${backupId}.sqsh`;
+        await this.execWithSession(
+          `rm -f ${shellEscape(archivePath)}`,
+          backupSession,
+          { origin: 'internal' }
+        ).catch(() => {});
+      }
       throw error;
+    } finally {
+      if (backupSession) {
+        await this.client.utils.deleteSession(backupSession).catch(() => {});
+      }
+      logCanonicalEvent(this.logger, {
+        event: 'backup.restore',
+        outcome,
+        durationMs: Date.now() - restoreStartTime,
+        backupId,
+        dir,
+        error: caughtError
+      });
     }
   }
 }

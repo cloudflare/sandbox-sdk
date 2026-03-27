@@ -41,10 +41,8 @@ export class BackupClient extends BaseHttpClient {
         data
       );
 
-      this.logSuccess('Backup archive created', `${dir} -> ${archivePath}`);
       return response;
     } catch (error) {
-      this.logError('createArchive', error);
       throw error;
     }
   }
@@ -72,10 +70,8 @@ export class BackupClient extends BaseHttpClient {
         data
       );
 
-      this.logSuccess('Backup archive restored', `${archivePath} -> ${dir}`);
       return response;
     } catch (error) {
-      this.logError('restoreArchive', error);
       throw error;
     }
   }

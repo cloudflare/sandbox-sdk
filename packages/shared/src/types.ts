@@ -66,6 +66,13 @@ export interface ExecOptions extends BaseExecOptions {
    * AbortSignal for cancelling execution
    */
   signal?: AbortSignal;
+
+  /**
+   * Whether this command was initiated by the user or by internal
+   * infrastructure (backup, bucket mount, env setup, etc.).
+   * Defaults to 'user' when omitted.
+   */
+  origin?: 'user' | 'internal';
 }
 
 export interface ExecResult {
@@ -432,6 +439,8 @@ export interface SessionOptions {
 }
 
 // Sandbox configuration options
+export const DEFAULT_CONTROL_PORT = 8671;
+
 export interface SandboxOptions {
   /**
    * Duration after which the sandbox instance will sleep if no requests are received
@@ -525,7 +534,7 @@ export interface SandboxOptions {
 
     /**
      * How often to poll for container readiness
-     * @default 1000 (1s) - or SANDBOX_POLL_INTERVAL_MS env var
+     * @default 300 (300ms) - or SANDBOX_POLL_INTERVAL_MS env var
      */
     waitIntervalMS?: number;
   };

@@ -42,6 +42,7 @@ jobs:
   deploy:
     permissions:
       contents: read
+      actions: read
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 5
     outputs:
@@ -67,6 +68,125 @@ jobs:
             echo "skip=false" >> $GITHUB_OUTPUT
             echo "::notice::Deploy hash mismatch (http=$HTTP_HASH ws=$WS_HASH expected=$EXPECTED) — deploying"
           fi
+
+      # --- Capacity guard (only when deploy is needed) ---
+      # Ensures enough container app headroom before deploying. Each PR
+      # creates 12 container apps (2 workers × 6 classes). The account
+      # has a ~100 app limit. We keep a budget of 84 (leaving 16 headroom)
+      # and evict the least-recently-active PR's resources when over budget.
+      # Protects: current PR, main workers, and PRs with in-progress CI.
+      - uses: actions/setup-node@v6
+        if: ${{ steps.deploy-check.outputs.skip != 'true' }}
+        with:
+          node-version: 24
+
+      - name: Install wrangler for capacity check
+        if: ${{ steps.deploy-check.outputs.skip != 'true' }}
+        run: npm install -g wrangler@latest
+
+      - name: Ensure container app capacity
+        if: ${{ steps.deploy-check.outputs.skip != 'true' }}
+        run: |
+          SAFE_BUDGET=84
+          EXPECTED_PR_APPS=12
+
+          CONTAINERS=$(wrangler containers list --json 2>/dev/null)
+          if [ $? -ne 0 ] || [ -z "$CONTAINERS" ]; then
+            echo "::error::Failed to list container apps — cannot verify capacity"
+            exit 1
+          fi
+
+          TOTAL_APPS=$(echo "$CONTAINERS" | jq 'length')
+          echo "Current container apps: $TOTAL_APPS / $SAFE_BUDGET budget"
+
+          # How many apps does this PR already own?
+          # Use exact prefix match with trailing dash or end-of-name to
+          # avoid pr-1 matching pr-10, pr-100, etc.
+          CURRENT_PR="${{ inputs.worker_name_prefix }}"
+          OWN_APPS=$(echo "$CONTAINERS" | jq --arg prefix "${CURRENT_PR}-" \
+            '[.[] | select(.name | startswith($prefix) or . == $prefix)] | length')
+          NEEDED=$((EXPECTED_PR_APPS - OWN_APPS))
+          if [ "$NEEDED" -lt 0 ]; then NEEDED=0; fi
+
+          echo "This PR owns $OWN_APPS apps, needs $NEEDED more"
+
+          if [ $((TOTAL_APPS + NEEDED)) -le "$SAFE_BUDGET" ]; then
+            echo "Capacity OK — no eviction needed"
+            exit 0
+          fi
+
+          echo "::warning::Over budget — evicting least-recently-active PR resources"
+
+          # Extract unique PR numbers from container names using exact
+          # boundary matching (word boundary after the number).
+          PR_NUMS=$(echo "$CONTAINERS" | jq -r '.[].name' \
+            | grep -oP 'sandbox-e2e-test-worker-pr-\K[0-9]+' | sort -un || true)
+
+          # Extract current PR number for exclusion
+          CURRENT_PR_NUM=$(echo "$CURRENT_PR" | grep -oP 'pr-\K[0-9]+$' || echo "")
+
+          # Get PR numbers with in-progress CI to protect from eviction.
+          # Uses pull_requests[].number from the workflow run API for reliable matching.
+          # Queued runs are NOT protected — they haven't started using workers yet
+          # and can redeploy if their warm cache is evicted.
+          PROTECTED_PRS=$(gh run list --workflow=pr-privileged.yml --status=in_progress \
+            --json pullRequests --jq '.[].pullRequests[].number' 2>/dev/null | sort -un || true)
+
+          # Build list of eviction candidates with recency info
+          declare -A CANDIDATES
+          for PR_NUM in $PR_NUMS; do
+            # Skip current PR
+            if [ "$PR_NUM" = "$CURRENT_PR_NUM" ]; then continue; fi
+
+            # Skip PRs with active CI runs
+            if echo "$PROTECTED_PRS" | grep -qx "$PR_NUM" 2>/dev/null; then
+              echo "Protecting PR #$PR_NUM (CI in progress)"
+              continue
+            fi
+
+            # Get PR activity time for recency ranking
+            UPDATED=$(gh pr view "$PR_NUM" --json updatedAt --jq '.updatedAt' 2>/dev/null || echo "1970-01-01T00:00:00Z")
+            CANDIDATES["$PR_NUM"]="$UPDATED"
+          done
+
+          # Sort candidates by updatedAt (oldest first) and evict until under budget
+          EVICT_ORDER=$(for PR_NUM in "${!CANDIDATES[@]}"; do
+            echo "${CANDIDATES[$PR_NUM]} $PR_NUM"
+          done | sort | awk '{print $2}')
+
+          for PR_NUM in $EVICT_ORDER; do
+            if [ $((TOTAL_APPS + NEEDED)) -le "$SAFE_BUDGET" ]; then
+              echo "Capacity restored"
+              break
+            fi
+
+            echo "Evicting PR #$PR_NUM resources"
+            # Re-read live state to avoid double-counting with concurrent evictions
+            LIVE_CONTAINERS=$(wrangler containers list --json 2>/dev/null || echo "[]")
+            EVICTED=0
+            for suffix in "-http" "-websocket"; do
+              WORKER="sandbox-e2e-test-worker-pr-${PR_NUM}${suffix}"
+              IDS=$(echo "$LIVE_CONTAINERS" | jq -r --arg w "$WORKER" \
+                '.[] | select(.name | startswith($w)) | .id' 2>/dev/null)
+              wrangler delete --name "$WORKER" 2>/dev/null || true
+              for id in $IDS; do
+                if wrangler containers delete "$id" 2>/dev/null; then
+                  EVICTED=$((EVICTED + 1))
+                fi
+              done
+            done
+            TOTAL_APPS=$((TOTAL_APPS - EVICTED))
+            echo "  Evicted $EVICTED apps (total now: $TOTAL_APPS)"
+          done
+
+          if [ $((TOTAL_APPS + NEEDED)) -gt "$SAFE_BUDGET" ]; then
+            echo "::error::Cannot free enough capacity. All remaining PRs are protected (CI in progress). Retry later."
+            exit 1
+          fi
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # --- Full deploy (only when health check misses) ---
 

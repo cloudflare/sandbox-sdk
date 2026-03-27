@@ -28,10 +28,8 @@ export class WatchClient extends BaseHttpClient {
       const stream = await this.doStreamFetch('/api/watch', request);
       const readyStream = await this.waitForReadiness(stream);
 
-      this.logSuccess('File watch started', request.path);
       return readyStream;
     } catch (error) {
-      this.logError('watch', error);
       throw error;
     }
   }

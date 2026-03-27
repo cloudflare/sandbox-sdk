@@ -187,12 +187,123 @@ describe('WebSocket Protocol Types', () => {
     });
   });
 
+  describe('request headers', () => {
+    it('should include headers in websocket requests', async () => {
+      const transport = new WebSocketTransport({
+        wsUrl: 'ws://localhost:3000/ws',
+        requestTimeoutMs: 1000
+      });
+
+      (transport as any).connect = vi.fn().mockResolvedValue(undefined);
+      const wsSend = vi.fn();
+      (transport as any).ws = {
+        readyState: WebSocket.OPEN,
+        send: wsSend,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        close: vi.fn()
+      };
+
+      const requestPromise = (transport as any).request(
+        'GET',
+        '/api/health',
+        undefined,
+        {
+          'X-Sandbox-Id': 'sandbox-123',
+          'X-Custom-Header': 'custom-value'
+        }
+      ) as Promise<{ status: number; body: { ok: boolean } }>;
+
+      await Promise.resolve();
+
+      expect(wsSend).toHaveBeenCalledTimes(1);
+      const request = JSON.parse(wsSend.mock.calls[0]![0]) as WSRequest;
+      expect(request.headers).toEqual({
+        'X-Custom-Header': 'custom-value',
+        'X-Sandbox-Id': 'sandbox-123'
+      });
+
+      const pendingIds = Array.from(
+        ((transport as any).pendingRequests as Map<string, unknown>).keys()
+      );
+      const requestId = pendingIds[0]!;
+
+      (transport as any).handleResponse({
+        type: 'response',
+        id: requestId,
+        status: 200,
+        body: { ok: true },
+        done: true
+      });
+
+      const response = await requestPromise;
+      expect(response.status).toBe(200);
+    });
+
+    it('should include headers in websocket streaming requests', async () => {
+      vi.useFakeTimers();
+      try {
+        const transport = new WebSocketTransport({
+          wsUrl: 'ws://localhost:3000/ws',
+          requestTimeoutMs: 1000
+        });
+
+        (transport as any).connect = vi.fn().mockResolvedValue(undefined);
+        const wsSend = vi.fn();
+        (transport as any).ws = {
+          readyState: WebSocket.OPEN,
+          send: wsSend,
+          addEventListener: vi.fn(),
+          removeEventListener: vi.fn(),
+          close: vi.fn()
+        };
+
+        const streamPromise = transport.fetchStream(
+          '/api/watch',
+          { path: '/workspace' },
+          'POST',
+          {
+            'X-Sandbox-Id': 'sandbox-stream',
+            'Content-Type': 'application/json'
+          }
+        );
+
+        await Promise.resolve();
+
+        expect(wsSend).toHaveBeenCalledTimes(1);
+        const request = JSON.parse(wsSend.mock.calls[0]![0]) as WSRequest;
+        expect(request.headers).toEqual({
+          'Content-Type': 'application/json',
+          'X-Sandbox-Id': 'sandbox-stream'
+        });
+
+        const pendingIds = Array.from(
+          ((transport as any).pendingRequests as Map<string, unknown>).keys()
+        );
+        const requestId = pendingIds[0]!;
+
+        (transport as any).handleStreamChunk({
+          type: 'stream',
+          id: requestId,
+          data: '{"type":"watching"}'
+        });
+
+        const stream = await streamPromise;
+        const reader = stream.getReader();
+        const readResult = await reader.read();
+        expect(readResult.done).toBe(false);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
   describe('stream request first-message handling', () => {
     it('should reject before returning stream when first message is an error response', async () => {
       vi.useFakeTimers();
       try {
         const transport = new WebSocketTransport({
-          wsUrl: 'ws://localhost:3000/ws',
+          wsUrl: 'ws://localhost:8671/ws',
           requestTimeoutMs: 1000
         });
 
@@ -244,7 +355,7 @@ describe('WebSocket Protocol Types', () => {
       vi.useFakeTimers();
       try {
         const transport = new WebSocketTransport({
-          wsUrl: 'ws://localhost:3000/ws',
+          wsUrl: 'ws://localhost:8671/ws',
           requestTimeoutMs: 1000
         });
 
@@ -308,7 +419,7 @@ describe('WebSocket Protocol Types', () => {
       vi.useFakeTimers();
       try {
         const transport = new WebSocketTransport({
-          wsUrl: 'ws://localhost:3000/ws',
+          wsUrl: 'ws://localhost:8671/ws',
           streamIdleTimeoutMs: 1000
         });
 
@@ -348,7 +459,7 @@ describe('WebSocket Protocol Types', () => {
       vi.useFakeTimers();
       try {
         const transport = new WebSocketTransport({
-          wsUrl: 'ws://localhost:3000/ws',
+          wsUrl: 'ws://localhost:8671/ws',
           streamIdleTimeoutMs: 1000
         });
 
@@ -402,7 +513,7 @@ describe('WebSocket Protocol Types', () => {
       vi.useFakeTimers();
       try {
         const transport = new WebSocketTransport({
-          wsUrl: 'ws://localhost:3000/ws',
+          wsUrl: 'ws://localhost:8671/ws',
           streamIdleTimeoutMs: 100
         });
 
@@ -479,14 +590,14 @@ describe('WebSocketTransport', () => {
   describe('initial state', () => {
     it('should not be connected after construction', () => {
       const transport = new WebSocketTransport({
-        wsUrl: 'ws://localhost:3000/ws'
+        wsUrl: 'ws://localhost:8671/ws'
       });
       expect(transport.isConnected()).toBe(false);
     });
 
     it('should accept custom options', () => {
       const transport = new WebSocketTransport({
-        wsUrl: 'ws://localhost:3000/ws',
+        wsUrl: 'ws://localhost:8671/ws',
         connectTimeoutMs: 5000,
         requestTimeoutMs: 60000
       });
@@ -503,7 +614,7 @@ describe('WebSocketTransport', () => {
   describe('disconnect', () => {
     it('should be safe to call disconnect when not connected', () => {
       const transport = new WebSocketTransport({
-        wsUrl: 'ws://localhost:3000/ws'
+        wsUrl: 'ws://localhost:8671/ws'
       });
       // Should not throw
       transport.disconnect();
@@ -512,7 +623,7 @@ describe('WebSocketTransport', () => {
 
     it('should be safe to call disconnect multiple times', () => {
       const transport = new WebSocketTransport({
-        wsUrl: 'ws://localhost:3000/ws'
+        wsUrl: 'ws://localhost:8671/ws'
       });
       transport.disconnect();
       transport.disconnect();
@@ -567,6 +678,117 @@ describe('WebSocketTransport', () => {
   });
 
   describe('fetch without connection', () => {
+    it('retries 503 upgrade responses with updated retry budget', async () => {
+      vi.useFakeTimers();
+
+      try {
+        const transport = new WebSocketTransport({
+          wsUrl: 'ws://localhost:8671/ws',
+          retryTimeoutMs: 1_000
+        });
+        transport.setRetryTimeoutMs(20_000);
+
+        const attemptUpgrade = vi
+          .fn<() => Promise<Response>>()
+          .mockResolvedValueOnce(
+            new Response('Container is starting.', {
+              status: 503,
+              statusText: 'Service Unavailable'
+            })
+          )
+          .mockResolvedValueOnce(
+            new Response(null, {
+              status: 200,
+              statusText: 'OK'
+            })
+          );
+
+        const connectPromise = (
+          transport as unknown as {
+            fetchUpgradeWithRetry: (
+              attemptUpgrade: () => Promise<Response>
+            ) => Promise<Response>;
+          }
+        ).fetchUpgradeWithRetry(attemptUpgrade);
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(attemptUpgrade).toHaveBeenCalledTimes(1);
+
+        await vi.advanceTimersByTimeAsync(3_000);
+        const response = await connectPromise;
+
+        expect(attemptUpgrade).toHaveBeenCalledTimes(2);
+        expect(response.status).toBe(200);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('creates a fresh request for each connectViaFetch retry', async () => {
+      vi.useFakeTimers();
+
+      try {
+        const ws = {
+          accept: vi.fn(),
+          addEventListener: vi.fn(),
+          removeEventListener: vi.fn(),
+          close: vi.fn(),
+          readyState: WebSocket.OPEN
+        } as unknown as WebSocket;
+
+        const requests: Request[] = [];
+        const stub = {
+          containerFetch: vi.fn(),
+          fetch: vi
+            .fn<(request: Request) => Promise<Response>>()
+            .mockImplementationOnce(async (request) => {
+              requests.push(request);
+              return new Response('Container is starting.', {
+                status: 503,
+                statusText: 'Service Unavailable'
+              });
+            })
+            .mockImplementationOnce(async (request) => {
+              requests.push(request);
+
+              if (request.signal.aborted) {
+                throw new Error('retry request reused an aborted signal');
+              }
+
+              return {
+                status: 101,
+                statusText: 'Switching Protocols',
+                webSocket: ws
+              } as Response;
+            })
+        };
+
+        const transport = new WebSocketTransport({
+          wsUrl: 'ws://localhost:8671/ws',
+          stub,
+          connectTimeoutMs: 1,
+          retryTimeoutMs: 20_000
+        });
+
+        const connectPromise = (
+          transport as unknown as { connectViaFetch: () => Promise<void> }
+        ).connectViaFetch();
+
+        await vi.advanceTimersByTimeAsync(0);
+        expect(stub.fetch).toHaveBeenCalledTimes(1);
+
+        await vi.advanceTimersByTimeAsync(3_000);
+        await connectPromise;
+
+        expect(stub.fetch).toHaveBeenCalledTimes(2);
+        expect(requests).toHaveLength(2);
+        expect(requests[0]).not.toBe(requests[1]);
+        expect(ws.accept).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it('should attempt to connect when making a fetch request', async () => {
       const transport = new WebSocketTransport({
         wsUrl: 'ws://invalid-url:9999/ws',

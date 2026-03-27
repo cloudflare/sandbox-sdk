@@ -45,19 +45,19 @@ describe('Logger Module', () => {
       const logger = new CloudflareLogger(
         { component: 'sandbox-do', traceId: 'tr_test123' } as LogContext,
         LogLevelEnum.DEBUG,
-        false
+        'json-line'
       );
 
-      logger.debug('Debug message', { operation: 'test' });
+      logger.debug('Debug message', { customField: 'test' });
 
       expect(consoleLogSpy).toHaveBeenCalledOnce();
       const logOutput = consoleLogSpy.mock.calls[0][0] as string;
       expect(JSON.parse(logOutput)).toMatchObject({
         level: 'debug',
-        msg: 'Debug message',
+        message: 'Debug message',
         component: 'sandbox-do',
         traceId: 'tr_test123',
-        operation: 'test'
+        customField: 'test'
       });
     });
 
@@ -65,7 +65,7 @@ describe('Logger Module', () => {
       const logger = new CloudflareLogger(
         { component: 'container', traceId: 'tr_abc' } as LogContext,
         LogLevelEnum.INFO,
-        false
+        'json-line'
       );
 
       logger.info('Info message');
@@ -73,14 +73,14 @@ describe('Logger Module', () => {
       expect(consoleLogSpy).toHaveBeenCalledOnce();
       const logOutput = JSON.parse(consoleLogSpy.mock.calls[0][0] as string);
       expect(logOutput.level).toBe('info');
-      expect(logOutput.msg).toBe('Info message');
+      expect(logOutput.message).toBe('Info message');
     });
 
     it('should log warn messages', () => {
       const logger = new CloudflareLogger(
         { component: 'container', traceId: 'tr_xyz' } as LogContext,
         LogLevelEnum.INFO,
-        false
+        'json-line'
       );
 
       logger.warn('Warning message');
@@ -88,14 +88,14 @@ describe('Logger Module', () => {
       expect(consoleWarnSpy).toHaveBeenCalledOnce();
       const logOutput = JSON.parse(consoleWarnSpy.mock.calls[0][0] as string);
       expect(logOutput.level).toBe('warn');
-      expect(logOutput.msg).toBe('Warning message');
+      expect(logOutput.message).toBe('Warning message');
     });
 
     it('should log error messages with error object', () => {
       const logger = new CloudflareLogger(
         { component: 'sandbox-do', traceId: 'tr_err' } as LogContext,
         LogLevelEnum.INFO,
-        false
+        'json-line'
       );
 
       const error = new Error('Test error');
@@ -105,7 +105,7 @@ describe('Logger Module', () => {
       expect(consoleErrorSpy).toHaveBeenCalledOnce();
       const logOutput = JSON.parse(consoleErrorSpy.mock.calls[0][0] as string);
       expect(logOutput.level).toBe('error');
-      expect(logOutput.msg).toBe('Error occurred');
+      expect(logOutput.message).toBe('Error occurred');
       expect(logOutput.error).toMatchObject({
         message: 'Test error',
         stack: expect.stringContaining('Error: Test error')
@@ -116,7 +116,7 @@ describe('Logger Module', () => {
       const logger = new CloudflareLogger(
         { component: 'container', traceId: 'tr_time' } as LogContext,
         LogLevelEnum.INFO,
-        false
+        'json-line'
       );
 
       logger.info('Test message');
@@ -133,7 +133,7 @@ describe('Logger Module', () => {
       const logger = new CloudflareLogger(
         { component: 'sandbox-do', traceId: 'tr_filter' } as LogContext,
         LogLevelEnum.INFO,
-        false
+        'json-line'
       );
 
       logger.debug('Debug message');
@@ -145,7 +145,7 @@ describe('Logger Module', () => {
       const logger = new CloudflareLogger(
         { component: 'sandbox-do', traceId: 'tr_filter' } as LogContext,
         LogLevelEnum.WARN,
-        false
+        'json-line'
       );
 
       logger.info('Info message');
@@ -158,7 +158,7 @@ describe('Logger Module', () => {
       const logger = new CloudflareLogger(
         { component: 'sandbox-do', traceId: 'tr_filter' } as LogContext,
         LogLevelEnum.WARN,
-        false
+        'json-line'
       );
 
       logger.warn('Warning');
@@ -172,7 +172,7 @@ describe('Logger Module', () => {
       const logger = new CloudflareLogger(
         { component: 'sandbox-do', traceId: 'tr_filter' } as LogContext,
         LogLevelEnum.ERROR,
-        false
+        'json-line'
       );
 
       logger.debug('Debug');
@@ -195,11 +195,10 @@ describe('Logger Module', () => {
           sandboxId: 'sandbox-1'
         } as LogContext,
         LogLevelEnum.INFO,
-        false
+        'json-line'
       );
 
       const childLogger = parentLogger.child({
-        operation: 'exec',
         commandId: 'cmd-123'
       });
       childLogger.info('Child log');
@@ -210,7 +209,6 @@ describe('Logger Module', () => {
         component: 'sandbox-do',
         traceId: 'tr_parent',
         sandboxId: 'sandbox-1',
-        operation: 'exec',
         commandId: 'cmd-123'
       });
     });
@@ -219,21 +217,19 @@ describe('Logger Module', () => {
       const logger = new CloudflareLogger(
         { component: 'container', traceId: 'tr_nest' } as LogContext,
         LogLevelEnum.INFO,
-        false
+        'json-line'
       );
 
       const child1 = logger.child({ sessionId: 'session-1' });
-      const child2 = child1.child({ operation: 'exec' });
-      const child3 = child2.child({ commandId: 'cmd-456' });
+      const child2 = child1.child({ commandId: 'cmd-456' });
 
-      child3.info('Nested child log');
+      child2.info('Nested child log');
 
       const logOutput = JSON.parse(consoleLogSpy.mock.calls[0][0] as string);
       expect(logOutput).toMatchObject({
         component: 'container',
         traceId: 'tr_nest',
         sessionId: 'session-1',
-        operation: 'exec',
         commandId: 'cmd-456'
       });
     });
@@ -242,10 +238,10 @@ describe('Logger Module', () => {
       const parentLogger = new CloudflareLogger(
         { component: 'sandbox-do', traceId: 'tr_level' } as LogContext,
         LogLevelEnum.ERROR,
-        false
+        'json-line'
       );
 
-      const childLogger = parentLogger.child({ operation: 'test' });
+      const childLogger = parentLogger.child({ commandId: 'cmd-test' });
 
       childLogger.info('Should not log');
       childLogger.error('Should log');
@@ -264,10 +260,10 @@ describe('Logger Module', () => {
           sandboxId: 'sandbox-1'
         } as LogContext,
         LogLevelEnum.INFO,
-        true // Enable pretty printing
+        'pretty'
       );
 
-      logger.info('Test message', { operation: 'exec' });
+      logger.info('Test message');
 
       expect(consoleLogSpy).toHaveBeenCalledOnce();
       const output = consoleLogSpy.mock.calls[0][0] as string;
@@ -283,11 +279,11 @@ describe('Logger Module', () => {
       expect(output).toContain('tr_pretty123'); // Truncated trace ID (12 chars)
     });
 
-    it('should use JSON output when pretty printing disabled', () => {
+    it('should use json-line output for container mode', () => {
       const logger = new CloudflareLogger(
         { component: 'container', traceId: 'tr_json' } as LogContext,
         LogLevelEnum.INFO,
-        false // Disable pretty printing
+        'json-line'
       );
 
       logger.info('JSON message');
@@ -296,7 +292,7 @@ describe('Logger Module', () => {
       expect(() => JSON.parse(output)).not.toThrow();
       expect(JSON.parse(output)).toMatchObject({
         level: 'info',
-        msg: 'JSON message',
+        message: 'JSON message',
         component: 'container'
       });
     });
@@ -305,7 +301,7 @@ describe('Logger Module', () => {
       const logger = new CloudflareLogger(
         { component: 'sandbox-do', traceId: 'tr_color' } as LogContext,
         LogLevelEnum.INFO,
-        true
+        'pretty'
       );
 
       logger.info('Colored info');
@@ -318,20 +314,151 @@ describe('Logger Module', () => {
       expect(consoleErrorSpy.mock.calls[0][0] as string).toContain('\x1b[');
     });
 
-    it('should display error stack in pretty mode', () => {
+    it('should include error details inline in pretty mode', () => {
       const logger = new CloudflareLogger(
         { component: 'container', traceId: 'tr_stack' } as LogContext,
         LogLevelEnum.ERROR,
-        true
+        'pretty'
       );
 
       const error = new Error('Test error');
       error.stack = 'Error: Test error\n    at test.js:1:1';
       logger.error('Error with stack', error);
 
-      // Pretty mode should output multiple lines for errors
-      expect(consoleErrorSpy).toHaveBeenCalled();
-      expect(consoleErrorSpy.mock.calls.length).toBeGreaterThan(1);
+      expect(consoleErrorSpy).toHaveBeenCalledOnce();
+      const output = consoleErrorSpy.mock.calls[0][0] as string;
+      expect(output).toContain('err.msg=Test error');
+      expect(output).toContain('err.stack=Error: Test error');
+    });
+  });
+
+  describe('CloudflareLogger - Output Modes', () => {
+    it('structured mode passes raw object to consoleFn', () => {
+      const logger = new CloudflareLogger(
+        { component: 'sandbox-do', traceId: 'tr_struct123' } as LogContext,
+        LogLevelEnum.INFO,
+        'structured'
+      );
+
+      logger.info('Structured log');
+
+      expect(consoleLogSpy).toHaveBeenCalledOnce();
+      const output = consoleLogSpy.mock.calls[0][0];
+
+      // Must be a raw object, not a string
+      expect(typeof output).toBe('object');
+      expect(output).toHaveProperty('message', 'Structured log');
+      expect(output).toHaveProperty('level', 'info');
+      expect(output).toHaveProperty('traceId', 'tr_struct123');
+    });
+
+    it('json-line mode passes JSON string to consoleFn', () => {
+      const logger = new CloudflareLogger(
+        { component: 'container', traceId: 'tr_jsonline' } as LogContext,
+        LogLevelEnum.INFO,
+        'json-line'
+      );
+
+      logger.info('JSON line log');
+
+      expect(consoleLogSpy).toHaveBeenCalledOnce();
+      const output = consoleLogSpy.mock.calls[0][0];
+
+      expect(typeof output).toBe('string');
+      const parsed = JSON.parse(output as string);
+      expect(parsed).toHaveProperty('message', 'JSON line log');
+      expect(parsed).toHaveProperty('level', 'info');
+    });
+
+    it('pretty mode passes ANSI-formatted string', () => {
+      const logger = new CloudflareLogger(
+        { component: 'sandbox-do', traceId: 'tr_prettymode' } as LogContext,
+        LogLevelEnum.INFO,
+        'pretty'
+      );
+
+      logger.info('Pretty log');
+
+      expect(consoleLogSpy).toHaveBeenCalledOnce();
+      const output = consoleLogSpy.mock.calls[0][0] as string;
+
+      expect(typeof output).toBe('string');
+      expect(() => JSON.parse(output)).toThrow();
+      expect(output).toContain('\x1b[');
+      expect(output).toContain('Pretty log');
+    });
+
+    it('structured mode preserves error fields as discrete properties', () => {
+      const logger = new CloudflareLogger(
+        { component: 'sandbox-do', traceId: 'tr_structerr' } as LogContext,
+        LogLevelEnum.ERROR,
+        'structured'
+      );
+
+      const error = new TypeError('bad input');
+      error.stack = 'TypeError: bad input\n    at foo.ts:10:5';
+      logger.error('Operation failed', error);
+
+      expect(consoleErrorSpy).toHaveBeenCalledOnce();
+      const output = consoleErrorSpy.mock.calls[0][0] as Record<
+        string,
+        unknown
+      >;
+
+      expect(typeof output).toBe('object');
+      const errObj = output.error as Record<string, unknown>;
+      expect(errObj.name).toBe('TypeError');
+      expect(errObj.message).toBe('bad input');
+      expect(errObj.stack).toContain('TypeError: bad input');
+    });
+
+    it('json-line mode preserves error fields in serialized output', () => {
+      const logger = new CloudflareLogger(
+        { component: 'container', traceId: 'tr_jsonerr' } as LogContext,
+        LogLevelEnum.ERROR,
+        'json-line'
+      );
+
+      const error = new RangeError('out of bounds');
+      error.stack = 'RangeError: out of bounds\n    at bar.ts:5:3';
+      logger.error('Range check failed', error);
+
+      expect(consoleErrorSpy).toHaveBeenCalledOnce();
+      const output = consoleErrorSpy.mock.calls[0][0] as string;
+      const parsed = JSON.parse(output);
+
+      expect(parsed.error.name).toBe('RangeError');
+      expect(parsed.error.message).toBe('out of bounds');
+      expect(parsed.error.stack).toContain('RangeError: out of bounds');
+    });
+
+    it('uses message field instead of msg in all modes', () => {
+      const structured = new CloudflareLogger(
+        { component: 'sandbox-do', traceId: 'tr_msgfield' } as LogContext,
+        LogLevelEnum.INFO,
+        'structured'
+      );
+      structured.info('hello structured');
+
+      const structOut = consoleLogSpy.mock.calls[0][0] as Record<
+        string,
+        unknown
+      >;
+      expect(structOut).toHaveProperty('message', 'hello structured');
+      expect(structOut).not.toHaveProperty('msg');
+
+      consoleLogSpy.mockClear();
+
+      const jsonLine = new CloudflareLogger(
+        { component: 'container', traceId: 'tr_msgfield2' } as LogContext,
+        LogLevelEnum.INFO,
+        'json-line'
+      );
+      jsonLine.info('hello json');
+
+      const jsonOut = JSON.parse(consoleLogSpy.mock.calls[0][0] as string);
+      expect(jsonOut).toHaveProperty('message', 'hello json');
+      expect(jsonOut).not.toHaveProperty('msg');
     });
   });
 
@@ -380,17 +507,11 @@ describe('Logger Module', () => {
   });
 
   describe('createLogger Factory', () => {
-    beforeEach(() => {
-      // Set NODE_ENV to production to force JSON output
-      process.env.NODE_ENV = 'production';
-    });
-
     afterEach(() => {
-      // Clean up
-      delete process.env.NODE_ENV;
+      delete process.env.SANDBOX_LOG_FORMAT;
     });
 
-    it('should create logger with base context', () => {
+    it('should create structured logger for sandbox-do component', () => {
       const logger = createLogger({
         component: 'sandbox-do',
         traceId: 'tr_factory',
@@ -400,7 +521,8 @@ describe('Logger Module', () => {
       logger.info('Factory test');
 
       expect(consoleLogSpy).toHaveBeenCalledOnce();
-      const output = JSON.parse(consoleLogSpy.mock.calls[0][0] as string);
+      const output = consoleLogSpy.mock.calls[0][0] as Record<string, unknown>;
+      expect(typeof output).toBe('object');
       expect(output).toMatchObject({
         component: 'sandbox-do',
         traceId: 'tr_factory',
@@ -408,15 +530,58 @@ describe('Logger Module', () => {
       });
     });
 
-    it('should auto-generate trace ID if not provided', () => {
+    it('should create json-line logger for container component', () => {
       const logger = createLogger({
         component: 'container'
       });
 
       logger.info('Auto trace');
 
-      const output = JSON.parse(consoleLogSpy.mock.calls[0][0] as string);
-      expect(output.traceId).toMatch(/^tr_[0-9a-f]{16}$/);
+      const output = consoleLogSpy.mock.calls[0][0] as string;
+      expect(typeof output).toBe('string');
+      const parsed = JSON.parse(output);
+      expect(parsed.traceId).toMatch(/^tr_[0-9a-f]{16}$/);
+    });
+
+    it('should create pretty logger when SANDBOX_LOG_FORMAT=pretty', () => {
+      process.env.SANDBOX_LOG_FORMAT = 'pretty';
+      const logger = createLogger({
+        component: 'sandbox-do',
+        traceId: 'tr_prettyfactory'
+      });
+
+      logger.info('Pretty factory');
+
+      const output = consoleLogSpy.mock.calls[0][0] as string;
+      expect(typeof output).toBe('string');
+      expect(output).toContain('Pretty factory');
+    });
+
+    it('should use pretty for container when SANDBOX_LOG_FORMAT=pretty', () => {
+      process.env.SANDBOX_LOG_FORMAT = 'pretty';
+      const logger = createLogger({
+        component: 'container'
+      });
+
+      logger.info('Container pretty in local dev');
+
+      const output = consoleLogSpy.mock.calls[0][0] as string;
+      expect(typeof output).toBe('string');
+      expect(output).toContain('Container pretty in local dev');
+      expect(() => JSON.parse(output)).toThrow();
+    });
+
+    it('should default container to json-line when SANDBOX_LOG_FORMAT is not set', () => {
+      delete process.env.SANDBOX_LOG_FORMAT;
+      const logger = createLogger({
+        component: 'container'
+      });
+
+      logger.info('Container json-line in production');
+
+      const output = consoleLogSpy.mock.calls[0][0] as string;
+      expect(typeof output).toBe('string');
+      expect(() => JSON.parse(output)).not.toThrow();
     });
   });
 
@@ -425,7 +590,7 @@ describe('Logger Module', () => {
       const logger = new CloudflareLogger(
         { component: 'container', traceId: 'tr_empty' } as LogContext,
         LogLevelEnum.INFO,
-        false
+        'json-line'
       );
 
       logger.info('Message', {});
@@ -437,7 +602,7 @@ describe('Logger Module', () => {
       const logger = new CloudflareLogger(
         { component: 'sandbox-do', traceId: 'tr_noerr' } as LogContext,
         LogLevelEnum.ERROR,
-        false
+        'json-line'
       );
 
       logger.error('Error without error object', undefined);
@@ -451,7 +616,7 @@ describe('Logger Module', () => {
       const logger = new CloudflareLogger(
         { component: 'container', traceId: 'tr_long' } as LogContext,
         LogLevelEnum.INFO,
-        false
+        'json-line'
       );
 
       const longMessage = 'A'.repeat(10000);
@@ -459,14 +624,14 @@ describe('Logger Module', () => {
 
       expect(consoleLogSpy).toHaveBeenCalledOnce();
       const output = JSON.parse(consoleLogSpy.mock.calls[0][0] as string);
-      expect(output.msg).toBe(longMessage);
+      expect(output.message).toBe(longMessage);
     });
 
     it('should handle special characters in messages', () => {
       const logger = new CloudflareLogger(
         { component: 'sandbox-do', traceId: 'tr_special' } as LogContext,
         LogLevelEnum.INFO,
-        false
+        'json-line'
       );
 
       const specialMessage =
@@ -475,17 +640,17 @@ describe('Logger Module', () => {
 
       expect(consoleLogSpy).toHaveBeenCalledOnce();
       const output = JSON.parse(consoleLogSpy.mock.calls[0][0] as string);
-      expect(output.msg).toBe(specialMessage);
+      expect(output.message).toBe(specialMessage);
     });
 
     it('should handle context with undefined values', () => {
       const logger = new CloudflareLogger(
         { component: 'container', traceId: 'tr_undef' } as LogContext,
         LogLevelEnum.INFO,
-        false
+        'json-line'
       );
 
-      logger.info('Message', { operation: undefined, commandId: 'cmd-123' });
+      logger.info('Message', { commandId: 'cmd-123' });
 
       expect(consoleLogSpy).toHaveBeenCalledOnce();
       const output = JSON.parse(consoleLogSpy.mock.calls[0][0] as string);
@@ -496,7 +661,7 @@ describe('Logger Module', () => {
       const logger = new CloudflareLogger(
         { component: 'sandbox-do', traceId: 'tr_circ' } as LogContext,
         LogLevelEnum.ERROR,
-        false
+        'json-line'
       );
 
       const error = new Error('Circular error');

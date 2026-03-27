@@ -36,7 +36,6 @@ export {
   extractRepoName,
   FALLBACK_REPO_NAME,
   GitLogger,
-  redactCredentials,
   sanitizeGitData
 } from './git.js';
 // Export all interpreter types
@@ -51,6 +50,14 @@ export type {
   RunCodeOptions
 } from './interpreter-types.js';
 export { Execution, ResultImpl } from './interpreter-types.js';
+export type { LogLevelOptions } from './logger/canonical.js';
+// Export canonical event helpers
+export {
+  buildMessage,
+  logCanonicalEvent,
+  resolveLogLevel
+} from './logger/canonical.js';
+export type { CanonicalEventPayload } from './logger/canonical.types.js';
 // Export logger infrastructure
 export type { LogContext, Logger, LogLevel } from './logger/index.js';
 export {
@@ -59,6 +66,13 @@ export {
   LogLevelEnum,
   TraceContext
 } from './logger/index.js';
+// Export sanitize helpers
+export {
+  redactCommand,
+  redactCredentials,
+  redactSensitiveParams,
+  truncateForLog
+} from './logger/sanitize.js';
 // Export PTY types
 export type {
   PtyControlMessage,
@@ -155,7 +169,6 @@ export type {
   RemoteMountBucketOptions,
   RenameFileResult,
   RestoreBackupResult,
-  // Sandbox configuration options
   SandboxOptions,
   // Session management result types
   SessionCreateResult,
@@ -173,6 +186,7 @@ export type {
   WriteFileResult
 } from './types.js';
 export {
+  DEFAULT_CONTROL_PORT,
   isExecResult,
   isProcess,
   isProcessStatus,

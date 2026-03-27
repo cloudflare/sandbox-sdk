@@ -6,8 +6,7 @@
   "account_id": "b8afc92c7a87f699592038b756153d22",
 
   "vars": {
-    "SANDBOX_LOG_LEVEL": "debug",
-    "SANDBOX_LOG_FORMAT": "pretty"
+    "SANDBOX_LOG_LEVEL": "debug"
   },
   "observability": {
     "enabled": true

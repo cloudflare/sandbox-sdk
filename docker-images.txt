@@ -1,0 +1,14 @@
+# Docker image names pushed to the container registry.
+# This is the single source of truth — CI workflows read this file
+# at runtime so that PRs adding new images work without waiting for
+# workflow changes to land on main (pull_request_target uses main's
+# workflow YAML but checks out the PR's code).
+#
+# One image per line. Lines starting with # are comments.
+# Order: base image first, then alphabetical.
+sandbox
+sandbox-desktop
+sandbox-musl
+sandbox-opencode
+sandbox-python
+sandbox-standalone

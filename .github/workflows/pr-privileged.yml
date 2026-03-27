@@ -199,6 +199,7 @@ jobs:
           echo "docker=${{ hashFiles(
             'packages/sandbox/Dockerfile',
             'docker-bake.hcl',
+            'docker-images.txt',
             '.dockerignore',
             'package-lock.json',
             'package.json',
@@ -209,11 +210,12 @@ jobs:
             'tooling/typescript-config/**',
             'biome.json',
             '.bun-version',
-            'tests/e2e/test-worker/Dockerfile.standalone'
+            'tests/e2e/test-worker/Dockerfile.*'
           ) }}" >> $GITHUB_OUTPUT
           echo "deploy=${{ hashFiles(
             'packages/sandbox/Dockerfile',
             'docker-bake.hcl',
+            'docker-images.txt',
             '.dockerignore',
             'package-lock.json',
             'package.json',
@@ -224,7 +226,7 @@ jobs:
             'tooling/typescript-config/**',
             'biome.json',
             '.bun-version',
-            'tests/e2e/test-worker/Dockerfile.standalone',
+            'tests/e2e/test-worker/Dockerfile.*',
             'packages/sandbox/src/**',
             'tests/e2e/test-worker/**',
             'vitest.e2e.config.ts'
@@ -252,6 +254,7 @@ jobs:
   e2e:
     needs: [policy, detect-changes, build]
     permissions:
+      actions: read
       contents: read
     if: |
       needs.policy.outputs.run_privileged == 'true' &&
@@ -349,12 +352,15 @@ jobs:
       - name: Copy Docker images to Docker Hub
         if: ${{ needs.detect-changes.outputs.docker-changed == 'true' }}
         run: |
+          source .github/load-docker-images.sh
           BUILD_TAG="pr-${{ github.event.pull_request.number }}"
           PREVIEW="${{ steps.version.outputs.version }}"
           echo "${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}" | crane auth login index.docker.io --password-stdin -u "${{ secrets.DOCKER_HUB_USERNAME }}"
-          for suffix in "" "-python" "-opencode" "-musl" "-desktop"; do
+          for image in "${DOCKER_IMAGES[@]}"; do
+            [[ "$image" == "sandbox-standalone" ]] && continue  # CF registry only
+            suffix="${image#sandbox}"
             crane copy \
-              registry.cloudflare.com/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/sandbox${suffix}:${BUILD_TAG} \
+              registry.cloudflare.com/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/${image}:${BUILD_TAG} \
               docker.io/cloudflare/sandbox:${PREVIEW}${suffix}
           done
 
@@ -440,7 +446,6 @@ jobs:
           echo "build: ${{ needs.build.result }}"
           echo "e2e: ${{ needs.e2e.result }}"
           echo "publish-preview: ${{ needs.publish-preview.result }}"
-
           # Gate 1: Authorization
           if [[ "${{ needs.policy.outputs.authorized }}" != "true" ]]; then
             echo "::error::Fork PR requires 'ok-to-test' label. A maintainer must review the code and add the label to run the full CI pipeline."

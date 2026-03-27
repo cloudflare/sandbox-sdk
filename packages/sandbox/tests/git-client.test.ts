@@ -25,7 +25,7 @@ describe('GitClient', () => {
 
     client = new GitClient({
       baseUrl: 'http://test.com',
-      port: 3000
+      port: 8671
     });
   });
 
@@ -487,7 +487,7 @@ describe('GitClient', () => {
 
       const clientWithLogger = new GitClient({
         baseUrl: 'http://test.com',
-        port: 3000,
+        port: 8671,
         logger: mockLogger
       });
 

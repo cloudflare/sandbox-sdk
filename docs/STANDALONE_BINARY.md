@@ -59,7 +59,7 @@ The musl image is a lightweight, functional sandbox. It supports all core SDK me
 
 The `/sandbox` binary acts as a supervisor:
 
-1. Starts HTTP API server on port 3000
+1. Starts HTTP API server on the control port (default: 8671)
 2. Spawns your CMD as a child process
 3. Forwards SIGTERM/SIGINT to the child
 4. If CMD exits 0, server keeps running; non-zero exits terminate the container

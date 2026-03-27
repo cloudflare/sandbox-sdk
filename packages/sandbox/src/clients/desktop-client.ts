@@ -157,14 +157,8 @@ export class DesktopClient extends BaseHttpClient {
         data
       );
 
-      this.logSuccess(
-        'Desktop started',
-        `${response.resolution[0]}x${response.resolution[1]}`
-      );
-
       return response;
     } catch (error) {
-      this.logError('desktop.start', error);
       this.options.onError?.(
         error instanceof Error ? error.message : String(error)
       );
@@ -181,10 +175,8 @@ export class DesktopClient extends BaseHttpClient {
         '/api/desktop/stop',
         {}
       );
-      this.logSuccess('Desktop stopped');
       return response;
     } catch (error) {
-      this.logError('desktop.stop', error);
       this.options.onError?.(
         error instanceof Error ? error.message : String(error)
       );
@@ -200,10 +192,8 @@ export class DesktopClient extends BaseHttpClient {
       const response = await this.get<DesktopStatusResponse>(
         '/api/desktop/status'
       );
-      this.logSuccess('Desktop status retrieved', response.status);
       return response;
     } catch (error) {
-      this.logError('desktop.status', error);
       throw error;
     }
   }
@@ -241,11 +231,6 @@ export class DesktopClient extends BaseHttpClient {
         data
       );
 
-      this.logSuccess(
-        'Screenshot captured',
-        `${response.width}x${response.height}`
-      );
-
       if (wantsBytes) {
         const binaryString = atob(response.data);
         const bytes = new Uint8Array(binaryString.length);
@@ -261,7 +246,6 @@ export class DesktopClient extends BaseHttpClient {
 
       return response;
     } catch (error) {
-      this.logError('desktop.screenshot', error);
       throw error;
     }
   }
@@ -303,11 +287,6 @@ export class DesktopClient extends BaseHttpClient {
         data
       );
 
-      this.logSuccess(
-        'Region screenshot captured',
-        `${region.width}x${region.height}`
-      );
-
       if (wantsBytes) {
         const binaryString = atob(response.data);
         const bytes = new Uint8Array(binaryString.length);
@@ -323,7 +302,6 @@ export class DesktopClient extends BaseHttpClient {
 
       return response;
     } catch (error) {
-      this.logError('desktop.screenshotRegion', error);
       throw error;
     }
   }
@@ -339,10 +317,7 @@ export class DesktopClient extends BaseHttpClient {
         button: options?.button ?? 'left',
         clickCount: 1
       });
-
-      this.logSuccess('Mouse click', `(${x}, ${y})`);
     } catch (error) {
-      this.logError('desktop.click', error);
       throw error;
     }
   }
@@ -362,10 +337,7 @@ export class DesktopClient extends BaseHttpClient {
         button: options?.button ?? 'left',
         clickCount: 2
       });
-
-      this.logSuccess('Mouse double click', `(${x}, ${y})`);
     } catch (error) {
-      this.logError('desktop.doubleClick', error);
       throw error;
     }
   }
@@ -385,10 +357,7 @@ export class DesktopClient extends BaseHttpClient {
         button: options?.button ?? 'left',
         clickCount: 3
       });
-
-      this.logSuccess('Mouse triple click', `(${x}, ${y})`);
     } catch (error) {
-      this.logError('desktop.tripleClick', error);
       throw error;
     }
   }
@@ -404,10 +373,7 @@ export class DesktopClient extends BaseHttpClient {
         button: 'right',
         clickCount: 1
       });
-
-      this.logSuccess('Mouse right click', `(${x}, ${y})`);
     } catch (error) {
-      this.logError('desktop.rightClick', error);
       throw error;
     }
   }
@@ -423,10 +389,7 @@ export class DesktopClient extends BaseHttpClient {
         button: 'middle',
         clickCount: 1
       });
-
-      this.logSuccess('Mouse middle click', `(${x}, ${y})`);
     } catch (error) {
-      this.logError('desktop.middleClick', error);
       throw error;
     }
   }
@@ -445,13 +408,7 @@ export class DesktopClient extends BaseHttpClient {
         ...(y !== undefined && { y }),
         button: options?.button ?? 'left'
       });
-
-      this.logSuccess(
-        'Mouse down',
-        x !== undefined ? `(${x}, ${y})` : 'current position'
-      );
     } catch (error) {
-      this.logError('desktop.mouseDown', error);
       throw error;
     }
   }
@@ -466,13 +423,7 @@ export class DesktopClient extends BaseHttpClient {
         ...(y !== undefined && { y }),
         button: options?.button ?? 'left'
       });
-
-      this.logSuccess(
-        'Mouse up',
-        x !== undefined ? `(${x}, ${y})` : 'current position'
-      );
     } catch (error) {
-      this.logError('desktop.mouseUp', error);
       throw error;
     }
   }
@@ -483,9 +434,7 @@ export class DesktopClient extends BaseHttpClient {
   async moveMouse(x: number, y: number): Promise<void> {
     try {
       await this.post<BaseApiResponse>('/api/desktop/mouse/move', { x, y });
-      this.logSuccess('Mouse move', `(${x}, ${y})`);
     } catch (error) {
-      this.logError('desktop.moveMouse', error);
       throw error;
     }
   }
@@ -508,13 +457,7 @@ export class DesktopClient extends BaseHttpClient {
         endY,
         button: options?.button ?? 'left'
       });
-
-      this.logSuccess(
-        'Mouse drag',
-        `(${startX},${startY}) -> (${endX},${endY})`
-      );
     } catch (error) {
-      this.logError('desktop.drag', error);
       throw error;
     }
   }
@@ -535,10 +478,7 @@ export class DesktopClient extends BaseHttpClient {
         direction,
         amount
       });
-
-      this.logSuccess('Mouse scroll', `${direction} ${amount} at (${x}, ${y})`);
     } catch (error) {
-      this.logError('desktop.scroll', error);
       throw error;
     }
   }
@@ -551,13 +491,8 @@ export class DesktopClient extends BaseHttpClient {
       const response = await this.get<CursorPositionResponse>(
         '/api/desktop/mouse/position'
       );
-      this.logSuccess(
-        'Cursor position retrieved',
-        `(${response.x}, ${response.y})`
-      );
       return response;
     } catch (error) {
-      this.logError('desktop.getCursorPosition', error);
       throw error;
     }
   }
@@ -571,10 +506,7 @@ export class DesktopClient extends BaseHttpClient {
         text,
         ...(options?.delayMs !== undefined && { delayMs: options.delayMs })
       });
-
-      this.logSuccess('Keyboard type', `${text.length} chars`);
     } catch (error) {
-      this.logError('desktop.type', error);
       throw error;
     }
   }
@@ -585,9 +517,7 @@ export class DesktopClient extends BaseHttpClient {
   async press(key: KeyInput): Promise<void> {
     try {
       await this.post<BaseApiResponse>('/api/desktop/keyboard/press', { key });
-      this.logSuccess('Key press', key);
     } catch (error) {
-      this.logError('desktop.press', error);
       throw error;
     }
   }
@@ -598,9 +528,7 @@ export class DesktopClient extends BaseHttpClient {
   async keyDown(key: KeyInput): Promise<void> {
     try {
       await this.post<BaseApiResponse>('/api/desktop/keyboard/down', { key });
-      this.logSuccess('Key down', key);
     } catch (error) {
-      this.logError('desktop.keyDown', error);
       throw error;
     }
   }
@@ -611,9 +539,7 @@ export class DesktopClient extends BaseHttpClient {
   async keyUp(key: KeyInput): Promise<void> {
     try {
       await this.post<BaseApiResponse>('/api/desktop/keyboard/up', { key });
-      this.logSuccess('Key up', key);
     } catch (error) {
-      this.logError('desktop.keyUp', error);
       throw error;
     }
   }
@@ -626,13 +552,8 @@ export class DesktopClient extends BaseHttpClient {
       const response = await this.get<ScreenSizeResponse>(
         '/api/desktop/screen/size'
       );
-      this.logSuccess(
-        'Screen size retrieved',
-        `${response.width}x${response.height}`
-      );
       return response;
     } catch (error) {
-      this.logError('desktop.getScreenSize', error);
       throw error;
     }
   }
@@ -650,10 +571,8 @@ export class DesktopClient extends BaseHttpClient {
         BaseApiResponse & { running: boolean; pid?: number; uptime?: number }
       >(`/api/desktop/process/${encodeURIComponent(name)}/status`);
 
-      this.logSuccess('Desktop process status retrieved', name);
       return response;
     } catch (error) {
-      this.logError('desktop.getProcessStatus', error);
       throw error;
     }
   }
