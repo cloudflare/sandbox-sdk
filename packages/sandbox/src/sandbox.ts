@@ -976,7 +976,7 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
         mountPath,
         prefix: options.prefix,
         readOnly: options.readOnly ?? false,
-        client: this.client,
+        getClient: () => this.client,
         sessionId,
         logger: this.logger
       });
