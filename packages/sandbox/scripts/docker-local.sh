@@ -6,14 +6,12 @@ cd "$(dirname "$0")/../../.."
 
 VERSION="$npm_package_version"
 IMAGE="cloudflare/sandbox-test"
-CONTROL_PORT="${BUILD_INTERNAL_SERVER_PORT:-8671}"
 
 docker build \
   -f packages/sandbox/Dockerfile \
   --target default \
   --platform linux/amd64 \
   --build-arg SANDBOX_VERSION="$VERSION" \
-  --build-arg BUILD_INTERNAL_SERVER_PORT="$CONTROL_PORT" \
   -t "$IMAGE:$VERSION" \
   .
 
@@ -22,7 +20,6 @@ docker build \
   --target python \
   --platform linux/amd64 \
   --build-arg SANDBOX_VERSION="$VERSION" \
-  --build-arg BUILD_INTERNAL_SERVER_PORT="$CONTROL_PORT" \
   -t "$IMAGE:$VERSION-python" \
   .
 
@@ -31,7 +28,6 @@ docker build \
   --target opencode \
   --platform linux/amd64 \
   --build-arg SANDBOX_VERSION="$VERSION" \
-  --build-arg BUILD_INTERNAL_SERVER_PORT="$CONTROL_PORT" \
   -t "$IMAGE:$VERSION-opencode" \
   --secret id=wrangler_ca,src="${NODE_EXTRA_CA_CERTS:-/dev/null}" \
   .
@@ -41,7 +37,6 @@ docker build \
   --target desktop \
   --platform linux/amd64 \
   --build-arg SANDBOX_VERSION="$VERSION" \
-  --build-arg BUILD_INTERNAL_SERVER_PORT="$CONTROL_PORT" \
   -t "$IMAGE:$VERSION-desktop" \
   --secret id=wrangler_ca,src="${NODE_EXTRA_CA_CERTS:-/dev/null}" \
   .
@@ -61,7 +56,6 @@ docker build \
   --target musl \
   --platform linux/amd64 \
   --build-arg SANDBOX_VERSION="$VERSION" \
-  --build-arg BUILD_INTERNAL_SERVER_PORT="$CONTROL_PORT" \
   -t "$IMAGE:$VERSION-musl" \
   --secret id=wrangler_ca,src="${NODE_EXTRA_CA_CERTS:-/dev/null}" \
   .

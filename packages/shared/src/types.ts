@@ -439,8 +439,6 @@ export interface SessionOptions {
 }
 
 // Sandbox configuration options
-export const DEFAULT_CONTROL_PORT = 8671;
-
 export interface SandboxOptions {
   /**
    * Duration after which the sandbox instance will sleep if no requests are received

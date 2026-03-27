@@ -2,12 +2,9 @@
 # This validates that users can add sandbox capabilities to any Docker image
 
 ARG BASE_IMAGE=cloudflare/sandbox-test:0.8.0
-ARG BUILD_INTERNAL_SERVER_PORT=8671
 FROM ${BASE_IMAGE} AS sandbox-source
 
 FROM node:20-slim
-
-ARG BUILD_INTERNAL_SERVER_PORT
 
 # Install dependencies required by the SDK
 # - file: MIME type detection for file operations
@@ -30,7 +27,7 @@ RUN chmod +x /startup-test.sh
 
 WORKDIR /workspace
 
-EXPOSE ${BUILD_INTERNAL_SERVER_PORT} 8080
+EXPOSE 3000 8080
 
 # Standard Docker pattern: ENTRYPOINT is the executable, CMD is passed as arguments
 ENTRYPOINT ["/sandbox"]
