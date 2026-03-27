@@ -1707,6 +1707,8 @@ export class Sandbox<Env = unknown> extends Container<Env> implements ISandbox {
           'This fallback will be removed in a future release.'
       );
       this.defaultPort = LEGACY_CONTROL_PORT;
+      // Rebuild the client after updating the control port.
+      // Long-lived helpers read it from the sandbox when they need it.
       this.client = this.createSandboxClient();
     }
   }

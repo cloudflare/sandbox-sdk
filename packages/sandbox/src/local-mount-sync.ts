@@ -18,6 +18,8 @@ interface LocalMountSyncOptions {
   mountPath: string;
   prefix: string | undefined;
   readOnly: boolean;
+  // Called for each sync operation so LocalMountSyncManager always uses
+  // the current sandbox client.
   getClient: () => SandboxClient;
   sessionId: string;
   logger: Logger;

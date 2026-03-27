@@ -20,6 +20,8 @@ export class CodeInterpreter {
     this.sandbox = sandbox;
   }
 
+  // Resolved from the sandbox on each access so CodeInterpreter always
+  // uses the current interpreter client.
   private get interpreterClient(): InterpreterClient {
     return this.sandbox.client.interpreter;
   }
