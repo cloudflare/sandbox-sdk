@@ -191,7 +191,7 @@ describe('LocalMountSyncManager', () => {
         mountPath: '/mnt/data',
         prefix: undefined,
         readOnly: true,
-        getClient: () => client,
+        client,
         sessionId: 'test-session',
         logger
       });
@@ -248,7 +248,7 @@ describe('LocalMountSyncManager', () => {
         mountPath: '/mnt/data',
         prefix: undefined,
         readOnly: true,
-        getClient: () => client,
+        client,
         sessionId: 'test-session',
         logger
       });
@@ -272,7 +272,7 @@ describe('LocalMountSyncManager', () => {
         mountPath: '/mnt/data',
         prefix: undefined,
         readOnly: false,
-        getClient: () => client,
+        client,
         sessionId: 'test-session',
         logger
       });
@@ -303,7 +303,7 @@ describe('LocalMountSyncManager', () => {
         mountPath: '/mnt/data',
         prefix: undefined,
         readOnly: true,
-        getClient: () => client,
+        client,
         sessionId: 'test-session',
         logger,
         pollIntervalMs: 1000
@@ -347,7 +347,7 @@ describe('LocalMountSyncManager', () => {
         mountPath: '/mnt/data',
         prefix: undefined,
         readOnly: true,
-        getClient: () => client,
+        client,
         sessionId: 'test-session',
         logger,
         pollIntervalMs: 1000
@@ -386,7 +386,7 @@ describe('LocalMountSyncManager', () => {
         mountPath: '/mnt/data',
         prefix: undefined,
         readOnly: true,
-        getClient: () => client,
+        client,
         sessionId: 'test-session',
         logger,
         pollIntervalMs: 1000
@@ -426,7 +426,7 @@ describe('LocalMountSyncManager', () => {
         mountPath: '/mnt/data',
         prefix: undefined,
         readOnly: true,
-        getClient: () => client,
+        client,
         sessionId: 'test-session',
         logger,
         pollIntervalMs: 1000
@@ -464,7 +464,7 @@ describe('LocalMountSyncManager', () => {
         mountPath: '/mnt/data',
         prefix: 'data/',
         readOnly: true,
-        getClient: () => client,
+        client,
         sessionId: 'test-session',
         logger
       });
@@ -501,7 +501,7 @@ describe('LocalMountSyncManager', () => {
         mountPath: '/mnt/data',
         prefix: 'uploads',
         readOnly: true,
-        getClient: () => client,
+        client,
         sessionId: 'test-session',
         logger
       });
@@ -540,7 +540,7 @@ describe('LocalMountSyncManager', () => {
         mountPath: '/mnt/data',
         prefix: undefined,
         readOnly: false,
-        getClient: () => client,
+        client,
         sessionId: 'test-session',
         logger,
         pollIntervalMs: 60_000
@@ -595,7 +595,7 @@ describe('LocalMountSyncManager', () => {
         mountPath: '/mnt/data',
         prefix: undefined,
         readOnly: false,
-        getClient: () => client,
+        client,
         sessionId: 'test-session',
         logger,
         pollIntervalMs: 60_000
@@ -643,7 +643,7 @@ describe('LocalMountSyncManager', () => {
         mountPath: '/mnt/data',
         prefix: undefined,
         readOnly: false,
-        getClient: () => client,
+        client,
         sessionId: 'test-session',
         logger,
         pollIntervalMs: 60_000
@@ -686,7 +686,7 @@ describe('LocalMountSyncManager', () => {
         mountPath: '/mnt/data',
         prefix: undefined,
         readOnly: false,
-        getClient: () => client,
+        client,
         sessionId: 'test-session',
         logger,
         pollIntervalMs: 60_000
@@ -741,7 +741,7 @@ describe('LocalMountSyncManager', () => {
         mountPath: '/mnt/data',
         prefix: undefined,
         readOnly: false,
-        getClient: () => client,
+        client,
         sessionId: 'test-session',
         logger,
         pollIntervalMs: 60_000
@@ -782,7 +782,7 @@ describe('LocalMountSyncManager', () => {
         mountPath: '/mnt/data',
         prefix: undefined,
         readOnly: false,
-        getClient: () => client,
+        client,
         sessionId: 'test-session',
         logger,
         pollIntervalMs: 60_000
@@ -823,7 +823,7 @@ describe('LocalMountSyncManager', () => {
         mountPath: '/mnt/data',
         prefix: 'uploads/',
         readOnly: false,
-        getClient: () => client,
+        client,
         sessionId: 'test-session',
         logger,
         pollIntervalMs: 60_000
@@ -864,7 +864,7 @@ describe('LocalMountSyncManager', () => {
         mountPath: '/mnt/data',
         prefix: undefined,
         readOnly: true,
-        getClient: () => client,
+        client,
         sessionId: 'test-session',
         logger,
         pollIntervalMs: 1000

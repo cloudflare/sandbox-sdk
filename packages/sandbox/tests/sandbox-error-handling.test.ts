@@ -329,8 +329,8 @@ describe('Sandbox.containerFetch() error classification', () => {
 
       expect(response.status).toBe(500);
       expect(response.headers.get('Retry-After')).toBeNull();
-      const body = (await response.json()) as { context: { phase: string } };
-      expect(body.context.phase).toBe('startup');
+      const body = (await response.json()) as { context: { error: string } };
+      expect(body.context.error).toContain('No such image');
     });
   });
   describe('unrecognized errors → 503 (safe to retry)', () => {
