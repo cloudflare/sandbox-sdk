@@ -1120,6 +1120,114 @@ export class FileService implements FileSystemOperations {
     return await this.write(path, content, options, sessionId);
   }
 
+  /**
+   * Write a file from a ReadableStream.
+   * Streams bytes directly to disk without buffering the entire file in memory.
+   */
+  async writeFileStream(
+    path: string,
+    stream: ReadableStream<Uint8Array>,
+    sessionId = 'default'
+  ): Promise<ServiceResult<{ bytesWritten: number }>> {
+    try {
+      const validation = this.security.validatePath(path);
+      if (!validation.isValid) {
+        return {
+          success: false,
+          error: {
+            message: `Invalid path format for '${path}': ${validation.errors.join(', ')}`,
+            code: ErrorCode.VALIDATION_FAILED,
+            details: {
+              validationErrors: validation.errors.map((e) => ({
+                field: 'path',
+                message: e,
+                code: 'INVALID_PATH'
+              }))
+            } satisfies ValidationFailedContext
+          }
+        };
+      }
+
+      const writeResult = await this.sessionManager.withSession(
+        sessionId,
+        async (exec) => {
+          let targetPath = path;
+
+          if (!path.startsWith('/')) {
+            const pwdResult = await exec('pwd');
+            if (pwdResult.exitCode !== 0) {
+              throw {
+                code: ErrorCode.FILESYSTEM_ERROR,
+                message: `Failed to resolve working directory for '${path}'`,
+                details: {
+                  path,
+                  operation: Operation.FILE_WRITE,
+                  exitCode: pwdResult.exitCode,
+                  stderr: pwdResult.stderr
+                } satisfies FileSystemContext
+              };
+            }
+            const cwd = pwdResult.stdout.trim();
+            targetPath = resolve(cwd, path);
+          }
+
+          // Ensure parent directory exists
+          const dir = targetPath.substring(0, targetPath.lastIndexOf('/'));
+          if (dir) {
+            await exec(`mkdir -p ${dir}`);
+          }
+
+          // Pipe the stream to disk using Bun's file writer for streaming I/O
+          const writer = Bun.file(targetPath).writer();
+          let bytesWritten = 0;
+          const reader = stream.getReader();
+          try {
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              writer.write(value);
+              bytesWritten += value.byteLength;
+            }
+            await writer.flush();
+          } finally {
+            writer.end();
+          }
+          return { bytesWritten };
+        }
+      );
+
+      if (!writeResult.success) {
+        return writeResult as ServiceResult<{ bytesWritten: number }>;
+      }
+
+      return {
+        success: true,
+        data: writeResult.data as { bytesWritten: number }
+      };
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error(
+        'Failed to stream-write file',
+        error instanceof Error ? error : undefined,
+        { path }
+      );
+
+      return {
+        success: false,
+        error: {
+          message: `Failed to write file '${path}': ${errorMessage}`,
+          code: ErrorCode.FILESYSTEM_ERROR,
+          details: {
+            path,
+            operation: Operation.FILE_WRITE,
+            stderr: errorMessage
+          } satisfies FileSystemContext
+        }
+      };
+    }
+  }
+
   async deleteFile(
     path: string,
     sessionId?: string
